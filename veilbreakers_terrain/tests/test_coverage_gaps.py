@@ -126,136 +126,19 @@ class TestTerrainErosionEdgeCases:
 
 
 # ===================================================================
-# 3. _dungeon_gen: minimum-size dungeon
+# 3. _dungeon_gen edge cases — REMOVED in phase 49.
+# TestDungeonGenEdgeCases used _dungeon_gen (generate_bsp_dungeon,
+# generate_cave_map, Room, generate_town_layout), which was deleted
+# along with the architecture domain.
 # ===================================================================
 
 
-class TestDungeonGenEdgeCases:
-    """Edge cases for dungeon, cave, and town generation."""
-
-    def test_small_dungeon_does_not_crash(self):
-        """A 20x20 dungeon with min_room_size=3 should still work.
-
-        With small sizes, BSP may not split, falling back to _force_rooms.
-        """
-        from blender_addon.handlers._dungeon_gen import (
-            generate_bsp_dungeon,
-            _verify_connectivity,
-        )
-
-        layout = generate_bsp_dungeon(
-            width=20, height=20, min_room_size=3, max_depth=2, seed=42
-        )
-        assert len(layout.rooms) >= 2
-        assert layout.grid is not None
-        assert _verify_connectivity(layout)
-
-    def test_cave_map_small(self):
-        """10x10 cave map should not crash. The degenerate fallback
-        opens the center when no floor regions exist.
-        """
-        from blender_addon.handlers._dungeon_gen import generate_cave_map
-
-        cave = generate_cave_map(width=10, height=10, seed=42)
-        assert cave.grid.shape == (10, 10)
-        # Should have at least some floor cells
-        assert np.sum(cave.grid == 1) > 0
-
-    def test_room_intersects_self(self):
-        """A Room must intersect with itself."""
-        from blender_addon.handlers._dungeon_gen import Room
-
-        r = Room(5, 5, 10, 10)
-        assert r.intersects(r)
-
-    def test_room_adjacent_no_overlap(self):
-        """Two adjacent rooms (sharing an edge) should NOT intersect
-        because intersects uses strict < comparison.
-        """
-        from blender_addon.handlers._dungeon_gen import Room
-
-        r1 = Room(0, 0, 5, 5)  # x2=5, y2=5
-        r2 = Room(5, 0, 5, 5)  # starts at x=5
-        assert not r1.intersects(r2)
-
-    def test_town_layout_small(self):
-        """Small town (30x30) with 2 districts should not crash."""
-        from blender_addon.handlers._dungeon_gen import generate_town_layout
-
-        town = generate_town_layout(width=30, height=30, num_districts=2, seed=42)
-        assert len(town.districts) == 2
-        assert len(town.roads) > 0
-
-
 # ===================================================================
-# 4. _building_grammar: 0-floor building and extreme damage
+# 4. _building_grammar edge cases — REMOVED in phase 49.
+# TestBuildingGrammarEdgeCases used _building_grammar
+# (evaluate_building_grammar, apply_ruins_damage, generate_interior_layout,
+# BuildingSpec), which was deleted along with the architecture domain.
 # ===================================================================
-
-
-class TestBuildingGrammarEdgeCases:
-    """Edge cases for building grammar evaluation."""
-
-    def test_zero_floor_building(self):
-        """A 0-floor building should produce a spec with foundation and
-        roof but no wall/window operations. The roof_z calculation must
-        not produce negative or nonsensical values.
-        """
-        from blender_addon.handlers._building_grammar import (
-            evaluate_building_grammar,
-            BuildingSpec,
-        )
-
-        result = evaluate_building_grammar(
-            width=10, depth=8, floors=0, style="medieval", seed=0
-        )
-        assert isinstance(result, BuildingSpec)
-        assert result.floors == 0
-        # Should have at least foundation and roof
-        roles = [op.get("role") for op in result.operations]
-        assert "foundation" in roles
-        assert "roof" in roles
-        # Should NOT have any walls (no floors = no walls)
-        wall_ops = [op for op in result.operations if op.get("role") == "wall"]
-        assert len(wall_ops) == 0
-
-    def test_damage_level_above_one(self):
-        """damage_level > 1.0 should not crash. The remove_chance can
-        exceed 1.0, which just means everything gets removed.
-        """
-        from blender_addon.handlers._building_grammar import (
-            evaluate_building_grammar,
-            apply_ruins_damage,
-        )
-
-        spec = evaluate_building_grammar(
-            width=10, depth=8, floors=2, style="medieval", seed=0
-        )
-        result = apply_ruins_damage(spec, damage_level=2.0, seed=0)
-        # Should not crash; most/all operations removed
-        non_debris = [op for op in result.operations
-                      if op.get("role") not in ("debris", "vegetation")]
-        assert len(non_debris) < len(spec.operations)
-
-    def test_unknown_room_type_interior(self):
-        """Unknown room_type for interior layout should return empty list."""
-        from blender_addon.handlers._building_grammar import generate_interior_layout
-
-        result = generate_interior_layout(
-            room_type="nonexistent_room", width=8, depth=6, seed=0
-        )
-        assert result == []
-
-    def test_tiny_room_interior(self):
-        """Very small room (2x2) should not crash even if furniture
-        cannot fit. Items that can't be placed are silently skipped.
-        """
-        from blender_addon.handlers._building_grammar import generate_interior_layout
-
-        result = generate_interior_layout(
-            room_type="tavern", width=2, depth=2, seed=0
-        )
-        # May be empty or have very few items -- just shouldn't crash
-        assert isinstance(result, list)
 
 
 # ===================================================================
