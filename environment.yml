@@ -1,0 +1,15 @@
+name: base
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.11
+  - numpy>=1.26.0
+  - opensimplex>=0.4.5
+  - flake8
+  - pytest
+  - pytest-asyncio
+  - pytest-cov
+  - pip
+  - pip:
+      - veilbreakers-mcp
