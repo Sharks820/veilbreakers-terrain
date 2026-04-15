@@ -106,32 +106,14 @@ def _vector_xyz(vec: Any) -> tuple[float, float, float]:
     return float(vec[0]), float(vec[1]), float(vec[2])
 
 
-def _detect_grid_dims_from_vertices(vertices: list[Any]) -> tuple[int, int]:
-    """Infer terrain grid dimensions from vertex coordinates."""
-    xs = set(round(_vector_xyz(v.co)[0], 3) for v in vertices)
-    ys = set(round(_vector_xyz(v.co)[1], 3) for v in vertices)
-    cols, rows = len(xs), len(ys)
-    if cols * rows == len(vertices):
-        return rows, cols
-    side = max(2, int(math.sqrt(len(vertices))))
-    return side, side
-
-
-def _detect_grid_dims(bm) -> tuple[int, int]:
-    """WORLD-004: Detect actual (rows, cols) of a terrain grid mesh.
-
-    Counts unique rounded X and Y coordinate positions to infer actual
-    grid width and height.  This is robust for non-square terrain meshes
-    (e.g. 256×512) where ``int(math.sqrt(vert_count))`` would give wrong
-    dimensions and cause reshape crashes.
-
-    Falls back to sqrt-based square assumption only when coordinate
-    detection produces an inconsistent vertex count.
-
-    Returns:
-        (rows, cols) tuple suitable for ``array.reshape(rows, cols)``.
-    """
-    return _detect_grid_dims_from_vertices(list(bm.verts))
+# Phase 50-02 G2: _detect_grid_dims / _detect_grid_dims_from_vertices
+# relocated to blender_addon.handlers.procedural_meshes (toolkit primitive).
+# Re-exported here for backward compatibility with intra-terrain callers
+# (lines 2667, 3681, 4149, 4317, 5047, 5211 of this file).
+from .procedural_meshes import (  # noqa: E402, F401  -- intentional post-imports re-export
+    _detect_grid_dims,
+    _detect_grid_dims_from_vertices,
+)
 
 
 def _object_world_xyz(obj: Any, local_co: Any) -> tuple[float, float, float]:
