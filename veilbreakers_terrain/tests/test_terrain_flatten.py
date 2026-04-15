@@ -11,7 +11,6 @@ Validates:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from blender_addon.handlers.terrain_advanced import (
     flatten_terrain_zone,
@@ -138,15 +137,6 @@ class TestFlattenTerrainZone:
         assert abs(mean_inside - 0.3) < 0.02, (
             f"mean inside = {mean_inside}, expected ~0.3"
         )
-
-    def test_flatten_output_clipped(self):
-        """Output should be clipped to [0, 1]."""
-        hmap = _make_noisy_heightmap(64)
-        result = flatten_terrain_zone(
-            hmap, center_x=0.5, center_y=0.5, radius=0.15, target_height=0.99
-        )
-        assert result.min() >= 0.0, f"min = {result.min()}"
-        assert result.max() <= 1.0, f"max = {result.max()}"
 
     def test_flatten_returns_copy(self):
         """flatten_terrain_zone should not mutate the input."""

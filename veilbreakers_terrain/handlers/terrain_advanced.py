@@ -21,37 +21,26 @@ from typing import Any
 
 import numpy as np
 
+def _detect_grid_dims(bm) -> tuple[int, int]:
+    """Detect actual (rows, cols) of a terrain grid mesh.
+
+    Shared with environment.py — duplicated here to avoid circular import.
+    """
+    import math as _math
+    xs = set(round(v.co.x, 3) for v in bm.verts)
+    ys = set(round(v.co.y, 3) for v in bm.verts)
+    cols, rows = len(xs), len(ys)
+    if cols * rows == len(bm.verts):
+        return rows, cols
+    side = max(2, int(_math.sqrt(len(bm.verts))))
+    return side, side
+
 
 # ---------------------------------------------------------------------------
 # Type aliases
 # ---------------------------------------------------------------------------
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
-
-
-# ---------------------------------------------------------------------------
-# Shared grid-dimension helper
-# ---------------------------------------------------------------------------
-
-def _detect_grid_dims(bm) -> tuple[int, int]:
-    """WORLD-004: Detect actual (rows, cols) of a terrain grid mesh.
-
-    Counts unique rounded X and Y coordinate positions to infer actual
-    grid width and height.  Robust for non-square terrain meshes where
-    ``int(math.sqrt(vert_count))`` would give wrong dimensions and cause
-    numpy reshape crashes.
-
-    Returns:
-        (rows, cols) tuple suitable for ``array.reshape(rows, cols)``.
-    """
-    xs = set(round(v.co.x, 3) for v in bm.verts)
-    ys = set(round(v.co.y, 3) for v in bm.verts)
-    cols, rows = len(xs), len(ys)
-    if cols * rows == len(bm.verts):
-        return rows, cols
-    # Fallback: assume square
-    side = max(2, int(math.sqrt(len(bm.verts))))
-    return side, side
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +285,7 @@ def compute_spline_deformation(
     depth: float = 1.0,
     falloff: float = 0.5,
     mode: str = "carve",
-    samples_per_segment: int = 32,
+    samples_per_segment: int = 18,
 ) -> dict[int, float]:
     """Compute terrain vertex Z-displacements along a spline path.
 
@@ -345,7 +334,7 @@ def compute_spline_deformation(
     core_width = width * (1.0 - blend_fraction)
 
     # For smooth mode, collect neighbors for averaging
-    neighbor_heights: list[float] = []
+    _neighbor_heights: list[float] = []
 
     for idx, (vx, vy, vz) in enumerate(vert_positions):
         dist, closest, t_spline = distance_point_to_polyline(vx, vy, polyline)
@@ -426,6 +415,7 @@ def handle_spline_deform(params: dict) -> dict:
     depth = float(params.get("depth", 1.0))
     falloff = float(params.get("falloff", 0.5))
     mode = params.get("mode", "carve")
+    samples_per_segment = max(4, min(int(params.get("samples_per_segment", 18)), 48))
 
     bm = bmesh.new()
     try:
@@ -434,7 +424,7 @@ def handle_spline_deform(params: dict) -> dict:
 
         positions = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
         new_heights = compute_spline_deformation(
-            positions, spline_points, width, depth, falloff, mode,
+            positions, spline_points, width, depth, falloff, mode, samples_per_segment,
         )
 
         for idx, new_z in new_heights.items():
@@ -453,6 +443,7 @@ def handle_spline_deform(params: dict) -> dict:
         "width": width,
         "depth": depth,
         "falloff": falloff,
+        "samples_per_segment": samples_per_segment,
     }
 
 
@@ -526,6 +517,7 @@ def apply_layer_operation(
     grid_width: int = 0,
     grid_height: int = 0,
     terrain_size: Vec2 = (100.0, 100.0),
+    terrain_origin: Vec2 = (0.0, 0.0),
     seed: int = 42,
 ) -> int:
     """Apply a brush operation to a terrain layer.
@@ -549,13 +541,17 @@ def apply_layer_operation(
 
     rows, cols = layer.heights.shape
     tw, td = terrain_size
+    # terrain_origin is the terrain object's world-space center, not its min corner.
+    ox, oy = terrain_origin
+    min_x = ox - tw * 0.5
+    min_y = oy - td * 0.5
 
     if tw <= 0 or td <= 0:
         return 0
 
     # Convert world-space brush to grid-space
-    cx_grid = center[0] / tw * cols
-    cy_grid = center[1] / td * rows
+    cx_grid = (center[0] - min_x) / tw * cols
+    cy_grid = (center[1] - min_y) / td * rows
     r_grid_x = radius / tw * cols
     r_grid_y = radius / td * rows
 
@@ -712,15 +708,15 @@ def handle_terrain_layers(params: dict) -> dict:
         res = max(2, int(math.sqrt(len(mesh.vertices))))
         new_layer = TerrainLayer(layer_name, res, res, blend_mode, strength)
         layers.append(new_layer)
-        obj["terrain_layers"] = json.dumps([l.to_dict() for l in layers])
+        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
         return {"action": "add_layer", "layer_name": layer_name,
                 "total_layers": len(layers)}
 
     elif action == "remove_layer":
         if not layer_name:
             raise ValueError("'layer_name' is required for remove_layer")
-        layers = [l for l in layers if l.name != layer_name]
-        obj["terrain_layers"] = json.dumps([l.to_dict() for l in layers])
+        layers = [L for L in layers if L.name != layer_name]
+        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
         return {"action": "remove_layer", "layer_name": layer_name,
                 "total_layers": len(layers)}
 
@@ -728,9 +724,9 @@ def handle_terrain_layers(params: dict) -> dict:
         if not layer_name:
             raise ValueError("'layer_name' is required for modify_layer")
         target = None
-        for l in layers:
-            if l.name == layer_name:
-                target = l
+        for layer in layers:
+            if layer.name == layer_name:
+                target = layer
                 break
         if target is None:
             raise ValueError(f"Layer not found: {layer_name}")
@@ -741,14 +737,16 @@ def handle_terrain_layers(params: dict) -> dict:
         strength = float(params.get("strength", 1.0))
         dims = obj.dimensions
         terrain_size = (dims.x, dims.y)
+        terrain_origin = (obj.location.x, obj.location.y)
 
         affected = apply_layer_operation(
             target, operation, tuple(center[:2]), radius, strength,
             terrain_size=terrain_size,
+            terrain_origin=terrain_origin,
             seed=params.get("seed", 42),
         )
 
-        obj["terrain_layers"] = json.dumps([l.to_dict() for l in layers])
+        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
         return {"action": "modify_layer", "layer_name": layer_name,
                 "operation": operation, "affected_cells": affected}
 
@@ -780,9 +778,9 @@ def handle_terrain_layers(params: dict) -> dict:
         return {
             "action": "list_layers",
             "layers": [
-                {"name": l.name, "blend_mode": l.blend_mode,
-                 "strength": l.strength, "shape": list(l.heights.shape)}
-                for l in layers
+                {"name": layer.name, "blend_mode": layer.blend_mode,
+                 "strength": layer.strength, "shape": list(layer.heights.shape)}
+                for layer in layers
             ],
             "total_layers": len(layers),
         }
@@ -802,6 +800,7 @@ def compute_erosion_brush(
     iterations: int = 5,
     strength: float = 0.5,
     terrain_size: Vec2 = (100.0, 100.0),
+    terrain_origin: Vec2 = (0.0, 0.0),
     seed: int = 42,
 ) -> np.ndarray:
     """Apply erosion within a brush radius on a heightmap.
@@ -830,13 +829,14 @@ def compute_erosion_brush(
     result = heightmap.astype(np.float64).copy()
     rows, cols = result.shape
     tw, td = terrain_size
+    ox, oy = terrain_origin
 
     if tw <= 0 or td <= 0 or brush_radius <= 0:
         return result
 
     # Convert to grid space
-    cx = brush_center[0] / tw * cols
-    cy = brush_center[1] / td * rows
+    cx = (brush_center[0] - ox) / tw * cols
+    cy = (brush_center[1] - oy) / td * rows
     rx = brush_radius / tw * cols
     ry = brush_radius / td * rows
 
@@ -895,7 +895,18 @@ def compute_erosion_brush(
 
         result += delta
 
-    return np.clip(result, 0.0, 1.0)
+    # Preserve source height range instead of hard-clamping to [0, 1].
+    # The legacy clip silently crushed any world-unit heightmap (e.g. metres)
+    # whose values exceeded 1.0 — a persistent bug flagged in the ultra
+    # implementation plan (§7.5, Addendum 3.A). The correct behavior is to
+    # let erosion operate freely within the input's natural range and only
+    # scrub NaN/inf introduced by numerical drift.
+    src_min = float(np.nanmin(heightmap)) if heightmap.size else 0.0
+    src_max = float(np.nanmax(heightmap)) if heightmap.size else 1.0
+    if not np.isfinite(src_min) or not np.isfinite(src_max) or src_max <= src_min:
+        src_min, src_max = 0.0, max(src_min + 1.0, 1.0)
+    result = np.nan_to_num(result, nan=src_min, posinf=src_max, neginf=src_min)
+    return np.clip(result, src_min, src_max)
 
 
 def handle_erosion_paint(params: dict) -> dict:
@@ -943,10 +954,11 @@ def handle_erosion_paint(params: dict) -> dict:
 
         dims = obj.dimensions
         terrain_size = (dims.x, dims.y)
+        terrain_origin = (obj.location.x, obj.location.y)
 
         eroded = compute_erosion_brush(
             heightmap, brush_center, brush_radius, erosion_type,
-            iterations, strength, terrain_size,
+            iterations, strength, terrain_size, terrain_origin,
         )
 
         flat = eroded.ravel()
@@ -1240,6 +1252,7 @@ def apply_stamp_to_heightmap(
     height: float = 1.0,
     falloff: float = 0.5,
     terrain_size: Vec2 = (100.0, 100.0),
+    terrain_origin: Vec2 = (0.0, 0.0),
 ) -> np.ndarray:
     """Apply a stamp heightmap onto a terrain heightmap.
 
@@ -1261,13 +1274,14 @@ def apply_stamp_to_heightmap(
     rows, cols = result.shape
     stamp_rows, stamp_cols = stamp.shape
     tw, td = terrain_size
+    ox, oy = terrain_origin
 
     if tw <= 0 or td <= 0 or radius <= 0:
         return result
 
     # Convert world-space to grid-space
-    cx = position[0] / tw * cols
-    cy = position[1] / td * rows
+    cx = (position[0] - ox) / tw * cols
+    cy = (position[1] - oy) / td * rows
     r_cells_x = radius / tw * cols
     r_cells_y = radius / td * rows
 
@@ -1352,9 +1366,10 @@ def handle_terrain_stamp(params: dict) -> dict:
 
         dims = obj.dimensions
         terrain_size = (dims.x, dims.y)
+        terrain_origin = (obj.location.x, obj.location.y)
 
         stamped = apply_stamp_to_heightmap(
-            heightmap, stamp, position, radius, height, falloff, terrain_size,
+            heightmap, stamp, position, radius, height, falloff, terrain_size, terrain_origin,
         )
 
         flat = stamped.ravel()
@@ -1414,7 +1429,7 @@ def handle_snap_to_terrain(params: dict) -> dict:
         raise ValueError(f"Terrain object not found: {terrain_name}")
 
     # Ensure terrain mesh is up to date for raycasting
-    depsgraph = bpy.context.evaluated_depsgraph_get()
+    _depsgraph = bpy.context.evaluated_depsgraph_get()
 
     results: list[dict[str, Any]] = []
 
@@ -1505,7 +1520,9 @@ def flatten_terrain_zone(
         seed: Random seed (reserved for future noise-based blend).
 
     Returns:
-        New heightmap with the flattened zone applied, clipped to [0, 1].
+        New heightmap with the flattened zone applied. Values are preserved in
+        the source heightmap's natural range (no forced normalization to [0,1])
+        so world-unit heightmaps are not silently crushed.
     """
     rows, cols = heightmap.shape
 
@@ -1517,15 +1534,31 @@ def flatten_terrain_zone(
     # Compute target height from average inside radius if not specified
     mask = dist < radius
     if target_height is None:
-        target_height = float(heightmap[mask].mean()) if mask.any() else 0.5
+        if mask.any():
+            target_height = float(heightmap[mask].mean())
+        else:
+            target_height = float(heightmap.mean()) if heightmap.size else 0.0
 
-    # Blend factor: 1.0 inside radius, smooth fade to 0.0 at radius+blend_width
+    # Blend factor: 1.0 inside radius, smooth fade to 0.0 at radius+blend_width.
+    # This blend mask is intentionally clamped to [0,1] — it is a weight, not
+    # a height — so the clip here is correct.
     blend = np.clip(1.0 - (dist - radius) / max(blend_width, 1e-6), 0.0, 1.0)
     # Smoothstep: 3t^2 - 2t^3 for C1 continuity (no step discontinuity)
     blend = blend * blend * (3.0 - 2.0 * blend)
 
     result = heightmap * (1.0 - blend) + target_height * blend
-    return np.clip(result, 0.0, 1.0)
+    # Preserve source height range — never hard-clamp to [0,1] which would
+    # silently destroy world-unit heightmaps (§7.5, Addendum 3.A).
+    src_min = float(np.nanmin(heightmap)) if heightmap.size else 0.0
+    src_max = float(np.nanmax(heightmap)) if heightmap.size else 1.0
+    # The flatten target may legitimately sit above the original max (e.g. when
+    # raising a plateau), so broaden the allowed range to include target_height.
+    lo = min(src_min, float(target_height))
+    hi = max(src_max, float(target_height))
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo, hi = 0.0, max(lo + 1.0, 1.0)
+    result = np.nan_to_num(result, nan=lo, posinf=hi, neginf=lo)
+    return np.clip(result, lo, hi)
 
 
 def flatten_multiple_zones(
@@ -1660,11 +1693,11 @@ def handle_terrain_flatten_zone(params: dict) -> dict:
     # Map flattened grid Z back to each vertex
     z_min_new = float(np.nanmin(flattened_grid))
     z_max_new = float(np.nanmax(flattened_grid))
-    z_range_new = max(z_max_new - z_min_new, 1e-6)
+    _z_range_new = max(z_max_new - z_min_new, 1e-6)
 
     z_orig_min = float(np.nanmin(grid))
     z_orig_max = float(np.nanmax(grid))
-    z_orig_range = max(z_orig_max - z_orig_min, 1e-6)
+    _z_orig_range = max(z_orig_max - z_orig_min, 1e-6)
 
     # Compute delta per vertex from grid change
     orig_sample = grid[row_idx, col_idx]
@@ -1681,4 +1714,4 @@ def handle_terrain_flatten_zone(params: dict) -> dict:
 
     mesh.update()
 
-    return {"status": "ok", "object_name": obj_name, "vertices_modified": len(verts)}
+    return {"status": "success", "object_name": obj_name, "vertices_modified": len(verts)}

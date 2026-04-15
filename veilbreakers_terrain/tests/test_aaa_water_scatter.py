@@ -15,12 +15,10 @@ Covers:
 
 from __future__ import annotations
 
-import importlib.util
 import math
-import os
-import sys
 import types
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -62,18 +60,45 @@ def _build_full_bpy_stubs():
     class _LoopLayerAccess:
         def __init__(self):
             self.float_color = _LayerGroup()
+            # environment.py's water spline builder also writes a UV layer
+            # via bm.loops.layers.uv.new("UVMap"); expose the same stubbed
+            # LayerGroup so the mock matches the real bmesh API surface.
+            self.uv = _LayerGroup()
 
     # --- bmesh vertex ---
 
+    class _LoopLayerCell:
+        """Per-loop per-layer cell that behaves like a tuple for color
+        reads and also exposes a mutable ``.uv`` attribute so the water
+        spline builder can do ``loop[uv_layer].uv = (u, v)``.
+        """
+
+        def __init__(self, initial=(0.0, 0.0, 0.0, 0.0)):
+            self._value = tuple(initial)
+            self.uv = (0.0, 0.0)
+
+        def __iter__(self):
+            return iter(self._value)
+
+        def __getitem__(self, idx):
+            return self._value[idx]
+
+        def __len__(self):
+            return len(self._value)
+
+        def __eq__(self, other):
+            return tuple(self._value) == tuple(other)
+
     class _Loop:
         def __init__(self):
-            self._colors = {}
+            self._cells = {}
 
         def __setitem__(self, layer, val):
-            self._colors[id(layer)] = tuple(val)
+            cell = self._cells.setdefault(id(layer), _LoopLayerCell())
+            cell._value = tuple(val)
 
         def __getitem__(self, layer):
-            return self._colors.get(id(layer), (0.0, 0.0, 0.0, 0.0))
+            return self._cells.setdefault(id(layer), _LoopLayerCell())
 
     class _Vert:
         def __init__(self, co):
@@ -198,17 +223,66 @@ def _build_full_bpy_stubs():
                     "Alpha": types.SimpleNamespace(default_value=1.0),
                     "IOR": types.SimpleNamespace(default_value=1.5),
                     "Transmission Weight": types.SimpleNamespace(default_value=0.0),
-                }
+                    "Specular IOR Level": types.SimpleNamespace(default_value=0.5),
+                    "Normal": types.SimpleNamespace(default_value=(0, 0, 0)),
+                },
+                outputs={"BSDF": types.SimpleNamespace()},
+                location=(0, 0),
             )
-            output_node = types.SimpleNamespace(inputs={})
+            output_node = types.SimpleNamespace(
+                inputs={"Surface": types.SimpleNamespace()},
+                outputs={},
+                location=(0, 0),
+            )
             nodes_store = {
                 "Principled BSDF": bsdf,
                 "Material Output": output_node,
             }
+            nodes_list = [bsdf, output_node]
+
+            def _nodes_get(n, _store=nodes_store):
+                return _store.get(n)
+
+            def _nodes_new(t, _list=nodes_list):
+                # Return type-appropriate stubs so handler key lookups work
+                if "Output" in t:
+                    node = types.SimpleNamespace(
+                        inputs={"Surface": types.SimpleNamespace()},
+                        outputs={},
+                        location=(0, 0),
+                    )
+                elif "Principled" in t:
+                    node = types.SimpleNamespace(
+                        inputs={
+                            "Base Color": types.SimpleNamespace(default_value=(0, 0, 0, 1)),
+                            "Roughness": types.SimpleNamespace(default_value=0.5),
+                            "Alpha": types.SimpleNamespace(default_value=1.0),
+                            "IOR": types.SimpleNamespace(default_value=1.5),
+                            "Transmission Weight": types.SimpleNamespace(default_value=0.0),
+                            "Specular IOR Level": types.SimpleNamespace(default_value=0.5),
+                            "Normal": types.SimpleNamespace(default_value=(0, 0, 0)),
+                        },
+                        outputs={"BSDF": types.SimpleNamespace()},
+                        location=(0, 0),
+                    )
+                else:
+                    node = types.SimpleNamespace(
+                        inputs={"Height": types.SimpleNamespace(), "Strength": types.SimpleNamespace(default_value=0.5), "Distance": types.SimpleNamespace(default_value=0.1), "Scale": types.SimpleNamespace(default_value=5.0), "Detail": types.SimpleNamespace(default_value=2.0), "Roughness": types.SimpleNamespace(default_value=0.5)},
+                        outputs={"Fac": types.SimpleNamespace(), "Normal": types.SimpleNamespace()},
+                        location=(0, 0),
+                    )
+                _list.append(node)
+                return node
+
+            def _nodes_clear(_store=nodes_store, _list=nodes_list):
+                _store.clear()
+                _list.clear()
+
             node_tree = types.SimpleNamespace(
                 nodes=types.SimpleNamespace(
-                    get=lambda n: nodes_store.get(n),
-                    new=lambda t: types.SimpleNamespace(inputs={}, outputs={}),
+                    get=_nodes_get,
+                    new=_nodes_new,
+                    clear=_nodes_clear,
                 ),
                 links=types.SimpleNamespace(new=lambda a, b: None),
             )
@@ -267,10 +341,10 @@ def _build_full_bpy_stubs():
 # Import handler modules normally (conftest stubs handle bpy/bmesh/mathutils)
 # ---------------------------------------------------------------------------
 
-from blender_addon.handlers import _terrain_noise as terrain_noise
+from blender_addon.handlers import _terrain_noise as terrain_noise  # noqa: E402
 auto_splat_terrain = terrain_noise.auto_splat_terrain
-from blender_addon.handlers import environment as _environment_mod
-from blender_addon.handlers.environment import handle_create_water
+from blender_addon.handlers import environment as _environment_mod  # noqa: E402
+from blender_addon.handlers.environment import handle_create_water  # noqa: E402
 
 
 # ===========================================================================
@@ -434,6 +508,90 @@ class TestWaterMaterialProperties(unittest.TestCase):
             "material_name": "MyWaterMat_AAA",
         })
         self.assertIsNotNone(result)
+
+    def test_level_water_uses_terrain_mask_surface_when_terrain_is_supplied(self):
+        bpy_stub, bmesh_stub = _build_full_bpy_stubs()
+        orig_bpy = _environment_mod.bpy
+        orig_bmesh = _environment_mod.bmesh
+
+        def _vec(x, y, z):
+            return types.SimpleNamespace(x=float(x), y=float(y), z=float(z))
+
+        grid = (-6.0, -2.0, 2.0, 6.0)
+        verts = []
+        for y in grid:
+            for x in grid:
+                z = -1.0 if abs(x) <= 2.0 and abs(y) <= 2.0 else 1.2
+                verts.append(types.SimpleNamespace(co=_vec(x, y, z)))
+
+        terrain_mesh = types.SimpleNamespace(vertices=verts, materials=[], polygons=[], update=lambda: None)
+        terrain_obj = types.SimpleNamespace(
+            name="TerrainMaskSource",
+            data=terrain_mesh,
+            location=_vec(0.0, 0.0, 0.0),
+            dimensions=types.SimpleNamespace(x=12.0, y=12.0, z=2.2),
+        )
+
+        created_objects = {}
+        linked_objects = []
+        orig_objects = bpy_stub.data.objects
+
+        def _new_object(name, mesh):
+            obj = orig_objects.new(name, mesh)
+            created_objects[name] = obj
+            return obj
+
+        def _get_object(name):
+            if name == terrain_obj.name:
+                return terrain_obj
+            return created_objects.get(name)
+
+        bpy_stub.data.objects = types.SimpleNamespace(
+            new=_new_object,
+            get=_get_object,
+            remove=lambda obj, **kwargs: created_objects.pop(obj.name, None),
+        )
+        bpy_stub.context.collection.objects = types.SimpleNamespace(
+            link=lambda obj: linked_objects.append(obj),
+            unlink=lambda obj: None,
+        )
+
+        _environment_mod.bpy = bpy_stub
+        _environment_mod.bmesh = bmesh_stub
+        try:
+            result = handle_create_water({
+                "name": "MaskedWater",
+                "terrain_name": terrain_obj.name,
+                "water_level": 0.0,
+            })
+            self.assertEqual(result.get("surface_mode"), "terrain_mask")
+            self.assertGreater(result.get("shoreline_face_count", 0), 0)
+            self.assertGreater(result.get("vertex_count", 0), 0)
+            self.assertLess(result.get("area", 999.0), terrain_obj.dimensions.x * terrain_obj.dimensions.y)
+            self.assertTrue(linked_objects, "Masked water surface should be linked into the collection")
+        finally:
+            _environment_mod.bpy = orig_bpy
+            _environment_mod.bmesh = orig_bmesh
+
+    def test_preserve_path_shape_skips_resmoothing(self):
+        path = [[0.0, -10.0, 0.0], [0.0, 0.0, -0.5], [0.0, 10.0, -1.0]]
+        with patch.object(_environment_mod, "_smooth_river_path_points", side_effect=AssertionError("unexpected smoothing")):
+            result = handle_create_water({
+                "name": "PreconformedRiver",
+                "path_points": path,
+                "preserve_path_shape": True,
+            })
+        self.assertIsNotNone(result)
+        self.assertIn("name", result)
+
+    def test_surface_only_path_defaults_terminal_taper(self):
+        path = [[0.0, -20.0, 0.0], [0.0, -8.0, -0.4], [0.0, 8.0, -0.8], [0.0, 20.0, -1.2]]
+        result = handle_create_water({
+            "name": "TaperedRiver",
+            "path_points": path,
+            "surface_only": True,
+        })
+        self.assertGreater(result.get("terminal_taper_rings", 0), 0)
 
 
 # ===========================================================================

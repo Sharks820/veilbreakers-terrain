@@ -32,6 +32,7 @@ from blender_addon.handlers.terrain_materials import (
     VALID_LAYER_NAMES,
     auto_assign_terrain_layers,
     compute_biome_transition,
+    compute_world_splatmap_weights,
 )
 
 
@@ -107,6 +108,7 @@ class TestBiomePaletteStructure:
         "cemetery", "battlefield",
         "desert", "coastal", "grasslands", "mushroom_forest",
         "crystal_cavern", "deep_forest",
+        "mountain_pass_summer", "mountain_pass_winter",
     }
 
     NEW_BIOMES = {
@@ -115,7 +117,7 @@ class TestBiomePaletteStructure:
     }
 
     def test_all_14_biomes_present(self):
-        assert len(BIOME_PALETTES_V2) == 14
+        assert len(BIOME_PALETTES_V2) == 16
 
     def test_expected_biome_names(self):
         assert set(BIOME_PALETTES_V2.keys()) == self.EXPECTED_BIOMES
@@ -250,6 +252,28 @@ class TestAutoAssignHeight:
         for r, g, b, a in auto_assign_terrain_layers(HEIGHT_EXTREME_VERTS, HEIGHT_EXTREME_NORMALS, HEIGHT_EXTREME_FACES):
             assert abs(r + g + b + a - 1.0) < 0.01
 
+    def test_mountain_pass_disables_high_altitude_special_banding(self):
+        result = auto_assign_terrain_layers(
+            HEIGHT_EXTREME_VERTS,
+            HEIGHT_EXTREME_NORMALS,
+            HEIGHT_EXTREME_FACES,
+            biome_name="mountain_pass_summer",
+        )
+        for _, _, _, a in result[4:8]:
+            assert a == 0.0
+
+    def test_mountain_pass_world_splatmap_keeps_peaks_out_of_special_channel(self):
+        hmap = [
+            [0.0, 0.0, 0.0],
+            [40.0, 80.0, 100.0],
+            [60.0, 90.0, 100.0],
+        ]
+        weights = compute_world_splatmap_weights(
+            hmap,
+            biome_name="mountain_pass_summer",
+        )
+        assert float(weights[2, 2, 3]) == 0.0
+
 
 # ===========================================================================
 # Dark fantasy palette compliance
@@ -309,7 +333,7 @@ class TestV1PaletteNewBiomes:
                   "crystal_cavern", "deep_forest"]
 
     def test_v1_has_14_biomes(self):
-        assert len(BIOME_PALETTES) == 14
+        assert len(BIOME_PALETTES) == 16
 
     @pytest.mark.parametrize("biome_name", NEW_BIOMES)
     def test_new_biome_exists_in_v1(self, biome_name):
@@ -564,13 +588,13 @@ class TestBiomeTransition:
                 faces.append((idx, idx + 1, idx + 1 + cols, idx + cols))
                 normals.append((0.0, 0.0, 1.0))
 
-        result_no_noise = compute_biome_transition(
+        compute_biome_transition(
             verts, normals, faces,
             "thornwood_forest", "desert",
             transition_width=4.0, boundary_position=0.0,
             noise_amplitude=0.0, noise_scale=0.05,
         )
-        result_with_noise = compute_biome_transition(
+        compute_biome_transition(
             verts, normals, faces,
             "thornwood_forest", "desert",
             transition_width=4.0, boundary_position=0.0,
@@ -753,7 +777,7 @@ class TestTerrainMaterialDedup:
 
     def test_biome_material_dedup(self):
         """Calling create_biome_terrain_material twice returns same material (no .001 suffix)."""
-        from unittest.mock import MagicMock, patch, PropertyMock
+        from unittest.mock import MagicMock, patch
 
         mock_bpy = MagicMock()
 
@@ -785,9 +809,9 @@ class TestTerrainMaterialDedup:
         with patch("blender_addon.handlers.terrain_materials.bpy", mock_bpy):
             from blender_addon.handlers.terrain_materials import create_biome_terrain_material
             # First call -- creates new
-            mat1 = create_biome_terrain_material("thornwood_forest")
+            create_biome_terrain_material("thornwood_forest")
             # Second call -- should reuse existing
-            mat2 = create_biome_terrain_material("thornwood_forest")
+            create_biome_terrain_material("thornwood_forest")
 
         # bpy.data.materials.new should only be called once
         assert call_count[0] == 1, (
@@ -807,3 +831,13 @@ class TestTerrainMaterialDedup:
                 assert not is_default, (
                     f"{biome}.{layer_name} has Blender default color (0.8, 0.8, 0.8)"
                 )
+
+    def test_unknown_biome_raises(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_bpy = MagicMock()
+        with patch("blender_addon.handlers.terrain_materials.bpy", mock_bpy):
+            from blender_addon.handlers.terrain_materials import create_biome_terrain_material
+
+            with pytest.raises(ValueError, match="Unknown biome"):
+                create_biome_terrain_material("not_a_real_biome")

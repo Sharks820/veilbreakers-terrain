@@ -175,6 +175,26 @@ class TestGenerateHeightmap:
         assert hmap.min() >= 0.0
         assert hmap.max() <= 1.0
 
+    def test_mountains_normalize_false_preserves_signed_relief(self):
+        """normalize=False should preserve negative mountain relief."""
+        from blender_addon.handlers._terrain_noise import generate_heightmap
+
+        hmap = generate_heightmap(
+            64, 64, seed=42, terrain_type="mountains", normalize=False
+        )
+        assert hmap.min() < 0.0
+        assert hmap.max() > 0.0
+
+    def test_cliffs_normalize_false_preserves_signed_relief(self):
+        """normalize=False should preserve negative cliff relief."""
+        from blender_addon.handlers._terrain_noise import generate_heightmap
+
+        hmap = generate_heightmap(
+            64, 64, seed=42, terrain_type="cliffs", normalize=False
+        )
+        assert hmap.min() < 0.0
+        assert hmap.max() > 0.0
+
 
 # ---------------------------------------------------------------------------
 # Terrain presets tests
@@ -184,17 +204,28 @@ class TestGenerateHeightmap:
 class TestTerrainPresets:
     """Test TERRAIN_PRESETS configuration dict."""
 
-    def test_has_eight_terrain_types(self):
-        """TERRAIN_PRESETS has exactly 8 terrain types."""
+    def test_has_ten_terrain_types(self):
+        """TERRAIN_PRESETS has exactly 10 terrain types."""
         from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
 
-        assert len(TERRAIN_PRESETS) == 8
+        assert len(TERRAIN_PRESETS) == 10
 
     def test_required_terrain_types_present(self):
-        """All 8 required terrain types are present."""
+        """All required terrain types are present."""
         from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
 
-        required = {"mountains", "hills", "plains", "volcanic", "canyon", "cliffs", "flat", "chaotic"}
+        required = {
+            "mountains",
+            "hills",
+            "plains",
+            "volcanic",
+            "canyon",
+            "cliffs",
+            "flat",
+            "coastal",
+            "swamp",
+            "chaotic",
+        }
         assert required == set(TERRAIN_PRESETS.keys())
 
     def test_each_preset_has_octaves(self):
@@ -341,6 +372,24 @@ class TestComputeSlopeMap:
         # Interior cells should have non-trivial slope
         assert slope[16, 16] > 0.5
 
+    def test_larger_cell_size_reduces_world_space_slope(self):
+        """The same height delta over larger cells should read as a gentler slope."""
+        from blender_addon.handlers._terrain_noise import compute_slope_map
+
+        hmap = np.tile(np.linspace(0, 1, 9), (9, 1))
+        fine = compute_slope_map(hmap, cell_size=1.0)
+        coarse = compute_slope_map(hmap, cell_size=4.0)
+        assert coarse[4, 4] < fine[4, 4]
+
+    def test_axis_specific_cell_spacing_reduces_slope_on_that_axis(self):
+        """Tuple spacing should let rectangular terrain use different row/col spacing."""
+        from blender_addon.handlers._terrain_noise import compute_slope_map
+
+        hmap = np.tile(np.linspace(0, 1, 9)[:, None], (1, 9))
+        fine = compute_slope_map(hmap, cell_size=(1.0, 1.0))
+        stretched_rows = compute_slope_map(hmap, cell_size=(4.0, 1.0))
+        assert stretched_rows[4, 4] < fine[4, 4]
+
 
 # ---------------------------------------------------------------------------
 # Biome assignment tests
@@ -378,9 +427,8 @@ class TestComputeBiomeAssignments:
         assert biomes.max() < len(BIOME_RULES)
 
     def test_snow_at_high_altitude(self):
-        """High altitude, low slope cells should be assigned 'snow' (rule 0)."""
+        """High altitude, low slope cells should be assigned 'highland_scrub' (rule 2)."""
         from blender_addon.handlers._terrain_noise import (
-            BIOME_RULES,
             compute_biome_assignments,
         )
 
@@ -402,7 +450,7 @@ class TestComputeBiomeAssignments:
         assert np.all(biomes == 1)
 
     def test_dead_grass_at_mid_altitude(self):
-        """Mid altitude, low slope -> grass (rule 4)."""
+        """Mid altitude, low slope -> dead_grass (rule 4)."""
         from blender_addon.handlers._terrain_noise import compute_biome_assignments
 
         hmap = np.full((8, 8), 0.5)  # Mid altitude
