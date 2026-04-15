@@ -2,7 +2,7 @@
 name = "veilbreakers-terrain"
 version = "0.1.0"
 description = "Terrain/environment/water/biome generation for VeilBreakers gamedev toolkit."
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 authors = [{name = "VeilBreakers gamedev"}]
 readme = "README.md"
 dependencies = [
