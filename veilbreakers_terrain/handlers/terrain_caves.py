@@ -951,6 +951,282 @@ def get_cave_entrance_specs(
     return results
 
 
+# ---------------------------------------------------------------------------
+# MCP handler adapter (added 2026-04-14 in phase 49, per D-14)
+# ---------------------------------------------------------------------------
+# Replaces world_generate_cave (BSP-based ``_dungeon_gen``, being deleted in
+# plan 49-02). Thin wrapper around ``pass_caves`` so compose_map's
+# ``_LOC_HANDLERS["cave"]`` dispatch keeps producing cave geometry.
+#
+# Adapter contract (compose_map ↔ adapter):
+#   IN  : params = {name, seed, width, height, cell_size, wall_height, ...}
+#         (exact shape compose_map's location dispatch builds — see
+#          blender_server.py:6582-6586, _build_location_generation_params)
+#   OUT : {"status": "ok"|"warning"|"error",
+#          "name": <chamber object name>,
+#          "meshes": [...],
+#          "meta": {"archetype": <CaveArchetype.value>,
+#                   "entrance_specs": [...],
+#                   "bundle": <pass_caves PassResult>,
+#                   "cave_count": int,
+#                   "wall_height": float,
+#                   "floor_area": int},
+#          "error": <str | None>}
+#
+# Pure-numpy execution path for ``pass_caves`` is preserved. The chamber
+# Blender mesh is created lazily (Blender-only) so this module still imports
+# under pytest with a bpy stub. No new external I/O, no auth, no new attack
+# surface (T-49-01 is mitigated by the top-level try/except below).
+
+
+def _build_synthetic_state(
+    seed: int,
+    width: int,
+    height: int,
+    cell_size: float,
+    *,
+    archetype_hint: Optional[str] = None,
+) -> "TerrainPipelineState":
+    """Construct a minimal TerrainPipelineState wrapping a flat heightmap.
+
+    compose_map dispatches caves at the location-mesh phase, AFTER the
+    terrain pipeline has already run. The full TerrainPipelineState is not
+    available at this dispatch site, so we synthesise the smallest viable
+    state that ``pass_caves`` will accept: a flat heightmap, a single
+    cave-candidate anchor at the center, no protected zones.
+
+    This keeps the adapter pure-numpy + scene-read-friendly without
+    coupling compose_map to the heavyweight pipeline orchestrator.
+    """
+    from .terrain_semantics import (
+        BBox,
+        TerrainAnchor,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+        TerrainSceneRead,
+    )
+
+    rows = max(8, int(height))
+    cols = max(8, int(width))
+    cs = max(0.1, float(cell_size))
+
+    # Flat heightmap with tiny seeded noise so pick_cave_archetype has signal.
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    flat_height = rng.uniform(0.0, 0.5, size=(rows, cols)).astype(np.float32)
+
+    half_w = cols * cs * 0.5
+    half_h = rows * cs * 0.5
+
+    stack = TerrainMaskStack(
+        tile_size=max(rows, cols),
+        cell_size=cs,
+        world_origin_x=-half_w,
+        world_origin_y=-half_h,
+        tile_x=0,
+        tile_y=0,
+        height=flat_height,
+        height_min_m=float(flat_height.min()),
+        height_max_m=float(flat_height.max()),
+    )
+
+    region_bounds = BBox(
+        min_x=-half_w,
+        min_y=-half_h,
+        max_x=half_w,
+        max_y=half_h,
+    )
+
+    # One cave-candidate at the centre (compose_map already chose the world
+    # anchor; this gives pass_caves something to carve).
+    centre_anchor = (0.0, 0.0, float(flat_height[rows // 2, cols // 2]))
+
+    scene_read = TerrainSceneRead(
+        timestamp=0.0,
+        major_landforms=(),
+        focal_point=centre_anchor,
+        hero_features_present=(),
+        hero_features_missing=(),
+        waterfall_chains=(),
+        cave_candidates=(centre_anchor,),
+        protected_zones_in_region=(),
+        edit_scope=region_bounds,
+        success_criteria=(),
+        reviewer="phase49-adapter",
+    )
+
+    intent = TerrainIntentState(
+        seed=int(seed),
+        region_bounds=region_bounds,
+        tile_size=max(rows, cols),
+        cell_size=cs,
+        anchors=(
+            TerrainAnchor(
+                name="cave_centre",
+                world_position=centre_anchor,
+                anchor_kind="cave",
+            ),
+        ),
+        scene_read=scene_read,
+        composition_hints=(
+            {"archetype_hint": archetype_hint} if archetype_hint else {}
+        ),
+    )
+
+    return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: float):
+    """Create a minimal Blender chamber mesh so callers can position/parent it.
+
+    compose_map's cave dispatch hides this object (set_visibility visible=False)
+    and uses it purely as a marker / parent for downstream linking. A simple
+    box is sufficient — the visible cave geometry is the entrance carved into
+    the terrain mesh by surrounding compose_map code (terrain_spline_deform).
+
+    Returns the created bpy Object, or None if bpy is not available (tests).
+    """
+    try:
+        import bpy
+    except ImportError:
+        return None
+
+    mesh = bpy.data.meshes.new(name)
+    half_w = float(width) * 0.5
+    half_d = float(depth) * 0.5
+    h = float(wall_height)
+    verts = [
+        (-half_w, -half_d, 0.0),
+        (half_w, -half_d, 0.0),
+        (half_w, half_d, 0.0),
+        (-half_w, half_d, 0.0),
+        (-half_w, -half_d, h),
+        (half_w, -half_d, h),
+        (half_w, half_d, h),
+        (-half_w, half_d, h),
+    ]
+    faces = [
+        (0, 1, 2, 3),  # floor
+        (4, 5, 6, 7),  # ceiling
+        (0, 1, 5, 4),  # -Y wall
+        (1, 2, 6, 5),  # +X wall
+        (2, 3, 7, 6),  # +Y wall
+        (3, 0, 4, 7),  # -X wall
+    ]
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+
+    obj = bpy.data.objects.new(name, mesh)
+    try:
+        bpy.context.collection.objects.link(obj)
+    except Exception:  # noqa: BLE001 — collection link can fail in tests
+        pass
+    return obj
+
+
+def handle_generate_cave(params: dict) -> dict:
+    """MCP handler: generate a cave via the terrain ``pass_caves`` engine.
+
+    This adapter replaces the deleted BSP-based ``world_generate_cave``
+    handler. It accepts the same dict shape compose_map's location
+    dispatch sends to the cave handler (name, seed, width, height,
+    cell_size, wall_height, plus any forwarded extras), runs the
+    five-archetype ``pass_caves`` over a synthetic minimal terrain to
+    select archetype + compute structure metadata, and creates a
+    chamber Blender mesh that compose_map can position and parent.
+
+    Returns a dict with status / name / meshes / meta / error keys (see
+    module-level adapter contract block above).
+
+    Phase 49 commit C2 — closes blocker G2 for architecture deletion.
+    """
+    name = str(params.get("name", "Cave"))
+    try:
+        seed = int(params.get("seed", 0))
+        width = int(params.get("width", 16))
+        height = int(params.get("height", 16))
+        cell_size = float(params.get("cell_size", 1.0))
+        wall_height = float(params.get("wall_height", 4.0))
+        archetype_hint = params.get("archetype")
+        if archetype_hint is not None:
+            archetype_hint = str(archetype_hint)
+
+        # Build synthetic state and run the five-archetype pass.
+        state = _build_synthetic_state(
+            seed=seed,
+            width=width,
+            height=height,
+            cell_size=cell_size,
+            archetype_hint=archetype_hint,
+        )
+        bundle = pass_caves(state, region=None)
+
+        # Extract entrance specs (Blender-side mesh dicts) from the
+        # populated cave_candidate channel.
+        try:
+            entrance_specs = get_cave_entrance_specs(
+                state.mask_stack,
+                max_entrances=2,
+                seed=seed,
+            )
+        except Exception:  # noqa: BLE001 — entrance generation is best-effort
+            entrance_specs = []
+
+        # Pull picked archetype from side_effects (pass_caves records
+        # one "cave_structure:<id>:archetype=<value>:..." per cave).
+        picked_archetype: Optional[str] = None
+        cave_count = 0
+        for side_effect in getattr(bundle, "side_effects", []):
+            if isinstance(side_effect, str) and side_effect.startswith("cave:"):
+                cave_count += 1
+        for side_effect in getattr(state, "side_effects", []):
+            if isinstance(side_effect, str) and side_effect.startswith("cave_structure:"):
+                for token in side_effect.split(":"):
+                    if token.startswith("archetype="):
+                        picked_archetype = token.split("=", 1)[1]
+                        break
+                if picked_archetype:
+                    break
+
+        # Materialise a chamber mesh so callers can _position_generated_object.
+        chamber_obj = _build_chamber_mesh(
+            name=name,
+            width=max(2.0, width * cell_size * 0.4),
+            depth=max(2.0, height * cell_size * 0.4),
+            wall_height=wall_height,
+        )
+        chamber_name = chamber_obj.name if chamber_obj is not None else name
+
+        # Floor area in cell units (compatibility with old handler shape).
+        cc = state.mask_stack.get("cave_candidate")
+        floor_area = int(np.asarray(cc).sum()) if cc is not None else 0
+
+        meshes = list(entrance_specs)
+
+        return {
+            "status": "ok" if getattr(bundle, "status", "ok") != "failed" else "error",
+            "name": chamber_name,
+            "meshes": meshes,
+            "meta": {
+                "archetype": picked_archetype or "unknown",
+                "entrance_specs": entrance_specs,
+                "bundle": bundle,
+                "cave_count": cave_count,
+                "wall_height": wall_height,
+                "floor_area": floor_area,
+            },
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 — handler boundary, surface error
+        return {
+            "status": "error",
+            "name": name,
+            "meshes": [],
+            "meta": {},
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 __all__ = [
     "CaveArchetype",
     "CaveArchetypeSpec",
@@ -966,4 +1242,5 @@ __all__ = [
     "pass_caves",
     "register_bundle_f_passes",
     "get_cave_entrance_specs",
+    "handle_generate_cave",
 ]
