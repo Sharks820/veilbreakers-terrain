@@ -1,0 +1,31 @@
+[project]
+name = "veilbreakers-terrain"
+version = "0.1.0"
+description = "Terrain/environment/water/biome generation for VeilBreakers gamedev toolkit."
+requires-python = ">=3.13"
+authors = [{name = "VeilBreakers gamedev"}]
+readme = "README.md"
+dependencies = [
+    "veilbreakers-mcp",
+    "numpy>=1.26.0",
+    "opensimplex>=0.4.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["veilbreakers_terrain/tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["veilbreakers_terrain"]
