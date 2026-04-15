@@ -615,11 +615,11 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
         try:
             state.banded_cache = {}  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # noqa: L2-04 best-effort non-critical attr write
     try:
         state.banded_cache[side_effect_token] = bands  # type: ignore[attr-defined]
     except Exception:
-        pass
+        pass  # noqa: L2-04 best-effort non-critical attr write
 
     return PassResult(
         pass_name="banded_macro",

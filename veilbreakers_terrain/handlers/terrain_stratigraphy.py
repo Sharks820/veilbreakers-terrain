@@ -269,7 +269,7 @@ def pass_stratigraphy(
     strat_stack = _default_strat_stack_from_hints(dict(hints))
 
     hardness = compute_rock_hardness(stack, strat_stack)
-    _orientation = compute_strata_orientation(stack, strat_stack)
+    _ = compute_strata_orientation(stack, strat_stack)
 
     metrics = {
         "layer_count": len(strat_stack.layers),

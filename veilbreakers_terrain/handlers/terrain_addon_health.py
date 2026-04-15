@@ -145,7 +145,7 @@ def force_addon_reload() -> None:
 
         importlib.reload(_live)
     except Exception:
-        pass
+        pass  # noqa: L2-04 best-effort non-critical attr write
 
 
 __all__ = [

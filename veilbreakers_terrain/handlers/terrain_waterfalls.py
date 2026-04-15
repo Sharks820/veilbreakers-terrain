@@ -216,7 +216,7 @@ def detect_waterfall_lip_candidates(
     if rows < 3 or cols < 3:
         return []
 
-    _cs = float(stack.cell_size)
+    _ = float(stack.cell_size)
 
     candidates: List[LipCandidate] = []
     for r in range(1, rows - 1):

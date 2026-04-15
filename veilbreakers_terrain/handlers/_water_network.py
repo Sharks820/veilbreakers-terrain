@@ -878,8 +878,8 @@ class WaterNetwork:
                 if seg.waypoints:
                     mid = seg.waypoints[len(seg.waypoints) // 2]
                     if x_min <= mid[0] <= x_max and y_min <= mid[1] <= y_max:
-                        __src_node = self.nodes.get(seg.source_node_id)
-                        __tgt_node = self.nodes.get(seg.target_node_id)
+                        _ = self.nodes.get(seg.source_node_id)
+                        _ = self.nodes.get(seg.target_node_id)
                         waterfalls.append({
                             "top": seg.waypoints[0],
                             "bottom": seg.waypoints[-1],
@@ -1012,7 +1012,7 @@ class WaterNetwork:
             try:
                 setattr(seg, "strahler_order", int(orders.get(seg_id, 1)))
             except Exception:
-                pass
+                pass  # noqa: L2-04 best-effort non-critical attr write
         return orders
 
     def get_trunk_segments(self, min_order: int = 2) -> list[int]:

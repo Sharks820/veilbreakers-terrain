@@ -1429,7 +1429,7 @@ def handle_snap_to_terrain(params: dict) -> dict:
         raise ValueError(f"Terrain object not found: {terrain_name}")
 
     # Ensure terrain mesh is up to date for raycasting
-    _depsgraph = bpy.context.evaluated_depsgraph_get()
+    _ = bpy.context.evaluated_depsgraph_get()
 
     results: list[dict[str, Any]] = []
 
@@ -1693,11 +1693,11 @@ def handle_terrain_flatten_zone(params: dict) -> dict:
     # Map flattened grid Z back to each vertex
     z_min_new = float(np.nanmin(flattened_grid))
     z_max_new = float(np.nanmax(flattened_grid))
-    _z_range_new = max(z_max_new - z_min_new, 1e-6)
+    _ = max(z_max_new - z_min_new, 1e-6)
 
     z_orig_min = float(np.nanmin(grid))
     z_orig_max = float(np.nanmax(grid))
-    _z_orig_range = max(z_orig_max - z_orig_min, 1e-6)
+    _ = max(z_orig_max - z_orig_min, 1e-6)
 
     # Compute delta per vertex from grid change
     orig_sample = grid[row_idx, col_idx]

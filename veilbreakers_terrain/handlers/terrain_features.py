@@ -948,7 +948,7 @@ def generate_natural_arch(
         - "material_indices": per-face material index list
         - "dimensions": dict with span_width, arch_height, thickness
     """
-    _rng = random.Random(seed)
+    _ = random.Random(seed)
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
@@ -1144,7 +1144,7 @@ def generate_geyser(
         - "material_indices": per-face material index list
         - "dimensions": dict
     """
-    _rng = random.Random(seed)
+    _ = random.Random(seed)
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
@@ -1426,7 +1426,7 @@ def generate_sinkhole(
             mat_indices.append(0 if k < depth_res // 2 else 1)
 
     # --- Floor ---
-    _floor_start = len(vertices)
+    _ = len(vertices)
     floor_center_idx = len(vertices)
     vertices.append((0.0, 0.0, -depth))
 

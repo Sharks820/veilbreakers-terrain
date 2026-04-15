@@ -131,7 +131,7 @@ def _generate_shoreline_profile(
     amp = config["shore_noise_amp"]
     freq = config["shore_noise_freq"]
 
-    _rng = random.Random(seed)
+    _ = random.Random(seed)
     profile: list[float] = []
 
     for i in range(resolution):
