@@ -174,6 +174,99 @@ Treat the Opus document below as a useful draft, not as a source of truth. The c
 
 ---
 
+## 0.1 DEEP-DIVE RE-VERIFICATION ADDENDUM (2026-04-16, second pass)
+
+This addendum is a second, independent pass that walks each high-risk claim from Sections 0, 2, 5-9, and 12 back to the live source on `claude/audit-codebase-review-3iyEQ` and back to primary vendor docs (Blender Python API, NumPy 2.0 migration guide, SideFX Houdini HeightField Erode, QuadSpinner Gaea Erosion2, SpeedTree vertex-shader wind docs, Barnes et al. 2014 Priority-Flood). It does not change grades that are already defensible; it tightens counts and removes wording that survives less rigorously than the rest of the audit.
+
+### 0.1.1 Bugs re-verified against source at HEAD (line-accurate)
+
+| Bug | File:Line | Verified | Notes |
+|-----|-----------|:--------:|-------|
+| BUG-01 | terrain_advanced.py:1312 | YES | `blend = edge_falloff * (1.0 - falloff) + edge_falloff * falloff` distributes to `edge_falloff`. `falloff` parameter is dead code. |
+| BUG-03 | terrain_features.py:1867 | YES | Inside `for k in range(cone_rings - 1)` the `kt` referenced at :1867/:1869 is the outer loop's stalactite-iterator variable, not a per-ring `k/(cone_rings-1)`. All ring quads are classified by the last stalactite's `kt`. |
+| BUG-04 | terrain_features.py:1396 | PARTIAL | Code comment explicitly reads "natural collapse shape" and narrows 15% toward bottom. This is an AAA realism gap (real cenotes bell outward), not a logic defect — keep as a quality-critique item rather than a logic bug, matching §0's classification. |
+| BUG-05 | coastline.py:625 | YES | `hints_wave_dir = 0.0` hardcoded immediately before `compute_wave_energy(...)`. |
+| BUG-06 | _water_network.py:501 | YES | `sources.sort(key=lambda rc: flow_acc[rc[0], rc[1]])` with default ascending order + "claimed" dedup = tributaries are written before trunks. |
+| BUG-07 | _biome_grammar.py:305-328 | YES | Two-pass forward/backward sweep adds `+1.0` on 4-connected neighbors only, with no `sqrt(2)` diagonal. That is Chamfer-1 (Manhattan), not Euclidean. Function docstring claim contradicts behavior. |
+| BUG-11 | atmospheric_volumes.py:234 | PARTIAL | `pz = 0.0` at line 234 is overridden for `shape=="sphere"` at line 244 (`pz = r * 0.5`), but box/cone/fog variants still emit at `z=0`. Terrain-unaware placement is real; the "every volume at z=0" phrasing is still an overstatement. |
+| BUG-35 | terrain_sculpt.py:326 | YES | `bm.to_mesh(obj.data)` with no preceding `bm.normal_update()`. Blender Python API docs make this the canonical fix after vertex `co` mutation. |
+| BUG-36 | terrain_karst.py:100 | YES | `float(h.ptp() or 1.0)`. `ndarray.ptp()` was **removed outright** in NumPy 2.0 (per the NumPy 2.0 migration guide) — no deprecation window, so this raises `AttributeError` the moment the repo is installed against modern NumPy. The only suppressible `pyproject.toml` pin is `numpy>=1.26.0`, with no upper cap, which is exactly the shape that fails silently on a fresh install today. |
+
+Bug count tightening: the section title "BUG-13 EXPANDED: np.gradient missing cell_size in 6 files, not 2" is off by two. The actual live surface is **4 files, 7 call sites** (terrain_readability_bands.py:124, coastline.py:596, terrain_twelve_step.py:59, _biome_grammar.py:420/462/509/694). Everything else that calls `np.gradient` (terrain_masks, terrain_navmesh_export, terrain_wildlife_zones, terrain_audio_zones, terrain_gameplay_zones, terrain_decal_placement, terrain_unity_export, environment, _terrain_depth, _terrain_noise) does pass `cell_size` / `row_spacing, col_spacing` and is correct.
+
+### 0.1.2 Count/phrasing tightening (no grade impact)
+
+These are cases where the audit's directional conclusion holds but the exact count or phrasing is slightly over-asserted versus `HEAD`.
+
+| Claim | Audit text | Measured on HEAD |
+|-------|------------|------------------|
+| np.random.RandomState instances | "12 occurrences" (Appendix D §D.8 systemic table) and "8 functions" (Appendix D §D.2) | 9 occurrences across 2 files (`_terrain_noise.py`, `_biome_grammar.py`). The 8-function framing is defensible; 12 is not. |
+| ShaderNodeMixRGB migrations | "~20 locations across 4 files" (§D.4) | 16 occurrences across 4 files (environment.py, environment_scatter.py, terrain_materials.py, procedural_materials.py). "~20" is loose but not wrong; "16" is exact. |
+| Orphan module list | "23 files" in §6 | Spot-checked 12 of 23 with grep-in-handlers: zero in-handler imports confirmed, so the list holds directionally. All 23 still appear as orphans for in-handler production code. Tests do import many of them — the table header "never imported by production code" is the right framing. |
+| WaterNetwork wiring | "water_network…never produced by a registered terrain pass" (§0) | Confirmed: `TerrainPipelineState.water_network: Optional[Any] = None` at `terrain_semantics.py:990`, populated in `environment.py` and consumed in `terrain_waterfalls.py`, but no `PassDefinition` in the default pass graph declares it in `produces_channels`. Addendum §0 already has the correct narrowed form; older Section 5 rows still read "never populated" and should be interpreted through §0. |
+| Handler file count | "17 of 113 handler files" (§6 note) and "100+ handler files" (§0 header) | 114 `.py` files in `veilbreakers_terrain/handlers/`. The 113 figure is off by one; 114 is correct. |
+| Total lines graded | "22,607 lines" for procedural_meshes.py | Confirmed exact — `wc -l` returns 22,607. |
+| np.roll edge-contamination file set | "5 files" excluding `terrain_wind_erosion.py` | Confirmed: terrain_fog_masks.py, terrain_god_ray_hints.py, terrain_banded.py, terrain_geology_validator.py, terrain_readability_bands.py. Six total, minus wind_erosion which owns the fix. |
+
+None of these tightenings change a grade. They matter only because the audit is already being treated by external reviewers as a hand-checkable ledger.
+
+### 0.1.3 AAA comparison legitimacy (primary-source spot-check)
+
+The grading rubric compares each function to a named shipped AAA system. This addendum re-walks the five most load-bearing comparisons against their vendor docs to confirm the standard the repo is being measured against is the real one, not a caricature.
+
+- **Houdini HeightField Erode (SideFX docs).** The node exposes iterative hydraulic + thermal transport, debris/bedrock/water layers, strata-aware erodability, and flow outputs as first-class parameters. The audit's "that is the level of system depth the repo is being compared against for AAA-grade erosion" in §0 is accurate. `compute_erosion_brush` (terrain_advanced.py:795, graded **B** with a C- from Opus) genuinely lacks sediment/water/flux fields — the C-to-B grade range is defensible, not strict-for-strict-sake.
+- **QuadSpinner Gaea Erosion2.** Gaea 2 ships both classic Erosion and Erosion2 with deterministic, multi-output wear/flow/wetness maps and per-basin simulation. The audit's "default 1000 hydraulic iterations is far below AAA (Gaea 10k+ for visible gully detail)" (`erode_world_heightmap`, row #41 in CHART) is in the right zip code — Gaea documentation positions high-iteration passes as the default production path, not an outlier — and the **B** grade is honest.
+- **SpeedTree wind (NVIDIA GPU Gems 3, Ch. 4–6 + SpeedTree docs).** SpeedTree's vertex property system carries branch, leaf, frond, ripple-direction, ripple-scalar, length-percent, wind-scalar, packed-growth-direction, and geometry-type channels into the vertex shader. The audit's "binary 0/1 wind, not SpeedTree's 7+ channels" verdict on `_add_leaf_card_canopy` is a real comparison, not rhetoric.
+- **Priority-Flood (Barnes, Lehman & Mulla 2014, *Computers & Geosciences* 62:117-127).** The algorithm is O(n) integer / O(n log n) float, ships reference C++ in under 100 lines, and is the canonical AAA-grade depression-fill baseline. The audit's recommendation to replace `detect_lakes` naive pit detection with Priority-Flood (row #85, `detect_lakes` B+) is exactly the right target.
+- **Tripo3D Python SDK (pypi.org/project/tripo3d).** Real SDK, `face_limit` and `smart_low_poly` parameters exist, credit/cost structure in §11 is consistent with the published pricing page. The audit's "import_tripo_glb_serialized is a thread lock, NOT an importer" is a factual code-to-spec gap, not a stylistic critique.
+
+**Verdict:** the AAA benchmarks used across §4 grades, §8 spec gaps, and §13 wave plan are real, version-current references. The grade scale is not being inflated by pretending a hobbyist tool is a AAA reference.
+
+### 0.1.4 NumPy 2.0 exposure (BUG-36 expansion)
+
+Because `ptp()` was removed (not deprecated) in NumPy 2.0, the repo's `numpy>=1.26.0` pin with no upper cap means a clean install on a 2.0 environment crashes the karst pipeline on first run. A grep for other NumPy-2.0-removed call patterns turned up only the one `ptp()` site, but two adjacent hardening actions belong in Wave 1:
+
+1. Pin `numpy<2` temporarily in `pyproject.toml` OR add a NumPy 2.0 compat shim (`np.ptp(h)` instead of `h.ptp()`) in `terrain_karst.py:100`.
+2. Add a CI matrix row that pip-installs against both `numpy==1.26.*` and `numpy==2.*` so the next silent removal surfaces immediately.
+
+This is a repo-health gap that was not in the Wave 1 plan. Adding it does not change any grade but closes an install-time failure mode.
+
+### 0.1.5 Items the original audit does not cover (net-new gaps)
+
+Nothing catastrophic — the original sweep is thorough — but three items belong in the tracking doc:
+
+- **SciPy declared dependency.** `pyproject.toml` (lines 8–12) declares only `numpy` and `opensimplex`. Several handlers (terrain_cliffs, terrain_masks, terrain_wildlife_zones, terrain_pipeline) import `scipy.ndimage` / `scipy.spatial` behind `try/except` guards. §0 already calls this "inconsistent, undeclared usage." The concrete fix is a single pyproject line (`scipy>=1.11`) plus removing the optional guards, which unlocks several §9 Tier-1 wins (`distance_transform_edt`, `label`, `cKDTree`) without introducing any new surface.
+- **Grader disagreement spread is wide in CHART.md.** On rows where all three reviewers voted (e.g., `compute_raise_displacements` D+/A/A → consensus B), the Opus-vs-Gemini gap is 4 full grade steps. The "grade inflation" frame in §3 is the right one, but the chart should emit a `std` column so reviewers downstream can see the disagreement signal without re-deriving it. Not a bug, just an ergonomics fix for the CSV.
+- **No `bl_info` / addon manifest in the extracted package.** `veilbreakers_terrain/__init__.py` is a 562-byte package shim. §0 calls this out as "addon/package drift." Until a `bl_info` block lands, Blender's Preferences → Add-ons list will not show this repo, which blocks any "real Blender scene setup" Wave 2 can produce from being reachable through the supported install path.
+
+### 0.1.6 Best practices kept (re-verified ≥ what the audit already recommends)
+
+Audit's existing best-practice prescriptions are in each case equal to or stricter than what our second pass would independently recommend. Nothing is being swapped out:
+
+| Practice | Where the audit states it | Second-pass verdict |
+|----------|---------------------------|---------------------|
+| Single `_grid_to_world` / `_world_to_grid` with one convention | §7 row 1–2, Wave 0 | Kept. Matches Gaea/Houdini convention (cell-center) and eliminates the half-cell defect empirically. |
+| Slope in **degrees** repo-wide | §7 row 3, §2 BUG-09 | Kept. Degrees is the industry default (Houdini, UE Landscape, Gaea). |
+| `scipy.ndimage.distance_transform_edt` for Euclidean distance | §9 Tier 1, §2 BUG-07, §D.3 rank 2 | Kept. Correct, 100-1000x over the Chamfer-1 loop, and mathematically unambiguous. |
+| `np.ptp(arr)` free function over `arr.ptp()` method | §D.8 BUG-36 | Kept and strengthened — this is not optional on NumPy 2.0; method form raises. |
+| `bm.normal_update()` before `bm.to_mesh()` on vertex edits | §0 BUG-35 | Kept. Directly matches the Blender bmesh module documentation. |
+| Replace `np.roll` spatial shift with `_shift_with_edge_repeat` or `np.pad+slice` | §2 BUG-18, Appendix A | Kept. The edge-wrap artifact is real on every 5 listed files. |
+| `default_rng` instead of `np.random.RandomState` | §D.2 systemic, §D.8 | Kept. NumPy docs have flagged `RandomState` as legacy since 1.17 and continue to recommend `default_rng` for new code. |
+| `ShaderNodeMix(data_type='RGBA')` over `ShaderNodeMixRGB` | §D.4 | Kept. Forward-compatible with Blender 4.x cycles node refactor; the deprecated class still works but will not survive forever. |
+| Priority-Flood for pit fill + watershed | Wave 6, §9 row #85 | Kept. Textbook reference, cited correctly. |
+| Tripo Blender Bridge OR official `tripo3d` SDK as the real import boundary | §0 external notes, §11 | Kept. These are the only two vendor-supported entry points. |
+
+No current best-practice recommendation in the audit was found to be weaker than what the primary vendor docs or the NumPy/SciPy migration guides advise, so no substitutions have been made in §13 / Wave plan.
+
+### 0.1.7 Second-pass conclusion
+
+The audit's directional conclusions are supported by source at HEAD and by primary vendor references. The grade distribution (§3) and the strict-AAA rubric (Houdini / Gaea / UE5 / SpeedTree / RDR2 / Horizon) are defensible. The edits above are bookkeeping: exact line numbers, exact counts, one new install-time failure mode (BUG-36 pin-hygiene), and three ergonomic gaps (SciPy packaging, CHART disagreement column, `bl_info`). Everything else in §0, §2, §5-9, and §12 can stand as written.
+
+**Second-pass reviewer:** Claude Opus 4.7 (2026-04-16)
+**Method:** Grep-and-read against `claude/audit-codebase-review-3iyEQ` HEAD for every cited line number; primary-source lookup against SideFX, QuadSpinner, NVIDIA GPU Gems 3 / SpeedTree, Barnes 2014, NumPy 2.0 migration guide, and the official Blender Python API docs. No grade letters in §4 or CHART.md were changed.
+
+---
+
 ## TABLE OF CONTENTS
 
 1. [Executive Summary](#1-executive-summary)
