@@ -17,12 +17,12 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
   - Several mask-stack write gaps are real: `hero_exclusion`, `biome_id`, `physics_collider_mask`, `ambient_occlusion_bake`, `pool_deepening_delta`, `strat_erosion_delta`.
   - Major convention conflicts are real: slope units, grid/world conversion, thermal talus units, duplicate `WaterfallVolumetricProfile`.
 - **Stale / incorrect**
-  - `WaterNetwork never populated` is no longer true. `TerrainPipelineState.water_network` exists, is populated in `environment.py`, and is consumed in `terrain_waterfalls.py`.
+  - `WaterNetwork never populated` is no longer true as a repo-wide statement. `TerrainPipelineState.water_network` exists, is populated in `environment.py`, and is consumed in `terrain_waterfalls.py`. The remaining gap is narrower: `water_network` is still not produced by a registered terrain pass in the default pass graph.
   - The cave-geometry claim is too broad. The repo does contain a cave-entrance mesh generator and a handler path that materializes it.
   - The `terrain_features.py` and `_terrain_depth.py` grades are too harsh if interpreted as "missing implementation." Their problem is realism and AAA finish, not absence of geometry.
 - **Overstated**
   - Section 9’s blanket `1000x` NumPy claims are not defensible as written. In this repo, the believable range is mostly `10x-50x` for straight NumPy rewrites and `20x-100x` when compiled/native helpers are allowed.
-  - The SciPy recommendations are not "easy wins" under current repo policy. `pyproject.toml` only declares `numpy` and `opensimplex`, and several modules explicitly avoid SciPy.
+  - The SciPy recommendations are not "easy wins" as written. SciPy is not declared in `pyproject.toml`, but some code already conditionally imports it, so the real issue is inconsistent, undeclared usage rather than a clean repo-wide "no SciPy" policy.
 
 ### Section 2 — Confirmed Bugs (Re-graded)
 
@@ -66,7 +66,7 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
 - Rollback does not restore `water_network` or `side_effects`; it reloads `mask_stack` and trims checkpoints only.
 
 **Incorrect / stale**
-- `WaterNetwork never populated` is stale. It is currently wired through state, created in `environment.py`, and consumed by the waterfall pass.
+- `WaterNetwork never populated` is stale as a repo-wide claim. It is currently wired through state, created in `environment.py`, and consumed by the waterfall pass. The remaining wiring gap is that it is still not produced by a registered terrain pass/channel in the default pass graph.
 
 **Overstated / needs narrowing**
 - `hero_exclusion` impact is overstated: erosion still honors `intent.protected_zones` even without a hero-exclusion write.
@@ -111,7 +111,7 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
 - `compute_flow_map()` is a real hotspot, but a fully correct rewrite likely needs graph/Numba/native work, not only vectorized direction lookup.
 - `apply_thermal_erosion()` in `terrain_advanced.py` is a stale target for the main world pipeline because the newer `_terrain_erosion.py` path is already used there.
 - Section 9 is internally inconsistent: the Tier 1 list and Wave 3 list do not match.
-- SciPy-based suggestions (`ndimage.label`, EDT) are a dependency-policy change under current repo constraints, not "easy wins."
+- SciPy-based suggestions (`ndimage.label`, EDT) are not "easy wins" in the current repo state: SciPy use is already conditional in some code, but it is still undeclared in packaging and not a consistent baseline dependency.
 
 ### Sections 10 and 11 — Visual / Blender / Tripo
 
@@ -119,7 +119,7 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
 - There is no committed Blender scene setup for camera, light, world, color management, viewport shading, compositor, or render capture in this repo.
 - There are no committed `.blend`, `.glb`, `.gltf`, `.hdr`, or `.exr` assets to audit for actual visual quality.
 - `import_tripo_glb_serialized()` remains a lock/validation wrapper rather than an importer.
-- `_TRIPO_ENVIRONMENT_PROMPTS` contains only 7 prompt entries, while `VB_BIOME_PRESETS` references 44 unique scatter asset ids.
+- `_TRIPO_ENVIRONMENT_PROMPTS` contains only 7 prompt entries, while `VB_BIOME_PRESETS` references 43 unique scatter asset ids.
 
 **More nuanced than the original audit**
 - Visual setup is missing, but materials are not weak by default. The repo already contains substantial procedural material work, including a more serious water shader path than the original summary implies.
@@ -223,9 +223,9 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **17 duplicate/conflicting code pairs** (including 3 HIGH severity convention conflicts)
 - **25 spec-vs-implementation gaps** (3 CRITICAL, 9 MODERATE)
 - **48 NumPy vectorization targets** (8 easy 1000x speedup wins)
-- **12 pipeline data flow gaps** (3 HIGH — hero_exclusion, biome_id, WaterNetwork never populated)
+- **12 pipeline data flow gaps** (3 HIGH — hero_exclusion, biome_id, `water_network` not produced by the default registered pass graph)
 - **Zero visual pipeline** (no camera, no lights, no world, no render config, no color management)
-- **Tripo integration is a stub** (file lock only, no actual GLB import)
+- **Tripo import boundary is still a stub** (metadata/prompt wiring exists, but there is still no actual GLB import)
 
 ---
 
@@ -392,7 +392,7 @@ Every dataclass graded A/A-. 50+ mask stack channels, Unity export manifest, SHA
 Contract enforcement, deterministic seed derivation (SHA-256), protected zone masking, quality gate infrastructure, checkpoint/rollback. Missing: parallel dispatch, dependency DAG.
 
 ### environment.py — B+ (Split: infrastructure A-, Tripo C+)
-Water mesh generation, road system, river carving, heightmap export are all strong (A-). Pipeline orchestration is good. But 5435-line monolith needs splitting. Tripo integration is a stub.
+Water mesh generation, road system, river carving, heightmap export are all strong (A-). Pipeline orchestration is good. But 5435-line monolith needs splitting. Tripo prompt/manifest wiring exists, while the actual import boundary is still a stub.
 
 ### terrain_materials.py — B+
 4-layer height-blend materials are the right architecture. Stone recipe with strata + Voronoi is good. Missing: real textures (all procedural), tri-planar for cliffs, smoothstep transitions (uses hard linear thresholds).
@@ -445,7 +445,7 @@ Waterfall = flat quad strip. Cave entrance = perfect semicircular tube. Cliff = 
 |---------|---------|--------|
 | `hero_exclusion` | 5 passes READ it, nothing writes it | Hero features unprotected from erosion |
 | `biome_id` | 5+ passes READ it, nothing writes it | macro_color/ecotone/wildlife all degraded |
-| `WaterNetwork` | Declared on state, never populated by any pass | Waterfalls disconnected from rivers |
+| `WaterNetwork` | Declared on state, populated in bootstrap code, but not produced by any registered pass | Waterfalls are still disconnected from pass-graph-owned river state |
 
 ### MEDIUM Severity (5)
 | Channel | Problem |
@@ -457,7 +457,7 @@ Waterfall = flat quad strip. Cave entrance = perfect semicircular tube. Cliff = 
 | Scene read dead fields | 6 of 11 fields populated but never consumed |
 
 ### LOW Severity (4)
-- 9 dead channels (convexity, bank_instability, flow_direction, flow_accumulation, material_weights, strata_orientation, sediment_height, bedrock_height, lightmap_uv_chart_id)
+- 7 dead or effectively unwired channels on `TerrainMaskStack` (convexity, flow_direction, flow_accumulation, material_weights, sediment_height, bedrock_height, lightmap_uv_chart_id)
 - Rollback doesn't restore water_network or side_effects
 - strat_erosion_delta expected by delta integrator, never produced
 - _bundle_e_placements monkey-patched via setattr, lost on checkpoint restore
@@ -628,7 +628,7 @@ The toolkit generates sophisticated geometry and materials but drops them into a
 - `import_tripo_glb_serialized` is a thread lock, NOT an importer
 - LOD pipeline exists and works (`lod_pipeline.py`)
 - Scatter system is production-quality (Poisson disk, viability, biome rules)
-- 37 of 44 scatter asset types in VB_BIOME_PRESETS have no Tripo prompt
+- 36 of 43 scatter asset types in `VB_BIOME_PRESETS` have no Tripo prompt
 - 21+ scatter asset types have no mesh generator at all
 
 ### Missing Assets by Category
@@ -703,7 +703,7 @@ Create `terrain_scene_setup.py` (camera, light, world, EEVEE, viewport, color ma
 _box_filter_2d, compute_stamp_heightmap, carve_impact_pool, build_outflow_channel, generate_mist_zone, generate_foam_mask, detect_cliff_edges (scipy.ndimage.label), _distance_from_mask (scipy EDT).
 
 ### Wave 4: Wire Broken Connections (12 gaps)
-Populate hero_exclusion, biome_id, WaterNetwork on state, pool_deepening_delta, physics_collider_mask. Wire orphaned modules into pipeline.
+Populate `hero_exclusion`, `biome_id`, `pool_deepening_delta`, and `physics_collider_mask`; wire `water_network` into the registered pass graph instead of only bootstrap state; then wire orphaned modules into pipeline.
 
 ### Wave 5: Sculpt System Rewrite (10 functions)
 KD-tree/grid accel, Taubin smooth, bilinear stamp, stroke batching, matrix_world.
@@ -741,7 +741,7 @@ Findings from 2 Opus verification agents scanning for gaps in this document:
 | Function | File | Speedup | Detail |
 |----------|------|:-------:|--------|
 | compute_vantage_silhouettes | terrain_saliency.py:96 | 1000x | Triple-nested loop (vantages x 64 rays x 256 samples) |
-| _label_connected_components | terrain_cliffs.py:160 | 1000x | Python BFS, scipy IS available (terrain_banded imports it) |
+| _label_connected_components | terrain_cliffs.py:160 | 1000x | Python BFS; SciPy is only optional today, with undeclared packaging and NumPy fallback elsewhere |
 | _distance_to_mask | terrain_wildlife_zones.py:69 | 1000x | 3rd distance transform implementation (chamfer, Python loops) |
 | carve_u_valley | terrain_glacial.py:95 | 100x | Nested loop over path bounding box |
 | compute_god_ray_hints NMS | terrain_god_ray_hints.py:159 | 100x | Nested loop for non-max suppression |
