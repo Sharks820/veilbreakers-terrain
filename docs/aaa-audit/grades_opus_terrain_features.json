@@ -1,0 +1,122 @@
+[
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_canyon",
+    "signature": "def generate_canyon(width: float = 5.0, length: float = 50.0, depth: float = 15.0, wall_roughness: float = 0.5, num_side_caves: int = 3, seed: int = 42) -> dict[str, Any]:",
+    "line": 69,
+    "grade": "C-",
+    "aaa_equivalent": "Houdini Heightfield carve + side tributary erosion (e.g. RDR2 Grand Canyon, Uncharted Lost Legacy canyons)",
+    "strength": "Produces a coherent three-piece mesh (floor + two walls) with wall-height-based material banding (wet_rock low, canyon_wall mid) and floor path waypoints useful for nav.",
+    "weakness": "Canyon is a straight rectilinear trench along X with only mild y-offset wall noise; no meander, no talus slopes, no stratified horizontal rock layers, and 'side caves' are only metadata dicts with zero actual mesh carved into the walls.",
+    "upgrade": "Build canyon centerline via meandering spline, carve walls from a base heightmap with multi-octave stratified erosion, generate real boolean cave voids at each side cave, and add scree/debris cones at wall bases.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_waterfall",
+    "signature": "def generate_waterfall(height: float = 10.0, width: float = 3.0, pool_radius: float = 4.0, num_steps: int = 3, has_cave_behind: bool = True, seed: int = 42, facing_direction: tuple[float, float] = (0.0, -1.0)) -> dict[str, Any]:",
+    "line": 254,
+    "grade": "D+",
+    "aaa_equivalent": "Horizon Forbidden West / Genshin waterfall with volumetric water plume, pool caustics, and mist VFX; Gaea water-carving layer.",
+    "strength": "Has direction-aware rotation for arbitrary facing, emits pool/cave/splash metadata for downstream VFX, and tags wet/dry material zones along the cliff.",
+    "weakness": "Ledges are literally single quads (no side/bottom faces), pool is a crude 16-sided fan triangle disc with no lip or undercut, 'cave behind' is pure metadata with no geometry carved, and there is no water mesh, no plunge basin curvature, and no erosion behind/below the falls.",
+    "upgrade": "Generate real boxed ledges with front undercuts, carve a real cave void behind the flow with SDF boolean, build a volumetric water plume mesh (tapered prism, not plane) and a contoured plunge pool with distinct lip, and output mist emitter positions.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_cliff_face",
+    "signature": "def generate_cliff_face(width: float = 20.0, height: float = 15.0, overhang: float = 3.0, num_cave_entrances: int = 2, has_ledge_path: bool = True, seed: int = 42) -> dict[str, Any]:",
+    "line": 497,
+    "grade": "C-",
+    "aaa_equivalent": "Uncharted / Tomb Raider climbable cliff with ledge kit, or UE Landscape Layer Blend with overhang tool.",
+    "strength": "Two-octave noise on face, explicit overhang lean at the top quartile with underside sheet, and a separate ledge-path ribbon usable for climbing.",
+    "weakness": "Base cliff is still a single planar heightfield tilted at the top (not true overhangs with undercut), cave entrances are metadata only with no holes punched in the face, and ledge ribbon is a flat two-vertex strip with no thickness or railings/handholds.",
+    "upgrade": "Use a displaced volumetric slab (front + top + underside stitched) so overhang becomes a real shelf, boolean-carve cave entrances through the face, and extrude the ledge into a 3D walkable shelf with chamfered edge.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_swamp_terrain",
+    "signature": "def generate_swamp_terrain(size: float = 50.0, water_level: float = 0.3, hummock_count: int = 12, island_count: int = 4, seed: int = 42) -> dict[str, Any]:",
+    "line": 688,
+    "grade": "C",
+    "aaa_equivalent": "Far Cry/Witcher 3 bog biome with hummock stamps, standing water masks, and island dry-zone classification.",
+    "strength": "Real FBM base, O(N^2) radial hummock/island stamping with quadratic and quartic falloffs, BFS flood fill to extract connected water-zone bounding boxes, and water-coverage metric for downstream asset scattering.",
+    "weakness": "Resolution scales as size/2 (so a 50m swamp is only 25x25 = 625 quads = ~2m quads) which is too coarse for AAA; no channel/river carving, no peat/hammock micro-morphology, and water is tagged via material only — there is no actual water plane mesh.",
+    "upgrade": "Raise resolution to sub-meter, carve drainage channels with hydraulic erosion pass, emit a separate water surface mesh aligned to water_level, and output root/reed scatter masks instead of just material IDs.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_natural_arch",
+    "signature": "def generate_natural_arch(span_width: float = 8.0, arch_height: float = 6.0, thickness: float = 2.0, roughness: float = 0.3, seed: int = 42) -> dict[str, Any]:",
+    "line": 915,
+    "grade": "D+",
+    "aaa_equivalent": "Real natural arch (Delicate Arch / Mesa Arch) as sculpted erosion of sandstone block, or Houdini Voronoi-fracture + erosion.",
+    "strength": "Sweep uses a correctly oriented Frenet-like frame (tangent in XZ, normal perpendicular) and ring cross-section allows noise displacement, giving a non-trivial closed tube.",
+    "weakness": "The arch is a swept elliptical tube (torus-arc) with single-sample noise per ring segment — that is the archetypal 'stretched torus' approach called out by the rubric; real natural arches are eroded rock masses with flat tops, scalloped undersides, and asymmetric pillar bases, none of which are modeled. Pillars are simple tapered 4-vert boxes.",
+    "upgrade": "Start from a solid rock mass (blockout box), boolean-subtract an elliptical tunnel, then apply per-layer strata displacement and wind-erosion noise on the underside so the shape reads as eroded sandstone, not a bent pipe.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_geyser",
+    "signature": "def generate_geyser(pool_radius: float = 3.0, pool_depth: float = 0.5, vent_height: float = 1.0, mineral_rim_width: float = 0.8, seed: int = 42) -> dict[str, Any]:",
+    "line": 1110,
+    "grade": "C",
+    "aaa_equivalent": "Yellowstone-style travertine terrace (RDR2 Cotorra Springs, Horizon hot springs) with layered sinter steps.",
+    "strength": "Three-tier terraced ring structure with per-tier z offset and radial noise, plus a cone vent with base/mid/tip rings and sulfur-crust material, which is more structured than a flat decal.",
+    "weakness": "Pool is a fan-triangulated flat disc (no concavity toward center despite the comment), terraces are only 3 rigid concentric rings of equal width (not scalloped basins with pour-lips), and there is no water surface mesh, no steam vent placement, and the vent cone is just 3 rings.",
+    "upgrade": "Model terraces as stacked basin polygons with irregular pour-lips carved per tier, add a real water surface inside each basin, generate steam/sulfur plume emitter points, and vary terrace counts by pool_radius.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_sinkhole",
+    "signature": "def generate_sinkhole(radius: float = 5.0, depth: float = 8.0, wall_roughness: float = 0.5, has_bottom_cave: bool = True, rubble_density: float = 0.3, seed: int = 42) -> dict[str, Any]:",
+    "line": 1304,
+    "grade": "C",
+    "aaa_equivalent": "Tomb Raider/Uncharted cenote or Sima de las Cotorras with vertical walls, vegetation shelves, and water pool bottom.",
+    "strength": "Multi-ring construction (outer rim, inner rim, stacked wall rings, floor fan) with FBM wall roughness, per-depth material banding, and rubble pieces as real 8-vert displaced box meshes.",
+    "weakness": "Walls are still rotationally symmetric (only 15% narrowing at bottom, no undercuts or bell shape), rubble boxes are axis-aligned and identical topology, the bottom cave is metadata-only with no actual opening cut into the wall, and there is no water/vegetation shelf despite sinkholes typically having both.",
+    "upgrade": "Allow non-axisymmetric radius profile (bell or hourglass), boolean-carve the bottom cave into the wall mesh, scatter rocks with varied topology and rotation, and add a mid-depth vegetation shelf ring.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_floating_rocks",
+    "signature": "def generate_floating_rocks(count: int = 5, base_height: float = 4.0, max_size: float = 3.0, chain_links: int = 2, seed: int = 42) -> dict[str, Any]:",
+    "line": 1533,
+    "grade": "C+",
+    "aaa_equivalent": "Avatar/Horizon floating islands or Zelda TOTK sky islands; Houdini Voronoi-fractured rock clusters.",
+    "strength": "Each rock is a real latitude/longitude tessellated sphere with two-octave noise on both radius and z, proper top/mid/bottom cap handling and even a fallback for mismatched segment counts; chain link geometry is actual extruded 4-sided rings, not just metadata.",
+    "weakness": "Chain 'links' are open cylindrical shafts stacked vertically (not interlocked torus rings), rocks are fundamentally noisy spheres with no sharp fractured planes or crystalline protrusions, undersides look identical to tops (same material differentiation is purely tag-based), and there is no island flat top / grass zone typical of fantasy float rocks.",
+    "upgrade": "Replace sphere base with Voronoi-fractured polyhedra giving flat facets, differentiate top via flattened cap + grass mask, make chain links actual torus primitives interlocking at 90-degree alternation, and add crystal vein mesh geometry rather than just material tag.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_ice_formation",
+    "signature": "def generate_ice_formation(width: float = 6.0, height: float = 4.0, depth: float = 3.0, stalactite_count: int = 8, ice_wall: bool = True, seed: int = 42) -> dict[str, Any]:",
+    "line": 1764,
+    "grade": "C-",
+    "aaa_equivalent": "God of War Ragnarok ice caves / Horizon FW Cauldrons with volumetric ice, parallax refraction, and icicle clusters.",
+    "strength": "Per-stalactite cone with variable length/radius, noise-displaced ring geometry and tip triangles; ice wall is a genuine 2D grid with FBM undulation and a curvature-based refraction material split.",
+    "weakness": "Stalactite material banding uses `kt` variable that is actually the OUTER loop counter `k` from a previous loop (variable captured incorrectly — bug: `kt` in the mat_indices block references the last stalactite's last ring k/cone_rings, not current face position), 'refraction zones' are randomly sampled metadata disconnected from the actual curvature classification applied to faces, ice wall is a flat displaced plane (no thickness), and there is no floor/stalagmite, no pool, no volumetric ice.",
+    "upgrade": "Fix the kt-scoping bug so banding tracks current ring properly; extrude the ice wall into a volume with frosted interior; add matching stalagmites and frozen pool mesh; derive refraction_zones from the actual high-curvature face centers rather than random sampling.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_features.py",
+    "function": "generate_lava_flow",
+    "signature": "def generate_lava_flow(length: float = 30.0, width: float = 4.0, edge_crust_width: float = 1.0, flow_segments: int = 20, seed: int = 42) -> dict[str, Any]:",
+    "line": 1967,
+    "grade": "C",
+    "aaa_equivalent": "Horizon Burning Shores lava channels or Kilauea reference with pahoehoe crust folds and incandescent fissures.",
+    "strength": "Sinusoidal centerline with noise-modulated perturbation, correct per-segment tangent/perpendicular frame for the cross-section sweep, five-band cross-section profile (raised solid rock, raised crust, depressed lava) with height variation, and heat_zones metadata parameterized by flow position.",
+    "weakness": "Flow is still a single-strip ribbon — no branching, no pillow/tube morphology, no solidification fingers; crust edges are symmetric with simple linear height profile, no a'a vs pahoehoe variation; lava surface is the same continuous grid as the rock banks with no lip or embankment discontinuity; heat zones are uniformly distributed along t with no flow-physics grounding.",
+    "upgrade": "Replace ribbon with a 2D flow-accumulation field producing branching channels, model crust as a separate floating shell above a lower hot-lava surface (two meshes) with broken crust patches, and derive heat_zones from channel-width narrowings/drop points instead of uniform sampling.",
+    "severity": "important"
+  }
+]

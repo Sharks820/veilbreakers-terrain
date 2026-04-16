@@ -1,0 +1,98 @@
+[
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "get_falloff_value",
+    "signature": "def get_falloff_value(distance_normalized: float, falloff: str = \"smooth\") -> float:",
+    "line": 38,
+    "grade": "C+",
+    "aaa_equivalent": "ZBrush/Mudbox brush falloff curve (customizable curve editor)",
+    "strength": "Provides four named falloff curves including a proper cosine smooth ramp with clamping and unknown-name guard.",
+    "weakness": "Hard-coded set of 4 curves with no user-definable curve editor, no root/inverse-sharp/middle/gaussian options, and the clamp to 1.5 silently allows out-of-range input where AAA tools expose an editable 2D spline.",
+    "upgrade": "Replace with a sampled 1D curve LUT driven by a user-editable spline (bezier/catmull) plus common presets (gauss, sharper, root, constant, custom), matching Blender/ZBrush brush curve UX.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "compute_brush_weights",
+    "signature": "def compute_brush_weights(\n    vert_positions_2d: list[tuple[float, float]],\n    brush_center: tuple[float, float],\n    brush_radius: float,\n    falloff: str = \"smooth\",\n) -> list[tuple[int, float]]:",
+    "line": 56,
+    "grade": "C-",
+    "aaa_equivalent": "UE Landscape brush footprint / Houdini heightfield mask by radius",
+    "strength": "Correctly uses squared-distance culling in XY before taking the sqrt, returning a sparse weight list.",
+    "weakness": "O(N) linear scan over every vertex with no spatial acceleration (KD-tree/grid/BVH), XY-only so projects wrong on sloped terrain, no pressure/tilt/azimuth, no anisotropic (elliptical) brush, no alpha-texture mask, and no stroke dab spacing - AAA tools use screen-space projection along the view ray with a spatial index.",
+    "upgrade": "Add KD-tree/spatial grid accel, ray-project the brush onto the surface (not XY plane), support pressure curve + elliptical shape + alpha-image mask + stroke spacing, and compute weight over geodesic distance for steep slopes.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "compute_raise_displacements",
+    "signature": "def compute_raise_displacements(\n    vert_heights: list[float],\n    weights: list[tuple[int, float]],\n    strength: float,\n) -> dict[int, float]:",
+    "line": 97,
+    "grade": "D+",
+    "aaa_equivalent": "ZBrush Standard/Inflate brush, UE Landscape Sculpt (raise)",
+    "strength": "Simple deterministic weighted displacement, easy to test.",
+    "weakness": "Displaces purely along world Z with no surface-normal option, no accumulation curve / per-dab falloff, no max-height clamp, no layer/undo stack, no pressure-sensitive strength, and no noise/jitter - an AAA raise brush offsets along averaged normal with stroke accumulation and clamps.",
+    "upgrade": "Offset along smoothed vertex normal (toggle normal vs Z), add per-stroke accumulation/clamp, pressure curve, optional noise modulation, and feed into a layered height buffer for non-destructive sculpting.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "compute_lower_displacements",
+    "signature": "def compute_lower_displacements(\n    vert_heights: list[float],\n    weights: list[tuple[int, float]],\n    strength: float,\n) -> dict[int, float]:",
+    "line": 118,
+    "grade": "D+",
+    "aaa_equivalent": "ZBrush Standard (inverted) / UE Landscape Sculpt (lower)",
+    "strength": "Symmetric to raise, tiny and correct for its trivial spec.",
+    "weakness": "Just a sign-flip of raise - no normal-aligned direction, no floor/minimum clamp, no distinct 'dig' behavior (AAA dig brushes carve along inverse-normal with a sharper falloff and terrain-floor clamp), and shares all of raise's gaps.",
+    "upgrade": "Share a single directional-displacement kernel with raise, expose direction enum (UP/DOWN/NORMAL/INV_NORMAL), add min-height clamp, pressure, and dig-shape option.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "compute_smooth_displacements",
+    "signature": "def compute_smooth_displacements(\n    vert_positions: list[tuple[float, float, float]],\n    adjacency: dict[int, list[int]],\n    weights: list[tuple[int, float]],\n) -> dict[int, float]:",
+    "line": 130,
+    "grade": "D",
+    "aaa_equivalent": "ZBrush Smooth brush, Blender sculpt Smooth (Laplacian/surface/enhance-detail)",
+    "strength": "Uses real 1-ring adjacency (not a fixed-radius 4-neighbor hack), giving a proper uniform Laplacian on Z.",
+    "weakness": "Only smooths Z (not full 3D position), uniform weighting rather than cotangent/area weights (causes shrinkage on irregular meshes), single Jacobi iteration per call (no iteration count), no Taubin lambda/mu shrinkage compensation, no detail-preserving smooth, no boundary handling - ZBrush/Blender offer Laplacian, Surface, Enhance-Detail, Taubin, and relax modes.",
+    "upgrade": "Add iterations param, support cotangent weights, Taubin lambda/mu to prevent shrinkage, a surface-smooth mode that preserves XY and only relaxes along normal, plus relax-topology and enhance-detail variants.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "compute_flatten_displacements",
+    "signature": "def compute_flatten_displacements(\n    vert_heights: list[float],\n    weights: list[tuple[int, float]],\n) -> dict[int, float]:",
+    "line": 160,
+    "grade": "D",
+    "aaa_equivalent": "ZBrush Flatten/Planar/Trim Dynamic, UE Landscape Flatten (with eye-dropper)",
+    "strength": "Computes a real brush-local average rather than a fixed global plane.",
+    "weakness": "Flattens to unweighted mean Z of affected verts (not a fitted plane), ignores brush weights in the average (bias toward edge verts), no user-set target height / eye-dropper pick, no plane-from-first-contact 'trim' mode, no angle/slope constraint - AAA flatten brushes plane-fit via least-squares and offer 'flatten to target', 'ramp', 'contrast' modes.",
+    "upgrade": "Compute a weighted least-squares plane from the affected verts, expose modes (average / first-hit / user-target / plane-fit), add contrast-blur parameter and ramp/slope constraint.",
+    "severity": "important"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "compute_stamp_displacements",
+    "signature": "def compute_stamp_displacements(\n    vert_positions_2d: list[tuple[float, float]],\n    vert_heights: list[float],\n    weights: list[tuple[int, float]],\n    brush_center: tuple[float, float],\n    brush_radius: float,\n    heightmap: list[list[float]],\n    stamp_strength: float = 1.0,\n) -> dict[int, float]:",
+    "line": 181,
+    "grade": "C-",
+    "aaa_equivalent": "World Machine/Gaea stamp macro, Houdini heightfield stamp, ZBrush Alpha stamp, UE Landscape Erosion/Stamp brush",
+    "strength": "Performs explicit UV remap of brush footprint into heightmap grid and clamps UV, with a strength multiplier.",
+    "weakness": "Nearest-neighbor sampling only (no bilinear/bicubic) causing blocky artifacts, axis-aligned square footprint inside a circular brush, no rotation / scale / flip, no blend modes (add/max/min/subtract/replace), no height remap curve, no wrap/tile, no masked alpha channel - AAA stamps support rotation, 8+ blend ops, bicubic sampling, and remap curves.",
+    "upgrade": "Add bilinear/bicubic sampling, rotation/scale/flip of the stamp, blend modes (add/max/min/replace/multiply/subtract), height remap curve, tile/wrap option, and a separate mask channel; decouple stamp footprint from circular brush weight.",
+    "severity": "critical"
+  },
+  {
+    "file": "handlers/terrain_sculpt.py",
+    "function": "handle_sculpt_terrain",
+    "signature": "def handle_sculpt_terrain(params: dict) -> dict:",
+    "line": 248,
+    "grade": "C",
+    "aaa_equivalent": "UE Landscape Sculpt mode / Blender Sculpt operator / ZBrush stroke dispatch",
+    "strength": "Provides a single dispatch entry-point covering 5 operations with clean bmesh lifecycle (try/finally free), validation, and a structured return payload including affected vertex count.",
+    "weakness": "Not a true stroke system - a single dab per call with no stroke spacing / path / smoothing-between-dabs, full mesh read/write every call (O(N) each), no undo stack / layer, no symmetry (X/Y/radial), no multires / sculpt-mode integration, no mask/vertex-group support, no normal/position updates beyond Z, no dirty-rect optimization - AAA sculpt dispatchers stream strokes, write only touched verts, push to an undo stack, and support symmetry + mask + layers.",
+    "upgrade": "Accept a stroke (list of samples + pressure), build/maintain a vertex KD-tree + dirty-vert set across dabs, add symmetry planes, mask/vertex-group weighting, undo layer stack, and an option to modify XYZ along normal; batch bmesh writes per stroke not per dab.",
+    "severity": "critical"
+  }
+]
