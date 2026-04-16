@@ -970,9 +970,9 @@ Both are actively called. `generate_lod_specs` is reached through `_lsystem_tree
 | 5. noise+erosion (3 files) | 3 | 37 | 32 | 1 | 4 |
 | 6. environment+scatter+materials (5 files) | 5 | 68 | 64 | 4 | 0 |
 | 8. pipeline+semantics+caves+glacial+karst+morph+strat | 7 | 76 | 72 | 3 | 1 |
-| **SUBTOTAL (6 agents)** | **25** | **310** | **268** | **32** | **10** |
+| 7. procmesh+bridge+depth+LOD (4 files) | 4 | 35 | 30 | 4 | 1 |
+| **SUBTOTAL (7 agents)** | **29** | **345** | **298** | **36** | **11** |
 | 4. Cliffs+masks+biome+banded | — | PENDING | — | — | — |
-| 7. procmesh+bridge+depth+LOD | — | PENDING | — | — | — |
 
 #### NEW BUGS FOUND (Round 2)
 
@@ -1018,12 +1018,13 @@ Both are actively called. `generate_lod_specs` is reached through `_lsystem_tree
 | BREAKING | 0 | 1 (BUG-36) | 1 |
 | HIGH | 22 | 2 (BUG-33, BUG-34) | 24 |
 | MEDIUM | 28 | 0 | 28 |
-| LOW / PARTIAL | 29 | 32 | 61 |
-| PASS / COMPLIANT | 48 | 268 | 316 |
+| LOW / PARTIAL | 29 | 36 | 65 |
+| PASS / COMPLIANT | 48 | 298 | 346 |
 
-**Total functions Context7-verified: 310+ (with 2 agents still running)**
+**Total functions Context7-verified: 345+ (1 agent still running)**
 **Total new bugs found by Context7: 4 (BUG-33 through BUG-36)**
 **Total confirmed bugs: 2 (BUG-01, BUG-03)**
+**Confirmed architectural issues: generate_lod_specs face truncation, _setup_billboard_lod wasted computation**
 
 ---
 
