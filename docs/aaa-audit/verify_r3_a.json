@@ -1,0 +1,642 @@
+[
+  {
+    "file": "_terrain_depth.py",
+    "function": "generate_cliff_face_mesh",
+    "line": 38,
+    "r1_consensus": "C",
+    "r2_verified": "C-",
+    "r3_grade": "C",
+    "r3_agrees_with": "R1",
+    "r3_reason": "R2 is slightly harsh. The geometry IS basic (single sin curve + Gaussian noise, no strata/overhangs), but the code is clean: proper quad topology, parameterized resolution, seeded RNG, and the concave partial-cylinder profile is a real design choice. For a procedrual placeholder cliff it earns a solid C. C- implies fundamentally broken, which it isn't -- it's just simplistic."
+  },
+  {
+    "file": "_terrain_depth.py",
+    "function": "generate_biome_transition_mesh",
+    "line": 234,
+    "r1_consensus": "C",
+    "r2_verified": "C-",
+    "r3_grade": "C-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "After reading the code: it IS a flat plane with trivial Gaussian bumps and a perfectly linear x_frac blend. Zero biome-specific geometry or boundary noise displacement. The blend weight is literally max(0, min(1, x_frac)). R2 was right that this is closer to D+/C- than C. I give it C- because the vertex-group blend weights at least provide useful metadata for downstream shading."
+  },
+  {
+    "file": "_terrain_depth.py",
+    "function": "generate_waterfall_mesh",
+    "line": 310,
+    "r1_consensus": "C-",
+    "r2_verified": "D+",
+    "r3_grade": "D+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct and I verified the code. The curtain is exactly a 2-row flat strip (lines 384-389: only z_top and z_bottom per x position). The pool is a flat 16-segment fan disc with no bowl geometry. This violates the explicit user rule in feedback_waterfall_must_have_volume.md requiring 3D volumetric meshes. The stepped ledges with subdivision are the only redeeming feature, keeping it above D."
+  },
+  {
+    "file": "_terrain_depth.py",
+    "function": "detect_cliff_edges",
+    "line": 448,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "I verified the code. The algorithm is solid (slope map + flood-fill + gradient rotation + height_scale fix). However: (1) pure Python flood-fill with stack.pop() is O(N) Python-speed, (2) np.argwhere(labels == lid) is O(R*C) per cluster, and (3) face_angle uses single-cell gradient at center, not PCA. The TERR-001 fix is good but doesn't fix the fundamental performance issues. B+ correctly reflects 'right algorithm, impractical implementation for production grids'."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "function": "TerrainPassController.register_pass",
+    "line": 109,
+    "r1_consensus": "B+",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "I read line 111: cls.PASS_REGISTRY[definition.name] = definition. Clean, idempotent, overwrite-on-duplicate. For a registration method, this is exactly what you want. B+ is slightly low for something that's simple and correct by design. A- is appropriate."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "function": "TerrainPassController.run_pass",
+    "line": 167,
+    "r1_consensus": "A",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: thorough enforcement (scene-read, protected zones, channel prerequisites, post-run output verification, quality gates, visual validators, content hashing, checkpoints). But R2 correctly identifies the gap: on exception (line 218), pass failure is recorded but no mask_stack rollback occurs. Partial mutations persist. A true A would have transactional semantics. A- is the honest grade."
+  },
+  {
+    "file": "terrain_waterfalls.py",
+    "function": "detect_waterfall_lip_candidates",
+    "line": 202,
+    "r1_consensus": "B",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified the code. The algorithm is genuinely well-designed: joint drainage+drop threshold with normalized confidence scoring, D8 deduplication sorted by confidence to prevent stacking. The _ensure_drainage fallback is thoughtful. The only weakness is Python nested loops. R2 was right to upgrade from B to B+ -- the algorithm quality deserves recognition despite the Python-speed implementation."
+  },
+  {
+    "file": "terrain_waterfalls.py",
+    "function": "generate_mist_zone",
+    "line": 483,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: val = max(0, 1 - norm) is a simple radial linear falloff centered on pool. No wind direction, no downstream bias, no turbulence. Real waterfall mist is wind-driven and concentrated downstream. This is indistinguishable from a circular gradient fill. C+ is correct for 'works but fundamentally oversimplified'."
+  },
+  {
+    "file": "terrain_waterfalls.py",
+    "function": "generate_foam_mask",
+    "line": 515,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Same radial pattern as mist but scaled by foam_intensity. The foam_intensity is tied to total_drop which is physically motivated, but the spatial distribution is a uniform circle with no impact-zone concentration or directional spray. C+ is appropriate."
+  },
+  {
+    "file": "terrain_waterfalls.py",
+    "function": "pass_waterfalls",
+    "line": 659,
+    "r1_consensus": "B",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified the full pass. This is comprehensive: lip detection -> chain solving (capped at 16) -> pool/outflow delta accumulation -> foam/mist -> wet_rock via compute_wet_rock_mask + pool contribution -> region scoping -> pool carving into height -> 5 channel writes -> validation with severity -> PassResult with 6 metrics. Fixes pipeline-breaks #1, #2, #5. The orchestration quality is genuinely good. B+ correctly rewards the integration quality."
+  },
+  {
+    "file": "coastline.py",
+    "function": "generate_coastline",
+    "line": 454,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2's evidence about the hard cliff threshold (land_factor > 0.3), hash-based noise quality, and coarse resolution (max(4, resolution//2)) is well-founded. The multi-style orchestration is good but the underlying geometry quality limits it. B+ is the fair grade."
+  },
+  {
+    "file": "_biome_grammar.py",
+    "function": "apply_periglacial_patterns",
+    "line": 340,
+    "r1_consensus": "B",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 correctly identifies the O(n_centers * H * W) Python-speed loop, legacy RandomState API, and simplistic elevation mask. Frost polygon ridges are physically motivated but the performance and detail limitations are real. B- is appropriate."
+  },
+  {
+    "file": "_biome_grammar.py",
+    "function": "apply_desert_pavement",
+    "line": 392,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 correctly notes the _box_filter_2d performance bottleneck (Python loops negating integral-image benefit). The concept is correct (slope+elevation masking) but the critical path has a Python-speed filter. B is fair."
+  },
+  {
+    "file": "_biome_grammar.py",
+    "function": "apply_hot_spring_features",
+    "line": 549,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2's observation about perfectly circular concentric rings with uniform spacing and no asymmetry is accurate. The concept (pool depression + terrace rings) is correct geology but the execution is overly regular. No noise perturbation on ring radius. B is fair."
+  },
+  {
+    "file": "_biome_grammar.py",
+    "function": "apply_reef_platform",
+    "line": 615,
+    "r1_consensus": "B",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "No temperature or gradient gating -- real reefs are biased toward warm shallow-gradient shores. Manhattan-approximated distance function. The reef band formula is simplistic. B- correctly reflects these gaps."
+  },
+  {
+    "file": "_biome_grammar.py",
+    "function": "apply_tafoni_weathering",
+    "line": 665,
+    "r1_consensus": "B",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is right: 50 cavities over a full heightmap is far too sparse for honeycomb weathering. The phenomenon is characterized by DENSE interconnected pits. Correct approach but wrong scale. B- is accurate."
+  },
+  {
+    "file": "_biome_grammar.py",
+    "function": "apply_geological_folds",
+    "line": 721,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Three fold types with random strike is good, but uniform amplitude across the grid with no attenuation along strike or amplitude variation is a real limitation. Real tectonic folds have varying amplitude. B is fair."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "apply_layer_operation",
+    "line": 511,
+    "r1_consensus": "B",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: Python double loop over every cell, 3x3 box average for smooth (not Gaussian), random.gauss per cell for noise (spatially incoherent white noise), stamp destructively replaces. Gemini A was absurd. R2's C+ is correct -- the operations exist but the implementation quality is fundamentally non-AAA."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "apply_stamp_to_heightmap",
+    "line": 1247,
+    "r1_consensus": "B-",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Critical finding verified: line 1312 blend = edge_falloff * (1-f) + edge_falloff * f algebraically simplifies to edge_falloff. The falloff parameter is completely INERT (dead parameter bug). Plus nearest-neighbor sampling, pure Python loop, additive only. The dead-parameter bug alone justifies dropping below B-. C is correct."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "apply_thermal_erosion",
+    "line": 1122,
+    "r1_consensus": "B",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: triple-nested Python loop (iterations * rows * cols * 4 neighbors). 4-neighborhood only (no diagonals, so scree fans appear axis-aligned). Returns hmap.tolist() bloating memory. Correct talus algorithm but impractical implementation. C+ is right."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "compute_erosion_brush",
+    "line": 795,
+    "r1_consensus": "B",
+    "r2_verified": "C-",
+    "r3_grade": "C-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified all three erosion types. Hydraulic: simple 4-neighbor diff*0.1 transfer. Wind: random.gauss removal + deposit one cell to +X. Thermal: basic talus check. All are toy implementations with no sediment transport, no water channels, no particle simulation. Pure Python triple-nested loops. These aren't erosion models -- they're placeholder stencils. C- is the honest grade."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "compute_falloff",
+    "line": 258,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Only 4 hardcoded curves, no user-definable curve editor, clamp to 1.5 is odd. Functional but basic. B is fair."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "compute_flow_map",
+    "line": 999,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified three nested Python loops, D8 artifacts, no pit-filling pre-pass, returns .tolist(). The algorithm is textbook-correct D8 flow but the pure-Python implementation makes it impractical for grids > ~256. No vectorization. B- is correct -- right algorithm, wrong language for the hot path."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "compute_spline_deformation",
+    "line": 281,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: smooth mode is just a weak pull-toward-spline-Z (weight*0.3), not actual Laplacian smoothing. No cross-section profile, no bank angles. O(N*M) brute force. B- correctly accounts for the fake smooth mode and lack of spatial acceleration."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "compute_stamp_heightmap",
+    "line": 1202,
+    "r1_consensus": "B+",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Six stamps are trivial single-line lambdas. A crater should have asymmetric rim and ejecta; a mesa needs fracture patterns. Fixed 64px resolution truncates detail. Custom passthrough is just np.asarray. R2 is right that the graders were evaluating the API surface, not the stamp quality. C+ is correct."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "distance_point_to_polyline",
+    "line": 163,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Correct closest-point math with cumulative t and degenerate handling, but O(N) brute-force scan per query. XY-only projection incorrect for vertical splines. AAA uses spatial acceleration. B+ correctly downgrades for the performance gap."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "evaluate_spline",
+    "line": 132,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: fixed uniform parameter sampling with no arc-length reparameterization. Point density clumps on tight curves. AAA spline tools sample by arc length. B correctly reflects 'functional but with known quality limitation'."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "flatten_layers",
+    "line": 604,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Nearest-neighbor resize produces blocky aliasing. MULTIPLY mode is non-standard (1+lh). Missing overlay/screen/soft-light blend modes. No per-layer mask. B is fair."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "flatten_multiple_zones",
+    "line": 1564,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: it's a simple sequential for loop calling flatten_terrain_zone. Last-writer-wins in overlap regions. No priority system, no spatial bucketing. ~10 lines of code. B+ for a trivial loop is too generous. B- is correct."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "flatten_terrain_zone",
+    "line": 1496,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Good vectorized numpy with smoothstep C1 blend and NaN/inf scrubbing. But circular only (no ellipse/rectangle), seed parameter is unused dead code. Gemini A+ was excessive. R2's B+ is correct -- good implementation but limited shape support and dead parameters."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "handle_erosion_paint",
+    "line": 912,
+    "r1_consensus": "B",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Thin wrapper around compute_erosion_brush (C-). Inherits all toy erosion problems. No undo, blocks Blender main thread, no normals rebuild. The handler adds zero value to fix the core weakness. C is correct."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "handle_snap_to_terrain",
+    "line": 1399,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 correctly identifies: rotation_euler overwrites all three Euler angles destroying authored yaw, single ray with no fallback, no footprint averaging. B is the honest grade."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "handle_spline_deform",
+    "line": 381,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: spline_points used as-is without matrix_world transform. If the terrain is moved/scaled/rotated, the spline points are in the wrong space. No undo support. B- correctly reflects the missing world-space transform bug."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "handle_terrain_layers",
+    "line": 652,
+    "r1_consensus": "B",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Full CRUD routing is good, but re-serializing entire layer stack to JSON on a custom property every mutation will bloat .blend files and fail at size limits. reshape(rows, cols) assumes row-major vertex order. No undo integration. C+ is correct."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "handle_terrain_stamp",
+    "line": 1319,
+    "r1_consensus": "B",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Inherits the dead-falloff-parameter bug from apply_stamp_to_heightmap, hardcoded 64x64 resolution, no rotation, uses obj.dimensions without matrix_world. C+ correctly reflects accumulated bugs."
+  },
+  {
+    "file": "terrain_advanced.py",
+    "function": "handle_terrain_flatten_zone",
+    "line": 1594,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: radius_x/radius_y collapses to averaged flat_radius (fake ellipse support), dead code lines, nearest-neighbor grid lookup. C+ is correct."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "generate_cave_path",
+    "line": 344,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: per-archetype path shape is a good design pattern, but all paths are simple 2D polylines with trigonometric jitter. No branching, no chamber nodes, no Y-splits. FISSURE is uniform descent. GLACIAL is one-period sin meander. B is fair -- correct parametric paths but no topological complexity."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "carve_cave_volume",
+    "line": 436,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: vectorized np.mgrid per waypoint is good, but this is a 2D heightmap-lowering operation. It can only lower the terrain surface, not create true 3D cave interiors. You cannot represent a cave ceiling or passage with this approach. The fundamental 2.5D limitation is more severe than B+ suggests. B- is correct."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "build_cave_entrance_frame",
+    "line": 499,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: framing rocks are just dicts with world_pos and radius_m. No actual geometry, no mesh vertices, no per-archetype shape variation. Vegetation_screen is a boolean. Occlusion_shelf is dimension numbers. It's metadata intent, not visual output. B- is correct for metadata-only design."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "scatter_collapse_debris",
+    "line": 568,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: deterministic, density-scaled, capped at 200. But no clustering (real debris piles up), no collision, no size/type variation, just (x,y,z) tuples. B is fair for a correct but basic scatter."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "validate_cave_entrance",
+    "line": 666,
+    "r1_consensus": "A",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Only 4 checks (framing count, lip height, damp mask, occlusion shelf). No geometry validation, no overlap detection, no terrain-context checks. Clean code but limited scope. A- is more appropriate than A."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "get_cave_entrance_specs",
+    "line": 908,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Uses rng.choice for positions with no minimum spacing check (could cluster entrances). Width/height/depth are random uniform with no archetype awareness. B is fairer than B+."
+  },
+  {
+    "file": "terrain_caves.py",
+    "function": "_build_chamber_mesh",
+    "line": 1079,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "It creates a simple 8-vertex box mesh documented as a marker/parent object. The code is clean (try/except for test environments), but A- for 8 hardcoded verts and 6 faces is generous. B+ for clean code that does a simple thing well is more accurate."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_canyon",
+    "line": 69,
+    "r1_consensus": "C+",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: straight rectilinear trench along X, side caves are metadata-only dicts with zero geometry, resolution is size/2 (50m canyon = 25 segments). The floor has drainage slope and hash-noise roughness, walls have noise displacement and inward lean. But no meander, no stratified layers, no talus. C is correct."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_waterfall",
+    "line": 254,
+    "r1_consensus": "B-",
+    "r2_verified": "D+",
+    "r3_grade": "D+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: ledges are 8-vert single quads (top + front, no sides/bottom), pool is 16-sided fan disc, cave is metadata-only dict. THERE IS NO WATER MESH. A function called generate_waterfall that generates no water. The direction-aware rotation is well-implemented, but the absence of the primary feature (water) is a fundamental failure. D+ is the correct grade."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_cliff_face",
+    "line": 497,
+    "r1_consensus": "C+",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: two-octave noise on face is good, overhang with underside sheet is structurally sound. But cave entrances are metadata-only (lines 619-632), ledge is a 2-vertex flat strip with no thickness, overhang underside is only 4 strips deep. C is correct."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_swamp_terrain",
+    "line": 688,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: resolution = max(8, int(size/2)), so 50m swamp = 25x25 grid at ~2m vertex spacing -- far too coarse. O(N^2) double loop per hummock. No water surface mesh; water indicated only by material index. BFS flood fill for water zones is a nice touch. But the crippling resolution issue dominates. C+ is correct."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_natural_arch",
+    "line": 915,
+    "r1_consensus": "C+",
+    "r2_verified": "C-",
+    "r3_grade": "C",
+    "r3_agrees_with": "NEITHER",
+    "r3_reason": "The arch IS a swept elliptical tube (torus-arc), not eroded rock. However, it does have: proper tangent-oriented cross-sections, noise displacement per ring, material zones (moss on top, weathered underside), and tapered 4-corner pillar geometry with noise. R2's C- is slightly harsh -- the code IS more sophisticated than a basic bent pipe. But R1's C+ is slightly generous since the form doesn't resemble natural arches. C splits the difference."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_geyser",
+    "line": 1110,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: pool bottom is a flat fan disc (not concave despite the intent), terraces are 3 concentric rings of equal width with linearly decreasing step height, vent cone is base/mid/tip rings. No water surface mesh, no steam vent positions, no pour-lips. The 3-tier structure shows intent but execution is simplistic. C+ is correct."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_sinkhole",
+    "line": 1304,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R1",
+    "r3_reason": "After reading the full code, R2 overcorrected here. The sinkhole has: multi-ring wall construction with FBM roughness, material banding (dirt upper/rock lower), real rubble geometry (8-vert displaced boxes with per-piece noise), proper ground rim with outer/inner rings, floor fan triangles. The 15% narrowing is modest but real. Cave is metadata-only, which is a gap, but the overall geometric complexity (rim + walls + floor + rubble boxes) is notably above C+. B- is the correct grade."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_floating_rocks",
+    "line": 1533,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: rocks are latitude-ring spheres with noise displacement, not fractured polyhedra. Chain links are open 4-vert cylinders, not interlocking torus rings. No flat-top island surface. Material zones exist but crystal_vein is just an index assignment. R2 correctly identifies the spheroid limitation. C+ is fair."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_ice_formation",
+    "line": 1764,
+    "r1_consensus": "C+",
+    "r2_verified": "C-",
+    "r3_grade": "C-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified the kt variable scoping bug: in the face loop (line 1858+), kt retains its LAST value from the vertex generation loop (approximately 1.0 for the last ring). The material banding check 'if kt < 0.3' is therefore always false for all stalactite faces after the first ring. This is a real bug that makes the material assignment incorrect. Additionally: refraction_zones are random positions disconnected from actual curvature, ice wall has no thickness. The kt bug alone justifies C-."
+  },
+  {
+    "file": "terrain_features.py",
+    "function": "generate_lava_flow",
+    "line": 1967,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: sinusoidal centerline with tangent-perpendicular cross-section is well-structured. Five-band material zones are good design. But: single non-branching ribbon strip, symmetric crust edges, lava surface is the same mesh as rock banks (no separate flowing surface), heat zones uniformly distributed. C+ correctly reflects 'good structure, basic geometry'."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "get_falloff_value",
+    "line": 38,
+    "r1_consensus": "B",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Same 4 hardcoded curves as terrain_advanced. Clamp to 1.5 allows out-of-range values silently. No user-definable curve. Basic but works. B- is fair."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "compute_brush_weights",
+    "line": 56,
+    "r1_consensus": "B",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: O(N) linear scan over EVERY vertex for every dab with no spatial acceleration (KD-tree/grid). XY-only distance projection is wrong on sloped terrain. For 100K+ vertex meshes this is unusable. No pressure/tilt/alpha mask. R2's C is correct."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "compute_raise_displacements",
+    "line": 97,
+    "r1_consensus": "B",
+    "r2_verified": "C-",
+    "r3_grade": "C-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: the ENTIRE computation is result[idx] = vert_heights[idx] + strength * w. Three lines. No normal-aligned displacement, no accumulation curve, no max-height clamp. AAA raise brushes offset along averaged vertex normals. Codex A was egregiously wrong. C- correctly grades a trivially basic operation."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "compute_lower_displacements",
+    "line": 118,
+    "r1_consensus": "B",
+    "r2_verified": "C-",
+    "r3_grade": "C-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Literal sign-flip of compute_raise. Same gaps. Codex A for a minus sign is absurd. C- is correct."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "compute_smooth_displacements",
+    "line": 130,
+    "r1_consensus": "B-",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: uses real 1-ring adjacency (good), but Z-only smoothing with uniform weights, single iteration, no cotangent/area weighting, no Taubin shrinkage compensation, no boundary handling. Blender offers Laplacian, Surface, HC, Taubin modes. This is the simplest possible mesh smoothing. C is correct."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "compute_flatten_displacements",
+    "line": 160,
+    "r1_consensus": "B-",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: flattens to unweighted mean Z of affected verts. Weights are NOT used in computing the target height (line 171-172). No user-set target, no eyedropper, no plane-fit. AAA flatten brushes do least-squares plane fit. C is correct."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "compute_stamp_displacements",
+    "line": 181,
+    "r1_consensus": "B-",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: nearest-neighbor sampling (int rounding), axis-aligned square in circular brush, no rotation/scale/flip, additive only blend. AAA stamps support rotation, 8+ blend ops, bicubic sampling. C is correct."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "function": "handle_sculpt_terrain",
+    "line": 248,
+    "r1_consensus": "B",
+    "r2_verified": "C",
+    "r3_grade": "C",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: single dab per call with full mesh read/write (O(N)) every time. No undo stack, no symmetry, no multires, no mask/vertex-group, no normals update. Clean bmesh lifecycle (try/finally) and validation are good, but the fundamental per-dab full-mesh-copy architecture makes it impractical for interactive use. C is correct."
+  },
+  {
+    "file": "_water_network.py",
+    "function": "detect_lakes",
+    "line": 170,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: naive pit detection (cell < ALL 8 neighbors strictly) misses plateau lakes. spill_z is the lowest single neighbor, not a true watershed spill elevation (no priority-flood per Barnes 2014). Flood fill is correct but starts from a simplistic pit definition. B is more accurate than B+."
+  },
+  {
+    "file": "_water_network.py",
+    "function": "detect_waterfalls",
+    "line": 252,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: sliding window along river_path finding best absolute drop. Reasonable heuristic but: only scans explicit path input (won't find off-path falls), uses absolute drop not drop-rate, processes one path at a time. B is correct for a functional but limited detector."
+  },
+  {
+    "file": "_water_network.py",
+    "function": "assign_strahler_orders",
+    "line": 995,
+    "r1_consensus": "C",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Verified: uses setattr on a dataclass (fragile, won't serialize via asdict), bare except pass is a code smell. But the function IS documented about these limitations, is idempotent, and serves a pragmatic purpose. The documentation and pragmatism push it slightly above C. C+ is fair."
+  }
+]

@@ -1,0 +1,242 @@
+[
+  {
+    "file": "environment.py",
+    "function": "_execute_terrain_pipeline",
+    "line": 1816,
+    "r1_consensus": "A",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Lines 2016-2021 catch ALL exceptions from WaterNetwork.from_heightmap and log at DEBUG level only, meaning a production world can silently lose its entire hydrology system. This is a genuine defect in a 300+ line orchestrator that otherwise does an excellent job of wiring intent, mask stack, protocol enforcement, and pass injection. The silent water failure drops it from A to A-. The retry-by-string-matching approach R2 cited is no longer visible in the current code (the while-loop is gone), but the silent except remains. A- is fair."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_create_cave_entrance",
+    "line": 3563,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. The handler is a thin delegation to generate_cave_entrance_mesh which received a consensus C for symmetric semicircular arch geometry. The handler adds param wiring, location/rotation, and parent assignment -- no geometric sophistication. The output quality IS the underlying generator's quality. Grading a wrapper higher than its geometry source is logically inconsistent. B acknowledges the clean wiring while reflecting that the produced cave entrance is below AAA quality. B+ from R1 was generous."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_create_water",
+    "line": 4575,
+    "r1_consensus": "B+",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct -- this is genuinely A- work. Reading the full implementation (lines 4575-4925): spline-following cross-section mesh with per-vertex flow_vc encoding (R=bank contact, G/B=flow dir remapped, A=foam), arc-length UV tiling via cumulative_length, per-side _resolve_river_bank_contact for terrain-aware bank height, terminal width tapering, smoothed flow speeds with weighted 3-tap kernel, channel_depth from width, shore_foam + speed_foam blending, and a complete terrain-masked level water surface fallback path. This is production-quality water authoring that matches what Unity Water System ships. The R1 consensus B+ undervalued it."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_generate_multi_biome_world",
+    "line": 5244,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Line 5341: dominant biome determined by center-cell heuristic (biome_ids[height//2, width//2]) -- naive for multi-biome worlds where the center could be a transition zone. Line 5351-5352: material assignment failure is a bare except/pass -- production should at least log. Lines 5371-5372: vegetation scatter failure is also bare except/pass per biome. These silent failures mean a world can silently lose materials and vegetation with no error. The orchestration structure is good (WorldMapSpec -> terrain -> vertex colors -> material -> scatter) but the error handling degrades it. B+ is accurate."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_generate_waterfall",
+    "line": 2184,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. The HANDLER is excellently architected: water network derivation, candidate scoring by proximity, facing direction from top->bottom delta, functional object naming system with chain_id, contract validation, material assignment. But line 2273 calls generate_waterfall() which was independently graded C- for near-flat curtain geometry. The handler wraps excellent metadata and wiring around fundamentally poor geometry. The produced waterfall mesh is the user-visible output. B+ reflects the genuine handler sophistication penalized by the weak underlying generator."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_stitch_terrain_edges",
+    "line": 2409,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Lines 2458-2459: raises ValueError if edge vertex counts differ -- UE5 World Partition handles mismatched LODs gracefully. Lines 2471-2478: simple avg = (za + zb) / 2 on exact edge vertices only, with no multi-row blending zone. A production stitcher needs to smooth across at least 2-3 rows to avoid a visible crease. The tolerance-based vertex extraction (lines 2437-2447) is well-implemented but the averaging algorithm is minimal. B is fair for a functional but basic stitcher labeled 'fallback' in its own docstring."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "create_leaf_card_tree",
+    "line": 744,
+    "r1_consensus": "A-",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. The trunk is a 6-sided tapered cylinder (0.7x top taper) -- functional but no bark texture or branch geometry. The canopy delegates to _add_leaf_card_canopy which creates flat intersecting planes at 60-degree intervals plus angled planes at 30-45 degrees. The SpeedTree-inspired approach is architecturally correct, but real SpeedTree trees have branch hierarchies connecting trunk to leaf clusters. This tree has trunk -> bare gap -> floating leaf cards. Wind vertex colors (flutter, phase, amplitude, trunk_sway) are a genuine AAA feature. B+ from Codex is accurate; A- from consensus was generous."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "handle_create_breakable",
+    "line": 1638,
+    "r1_consensus": "B",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. The handler creates intact + destroyed variant pairs, but fragments are ALL scaled cubes (lines 1715-1716: bmesh.ops.create_cube, then scale per-axis). No Voronoi fracture, no Cell Fracture, no constraint graphs. The intact mesh is either a cylinder (cone op) or a box. Real breakable props (UE5 Chaos, Havok) use physics-based fracture algorithms. The destroyed material is a darkened version of intact color -- no scorch marks, no splinter detail. B- accurately reflects 'works but placeholder quality'."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "handle_scatter_props",
+    "line": 1565,
+    "r1_consensus": "B+",
+    "r2_verified": "B",
+    "r3_grade": "B",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Comparing to handle_scatter_vegetation (lines 1266-1512): vegetation has Poisson disk sampling, biome-filtered placement, slope rejection from computed slope_map, moisture filtering, building/road exclusion zones, collection instances, billboard LOD setup. Props (lines 1565-1631) uses context_scatter (a simpler algorithm), has no Poisson disk, no slope rejection, no exclusion zones, no billboard LOD. The template instancing pattern is shared but the scatter sophistication gap is significant. B is accurate."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "handle_scatter_vegetation",
+    "line": 1266,
+    "r1_consensus": "B",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct -- the consensus B badly undervalued this handler. Reading lines 1266-1512: Poisson disk sampling for natural spacing, biome_filter_points with per-rule slope/altitude matching, compute_slope_map with proper cell_size for max_tilt_angle rejection, moisture_map nearest-neighbor resize and per-rule min/max_moisture filtering, building footprint exclusion zones with proportional margin (half diagonal, clamped 1.5-6m), road exclusion with 2m buffer, collection instancing pattern for performance, billboard LOD per template, terrain-height-aware Z placement with slope-aligned rotation (70% blend). This is production-grade scatter that rivals mid-tier UE5 PCG setups. The O(objects * exclusion_zones) loop is the main weakness but the feature set is A-."
+  },
+  {
+    "file": "atmospheric_volumes.py",
+    "function": "compute_atmospheric_placements",
+    "line": 172,
+    "r1_consensus": "B",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Lines 231-234: px = rng.uniform(min_x, max_x), py = rng.uniform(min_y, max_y), pz = 0.0. Uniform random placement with no terrain awareness. God rays should cluster under canopy gaps, fireflies near water, ground_fog in valleys -- none of this exists. The volume area formulas are arbitrary: sphere area = pi * (h*2)^2, cone area = pi * (h*0.5)^2, box area = (h*4)^2 -- these have no physical basis and the relationship between height and footprint is made up. Z is hardcoded to 0.0 regardless of terrain. The biome rules are well-designed (10 biomes, thematic volume assignments) but the placement algorithm is basic random scatter. C+ is accurate."
+  },
+  {
+    "file": "atmospheric_volumes.py",
+    "function": "compute_volume_mesh_spec",
+    "line": 282,
+    "r1_consensus": "B-",
+    "r2_verified": "C+",
+    "r3_grade": "C+",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Lines 337-355: the 'sphere' is an icosahedron (12 vertices, 20 triangular faces) with NO subdivision. This is visually a spiky polyhedron, not a sphere. At game-ready quality you need at least subdiv 1 (42 verts) for an acceptable sphere proxy. The cone (lines 357-373) uses 8 segments which is reasonable for a proxy, but the face generation logic is confusing with the double-modulo approach (though it happens to produce correct output). The box is trivially correct. These are placeholder-quality proxy meshes suitable for editor visualization but not production. C+ is accurate for meshes that function correctly but look placeholder."
+  },
+  {
+    "file": "atmospheric_volumes.py",
+    "function": "estimate_atmosphere_performance",
+    "line": 389,
+    "r1_consensus": "B+",
+    "r2_verified": "B-",
+    "r3_grade": "B-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct. Lines 411-426: cost = total + particle_count * 2 + distortion_count * 5. The thresholds (15/30/60/100) are magic numbers with no empirical calibration. No resolution dependency, no fill-rate consideration, no screen coverage estimate. All particle volumes cost the same regardless of particle count per volume. All distortion volumes cost the same regardless of resolution or complexity. This is a back-of-envelope heuristic, not a performance estimator. The API design (returning recommendation strings) is clean but the model has no real predictive value. B- is accurate."
+  },
+  {
+    "file": "terrain_semantics.py",
+    "function": "TerrainMaskStack",
+    "line": 201,
+    "r1_consensus": "B+",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "R2 is correct -- B+ undervalues this class significantly. Reading lines 201-650: 48+ typed Optional[np.ndarray] channels spanning 10 pipeline passes (structural, hero, erosion, water, material, ecosystem, geology, delta, Unity-ready), provenance tracking via populated_by_pass dict, dirty-channel management, content_hash via SHA-256 over all populated channels + coordinate metadata, npz serialization/deserialization, unity_export_manifest with schema version + coordinate system + per-channel dtype/shape, tile resolution contract enforcement (Addendum 2.A.1 with backward compat), UNITY_EXPORT_CHANNELS manifest, dict-channel support for wildlife_affinity and decal_density. This is genuine pipeline architecture -- the central data structure of the entire terrain system. A- is accurate."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_carve_river",
+    "line": 2609,
+    "r1_consensus": "A-",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. WorldHeightTransform for signed-range preservation, multi-segment waypointed routing through _run_height_solver_in_world_space, separate _apply_river_profile_to_heightmap with thalweg channel and bank smoothing, _derive_river_surface_levels with monotonic enforcement, smoothed path points, bed points for volumetric water. Per-vertex bmesh update is the weakness but acceptable for Blender handler context. A- is accurate."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_carve_water_basin",
+    "line": 5002,
+    "r1_consensus": "B+",
+    "r2_verified": "B+",
+    "r3_grade": "B+",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. Elliptical basin with aspect_y, shoreline warp using dual-frequency sinusoidal noise (0.12*sin + 0.07*sin), containment rim with proportional height, shore_width falloff using smootherstep, beach rim tapering, neighborhood-mean smoothing pass for natural transitions. The O(H*W) Python double-loop is slow but the geometry logic is sophisticated with proper per-cell blending weights. B+ is accurate -- solid but not quite A-level due to the performance bottleneck."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_export_heightmap",
+    "line": 5160,
+    "r1_consensus": "A-",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. Purpose-built Unity RAW16 LE exporter with robust grid dim detection via _detect_grid_dims, flip_vertical for coordinate system, unity_compat power-of-two+1 resize via _nearest_pot_plus_1, _resolve_export_height_range for tiled world consistency. Clean, correct, and production-ready for the Unity Terrain import pipeline. A- is accurate."
+  },
+  {
+    "file": "environment.py",
+    "function": "handle_generate_terrain",
+    "line": 1257,
+    "r1_consensus": "A-",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed based on R2 evidence. Dual-path controller vs legacy with VB biome preset resolution, noise scale factor tables, relief enhancement, spike tempering, flatten zones, cliff overlays from mask stack, 150K minimum erosion droplets policy. A- is accurate for a 330+ line handler."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "_sample_heightmap_surface_world",
+    "line": 334,
+    "r1_consensus": "A-",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. Bilinear interpolation with analytical gradient computation from the same interpolation coefficients (dsample_dcol, dsample_drow). Returns (height, dzdx, dzdy) in world-space units with proper scaling by terrain dimensions. Handles edge cases (0-size, 1-row/col). The math is correct and efficient. A- is accurate."
+  },
+  {
+    "file": "terrain_materials.py",
+    "function": "height_blend",
+    "line": 1508,
+    "r1_consensus": "N/A",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Spot-check AGREE: confirmed. The formula (height_diff * contrast + 0.5) * mask with contrast scaling from 1x to 20x is the standard AAA height-based texture blend technique used in UE/Unity terrain shaders. Clean pure-logic function with no dependencies. A- is accurate."
+  },
+  {
+    "file": "terrain_materials.py",
+    "function": "compute_world_splatmap_weights",
+    "line": 2365,
+    "r1_consensus": "N/A",
+    "r2_verified": "A-",
+    "r3_grade": "A-",
+    "r3_agrees_with": "R2",
+    "r3_reason": "Spot-check AGREE: confirmed. Fully vectorized numpy splatmap computation with proper 3-zone slope transition (flat/mid/cliff), moisture modulation for wet/dry cells, biome-specific special band policies for altitude-based alpha, RGB renormalization to (1-alpha). The Bundle B performance fix comment confirms it replaced an O(H*W) Python loop. Production-quality splatmap generation. A- is accurate."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "_sample_heightmap_world",
+    "line": 392,
+    "r1_consensus": "A",
+    "r2_verified": "A",
+    "r3_grade": "A",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. Clean delegate to _sample_heightmap_surface_world discarding gradients. Perfect API design pattern. A is accurate."
+  },
+  {
+    "file": "environment_scatter.py",
+    "function": "_terrain_axis_spacing_from_extent",
+    "line": 417,
+    "r1_consensus": "A",
+    "r2_verified": "A",
+    "r3_grade": "A",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. Simple, correct, handles non-square terrain. Returns (row_spacing, col_spacing) with 1e-9 floor to prevent division by zero. A is accurate."
+  },
+  {
+    "file": "terrain_semantics.py",
+    "function": "WorldHeightTransform",
+    "line": 70,
+    "r1_consensus": "A",
+    "r2_verified": "A",
+    "r3_grade": "A",
+    "r3_agrees_with": "R1",
+    "r3_reason": "Spot-check AGREE: confirmed. Bidirectional normalized-to-world height adapter with zero-range guard, numpy vectorized ops. Solves the persistent scatter-altitude bug. Critical infrastructure correctly implemented. A is accurate."
+  }
+]
