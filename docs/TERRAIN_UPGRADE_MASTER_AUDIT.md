@@ -907,22 +907,67 @@ Bugs: windmill blades don't rotate (BUG-27), crossbow string squared (BUG-28), b
 - **P1:** `voronoi_biome_distribution` brute-force instead of `cKDTree`
 - **PASS:** `erosion_filter`, `apply_thermal_erosion_masks`, `compute_slope_map`, `_astar`
 
-### D.6 — Vegetation/Scatter/LOD/Pipeline
+### D.6 — Vegetation, Scatter, LOD, and Pipeline (Deep Dive)
 
-- **HIGH:** LOD decimation is NOT QEM (edge-length cost, not Garland-Heckbert quadrics)
-- **MEDIUM:** Billboard "octahedral" is actually cylindrical prism
-- **MEDIUM:** `allow_pickle=True` security risk in MaskStack
-- **PASS:** Poisson-disk (Bridson's), L-system trees, wind vertex colors, pipeline contracts
+#### CRITICAL (Ship-blocking)
 
-### D.7 — Round 1 Totals
+| Issue | File:Line | Description |
+|-------|-----------|-------------|
+| `generate_lod_specs` is FACE TRUNCATION | `_mesh_bridge.py:780` | Takes first N faces from face list (`faces[:keep_count]`). NOT decimation. A tree generated bottom-up loses its ENTIRE CANOPY at LOD1. No geometric error metric, no edge collapse, no QEM. The real LOD pipeline (`lod_pipeline.py`) has proper edge-collapse but this legacy stub is still called by some code paths. **DELETE or route through lod_pipeline.** |
+| `_near_tree` is O(n*t) brute force | `environment_scatter.py:1190` | For each grass candidate, iterates ALL tree positions. With 2000 trees and 12000 grass points = **24 MILLION** distance calculations in Python. Use `scipy.spatial.cKDTree.query_ball_point()`. |
+
+#### HIGH
+
+| Issue | File:Line | Description |
+|-------|-----------|-------------|
+| LOD decimation cost function too simple | `lod_pipeline.py:276` | `cost = edge_length * (1 + importance * 5)` is NOT QEM. No geometric error accumulation. No optimal collapse position. Static priority list (not min-heap). No boundary preservation. |
+| Entire scatter engine unvectorized | `_scatter_engine.py` | `poisson_disk_sample`, `biome_filter_points`, `context_scatter` — all pure Python loops. NumPy imported but unused. 200m terrain at 0.9m spacing = 30+ seconds vs <1s vectorized. |
+| No quality gates on any default pass | `terrain_pipeline.py:395` | Infrastructure exists but `quality_gate=None` on all 4 default passes. Fire alarm system with no smoke detectors. |
+| L-system branch joints duplicate vertices | `vegetation_lsystem.py:437` | Each segment creates own start/end rings. Adjacent segments create DUPLICATE VERTICES at joints. SpeedTree/Houdini stitch rings. ~40% vertex count waste. |
+| Leaf cards have no UVs | `vegetation_lsystem.py:750` | Generated quads have no UV coordinates. Cannot apply alpha-tested leaf textures. In-game: solid-color quads. NOT AAA. |
+| No stochastic L-system rules | `vegetation_lsystem.py:125` | Purely deterministic grammar. Every tree of same type has identical branching topology. Real SpeedTree uses probabilistic rule selection. |
+
+#### MEDIUM
+
+| Issue | File:Line | Description |
+|-------|-----------|-------------|
+| 46/60 mask stack channels unpopulated | `terrain_semantics.py` | Only 14 channels produced by 4 default passes. 46+ declared but never written. Pipeline is 77% stub declarations. |
+| Wind vertex colors never baked | `vegetation_system.py:721` | `bake_wind_colors` param discarded with `_ = params.get(...)`. No code path actually bakes wind colors to instanced vegetation. |
+| Dict channels lost on npz serialize | `terrain_semantics.py:600` | `to_npz` only saves `_ARRAY_CHANNELS`. Dict channels (wildlife_affinity, decal_density, detail_density) lost on checkpoint/restore. |
+| Stale height_min_m/max_m after mutation | `terrain_semantics.py:410` | Auto-populated at init but never updated when height channel mutated by erosion passes. |
+| `context_scatter` brute-force buildings | `_scatter_engine.py:318` | O(n*m) nearest-building search. 200 buildings × 5000 candidates = 1M Python distance calcs. Use cKDTree. |
+| `biome_filter_points` nearest-neighbor only | `_scatter_engine.py:131` | `int()` truncation for heightmap lookup — no bilinear interpolation. Visible stepping artifacts. |
+| Billboard LOD single quad | `lod_pipeline.py:757` | `_generate_billboard_quad` produces 1 vertical quad. Disappears edge-on. Should use cross-billboard. |
+
+#### COMPLIANT
+
+| Component | Verdict |
+|-----------|---------|
+| `derive_pass_seed` | SHA-256 over JSON tuple. Correct deterministic seeding. |
+| `TerrainPassController.run_pass` | Comprehensive contract enforcement, checkpoint, rollback. |
+| `TerrainMaskStack.compute_hash` | SHA-256 with `ascontiguousarray()`. Deterministic. |
+| `poisson_disk_sample` algorithm | Correct Bridson's with grid acceleration (but pure Python). |
+| `compute_silhouette_importance` | 14-view boundary edge detection. Correct. |
+| `SceneBudgetValidator` | Three-tier budget with actionable recommendations. |
+
+#### DUPLICATE SYSTEM CONFLICT
+
+Two LOD paths exist:
+1. `generate_lod_specs` (_mesh_bridge.py:780) — **FACE TRUNCATION (garbage)**
+2. `generate_lod_chain` (lod_pipeline.py:708) — **EDGE COLLAPSE (correct but not QEM)**
+
+Both are actively called. `generate_lod_specs` is reached through `_lsystem_tree_generator` → `VEGETATION_GENERATOR_MAP`. `generate_lod_chain` is reached through `handle_generate_lods`. **Resolution: delete `generate_lod_specs`, route all LOD through `lod_pipeline`.**
+
+### D.7 — Round 1+2 Totals
 
 | Severity | Count |
 |----------|:-----:|
-| HIGH | 16 |
-| MEDIUM | 17 |
+| CRITICAL | 2 |
+| HIGH | 22 |
+| MEDIUM | 28 |
 | LOW | 29 |
-| COMPLIANT | 42 |
+| COMPLIANT | 48 |
 
 ---
 
-*Round 1 Context7 verification by 6 Opus agents. ROUND 2 (per-function exhaustive) launching now...*
+*Round 1 Context7 verification by 7 Opus agents (6 domain + 1 vegetation deep dive). ROUND 2 (8 per-function exhaustive agents) running now — every function below A+ getting individual Context7 lookups for exact API calls.*
