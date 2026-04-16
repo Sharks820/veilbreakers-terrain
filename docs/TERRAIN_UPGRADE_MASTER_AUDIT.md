@@ -847,8 +847,82 @@ Bugs: windmill blades don't rotate (BUG-27), crossbow string squared (BUG-28), b
 
 ---
 
-*This document was produced by 27+ Opus 4.6 agents analyzing the complete veilbreakers-terrain codebase. Total: 12 code audits (including procedural_meshes.py 3-part), 5 deep research reports, 6 gap analyses, 1 A-grade verification, 2 verification sweeps, 1 procedural mesh quality deep dive (results pending integration). Covers ~513 graded functions across 30+ handler files. Intended for verification by Codex and subsequent implementation planning.*
+*This document was produced by 33+ Opus 4.6 agents analyzing the complete veilbreakers-terrain codebase. Total: 12 code audits (including procedural_meshes.py 3-part), 5 deep research reports, 6 gap analyses, 1 A-grade verification, 2 verification sweeps, 1 procedural mesh quality deep dive, 6 Context7 domain verification agents. Covers ~513 graded functions across 30+ handler files. Per-function Context7 exhaustive verification IN PROGRESS.*
 
 ---
 
-*This document was produced by 20 Opus 4.6 agents (18 primary + 2 verification) analyzing the complete veilbreakers-terrain codebase. Total: 6 code audits, 5 deep research reports, 6 gap analyses, 1 A-grade verification, 2 verification sweeps. It is intended for verification by Codex and subsequent implementation planning.*
+## APPENDIX D: CONTEXT7 BEST PRACTICE VERIFICATION (ROUND 1 — DOMAIN SUMMARIES)
+
+**Date:** 2026-04-15
+**Method:** 6 dedicated Opus agents queried Context7 MCP for current Blender API 4.5, NumPy, and SciPy docs.
+**Libraries verified:** `/websites/blender_api_4_5`, `/numpy/numpy`, `/websites/scipy_doc_scipy`
+
+### D.1 — Blender bmesh / Mesh Generation
+
+| Priority | Issue | File:Line | Description |
+|----------|-------|-----------|-------------|
+| HIGH | material_ids never applied | `_mesh_bridge.py:916` | MeshSpec material_ids validated but never written to `polygon.material_index`. Per-face material assignment silently dropped. |
+| MEDIUM | Missing mesh.update()/validate() | `_mesh_bridge.py:1029` | After `bm.to_mesh()` and `bm.free()`, neither called. |
+| MEDIUM | bmesh not in try/finally | `_mesh_bridge.py:942` | 87 lines unprotected — memory leak on exception. |
+| MEDIUM | auto_smooth missing 4.1+ fallback | `_mesh_bridge.py:1035` | No `set_sharp_from_angle()` for Blender 4.1+. |
+| LOW | Per-vertex UVs (no seam support) | `procedural_meshes.py:192` | UVs per-vertex not per-loop. |
+| LOW | Smooth shading via Python loop | `_mesh_bridge.py:1033` | Should use `foreach_set`. |
+
+**Compliant:** bmesh lifecycle, normal recalculation, UV layer creation, collection linking, pure-logic separation.
+
+### D.2 — NumPy Vectorization (HIGH = 100x+ speedup)
+
+| Function | File:Line | Gap | Speedup |
+|----------|-----------|-----|---------|
+| `compute_flow_map` | terrain_advanced.py:999 | Triple-nested Python loop for D8 | ~500x |
+| `apply_thermal_erosion` | terrain_advanced.py:1122 | Double-nested loop per iteration | ~200x |
+| `_box_filter_2d` | _biome_grammar.py:279 | Integral image via Python loop | ~100x |
+| `_distance_from_mask` | _biome_grammar.py:305 | **Mathematically wrong** (L1 not L2) + nested loops | ~1000x |
+| `compute_erosion_brush` | terrain_advanced.py:795 | Triple-nested brush loop | ~100x |
+| `apply_layer_operation` | terrain_advanced.py:511 | Double-nested brush loop | ~100x |
+| `compute_stamp_heightmap` | terrain_advanced.py:1202 | Double-nested stamp loop | ~100x |
+
+**Systemic:** 8 functions use deprecated `RandomState`, 2 return `.tolist()` on large arrays.
+
+### D.3 — SciPy Spatial (Top 5 Replacements)
+
+| Rank | Function | Replacement | Speedup |
+|------|----------|-------------|---------|
+| 1 | `detect_basins` dilation (terrain_masks.py:204) | `ndimage.binary_dilation` | 100-500x |
+| 2 | `_distance_from_mask` (_biome_grammar.py:305) | `ndimage.distance_transform_edt` | 100-1000x |
+| 3 | `_label_connected_components` (terrain_cliffs.py:147) | `ndimage.label` | 50-200x |
+| 4 | `detect_lakes` pit detection (_water_network.py:200) | `ndimage.minimum_filter` | 50-200x |
+| 5 | `detect_waterfall_lip_candidates` (terrain_waterfalls.py:222) | Vectorized masking | 50-200x |
+
+### D.4 — Blender Materials
+
+**ShaderNodeMixRGB deprecated** (~20 locations across 4 files). Migrate to `ShaderNodeMix(data_type='RGBA')`.
+
+**PASS:** BSDF socket names, normal chains, PBR values, node group interface, vertex colors, EEVEE guards.
+
+### D.5 — Erosion/Noise/Water
+
+- **P0:** `_erode_brush` kernel recomputed every call (50,000x waste)
+- **P1:** 3/4 erosion paths use deprecated RNG. Only `_water_network.from_heightmap` correct.
+- **P1:** `voronoi_biome_distribution` brute-force instead of `cKDTree`
+- **PASS:** `erosion_filter`, `apply_thermal_erosion_masks`, `compute_slope_map`, `_astar`
+
+### D.6 — Vegetation/Scatter/LOD/Pipeline
+
+- **HIGH:** LOD decimation is NOT QEM (edge-length cost, not Garland-Heckbert quadrics)
+- **MEDIUM:** Billboard "octahedral" is actually cylindrical prism
+- **MEDIUM:** `allow_pickle=True` security risk in MaskStack
+- **PASS:** Poisson-disk (Bridson's), L-system trees, wind vertex colors, pipeline contracts
+
+### D.7 — Round 1 Totals
+
+| Severity | Count |
+|----------|:-----:|
+| HIGH | 16 |
+| MEDIUM | 17 |
+| LOW | 29 |
+| COMPLIANT | 42 |
+
+---
+
+*Round 1 Context7 verification by 6 Opus agents. ROUND 2 (per-function exhaustive) launching now...*
