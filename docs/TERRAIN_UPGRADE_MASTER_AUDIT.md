@@ -847,7 +847,7 @@ Bugs: windmill blades don't rotate (BUG-27), crossbow string squared (BUG-28), b
 
 ---
 
-*This document was produced by 40+ Opus 4.6 agents analyzing the complete veilbreakers-terrain codebase. Total: 12 code audits, 5 deep research, 6 gap analyses, 1 A-grade verification, 2 verification sweeps, 1 procmesh deep dive, 7 Context7 domain agents, 8 Context7 per-function exhaustive agents (6 complete, 2 running). 310+ functions individually Context7-verified. 36 confirmed bugs. 4 new bugs found by Context7 (BUG-33 through BUG-36).*
+*This document was produced by 42 Opus 4.6 agents analyzing the complete veilbreakers-terrain codebase. Total: 12 code audits, 5 deep research, 6 gap analyses, 1 A-grade verification, 2 verification sweeps, 1 procmesh deep dive, 7 Context7 domain agents, 8 Context7 per-function exhaustive agents (ALL COMPLETE). 394 functions individually Context7-verified. 36 confirmed bugs (4 new from Context7: BUG-33 through BUG-36).*
 
 ---
 
@@ -971,8 +971,8 @@ Both are actively called. `generate_lod_specs` is reached through `_lsystem_tree
 | 6. environment+scatter+materials (5 files) | 5 | 68 | 64 | 4 | 0 |
 | 8. pipeline+semantics+caves+glacial+karst+morph+strat | 7 | 76 | 72 | 3 | 1 |
 | 7. procmesh+bridge+depth+LOD (4 files) | 4 | 35 | 30 | 4 | 1 |
-| **SUBTOTAL (7 agents)** | **29** | **345** | **298** | **36** | **11** |
-| 4. Cliffs+masks+biome+banded | — | PENDING | — | — | — |
+| 4. Cliffs+masks+biome+banded (5 files) | 5 | 49 | 36 | 12 | 1 |
+| **TOTAL (8 agents)** | **34** | **394** | **334** | **48** | **12** |
 
 #### NEW BUGS FOUND (Round 2)
 
@@ -1018,14 +1018,25 @@ Both are actively called. `generate_lod_specs` is reached through `_lsystem_tree
 | BREAKING | 0 | 1 (BUG-36) | 1 |
 | HIGH | 22 | 2 (BUG-33, BUG-34) | 24 |
 | MEDIUM | 28 | 0 | 28 |
-| LOW / PARTIAL | 29 | 36 | 65 |
-| PASS / COMPLIANT | 48 | 298 | 346 |
+| LOW / PARTIAL | 29 | 48 | 77 |
+| PASS / COMPLIANT | 48 | 334 | 382 |
 
-**Total functions Context7-verified: 345+ (1 agent still running)**
+**Total functions Context7-verified: 394 (ALL 8 AGENTS COMPLETE)**
 **Total new bugs found by Context7: 4 (BUG-33 through BUG-36)**
-**Total confirmed bugs: 2 (BUG-01, BUG-03)**
+**Total confirmed bugs: 3 (BUG-01, BUG-03, BUG-07 _distance_from_mask L1 not L2)**
 **Confirmed architectural issues: generate_lod_specs face truncation, _setup_billboard_lod wasted computation**
+
+#### Systemic Issues Found Across All 394 Functions
+
+| Issue | Occurrences | Files |
+|-------|:-----------:|:-----:|
+| `np.random.RandomState` (legacy) | 12 | _terrain_noise.py, _biome_grammar.py (8x) |
+| `ShaderNodeMixRGB` (deprecated) | ~20 | 4 files |
+| Python loops instead of scipy | 6 | terrain_cliffs, terrain_masks, _biome_grammar |
+| `np.gradient` without cell_size | 4 | _biome_grammar.py |
+| `.astype().copy()` redundancy | 4 | terrain_advanced.py |
+| Dead `_ = random.Random(seed)` | 5+ | terrain_features, coastline |
 
 ---
 
-*Context7 exhaustive verification by 15 Opus 4.6 agents (7 Round 1 domain + 8 Round 2 per-function). Every function's API calls checked against live Context7 documentation for Blender API 4.5, NumPy, and SciPy. Full per-function results in docs/aaa-audit/CONTEXT7_ROUND2_RESULTS.md.*
+*Context7 exhaustive verification COMPLETE. 15 Opus 4.6 agents (7 Round 1 domain + 8 Round 2 per-function). 394 functions individually verified against live Context7 documentation for Blender API 4.5, NumPy, and SciPy. 334 PASS, 48 PARTIAL, 12 FAIL. Full per-function results in docs/aaa-audit/CONTEXT7_ROUND2_RESULTS.md.*
