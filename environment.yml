@@ -12,4 +12,4 @@ dependencies:
   - pytest-cov
   - pip
   - pip:
-      - veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git#subdirectory=Tools/mcp-toolkit
+      - veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@<reviewed-commit-sha>#subdirectory=Tools/mcp-toolkit
