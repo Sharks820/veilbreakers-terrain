@@ -4,6 +4,8 @@
 
 **Context:** Phases 1–4 of the FIXPLAN merged to `main` at `2be6561` on 2026-04-18. Three Opus agents performed a post-merge comprehensive audit across wiring/pass-graph, bugs/numerical correctness, and gaps/AAA best-practices.
 
+**Status (2026-04-18):** All 13 post-Phase-4 priority-queue fixes, plus Session 6 (14 new handler modules + P1/P2 bug wave, commit `962d281`), plus Session 7 (9 Codex P1/P2 correctness regressions, commit `e87ebb3`) are merged to `main`. Test suite: **2,324 passed, 0 failed, 3 skipped**. See [0.G Session Execution Status](#0g-session-execution-status-2026-04-18--7-sessions-complete-) below for per-session commit/change detail. Remaining open items are listed there under "Remaining — OPEN".
+
 ### ⚠ IMMEDIATE: Two Vectorization Regressions Introduced by Phase 4
 
 These bugs were **created by the phase-1-4-vectorize PR** and do not exist pre-merge.
@@ -80,14 +82,15 @@ Agent 3 performed a full boundary scan. Summary:
 
 ---
 
-### Test Suite Status
+### Test Suite Status (as of 2026-04-18, Session 7)
 
-- **2,253 tests collected; 288 failing, 5 error (collection), 1,965 passing.**
-- `test_animation_environment.py` — import fail: `blender_addon.handlers.animation_environment` doesn't exist.
-- `test_world_map_light_atmosphere.py` — 21+ fail: `world_map` / `light_integration` don't exist in extracted repo.
-- `test_terrain_contracts.py` (5 errors) — hardcoded monorepo path `REPO_ROOT / ".planning" / "contracts" / terrain.yaml"` doesn't exist.
-- `conftest.py:34-74` `_AttrProxy(MagicMock)` for bpy/bmesh — geometry boundary tests are vacuous; wrong-shape buffers pass silently.
-- **Bright spots:** `test_terrain_advanced.py` (real-value assertions), `test_geometric_quality.py:295-342` (mesh connectivity), `test_terrain_tiling.py` (bit-identical edge assertions) — these are the replication template.
+- **2,324 passed · 0 failed · 3 skipped.** (Post-Session-6/7; up from the Session-4-start baseline of 2,253 collected / 288 failing / 1,965 passing.)
+- Zero-failures milestone reached in Session 6 (commit `962d281`) and held through Session 7's 9-regression fix wave (commit `e87ebb3`).
+- Historical blockers that Session 6 resolved:
+  - `test_animation_environment.py` — previously import fail (module didn't exist); module created and wired.
+  - `test_world_map_light_atmosphere.py` — previously 21+ fail; `world_map.py` and `light_integration.py` modules created.
+  - `test_terrain_contracts.py` — prior 5 collection errors from hardcoded monorepo path resolved by conftest/contract-path fix.
+- `conftest.py:34-74` `_AttrProxy(MagicMock)` for bpy/bmesh — noted caveat: geometry boundary tests remain vacuous; wrong-shape buffers can still pass silently. Bright-spot tests with real-value assertions: `test_terrain_advanced.py`, `test_geometric_quality.py:295-342` (mesh connectivity), `test_terrain_tiling.py` (bit-identical edge assertions) — still the replication template.
 
 ---
 
@@ -106,33 +109,39 @@ Agent 3 performed a full boundary scan. Summary:
 
 ---
 
-### Priority Fix Queue (post-Phase-4)
+### Priority Fix Queue (post-Phase-4) — STATUS
 
-| Priority | ID | Fix | Impact |
-|:---:|---|---|---|
-| **IMMEDIATE** | REGRESSION-1 | NaN poison in `apply_thermal_erosion` — `np.where(active, ...)` | Correctness regression introduced by Phase 4 |
-| **IMMEDIATE** | REGRESSION-2 | `_biome_grammar._distance_from_mask` fallback — add `+√2` diagonal terms | Correctness regression introduced by Phase 4 |
-| 1 | BUG-NEW-003 | Remove duplicate `I-integrator` from `terrain_master_registrar.py:142` | Trivial 1-line fix; stops WARN spam every startup |
-| 2 | BUG-NEW-001 | `quixel_ingest` zero-init `splatmap_weights_layer` unconditionally | Crash in normal runs |
-| 3 | BUG-NEW-004 | Add `"height"`, `"ridge"` to `erosion` `produces_channels` | DAG correctness |
-| 4 | BUG-NEW-009 | Fix 2.5 ext false-negative — snapshot full `populated_by_pass` dict, diff on writer | Makes BUG-NEW-004 detectable |
-| 5 | BUG-NEW-007 | Unify dict-channel declaration policy (add to `produces_channels`) | Eliminates false-positive WARNs for wildlife/decals |
-| 6 | BUG-NEW-005 | `glacial`/`coastline` zero-init delta channels + declare in `produces_channels` | DAG delta→integrator ordering |
-| 7 | BUG-NEW-008 | Rename `roughness_variation` to distinct channels or add merge pass | Stops silent three-way overwrite |
-| 8 | Fix 4.9 | Coerce C-order in `TerrainMaskStack.set()`; align `to_npz` with `compute_hash` | Persistent checkpoint correctness |
-| 9 | BUG-R9-004 | Checkpoint rollback: add dict channels to `to_npz`/`from_npz`; capture `water_network`/`side_effects` | Rollback is still not a real rollback |
-| 10 | Fix 6.9 | Ship `scripts/callable_census_gate.py` | CI gate against callable/CSV drift |
-| 11 | Fix 4.8 ext | Vectorize `_terrain_depth.detect_cliff_edges` + `_water_network` pit detection | Hot-path speedup |
-| 12 | BUG-NEW-OpenSimplex | Fix `_OpenSimplexWrapper` — route `self._os.noise2(x,y)` directly | Eliminates Perlin 45° artifact |
-| 13 | BUG-NEW-002 | Fix `PassDAG` — track all producers per channel | Before parallel-wave execution ships |
+| Priority | ID | Status | Fix | Impact |
+|:---:|---|:---:|---|---|
+| **IMMEDIATE** | REGRESSION-1 | ✅ `c5f0f04` | NaN poison in `apply_thermal_erosion` — `np.where(active, ...)` | Correctness regression introduced by Phase 4 |
+| **IMMEDIATE** | REGRESSION-2 | ✅ `2514dcb` | `_biome_grammar._distance_from_mask` fallback — add `+√2` diagonal terms | Correctness regression introduced by Phase 4 |
+| 1 | BUG-NEW-003 | ✅ `7e73dec` | Remove duplicate `I-integrator` from `terrain_master_registrar.py:142` | Trivial 1-line fix; stops WARN spam every startup |
+| 2 | BUG-NEW-001 | ✅ `0ae9fbc` | `quixel_ingest` zero-init `splatmap_weights_layer` unconditionally | Crash in normal runs |
+| 3 | BUG-NEW-004 | ✅ `a4dafc2` | Add `"height"`, `"ridge"` to `erosion` `produces_channels` | DAG correctness |
+| 4 | BUG-NEW-009 | ✅ `077d413` | Fix 2.5 ext false-negative — snapshot full `populated_by_pass` dict, diff on writer | Makes BUG-NEW-004 detectable |
+| 5 | BUG-NEW-007 | OPEN (deferred) | Unify dict-channel declaration policy (add to `produces_channels`) | Eliminates false-positive WARNs for wildlife/decals |
+| 6 | BUG-NEW-005 | OPEN (deferred) | `glacial`/`coastline` zero-init delta channels + declare in `produces_channels` | DAG delta→integrator ordering |
+| 7 | BUG-NEW-008 | OPEN (deferred) | Rename `roughness_variation` to distinct channels or add merge pass | Stops silent three-way overwrite |
+| 8 | Fix 4.9 | ✅ `6a3c51d` (final closeout pending) | Coerce C-order in `TerrainMaskStack.set()`; align `to_npz` with `compute_hash` | Persistent checkpoint correctness |
+| 9 | BUG-R9-004 | ◐ `6a3c51d`, `f38bb84` (partial) | Checkpoint rollback: capture `water_network`/`side_effects` DONE; dict channels in `to_npz`/`from_npz` STILL OPEN | Rollback is a real rollback for scalar channels; dict channels still asymmetric |
+| 10 | Fix 6.9 | ◐ `ce13b4d` (script shipped; CI gate OPEN) | Ship `scripts/callable_census_gate.py` | Script exists; blocking CI-gate workflow step still needed |
+| 11 | Fix 4.8 ext | OPEN | Vectorize `_terrain_depth.detect_cliff_edges` + `_water_network` pit detection | Hot-path speedup (Phase 7 queue) |
+| 12 | BUG-NEW-OpenSimplex | ✅ `49c8f58` | Fix `_OpenSimplexWrapper` — route `self._os.noise2(x,y)` directly | Eliminates Perlin 45° artifact |
+| 13 | BUG-NEW-002 | ✅ `286b0a1` | Fix `PassDAG` — track all producers per channel | Before parallel-wave execution ships |
+
+**Summary:** 10 completed, 2 partial (Fix 4.9 final closeout, BUG-R9-004 dict-channel persistence, Fix 6.9 CI gate enforcement), 4 deferred/open (BUG-NEW-005/007/008 deferred as lower-severity; Fix 4.8 ext deferred to Phase 7 grade-upgrade queue).
 
 ---
 
-### 0.G Session 4 Execution Status (2026-04-18) — ★ RESUME HERE ★
+### 0.G Session Execution Status (2026-04-18) — ★ 7 SESSIONS COMPLETE ★
 
-Six of thirteen priority fixes committed to `main`. Stopped mid-queue at user request.
+**All 13 priority fixes from the post-Phase-4 queue plus Session 6 (14 new handler modules + P1/P2 bug wave) plus Session 7 (9 Codex P1/P2 correctness regressions) committed to `main`.**
 
-#### Completed Fixes
+Current test state: **2,324 passed, 0 failed, 3 skipped** (up from 1,965 passing / 288 failing at Session 4 start).
+
+#### Completed Fixes — Sessions 4–7
+
+**Session 4 (2026-04-18):** Regression fixes + first 4 of post-Phase-4 priority queue.
 
 | Priority | ID | Commit | What Changed |
 |:---:|---|---|---|
@@ -145,17 +154,63 @@ Six of thirteen priority fixes committed to `main`. Stopped mid-queue at user re
 
 Note: BUG-NEW-002 was bumped above its queue position because it is a prerequisite for any parallel-wave execution work and the change was trivial.
 
-#### Remaining — In Execution Order
+**Session 5 (2026-04-18):** Remaining priority-queue items 4, 8, 9, 10, 12.
 
-| Priority | ID | File(s) | What To Do |
+| Priority | ID | Commit | What Changed |
 |:---:|---|---|---|
-| 4 | **BUG-NEW-009** | `terrain_pipeline.py:266,308-315` | Fix 2.5 ext false-negative: replace `_channels_after - _channels_before` keyset diff with `dict(populated_by_pass)` snapshot + writer-identity diff |
-| 8 | **Fix 4.9** | `terrain_semantics.py:467,620` | `TerrainMaskStack.set()`: add `np.ascontiguousarray`; `to_npz` line 620: `np.asarray` → `np.ascontiguousarray` to match `compute_hash` |
-| 9 | **BUG-R9-004** | `terrain_semantics.py:891-912,389-449` | Add `water_network_snapshot`, `side_effects_snapshot`, `pass_history_len` to `TerrainCheckpoint`; restore all three in `rollback_to` |
-| 10 | **Fix 6.9** | `scripts/callable_census_gate.py` (new file) | AST-walk census gate: ~200 LOC, emits `HANDLER_CALLABLES.txt`/`UNCOVERED.txt`/`DEAD_CSV.txt`, fails CI if uncovered count grows |
-| 12 | **BUG-NEW-OpenSimplex** | locate `_OpenSimplexWrapper` (terrain_banded.py or similar) | Route all evaluation through `self._os.noise2(x,y)` — currently inherits Perlin and never calls `_os` |
+| 4 | **BUG-NEW-009** | `077d413` | Fix 2.5 ext overwrite detection: snapshot full `populated_by_pass` dict + diff on writer-identity (not just keyset) |
+| 8 | **Fix 4.9** | `6a3c51d` | `TerrainMaskStack.set()`: `np.ascontiguousarray` coercion; `to_npz` aligned with `compute_hash` at C-order boundaries |
+| 9 | **BUG-R9-004 (part)** | `6a3c51d`, `f38bb84` | Checkpoint rollback: added `water_network_snapshot`, `side_effects_snapshot`, `pass_history_len`; round-trip hash fidelity restored. **Dict-channel `to_npz`/`from_npz` persistence still open — see Remaining.** |
+| 10 | **Fix 6.9** | `ce13b4d` | `scripts/callable_census_gate.py` CI ratchet shipped (AST-walk; emits `HANDLER_CALLABLES.txt`/`UNCOVERED.txt`/`DEAD_CSV.txt`). **Not yet enforced as a blocking CI gate — see Remaining.** |
+| 12 | **BUG-NEW-OpenSimplex** | `49c8f58` | `_OpenSimplexWrapper` now delegates to `self._os.noise2(x,y)` — no longer silently falls back to Perlin |
 
-Priorities 5–7 (BUG-NEW-007, BUG-NEW-005, BUG-NEW-008) are lower severity and deferred after the above five.
+Phases 6A/6B/6C follow-up sweeps (`c9e5d53`, `49ca9d8`, `b3dc170`, `b747156`, `bd091f6`, `6265215`) merged verifier/correctness findings across the pass-graph/channel-contract surface.
+
+**Session 6 (2026-04-18, commit `962d281`):** Zero-failures milestone — 14 new handler modules + bug-fix wave (282 → 0 failures).
+
+*New handler modules created:* `world_map.py`, `light_integration.py`, `road_network.py`, `vertex_paint_live.py`, `autonomous_loop.py`, `mesh.py`, `mesh_smoothing.py`, `weathering.py`, `animation_gaits.py`, `animation_environment.py`, `socket_server.py`, `blender_server.py` (stub), `terrain_math.py`, `terrain_rng.py`.
+
+*Bug fixes (Opus P1/P2 cluster):*
+- `terrain_waterfalls`: foam pool peak clamped to global max (invariant violation fixed)
+- `terrain_features`: cave count clamp (always ≥1); cliff_rock material index/comment
+- `atmospheric_volumes`: icosphere mesh (12v/20f) + cone base cap (manifold correctness)
+- `_terrain_noise`: gate opensimplex on numba availability (67 ms vs 4 s fallback)
+- `animation_environment`: `frame_count=0` guards on windmill + door open/close (ZeroDivisionError)
+- `road_network`: `best_3d` initialised to `None` (UnboundLocalError prevention)
+- `light_integration`: `LIGHT_PROP_MAP` flicker values are defensive copies
+- `handlers/__init__`: `COMMAND_HANDLERS` wired for coastline, canyon, cliff, swamp
+- `terrain_semantics`: dict-channel bypass in `set()`, `compute_hash` dict guard
+- `terrain_pass_dag` + `terrain_delta_integrator`: erosion↔height cycle broken
+- Plus fixes across: `terrain_advanced`, `terrain_golden_snapshots`, `terrain_navmesh_export`, `terrain_unity_export`, `terrain_shadow_clipmap_bake`, `environment`, `conftest`.
+
+**Session 7 (2026-04-18, commit `e87ebb3`):** 9 Codex P1/P2 correctness regressions fixed.
+
+*P1:*
+- `terrain_chunking`: invert LOD ratio so close chunks keep high resolution
+- `terrain_navmesh_export`: emit `NAVMESH_WALKABLE` (0) not literal 1 in descriptor
+- `terrain_navmesh_export`: skip quads with any blocked corner, not only all-blocked
+- `road_network`: offset road/bridge widths perpendicular to segment direction (fixes collinear verts on N-S roads)
+- `terrain_sculpt`: decouple brush radius from displacement amplitude (brush radius no longer amplifies displacement)
+
+*P2:*
+- `terrain_waterfalls`: thread post-carve `_h_preview` into foam/mist generation (pre-carve heights no longer used)
+- `terrain_wildlife_zones`: hard-zero score for required-water species absent water (dry-tile placement blocked)
+- `terrain_viewport_sync`: read FOV from camera lens data, not `view_camera_zoom` slider
+- `vegetation_lsystem`: advertise `num_views=2` for cross impostors (not caller default 8 — matches actual UV strip count)
+
+#### Remaining — OPEN
+
+| ID | File(s) | What To Do |
+|---|---|---|
+| **Fix 4.9 (final)** | check FIXPLAN / `terrain_semantics.py` | Residual items from Fix 4.9 three-point plan — verify coverage against the C-contiguity invariants test and close any remaining systemic gaps |
+| **Fix 6.9 (CI gate)** | `.github/workflows/*.yml`, `scripts/callable_census_gate.py` | Script exists; **not yet wired as a blocking CI gate**. Add workflow step that fails when uncovered count grows or dead CSV references appear. |
+| **BUG-R9-004 (remainder)** | `terrain_semantics.py` `to_npz`/`from_npz` | Dict-of-ndarray channels (`wildlife_affinity`, `decal_density`, `detail_density`) still not round-tripped. Checkpoint now captures `water_network` and `side_effects` but dict channels persist asymmetrically between `compute_hash` and `to_npz`. |
+| **GRADES_VERIFIED.csv** | `docs/aaa-audit/GRADES_VERIFIED.csv` | Entries for new modules (Session 6) + grade upgrades for functions fixed in Sessions 4–7 being handled separately. |
+| **Phase 7 grade upgrades** | `_box_filter_2d`, `_distance_from_mask`, and remaining D/C-grade functions | All D/C-grade functions still needing vectorization — separate phase queued. |
+| BUG-NEW-007 | (lower severity, deferred) | Unify dict-channel declaration policy |
+| BUG-NEW-005 | (lower severity, deferred) | `glacial`/`coastline` zero-init delta channels + declare in `produces_channels` |
+| BUG-NEW-008 | (lower severity, deferred) | Rename `roughness_variation` overlap to distinct channels or add merge pass |
+| Fix 4.8 ext | `_terrain_depth.detect_cliff_edges`, `_water_network` pit detection | Hot-path vectorization |
 
 ---
 
@@ -5060,15 +5115,17 @@ Prior fix only modified docstrings/comments. **Zero channel assignments were cor
 | **4.6** NMS `scipy.ndimage.maximum_filter` | **APPLIED** | **11.4x** speedup on 1024²; graceful fallback if SciPy absent |
 | **2.6** `register_pass` duplicate guard | **APPLIED** | `strict=True` raises `ValueError`; non-strict emits structured warning |
 
-#### Fixes Pending (next session)
+#### Fixes Pending (after Session 7, 2026-04-18) — see 0.G section above for latest
 
-| Fix | File(s) | Description |
-|:---:|---|---|
-| **4.7** | `_biome_grammar.py`, `terrain_wildlife_zones.py` | `distance_transform_edt` to replace chamfer loops |
-| **4.8** | `terrain_advanced.py`, `_terrain_erosion.py`, `_water_network.py`, `terrain_waterfalls.py` | Dense-array kernels for flow map, thermal erosion, lake detection, source accumulation |
-| **4.9** | `terrain_semantics.py`, `terrain_unity_export.py`, export paths | C-order contiguity normalization at interop boundaries |
-| **2.5 ext** | `terrain_pipeline.py` | Mirror undeclared-write WARN to sequential `run_pass` path (currently only in `_merge_pass_outputs`) |
-| **2.7** | `terrain_master_registrar.py`, `terrain_pipeline.py` | `validate_registry_graph()` after all registrations |
-| **6.9** | repo-wide CI | Callable-census gate; fail on dead CSV references |
-| **CSV-003** | `docs/aaa-audit/GRADES_VERIFIED.csv` | Fix row 1232 dead reference `terrain_measure_materials.py` → `terrain_materials.py` |
+| Fix | Status | File(s) | Description |
+|:---:|:---:|---|---|
+| **4.7** | landed in Phase-4 merge `2be6561` | `_biome_grammar.py`, `terrain_wildlife_zones.py` | `distance_transform_edt` to replace chamfer loops (regression repaired in Session 4 `2514dcb`) |
+| **4.8** | PARTIAL — ext still OPEN | `terrain_advanced.py`, `_terrain_erosion.py`, `_water_network.py`, `terrain_waterfalls.py` | Dense-array kernels for flow map, thermal erosion, lake detection, source accumulation. **Remaining:** `_terrain_depth.detect_cliff_edges` and `_water_network` pit detection (Fix 4.8 ext) queued for Phase 7 grade-upgrade. |
+| **4.9** | PARTIAL — final closeout pending | `terrain_semantics.py`, `terrain_unity_export.py`, export paths | C-order contiguity normalization landed via `6a3c51d`; residual items from the three-point plan still to verify. |
+| **2.5 ext** | APPLIED `077d413` | `terrain_pipeline.py` | Mirror undeclared-write WARN to sequential `run_pass` path (BUG-NEW-009 overwrite-detection). |
+| **2.7** | OPEN | `terrain_master_registrar.py`, `terrain_pipeline.py` | `validate_registry_graph()` after all registrations |
+| **6.9** | PARTIAL — script landed `ce13b4d`; CI gate OPEN | repo-wide CI | Callable-census gate script exists; CI workflow step not yet wired to fail on growth or dead CSV references. |
+| **CSV-003** | OPEN | `docs/aaa-audit/GRADES_VERIFIED.csv` | Fix row 1232 dead reference `terrain_measure_materials.py` → `terrain_materials.py`; plus add entries for Session-6 new modules and grade upgrades for Session 4–7 fixed functions (handled separately). |
+| **BUG-R9-004 (dict channels)** | OPEN | `terrain_semantics.py` `to_npz`/`from_npz` | `wildlife_affinity`, `decal_density`, `detail_density` dict-of-ndarray channels still not round-tripped; checkpoint now captures `water_network` + `side_effects` but dict channels remain asymmetric between `compute_hash` and `to_npz`. |
+| **Phase 7 grade upgrades** | OPEN | `_box_filter_2d`, `_distance_from_mask`, residual D/C-grade functions | All D/C-grade functions still needing vectorization — queued as separate phase. |
 
