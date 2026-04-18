@@ -175,7 +175,7 @@ def register_integrator_pass() -> None:
         PassDefinition(
             name="integrate_deltas",
             func=pass_integrate_deltas,
-            requires_channels=("height",) + _DELTA_CHANNELS,
+            requires_channels=("height",),
             produces_channels=("height",),
             seed_namespace="integrate_deltas",
             requires_scene_read=False,
