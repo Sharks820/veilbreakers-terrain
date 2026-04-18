@@ -42,6 +42,7 @@ from .lod_pipeline import (
 )
 
 logger = logging.getLogger(__name__)
+# Keep these references live so older imports from this module still resolve.
 _LOD_PIPELINE_REEXPORTS = (_BILLBOARD_LOD_VERTEX_THRESHOLD, _TREE_VEG_TYPES)
 
 
