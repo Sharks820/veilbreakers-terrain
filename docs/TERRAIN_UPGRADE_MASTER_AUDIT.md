@@ -1997,6 +1997,120 @@ These are architectural meta-findings surfaced by the M2 MCP-research wave (Agen
 - **BUG-131 (`generate_terrain_bridge_mesh` discards Z) — REVISED Fix:** sample terrain Z under each span sample via `scipy.interpolate.RegularGridInterpolator((x_grid, y_grid), heightmap, method='linear')((sample_xs, sample_ys))` (vectorized bilinear). Emit a pillar mesh per sample where `pillar_height_i = max(0, deck_z - terrain_z_at(x_i, y_i))`. Add `pillar_spacing` (8-16 m stone bridges, 30-50 m steel) and `abutment_flare` (terrain blends into bridge ramps) parameters. Reference: UE5 `Sample Spline Component` + `Sample Surface` PCG nodes.
 
 
+## BUG-S6-xxx: Session-6 New Module Bugs (2026-04-18)
+
+> Post-Session-6 audit of the 14 newly-created handler modules (`world_map.py`, `light_integration.py`, `mesh.py`, `mesh_smoothing.py`, `vertex_paint_live.py`, `autonomous_loop.py`, `weathering.py`, `animation_gaits.py`, `animation_environment.py`, plus utilities). Three Opus agents performed deep-dive inspection of the newly-landed code that Session 6's fix wave merged but that had not yet been audited against AAA comparables (Frostbite, UE5, Unity HDRP, Blender 4.5).
+
+### CRITICAL (2)
+
+#### BUG-S6-002 — Laplacian smoothing has classic shrinkage (no Taubin pass)
+- **File:** `mesh_smoothing.py:42-89`
+- **Problem:** `blend_factor=0.5` over 3 iterations shrinks the mesh ~10-15%. For terrain assembled from tiles, characteristic peaks lose silhouette. No Taubin λ/μ counter-pass (canonical SIGGRAPH '95 remedy).
+- **Impact:** Silhouette collapse on assembled terrain; peaks flatten; shape-preservation broken.
+- **Docstring mismatch:** Docstring claims "double-buffer numpy refactor" but implementation has zero numpy — pure-Python nested loops (see BUG-S6-001).
+- **Severity:** CRITICAL
+- **Fix:** Implement Taubin smoothing with alternating (λ=+0.5, μ≈-0.53) passes to counter shrinkage; OR post-smooth rescale to preserve bounding volume.
+
+#### BUG-S6-005 — `merge_nearby_lights` is non-transitive and order-dependent
+- **File:** `light_integration.py:222-232`
+- **Problem:** Greedy clustering is non-transitive: lights A=(0,0,0), B=(4,0,0), C=(8,0,0) at `merge_distance=5` merge A+B but leave C orphaned despite C being within 5m of B. Dict iteration order determines the outcome.
+- **Impact:** Same scene produces different merges depending on Python dict ordering — non-deterministic light baking. AAA light merging (Frostbite / UE5) must be transitive and order-independent.
+- **Severity:** CRITICAL
+- **Fix:** Use union-find / connected-components over the within-distance graph. Sort by stable key (e.g. position hash) before clustering to guarantee determinism.
+
+### IMPORTANT (10)
+
+#### BUG-S6-001 — `mesh_smoothing.py` docstring lies about numpy refactor
+- **File:** `mesh_smoothing.py:1-7`
+- **Problem:** Module docstring claims "double-buffer numpy refactor" but implementation has zero numpy — pure-Python nested loops.
+- **Impact:** Misleads maintainers about performance characteristics and correctness.
+- **Severity:** IMPORTANT
+- **Fix:** Implement the numpy refactor or rename/delete the claim; remove "numpy refactor" from docstring.
+
+#### BUG-S6-003 — `apply_structural_settling` is height-blind and has dead bbox call
+- **File:** `weathering.py:227-234`
+- **Problem:** Computes `_compute_bounding_box(...)` then discards the result (explicit dead code). Applies same-magnitude Gaussian jitter to every vertex regardless of height — tower-tops and ground-plane get identical displacement magnitude. Not "structural settling"; it's uniform-random Y-jitter.
+- **Impact:** Settling looks wrong; tall structures wobble with ground plane rather than subsiding.
+- **Severity:** IMPORTANT
+- **Fix:** Weight `dy` by `height_norm = (v.y - bbox.min_y) / (bbox.max_y - bbox.min_y)`; OR rename to `apply_random_y_jitter` to match actual behavior.
+
+#### BUG-S6-004 — `compute_light_placements` leaks global `LIGHT_PROP_MAP` refs
+- **File:** `light_integration.py:176-182`
+- **Problem:** Returns `color` and `flicker` as references to module-level `LIGHT_PROP_MAP` dicts. Any caller mutating `light["color"]` or `light["flicker"]["frequency"]` corrupts the global map for all subsequent calls. Session 6's `_fp()` defensive-copy only protects the preset copy, not the `ldef` reference.
+- **Impact:** First caller mutation silently poisons every subsequent light placement.
+- **Severity:** IMPORTANT
+- **Fix:** `"color": tuple(ldef["color"])`, `"flicker": dict(ldef["flicker"]) if ldef["flicker"] else None` at the return site.
+
+#### BUG-S6-006 — Energy-weighted centroid for light merging is wrong for mixed-scale inputs
+- **File:** `light_integration.py:248-255`
+- **Problem:** Bonfire (energy=200) + 3 candles (energy=25) places the merged light 97% at bonfire position, visually ignoring the candle cluster. Frostbite/UE5 use luminous-center or max-energy-anchor with unweighted centroid for similar-energy clusters.
+- **Impact:** Merged light placement ignores cluster geometry when energies differ by 2× or more.
+- **Severity:** IMPORTANT
+- **Fix:** Use max-energy-anchor for dominant lights; unweighted centroid when all energies are within 2× of each other.
+
+#### BUG-S6-007 — Voronoi-bounds grid is too coarse for bbox-based landmark placement
+- **File:** `world_map.py:330-365`
+- **Problem:** `_compute_voronoi_bounds` at `resolution=20` gives 100-unit grid spacing on a 2000m map. Adjacent cells share overlapping rectangular bboxes over irregular Voronoi regions. Landmarks from one region can be placed visually inside a neighbor's territory.
+- **Impact:** Visible region-boundary violations in landmark placement.
+- **Severity:** IMPORTANT
+- **Fix:** Scale `resolution` with `sqrt(num_regions)`; clip landmark placement to 25% of bbox half-dimensions; OR store actual Voronoi polygon points and use point-in-polygon.
+
+#### BUG-S6-010 — `_compute_edge_convexity` is edge-orientation-dependent
+- **File:** `weathering.py:92-112`
+- **Problem:** Providing edge `(a,b)` vs `(b,a)` flips the convexity sign, reversing which vertices accumulate moss vs wear. Real weathering should be orientation-invariant.
+- **Impact:** Moss/wear patterns flip based on arbitrary edge-traversal direction.
+- **Severity:** IMPORTANT
+- **Fix:** Use symmetric curvature: `curvature = 1.0 - dot(na, nb)` from the two face normals, independent of edge direction.
+
+#### BUG-S6-011 — `blend_colors` destroys vertex alpha for ADD/SUBTRACT/MULTIPLY modes
+- **File:** `vertex_paint_live.py:155-182`
+- **Problem:** Hardcoded `range(4)` for RGBA treats alpha identically to color channels under ADD/SUBTRACT/MULTIPLY, driving vertex alpha toward zero on opaque brushwork. Blender 4.5 vertex-color layers treat alpha as selection mask, not a color component.
+- **Impact:** Vertex selection masks silently get wiped during live paint brushing.
+- **Severity:** IMPORTANT
+- **Fix:** Preserve alpha in non-MIX modes: `result[3] = existing[3]`. OR blend only channels 0-2 and apply MIX semantics to channel 3.
+
+#### BUG-S6-014 — `select_fix_action` collapses non-manifold and degenerate cases to one action
+- **File:** `autonomous_loop.py:261-267`
+- **Problem:** Returns `"repair"` for both non-manifold AND degenerate-faces cases. These require different bmesh operations (merge-coincident-verts vs `dissolve_degenerate`). Downstream repair handler cannot distinguish which fix to apply without re-inspecting the mesh.
+- **Impact:** Loops may apply wrong repair op, or redundantly re-inspect geometry on every iteration.
+- **Severity:** IMPORTANT
+- **Fix:** Return distinct action strings: `"repair_non_manifold"` vs `"repair_degenerate"`.
+
+#### BUG-S6-015 — Topology grade ladder is inverted (degenerate < non-manifold)
+- **File:** `autonomous_loop.py:175-180`
+- **Problem:** Degenerate faces (unrenderable) score "B" while non-manifold edges (renderable but ambiguous) score "C/D". Real AAA pipelines treat degenerate faces as a blocker and non-manifold edges as a warning.
+- **Impact:** Shipable-but-ugly meshes score lower than unrenderable-broken meshes.
+- **Severity:** IMPORTANT
+- **Fix:** Reorder: A=clean, B=non-manifold<10%, C=non-manifold≥10%, D=has-degenerate, E=both. OR split into `topology_grade` and `degeneracy_grade`.
+
+#### BUG-S6-016 — `_select_by_plane` silently accepts typos as "below"
+- **File:** `mesh.py:139-144`
+- **Problem:** Any non-`"above"` string (typos: `"Above"`, `"BELOW"`, `"outside"`) silently gives inverted selection with no error. For a level-designer-facing selection system, silent wrong-axis selection is data corruption.
+- **Impact:** Designer typos wipe the wrong half of the mesh with no warning.
+- **Severity:** IMPORTANT
+- **Fix:** `if side not in ("above", "below"): raise ValueError(f"side must be 'above' or 'below', got {side!r}")`.
+
+#### BUG-S6-019 — `merge_nearby_lights` picks flicker preset from arbitrary first light
+- **File:** `light_integration.py:243-246`
+- **Problem:** Flicker preset taken from first non-None light in group (arbitrary dict-iteration order). A bonfire near a torch gets torch-flicker (first encountered), losing the bonfire's dramatic sine amplitude entirely.
+- **Impact:** Dominant-light character lost after merge; audience sees weaker flicker behavior.
+- **Severity:** IMPORTANT
+- **Fix:** Pick flicker from highest-energy light: `max_k = max(group, key=lambda k: lights[k]["energy"]); flicker = lights[max_k].get("flicker")`.
+
+### POLISH (9)
+
+- **BUG-S6-008** — `world_map.py:405-433`: Dead `rng_state = rng.getstate()` at line 408 never used; extra-edge loop has unclear convergence guarantee.
+- **BUG-S6-009** — `world_map.py:499-526`: Second POI-generation `while`-loop is unreachable dead code (`base_count = max(min_pois, n*8)` guarantees the count is already met before the loop starts).
+- **BUG-S6-012** — `vertex_paint_live.py:30-58`: `_falloff_weight` returns `None` vs `(i, 0.0)` inconsistently for boundary vertices across CONSTANT vs other modes.
+- **BUG-S6-013** — `autonomous_loop.py:114-118`: `_grade_worse_than` defaults typo'd grade strings silently to "A" and "worse than F" respectively; should raise `ValueError`.
+- **BUG-S6-017** — `weathering.py:167-192`: Height axis hardcoded to Y (index 1) but Blender 4.5 uses Z-up; all weathering height factors are biased along the wrong axis.
+- **BUG-S6-018** — `world_map.py:393`: Road-type threshold hardcoded at `500.0`; should scale with `map_size` (use `map_size * 0.25`).
+- **BUG-S6-020** — `autonomous_loop.py:203`: `normal_consistency` defaults to `1.0` for zero adjacent-face meshes; should be `None` or `0.0` (current default hides isolated-vertex pathology).
+- **BUG-S6-021** — `world_map.py:611-614`: Landmark height range only `[min_h, 1.5×min_h]`; e.g. `obsidian_spire` (25m) gets 25-37.5m with no variety.
+- **BUG-S6-XXX** — `mesh.py:148-150`: `_parse_selection_criteria` is literally `return criteria` (pass-through placeholder). Either implement real parsing or delete.
+
+---
+
 ## 3. GRADE INFLATION REPORT
 
 The original audit used 3 reviewers with vastly different strictness:
@@ -2320,6 +2434,21 @@ G1 verified all 22 modules listed above are STILL ORPHAN on HEAD `064f8d5` (no p
 | `terrain_advanced.py` | `compute_erosion_brush` wind/thermal modes | hardcoded params (BUG-38) |
 | `_terrain_noise.py` | `_OpenSimplexWrapper.noise2/noise2_array` (line 164) | imported real opensimplex, never invoked (BUG-23) |
 | `terrain_blender_safety.py` | `import_tripo_glb_serialized` | thread lock wrapper, no `bpy.ops.import_scene.gltf()` (master Section 8 CRITICAL) |
+
+### Session-6 Orphaned Modules (2026-04-18)
+
+13 of 14 Session-6 module functions are ORPHANED — registered nowhere in `COMMAND_HANDLERS`, reachable only by test imports:
+
+| Module | Functions | Status |
+|--------|-----------|--------|
+| `mesh_smoothing.py` | `smooth_assembled_mesh` | ORPHANED — tests use stale `blender_addon.*` import prefix |
+| `vertex_paint_live.py` | `compute_paint_weights`, `compute_paint_weights_uv`, `blend_colors` | ORPHANED |
+| `autonomous_loop.py` | `evaluate_mesh_quality`, `select_fix_action` | ORPHANED |
+| `weathering.py` | `compute_weathered_vertex_colors`, `apply_structural_settling` | ORPHANED |
+| `mesh.py` | `_select_by_box`, `_select_by_sphere`, `_select_by_plane`, `_parse_selection_criteria`, `_validate_edit_operation` | ORPHANED (tests only) |
+| `animation_gaits.py` | `Keyframe` | WIRED — used internally by `animation_environment.py` |
+
+**Action required:** Either wire into `COMMAND_HANDLERS` or document as internal-only library modules and move out of `handlers/`.
 
 ---
 
@@ -2982,6 +3111,17 @@ JSON quality profiles (presets/quality_profiles/*.json) have DIFFERENT values fr
 
 ### Test File with Missing Modules
 `test_animation_environment.py` imports `animation_environment` and `animation_gaits` modules that don't exist in this repo (stayed in toolkit monorepo). This test always fails with ModuleNotFoundError.
+
+### Completely Ungraded Handler Files (found 2026-04-18)
+
+- `handlers/__init__.py` — dispatch scaffolding never audited (`_try_register`, `_fail_closed`, `_build_command_handlers`).
+- `terrain_math.py` — 7 canonical unit helpers (`slope_radians`, `distance_field_edt`, etc.); `distance_field_edt` has a D-quality Python-loop chamfer fallback.
+- `terrain_rng.py` — 2 functions (`make_rng`, `tile_rng`); policy-critical NumPy parallel-seed contract.
+
+### Partially Graded
+
+- `lod_pipeline.py` — `_edge_collapse_cost_qem` (QEM core) and `_compute_quadric` missing from grades.
+- `mesh.py` — all functions were skipped (private-prefix heuristic); all now graded (see CSV rows added 2026-04-18).
 
 ---
 
