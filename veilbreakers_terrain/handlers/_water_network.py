@@ -345,32 +345,21 @@ def _find_high_accumulation_sources(
     """
     rows, cols = flow_accumulation.shape
     above = flow_accumulation >= threshold
-    # A source is a cell above threshold where no in-flowing neighbor is above threshold
-    sources: list[tuple[int, int]] = []
+    has_upstream = np.zeros((rows, cols), dtype=bool)
 
-    for r in range(rows):
-        for c in range(cols):
-            if not above[r, c]:
-                continue
-            has_upstream_above = False
-            for d_idx, (dr, dc) in enumerate(_D8_OFFSETS):
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < rows and 0 <= nc < cols:
-                    # Check if neighbor flows INTO (r, c)
-                    neighbor_dir = flow_direction[nr, nc]
-                    if neighbor_dir < 0:
-                        continue
-                    # The opposite direction index
-                    opp_dr, opp_dc = _D8_OFFSETS[neighbor_dir]
-                    target_r, target_c = nr + opp_dr, nc + opp_dc
-                    if target_r == r and target_c == c:
-                        if above[nr, nc]:
-                            has_upstream_above = True
-                            break
-            if not has_upstream_above:
-                sources.append((r, c))
+    for d_idx, (dr, dc) in enumerate(_D8_OFFSETS):
+        opp = (d_idx + 4) % 8
+        r_d = slice(max(0, -dr), rows - max(0, dr))
+        r_s = slice(max(0,  dr), rows - max(0, -dr))
+        c_d = slice(max(0, -dc), cols - max(0, dc))
+        c_s = slice(max(0,  dc), cols - max(0, -dc))
+        # Neighbor at (r+dr,c+dc) flows INTO (r,c) when its flow_direction == opp
+        neighbor_flows_in = (flow_direction[r_s, c_s] == opp) & above[r_s, c_s]
+        has_upstream[r_d, c_d] |= neighbor_flows_in
 
-    return sources
+    sources_mask = above & ~has_upstream
+    rs, cs = np.where(sources_mask)
+    return list(zip(rs.tolist(), cs.tolist()))
 
 
 # ===================================================================

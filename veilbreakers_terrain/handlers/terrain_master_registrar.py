@@ -125,7 +125,8 @@ def _register_all_terrain_passes_impl(
     register_default_passes()
     loaded.append("A")
 
-    package_root = __package__ or "blender_addon.handlers"
+    package_root = __package__ or __name__.rpartition(".")[0]
+    assert package_root.startswith("veilbreakers_terrain")
 
     registrars: list[tuple[str, str, str]] = [
         ("B-cliffs", f"{package_root}.terrain_cliffs", "register_bundle_b_passes"),
@@ -170,6 +171,9 @@ def _register_all_terrain_passes_impl(
                 (label, ImportError(f"registrar not found: {module_path}.{attr}"))
             )
 
+    from .terrain_pipeline import TerrainPassController
+    for _w in TerrainPassController.validate_registry_graph():
+        logger.warning("Registry graph: %s", _w)
     return loaded, errors
 
 

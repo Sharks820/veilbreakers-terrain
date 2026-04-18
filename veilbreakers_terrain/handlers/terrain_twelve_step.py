@@ -66,32 +66,38 @@ def _detect_cliff_edges_stub(world_hmap: np.ndarray) -> List[Tuple[int, int]]:
 
 
 def _detect_cave_candidates_stub(world_hmap: np.ndarray) -> List[Tuple[int, int]]:
-    """Detect cave candidates as local minima surrounded by higher terrain."""
-    coords: List[Tuple[int, int]] = []
+    """Detect cave candidates as local minima in a 3×3 neighbourhood (vectorized)."""
     if world_hmap.size == 0 or world_hmap.shape[0] < 3 or world_hmap.shape[1] < 3:
-        return coords
+        return []
     h, w = world_hmap.shape
-    for y in range(1, h - 1):
-        for x in range(1, w - 1):
-            centre = world_hmap[y, x]
-            neighbours = world_hmap[y - 1:y + 2, x - 1:x + 2]
-            if centre <= np.min(neighbours):
-                coords.append((x, y))
-    return coords
+    padded = np.pad(world_hmap, 1, mode="edge")
+    local_min = np.full((h, w), np.inf)
+    for dy in range(3):
+        for dx in range(3):
+            local_min = np.minimum(local_min, padded[dy : dy + h, dx : dx + w])
+    ys, xs = np.where(world_hmap <= local_min)
+    return list(zip(xs.tolist(), ys.tolist()))
 
 
-def _detect_waterfall_lips_stub(world_hmap: np.ndarray) -> List[Tuple[int, int]]:
-    """Detect waterfall lip candidates where a plateau drops sharply."""
-    coords: List[Tuple[int, int]] = []
-    if world_hmap.size == 0 or world_hmap.shape[0] < 3:
-        return coords
-    # Look for rows where height drops significantly downward
-    dy = np.diff(world_hmap, axis=0)
-    threshold = float(np.percentile(np.abs(dy), 97))
-    ys, xs = np.where(dy <= -threshold)
-    for y, x in zip(ys.tolist(), xs.tolist()):
-        coords.append((int(x), int(y)))
-    return coords
+def _detect_waterfall_lips_stub(
+    world_hmap: np.ndarray,
+    world_origin_x: float,
+    world_origin_y: float,
+    cell_size: float,
+) -> list:
+    """Detect waterfall lip candidates via drainage-weighted D8 steepest descent."""
+    from .terrain_waterfalls import detect_waterfall_lip_candidates
+
+    world_stack = TerrainMaskStack(
+        tile_size=world_hmap.shape[0],
+        cell_size=cell_size,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        tile_x=0,
+        tile_y=0,
+        height=world_hmap,
+    )
+    return detect_waterfall_lip_candidates(world_stack)
 
 
 def _generate_road_mesh_specs(
@@ -286,7 +292,9 @@ def run_twelve_step_world_terrain(
     sequence.append("8_detect_hero_candidates")
     cliff_candidates = _detect_cliff_edges_stub(world_eroded)
     cave_candidates = _detect_cave_candidates_stub(world_eroded)
-    waterfall_lip_candidates = _detect_waterfall_lips_stub(world_eroded)
+    waterfall_lip_candidates = _detect_waterfall_lips_stub(
+        world_eroded, world_origin_x, world_origin_y, cell_size
+    )
 
     # Step 9 — per-tile extraction
     sequence.append("9_per_tile_extract")

@@ -11,11 +11,14 @@ Pure Python + numpy. Threading is stdlib.
 from __future__ import annotations
 
 import copy
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Sequence, Set
 
 from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import PassDefinition, PassResult
+
+logger = logging.getLogger(__name__)
 
 
 class PassDAGError(RuntimeError):
@@ -36,13 +39,24 @@ def _merge_pass_outputs(
             f"Worker for pass '{source_result.pass_name}' returned no mask stack snapshot"
         )
 
+    # Warn on channels written by this pass but not declared in produces_channels (Fix 2.5)
+    declared = set(definition.produces_channels)
+    for channel, writer in source_stack.populated_by_pass.items():
+        if writer == source_result.pass_name and channel not in declared:
+            logger.warning(
+                "Pass '%s' wrote channel '%s' but did not declare it in produces_channels; "
+                "add it to PassDefinition to ensure correct DAG ordering.",
+                source_result.pass_name, channel,
+            )
+
     for channel in definition.produces_channels:
         if not hasattr(source_stack, channel):
             raise PassDAGError(
                 f"Pass '{source_result.pass_name}' declared unknown channel '{channel}'"
             )
-        setattr(target_stack, channel, copy.deepcopy(getattr(source_stack, channel)))
-        if getattr(source_stack, channel) is not None:
+        val = copy.deepcopy(getattr(source_stack, channel))
+        object.__setattr__(target_stack, channel, val)
+        if val is not None:
             target_stack.populated_by_pass[channel] = source_result.pass_name
         target_stack.dirty_channels.discard(channel)
 

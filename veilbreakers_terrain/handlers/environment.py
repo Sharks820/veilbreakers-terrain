@@ -1070,33 +1070,35 @@ def _create_terrain_mesh_from_heightmap(
 
     bm.verts.ensure_lookup_table()
 
-    # Set vertex Z from heightmap using bilinear interpolation for smooth terrain
-    for vert in bm.verts:
-        u = (vert.co.x + terrain_size / 2.0) / terrain_size
-        v = (vert.co.y + terrain_size / 2.0) / terrain_size
-        col_f = u * (cols - 1)
-        row_f = v * (rows - 1)
-        c0 = max(0, min(int(col_f), cols - 2))
-        r0 = max(0, min(int(row_f), rows - 2))
-        c1 = c0 + 1
-        r1 = r0 + 1
-        cf = col_f - c0
-        rf = row_f - r0
-        h00 = float(heightmap[r0, c0])
-        h10 = float(heightmap[r0, c1])
-        h01 = float(heightmap[r1, c0])
-        h11 = float(heightmap[r1, c1])
-        h = (
-            h00 * (1 - cf) * (1 - rf)
-            + h10 * cf * (1 - rf)
-            + h01 * (1 - cf) * rf
-            + h11 * cf * rf
-        )
-        vert.co.z = h * height_scale
-
+    # Transfer grid topology to mesh first, then batch-write Z via foreach_set.
     bm.to_mesh(mesh)
     vertex_count = len(bm.verts)
     bm.free()
+
+    # Batch bilinear interpolation: read all positions at once, compute Z numpy.
+    n_verts = len(mesh.vertices)
+    co_flat = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co_flat)
+    co = co_flat.reshape(n_verts, 3)
+    u_arr = (co[:, 0] + terrain_size / 2.0) / terrain_size
+    v_arr = (co[:, 1] + terrain_size / 2.0) / terrain_size
+    col_f = u_arr * (cols - 1)
+    row_f = v_arr * (rows - 1)
+    c0 = np.clip(col_f.astype(np.int32), 0, cols - 2)
+    r0 = np.clip(row_f.astype(np.int32), 0, rows - 2)
+    c1 = c0 + 1
+    r1 = r0 + 1
+    cf = (col_f - c0).astype(np.float32)
+    rf = (row_f - r0).astype(np.float32)
+    hmap = np.asarray(heightmap, dtype=np.float32)
+    h_interp = (
+        hmap[r0, c0] * (1.0 - cf) * (1.0 - rf)
+        + hmap[r0, c1] * cf * (1.0 - rf)
+        + hmap[r1, c0] * (1.0 - cf) * rf
+        + hmap[r1, c1] * cf * rf
+    )
+    co_flat[2::3] = h_interp * float(height_scale)
+    mesh.vertices.foreach_set("co", co_flat)
 
     if hasattr(mesh, "polygons"):
         for poly in mesh.polygons:
@@ -2568,32 +2570,30 @@ def handle_paint_terrain(params: dict) -> dict:
                 altitude_min = 0.0
                 altitude_max = height_scale if height_scale > 0.0 else 1.0
 
-    for face in bm.faces:
-        center = face.calc_center_median()
-        altitude = _normalize_altitude_for_rule_range(
-            center.z,
-            range_min=altitude_min,
-            range_max=altitude_max,
-        )
+    centers_z = np.array([face.calc_center_median().z for face in bm.faces], dtype=np.float64)
+    normals_z = np.array([face.normal.z for face in bm.faces], dtype=np.float64)
 
-        # Slope from face normal
-        slope_rad = math.acos(max(-1.0, min(1.0, face.normal.z)))
-        slope_deg = math.degrees(slope_rad)
+    alt_span = max(altitude_max - altitude_min, 1e-9)
+    altitude_arr = np.clip((centers_z - altitude_min) / alt_span, 0.0, 1.0)
+    slope_arr = np.degrees(np.arccos(np.clip(normals_z, -1.0, 1.0)))
 
-        # First matching rule wins
-        for idx, rule in enumerate(biome_rules):
-            min_alt = rule.get("min_alt", 0.0)
-            max_alt = rule.get("max_alt", 1.0)
-            min_slope = rule.get("min_slope", 0.0)
-            max_slope = rule.get("max_slope", 90.0)
+    min_alts = np.array([r.get("min_alt", 0.0) for r in biome_rules], dtype=np.float64)
+    max_alts = np.array([r.get("max_alt", 1.0) for r in biome_rules], dtype=np.float64)
+    min_slopes = np.array([r.get("min_slope", 0.0) for r in biome_rules], dtype=np.float64)
+    max_slopes = np.array([r.get("max_slope", 90.0) for r in biome_rules], dtype=np.float64)
 
-            if (min_alt <= altitude <= max_alt
-                    and min_slope <= slope_deg <= max_slope):
-                face.material_index = idx
-                break
+    # (N_faces, N_rules) match; argmax gives first True per row (0 on all-False = default slot).
+    both_pass = (
+        (altitude_arr[:, None] >= min_alts[None, :])
+        & (altitude_arr[:, None] <= max_alts[None, :])
+        & (slope_arr[:, None] >= min_slopes[None, :])
+        & (slope_arr[:, None] <= max_slopes[None, :])
+    )
+    material_idx_arr = np.argmax(both_pass, axis=1).astype(np.int32)
 
     bm.to_mesh(mesh)
     bm.free()
+    mesh.polygons.foreach_set("material_index", material_idx_arr)
 
     return {
         "name": obj.name,
@@ -2795,6 +2795,9 @@ def _apply_road_profile_to_heightmap(
     outer_radius = road_half_width + shoulder_width
     grade = max(0.15, min(float(grade_strength), 1.0))
 
+    def _ss(x: np.ndarray) -> np.ndarray:
+        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
+
     for (r0, c0), (r1, c1) in zip(path, path[1:]):
         center_h0 = float(result[r0, c0])
         center_h1 = float(result[r1, c1])
@@ -2803,32 +2806,42 @@ def _apply_road_profile_to_heightmap(
         c_min = max(0, int(math.floor(min(c0, c1) - outer_radius)))
         c_max = min(result.shape[1] - 1, int(math.ceil(max(c0, c1) + outer_radius)))
 
-        for rr in range(r_min, r_max + 1):
-            for cc in range(c_min, c_max + 1):
-                dist, t = _point_segment_distance_2d(
-                    float(rr),
-                    float(cc),
-                    float(r0),
-                    float(c0),
-                    float(r1),
-                    float(c1),
-                )
-                if dist > outer_radius:
-                    continue
+        rr = np.arange(r_min, r_max + 1, dtype=np.float64)[:, np.newaxis]
+        cc = np.arange(c_min, c_max + 1, dtype=np.float64)[np.newaxis, :]
 
-                center_height = center_h0 + (center_h1 - center_h0) * t
-                if dist <= road_half_width:
-                    center_t = dist / max(road_half_width, 1e-6)
-                    crown = crown_height_m * (1.0 - _smootherstep(center_t))
-                    blend = grade * (0.45 + 0.55 * (1.0 - _smootherstep(center_t)))
-                    target = center_height + crown
-                else:
-                    shoulder_t = (dist - road_half_width) / max(shoulder_width, 1e-6)
-                    ditch = -ditch_depth_m * math.sin(_clamp01(shoulder_t) * math.pi)
-                    blend = grade * 0.35 * (1.0 - _smootherstep(shoulder_t))
-                    target = center_height + ditch
+        abr = float(r1 - r0)
+        abc = float(c1 - c0)
+        denom = abr * abr + abc * abc
+        if denom <= 1e-9:
+            dist = np.sqrt((rr - r0) ** 2 + (cc - c0) ** 2)
+            t_arr = np.zeros_like(dist)
+        else:
+            t_arr = np.clip(((rr - r0) * abr + (cc - c0) * abc) / denom, 0.0, 1.0)
+            dist = np.sqrt(
+                (rr - (r0 + abr * t_arr)) ** 2 + (cc - (c0 + abc * t_arr)) ** 2
+            )
 
-                result[rr, cc] = result[rr, cc] * (1.0 - blend) + target * blend
+        center_height = center_h0 + (center_h1 - center_h0) * t_arr
+
+        center_t = np.clip(dist / max(road_half_width, 1e-6), 0.0, 1.0)
+        ss_c = _ss(center_t)
+        target_crown = center_height + crown_height_m * (1.0 - ss_c)
+        blend_crown = grade * (0.45 + 0.55 * (1.0 - ss_c))
+
+        shoulder_t = np.clip((dist - road_half_width) / max(shoulder_width, 1e-6), 0.0, 1.0)
+        target_ditch = center_height - ditch_depth_m * np.sin(shoulder_t * math.pi)
+        blend_ditch = grade * 0.35 * (1.0 - _ss(shoulder_t))
+
+        in_crown = dist <= road_half_width
+        target = np.where(in_crown, target_crown, target_ditch)
+        blend = np.where(in_crown, blend_crown, blend_ditch)
+
+        patch = result[r_min : r_max + 1, c_min : c_max + 1]
+        result[r_min : r_max + 1, c_min : c_max + 1] = np.where(
+            dist <= outer_radius,
+            patch * (1.0 - blend) + target * blend,
+            patch,
+        )
 
     return result
 
@@ -2859,39 +2872,51 @@ def _apply_river_profile_to_heightmap(
     center_depth = max(float(depth_world), channel_half_width * 0.55, 0.9)
     thalweg_half_width = max(channel_half_width * 0.42, 0.75)
 
+    def _ss(x: np.ndarray) -> np.ndarray:
+        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
+
+    def _seg_dist(rr: np.ndarray, cc: np.ndarray, r0: int, c0: int, r1: int, c1: int):
+        abr = float(r1 - r0)
+        abc = float(c1 - c0)
+        denom = abr * abr + abc * abc
+        if denom <= 1e-9:
+            return np.sqrt((rr - r0) ** 2 + (cc - c0) ** 2), np.zeros_like(rr)
+        t = np.clip(((rr - r0) * abr + (cc - c0) * abc) / denom, 0.0, 1.0)
+        dist = np.sqrt((rr - (r0 + abr * t)) ** 2 + (cc - (c0 + abc * t)) ** 2)
+        return dist, t
+
+    base_hmap = np.asarray(base_heightmap, dtype=np.float64)
+
     for (r0, c0), (r1, c1) in zip(path, path[1:]):
-        bank_h0 = float(base_heightmap[r0, c0])
-        bank_h1 = float(base_heightmap[r1, c1])
+        bank_h0 = float(base_hmap[r0, c0])
+        bank_h1 = float(base_hmap[r1, c1])
         r_min = max(0, int(math.floor(min(r0, r1) - outer_radius)))
         r_max = min(result.shape[0] - 1, int(math.ceil(max(r0, r1) + outer_radius)))
         c_min = max(0, int(math.floor(min(c0, c1) - outer_radius)))
         c_max = min(result.shape[1] - 1, int(math.ceil(max(c0, c1) + outer_radius)))
 
-        for rr in range(r_min, r_max + 1):
-            for cc in range(c_min, c_max + 1):
-                dist, t = _point_segment_distance_2d(
-                    float(rr),
-                    float(cc),
-                    float(r0),
-                    float(c0),
-                    float(r1),
-                    float(c1),
-                )
-                if dist > outer_radius:
-                    continue
+        rr = np.arange(r_min, r_max + 1, dtype=np.float64)[:, np.newaxis]
+        cc = np.arange(c_min, c_max + 1, dtype=np.float64)[np.newaxis, :]
+        dist, t_arr = _seg_dist(rr, cc, r0, c0, r1, c1)
+        bank_height = bank_h0 + (bank_h1 - bank_h0) * t_arr
 
-                bank_height = bank_h0 + (bank_h1 - bank_h0) * t
-                if dist <= channel_half_width:
-                    inner_t = dist / max(channel_half_width, 1e-6)
-                    target = bank_height - center_depth * (1.0 - _smootherstep(inner_t))
-                    if dist <= thalweg_half_width:
-                        thalweg_t = dist / max(thalweg_half_width, 1e-6)
-                        target -= center_depth * 0.22 * (1.0 - _smootherstep(thalweg_t))
-                else:
-                    outer_t = (dist - channel_half_width) / max(bank_width, 1e-6)
-                    target = bank_height - center_depth * 0.34 * (1.0 - _smootherstep(outer_t))
+        inner_t = np.clip(dist / max(channel_half_width, 1e-6), 0.0, 1.0)
+        target_inner = bank_height - center_depth * (1.0 - _ss(inner_t))
+        thalweg_t = np.clip(dist / max(thalweg_half_width, 1e-6), 0.0, 1.0)
+        target_inner = target_inner - np.where(
+            dist <= thalweg_half_width,
+            center_depth * 0.22 * (1.0 - _ss(thalweg_t)),
+            0.0,
+        )
 
-                result[rr, cc] = min(result[rr, cc], target)
+        outer_t = np.clip((dist - channel_half_width) / max(bank_width, 1e-6), 0.0, 1.0)
+        target_outer = bank_height - center_depth * 0.34 * (1.0 - _ss(outer_t))
+
+        target = np.where(dist <= channel_half_width, target_inner, target_outer)
+        patch = result[r_min : r_max + 1, c_min : c_max + 1]
+        result[r_min : r_max + 1, c_min : c_max + 1] = np.where(
+            dist <= outer_radius, np.minimum(patch, target), patch
+        )
 
     padded = np.pad(result, 1, mode="edge")
     neighborhood_mean = (
@@ -2905,29 +2930,29 @@ def _apply_river_profile_to_heightmap(
         + padded[2:, 1:-1]
         + padded[2:, 2:]
     ) / 9.0
+    thalweg_inner = channel_half_width * 0.42
+    smooth_denom = max(outer_radius - thalweg_inner, 1e-6)
     for (r0, c0), (r1, c1) in zip(path, path[1:]):
         r_min = max(0, int(math.floor(min(r0, r1) - outer_radius)))
         r_max = min(result.shape[0] - 1, int(math.ceil(max(r0, r1) + outer_radius)))
         c_min = max(0, int(math.floor(min(c0, c1) - outer_radius)))
         c_max = min(result.shape[1] - 1, int(math.ceil(max(c0, c1) + outer_radius)))
-        for rr in range(r_min, r_max + 1):
-            for cc in range(c_min, c_max + 1):
-                dist, _t = _point_segment_distance_2d(
-                    float(rr),
-                    float(cc),
-                    float(r0),
-                    float(c0),
-                    float(r1),
-                    float(c1),
-                )
-                if dist > outer_radius or dist <= channel_half_width * 0.42:
-                    continue
-                bank_t = (dist - channel_half_width * 0.42) / max(outer_radius - channel_half_width * 0.42, 1e-6)
-                smooth_weight = 0.10 + 0.22 * (1.0 - _smootherstep(bank_t))
-                result[rr, cc] = (
-                    result[rr, cc] * (1.0 - smooth_weight)
-                    + neighborhood_mean[rr, cc] * smooth_weight
-                )
+
+        rr = np.arange(r_min, r_max + 1, dtype=np.float64)[:, np.newaxis]
+        cc = np.arange(c_min, c_max + 1, dtype=np.float64)[np.newaxis, :]
+        dist, _ = _seg_dist(rr, cc, r0, c0, r1, c1)
+
+        bank_t = np.clip((dist - thalweg_inner) / smooth_denom, 0.0, 1.0)
+        smooth_weight = 0.10 + 0.22 * (1.0 - _ss(bank_t))
+        active = (dist <= outer_radius) & (dist > thalweg_inner)
+
+        patch = result[r_min : r_max + 1, c_min : c_max + 1]
+        nm = neighborhood_mean[r_min : r_max + 1, c_min : c_max + 1]
+        result[r_min : r_max + 1, c_min : c_max + 1] = np.where(
+            active,
+            patch * (1.0 - smooth_weight) + nm * smooth_weight,
+            patch,
+        )
 
     return result
 
@@ -3180,7 +3205,6 @@ def _paint_road_mask_on_terrain(
         return
 
     total_radius = max(road_half_width + shoulder_width, 1e-6)
-    zero_color = np.asarray((0.0, 0.0, 0.0, 0.0), dtype=np.float32)
     surface = str(surface_key or "dirt").strip().lower()
     target_palette = {
         "trail": (0.90, 0.07, 0.02, 0.01),
@@ -3197,83 +3221,106 @@ def _paint_road_mask_on_terrain(
     target_color = np.asarray(target_palette.get(surface, target_palette["dirt"]), dtype=np.float32)
     matrix_world = getattr(terrain_obj, "matrix_world", None)
 
-    if created_attr:
-        for loop_idx in range(len(mesh.loops)):
-            attr.data[loop_idx].color = tuple(zero_color)
+    n_loops = len(attr.data)
+    n_verts = len(mesh.vertices)
 
-    def _blend_loop_color(loop_idx: int, mask: float) -> None:
-        if mask <= 0.0:
-            return
-        existing = np.asarray(attr.data[loop_idx].color[:4], dtype=np.float32)
-        if not np.isfinite(existing).all() or float(existing.sum()) <= 1e-6:
-            existing = zero_color.copy()
-        mixed = existing * (1.0 - mask) + target_color * mask
-        total = float(mixed.sum())
-        if total > 1e-6:
-            mixed /= total
-        attr.data[loop_idx].color = tuple(float(v) for v in mixed)
+    # Batch-read all vertex local positions.
+    vco_flat = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", vco_flat)
+    vco_local = vco_flat.reshape(n_verts, 3).astype(np.float64)
 
+    if matrix_world is not None:
+        try:
+            mat = np.array(
+                [[matrix_world[r][c] for c in range(4)] for r in range(4)], dtype=np.float64
+            )
+            vco_world = (vco_local @ mat[:3, :3].T) + mat[:3, 3]
+        except Exception:
+            vco_world = vco_local
+    else:
+        vco_world = vco_local
+
+    # Vectorized min distance from N points to any path segment.
+    seg_a = np.array([[p[0], p[1]] for p in path_world[:-1]], dtype=np.float64)
+    seg_b = np.array([[p[0], p[1]] for p in path_world[1:]], dtype=np.float64)
+    ab = seg_b - seg_a
+    ab_sq = np.maximum((ab * ab).sum(axis=1), 1e-12)
+
+    def _min_dist_to_path(px: np.ndarray, py: np.ndarray) -> np.ndarray:
+        t = (
+            (px[:, None] - seg_a[None, :, 0]) * ab[None, :, 0]
+            + (py[:, None] - seg_a[None, :, 1]) * ab[None, :, 1]
+        ) / ab_sq[None, :]
+        t = np.clip(t, 0.0, 1.0)
+        cpx = seg_a[None, :, 0] + t * ab[None, :, 0]
+        cpy = seg_a[None, :, 1] + t * ab[None, :, 1]
+        dx = px[:, None] - cpx
+        dy = py[:, None] - cpy
+        return np.sqrt((dx * dx + dy * dy).min(axis=1))
+
+    def _ss(x: np.ndarray) -> np.ndarray:
+        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
+
+    # Per-loop world positions (for both distance passes).
+    loop_vi = np.empty(n_loops, dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", loop_vi)
+    lx = vco_world[loop_vi, 0]
+    ly = vco_world[loop_vi, 1]
+    loop_min_dists = _min_dist_to_path(lx, ly)
+
+    # Polygon centers via reduceat over contiguous loop positions.
     polygons = getattr(mesh, "polygons", None)
-    if polygons:
-        for poly in polygons:
-            loop_indices = list(getattr(poly, "loop_indices", []) or [])
-            vertex_indices = list(getattr(poly, "vertices", []) or [])
-            if not loop_indices or not vertex_indices:
-                continue
-            center_x = 0.0
-            center_y = 0.0
-            for vertex_index in vertex_indices:
-                vertex = mesh.vertices[vertex_index].co
-                if matrix_world is not None:
-                    try:
-                        world_pos = matrix_world @ vertex
-                        center_x += float(world_pos.x)
-                        center_y += float(world_pos.y)
-                    except Exception:
-                        center_x += float(vertex.x)
-                        center_y += float(vertex.y)
-                else:
-                    center_x += float(vertex.x)
-                    center_y += float(vertex.y)
-            center_x /= max(len(vertex_indices), 1)
-            center_y /= max(len(vertex_indices), 1)
-            min_dist = float("inf")
-            for (ax, ay, _az), (bx, by, _bz) in zip(path_world, path_world[1:]):
-                dist, _ = _point_segment_distance_2d(center_x, center_y, ax, ay, bx, by)
-                if dist < min_dist:
-                    min_dist = dist
-            if min_dist > total_radius * 1.12:
-                continue
-            poly_mask = 1.0 - _smootherstep(min_dist / max(total_radius * 1.08, 1e-6))
-            if poly_mask <= 0.0:
-                continue
-            for loop_idx in loop_indices:
-                _blend_loop_color(loop_idx, poly_mask * 0.78)
+    if polygons and len(polygons) > 0:
+        poly_ls = np.empty(len(polygons), dtype=np.int32)
+        poly_lt = np.empty(len(polygons), dtype=np.int32)
+        polygons.foreach_get("loop_start", poly_ls)
+        polygons.foreach_get("loop_total", poly_lt)
+        poly_cx = np.add.reduceat(lx, poly_ls) / poly_lt.astype(np.float64)
+        poly_cy = np.add.reduceat(ly, poly_ls) / poly_lt.astype(np.float64)
+        poly_min_dists = _min_dist_to_path(poly_cx, poly_cy)
+    else:
+        poly_ls = poly_lt = np.empty(0, dtype=np.int32)
+        poly_min_dists = np.empty(0, dtype=np.float64)
 
-    for loop_idx, loop in enumerate(mesh.loops):
-        vertex = mesh.vertices[loop.vertex_index].co
-        if matrix_world is not None:
-            try:
-                world_pos = matrix_world @ vertex
-                vx = float(world_pos.x)
-                vy = float(world_pos.y)
-            except Exception:
-                vx = float(vertex.x)
-                vy = float(vertex.y)
-        else:
-            vx = float(vertex.x)
-            vy = float(vertex.y)
+    # Batch-read existing loop colors (zeros if freshly created attribute).
+    colors_flat = np.zeros(n_loops * 4, dtype=np.float32)
+    if not created_attr:
+        attr.data.foreach_get("color", colors_flat)
+    colors = colors_flat.reshape(n_loops, 4)
 
-        min_dist = float("inf")
-        for (ax, ay, _az), (bx, by, _bz) in zip(path_world, path_world[1:]):
-            dist, _ = _point_segment_distance_2d(vx, vy, ax, ay, bx, by)
-            if dist < min_dist:
-                min_dist = dist
-        if min_dist > total_radius:
+    def _apply_blend_vec(loop_indices: np.ndarray, masks: np.ndarray) -> None:
+        if len(loop_indices) == 0:
+            return
+        m = masks.astype(np.float32)[:, None]
+        cur = colors[loop_indices].copy()
+        bad = ~np.isfinite(cur).all(axis=1) | (cur.sum(axis=1) <= 1e-6)
+        cur[bad] = 0.0
+        mixed = cur * (1.0 - m) + target_color[None, :] * m
+        totals = mixed.sum(axis=1, keepdims=True)
+        mixed = np.where(totals > 1e-6, mixed / np.where(totals > 1e-6, totals, 1.0), mixed)
+        colors[loop_indices] = mixed.astype(np.float32)
+
+    # Polygon pass: blend per-polygon mask into all loops of each active polygon.
+    for pi in range(len(poly_min_dists)):
+        md = float(poly_min_dists[pi])
+        if md > total_radius * 1.12:
             continue
+        t_v = float(np.clip(md / max(total_radius * 1.08, 1e-6), 0.0, 1.0))
+        pm = float(1.0 - _ss(np.array([t_v], dtype=np.float32))[0])
+        if pm <= 0.0:
+            continue
+        s = int(poly_ls[pi])
+        cnt = int(poly_lt[pi])
+        _apply_blend_vec(np.arange(s, s + cnt, dtype=np.int32), np.full(cnt, pm * 0.78, dtype=np.float32))
 
-        mask = 1.0 - _smootherstep(min_dist / total_radius)
-        _blend_loop_color(loop_idx, mask)
+    # Per-loop pass: blend per-loop vertex distance.
+    act = loop_min_dists <= total_radius
+    if act.any():
+        act_idx = np.where(act)[0].astype(np.int32)
+        t_vals = np.clip(loop_min_dists[act_idx] / max(total_radius, 1e-6), 0.0, 1.0).astype(np.float32)
+        _apply_blend_vec(act_idx, 1.0 - _ss(t_vals))
+
+    attr.data.foreach_set("color", colors_flat)
 
 
 def _build_road_strip_geometry(
@@ -4326,19 +4373,17 @@ def _build_level_water_surface_from_terrain(
         seed_col = 0
         best_seed_dist = float("inf")
         wet_cells = heights <= water_level_f + shoreline_eps
-        for row in range(rows):
-            for col in range(cols):
-                wx, wy, _wz = world_points[row * cols + col]
-                dist_to_center = math.hypot(
-                    wx - mask_center_x,
-                    (wy - mask_center_y) / mask_aspect,
-                )
-                if dist_to_center <= mask_radius_f * 1.18:
-                    allowed_cells[row, col] = True
-                    if wet_cells[row, col] and dist_to_center < best_seed_dist:
-                        seed_row = row
-                        seed_col = col
-                        best_seed_dist = dist_to_center
+        wp_arr = np.array(world_points, dtype=np.float64).reshape(rows, cols, 3)
+        dx_mc = wp_arr[:, :, 0] - mask_center_x
+        dy_mc = (wp_arr[:, :, 1] - mask_center_y) / mask_aspect
+        dist_to_center_arr = np.sqrt(dx_mc * dx_mc + dy_mc * dy_mc)
+        allowed_cells = dist_to_center_arr <= mask_radius_f * 1.18
+        candidate = allowed_cells & wet_cells
+        if candidate.any():
+            dist_cand = np.where(candidate, dist_to_center_arr, np.inf)
+            flat_idx = int(np.argmin(dist_cand))
+            seed_row, seed_col = divmod(flat_idx, cols)
+            best_seed_dist = float(dist_to_center_arr[seed_row, seed_col])
 
         if best_seed_dist < float("inf"):
             component_cells = np.zeros((rows, cols), dtype=bool)
@@ -4361,30 +4406,31 @@ def _build_level_water_surface_from_terrain(
                         component_cells[rr, cc] = True
                         queue.append((rr, cc))
 
-    kept_quads: list[tuple[int, int]] = []
-    for row in range(rows - 1):
-        for col in range(cols - 1):
-            quad_indices = (
-                row * cols + col,
-                row * cols + col + 1,
-                (row + 1) * cols + col,
-                (row + 1) * cols + col + 1,
-            )
-            if component_cells is not None:
-                if int(np.count_nonzero(component_cells[row:row + 2, col:col + 2])) < 2:
-                    continue
-            elif bounded_mask:
-                quad_center_x = sum(world_points[idx][0] for idx in quad_indices) / 4.0
-                quad_center_y = sum(world_points[idx][1] for idx in quad_indices) / 4.0
-                if math.hypot(
-                    quad_center_x - mask_center_x,
-                    (quad_center_y - mask_center_y) / mask_aspect,
-                ) > mask_radius_f:
-                    continue
-            quad = heights[row:row + 2, col:col + 2]
-            wet_count = int(np.count_nonzero(quad <= water_level_f + shoreline_eps))
-            if wet_count >= 2 or float(np.mean(quad)) <= water_level_f:
-                kept_quads.append((row, col))
+    wet_grid = (heights <= water_level_f + shoreline_eps).astype(np.int32)
+    wet2 = wet_grid[:-1, :-1] + wet_grid[:-1, 1:] + wet_grid[1:, :-1] + wet_grid[1:, 1:]
+    mean_quad = (
+        heights[:-1, :-1] + heights[:-1, 1:] + heights[1:, :-1] + heights[1:, 1:]
+    ) / 4.0
+    water_pass = (wet2 >= 2) | (mean_quad <= water_level_f)
+
+    if component_cells is not None:
+        cc2 = (
+            component_cells[:-1, :-1].astype(np.int32)
+            + component_cells[:-1, 1:].astype(np.int32)
+            + component_cells[1:, :-1].astype(np.int32)
+            + component_cells[1:, 1:].astype(np.int32)
+        )
+        keep_mask = (cc2 >= 2) & water_pass
+    elif bounded_mask:
+        qcx = (wp_arr[:-1, :-1, 0] + wp_arr[:-1, 1:, 0] + wp_arr[1:, :-1, 0] + wp_arr[1:, 1:, 0]) / 4.0
+        qcy = (wp_arr[:-1, :-1, 1] + wp_arr[:-1, 1:, 1] + wp_arr[1:, :-1, 1] + wp_arr[1:, 1:, 1]) / 4.0
+        qd = np.sqrt((qcx - mask_center_x) ** 2 + ((qcy - mask_center_y) / mask_aspect) ** 2)
+        keep_mask = (qd <= mask_radius_f) & water_pass
+    else:
+        keep_mask = water_pass
+
+    r_arr, c_arr = np.where(keep_mask)
+    kept_quads: list[tuple[int, int]] = list(zip(r_arr.tolist(), c_arr.tolist()))
 
     if not kept_quads:
         raise ValueError(
@@ -5039,64 +5085,67 @@ def handle_carve_water_basin(params: dict) -> dict:
     outer_radius = radius + shore_width
     shoreline_radius = max(radius * 0.94, 1.0)
 
-    for row in range(rows):
-        for col in range(cols):
-            wx, wy = _terrain_grid_to_world_xy(
-                row,
-                col,
-                rows=rows,
-                cols=cols,
-                terrain_width=terrain_width,
-                terrain_height=terrain_height,
-                terrain_origin_x=obj.location.x,
-                terrain_origin_y=obj.location.y,
-            )
-            dx = wx - cx
-            dy = (wy - cy) / aspect_y
-            angle = math.atan2(dy, dx if abs(dx) > 1e-9 else 1e-9)
-            shoreline_warp = 1.0 + (
-                0.12 * math.sin(angle * 2.6 + cx * 0.031)
-                + 0.07 * math.sin(angle * 5.4 + cy * 0.043)
-            )
-            shoreline_warp = max(0.72, min(1.28, shoreline_warp))
-            dist = math.hypot(dx, dy) / shoreline_warp
-            if dist > outer_radius:
-                continue
+    def _ss(x: np.ndarray) -> np.ndarray:
+        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
 
-            current = float(result[row, col])
-            if dist <= radius:
-                inner_t = dist / max(radius, 1e-6)
-                basin_curve = 1.0 - _smootherstep(inner_t)
-                target_depth = depth * (0.14 + 0.86 * (basin_curve ** 0.68))
-                if dist >= shoreline_radius:
-                    shoreline_t = (dist - shoreline_radius) / max(radius - shoreline_radius, 1e-6)
-                    target_depth *= 1.0 - 0.72 * _smootherstep(shoreline_t)
-                target = water_level - max(target_depth, max(depth * 0.08, 0.12))
-                carve_weight = 0.96 - 0.44 * _smootherstep(inner_t)
-            else:
-                shoulder_t = (dist - radius) / max(shore_width, 1e-6)
-                target = water_level + beach_rim * (0.12 + 0.88 * _smootherstep(shoulder_t))
-                carve_weight = 0.10 + 0.08 * (1.0 - _smootherstep(shoulder_t))
+    # Precompute world-space grid coordinates (vectorized _terrain_grid_to_world_xy).
+    _tw = max(float(terrain_width), 1e-9)
+    _th = max(float(terrain_height), 1e-9)
+    _ox = float(obj.location.x)
+    _oy = float(obj.location.y)
+    _col_w = _ox + np.arange(cols, dtype=np.float64) / max(cols - 1, 1) * _tw - _tw * 0.5
+    _row_w = _oy + np.arange(rows, dtype=np.float64) / max(rows - 1, 1) * _th - _th * 0.5
+    dx = _col_w[np.newaxis, :] - cx                         # (1, cols) → broadcast
+    dy = (_row_w[:, np.newaxis] - cy) / aspect_y            # (rows, 1) → broadcast
 
-            if dist <= radius:
-                target_lowered = min(current, target)
-                new_height = current + (target_lowered - current) * carve_weight
-            else:
-                new_height = current
-                if current < target:
-                    new_height = current + (target - current) * carve_weight
-            if containment_rim and dist > radius + shore_width * 0.42:
-                rim_t = (dist - (radius + shore_width * 0.42)) / max(outer_radius - (radius + shore_width * 0.42), 1e-6)
-                rim_raise_weight = 0.08 + 0.06 * _smootherstep(rim_t)
-                rim_target = water_level + containment_rim_height * (0.18 + 0.52 * _smootherstep(rim_t))
-                if current < rim_target:
-                    raised_height = current + (rim_target - current) * rim_raise_weight
-                    new_height = max(new_height, raised_height)
-            if new_height < current - 1e-6:
-                result[row, col] = new_height
-                cells_modified += 1
-            elif new_height > current + 1e-6:
-                result[row, col] = new_height
+    angle = np.arctan2(dy, np.where(np.abs(dx) > 1e-9, dx, 1e-9))
+    shoreline_warp = np.clip(
+        1.0 + 0.12 * np.sin(angle * 2.6 + cx * 0.031)
+            + 0.07 * np.sin(angle * 5.4 + cy * 0.043),
+        0.72, 1.28,
+    )
+    dist_raw = np.hypot(dx, dy)                             # unwrapped (for smoothing pass)
+    dist = dist_raw / shoreline_warp                        # warped (for carving pass)
+    active = dist <= outer_radius
+
+    # Basin branch
+    in_basin = dist <= radius
+    inner_t = np.clip(dist / max(radius, 1e-6), 0.0, 1.0)
+    basin_curve = 1.0 - _ss(inner_t)
+    tgt_depth = depth * (0.14 + 0.86 * np.power(basin_curve, 0.68))
+    sl_t = np.clip((dist - shoreline_radius) / max(radius - shoreline_radius, 1e-6), 0.0, 1.0)
+    tgt_depth = np.where(dist >= shoreline_radius, tgt_depth * (1.0 - 0.72 * _ss(sl_t)), tgt_depth)
+    _min_depth = max(depth * 0.08, 0.12)
+    target_basin = water_level - np.maximum(tgt_depth, _min_depth)
+    cw_basin = 0.96 - 0.44 * _ss(inner_t)
+
+    # Shore branch
+    sh_t = np.clip((dist - radius) / max(shore_width, 1e-6), 0.0, 1.0)
+    target_shore = water_level + beach_rim * (0.12 + 0.88 * _ss(sh_t))
+    cw_shore = 0.10 + 0.08 * (1.0 - _ss(sh_t))
+
+    # Build new_height: basin carves down, shore raises up
+    tgt_lowered = np.where(in_basin, np.minimum(result, target_basin), result)
+    new_height = np.where(in_basin, result + (tgt_lowered - result) * cw_basin, result)
+    in_shore = active & ~in_basin
+    new_height = np.where(
+        in_shore & (result < target_shore),
+        result + (target_shore - result) * cw_shore,
+        new_height,
+    )
+    if containment_rim:
+        rim_start = radius + shore_width * 0.42
+        rim_t = np.clip((dist - rim_start) / max(outer_radius - rim_start, 1e-6), 0.0, 1.0)
+        rim_rw = 0.08 + 0.06 * _ss(rim_t)
+        rim_tgt = water_level + containment_rim_height * (0.18 + 0.52 * _ss(rim_t))
+        in_rim = active & (dist > rim_start) & (result < rim_tgt)
+        raised = result + (rim_tgt - result) * rim_rw
+        new_height = np.where(in_rim, np.maximum(new_height, raised), new_height)
+
+    changed_low = active & (new_height < result - 1e-6)
+    changed_high = active & (new_height > result + 1e-6)
+    cells_modified = int(changed_low.sum())
+    result = np.where(changed_low | changed_high, new_height, result)
 
     padded = np.pad(result, 1, mode="edge")
     neighborhood_mean = (
@@ -5110,29 +5159,12 @@ def handle_carve_water_basin(params: dict) -> dict:
         + padded[2:, 1:-1]
         + padded[2:, 2:]
     ) / 9.0
-    for row in range(rows):
-        for col in range(cols):
-            wx, wy = _terrain_grid_to_world_xy(
-                row,
-                col,
-                rows=rows,
-                cols=cols,
-                terrain_width=terrain_width,
-                terrain_height=terrain_height,
-                terrain_origin_x=obj.location.x,
-                terrain_origin_y=obj.location.y,
-            )
-            dx = wx - cx
-            dy = (wy - cy) / aspect_y
-            dist = math.hypot(dx, dy)
-            if dist > outer_radius or dist <= radius * 0.14:
-                continue
-            smooth_t = (dist - radius * 0.14) / max(outer_radius - radius * 0.14, 1e-6)
-            smooth_weight = 0.12 + 0.34 * _smootherstep(smooth_t)
-            result[row, col] = (
-                result[row, col] * (1.0 - smooth_weight)
-                + neighborhood_mean[row, col] * smooth_weight
-            )
+    smooth_active = (dist_raw <= outer_radius) & (dist_raw > radius * 0.14)
+    sm_t = np.clip(
+        (dist_raw - radius * 0.14) / max(outer_radius - radius * 0.14, 1e-6), 0.0, 1.0
+    )
+    sm_w = 0.12 + 0.34 * _ss(sm_t)
+    result = np.where(smooth_active, result * (1.0 - sm_w) + neighborhood_mean * sm_w, result)
 
     flat = result.flatten()
     for idx, vert in enumerate(bm.verts):
@@ -5400,33 +5432,43 @@ def _compute_vertex_colors_for_biome_map(
 
     mesh = obj.data
     rows, cols = spec.biome_ids.shape
+    n_verts = len(mesh.vertices)
 
-    result_colors = []
-    for v in mesh.vertices:
-        vx, vy = v.co.x, v.co.y
+    # Batch-read all vertex positions — avoids per-vertex Blender API iteration
+    co_flat = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co_flat)
+    vx_arr = co_flat[0::3].astype(np.float64)
+    vy_arr = co_flat[1::3].astype(np.float64)
 
-        # Map world position to biome grid cell
-        nx = max(0, min(cols - 1, int((vx / world_size + 0.5) * cols)))
-        ny = max(0, min(rows - 1, int((vy / world_size + 0.5) * rows)))
-        biome_idx = int(spec.biome_ids[ny, nx])
-        corruption = float(spec.corruption_map[ny, nx])
+    # Vectorize grid index computation
+    nx_arr = np.clip((vx_arr / world_size + 0.5) * cols, 0, cols - 1).astype(np.int32)
+    ny_arr = np.clip((vy_arr / world_size + 0.5) * rows, 0, rows - 1).astype(np.int32)
 
-        # Base color from biome palette
+    biome_idx_arr = spec.biome_ids[ny_arr, nx_arr]
+    corruption_arr = spec.corruption_map[ny_arr, nx_arr].astype(np.float64)
+
+    # Precompute base_color per unique biome — _get_material_def once per biome, not per vertex
+    unique_biomes = np.unique(biome_idx_arr)
+    biome_base_colors: dict = {}
+    for bidx in unique_biomes.tolist():
         base_color = (0.15, 0.12, 0.10, 1.0)
         try:
-            biome_name = spec.biome_names[biome_idx]
+            biome_name = spec.biome_names[int(bidx)]
             palette = BIOME_PALETTES.get(biome_name, {})
             ground_mats = palette.get("ground", [])
             if ground_mats:
                 mat_def = _get_material_def(ground_mats[0])
                 if mat_def and "base_color" in mat_def:
-                    base_color = tuple(mat_def["base_color"])
-                    if len(base_color) == 3:
-                        base_color = base_color + (1.0,)
+                    bc = tuple(mat_def["base_color"])
+                    base_color = bc if len(bc) == 4 else bc + (1.0,)
         except Exception:
             pass
+        biome_base_colors[int(bidx)] = base_color
 
-        tinted = apply_corruption_tint([base_color], corruption)
+    result_colors = []
+    for i in range(n_verts):
+        base_color = biome_base_colors[int(biome_idx_arr[i])]
+        tinted = apply_corruption_tint([base_color], float(corruption_arr[i]))
         result_colors.append(tinted[0])
 
     return result_colors

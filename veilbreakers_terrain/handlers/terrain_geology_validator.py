@@ -114,6 +114,20 @@ def validate_strahler_ordering(
         streams = getattr(water_network, "streams")
     elif isinstance(water_network, dict) and "streams" in water_network:
         streams = water_network["streams"]
+    elif isinstance(water_network, list):
+        # list-of-tuples: [(order, parent_order), ...]
+        streams = [
+            {"order": t[0], "parent_order": t[1]}
+            for t in water_network
+            if isinstance(t, (tuple, list)) and len(t) >= 2
+        ]
+    elif callable(getattr(water_network, "edges", None)):
+        # networkx DiGraph: edges carry order/parent_order as edge attribute dicts
+        streams = [
+            data
+            for _u, _v, data in water_network.edges(data=True)
+            if isinstance(data, dict) and "order" in data and "parent_order" in data
+        ]
 
     if streams is None:
         return issues

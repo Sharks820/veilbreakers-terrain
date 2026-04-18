@@ -650,8 +650,9 @@ def _add_leaf_card_canopy(
     Each plane is sized to canopy_radius and given a small random offset
     (0-0.3m) for organic variety.
 
-    Wind vertex colors are painted:
-      R=flutter (1.0), G=random phase, B=amplitude gradient, A=0 (tips only)
+    Wind vertex colors follow canonical WIND_COLOR_LAYOUT (vegetation_system.py):
+      R=sway_strength (1.0 at tips), G=sway_frequency (height proportion),
+      B=phase_offset (random per-cluster), A=trunk_sway (0 for leaf tips)
     """
     cx, cy, cz = canopy_center
     r = canopy_radius
@@ -687,13 +688,15 @@ def _add_leaf_card_canopy(
         verts = [bm.verts.new(c) for c in corners]
         phase = rng.random()
         for vi, v in enumerate(verts):
-            # Bottom verts: lower amplitude; top verts: full flutter
+            # Bottom verts: lower sway; top verts: full sway
+            # Canonical WIND_COLOR_LAYOUT: R=sway_strength, G=sway_frequency,
+            # B=phase_offset, A=trunk_sway (vegetation_system.py)
             height_t = vi // 2  # 0 for bottom row, 1 for top row
             v[wind_layer] = (
-                float(height_t),   # R = flutter (1.0 at tips)
-                phase,             # G = per-cluster phase
-                height_t * 0.85,   # B = branch sway amplitude
-                0.0,               # A = trunk sway (0 for leaf tips, used at trunk)
+                float(height_t),   # R = sway_strength (1.0 at tips)
+                float(height_t),   # G = sway_frequency (height proportion)
+                phase,             # B = phase_offset (random per-cluster)
+                0.0,               # A = trunk_sway (0 for leaf tips)
             )
         try:
             bm.faces.new(verts)
@@ -727,12 +730,14 @@ def _add_leaf_card_canopy(
         verts = [bm.verts.new(c) for c in corners]
         phase = rng.random()
         for vi, v in enumerate(verts):
+            # Canonical WIND_COLOR_LAYOUT: R=sway_strength, G=sway_frequency,
+            # B=phase_offset, A=trunk_sway (vegetation_system.py)
             height_t = vi // 2
             v[wind_layer] = (
-                float(height_t),
-                phase,
-                height_t * 0.85,
-                0.0,
+                float(height_t),   # R = sway_strength
+                float(height_t),   # G = sway_frequency (height proportion)
+                phase,             # B = phase_offset (random per-cluster)
+                0.0,               # A = trunk_sway
             )
         try:
             bm.faces.new(verts)
@@ -776,15 +781,16 @@ def create_leaf_card_tree(
             position[2] + height * 0.55,
         )))
 
-    # Trunk wind vertex colors: A=trunk_sway gradient
+    # Trunk wind vertex colors — canonical WIND_COLOR_LAYOUT (vegetation_system.py):
+    # R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
     # WORLD-006: guard against duplicate layer creation
     wind_layer = bm.verts.layers.float_color.get("wind_vc")
     if wind_layer is None:
         wind_layer = bm.verts.layers.float_color.new("wind_vc")
     for v in trunk_verts_bottom:
-        v[wind_layer] = (0.0, 0.0, 0.0, 0.0)  # base: no sway
+        v[wind_layer] = (0.0, 0.0, 0.0, 0.0)  # base: no sway, no trunk_sway
     for v in trunk_verts_top:
-        v[wind_layer] = (0.0, 0.0, 0.2, 0.6)  # top of trunk: moderate sway
+        v[wind_layer] = (0.0, 0.55, 0.0, 0.6)  # top of trunk: sway_freq=0.55, trunk_sway=0.6
 
     # Create trunk faces
     for i in range(trunk_segments):
@@ -865,13 +871,14 @@ def _create_grass_card(
     v4 = bm.verts.new((w * 0.15, bend_offset * 2, height))
     v5 = bm.verts.new((-w * 0.15, bend_offset * 2, height))
 
-    # Wind colors: base=no flutter, mid=partial, tip=full
-    v0[wind_layer] = (0.0, phase, 0.0, 0.0)
-    v1[wind_layer] = (0.0, phase, 0.0, 0.0)
-    v2[wind_layer] = (0.5, phase, 0.55, 0.0)
-    v3[wind_layer] = (0.5, phase, 0.55, 0.0)
-    v4[wind_layer] = (1.0, phase, 1.0, 0.0)
-    v5[wind_layer] = (1.0, phase, 1.0, 0.0)
+    # Wind colors — canonical WIND_COLOR_LAYOUT (vegetation_system.py):
+    # R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
+    v0[wind_layer] = (0.0, 0.0,  phase, 0.0)  # base:  no sway
+    v1[wind_layer] = (0.0, 0.0,  phase, 0.0)
+    v2[wind_layer] = (0.5, 0.5,  phase, 0.0)  # mid:   half sway
+    v3[wind_layer] = (0.5, 0.5,  phase, 0.0)
+    v4[wind_layer] = (1.0, 1.0,  phase, 0.0)  # tip:   full sway
+    v5[wind_layer] = (1.0, 1.0,  phase, 0.0)
 
     try:
         bm.faces.new([v0, v1, v2, v3])
@@ -905,12 +912,13 @@ def _create_grass_card(
     b4 = bm.verts.new((rx4, ry4, height))
     b5 = bm.verts.new((rx5, ry5, height))
 
-    b0[wind_layer] = (0.0, phase2, 0.0, 0.0)
-    b1[wind_layer] = (0.0, phase2, 0.0, 0.0)
-    b2[wind_layer] = (0.5, phase2, 0.55, 0.0)
-    b3[wind_layer] = (0.5, phase2, 0.55, 0.0)
-    b4[wind_layer] = (1.0, phase2, 1.0, 0.0)
-    b5[wind_layer] = (1.0, phase2, 1.0, 0.0)
+    # Canonical WIND_COLOR_LAYOUT: R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
+    b0[wind_layer] = (0.0, 0.0,  phase2, 0.0)  # base:  no sway
+    b1[wind_layer] = (0.0, 0.0,  phase2, 0.0)
+    b2[wind_layer] = (0.5, 0.5,  phase2, 0.0)  # mid:   half sway
+    b3[wind_layer] = (0.5, 0.5,  phase2, 0.0)
+    b4[wind_layer] = (1.0, 1.0,  phase2, 0.0)  # tip:   full sway
+    b5[wind_layer] = (1.0, 1.0,  phase2, 0.0)
 
     try:
         bm.faces.new([b0, b1, b2, b3])
