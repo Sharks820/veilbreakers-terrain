@@ -75,11 +75,10 @@ class PassDAG:
 
     def __init__(self, passes: Sequence[PassDefinition]) -> None:
         self._passes: Dict[str, PassDefinition] = {p.name: p for p in passes}
-        self._producers: Dict[str, str] = {}
+        self._producers: Dict[str, List[str]] = {}
         for p in passes:
             for ch in p.produces_channels:
-                # Last producer wins — stable enough for the DAG
-                self._producers[ch] = p.name
+                self._producers.setdefault(ch, []).append(p.name)
 
     @classmethod
     def from_registry(cls, pass_names: Optional[Sequence[str]] = None) -> "PassDAG":
@@ -104,9 +103,9 @@ class PassDAG:
         pdef = self._passes[pass_name]
         deps: Set[str] = set()
         for ch in pdef.requires_channels:
-            producer = self._producers.get(ch)
-            if producer and producer != pass_name and producer in self._passes:
-                deps.add(producer)
+            for producer in self._producers.get(ch, []):
+                if producer != pass_name and producer in self._passes:
+                    deps.add(producer)
         return deps
 
     def topological_order(self) -> List[str]:
