@@ -20,6 +20,7 @@ Blender side of the TCP bridge.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import time
@@ -432,7 +433,7 @@ class TerrainPassController:
             tile_size=int(stack.tile_size),
             coordinate_system=stack.coordinate_system,
             unity_export_schema_version=stack.unity_export_schema_version,
-            water_network_snapshot=self.state.water_network,
+            water_network_snapshot=copy.deepcopy(self.state.water_network),
             side_effects_snapshot=list(self.state.side_effects),
             pass_history_len=len(self.state.pass_history),
         )
@@ -444,7 +445,7 @@ class TerrainPassController:
             if ckpt.checkpoint_id == checkpoint_id:
                 restored = TerrainMaskStack.from_npz(ckpt.mask_stack_path)
                 self.state.mask_stack = restored
-                self.state.water_network = ckpt.water_network_snapshot
+                self.state.water_network = copy.deepcopy(ckpt.water_network_snapshot)
                 self.state.side_effects = list(ckpt.side_effects_snapshot)
                 self.state.pass_history = self.state.pass_history[: ckpt.pass_history_len]
                 # Truncate checkpoint history past the restored point

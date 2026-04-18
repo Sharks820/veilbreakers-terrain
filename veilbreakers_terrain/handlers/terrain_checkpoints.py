@@ -16,6 +16,7 @@ No Blender / bpy imports. Pure Python + numpy — fully unit-testable.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 import uuid
@@ -101,6 +102,9 @@ def save_checkpoint(
         tile_size=int(stack.tile_size),
         coordinate_system=stack.coordinate_system,
         unity_export_schema_version=stack.unity_export_schema_version,
+        water_network_snapshot=copy.deepcopy(state.water_network),
+        side_effects_snapshot=list(state.side_effects),
+        pass_history_len=len(state.pass_history),
     )
     state.checkpoints.append(ckpt)
     if label:

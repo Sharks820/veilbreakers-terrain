@@ -74,6 +74,8 @@ def _extract_callables(path: Path) -> List[CallableEntry]:
     entries: List[CallableEntry] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("__") and node.name.endswith("__"):
+                continue
             entries.append(CallableEntry(
                 filename=path.name,
                 func_name=node.name,
@@ -88,7 +90,7 @@ def _load_graded_set() -> Set[Tuple[str, str]]:
     if not CSV_PATH.exists():
         print(f"WARNING: GRADES_VERIFIED.csv not found at {CSV_PATH}", file=sys.stderr)
         return graded
-    with CSV_PATH.open(newline="", encoding="utf-8") as fh:
+    with CSV_PATH.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             fn = (row.get("File") or "").strip()

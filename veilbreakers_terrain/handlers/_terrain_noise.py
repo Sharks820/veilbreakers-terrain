@@ -178,7 +178,7 @@ class _OpenSimplexWrapper(_PermTableNoise):
 
     def noise2_array(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
         vf = np.vectorize(self._os.noise2)
-        return vf(xs.ravel(), ys.ravel()).reshape(xs.shape).astype(np.float32)
+        return vf(xs.ravel(), ys.ravel()).reshape(xs.shape)
 
 
 # Legacy alias so that any code importing ``OpenSimplex`` from this module
