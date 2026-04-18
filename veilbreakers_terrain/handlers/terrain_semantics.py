@@ -609,6 +609,8 @@ class TerrainMaskStack:
 
     # -- persistence --------------------------------------------------------
 
+    _DICT_CHANNELS = ("wildlife_affinity", "decal_density", "detail_density")
+
     def to_npz(self, path: Path) -> None:
         """Save all populated channels to a .npz archive."""
         path = Path(path)
@@ -618,6 +620,16 @@ class TerrainMaskStack:
             val = getattr(self, name, None)
             if val is not None:
                 arrays[name] = np.ascontiguousarray(val)
+        # Persist dict channels (key order preserved, counter-indexed so any
+        # key string is safe as an npz array name)
+        dict_channels_meta: Dict[str, list] = {}
+        for dict_field in self._DICT_CHANNELS:
+            container = getattr(self, dict_field, None)
+            if container:
+                keys = list(container.keys())
+                dict_channels_meta[dict_field] = keys
+                for i, k in enumerate(keys):
+                    arrays[f"__dict_{dict_field}_{i}"] = np.ascontiguousarray(container[k])
         meta = {
             "schema_version": self.schema_version,
             "tile_size": self.tile_size,
@@ -628,6 +640,7 @@ class TerrainMaskStack:
             "tile_y": self.tile_y,
             "populated_by_pass": dict(self.populated_by_pass),
             "dirty_channels": sorted(self.dirty_channels),
+            "dict_channels": dict_channels_meta,
             "content_hash": self.compute_hash(),
         }
         arrays["__meta__"] = np.array(json.dumps(meta), dtype=object)
@@ -657,6 +670,15 @@ class TerrainMaskStack:
             stack.populated_by_pass.update(meta.get("populated_by_pass", {}))
             stack.dirty_channels.update(meta.get("dirty_channels", []))
             stack.schema_version = meta.get("schema_version", "1.0")
+            dict_channels = meta.get("dict_channels", {})
+            for dict_field, keys in dict_channels.items():
+                container: Dict[str, np.ndarray] = {}
+                for i, k in enumerate(keys):
+                    arr_name = f"__dict_{dict_field}_{i}"
+                    if arr_name in data.files:
+                        container[k] = np.array(data[arr_name])
+                if container:
+                    setattr(stack, dict_field, container)
             return stack
 
 
