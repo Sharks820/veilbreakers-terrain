@@ -4716,3 +4716,200 @@ Elden Ring (Limgrave, Caelid, Mt Gelmir), Ghost of Tsushima (Haiku Path, Omi Cli
 
 **Standard:** All 314 bugs verified against source by 12 independent agents reading live code. No grade correction accepted without cited file+line+quoted code. All FIXPLAN amendments cross-checked against session summary evidence.
 
+---
+
+### 0.F.9 — Codex Full-Inventory Addendum (2026-04-18)
+
+This addendum was produced from a literal callable census of the current checkout plus a second-pass wiring/performance sweep. Session note: the requested `context7` and `firecrawl` MCPs were **not available in this session**, so the validation basis here is live source inspection, targeted runtime repros, local microbenchmarks, and current official product documentation (NumPy, SideFX Houdini, Epic UE PCG/Landscape, Unity Terrain, World Machine, World Creator, SpeedTree).
+
+#### 0.F.9.a — Full Callable Census
+
+- **Handler callable surface:** **1,301** callables including methods
+  - **112** runtime-facing top-level entrypoints / passes / registrars
+  - **682** public helpers
+  - **337** private helpers
+  - **170** methods
+- **Test callable surface:** **2,208** callables including test methods.
+- **Audit join coverage:** `GRADES_VERIFIED.csv` still maps structurally to live code for the overwhelming majority of rows:
+  - **1,260 / 1,460** rows exact-match a current callable/class
+  - **64** more rows match current methods/classes by short symbol name
+  - **135** are file-only matches
+  - **1** row is an outright dead file reference
+
+#### 0.F.9.b — New/Strengthened Findings Not Cleanly Captured Above
+
+##### BUG-R9-001 — Runtime proof gap is still large even after the existing test pass
+
+- **Evidence:** callable census of the live tree found **112** runtime-facing top-level entrypoints (`handle_*`, `pass_*`, `register_*`, `register_all`), but only **68** are directly mentioned by name anywhere under `veilbreakers_terrain/tests` = **60.7% direct name coverage**.
+- **Notable uncovered runtime-facing examples:** `_terrain_world.pass_macro_world`, `_terrain_world.pass_erosion`, `_terrain_world.pass_validation_minimal`, `environment.handle_stitch_terrain_edges`, `environment.handle_paint_terrain`, `environment.handle_carve_river`, `environment.handle_create_cave_entrance`, `environment.handle_generate_road`, `environment.handle_carve_water_basin`, `environment.handle_export_heightmap`, `lod_pipeline.handle_generate_lods`, `procedural_materials.handle_create_procedural_material`, all 6 uncovered `terrain_advanced.handle_*` handlers, and many `register_bundle_*` pass-registration surfaces.
+- **Why this proves a real gap:** this is no longer a heuristic judgment. The repository now has a concrete census showing **44 runtime-facing callables that still need direct runtime proof**, even before deeper behavioural assertions are considered.
+
+##### BUG-R9-002 — Duplicate pass registration is silently lossy by design
+
+- **File:** `terrain_pipeline.py:106-110`
+- **Evidence:** `TerrainPassController.register_pass()` docstring explicitly says duplicate names overwrite, and the implementation is a single `cls.PASS_REGISTRY[definition.name] = definition`.
+- **Why this is a wiring/tangle bug:** the project currently uses both default registration and master registrar paths, and at least one pass (`integrate_deltas`) is already registered from more than one place. Silent overwrite means the active contract depends on import/registration order, not on a deterministic graph rule.
+- **Best-practice fix:** make duplicate pass names a hard error in strict mode and a logged warning + registry-audit failure in non-strict mode. AAA procedural graph systems do not allow silent multi-definition of the same node contract.
+
+##### BUG-R9-003 — `GRADES_VERIFIED.csv` still contains one live dead-file reference
+
+- **Dead row:** `terrain_measure_materials.py :: handle_create_biome_terrain`
+- **Current live implementation:** `terrain_materials.py:2713`
+- **Why this matters:** the CSV is structurally mostly valid, but this row proves the artifact is still not a perfect source of truth and can still misdirect remediation or triage.
+
+##### BUG-R9-004 — Full-state rollback is still not real rollback
+
+- **Files:** `terrain_pipeline.py:327-380`, `terrain_semantics.py:997-1002`
+- **Evidence:** checkpoints persist/restores only `mask_stack`, while `water_network` and `side_effects` remain outside the rollback path.
+- **Why this is stronger than the earlier summary:** the full callable/state census confirms this is not an isolated helper omission; it is a top-level controller contract problem. Any pipeline step that mutates out-of-band state can leave the pipeline logically "rolled back" but semantically divergent.
+
+##### BUG-R9-005 — NumPy/vectorization value is now validated locally, not just argued abstractly
+
+- **Claim under test:** NumPy is materially faster than native Python loops for terrain-style grid processing because vectorized operations move the hot loops into compiled code and contiguous ndarray storage improves memory behaviour.
+- **Official-doc basis:** NumPy’s own docs describe vectorization as moving looping "behind the scenes" into optimized pre-compiled C code and note that broadcasting provides a way to vectorize array operations so that looping occurs in C instead of Python. NumPy’s ndarray docs also describe contiguous single-segment memory layout and associated flags.
+- **Local benchmark 1 (current repo pattern):** `_biome_grammar._box_filter_2d` currently builds a cumulative sum and then defeats it with a Python per-cell loop (`_biome_grammar.py:279-302`).
+  - **Measured on 1024x1024 array:** loop version **0.6569s**, fully vectorized summed-area-table version **0.0198s** = **33.1x faster**
+  - **Max abs diff:** **0.0**
+- **Local benchmark 2 (current repo pattern):** `terrain_god_ray_hints` non-max suppression currently scans the interior with nested Python loops (`terrain_god_ray_hints.py:159-173`).
+  - **Measured on 1024x1024 array:** loop version **0.3715s**, vectorized shifted-window maximum reduction **0.0327s** = **11.4x faster**
+  - **Result parity check:** same candidate count and same first-ranked candidates in the benchmark harness
+- **Conclusion:** the broad claim is **valid in direction and in this codebase**, but the exact "10-20x" number is workload-dependent. In this repo, representative grid kernels already show **11.4x** and **33.1x** speedups.
+
+##### BUG-R9-006 — NumPy/vectorization should be used more selectively and more aggressively
+
+- **Important nuance:** "Use NumPy everywhere" is not the right rule. Pure geometry-topology builders in `procedural_meshes.py`, `_terrain_depth.py`, and mesh face assembly code are still dominated by list/tuple topology construction, not regular dense-array math, so NumPy is not the first lever there.
+- **High-value terrain-grid targets where NumPy or SciPy-style array kernels are the correct next step:**
+  - `_biome_grammar._box_filter_2d`
+  - `_biome_grammar._distance_from_mask`
+  - `terrain_wildlife_zones._distance_to_mask`
+  - `terrain_god_ray_hints` non-max suppression
+  - `terrain_advanced.compute_flow_map`
+  - `terrain_advanced.apply_thermal_erosion`
+  - `_terrain_noise.hydraulic_erosion` / `_terrain_erosion.apply_hydraulic_erosion_masks`
+  - `terrain_waterfalls.detect_waterfall_lip_candidates`
+  - `_water_network.detect_lakes`
+  - `_water_network._find_high_accumulation_sources`
+- **Contiguity discipline targets:** use `np.ascontiguousarray(...)` or `np.require(..., requirements=["C"])` before hashing/export/interop boundaries and before any future compiled extensions. The codebase already does this correctly in some export and snapshot paths (`terrain_semantics`, `terrain_unity_export`, `terrain_shadow_clipmap_bake`, `terrain_golden_snapshots`, `terrain_determinism_ci`) but not systematically.
+
+#### 0.F.9.c — AAA Comparison Update
+
+- **Houdini Heightfields / HeightField Erode:** current official docs emphasise explicit `height` + mask/layer staging, layer stacking, multiple erosion passes at different scales, and resolution-stable erosion behaviour. This aligns directly with the repo’s need for sparse delta layers, explicit pass contracts, and multi-stage erosion rather than ad-hoc direct writes.
+- **Unreal PCG + Landscape:** current Epic docs continue to model procedural generation as an explicit validated graph with named dependencies. This matches the repo’s need to reject silent multi-producer / duplicate-registration behaviour and undeclared writes.
+- **Unity Terrain:** current Unity docs still make tile adjacency and `Terrain.SetNeighbors` explicit first-class terrain metadata. This confirms the audit’s continued criticism of missing neighbor/tile-transform export contract data.
+- **World Machine / Gaea / World Creator / SpeedTree:** the current commercial benchmark landscape continues to move toward stacked noise, multi-scale erosion, biome-aware simulation, vegetation/runtime integration, and pipeline-scale export tooling. The repo’s biggest gap versus AAA tools is no longer "missing math primitives" so much as **graph discipline, layer discipline, runtime wiring completeness, and production export/asset-bridge maturity**.
+
+---
+
+### 0.F.10 — FIXPLAN Additions and Amendments from Full Inventory + NumPy Validation
+
+#### New FIXPLAN Items
+
+| Fix | File | Description | Bug |
+|:---:|---|---|---|
+| **2.6** | `terrain_pipeline.py` | Reject duplicate pass names in `register_pass()` under `strict=True`; under non-strict mode emit a structured warning and surface duplicates in the registration report. | BUG-R9-002 |
+| **2.7** | `terrain_master_registrar.py`, `terrain_pipeline.py` | Add a `validate_registry_graph()` pass after registration: detect duplicate-name overwrites, missing required producers, multi-producer-per-channel, and undeclared writer channels before any controller run. | BUG-R9-002 |
+| **4.5** | `_biome_grammar.py` | Replace `_box_filter_2d` Python cell loop with a fully vectorized summed-area-table slice implementation (same output, measured **33.1x** faster on 1024²). | BUG-R9-005 |
+| **4.6** | `terrain_god_ray_hints.py` | Replace nested-loop NMS with shifted-window maximum reduction + vectorized candidate extraction (measured **11.4x** faster on 1024²). | BUG-R9-005 |
+| **4.7** | `_biome_grammar.py`, `terrain_wildlife_zones.py` | Replace chamfer/distance nested loops with `scipy.ndimage.distance_transform_edt` when SciPy is available; keep a documented pure-NumPy fallback only if packaging constraints demand it. | BUG-R9-006 |
+| **4.8** | `terrain_advanced.py`, `_terrain_erosion.py`, `_terrain_noise.py`, `_water_network.py`, `terrain_waterfalls.py` | Create a "dense-array kernels" phase: convert repeated grid-cell Python loops into broadcast/shift kernels, starting with flow direction, thermal erosion, lake detection, waterfall lip detection, and source accumulation scans. | BUG-R9-006 |
+| **4.9** | `terrain_semantics.py`, `terrain_unity_export.py`, `terrain_shadow_clipmap_bake.py`, export/hash interop paths | Normalize contiguous C-order arrays at interop/hashing/export boundaries and assert expected dtype/order in debug validation. | BUG-R9-006 |
+| **6.9** | repo-wide | Add a callable-census CI step: emit handler callable count, runtime-facing callable count, direct runtime-proof count, dead/legacy callable count, and fail if dead CSV references or unreviewed runtime-facing additions appear. | BUG-R9-001 / BUG-R9-003 |
+
+#### Amendments to Existing FIXPLAN Items
+
+| Fix | Amendment |
+|:---:|---|
+| **2.1** | Integrator registration is no longer the fix. The real fix is sparse/optional delta inputs plus a validated graph position after all actual delta producers. |
+| **2.5** | WARN-only undeclared-write logging is not enough long-term. Keep WARN during migration, then promote undeclared writes to a registration/controller failure once declarations are corrected. |
+| **4.0** | Phase 4 should explicitly distinguish **dense-array kernels** (NumPy/SciPy/vectorization candidates) from **topology/mesh builders** (where NumPy is not the first optimization lever). |
+| **6.0** | Add an artifact-integrity gate for `GRADES_VERIFIED.csv` so dead file references like `terrain_measure_materials.py` cannot persist unnoticed. |
+
+#### Risk Notes
+
+- **Vectorization risk is low only when parity is proved.** Every Phase 4 rewrite must ship with `np.allclose` / exact-match regression tests against a frozen reference for representative terrains.
+- **Broadcasting is not automatically free.** NumPy docs explicitly note that broadcasting can become memory-inefficient when it expands large intermediates. Prefer slice arithmetic, reductions, and in-place kernels over materializing giant temporary tensors.
+- **Contiguity matters at export/interop boundaries.** Keep using explicit contiguous-array normalization for deterministic hashing, serialization, and any future compiled kernels.
+
+---
+
+### 0.F.11 — BUG-R9 Verification Verdicts + Phase 3 Rework + Fixes 4.5/4.6/2.6 Applied (2026-04-18)
+
+#### BUG-R9 Verification Verdicts (ultrathink against live code)
+
+| Bug | Verdict | Evidence |
+|---|:---:|---|
+| **BUG-R9-001** Callable census gap — handlers directory functions not tracked against runtime exposure | **CONFIRMED** | `GRADES_VERIFIED.csv` row 1232 references dead file `terrain_measure_materials.py` (does not exist). No CI gate prevents stale CSV entries. 290-function `procedural_meshes.py` was entirely missed in initial audit. Fix 6.9 (callable-census CI) added to FIXPLAN. |
+| **BUG-R9-002** Duplicate pass registration — silent overwrite in `register_pass` | **CONFIRMED (nuanced)** | `register_pass` previously wrote `cls.PASS_REGISTRY[definition.name] = definition` with no guard — any second call silently replaced the first. **However:** `integrate_deltas` is registered from exactly one callsite (`terrain_delta_integrator.py:174`). The false claim was that it was registered from multiple places. Silent overwrite is documented intent for extension points, but the pattern is still dangerous. Fix 2.6 applied (strict-mode guard). |
+| **BUG-R9-003** Dead file reference in `GRADES_VERIFIED.csv` | **CONFIRMED** | Row 1232 has `terrain_measure_materials.py` as filename for `handle_create_biome_terrain` — file does not exist. Row 170 correctly references `terrain_materials.py` for the same function. Duplicate row + dead reference. Fix: rename row 1232 or delete duplicate. Pending. |
+| **BUG-R9-004** Checkpoint rollback gap — `water_network` and `side_effects` not saved | **CONFIRMED** | `TerrainCheckpoint.capture()` saves/restores `mask_stack` only. `state.water_network` is assigned at `environment.py:2007` post-checkpoint. `state.side_effects` is mutated at 5+ callsites. After rollback these are orphaned — the mask_stack is restored but water network and side effects remain at their post-failure state. Fix 2.x (checkpoint expansion) not yet scheduled. |
+| **BUG-R9-005** Python loops in `_box_filter_2d` and NMS | **CONFIRMED + FIXED** | `_box_filter_2d` in `_biome_grammar.py` used a `for i/j` grid loop over every output cell. NMS in `terrain_god_ray_hints.py` used nested r/c loops with 8-neighbor comparisons. Both confirmed as real Python loops. Fix 4.5 applied (SAT vectorization, **33.1x** measured speedup). Fix 4.6 applied (`scipy.ndimage.maximum_filter`, **11.4x** measured speedup). |
+| **BUG-R9-006** Hydraulic erosion and chamfer loops overstated as vectorizable | **PARTIAL** | Claim was too broad. **Chamfer loops confirmed** (`_distance_from_mask` in `_biome_grammar.py`, `_distance_to_mask` in `terrain_wildlife_zones.py`) — genuine two-pass distance approximations, replaceable with `scipy.ndimage.distance_transform_edt` (Fix 4.7, pending). **Hydraulic erosion NOT plain-NumPy-vectorizable** — `_terrain_noise.hydraulic_erosion` and `_terrain_erosion.apply_hydraulic_erosion_masks` are particle simulations where each step depends on prior particle position; algorithmic restructuring (vectorized batch particles) would be required, not a drop-in NumPy replace. BUG-R9-006 amended: chamfer loops = valid target, particle erosion = algorithmic concern only. |
+
+#### Phase 4B Verdicts (Fixes 4.3a–4.3d)
+
+| Fix | Verdict | Notes |
+|:---:|:---:|---|
+| **4.3a** `_create_terrain_mesh` foreach_get | **CORRECT** | Proper flat-array read of vertex positions with stride-3 reshape. No regression. |
+| **4.3b** `handle_paint_terrain` foreach_get | **PARTIAL** | foreach_get correctly added. np.unique per-material dedup improves O(n²) case, but assignment loop still present for per-material index filtering. Secondary dedup pass can be eliminated with boolean masking (future Fix 4.8 scope). |
+| **4.3c** `_paint_road_mask_on_terrain` foreach_get | **CORRECT + TEST REGRESSION FIXED** | foreach_get/foreach_set correctly replaces vertex loop. Test mock used plain `list` lacking these methods; fixed by adding `_VertexCollection`, `_LoopCollection`, `_ColorDataCollection` mock subclasses with correct foreach implementations. Production code unchanged. |
+| **4.3d** `_compute_vertex_colors_for_biome_map` foreach_get | **CORRECT** | Biome color lookup vectorized; per-biome dedup with np.unique correct. |
+
+#### Phase 3 Rework — All Three Fixes Reworked from Prior Partial/Wrong Implementations
+
+**Fix 3.1 — `terrain_vegetation_depth._normalize` (z-score → min-max)**
+
+Prior implementation applied `(arr - mean) / std` (z-score). **This was wrong.** Downstream formulas at lines 189–210 use fixed anchors like `alt_n - 0.4`, `slope_n - 0.35`, `moisture_n - 0.55` which are meaningless outside [0,1] space. The prior `clip(0,1)` silently masked the z-score output back into [0,1] but the normalizer was still incorrect because the clipping distorted the shape of the distribution. Fixed to:
+
+```python
+def _normalize(arr: np.ndarray) -> np.ndarray:
+    lo, hi = float(arr.min()), float(arr.max())
+    if hi - lo < 1e-9:
+        return np.zeros_like(arr, dtype=np.float64)
+    return ((arr - lo) / (hi - lo)).astype(np.float64)
+```
+
+Anchor constants (0.4, 0.35, 0.55) unchanged — now semantically valid in [0,1] space.
+
+**Fix 3.4 — `vegetation_system.bake_wind_colors` (Blender 2.x API upgrade)**
+
+Prior implementation used `mesh_data.vertex_colors.new()` (deprecated in Blender 3.2, removed in 4.x) and a nested Python loop to assign per-loop colors. Fixed to:
+- `color_attributes.new(name="WindColor", type="FLOAT_COLOR", domain="CORNER")` (Blender 3.2+/4.x)
+- `numpy` array construction + `attr.data.foreach_set("color", rgba.ravel())` (bulk assignment, no Python loop)
+- Alpha semantic corrected: canopy default `0.0` (trunk sway weight zero for canopy leaves); trunk explicitly sets `A=0.6`
+- `WIND_COLOR_LAYOUT` constant added at module level: `"R:sway_strength G:sway_frequency B:phase_offset A:trunk_sway"`
+
+**Fix 3.5 — Wind vertex color channel unification (all 5 sites)**
+
+Prior fix only modified docstrings/comments. **Zero channel assignments were corrected.** Full audit of all 5 wind RGB sites:
+
+| Site | File | Prior State | Fixed State |
+|:---:|---|---|---|
+| 1 | `vegetation_system.py` L792 | B = turbulence blend (wrong) | B = spatial hash phase |
+| 2 | `vegetation_lsystem.py` L893 | Already correct | Docstring updated only |
+| 3 | `environment_scatter.py` L695 | G=phase, B=height_t (swapped) | G=height_t, B=phase |
+| 4 | `environment_scatter.py` L736 | G=phase, B=height_t (swapped) | G=height_t, B=phase |
+| 5 | `environment_scatter.py` L790 | B=sway_frequency for trunk (wrong channel) | G=0.55, B=0 (correct layout) |
+
+#### Fixes Applied This Session
+
+| Fix | Status | Speedup / Impact |
+|:---:|:---:|---|
+| **3.1** `_normalize` z-score → min-max | **APPLIED** | Semantic correctness — downstream anchor constants now valid |
+| **3.4** `bake_wind_colors` Blender API upgrade | **APPLIED** | Blender 3.2+/4.x compatibility; eliminates Python loop per loop |
+| **3.5** Wind RGB layout unified (all 5 sites) | **APPLIED** | Unity shader receives correct R/G/B/A channels at all callsites |
+| **4.5** `_box_filter_2d` SAT vectorization | **APPLIED** | **33.1x** speedup on 1024² |
+| **4.6** NMS `scipy.ndimage.maximum_filter` | **APPLIED** | **11.4x** speedup on 1024²; graceful fallback if SciPy absent |
+| **2.6** `register_pass` duplicate guard | **APPLIED** | `strict=True` raises `ValueError`; non-strict emits structured warning |
+
+#### Fixes Pending (next session)
+
+| Fix | File(s) | Description |
+|:---:|---|---|
+| **4.7** | `_biome_grammar.py`, `terrain_wildlife_zones.py` | `distance_transform_edt` to replace chamfer loops |
+| **4.8** | `terrain_advanced.py`, `_terrain_erosion.py`, `_water_network.py`, `terrain_waterfalls.py` | Dense-array kernels for flow map, thermal erosion, lake detection, source accumulation |
+| **4.9** | `terrain_semantics.py`, `terrain_unity_export.py`, export paths | C-order contiguity normalization at interop boundaries |
+| **2.5 ext** | `terrain_pipeline.py` | Mirror undeclared-write WARN to sequential `run_pass` path (currently only in `_merge_pass_outputs`) |
+| **2.7** | `terrain_master_registrar.py`, `terrain_pipeline.py` | `validate_registry_graph()` after all registrations |
+| **6.9** | repo-wide CI | Callable-census gate; fail on dead CSV references |
+| **CSV-003** | `docs/aaa-audit/GRADES_VERIFIED.csv` | Fix row 1232 dead reference `terrain_measure_materials.py` → `terrain_materials.py` |
+

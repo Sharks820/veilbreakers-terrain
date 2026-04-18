@@ -106,8 +106,23 @@ class TerrainPassController:
     # -- registration --------------------------------------------------------
 
     @classmethod
-    def register_pass(cls, definition: PassDefinition) -> None:
-        """Register a pass definition by name. Duplicate names overwrite."""
+    def register_pass(cls, definition: PassDefinition, strict: bool = False) -> None:
+        """Register a pass definition by name.
+
+        In strict mode, raises ValueError on duplicate names.
+        In non-strict mode (default), logs a WARNING on duplicate registration.
+        """
+        if definition.name in cls.PASS_REGISTRY:
+            existing = cls.PASS_REGISTRY[definition.name]
+            msg = (
+                f"Duplicate pass registration: '{definition.name}' already registered "
+                f"from {getattr(existing, 'description', '?')}; "
+                f"overwriting with {getattr(definition, 'description', '?')}"
+            )
+            if strict:
+                raise ValueError(msg)
+            import logging
+            logging.getLogger(__name__).warning(msg)
         cls.PASS_REGISTRY[definition.name] = definition
 
     @classmethod

@@ -19,6 +19,12 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+try:
+    from scipy.ndimage import maximum_filter as _maximum_filter
+    _HAS_SCIPY_NMS = True
+except ImportError:
+    _HAS_SCIPY_NMS = False
+
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -155,22 +161,35 @@ def compute_god_ray_hints(
     if thresh < 1e-6:
         thresh = float(intensity.max() * 0.5)
     candidates: list[Tuple[float, int, int, str]] = []
-    rows, cols = intensity.shape
-    for r in range(1, rows - 1):
-        for c in range(1, cols - 1):
+    if _HAS_SCIPY_NMS:
+        local_max = _maximum_filter(intensity, size=3, mode='reflect')
+        nms_mask  = (intensity >= local_max) & (intensity > thresh)
+        for r, c in zip(*np.where(nms_mask)):
             v = float(intensity[r, c])
-            if v < thresh:
-                continue
-            window = intensity[r - 1 : r + 2, c - 1 : c + 2]
-            if v < float(window.max()) - 1e-9:
-                continue
             if cave_mask[r, c] > 0.5:
                 fkind = "cave_entrance"
             elif wfall_mask[r, c] > 0.5:
                 fkind = "waterfall_lip"
             else:
                 fkind = "valley"
-            candidates.append((v, r, c, fkind))
+            candidates.append((v, int(r), int(c), fkind))
+    else:
+        rows, cols = intensity.shape
+        for r in range(1, rows - 1):
+            for c in range(1, cols - 1):
+                v = float(intensity[r, c])
+                if v < thresh:
+                    continue
+                window = intensity[r - 1 : r + 2, c - 1 : c + 2]
+                if v < float(window.max()) - 1e-9:
+                    continue
+                if cave_mask[r, c] > 0.5:
+                    fkind = "cave_entrance"
+                elif wfall_mask[r, c] > 0.5:
+                    fkind = "waterfall_lip"
+                else:
+                    fkind = "valley"
+                candidates.append((v, r, c, fkind))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))
     top = candidates[:16]
