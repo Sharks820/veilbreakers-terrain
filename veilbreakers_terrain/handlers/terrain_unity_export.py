@@ -331,23 +331,23 @@ def export_unity_manifest(
 
     hm_bit_depth = _bit_depth_for_profile(profile)
     if stack.heightmap_raw_u16 is None:
-        stack.set("heightmap_raw_u16", _quantize_heightmap(stack), "unity_export")
+        stack.set("heightmap_raw_u16", _quantize_heightmap(stack), "prepare_heightmap_raw_u16")
     else:
         stack.set(
             "heightmap_raw_u16",
             np.asarray(stack.heightmap_raw_u16, dtype=np.uint16),
-            stack.populated_by_pass.get("heightmap_raw_u16", "unity_export"),
+            stack.populated_by_pass.get("heightmap_raw_u16", "prepare_heightmap_raw_u16"),
         )
     normals = stack.get("terrain_normals")
     height_shape = np.asarray(stack.height, dtype=np.float64).shape
     if normals is None or np.asarray(normals).shape != (*height_shape, 3):
         normals_zup = _compute_terrain_normals_zup(np.asarray(stack.height, dtype=np.float64), float(stack.cell_size))
-        stack.set("terrain_normals", _zup_to_unity_vectors(normals_zup), "unity_export")
+        stack.set("terrain_normals", _zup_to_unity_vectors(normals_zup), "prepare_terrain_normals")
     else:
         stack.set(
             "terrain_normals",
             np.asarray(normals, dtype=np.float32),
-            stack.populated_by_pass.get("terrain_normals", "unity_export"),
+            stack.populated_by_pass.get("terrain_normals", "prepare_terrain_normals"),
         )
 
     files: Dict[str, Dict[str, Any]] = {}

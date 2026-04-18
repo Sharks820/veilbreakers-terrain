@@ -207,14 +207,24 @@ def pass_quixel_ingest(
             layer_id = asset.asset_id
             apply_quixel_to_layer(stack, layer_id, asset, side_effects=state.side_effects)
 
-    # Guarantee the declared output exists even when no assets were ingested.
+    # Guarantee the declared output exists (contract). When no assets were
+    # ingested the placeholder is all-zeros so downstream weight checks detect
+    # the empty state; a soft issue is raised so PassResult.status reflects it.
     if stack.splatmap_weights_layer is None:
         rows, cols = np.asarray(stack.height).shape
         stack.set(
             "splatmap_weights_layer",
-            np.ones((rows, cols, 1), dtype=np.float32),
+            np.zeros((rows, cols, 1), dtype=np.float32),
             "quixel_ingest",
         )
+        if not resolved:
+            issues.append(
+                ValidationIssue(
+                    code="quixel_no_assets_ingested",
+                    severity="soft",
+                    message="No Quixel assets ingested; splatmap_weights_layer is a zero placeholder",
+                )
+            )
 
     return PassResult(
         pass_name="quixel_ingest",

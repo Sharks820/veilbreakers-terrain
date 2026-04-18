@@ -672,6 +672,8 @@ class TerrainMaskStack:
             stack.schema_version = meta.get("schema_version", "1.0")
             dict_channels = meta.get("dict_channels", {})
             for dict_field, keys in dict_channels.items():
+                if dict_field not in cls._DICT_CHANNELS:
+                    continue
                 container: Dict[str, np.ndarray] = {}
                 for i, k in enumerate(keys):
                     arr_name = f"__dict_{dict_field}_{i}"
