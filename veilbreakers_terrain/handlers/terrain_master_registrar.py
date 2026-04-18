@@ -139,7 +139,6 @@ def _register_all_terrain_passes_impl(
         ("H-saliency", f"{package_root}.terrain_saliency", "register_saliency_pass"),
         ("H-framing", f"{package_root}.terrain_framing", "register_framing_pass"),
         ("I", f"{package_root}.terrain_geology_validator", "register_bundle_i_passes"),
-        ("I-integrator", f"{package_root}.terrain_delta_integrator", "register_integrator_pass"),
         ("J", f"{package_root}.terrain_bundle_j", "register_bundle_j_passes"),
         ("K", f"{package_root}.terrain_bundle_k", "register_bundle_k_passes"),
         ("L", f"{package_root}.terrain_bundle_l", "register_bundle_l_passes"),
