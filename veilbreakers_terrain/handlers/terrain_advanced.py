@@ -1160,10 +1160,10 @@ def apply_thermal_erosion(
         active    = total_exc > 0.0
         safe_total = np.where(active, total_exc, 1.0)
         transfer   = np.where(active, max_exc * strength * 0.5, 0.0)
-        t_N = transfer * exc_N / safe_total
-        t_S = transfer * exc_S / safe_total
-        t_W = transfer * exc_W / safe_total
-        t_E = transfer * exc_E / safe_total
+        t_N = np.where(active, transfer * exc_N / safe_total, 0.0)
+        t_S = np.where(active, transfer * exc_S / safe_total, 0.0)
+        t_W = np.where(active, transfer * exc_W / safe_total, 0.0)
+        t_E = np.where(active, transfer * exc_E / safe_total, 0.0)
         delta = np.zeros_like(hmap)
         delta[1:-1, 1:-1] -= (t_N + t_S + t_W + t_E)
         delta[0:-2, 1:-1] += t_N
