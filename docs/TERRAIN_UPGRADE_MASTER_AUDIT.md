@@ -128,6 +128,37 @@ Agent 3 performed a full boundary scan. Summary:
 
 ---
 
+### 0.G Session 4 Execution Status (2026-04-18) — ★ RESUME HERE ★
+
+Six of thirteen priority fixes committed to `main`. Stopped mid-queue at user request.
+
+#### Completed Fixes
+
+| Priority | ID | Commit | What Changed |
+|:---:|---|---|---|
+| IMMEDIATE | **REGRESSION-1** | `c5f0f04` | `apply_thermal_erosion`: `t_N/S/W/E = np.where(active, transfer * exc / safe_total, 0.0)` — NaN poison eliminated |
+| IMMEDIATE | **REGRESSION-2** | `2514dcb` | `_biome_grammar._distance_from_mask` fallback: 4-connected L1 → 8-connected chamfer (`_CHAMFER_DIAG = √2`), matching scipy EDT |
+| 1 | **BUG-NEW-003** | `7e73dec` | Removed duplicate `I-integrator` entry from `terrain_master_registrar.py` (was registered twice; Fix 2.6 WARN fired every startup) |
+| 2 | **BUG-NEW-001** | `0ae9fbc` | `pass_quixel_ingest`: added zero-asset fallback `np.ones((rows,cols,1))` init of `splatmap_weights_layer` before `PassResult` return |
+| 3 | **BUG-NEW-004** | `a4dafc2` | Added `"height"` and `"ridge"` to `erosion` `PassDefinition.produces_channels` (terrain_pipeline.py) and `PassResult.produced_channels` (_terrain_world.py) |
+| 13 | **BUG-NEW-002** | `286b0a1` | `PassDAG._producers`: `Dict[str,str]` last-wins → `Dict[str,List[str]]` with `setdefault().append()`; `dependencies()` now iterates all producers per channel |
+
+Note: BUG-NEW-002 was bumped above its queue position because it is a prerequisite for any parallel-wave execution work and the change was trivial.
+
+#### Remaining — In Execution Order
+
+| Priority | ID | File(s) | What To Do |
+|:---:|---|---|---|
+| 4 | **BUG-NEW-009** | `terrain_pipeline.py:266,308-315` | Fix 2.5 ext false-negative: replace `_channels_after - _channels_before` keyset diff with `dict(populated_by_pass)` snapshot + writer-identity diff |
+| 8 | **Fix 4.9** | `terrain_semantics.py:467,620` | `TerrainMaskStack.set()`: add `np.ascontiguousarray`; `to_npz` line 620: `np.asarray` → `np.ascontiguousarray` to match `compute_hash` |
+| 9 | **BUG-R9-004** | `terrain_semantics.py:891-912,389-449` | Add `water_network_snapshot`, `side_effects_snapshot`, `pass_history_len` to `TerrainCheckpoint`; restore all three in `rollback_to` |
+| 10 | **Fix 6.9** | `scripts/callable_census_gate.py` (new file) | AST-walk census gate: ~200 LOC, emits `HANDLER_CALLABLES.txt`/`UNCOVERED.txt`/`DEAD_CSV.txt`, fails CI if uncovered count grows |
+| 12 | **BUG-NEW-OpenSimplex** | locate `_OpenSimplexWrapper` (terrain_banded.py or similar) | Route all evaluation through `self._os.noise2(x,y)` — currently inherits Perlin and never calls `_os` |
+
+Priorities 5–7 (BUG-NEW-007, BUG-NEW-005, BUG-NEW-008) are lower severity and deferred after the above five.
+
+---
+
 ## 0. CODEX VERIFICATION ADDENDUM (2026-04-16)
 
 This addendum verifies the April 15, 2026 Opus audit against the current repository `HEAD` on April 16, 2026.
