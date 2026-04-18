@@ -696,15 +696,18 @@ def pass_coastline(
     retreat_mean = 0.0
     if apply_retreat:
         delta = apply_coastal_erosion(stack, sea_level)
-        stack.set("coastline_delta", delta.astype(np.float32), "coastline")
         retreat_mean = float(np.abs(delta).mean())
+    else:
+        H, W = stack.height.shape
+        delta = np.zeros((H, W), dtype=np.float32)
+    stack.set("coastline_delta", delta.astype(np.float32), "coastline")
 
     return _PR(
         pass_name="coastline",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("tidal", "coastline_delta") if apply_retreat else ("tidal",),
+        produced_channels=("tidal", "coastline_delta"),
         metrics={
             "sea_level_m": sea_level,
             "tidal_range_m": tidal_range,

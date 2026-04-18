@@ -264,7 +264,7 @@ class TerrainPassController:
             region,
         )
 
-        _provenance_before = dict(self.state.mask_stack.populated_by_pass)
+        _keys_before = set(self.state.mask_stack.populated_by_pass)
         t0 = time.perf_counter()
         try:
             result = definition.func(self.state, region)
@@ -306,12 +306,8 @@ class TerrainPassController:
             )
 
         # Warn on channels written but not declared in produces_channels
-        _provenance_after = dict(self.state.mask_stack.populated_by_pass)
-        _undeclared = {
-            ch for ch, pname in _provenance_after.items()
-            if _provenance_before.get(ch) != pname
-               and ch not in definition.produces_channels
-        }
+        _keys_after = set(self.state.mask_stack.populated_by_pass)
+        _undeclared = (_keys_after - _keys_before) - set(definition.produces_channels)
         if _undeclared:
             import logging as _logging
             _logging.getLogger(__name__).warning(

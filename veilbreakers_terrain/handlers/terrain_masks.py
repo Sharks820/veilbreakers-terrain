@@ -309,9 +309,7 @@ def compute_base_masks(
             tile_y=int(tile_coords[1]),
             height=h.copy(),
         )
-    else:
-        if stack.height is None or stack.height.shape != h.shape:
-            stack.set("height", h.copy(), pass_name)
+    # else: stack provided with correct height — no-op (h == stack.height)
 
     slope = compute_slope(h, cell_size)
     curvature = compute_curvature(h, cell_size)

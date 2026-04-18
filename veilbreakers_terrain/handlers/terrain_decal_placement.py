@@ -149,7 +149,7 @@ def pass_decals(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=(),
+        produced_channels=("decal_density",),
         metrics=metrics,
     )
 
@@ -162,7 +162,7 @@ def register_bundle_j_decals_pass() -> None:
             name="decals",
             func=pass_decals,
             requires_channels=("height",),
-            produces_channels=(),
+            produces_channels=("decal_density",),
             seed_namespace="decals",
             requires_scene_read=False,
             description="Bundle J: mask-driven decal density layers",

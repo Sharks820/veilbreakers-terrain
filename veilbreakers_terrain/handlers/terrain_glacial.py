@@ -238,10 +238,8 @@ def pass_glacial(
                 total_delta += delta
                 carved = True
 
-    produced = ("snow_line_factor",)
-    if carved:
-        stack.set("glacial_delta", total_delta.astype(np.float32), "glacial")
-        produced = ("snow_line_factor", "glacial_delta")
+    stack.set("glacial_delta", total_delta.astype(np.float32), "glacial")
+    produced = ("snow_line_factor", "glacial_delta")
 
     return PassResult(
         pass_name="glacial",

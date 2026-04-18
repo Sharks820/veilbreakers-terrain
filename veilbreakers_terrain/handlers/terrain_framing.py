@@ -156,7 +156,7 @@ def register_framing_pass() -> None:
             requires_channels=("height",),
             produces_channels=("height",),
             seed_namespace="framing",
-            may_modify_geometry=False,
+            may_modify_geometry=True,
             requires_scene_read=False,
             supports_region_scope=False,
             description="Clear vantage→hero sightlines by lowering obstructing cells.",

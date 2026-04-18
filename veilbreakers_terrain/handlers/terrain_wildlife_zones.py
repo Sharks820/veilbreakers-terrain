@@ -274,9 +274,7 @@ def register_bundle_j_wildlife_zones_pass() -> None:
             name="wildlife_zones",
             func=pass_wildlife_zones,
             requires_channels=("height",),
-            # dict channels are not validated by the controller's scalar
-            # produces_channels contract — keep this empty on purpose.
-            produces_channels=(),
+            produces_channels=("wildlife_affinity",),
             seed_namespace="wildlife_zones",
             requires_scene_read=False,
             description="Bundle J: compute per-species wildlife affinity maps",

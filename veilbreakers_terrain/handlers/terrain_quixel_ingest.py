@@ -127,6 +127,8 @@ def apply_quixel_to_layer(
     stack: TerrainMaskStack,
     layer_id: str,
     asset: QuixelAsset,
+    *,
+    side_effects: Optional[List[str]] = None,
 ) -> None:
     """Wire a ``QuixelAsset`` into a splatmap layer on the mask stack.
 
@@ -150,17 +152,16 @@ def apply_quixel_to_layer(
             "quixel_ingest",
         )
 
-    # Stash provenance — populated_by_pass takes string values, so we encode
-    # the asset metadata as a JSON string keyed by a synthetic channel name.
-    key = f"quixel_layer[{layer_id}]"
-    payload = json.dumps(
-        {
-            "asset_id": asset.asset_id,
-            "textures": {k: str(v) for k, v in asset.textures.items()},
-        },
-        sort_keys=True,
-    )
-    stack.populated_by_pass[key] = payload
+    if side_effects is not None:
+        side_effects.append(json.dumps(
+            {
+                "event": "quixel_layer",
+                "layer_id": layer_id,
+                "asset_id": asset.asset_id,
+                "textures": {k: str(v) for k, v in asset.textures.items()},
+            },
+            sort_keys=True,
+        ))
 
 
 def pass_quixel_ingest(
@@ -189,7 +190,7 @@ def pass_quixel_ingest(
                 path = Path(desc["asset_path"])
                 layer_id = desc.get("layer_id") or path.name
                 asset = ingest_quixel_asset(path)
-                apply_quixel_to_layer(stack, layer_id, asset)
+                apply_quixel_to_layer(stack, layer_id, asset, side_effects=state.side_effects)
                 resolved.append(asset)
             except (FileNotFoundError, NotADirectoryError, KeyError, TypeError) as exc:
                 issues.append(
@@ -204,7 +205,7 @@ def pass_quixel_ingest(
     if assets is not None:
         for asset in assets:
             layer_id = asset.asset_id
-            apply_quixel_to_layer(stack, layer_id, asset)
+            apply_quixel_to_layer(stack, layer_id, asset, side_effects=state.side_effects)
 
     # Guarantee the declared output exists even when no assets were ingested.
     if stack.splatmap_weights_layer is None:

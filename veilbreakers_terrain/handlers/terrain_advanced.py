@@ -1021,8 +1021,6 @@ def compute_flow_map(
     rows, cols = hmap.shape
 
     # --- Step 1: Compute flow direction (D8 steepest descent) ---
-    flow_dir = np.full((rows, cols), -1, dtype=np.int32)
-
     slopes_vec = np.full((8, rows, cols), -np.inf, dtype=np.float64)
     for _d_idx, ((_dr, _dc), _dist) in enumerate(zip(_D8_OFFSETS, _D8_DISTANCES)):
         _r_d = slice(max(0, -_dr), rows - max(0, _dr))

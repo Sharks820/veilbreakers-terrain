@@ -592,7 +592,7 @@ class TerrainMaskStack:
             hasher.update(repr(arr.shape).encode("utf-8"))
             hasher.update(arr.tobytes())
 
-        for dict_field in ("wildlife_affinity", "decal_density"):
+        for dict_field in ("wildlife_affinity", "decal_density", "detail_density"):
             container = getattr(self, dict_field, None)
             if not container:
                 continue
