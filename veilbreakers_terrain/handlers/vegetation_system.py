@@ -37,6 +37,13 @@ except ImportError:
     np = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
+# Canonical wind vertex color layout
+# ---------------------------------------------------------------------------
+
+# Wind vertex color layout: R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
+WIND_COLOR_LAYOUT = "R:sway_strength G:sway_frequency B:phase_offset A:trunk_sway"
+
+# ---------------------------------------------------------------------------
 # Per-biome vegetation configuration
 # ---------------------------------------------------------------------------
 
@@ -496,10 +503,10 @@ def compute_wind_vertex_colors(
 
     Pure-logic function -- no Blender dependency.
 
-    Channel mapping (Unity vertex color convention — primary/secondary/turbulence):
-      R = primary wind sway — distance from trunk center normalized [0, 1]
-      G = secondary wind sway — height from ground normalized [0, 1]
-      B = turbulence — estimated branch level [0, 1], higher = more frequency variation
+    Channel mapping (see WIND_COLOR_LAYOUT):
+      R = sway_strength   — distance from trunk center, normalized [0, 1]
+      G = sway_frequency  — height from ground, normalized [0, 1]
+      B = phase_offset    — spatial hash for desynchronized per-vertex motion [0, 1]
 
     Parameters
     ----------
@@ -553,16 +560,16 @@ def compute_wind_vertex_colors(
     colors: list[tuple[float, float, float]] = []
 
     for vx, vy, vz in vertices:
-        # R: primary wind sway (distance from trunk center)
+        # R: sway_strength — distance from trunk center
         dist = math.sqrt((vx - trunk_center[0]) ** 2 + (vy - trunk_center[1]) ** 2)
         r = min(1.0, max(0.0, dist / max_dist))
 
-        # G: secondary wind sway (height from ground)
+        # G: sway_frequency — height from ground
         g = min(1.0, max(0.0, (vz - ground_level) / height_range))
 
-        # B: turbulence — outer/high-up branches get more frequency variation
-        branch_level = (r * 0.5 + g * 0.5)
-        b = min(1.0, max(0.0, branch_level))
+        # B: phase_offset — spatial hash for desynchronized per-vertex motion
+        phase_hash = math.sin(vx * 12.9898 + vy * 78.233 + vz * 37.719) * 43758.5453
+        b = min(1.0, max(0.0, phase_hash - math.floor(phase_hash)))
 
         colors.append((r, g, b))
 
@@ -793,13 +800,25 @@ def scatter_biome_vegetation(
                 mesh_data = templates[veg_type].data
                 tree_verts = [(v.co.x, v.co.y, v.co.z) for v in mesh_data.vertices]
                 wind_colors = compute_wind_vertex_colors(tree_verts)
-                if "WindColor" not in mesh_data.vertex_colors:
-                    mesh_data.vertex_colors.new(name="WindColor")
-                vcol_layer = mesh_data.vertex_colors["WindColor"]
+                # Blender 3.2+ / 4.x API: color_attributes replaces vertex_colors.
+                # Wind color layout (see WIND_COLOR_LAYOUT): R=sway_strength,
+                # G=sway_frequency, B=phase_offset, A=trunk_sway_intensity.
+                if "WindColor" in mesh_data.color_attributes:
+                    mesh_data.color_attributes.remove(mesh_data.color_attributes["WindColor"])
+                attr = mesh_data.color_attributes.new(
+                    name="WindColor", type="FLOAT_COLOR", domain="CORNER"
+                )
+                n_loops = len(mesh_data.loops)
+                rgba = np.zeros((n_loops, 4), dtype=np.float32)
                 for poly in mesh_data.polygons:
                     for loop_idx, vert_idx in zip(poly.loop_indices, poly.vertices):
                         r, g, b = wind_colors[vert_idx]
-                        vcol_layer.data[loop_idx].color = (r, g, b, 1.0)
+                        rgba[loop_idx, 0] = r  # sway_strength
+                        rgba[loop_idx, 1] = g  # sway_frequency
+                        rgba[loop_idx, 2] = b  # phase_offset
+                        # A=trunk_sway_intensity: 0.0 for tips/canopy (no trunk sway)
+                        rgba[loop_idx, 3] = 0.0
+                attr.data.foreach_set("color", rgba.ravel())
 
     for p in placements:
         veg_key = f"{p['type']}_{p['style']}"

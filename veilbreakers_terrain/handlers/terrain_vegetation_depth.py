@@ -123,13 +123,20 @@ def _protected_mask(
 
 
 def _normalize(arr: np.ndarray) -> np.ndarray:
+    """Min-max normalize to [0, 1].
+
+    The downstream anchor constants in compute_vegetation_layers (0.4, 0.35,
+    0.55 etc.) are semantic thresholds in [0, 1] space and require min-max
+    normalization.  The previous z-score implementation produced values
+    outside [0, 1], making those anchors meaningless and causing the final
+    clip to silently saturate everything to 0 or 1.
+    """
     if arr.size == 0:
-        return arr.astype(np.float32)
-    mean = float(arr.mean())
-    std = float(arr.std())
-    if std < 1e-9:
-        return np.zeros_like(arr, dtype=np.float32)
-    return ((arr - mean) / std).astype(np.float32)
+        return arr.astype(np.float64)
+    lo, hi = float(arr.min()), float(arr.max())
+    if hi - lo < 1e-9:
+        return np.zeros_like(arr, dtype=np.float64)
+    return ((arr - lo) / (hi - lo)).astype(np.float64)
 
 
 # ---------------------------------------------------------------------------

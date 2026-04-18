@@ -891,11 +891,10 @@ def bake_wind_vertex_colors(tree_mesh_spec: MeshSpec) -> MeshSpec:
 
     Pure-logic function -- no Blender dependency.
 
-    Channel mapping:
-      R = primary sway (0 at trunk, 1 at branch tips -- radial distance
-          from base, normalized).
-      G = secondary sway (leaf flutter: 1 for tip verts, 0 for trunk).
-      B = phase offset (random per branch for desynchronized motion).
+    Channel mapping (canonical WIND_COLOR_LAYOUT from vegetation_system.py):
+      R = sway_strength   (0 at trunk, 1 at branch tips -- radial+height blend).
+      G = sway_frequency  (branch depth normalized: 1 for fine tips, 0 for trunk).
+      B = phase_offset    (spatial hash for desynchronized per-branch motion).
 
     Unity shader reads these vertex colors for GPU-based wind animation.
 
