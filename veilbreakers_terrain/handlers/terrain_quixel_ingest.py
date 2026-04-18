@@ -206,6 +206,15 @@ def pass_quixel_ingest(
             layer_id = asset.asset_id
             apply_quixel_to_layer(stack, layer_id, asset)
 
+    # Guarantee the declared output exists even when no assets were ingested.
+    if stack.splatmap_weights_layer is None:
+        rows, cols = np.asarray(stack.height).shape
+        stack.set(
+            "splatmap_weights_layer",
+            np.ones((rows, cols, 1), dtype=np.float32),
+            "quixel_ingest",
+        )
+
     return PassResult(
         pass_name="quixel_ingest",
         status="ok" if not any(i.is_hard() for i in issues) else "failed",
