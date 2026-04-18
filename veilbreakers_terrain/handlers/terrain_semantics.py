@@ -468,7 +468,7 @@ class TerrainMaskStack:
         """Store a channel value, record provenance, clear dirty flag."""
         if not hasattr(self, channel):
             raise AttributeError(f"Unknown mask channel: {channel}")
-        object.__setattr__(self, channel, value)
+        object.__setattr__(self, channel, np.ascontiguousarray(value))
         self.populated_by_pass[channel] = pass_name
         self.dirty_channels.discard(channel)
         # Any mutation invalidates cached hash
@@ -617,7 +617,7 @@ class TerrainMaskStack:
         for name in self._ARRAY_CHANNELS:
             val = getattr(self, name, None)
             if val is not None:
-                arrays[name] = np.asarray(val)
+                arrays[name] = np.ascontiguousarray(val)
         meta = {
             "schema_version": self.schema_version,
             "tile_size": self.tile_size,
@@ -910,6 +910,10 @@ class TerrainCheckpoint:
     coordinate_system: str = "z-up"
     unity_export_schema_version: str = "1.0"
     splatmap_layer_ids: Tuple[str, ...] = ()
+    # Rollback completeness — restores full pipeline state, not just mask stack
+    water_network_snapshot: Optional[Any] = field(default=None, repr=False)
+    side_effects_snapshot: List[str] = field(default_factory=list)
+    pass_history_len: int = 0
 
 
 # ---------------------------------------------------------------------------
