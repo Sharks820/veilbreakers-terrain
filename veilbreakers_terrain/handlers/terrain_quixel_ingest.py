@@ -214,17 +214,16 @@ def pass_quixel_ingest(
         rows, cols = np.asarray(stack.height).shape
         stack.set(
             "splatmap_weights_layer",
-            np.zeros((rows, cols, 1), dtype=np.float32),
+            np.ones((rows, cols, 1), dtype=np.float32),
             "quixel_ingest",
         )
-        if not resolved:
-            issues.append(
-                ValidationIssue(
-                    code="quixel_no_assets_ingested",
-                    severity="soft",
-                    message="No Quixel assets ingested; splatmap_weights_layer is a zero placeholder",
-                )
+        issues.append(
+            ValidationIssue(
+                code="quixel_no_assets_ingested",
+                severity="soft",
+                message="No Quixel assets ingested; splatmap_weights_layer is a fallback placeholder",
             )
+        )
 
     return PassResult(
         pass_name="quixel_ingest",

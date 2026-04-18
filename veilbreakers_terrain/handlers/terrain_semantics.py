@@ -617,6 +617,8 @@ class TerrainMaskStack:
         path.parent.mkdir(parents=True, exist_ok=True)
         arrays: Dict[str, np.ndarray] = {}
         for name in self._ARRAY_CHANNELS:
+            if name in self._DICT_CHANNELS:
+                continue
             val = getattr(self, name, None)
             if val is not None:
                 arrays[name] = np.ascontiguousarray(val)

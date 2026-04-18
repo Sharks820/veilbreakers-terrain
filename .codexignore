@@ -1,0 +1,36 @@
+# Exclude compiled bytecode — binary files exhaust GPT context before verdict
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Git internals
+.git/
+
+# Large binary assets
+**/*.blend
+**/*.blend1
+**/*.fbx
+**/*.obj
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.tiff
+**/*.tif
+**/*.exr
+**/*.tga
+**/*.hdr
+**/*.npy
+**/*.npz
+
+# IDE / OS noise
+.vscode/
+.idea/
+**/.DS_Store
+**/Thumbs.db
