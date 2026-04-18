@@ -193,8 +193,30 @@ def _dist3(a: tuple, b: tuple) -> float:
     )
 
 
+def _uf_find(parent: list, i: int) -> int:
+    while parent[i] != i:
+        parent[i] = parent[parent[i]]  # path compression
+        i = parent[i]
+    return i
+
+
+def _uf_union(parent: list, rank: list, i: int, j: int) -> None:
+    ri, rj = _uf_find(parent, i), _uf_find(parent, j)
+    if ri == rj:
+        return
+    if rank[ri] < rank[rj]:
+        ri, rj = rj, ri
+    parent[rj] = ri
+    if rank[ri] == rank[rj]:
+        rank[ri] += 1
+
+
 def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
     """Group lights within merge_distance and merge each group into one light.
+
+    Uses union-find (disjoint set) for transitive clustering: A-B and B-C both
+    within merge_distance means A, B, C all merge, even if A-C > merge_distance.
+    The prior greedy approach was order-dependent and missed these chains.
 
     Merged properties:
     - energy: sum
@@ -216,23 +238,25 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
         return []
 
     n = len(lights)
-    visited = [False] * n
-    merged = []
+    parent = list(range(n))
+    rank = [0] * n
 
     for i in range(n):
-        if visited[i]:
-            continue
-        group = [i]
-        visited[i] = True
         for j in range(i + 1, n):
-            if visited[j]:
-                continue
             if _dist3(lights[i]["position"], lights[j]["position"]) <= merge_distance:
-                group.append(j)
-                visited[j] = True
+                _uf_union(parent, rank, i, j)
 
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        root = _uf_find(parent, i)
+        if root not in groups:
+            groups[root] = []
+        groups[root].append(i)
+
+    merged = []
+    for group in groups.values():
         if len(group) == 1:
-            entry = dict(lights[i])
+            entry = dict(lights[group[0]])
             entry["merged_count"] = 1
             merged.append(entry)
             continue
