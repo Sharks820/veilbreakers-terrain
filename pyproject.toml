@@ -27,9 +27,6 @@ asyncio_mode = "auto"
 line-length = 127
 target-version = "py311"
 
-[tool.ruff.lint]
-external = ["L2-04"]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

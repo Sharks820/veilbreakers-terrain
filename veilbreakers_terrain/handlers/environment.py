@@ -124,7 +124,7 @@ def _object_world_xyz(obj: Any, local_co: Any) -> tuple[float, float, float]:
             world_co = matrix_world @ local_co
             return _vector_xyz(world_co)
         except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+            pass
 
     x, y, z = _vector_xyz(local_co)
     location = getattr(obj, "location", None)
@@ -3338,7 +3338,7 @@ def _create_bridge_object_from_spec(
         if mat is not None:
             mesh_data.materials.append(mat)
     except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+        pass
     return obj
 
 
@@ -3372,7 +3372,7 @@ def _create_mesh_object_from_spec(
                 obj.data.materials.clear()
                 obj.data.materials.append(mat)
         except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+            pass
     return obj
 
 
@@ -3919,7 +3919,7 @@ def _ensure_water_material(
         try:
             mat.surface_render_method = "DITHERED"
         except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+            pass
     if hasattr(mat, "use_screen_refraction"):
         mat.use_screen_refraction = not surface_only
     if hasattr(mat, "refraction_depth"):
@@ -4053,7 +4053,7 @@ def _ensure_water_material(
                 if output.inputs.get("Volume") is not None:
                     links.new(absorption.outputs["Volume"], output.inputs["Volume"])
             except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+                pass
 
         if surface_only:
             try:
@@ -4067,7 +4067,7 @@ def _ensure_water_material(
                 links.new(emission.outputs["Emission"], add_shader.inputs[1])
                 links.new(add_shader.outputs["Shader"], output.inputs["Surface"])
             except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+                pass
 
         noise_tex = nodes.new("ShaderNodeTexNoise")
         noise_tex.location = (-220, -220)
@@ -4098,7 +4098,7 @@ def _apply_water_object_settings(obj: Any, *, surface_only: bool) -> None:
     try:
         obj.display_type = "TEXTURED"
     except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+        pass
     for attr, value in (
         ("visible_shadow", False),
         ("is_shadow_catcher", False),
@@ -4107,18 +4107,18 @@ def _apply_water_object_settings(obj: Any, *, surface_only: bool) -> None:
             try:
                 setattr(obj, attr, value)
             except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+                pass
     cycles_visibility = getattr(obj, "cycles_visibility", None)
     if cycles_visibility is not None and hasattr(cycles_visibility, "shadow"):
         try:
             cycles_visibility.shadow = False
         except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+            pass
     if surface_only:
         try:
             obj.color = (1.0, 1.0, 1.0, 1.0)
         except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+            pass
 
 
 def _build_terrain_world_height_sampler(terrain_obj: Any) -> Callable[[float, float], float] | None:
@@ -4539,7 +4539,7 @@ def _build_level_water_surface_from_terrain(
         obj["vb_water_depth"] = float(water_depth)
         obj["vb_water_surface_only"] = bool(surface_only)
     except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+        pass
     bpy.context.collection.objects.link(obj)
     _apply_water_object_settings(obj, surface_only=surface_only)
     mesh.materials.append(
@@ -4964,7 +4964,7 @@ def handle_create_water(params: dict) -> dict:
         obj["vb_water_depth"] = float(channel_depth)
         obj["vb_water_surface_only"] = bool(surface_only)
     except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+        pass
     bpy.context.collection.objects.link(obj)
     _apply_water_object_settings(obj, surface_only=surface_only)
 
@@ -5424,7 +5424,7 @@ def _compute_vertex_colors_for_biome_map(
                     if len(base_color) == 3:
                         base_color = base_color + (1.0,)
         except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+            pass
 
         tinted = apply_corruption_tint([base_color], corruption)
         result_colors.append(tinted[0])

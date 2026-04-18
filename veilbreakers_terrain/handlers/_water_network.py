@@ -1012,7 +1012,7 @@ class WaterNetwork:
             try:
                 setattr(seg, "strahler_order", int(orders.get(seg_id, 1)))
             except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+                pass
         return orders
 
     def get_trunk_segments(self, min_order: int = 2) -> list[int]:
