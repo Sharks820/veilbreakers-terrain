@@ -263,7 +263,7 @@ class TerrainPassController:
             region,
         )
 
-        _channels_before = frozenset(self.state.mask_stack.populated_by_pass.keys())
+        _provenance_before = dict(self.state.mask_stack.populated_by_pass)
         t0 = time.perf_counter()
         try:
             result = definition.func(self.state, region)
@@ -305,8 +305,12 @@ class TerrainPassController:
             )
 
         # Warn on channels written but not declared in produces_channels
-        _channels_after = frozenset(self.state.mask_stack.populated_by_pass.keys())
-        _undeclared = _channels_after - _channels_before - set(definition.produces_channels)
+        _provenance_after = dict(self.state.mask_stack.populated_by_pass)
+        _undeclared = {
+            ch for ch, pname in _provenance_after.items()
+            if _provenance_before.get(ch) != pname
+               and ch not in definition.produces_channels
+        }
         if _undeclared:
             import logging as _logging
             _logging.getLogger(__name__).warning(
@@ -428,16 +432,22 @@ class TerrainPassController:
             tile_size=int(stack.tile_size),
             coordinate_system=stack.coordinate_system,
             unity_export_schema_version=stack.unity_export_schema_version,
+            water_network_snapshot=self.state.water_network,
+            side_effects_snapshot=list(self.state.side_effects),
+            pass_history_len=len(self.state.pass_history),
         )
         return ckpt
 
     def rollback_to(self, checkpoint_id: str) -> None:
-        """Rewind mask stack state to a prior checkpoint by id."""
+        """Rewind full pipeline state to a prior checkpoint by id."""
         for ckpt in reversed(self.state.checkpoints):
             if ckpt.checkpoint_id == checkpoint_id:
                 restored = TerrainMaskStack.from_npz(ckpt.mask_stack_path)
                 self.state.mask_stack = restored
-                # Truncate history past the restored point
+                self.state.water_network = ckpt.water_network_snapshot
+                self.state.side_effects = list(ckpt.side_effects_snapshot)
+                self.state.pass_history = self.state.pass_history[: ckpt.pass_history_len]
+                # Truncate checkpoint history past the restored point
                 idx = self.state.checkpoints.index(ckpt)
                 self.state.checkpoints = self.state.checkpoints[: idx + 1]
                 return
