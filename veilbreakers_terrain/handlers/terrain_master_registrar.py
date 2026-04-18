@@ -171,6 +171,9 @@ def _register_all_terrain_passes_impl(
                 (label, ImportError(f"registrar not found: {module_path}.{attr}"))
             )
 
+    from .terrain_pipeline import TerrainPassController
+    for _w in TerrainPassController.validate_registry_graph():
+        logger.warning("Registry graph: %s", _w)
     return loaded, errors
 
 

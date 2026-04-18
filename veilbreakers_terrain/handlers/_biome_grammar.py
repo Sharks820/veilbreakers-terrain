@@ -19,6 +19,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+try:
+    from scipy.ndimage import distance_transform_edt as _edt
+    _HAS_SCIPY_EDT = True
+except ImportError:
+    _HAS_SCIPY_EDT = False
+
 
 # ---------------------------------------------------------------------------
 # Biome alias table
@@ -301,15 +307,12 @@ def _box_filter_2d(arr: np.ndarray, radius: int) -> np.ndarray:
 
 
 def _distance_from_mask(mask: np.ndarray) -> np.ndarray:
-    """Approximate Euclidean distance transform using iterative passes.
-
-    For each True cell in *mask*, returns approximate distance to nearest
-    False cell. Pure numpy, no scipy dependency.
-    """
+    """Euclidean distance from each True cell to nearest False cell."""
+    if _HAS_SCIPY_EDT:
+        return _edt(mask).astype(np.float64)
     h, w = mask.shape
     dist = np.full((h, w), h + w, dtype=np.float64)
     dist[~mask] = 0.0
-
     # Forward pass
     for y in range(h):
         for x in range(w):

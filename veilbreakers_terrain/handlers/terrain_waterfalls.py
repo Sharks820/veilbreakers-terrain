@@ -218,35 +218,51 @@ def detect_waterfall_lip_candidates(
 
     _ = float(stack.cell_size)
 
+    # Vectorized candidate scan: use D8 slopes (for steepest-descent direction)
+    # and raw height drops (for min_drop_m check), matching _steepest_descent_step.
+    interior = np.zeros((rows, cols), dtype=bool)
+    interior[1:-1, 1:-1] = True
+    drainage_ok = interior & (drainage >= min_drainage)
+
+    slopes_stack = np.full((8, rows, cols), -np.inf, dtype=np.float64)
+    drops_stack  = np.full((8, rows, cols), -np.inf, dtype=np.float64)
+    for _d_idx, ((_dr, _dc), _dist) in enumerate(zip(_D8_OFFSETS, _D8_DISTANCES)):
+        _r_d = slice(max(0, -_dr), rows - max(0, _dr))
+        _r_s = slice(max(0,  _dr), rows - max(0, -_dr))
+        _c_d = slice(max(0, -_dc), cols - max(0, _dc))
+        _c_s = slice(max(0,  _dc), cols - max(0, -_dc))
+        _h_diff = h[_r_d, _c_d] - h[_r_s, _c_s]
+        slopes_stack[_d_idx, _r_d, _c_d] = _h_diff / _dist
+        drops_stack[_d_idx, _r_d, _c_d]  = _h_diff
+
+    best_d8 = np.argmax(slopes_stack, axis=0).astype(np.int32)
+    _ri = np.arange(rows)[:, None]
+    _ci = np.arange(cols)[None, :]
+    best_slope_arr = slopes_stack[best_d8, _ri, _ci]
+    best_drop_arr  = drops_stack[best_d8, _ri, _ci]
+
+    cand_mask = drainage_ok & (best_slope_arr > 0.0) & (best_drop_arr >= min_drop_m)
+    cand_rs, cand_cs = np.where(cand_mask)
+
     candidates: List[LipCandidate] = []
-    for r in range(1, rows - 1):
-        for c in range(1, cols - 1):
-            if drainage[r, c] < min_drainage:
-                continue
-            step = _steepest_descent_step(h, r, c)
-            if step is None:
-                continue
-            nr, nc, d8 = step
-            drop = float(h[r, c] - h[nr, nc])
-            # Scale drop to world meters (height is already world-m, cell step is cs)
-            if drop < min_drop_m:
-                continue
-            wx, wy, wz = _grid_to_world(stack, r, c)
-            angle = _d8_to_angle(d8)
-            # Confidence = normalized combination of drop + drainage
-            drainage_score = min(1.0, float(drainage[r, c]) / (max(min_drainage, 1.0) * 4.0))
-            drop_score = min(1.0, drop / (max(min_drop_m, 0.1) * 4.0))
-            confidence = 0.5 * drainage_score + 0.5 * drop_score
-            candidates.append(
-                LipCandidate(
-                    world_position=(wx, wy, wz),
-                    upstream_drainage=float(drainage[r, c]),
-                    downstream_drop_m=drop,
-                    flow_direction_rad=angle,
-                    confidence_score=float(confidence),
-                    grid_rc=(r, c),
-                )
+    for r, c in zip(cand_rs.tolist(), cand_cs.tolist()):
+        d8   = int(best_d8[r, c])
+        drop = float(best_drop_arr[r, c])
+        wx, wy, wz = _grid_to_world(stack, r, c)
+        angle = _d8_to_angle(d8)
+        drainage_score = min(1.0, float(drainage[r, c]) / (max(min_drainage, 1.0) * 4.0))
+        drop_score     = min(1.0, drop / (max(min_drop_m, 0.1) * 4.0))
+        confidence     = 0.5 * drainage_score + 0.5 * drop_score
+        candidates.append(
+            LipCandidate(
+                world_position=(wx, wy, wz),
+                upstream_drainage=float(drainage[r, c]),
+                downstream_drop_m=drop,
+                flow_direction_rad=angle,
+                confidence_score=float(confidence),
+                grid_rc=(r, c),
             )
+        )
 
     # Deduplicate: if two candidates are immediate D8 neighbors keep the one
     # with the higher confidence score — avoids stacking detections along a

@@ -136,6 +136,42 @@ class TerrainPassController:
         """Test helper — clears the pass registry."""
         cls.PASS_REGISTRY.clear()
 
+    @classmethod
+    def validate_registry_graph(cls) -> list[str]:
+        """Check registered passes for common wiring issues.
+
+        Returns a list of warning strings (empty = clean). Checks:
+          - requires_channels not produced by any registered pass.
+          - duplicate entries in requires/produces_channels.
+        """
+        warnings_list: list[str] = []
+        all_produced: set[str] = set()
+        for defn in cls.PASS_REGISTRY.values():
+            all_produced.update(defn.produces_channels)
+
+        for name, defn in cls.PASS_REGISTRY.items():
+            seen_req: set[str] = set()
+            for ch in defn.requires_channels:
+                if ch in seen_req:
+                    warnings_list.append(
+                        f"Pass '{name}': duplicate requires_channels entry '{ch}'"
+                    )
+                seen_req.add(ch)
+                if ch not in all_produced:
+                    warnings_list.append(
+                        f"Pass '{name}' requires channel '{ch}' "
+                        "but no registered pass produces it"
+                    )
+            seen_prod: set[str] = set()
+            for ch in defn.produces_channels:
+                if ch in seen_prod:
+                    warnings_list.append(
+                        f"Pass '{name}': duplicate produces_channels entry '{ch}'"
+                    )
+                seen_prod.add(ch)
+
+        return warnings_list
+
     # -- enforcement hooks ---------------------------------------------------
 
     def require_scene_read(self, operation: str) -> None:
@@ -227,6 +263,7 @@ class TerrainPassController:
             region,
         )
 
+        _channels_before = frozenset(self.state.mask_stack.populated_by_pass.keys())
         t0 = time.perf_counter()
         try:
             result = definition.func(self.state, region)
@@ -265,6 +302,16 @@ class TerrainPassController:
             raise PassContractError(
                 f"Pass '{pass_name}' declared produces_channels={definition.produces_channels} "
                 f"but did not populate {missing_outputs}"
+            )
+
+        # Warn on channels written but not declared in produces_channels
+        _channels_after = frozenset(self.state.mask_stack.populated_by_pass.keys())
+        _undeclared = _channels_after - _channels_before - set(definition.produces_channels)
+        if _undeclared:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Pass '%s' wrote undeclared channels %s; add to produces_channels",
+                pass_name, sorted(_undeclared),
             )
 
         # Run quality gate if defined (§agent protocol rule 4)
