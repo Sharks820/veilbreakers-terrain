@@ -1076,17 +1076,58 @@ class TestRoadMaskPainting:
             def __init__(self, x, y, z=0.0):
                 self.co = SimpleNamespace(x=x, y=y, z=z)
 
+        class _VertexCollection(list):
+            """List of _Vertex objects that also supports Blender's foreach_get API."""
+
+            def foreach_get(self, attr, dest):
+                # attr is expected to be "co"; dest is a flat array of length n_verts*3.
+                for i, v in enumerate(self):
+                    co = getattr(v, attr)
+                    dest[i * 3 + 0] = co.x
+                    dest[i * 3 + 1] = co.y
+                    dest[i * 3 + 2] = co.z
+
         class _Loop:
             def __init__(self, vertex_index):
                 self.vertex_index = vertex_index
+
+        class _LoopCollection(list):
+            """List of _Loop objects that also supports Blender's foreach_get API."""
+
+            def foreach_get(self, attr, dest):
+                # attr is expected to be "vertex_index"; dest is a flat int array of length n_loops.
+                for i, loop in enumerate(self):
+                    dest[i] = getattr(loop, attr)
 
         class _ColorDatum:
             def __init__(self):
                 self.color = (0.0, 0.0, 0.0, 0.0)
 
+        class _ColorDataCollection(list):
+            """List of _ColorDatum objects that supports Blender's foreach_get/foreach_set API."""
+
+            def foreach_get(self, attr, dest):
+                # attr is expected to be "color"; dest is a flat float array of length n_loops*4.
+                for i, datum in enumerate(self):
+                    val = getattr(datum, attr)
+                    dest[i * 4 + 0] = val[0]
+                    dest[i * 4 + 1] = val[1]
+                    dest[i * 4 + 2] = val[2]
+                    dest[i * 4 + 3] = val[3]
+
+            def foreach_set(self, attr, src):
+                # attr is expected to be "color"; src is a flat float array of length n_loops*4.
+                for i, datum in enumerate(self):
+                    setattr(datum, attr, (
+                        float(src[i * 4 + 0]),
+                        float(src[i * 4 + 1]),
+                        float(src[i * 4 + 2]),
+                        float(src[i * 4 + 3]),
+                    ))
+
         class _ColorAttr:
             def __init__(self, count):
-                self.data = [_ColorDatum() for _ in range(count)]
+                self.data = _ColorDataCollection(_ColorDatum() for _ in range(count))
 
         class _ColorAttributes:
             def __init__(self):
@@ -1102,13 +1143,13 @@ class TestRoadMaskPainting:
 
         class _Mesh:
             def __init__(self):
-                self.vertices = [
+                self.vertices = _VertexCollection([
                     _Vertex(0.0, 0.0),
                     _Vertex(2.0, 0.0),
                     _Vertex(100.0, 100.0),
                     _Vertex(102.0, 100.0),
-                ]
-                self.loops = [_Loop(0), _Loop(1), _Loop(2), _Loop(3)]
+                ])
+                self.loops = _LoopCollection([_Loop(0), _Loop(1), _Loop(2), _Loop(3)])
                 self.color_attributes = _ColorAttributes()
 
         terrain_obj = SimpleNamespace(data=_Mesh(), matrix_world=None)

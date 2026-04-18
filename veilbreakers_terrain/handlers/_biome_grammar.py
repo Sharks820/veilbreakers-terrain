@@ -19,6 +19,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+try:
+    from scipy.ndimage import distance_transform_edt as _edt
+    _HAS_SCIPY_EDT = True
+except ImportError:
+    _HAS_SCIPY_EDT = False
+
 
 # ---------------------------------------------------------------------------
 # Biome alias table
@@ -277,41 +283,36 @@ def _generate_corruption_map(
 
 
 def _box_filter_2d(arr: np.ndarray, radius: int) -> np.ndarray:
-    """Simple 2D box (mean) filter using cumulative sums. No scipy needed."""
+    """Box-mean filter using summed-area table, O(H*W) total."""
     if radius <= 0:
         return arr.copy()
-    h, w = arr.shape
-    size = 2 * radius + 1
-    # Pad with edge values
-    padded = np.pad(arr, radius, mode="edge")
-    # Cumulative sum approach for fast uniform filter
-    cs = np.cumsum(np.cumsum(padded, axis=0), axis=1)
-    # Compute box means using the integral image
-    result = np.empty_like(arr)
-    for y in range(h):
-        for x in range(w):
-            y2, x2 = y + size - 1, x + size - 1
-            total = cs[y2, x2]
-            if y > 0:
-                total -= cs[y - 1, x2]
-            if x > 0:
-                total -= cs[y2, x - 1]
-            if y > 0 and x > 0:
-                total += cs[y - 1, x - 1]
-            result[y, x] = total / (size * size)
-    return result
+    arr = np.asarray(arr, dtype=np.float64)
+    H, W = arr.shape
+    # Zero-padded SAT: shape (H+1, W+1), row 0 and col 0 are zero sentinels
+    padded = np.zeros((H + 1, W + 1), dtype=np.float64)
+    padded[1:, 1:] = arr
+    sat = np.cumsum(np.cumsum(padded, axis=0), axis=1)
+
+    # Per-cell box bounds (clamped)
+    r0 = np.maximum(0, np.arange(H) - radius)
+    r1 = np.minimum(H, np.arange(H) + radius + 1)
+    c0 = np.maximum(0, np.arange(W) - radius)
+    c1 = np.minimum(W, np.arange(W) + radius + 1)
+
+    R0 = r0[:, None]; R1 = r1[:, None]
+    C0 = c0[None, :]; C1 = c1[None, :]
+    box_sums = sat[R1, C1] - sat[R0, C1] - sat[R1, C0] + sat[R0, C0]
+    counts   = (R1 - R0) * (C1 - C0)
+    return (box_sums / counts).astype(arr.dtype)
 
 
 def _distance_from_mask(mask: np.ndarray) -> np.ndarray:
-    """Approximate Euclidean distance transform using iterative passes.
-
-    For each True cell in *mask*, returns approximate distance to nearest
-    False cell. Pure numpy, no scipy dependency.
-    """
+    """Euclidean distance from each True cell to nearest False cell."""
+    if _HAS_SCIPY_EDT:
+        return _edt(mask).astype(np.float64)
     h, w = mask.shape
     dist = np.full((h, w), h + w, dtype=np.float64)
     dist[~mask] = 0.0
-
     # Forward pass
     for y in range(h):
         for x in range(w):

@@ -81,39 +81,49 @@ def detect_karst_candidates(
     if not karst_mask.any():
         return []
 
-    # Pick local minima within the mask as sinkhole / cenote seeds
+    # Poisson-disk sampling: natural blue-noise distribution vs regular grid.
+    # min separation mirrors the old grid step converted to world-space meters.
+    from ._scatter_engine import poisson_disk_sample
+
     features: List[KarstFeature] = []
-    # Use a simple grid subsample to avoid O(N) feature explosion
-    step = max(4, H // 16)
+    min_sep = float(max(4, H // 16)) * float(stack.cell_size)
+    tile_w = W * float(stack.cell_size)
+    tile_d = H * float(stack.cell_size)
+    _seed = (int(stack.tile_x) * 1000003 + int(stack.tile_y)) & 0x7FFFFFFF
+    candidates = poisson_disk_sample(tile_w, tile_d, min_sep, seed=_seed)
+
     fid = 0
-    for r in range(step, H - step, step):
-        for c in range(step, W - step, step):
-            if not karst_mask[r, c]:
-                continue
-            window = h[r - 2 : r + 3, c - 2 : c + 3]
-            if h[r, c] > float(window.min()) + 0.1:
-                continue  # not a local minimum
-            # Decide feature kind from neighborhood
-            rng_hardness = hardness[r, c]
-            if rng_hardness > hardness_threshold:
-                kind = "cenote"
-            elif h[r, c] < (float(h.min()) + 0.25 * float(h.ptp() or 1.0)):
-                kind = "polje"
-            else:
-                kind = "sinkhole"
-            wx = stack.world_origin_x + c * stack.cell_size
-            wy = stack.world_origin_y + r * stack.cell_size
-            wz = float(h[r, c])
-            radius = float(stack.cell_size * 2.0)
-            features.append(
-                KarstFeature(
-                    feature_id=f"karst_{fid}",
-                    kind=kind,
-                    world_pos=(wx, wy, wz),
-                    radius_m=radius,
-                )
+    margin = 2  # 5×5 window needs r±2, c±2
+    for lx, ly in candidates:
+        c = int(round(lx / float(stack.cell_size)))
+        r = int(round(ly / float(stack.cell_size)))
+        if not (margin <= r < H - margin and margin <= c < W - margin):
+            continue
+        if not karst_mask[r, c]:
+            continue
+        window = h[r - 2 : r + 3, c - 2 : c + 3]
+        if h[r, c] > float(window.min()) + 0.1:
+            continue  # not a local minimum
+        rng_hardness = hardness[r, c]
+        if rng_hardness > hardness_threshold:
+            kind = "cenote"
+        elif h[r, c] < (float(h.min()) + 0.25 * float((h.max() - h.min()) or 1.0)):
+            kind = "polje"
+        else:
+            kind = "sinkhole"
+        wx = stack.world_origin_x + c * stack.cell_size
+        wy = stack.world_origin_y + r * stack.cell_size
+        wz = float(h[r, c])
+        radius = float(stack.cell_size * 2.0)
+        features.append(
+            KarstFeature(
+                feature_id=f"karst_{fid}",
+                kind=kind,
+                world_pos=(wx, wy, wz),
+                radius_m=radius,
             )
-            fid += 1
+        )
+        fid += 1
     return features
 
 

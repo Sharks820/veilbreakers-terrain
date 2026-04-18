@@ -208,6 +208,22 @@ def pass_horizon_lod(
         bias = ((upsampled - lo) / (hi - lo)).astype(np.float32)
     stack.set("lod_bias", bias, "horizon_lod")
 
+    # Build horizon skybox profiles from vantage positions.
+    vantage_hint = hints.get("horizon_skybox_vantages", None)
+    if vantage_hint:
+        vantages = list(vantage_hint)
+    else:
+        cs = float(stack.cell_size)
+        cx = float(stack.world_origin_x) + src_shape[1] * cs * 0.5
+        cy = float(stack.world_origin_y) + src_shape[0] * cs * 0.5
+        cz = float(stack.height.mean())
+        vantages = [(cx, cy, cz)]
+    ray_count = int(hints.get("horizon_skybox_ray_count", 128))
+    skybox_profiles = [
+        build_horizon_skybox_mask(stack, vp, ray_count=ray_count).tolist()
+        for vp in vantages
+    ]
+
     # Determinism-friendly ratio guard.
     ratio = float(out_res) / float(max(1, src_min))
     return PassResult(
@@ -223,6 +239,8 @@ def pass_horizon_lod(
             "ratio_target_over_source": ratio,
             "silhouette_max_m": float(lod_map.max()),
             "silhouette_min_m": float(lod_map.min()),
+            "horizon_skybox_profiles": skybox_profiles,
+            "horizon_skybox_vantage_count": len(vantages),
         },
     )
 

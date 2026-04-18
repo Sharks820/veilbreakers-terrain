@@ -15,6 +15,12 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+try:
+    from scipy.ndimage import distance_transform_edt as _edt
+    _HAS_SCIPY_EDT = True
+except ImportError:
+    _HAS_SCIPY_EDT = False
+
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -67,13 +73,13 @@ def _window_score(values: np.ndarray, lo: float, hi: float) -> np.ndarray:
 
 
 def _distance_to_mask(mask: np.ndarray, cell_size: float) -> np.ndarray:
-    """Approximate Euclidean distance from every cell to the nearest True cell.
-
-    Pure numpy BFS-ish chamfer approximation that avoids scipy dependency.
-    For terrain-scale tiles this is acceptable cost.
-    """
+    """Euclidean distance from every cell to the nearest True cell, in world meters."""
     if not mask.any():
         return np.full(mask.shape, np.inf, dtype=np.float64)
+    if _HAS_SCIPY_EDT:
+        dist = _edt(~mask).astype(np.float64) * float(cell_size)
+        dist[mask] = 0.0
+        return dist
     INF = np.float64(1e12)
     dist = np.where(mask, 0.0, INF)
     # Two-pass chamfer 3x3

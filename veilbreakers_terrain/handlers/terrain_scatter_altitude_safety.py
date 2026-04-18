@@ -35,6 +35,9 @@ _BAD_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
     ("altitude_div_height_scale", re.compile(r"altitude\s*/\s*height_scale\b")),
     ("center_z_div_height_scale", re.compile(r"center\.z\s*/\s*height_scale\b")),
     ("np_clip_0_1_on_altitude", re.compile(r"np\.clip\s*\(\s*altitude[^,]*,\s*0\.?0?\s*,\s*1\.?0?\s*\)")),
+    # arr - arr.min() strips sign from sub-zero elevations — same class as heights/heights.max()
+    ("arr_minus_arr_min", re.compile(r"\barr\s*-\s*arr\.min\s*\(")),
+    ("array_minus_array_min", re.compile(r"\b(\w+)\s*-\s*\1\.min\s*\(")),
 )
 
 

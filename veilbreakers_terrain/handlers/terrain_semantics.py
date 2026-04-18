@@ -17,6 +17,7 @@ from __future__ import annotations
 import enum
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -32,6 +33,7 @@ from typing import (
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Bundle A supplements (Addendum 1.B.1 + Addendum 2.A + Addendum 3)
@@ -434,6 +436,16 @@ class TerrainMaskStack:
                     f"{expected_new} (new Addendum 2.A.1 contract) or "
                     f"{expected_legacy} (legacy)."
                 )
+        object.__setattr__(self, "_guard_active", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if self.__dict__.get("_guard_active") and name in self._ARRAY_CHANNELS:
+            logger.warning(
+                "Direct stack.%s = ... bypasses provenance tracking; "
+                "use stack.set(%r, value, pass_name) instead.",
+                name, name,
+            )
+        object.__setattr__(self, name, value)
 
     # -- core accessors -----------------------------------------------------
 
@@ -456,7 +468,7 @@ class TerrainMaskStack:
         """Store a channel value, record provenance, clear dirty flag."""
         if not hasattr(self, channel):
             raise AttributeError(f"Unknown mask channel: {channel}")
-        setattr(self, channel, value)
+        object.__setattr__(self, channel, value)
         self.populated_by_pass[channel] = pass_name
         self.dirty_channels.discard(channel)
         # Any mutation invalidates cached hash

@@ -1023,20 +1023,19 @@ def compute_flow_map(
     # --- Step 1: Compute flow direction (D8 steepest descent) ---
     flow_dir = np.full((rows, cols), -1, dtype=np.int32)
 
-    for r in range(rows):
-        for c in range(cols):
-            max_slope = 0.0
-            best_dir = -1
+    slopes_vec = np.full((8, rows, cols), -np.inf, dtype=np.float64)
+    for _d_idx, ((_dr, _dc), _dist) in enumerate(zip(_D8_OFFSETS, _D8_DISTANCES)):
+        _r_d = slice(max(0, -_dr), rows - max(0, _dr))
+        _r_s = slice(max(0,  _dr), rows - max(0, -_dr))
+        _c_d = slice(max(0, -_dc), cols - max(0, _dc))
+        _c_s = slice(max(0,  _dc), cols - max(0, -_dc))
+        slopes_vec[_d_idx, _r_d, _c_d] = (hmap[_r_d, _c_d] - hmap[_r_s, _c_s]) / _dist
 
-            for d_idx, (dr, dc) in enumerate(_D8_OFFSETS):
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < rows and 0 <= nc < cols:
-                    slope = (hmap[r, c] - hmap[nr, nc]) / _D8_DISTANCES[d_idx]
-                    if slope > max_slope:
-                        max_slope = slope
-                        best_dir = d_idx
-
-            flow_dir[r, c] = best_dir
+    _best_d8 = np.argmax(slopes_vec, axis=0)
+    _ri_v = np.arange(rows)[:, None]
+    _ci_v = np.arange(cols)[None, :]
+    _best_slope = slopes_vec[_best_d8, _ri_v, _ci_v]
+    flow_dir = np.where(_best_slope > 0.0, _best_d8, -1).astype(np.int32)
 
     # --- Step 2: Compute flow accumulation ---
     # Each cell accumulates flow from all cells that drain into it.
@@ -1147,38 +1146,30 @@ def apply_thermal_erosion(
     if rows < 2 or cols < 2:
         return hmap.tolist()
 
-    # 4-connected neighbor offsets with distances
-    offsets = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0)]
-
     for _it in range(iterations):
+        diff_N = hmap[1:-1, 1:-1] - hmap[0:-2, 1:-1]
+        diff_S = hmap[1:-1, 1:-1] - hmap[2:,   1:-1]
+        diff_W = hmap[1:-1, 1:-1] - hmap[1:-1, 0:-2]
+        diff_E = hmap[1:-1, 1:-1] - hmap[1:-1, 2:  ]
+        exc_N = np.maximum(diff_N - talus_angle, 0.0)
+        exc_S = np.maximum(diff_S - talus_angle, 0.0)
+        exc_W = np.maximum(diff_W - talus_angle, 0.0)
+        exc_E = np.maximum(diff_E - talus_angle, 0.0)
+        total_exc = exc_N + exc_S + exc_W + exc_E
+        max_exc   = np.maximum.reduce([exc_N, exc_S, exc_W, exc_E])
+        active    = total_exc > 0.0
+        safe_total = np.where(active, total_exc, 1.0)
+        transfer   = np.where(active, max_exc * strength * 0.5, 0.0)
+        t_N = transfer * exc_N / safe_total
+        t_S = transfer * exc_S / safe_total
+        t_W = transfer * exc_W / safe_total
+        t_E = transfer * exc_E / safe_total
         delta = np.zeros_like(hmap)
-
-        for r in range(1, rows - 1):
-            for c in range(1, cols - 1):
-                h = hmap[r, c]
-                max_diff = 0.0
-                total_diff = 0.0
-                diffs: list[tuple[int, int, float]] = []
-
-                for dr, dc, dist in offsets:
-                    nr, nc = r + dr, c + dc
-                    if 0 <= nr < rows and 0 <= nc < cols:
-                        h_diff = (h - hmap[nr, nc]) / dist
-                        if h_diff > talus_angle:
-                            excess = h_diff - talus_angle
-                            diffs.append((nr, nc, excess))
-                            total_diff += excess
-                            if excess > max_diff:
-                                max_diff = excess
-
-                if total_diff > 0 and max_diff > 0:
-                    transfer = max_diff * strength * 0.5
-                    for nr, nc, d in diffs:
-                        fraction = d / total_diff
-                        amount = transfer * fraction
-                        delta[r, c] -= amount
-                        delta[nr, nc] += amount
-
+        delta[1:-1, 1:-1] -= (t_N + t_S + t_W + t_E)
+        delta[0:-2, 1:-1] += t_N
+        delta[2:,   1:-1] += t_S
+        delta[1:-1, 0:-2] += t_W
+        delta[1:-1, 2:  ] += t_E
         hmap += delta
 
     return hmap.tolist()

@@ -123,13 +123,20 @@ def _protected_mask(
 
 
 def _normalize(arr: np.ndarray) -> np.ndarray:
+    """Min-max normalize to [0, 1].
+
+    The downstream anchor constants in compute_vegetation_layers (0.4, 0.35,
+    0.55 etc.) are semantic thresholds in [0, 1] space and require min-max
+    normalization.  The previous z-score implementation produced values
+    outside [0, 1], making those anchors meaningless and causing the final
+    clip to silently saturate everything to 0 or 1.
+    """
     if arr.size == 0:
-        return arr.astype(np.float32)
-    lo = float(arr.min())
-    hi = float(arr.max())
+        return arr.astype(np.float64)
+    lo, hi = float(arr.min()), float(arr.max())
     if hi - lo < 1e-9:
-        return np.zeros_like(arr, dtype=np.float32)
-    return ((arr - lo) / (hi - lo)).astype(np.float32)
+        return np.zeros_like(arr, dtype=np.float64)
+    return ((arr - lo) / (hi - lo)).astype(np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -486,13 +493,14 @@ def apply_allelopathic_exclusion(
         raise ValueError("species_b_mask shape mismatch")
 
     suppression = np.clip(b, 0.0, 1.0)
-    canopy = vegetation.canopy_density * (1.0 - suppression * 0.8)
-    canopy = canopy.astype(np.float32)
+    understory = (vegetation.understory_density * (1.0 - suppression * 0.8)).astype(np.float32)
+    shrub = (vegetation.shrub_density * (1.0 - suppression * 0.7)).astype(np.float32)
+    ground_cover = (vegetation.ground_cover_density * (1.0 - suppression * 0.6)).astype(np.float32)
     return VegetationLayers(
-        canopy_density=canopy,
-        understory_density=vegetation.understory_density.copy(),
-        shrub_density=vegetation.shrub_density.copy(),
-        ground_cover_density=vegetation.ground_cover_density.copy(),
+        canopy_density=vegetation.canopy_density.copy(),
+        understory_density=understory,
+        shrub_density=shrub,
+        ground_cover_density=ground_cover,
     )
 
 
@@ -528,8 +536,48 @@ def pass_vegetation_depth(
         region,
     )
 
+    hints = dict(state.intent.composition_hints) if state.intent else {}
     biome = getattr(state.intent, "biome_rules", None) or "dark_fantasy_default"
     layers = compute_vegetation_layers(stack, biome=biome)
+
+    # --- Layer modifiers ---
+    if hints.get("veg_edge_effects", True):
+        biome_arr = stack.get("biome_id")
+        if biome_arr is not None:
+            ba = np.asarray(biome_arr, dtype=np.int32)
+            boundary = np.zeros(ba.shape, dtype=bool)
+            boundary[1:, :] |= ba[1:, :] != ba[:-1, :]
+            boundary[:-1, :] |= ba[:-1, :] != ba[1:, :]
+            boundary[:, 1:] |= ba[:, 1:] != ba[:, :-1]
+            boundary[:, :-1] |= ba[:, :-1] != ba[:, 1:]
+            layers = apply_edge_effects(layers, boundary)
+
+    if hints.get("veg_cultivated_zones", False):
+        cult = stack.get("gameplay_zone")
+        if cult is not None:
+            cult_mask = np.asarray(cult, dtype=np.int32) == 2
+            layers = apply_cultivated_zones(layers, cult_mask)
+
+    if hints.get("veg_allelopathic_exclusion", True):
+        layers = apply_allelopathic_exclusion(
+            layers,
+            species_a_mask=(layers.canopy_density > 0.5).astype(np.float32),
+            species_b_mask=layers.canopy_density,
+        )
+
+    # --- Feature generators (results stored in metrics) ---
+    disturbance_patches: List = []
+    if hints.get("veg_disturbance_patches", False):
+        disturbance_patches = detect_disturbance_patches(stack, seed)
+
+    clearings: List = []
+    if hints.get("veg_clearings", False):
+        clearings = place_clearings(stack, state.intent, seed=seed)
+
+    fallen_logs: List = []
+    if hints.get("veg_fallen_logs", False):
+        forest_mask = layers.canopy_density > 0.3
+        fallen_logs = place_fallen_logs(stack, forest_mask, seed)
 
     existing = stack.detail_density or {}
     merged: Dict[str, np.ndarray] = {k: np.asarray(v).copy() for k, v in existing.items()}
@@ -571,6 +619,9 @@ def pass_vegetation_depth(
             "layers": len(merged),
             "mean_density_sum": total_density,
             "biome": biome,
+            "disturbance_patch_count": len(disturbance_patches),
+            "clearing_count": len(clearings),
+            "fallen_log_count": len(fallen_logs),
         },
         issues=issues,
         seed_used=seed,
