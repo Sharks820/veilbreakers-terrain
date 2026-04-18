@@ -502,6 +502,8 @@ def register_default_passes() -> None:
             func=_tw.pass_erosion,
             requires_channels=("height",),
             produces_channels=(
+                "height",
+                "ridge",
                 "erosion_amount",
                 "deposition_amount",
                 "wetness",

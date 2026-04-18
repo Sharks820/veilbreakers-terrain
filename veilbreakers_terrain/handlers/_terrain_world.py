@@ -604,13 +604,14 @@ def pass_erosion(
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
         produced_channels=(
+            "height",
+            "ridge",
             "erosion_amount",
             "deposition_amount",
             "wetness",
             "drainage",
             "bank_instability",
             "talus",
-            "ridge",
         ),
         metrics={
             "profile": profile,
