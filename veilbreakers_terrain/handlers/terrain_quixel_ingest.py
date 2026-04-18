@@ -132,10 +132,10 @@ def apply_quixel_to_layer(
 ) -> None:
     """Wire a ``QuixelAsset`` into a splatmap layer on the mask stack.
 
-    We do not load the textures here (that's a Blender-side concern) —
-    we record the asset_id + channel paths into ``stack.populated_by_pass``
-    under a synthetic key ``quixel_layer[layer_id]`` so the Unity exporter
-    can find them.
+    Does not load textures (Blender-side concern). If *side_effects* is
+    provided (typically ``state.side_effects``), a JSON event record is
+    appended so the Unity exporter can trace asset provenance without
+    polluting ``populated_by_pass`` with non-channel synthetic keys.
 
     If ``splatmap_weights_layer`` is not yet present on the stack, we
     create a single-layer all-ones weights array so the new layer has

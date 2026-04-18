@@ -404,10 +404,16 @@ def test_apply_quixel_to_layer_creates_splatmap(stack):
 
     asset = QuixelAsset(asset_id="rock_01", textures={"albedo": Path("fake.png")})
     assert stack.splatmap_weights_layer is None
-    apply_quixel_to_layer(stack, "rock_layer", asset)
+    side_effects: list = []
+    apply_quixel_to_layer(stack, "rock_layer", asset, side_effects=side_effects)
     assert stack.splatmap_weights_layer is not None
     assert stack.splatmap_weights_layer.shape[-1] == 1
-    assert "quixel_layer[rock_layer]" in stack.populated_by_pass
+    assert len(side_effects) == 1
+    import json
+    payload = json.loads(side_effects[0])
+    assert payload["event"] == "quixel_layer"
+    assert payload["layer_id"] == "rock_layer"
+    assert payload["asset_id"] == "rock_01"
 
 
 def test_pass_quixel_ingest_with_assets_param(state):
