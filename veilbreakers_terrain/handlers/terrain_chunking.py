@@ -86,7 +86,7 @@ def compute_chunk_lod(
                 chunk_world_size / (camera_distance * tan_fov_half)
             ) * screen_height_px
             if screen_size_px > 0.0 and target_px > 0.0:
-                lod_level = max(0, int(math.floor(math.log2(screen_size_px / target_px))))
+                lod_level = max(0, int(math.floor(math.log2(target_px / max(screen_size_px, 1e-12)))))
 
     # Apply LOD: each level halves the resolution (minimum 2)
     effective_res = max(2, target_resolution >> lod_level)

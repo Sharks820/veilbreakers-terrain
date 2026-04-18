@@ -23,7 +23,7 @@ import math
 import time
 
 logger = logging.getLogger(__name__)
-from dataclasses import dataclass, field  # noqa: E402
+from dataclasses import dataclass, field, replace  # noqa: E402
 from typing import Any, List, Optional, Tuple  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -894,12 +894,13 @@ def pass_waterfalls(
     # Do NOT write this back to stack.height — the delta integrator owns height application.
     _h_preview = stack.height + pool_delta  # local only, not written to stack
 
-    # 4. Accumulate foam + mist masks across chains
+    # 4. Accumulate foam + mist masks across chains (use post-carve heights)
+    _preview_stack = replace(stack, height=_h_preview)
     foam = np.zeros(h_shape, dtype=np.float32)
     mist = np.zeros(h_shape, dtype=np.float32)
     for chain in chains:
-        foam = np.maximum(foam, generate_foam_mask(chain, stack))
-        mist = np.maximum(mist, generate_mist_zone(chain, stack))
+        foam = np.maximum(foam, generate_foam_mask(chain, _preview_stack))
+        mist = np.maximum(mist, generate_mist_zone(chain, _preview_stack))
 
     # 5. Wet-rock mask (uses existing water surfaces + pools)
     # FIX pipeline-break #2: wire water_network so wet-rock seeds from network nodes

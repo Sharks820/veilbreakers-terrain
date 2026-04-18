@@ -388,15 +388,17 @@ def _road_segment_mesh_spec(start, end, width: float = 4.0) -> dict:
     ex, ey, ez = end[0], end[1], end[2]
     hw = width / 2.0
 
-    # Simple axis-aligned quad:
-    # v0 = start, -Y offset
-    # v1 = start, +Y offset
-    # v2 = end,   +Y offset
-    # v3 = end,   -Y offset
-    v0 = (sx, sy - hw, sz)
-    v1 = (sx, sy + hw, sz)
-    v2 = (ex, ey + hw, ez)
-    v3 = (ex, ey - hw, ez)
+    # Perpendicular offset in XY — avoids collinear verts on axis-aligned segments
+    seg_len_xy = math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2)
+    if seg_len_xy > 0.0:
+        px = -(ey - sy) / seg_len_xy
+        py = (ex - sx) / seg_len_xy
+    else:
+        px, py = 1.0, 0.0
+    v0 = (sx - px * hw, sy - py * hw, sz)
+    v1 = (sx + px * hw, sy + py * hw, sz)
+    v2 = (ex + px * hw, ey + py * hw, ez)
+    v3 = (ex - px * hw, ey - py * hw, ez)
 
     vertices = [v0, v1, v2, v3]
     faces = [[0, 1, 2, 3]]
@@ -418,10 +420,16 @@ def _bridge_mesh_spec(bridge: dict) -> dict:
     sx, sy, sz = deck_start
     ex, ey, ez = deck_end
 
-    v0 = (sx, sy - hw, sz)
-    v1 = (sx, sy + hw, sz)
-    v2 = (ex, ey + hw, ez)
-    v3 = (ex, ey - hw, ez)
+    seg_len_xy = math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2)
+    if seg_len_xy > 0.0:
+        px = -(ey - sy) / seg_len_xy
+        py = (ex - sx) / seg_len_xy
+    else:
+        px, py = 1.0, 0.0
+    v0 = (sx - px * hw, sy - py * hw, sz)
+    v1 = (sx + px * hw, sy + py * hw, sz)
+    v2 = (ex + px * hw, ey + py * hw, ez)
+    v3 = (ex - px * hw, ey - py * hw, ez)
 
     return {
         "type": "terrain_bridge",

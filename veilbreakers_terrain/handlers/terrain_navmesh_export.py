@@ -174,12 +174,10 @@ def _build_navmesh_geometry(
                 int(navmesh_np[r + 1, c]),
                 int(navmesh_np[r + 1, c + 1]),
             ]
-            # Skip fully unwalkable quads
-            if all(a == NAVMESH_UNWALKABLE for a in areas):
+            # Require all four corners traversable before emitting the quad
+            if any(a == NAVMESH_UNWALKABLE for a in areas):
                 continue
-            # Representative area for the quad: majority vote among non-unwalkable
-            non_unw = [a for a in areas if a != NAVMESH_UNWALKABLE]
-            quad_area = max(set(non_unw), key=non_unw.count) if non_unw else NAVMESH_UNWALKABLE
+            quad_area = max(set(areas), key=areas.count)
 
             ia = vert_idx[a_rc]
             ib = vert_idx[b_rc]
@@ -242,7 +240,7 @@ def export_navmesh_json(stack: TerrainMaskStack, output_path: Path) -> Dict[str,
         "coordinate_system": "y-up",
         "source_coordinate_system": stack.coordinate_system,
         "area_ids": {
-            "walkable": 1,
+            "walkable": NAVMESH_WALKABLE,
             "unwalkable": NAVMESH_UNWALKABLE,
             "jump": NAVMESH_JUMP,
             "swim": NAVMESH_SWIM,

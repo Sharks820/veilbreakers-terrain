@@ -363,7 +363,7 @@ def test_export_navmesh_json_writes_file(state):
         assert "area_ids" in descriptor
         assert descriptor["tile_x"] == 0
         data = json.loads(out.read_text())
-        assert data["area_ids"]["walkable"] == 1
+        assert data["area_ids"]["walkable"] == 0  # NAVMESH_WALKABLE = 0 per Unity convention
 
 
 # ---------------------------------------------------------------------------

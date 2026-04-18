@@ -299,6 +299,10 @@ def compute_wildlife_affinity(
         for key, factor in factors.items():
             score = score + (hw[key] / total_weight) * factor
 
+        # Hard zero for required-water species when no water is present
+        if rule.required_water_proximity_m is not None:
+            score = score * (f_water > 0.0).astype(np.float64)
+
         # Hard masks applied after weighted combination
         # Biome filter
         if rule.preferred_biomes and biome is not None:

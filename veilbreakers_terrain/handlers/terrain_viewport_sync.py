@@ -56,7 +56,13 @@ def _read_from_blender_context() -> "dict | None":
                     "position": (cam_pos.x, cam_pos.y, cam_pos.z),
                     "look": (look_dir.x, look_dir.y, look_dir.z),
                     "up": (up_dir.x, up_dir.y, up_dir.z),
-                    "fov_deg": math.degrees(r3d.view_camera_zoom) if r3d.view_perspective == 'CAMERA' else 60.0,
+                    "fov_deg": (
+                        math.degrees(float(bpy.context.scene.camera.data.angle))
+                        if r3d.view_perspective == 'CAMERA'
+                        and bpy.context.scene.camera is not None
+                        and hasattr(bpy.context.scene.camera.data, 'angle')
+                        else 60.0
+                    ),
                     "distance": r3d.view_distance,
                 }
     except Exception:

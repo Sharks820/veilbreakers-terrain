@@ -1259,7 +1259,7 @@ def generate_billboard_impostor(params: dict) -> MeshSpec:
         "vertex_count": len(vertices),
         "face_count": len(faces),
         "impostor_type": impostor_type,
-        "num_views": num_views,
+        "num_views": 2 if impostor_type == "cross" else num_views,
         "atlas_resolution": resolution,
         "object_name": object_name,
         "tree_dimensions": {"width": tree_width, "height": tree_height},

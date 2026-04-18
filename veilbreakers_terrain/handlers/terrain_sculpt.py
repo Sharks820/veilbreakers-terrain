@@ -457,12 +457,12 @@ def handle_sculpt_terrain(params: dict) -> dict:
         if operation == "raise":
             new_heights = compute_raise_displacements(
                 heights, weights, strength,
-                brush_size=radius, max_height=height_max,
+                brush_size=1.0, max_height=height_max,
             )
         elif operation == "lower":
             new_heights = compute_lower_displacements(
                 heights, weights, strength,
-                brush_size=radius, min_height=height_min,
+                brush_size=1.0, min_height=height_min,
             )
         elif operation == "smooth":
             adjacency = _build_adjacency(bm)
