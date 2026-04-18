@@ -306,25 +306,41 @@ def _box_filter_2d(arr: np.ndarray, radius: int) -> np.ndarray:
     return (box_sums / counts).astype(arr.dtype)
 
 
+_CHAMFER_DIAG = math.sqrt(2.0)
+
+
 def _distance_from_mask(mask: np.ndarray) -> np.ndarray:
-    """Euclidean distance from each True cell to nearest False cell."""
+    """Approximate Euclidean distance from each True cell to nearest False cell.
+
+    Uses scipy EDT when available. Fallback is a two-pass 8-connected chamfer
+    (costs: axis-aligned=1, diagonal=sqrt(2)) which closely approximates
+    Euclidean distance and avoids the L1/Manhattan bias of a 4-connected scan.
+    """
     if _HAS_SCIPY_EDT:
         return _edt(mask).astype(np.float64)
     h, w = mask.shape
-    dist = np.full((h, w), h + w, dtype=np.float64)
+    dist = np.full((h, w), float(h + w), dtype=np.float64)
     dist[~mask] = 0.0
-    # Forward pass
+    # Forward pass — top-left to bottom-right; check NW, N, NE, W
     for y in range(h):
         for x in range(w):
+            if y > 0 and x > 0:
+                dist[y, x] = min(dist[y, x], dist[y - 1, x - 1] + _CHAMFER_DIAG)
             if y > 0:
                 dist[y, x] = min(dist[y, x], dist[y - 1, x] + 1.0)
+            if y > 0 and x < w - 1:
+                dist[y, x] = min(dist[y, x], dist[y - 1, x + 1] + _CHAMFER_DIAG)
             if x > 0:
                 dist[y, x] = min(dist[y, x], dist[y, x - 1] + 1.0)
-    # Backward pass
+    # Backward pass — bottom-right to top-left; check SE, S, SW, E
     for y in range(h - 1, -1, -1):
         for x in range(w - 1, -1, -1):
+            if y < h - 1 and x < w - 1:
+                dist[y, x] = min(dist[y, x], dist[y + 1, x + 1] + _CHAMFER_DIAG)
             if y < h - 1:
                 dist[y, x] = min(dist[y, x], dist[y + 1, x] + 1.0)
+            if y < h - 1 and x > 0:
+                dist[y, x] = min(dist[y, x], dist[y + 1, x - 1] + _CHAMFER_DIAG)
             if x < w - 1:
                 dist[y, x] = min(dist[y, x], dist[y, x + 1] + 1.0)
     return dist
