@@ -29,8 +29,6 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
-
 from .terrain_pipeline import TerrainPassController, derive_pass_seed
 from .terrain_semantics import (
     BBox,
@@ -40,6 +38,8 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

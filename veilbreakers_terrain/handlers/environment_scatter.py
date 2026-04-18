@@ -33,12 +33,16 @@ from ._scatter_engine import (
     context_scatter,
     generate_breakable_variants,
 )
-from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
-from .vegetation_lsystem import generate_billboard_impostor
-from .lod_pipeline import generate_lod_chain
+from ._terrain_noise import compute_slope_map
+from .lod_pipeline import (
+    _BILLBOARD_LOD_VERTEX_THRESHOLD,
+    _TREE_VEG_TYPES,
+    _setup_billboard_lod,
+)
 
 logger = logging.getLogger(__name__)
+_LOD_PIPELINE_REEXPORTS = (_BILLBOARD_LOD_VERTEX_THRESHOLD, _TREE_VEG_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -563,13 +567,8 @@ def _create_vegetation_template(
 # ``_setup_billboard_lod`` + its helpers (``_BILLBOARD_LOD_VERTEX_THRESHOLD``,
 # ``_TREE_VEG_TYPES``) now live in ``blender_addon.handlers.lod_pipeline``
 # (toolkit-side) so vegetation_system (toolkit) can import them without
-# reaching into environment_scatter (terrain). Re-exported here for
+# reaching into environment_scatter (terrain). Imported near the module top for
 # backward compatibility with intra-terrain callers of this module.
-from .lod_pipeline import (  # noqa: F401  -- intentional re-export
-    _BILLBOARD_LOD_VERTEX_THRESHOLD,
-    _TREE_VEG_TYPES,
-    _setup_billboard_lod,
-)
 
 
 # ---------------------------------------------------------------------------
