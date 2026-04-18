@@ -747,12 +747,6 @@ def pass_waterfalls(
 
     stack.set("waterfall_pool_delta", pool_delta.astype(np.float32), "waterfalls")
 
-    # FIX pipeline-break #5: apply pool_delta to height (carve pools into terrain)
-    # Only carve where delta is negative (lowering terrain), within region scope.
-    carve_mask = pool_delta < 0.0
-    if np.any(carve_mask):
-        stack.height = np.where(carve_mask, stack.height + pool_delta, stack.height)
-
     stack.set("waterfall_lip_candidate", lip_mask, "waterfalls")
     stack.set("foam", foam, "waterfalls")
     stack.set("mist", mist, "waterfalls")

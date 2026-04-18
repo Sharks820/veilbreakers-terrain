@@ -18,14 +18,14 @@ from typing import Dict, List, Optional
 
 # Modules we will attempt to reload. Missing modules are silently skipped.
 _BIOME_RULE_MODULES = (
-    "blender_addon.handlers.terrain_ecotone_graph",
-    "blender_addon.handlers.terrain_materials_v2",
-    "blender_addon.handlers.terrain_banded",
+    "veilbreakers_terrain.handlers.terrain_ecotone_graph",
+    "veilbreakers_terrain.handlers.terrain_materials_v2",
+    "veilbreakers_terrain.handlers.terrain_banded",
 )
 
 _MATERIAL_RULE_MODULES = (
-    "blender_addon.handlers.terrain_materials",
-    "blender_addon.handlers.terrain_materials_v2",
+    "veilbreakers_terrain.handlers.terrain_materials",
+    "veilbreakers_terrain.handlers.terrain_materials_v2",
 )
 
 

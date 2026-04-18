@@ -496,10 +496,10 @@ def compute_wind_vertex_colors(
 
     Pure-logic function -- no Blender dependency.
 
-    Channel mapping:
-      R = distance from trunk center normalized [0, 1] -- sway amount
-      G = height from ground normalized [0, 1] -- sway amplitude
-      B = estimated branch level [0, 1] -- sway frequency variation
+    Channel mapping (Unity vertex color convention — primary/secondary/turbulence):
+      R = primary wind sway — distance from trunk center normalized [0, 1]
+      G = secondary wind sway — height from ground normalized [0, 1]
+      B = turbulence — estimated branch level [0, 1], higher = more frequency variation
 
     Parameters
     ----------
@@ -553,16 +553,14 @@ def compute_wind_vertex_colors(
     colors: list[tuple[float, float, float]] = []
 
     for vx, vy, vz in vertices:
-        # R: distance from trunk center (sway amount)
+        # R: primary wind sway (distance from trunk center)
         dist = math.sqrt((vx - trunk_center[0]) ** 2 + (vy - trunk_center[1]) ** 2)
         r = min(1.0, max(0.0, dist / max_dist))
 
-        # G: height from ground (sway amplitude)
+        # G: secondary wind sway (height from ground)
         g = min(1.0, max(0.0, (vz - ground_level) / height_range))
 
-        # B: branch level estimation
-        # Higher vertices further from trunk = outer branches (higher frequency)
-        # Low vertices near trunk = trunk (low frequency)
+        # B: turbulence — outer/high-up branches get more frequency variation
         branch_level = (r * 0.5 + g * 0.5)
         b = min(1.0, max(0.0, branch_level))
 
@@ -717,7 +715,7 @@ def scatter_biome_vegetation(
     seed = params.get("seed", 42)
     max_instances = params.get("max_instances", 5000)
     season = params.get("season")
-    _ = params.get("bake_wind_colors", False)
+    bake_wind_colors: bool = bool(params.get("bake_wind_colors", False))
     water_level = params.get("water_level", _DEFAULT_WATER_LEVEL)
     # PROP-004: exclusion zones (rectangular no-plant areas e.g. roads, buildings)
     exclusion_zones: list[dict] = params.get("exclusion_zones") or []
@@ -791,6 +789,17 @@ def scatter_biome_vegetation(
         templates[veg_type] = _create_biome_vegetation_template(veg_type, template_coll)
         if veg_type == "tree":
             _setup_billboard_lod(templates[veg_type], veg_spec=None, veg_type=veg_type)
+            if bake_wind_colors:
+                mesh_data = templates[veg_type].data
+                tree_verts = [(v.co.x, v.co.y, v.co.z) for v in mesh_data.vertices]
+                wind_colors = compute_wind_vertex_colors(tree_verts)
+                if "WindColor" not in mesh_data.vertex_colors:
+                    mesh_data.vertex_colors.new(name="WindColor")
+                vcol_layer = mesh_data.vertex_colors["WindColor"]
+                for poly in mesh_data.polygons:
+                    for loop_idx, vert_idx in zip(poly.loop_indices, poly.vertices):
+                        r, g, b = wind_colors[vert_idx]
+                        vcol_layer.data[loop_idx].color = (r, g, b, 1.0)
 
     for p in placements:
         veg_key = f"{p['type']}_{p['style']}"

@@ -175,11 +175,11 @@ def register_integrator_pass() -> None:
         PassDefinition(
             name="integrate_deltas",
             func=pass_integrate_deltas,
-            requires_channels=("height",),
+            requires_channels=("height",) + _DELTA_CHANNELS,
             produces_channels=("height",),
             seed_namespace="integrate_deltas",
             requires_scene_read=False,
-            may_modify_geometry=False,
+            may_modify_geometry=True,
             respects_protected_zones=True,
             description="Phase 51 — compose all terrain height deltas additively into height.",
         )

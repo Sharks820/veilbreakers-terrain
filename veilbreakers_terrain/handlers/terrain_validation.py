@@ -606,13 +606,12 @@ def check_cliff_silhouette_readability(
     if total_area > 0 and cliff_area / total_area < 0.005:
         issues.append(
             ValidationIssue(
-                severity="warning",
-                category="readability",
+                code="cliff-silhouette-too-small",
+                severity="soft",
                 message=(
                     f"Cliff silhouette covers only {cliff_area / total_area:.1%} "
                     f"of terrain — may be invisible"
                 ),
-                hard=False,
             )
         )
     return issues
@@ -633,19 +632,17 @@ def check_waterfall_chain_completeness(
         if foam is None or not np.any(np.asarray(foam) > 0):
             issues.append(
                 ValidationIssue(
-                    severity="warning",
-                    category="readability",
+                    code="waterfall-foam-missing",
+                    severity="soft",
                     message="Waterfall lips detected but no foam channel populated",
-                    hard=False,
                 )
             )
         if mist is None or not np.any(np.asarray(mist) > 0):
             issues.append(
                 ValidationIssue(
-                    severity="warning",
-                    category="readability",
+                    code="waterfall-mist-missing",
+                    severity="soft",
                     message="Waterfall lips detected but no mist channel populated",
-                    hard=False,
                 )
             )
     return issues
@@ -665,13 +662,12 @@ def check_cave_framing_presence(
         if delta is None or not np.any(np.asarray(delta) != 0):
             issues.append(
                 ValidationIssue(
-                    severity="error",
-                    category="readability",
+                    code="cave-height-delta-empty",
+                    severity="hard",
                     message=(
                         "Cave candidates exist but cave_height_delta channel "
                         "is empty — deltas were discarded"
                     ),
-                    hard=True,
                 )
             )
     return issues
@@ -682,18 +678,19 @@ def check_focal_composition(
 ) -> List[ValidationIssue]:
     """Check that terrain has adequate focal composition (not uniform flat)."""
     issues: List[ValidationIssue] = []
+    if stack.height is None:
+        return issues
     h = np.asarray(stack.height, dtype=np.float64)
     height_range = float(h.max() - h.min())
     if height_range < 1.0:
         issues.append(
             ValidationIssue(
-                severity="warning",
-                category="readability",
+                code="terrain-height-range-too-small",
+                severity="soft",
                 message=(
                     f"Height range is only {height_range:.2f}m — terrain is "
                     f"essentially flat, lacks focal interest"
                 ),
-                hard=False,
             )
         )
     slope = stack.get("slope")
@@ -703,13 +700,12 @@ def check_focal_composition(
         if steep_ratio < 0.01:
             issues.append(
                 ValidationIssue(
-                    severity="warning",
-                    category="readability",
+                    code="terrain-no-dramatic-slopes",
+                    severity="soft",
                     message=(
                         f"Only {steep_ratio:.1%} of terrain is steep (>30°) — "
                         f"lacks dramatic features"
                     ),
-                    hard=False,
                 )
             )
     return issues

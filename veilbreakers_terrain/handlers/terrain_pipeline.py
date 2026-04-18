@@ -463,6 +463,8 @@ def register_default_passes() -> None:
             requires_scene_read=False,
         )
     )
+    from .terrain_delta_integrator import register_integrator_pass
+    register_integrator_pass()
 
 
 __all__ = [
