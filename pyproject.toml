@@ -11,17 +11,21 @@ dependencies = [
     "opensimplex>=0.4.5",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0",
-    "ruff>=0.8.0",
+    "ruff>=0.15.11",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["veilbreakers_terrain/tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 127
+target-version = "py311"
 
 [build-system]
 requires = ["hatchling"]

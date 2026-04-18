@@ -17,8 +17,6 @@ import sys
 import types
 from unittest.mock import patch
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # bpy stub — terrain_caves itself is pure numpy, but the adapter creates a

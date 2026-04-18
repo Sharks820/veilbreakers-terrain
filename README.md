@@ -62,7 +62,8 @@ veilbreakers_terrain/
 ## Tests
 
 ```bash
-pip install -e .[dev]    # or `pip install pytest pytest-asyncio pytest-cov`
+pip install -e '.[dev]'
+python -m ruff check .
 pytest veilbreakers_terrain/tests/ -q
 ```
 
