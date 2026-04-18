@@ -26,12 +26,18 @@ from .terrain_semantics import (
 )
 
 
-# Area IDs — keep stable, Unity side uses the same table.
-NAVMESH_UNWALKABLE = 0
-NAVMESH_WALKABLE = 1
-NAVMESH_CLIMB = 2
-NAVMESH_JUMP = 3
-NAVMESH_SWIM = 4
+# Area IDs — Unity NavMesh built-in convention:
+#   0 = Walkable  (Unity built-in)
+#   1 = Not Walkable  (Unity built-in)
+#   2 = Jump  (Unity built-in)
+#   3 = Water  (first custom area, widely expected by Unity Nav tools)
+#   4 = Climb  (custom)
+# This matches UnityEngine.AI.NavMesh.AllAreas area mask convention.
+NAVMESH_WALKABLE = 0
+NAVMESH_UNWALKABLE = 1
+NAVMESH_JUMP = 2
+NAVMESH_SWIM = 3
+NAVMESH_CLIMB = 4
 
 
 def compute_navmesh_area_id(
@@ -118,17 +124,94 @@ def compute_traversability(stack: TerrainMaskStack) -> np.ndarray:
     return np.clip(base, 0.0, 1.0).astype(np.float32)
 
 
+def _build_navmesh_geometry(
+    stack: TerrainMaskStack,
+    navmesh_np: np.ndarray,
+) -> Dict[str, Any]:
+    """Build vertices, triangles, and per-triangle area_ids for Unity NavMesh.
+
+    Each grid quad is split into two triangles. Only quads where all four
+    corner cells have area_id != NAVMESH_UNWALKABLE are included (fully
+    traversable quads only — partial quads at cliff edges are excluded).
+    Vertices are in Unity Y-up world space [x, y, z].
+
+    Returns a dict with:
+        "vertices": [[x, y, z], ...] — world positions
+        "triangles": [[i, j, k], ...] — 0-based vertex indices
+        "area_ids": [int, ...] — per-triangle Unity area id (length == len(triangles))
+    """
+    h = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = h.shape
+    cs = float(stack.cell_size)
+    ox = float(stack.world_origin_x)
+    oy = float(stack.world_origin_y)
+
+    # Build vertex grid: (rows x cols) vertices, Y-up (swap Z and Y from Blender)
+    # Unity convention: x=east, y=up(height), z=north
+    vertices: list = []
+    vert_idx = np.full((rows, cols), -1, dtype=np.int32)
+    for r in range(rows):
+        for c in range(cols):
+            vert_idx[r, c] = len(vertices)
+            wx = ox + c * cs
+            wz = oy + r * cs
+            wy = float(h[r, c])
+            vertices.append([wx, wy, wz])  # Y-up: height is Y
+
+    triangles: list = []
+    tri_area_ids: list = []
+
+    for r in range(rows - 1):
+        for c in range(cols - 1):
+            # Four corners of this quad
+            a_rc = (r, c)
+            b_rc = (r, c + 1)
+            c_rc = (r + 1, c)
+            d_rc = (r + 1, c + 1)
+            areas = [
+                int(navmesh_np[r, c]),
+                int(navmesh_np[r, c + 1]),
+                int(navmesh_np[r + 1, c]),
+                int(navmesh_np[r + 1, c + 1]),
+            ]
+            # Skip fully unwalkable quads
+            if all(a == NAVMESH_UNWALKABLE for a in areas):
+                continue
+            # Representative area for the quad: majority vote among non-unwalkable
+            non_unw = [a for a in areas if a != NAVMESH_UNWALKABLE]
+            quad_area = max(set(non_unw), key=non_unw.count) if non_unw else NAVMESH_UNWALKABLE
+
+            ia = vert_idx[a_rc]
+            ib = vert_idx[b_rc]
+            ic = vert_idx[c_rc]
+            id_ = vert_idx[d_rc]
+            # Tri 1: upper-left triangle (a, b, c)
+            triangles.append([ia, ib, ic])
+            tri_area_ids.append(quad_area)
+            # Tri 2: lower-right triangle (b, d, c)
+            triangles.append([ib, id_, ic])
+            tri_area_ids.append(quad_area)
+
+    return {
+        "vertices": vertices,
+        "triangles": triangles,
+        "area_ids": tri_area_ids,
+    }
+
+
 def export_navmesh_json(stack: TerrainMaskStack, output_path: Path) -> Dict[str, Any]:
     """Write a Unity-consumable navmesh descriptor JSON and return the dict.
 
-    Schema (conforms to plan §33 concept — navmesh descriptor):
+    Schema includes vertices/triangles/area_ids arrays for Unity NavMesh
+    consumption alongside the metadata descriptor:
         {
-          "schema_version": "1.0",
+          "schema_version": "2.0",
           "tile_x": ..., "tile_y": ...,
           "tile_size": ..., "cell_size_m": ...,
           "world_origin": [x, y],
-          "area_ids": { "unwalkable": 0, ..., "swim": 4 },
+          "area_ids": { "walkable": 0, "unwalkable": 1, "jump": 2, "swim": 3, "climb": 4 },
           "max_walkable_slope_deg": 45.0,
+          "geometry": { "vertices": [...], "triangles": [...], "area_ids": [...] },
           "stats": {...},
         }
     """
@@ -145,6 +228,9 @@ def export_navmesh_json(stack: TerrainMaskStack, output_path: Path) -> Dict[str,
     total = float(counts.sum())
     distribution = {int(v): int(c) for v, c in zip(vals.tolist(), counts.tolist())}
 
+    # Build mesh geometry arrays
+    geometry = _build_navmesh_geometry(stack, navmesh_np)
+
     descriptor: Dict[str, Any] = {
         "schema_version": "1.0",
         "tile_x": int(stack.tile_x),
@@ -156,20 +242,23 @@ def export_navmesh_json(stack: TerrainMaskStack, output_path: Path) -> Dict[str,
         "coordinate_system": "y-up",
         "source_coordinate_system": stack.coordinate_system,
         "area_ids": {
+            "walkable": 1,
             "unwalkable": NAVMESH_UNWALKABLE,
-            "walkable": NAVMESH_WALKABLE,
-            "climb": NAVMESH_CLIMB,
             "jump": NAVMESH_JUMP,
             "swim": NAVMESH_SWIM,
+            "climb": NAVMESH_CLIMB,
         },
         "max_walkable_slope_deg": 45.0,
+        "geometry": geometry,
         "stats": {
             "cell_counts": distribution,
             "walkable_fraction": float(distribution.get(NAVMESH_WALKABLE, 0)) / max(total, 1.0),
             "swim_fraction": float(distribution.get(NAVMESH_SWIM, 0)) / max(total, 1.0),
+            "vertex_count": len(geometry["vertices"]),
+            "triangle_count": len(geometry["triangles"]),
         },
     }
-    output_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True))
+    output_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True, default=lambda o: int(o) if hasattr(o, '__int__') else float(o) if hasattr(o, '__float__') else repr(o)))
     return descriptor
 
 

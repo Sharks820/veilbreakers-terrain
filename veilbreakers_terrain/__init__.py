@@ -10,5 +10,13 @@ split rationale and rollback instructions.
 
 from veilbreakers_terrain.handlers import register_all  # noqa: F401
 
+bl_info = {
+    "name": "VeilBreakers Terrain",
+    "author": "VeilBreakers Team",
+    "version": (1, 0, 0),
+    "blender": (4, 5, 0),
+    "category": "Object",
+}
+
 __version__ = "0.1.0"
-__all__ = ["register_all", "__version__"]
+__all__ = ["register_all", "__version__", "bl_info"]

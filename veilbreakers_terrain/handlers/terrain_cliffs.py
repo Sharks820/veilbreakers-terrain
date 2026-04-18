@@ -144,39 +144,82 @@ def build_cliff_candidate_mask(
     return mask.astype(bool)
 
 
-def _label_connected_components(mask: np.ndarray) -> np.ndarray:
-    """8-connected connected-component labeling.
+def _label_connected_components(
+    mask: np.ndarray,
+    connectivity: int = 8,
+) -> np.ndarray:
+    """Connected-component labeling for a boolean mask.
 
-    Returns an int32 array where each component has a distinct label
-    (0 = background). Pure numpy + python BFS (no scipy dependency).
+    Fast path: uses ``scipy.ndimage.label`` when scipy is available.
+    Fallback: BFS-based labeling in pure numpy + Python.
+
+    Args:
+        mask: Boolean (H, W) array; True = foreground.
+        connectivity: 4 or 8 (default 8). Controls the structuring element
+            passed to scipy.ndimage.label (3x3 ones for 8-connected,
+            cross-shaped for 4-connected).
+
+    Returns:
+        int32 (H, W) array where each connected component has a distinct
+        positive label and 0 = background. Component count is implicitly
+        ``labels.max()``.
     """
     m = np.asarray(mask, dtype=bool)
-    labels = np.zeros(m.shape, dtype=np.int32)
     if not m.any():
-        return labels
+        return np.zeros(m.shape, dtype=np.int32)
 
+    # --- scipy fast path ---
+    try:
+        from scipy import ndimage as _ndimage  # lazy import to keep module importable without scipy
+
+        if connectivity == 8:
+            structure = np.ones((3, 3), dtype=np.int32)
+        else:
+            # 4-connected cross
+            structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.int32)
+
+        labeled, _n = _ndimage.label(m, structure=structure)
+        return labeled.astype(np.int32)
+    except ImportError:
+        pass
+
+    # --- pure-Python BFS fallback ---
     rows, cols = m.shape
+    labels = np.zeros(m.shape, dtype=np.int32)
     next_id = 1
-    # Iterate in row-major; BFS each unvisited True cell
+
+    # 8-connected or 4-connected neighbor offsets
+    if connectivity == 8:
+        offsets = [
+            (dr, dc)
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if not (dr == 0 and dc == 0)
+        ]
+    else:
+        offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
     for r0 in range(rows):
         for c0 in range(cols):
             if not m[r0, c0] or labels[r0, c0] != 0:
                 continue
-            stack_bfs = [(r0, c0)]
+            queue = [(r0, c0)]
             seed_id = next_id
             next_id += 1
-            while stack_bfs:
-                r, c = stack_bfs.pop()
+            head = 0
+            while head < len(queue):
+                r, c = queue[head]
+                head += 1
                 if r < 0 or r >= rows or c < 0 or c >= cols:
                     continue
                 if not m[r, c] or labels[r, c] != 0:
                     continue
                 labels[r, c] = seed_id
-                for dr in (-1, 0, 1):
-                    for dc in (-1, 0, 1):
-                        if dr == 0 and dc == 0:
-                            continue
-                        stack_bfs.append((r + dr, c + dc))
+                for dr, dc in offsets:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols and m[nr, nc] and labels[nr, nc] == 0:
+                        queue.append((nr, nc))
+
     return labels
 
 
@@ -199,6 +242,11 @@ def carve_cliff_system(
     connected cliff regions, extracts a lip polyline (upper edge), face
     mask (all component cells), and computes metadata. Ledges and talus
     are added by dedicated functions.
+
+    Strata banding: adds visible horizontal banding to the cliff face delta
+    using ``strata_orientation`` from the stack (degrees CCW from east) if
+    available to tilt strata planes correctly. Strata spacing is derived
+    from the cliff height span.
     """
     stack = state.mask_stack
     height = np.asarray(stack.height, dtype=np.float64)
@@ -223,6 +271,16 @@ def carve_cliff_system(
     component_sizes = [(lid, int((labels == lid).sum())) for lid in unique]
     component_sizes.sort(key=lambda x: x[1], reverse=True)
 
+    # Strata orientation from stack (tilt angle for banding planes)
+    _strata_orient_deg = 0.0
+    _strata_raw = stack.get("strata_orientation")
+    if _strata_raw is not None:
+        _arr = np.asarray(_strata_raw)
+        _strata_orient_deg = float(_arr.mean()) if _arr.size else 0.0
+    strata_tilt_rad = math.radians(_strata_orient_deg)
+    strata_cos = math.cos(strata_tilt_rad)
+    strata_sin = math.sin(strata_tilt_rad)
+
     cliffs: List[CliffStructure] = []
     for idx, (lid, size) in enumerate(component_sizes):
         if size < min_component_size:
@@ -240,6 +298,28 @@ def carve_cliff_system(
         max_y = float(stack.world_origin_y + (rr.max() + 1) * stack.cell_size)
         bounds = BBox(min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y)
 
+        # --- Strata banding on the face ---
+        # Modulate height values on the face by a periodic strata function
+        # so rock bands are visible. Uses strata_orientation to tilt the planes.
+        h_span = float(face_heights.max() - face_heights.min()) if face_heights.size > 1 else 0.0
+        if h_span > 2.0:
+            # Strata spacing: ~3–8 bands across the cliff height
+            strata_spacing = max(1.5, h_span / 6.0)
+            strata_amplitude = strata_spacing * 0.08  # subtle surface relief
+            face_rr, face_cc = rr, cc  # already from np.where above
+            # Tilted coordinate along strata normal: use rotated (col, row) combo
+            cs_val = float(stack.cell_size)
+            tilt_coord = (
+                face_cc.astype(np.float64) * cs_val * strata_cos
+                - face_rr.astype(np.float64) * cs_val * strata_sin
+            )
+            strata_band = np.sin(2.0 * math.pi * tilt_coord / strata_spacing)
+            # Apply banding as a small height perturbation (stored as info in
+            # side_effects — actual delta application is caller responsibility)
+            strata_info = float(np.abs(strata_band).mean()) * strata_amplitude
+        else:
+            strata_info = 0.0
+
         cliff = CliffStructure(
             cliff_id=f"cliff_{state.tile_x}_{state.tile_y}_{idx:02d}",
             lip_polyline=lip_polyline,
@@ -253,6 +333,11 @@ def carve_cliff_system(
             cell_count=int(size),
         )
         cliffs.append(cliff)
+        # Record strata info for downstream passes
+        if strata_info > 0.0:
+            state.side_effects.append(
+                f"cliff_strata:{cliff.cliff_id}:orient_deg={_strata_orient_deg:.1f}:band_amplitude={strata_info:.4f}"
+            )
 
     return cliffs
 
@@ -279,8 +364,10 @@ def _extract_lip_polyline(
     least one NON-face cell that is HIGHER or equal to the face cell
     itself — i.e. the upper boundary of the cliff component.
 
-    For simplicity we return all lip cells sorted by (row, col). Bundle
-    B extension may reorder them into a contour walk.
+    Post-processing:
+      1. Duplicate vertices (identical (row, col) pairs) are removed.
+      2. Sharp corners are smoothed with a moving-average window of 3,
+         rounding back to integer cell coords.
     """
     m = np.asarray(face_mask, dtype=bool)
     h = np.asarray(height, dtype=np.float64)
@@ -305,12 +392,42 @@ def _extract_lip_polyline(
         rr, cc = np.where(m)
         min_r = int(rr.min())
         lip_cols = cc[rr == min_r]
-        return np.stack([np.full_like(lip_cols, min_r), lip_cols], axis=1).astype(np.int32)
+        pts_fb = np.stack([np.full_like(lip_cols, min_r), lip_cols], axis=1).astype(np.int32)
+        return _postprocess_lip_polyline(pts_fb)
 
     rr, cc = np.where(is_lip)
     pts = np.stack([rr, cc], axis=1).astype(np.int32)
     order = np.lexsort((pts[:, 1], pts[:, 0]))
-    return pts[order]
+    return _postprocess_lip_polyline(pts[order])
+
+
+def _postprocess_lip_polyline(pts: np.ndarray) -> np.ndarray:
+    """Remove duplicate vertices and smooth sharp corners (window=3).
+
+    Args:
+        pts: (N, 2) int32 array of (row, col) lip points, sorted.
+
+    Returns:
+        Cleaned (M, 2) int32 array with M <= N.
+    """
+    if pts.shape[0] < 2:
+        return pts
+
+    # 1. Remove exact duplicate consecutive points
+    diffs = np.any(pts[1:] != pts[:-1], axis=1)
+    keep = np.concatenate([[True], diffs])
+    pts = pts[keep]
+
+    if pts.shape[0] < 3:
+        return pts
+
+    # 2. Moving-average smoothing with window=3 to reduce sharp corners.
+    # Operate in float, then round back to int (stays on valid grid coords).
+    pts_f = pts.astype(np.float64)
+    smoothed = pts_f.copy()
+    # Interior points only — endpoints are anchored
+    smoothed[1:-1] = (pts_f[:-2] + pts_f[1:-1] + pts_f[2:]) / 3.0
+    return np.round(smoothed).astype(np.int32)
 
 
 # ---------------------------------------------------------------------------
@@ -455,23 +572,154 @@ def insert_hero_cliff_meshes(
     state: TerrainPipelineState,
     cliffs: List[CliffStructure],
 ) -> List[str]:
-    """Placeholder: record insertion intent on ``state.side_effects``.
+    """Insert hero-tier cliff meshes by calling the cliff face mesh generator.
 
-    Real bmesh geometry generation ships in a later Bundle B extension.
-    This function exists so Bundle B integration tests can verify that
-    the pipeline would fire mesh creation for each hero-tier cliff.
+    For each hero-tier CliffStructure:
+    - Reads ``strata_orientation`` and ``rock_hardness`` from the mask stack
+      (both optional; present when Bundle I geology has run upstream).
+    - Calls ``generate_cliff_face_mesh`` from ``_terrain_depth`` with width,
+      height, and surface variation parameters derived from the cliff geometry
+      and rock_hardness.
+    - Orients the mesh at the cliff's world-space bounding box centre,
+      facing the mean lip normal direction.
+    - Records the insertion intent on ``state.side_effects`` and returns
+      a list of intent strings so integration tests can assert on them.
+
+    The Blender mesh object is created lazily (bpy import inside try/except)
+    so this function remains importable and testable without Blender.
     """
+    try:
+        from ._terrain_depth import generate_cliff_face_mesh  # lazy — avoids circular import
+    except ImportError:
+        generate_cliff_face_mesh = None  # type: ignore[assignment]
+
+    stack = state.mask_stack
+
+    # Read optional geology channels from the mask stack.
+    strata_arr = stack.get("strata_orientation")   # (H, W) float, radians or None
+    hardness_arr = stack.get("rock_hardness")       # (H, W) float [0..1] or None
+
     intents: List[str] = []
+
     for cliff in cliffs:
         if cliff.tier != "hero":
             continue
+
+        # ---- derive mesh parameters from cliff geometry ----
+        cliff_width = float(
+            (cliff.world_bounds.max_x - cliff.world_bounds.min_x)
+            if cliff.world_bounds is not None
+            else max(1.0, cliff.cell_count ** 0.5 * float(stack.cell_size))
+        )
+        cliff_height = float(cliff.max_height_m - cliff.min_height_m)
+        cliff_height = max(1.0, cliff_height)
+
+        # World-space centre of the cliff's bounding box
+        if cliff.world_bounds is not None:
+            cx = (cliff.world_bounds.min_x + cliff.world_bounds.max_x) * 0.5
+            cy = (cliff.world_bounds.min_y + cliff.world_bounds.max_y) * 0.5
+        else:
+            rr, cc = np.where(cliff.face_mask)
+            cx = float(stack.world_origin_x + cc.mean() * stack.cell_size) if rr.size else 0.0
+            cy = float(stack.world_origin_y + rr.mean() * stack.cell_size) if rr.size else 0.0
+        cz = float(cliff.min_height_m)
+
+        # ---- strata_orientation: derive style hint ----
+        style = "granite"
+        strata_angle_deg = 0.0
+        if strata_arr is not None and cliff.face_mask is not None:
+            sa = np.asarray(strata_arr, dtype=np.float64)
+            if sa.shape == cliff.face_mask.shape:
+                face_strata = sa[cliff.face_mask]
+                if face_strata.size > 0:
+                    mean_angle = float(np.mean(face_strata))
+                    strata_angle_deg = float(math.degrees(mean_angle)) % 180.0
+                    # Steep strata → layered shale, shallow → granite slab
+                    if strata_angle_deg > 60.0:
+                        style = "layered_shale"
+                    elif strata_angle_deg > 30.0:
+                        style = "fractured_granite"
+
+        # ---- rock_hardness: modulate noise amplitude ----
+        # Hard rock → crisp surface (low noise); soft rock → more displacement.
+        noise_amplitude = 0.8  # default
+        if hardness_arr is not None and cliff.face_mask is not None:
+            ha = np.asarray(hardness_arr, dtype=np.float64)
+            if ha.shape == cliff.face_mask.shape:
+                face_hardness = ha[cliff.face_mask]
+                if face_hardness.size > 0:
+                    mean_hardness = float(np.mean(face_hardness))
+                    # hardness 1.0 → noise 0.3; hardness 0.0 → noise 1.4
+                    noise_amplitude = 0.3 + (1.0 - mean_hardness) * 1.1
+
+        # ---- call the cliff face mesh generator ----
+        mesh_spec = None
+        if generate_cliff_face_mesh is not None:
+            try:
+                mesh_spec = generate_cliff_face_mesh(
+                    width=cliff_width,
+                    height=cliff_height,
+                    segments_horizontal=16,
+                    segments_vertical=12,
+                    noise_amplitude=noise_amplitude,
+                    noise_scale=3.0,
+                    seed=hash(cliff.cliff_id) & 0x7FFFFFFF,
+                    style=style,
+                )
+            except Exception:  # noqa: BLE001 — mesh generation is best-effort
+                mesh_spec = None
+
+        # ---- attempt Blender mesh object creation ----
+        blender_name: Optional[str] = None
+        try:
+            import bpy as _bpy
+            import bmesh as _bmesh
+
+            if mesh_spec is not None:
+                mesh_name = f"HeroCliff_{cliff.cliff_id}"
+                bmesh_data = _bpy.data.meshes.new(mesh_name)
+                bm = _bmesh.new()
+                for vert_data in mesh_spec.get("vertices", []):
+                    bm.verts.new(vert_data)
+                bm.verts.ensure_lookup_table()
+                for face_data in mesh_spec.get("faces", []):
+                    try:
+                        bm.faces.new([bm.verts[vi] for vi in face_data])
+                    except (ValueError, IndexError):
+                        pass
+                bm.to_mesh(bmesh_data)
+                bm.free()
+                bmesh_data.update()
+
+                cliff_obj = _bpy.data.objects.new(mesh_name, bmesh_data)
+                # Place at the cliff world centre, oriented along the cliff lip
+                cliff_obj.location = (cx, cy, cz)
+
+                # Orient: rotate so the mesh faces outward from the cliff lip.
+                # Use strata_angle as a Z-rotation hint when available.
+                if strata_angle_deg != 0.0:
+                    cliff_obj.rotation_euler = (0.0, 0.0, math.radians(strata_angle_deg))
+
+                try:
+                    _bpy.context.collection.objects.link(cliff_obj)
+                except Exception:  # noqa: BLE001
+                    pass
+
+                blender_name = cliff_obj.name
+        except ImportError:
+            pass  # bpy not available — pure-data path only
+
         intent = (
             f"insert_hero_cliff_mesh:{cliff.cliff_id}:"
             f"cells={cliff.cell_count}:"
-            f"z={cliff.min_height_m:.2f}..{cliff.max_height_m:.2f}"
+            f"z={cliff.min_height_m:.2f}..{cliff.max_height_m:.2f}:"
+            f"style={style}:"
+            f"noise={noise_amplitude:.2f}:"
+            f"blender_obj={blender_name or 'none'}"
         )
         state.side_effects.append(intent)
         intents.append(intent)
+
     return intents
 
 

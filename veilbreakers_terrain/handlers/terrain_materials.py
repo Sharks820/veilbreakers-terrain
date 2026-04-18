@@ -1097,7 +1097,7 @@ def assign_terrain_materials_by_slope(
     mesh_data: dict[str, Any],
     biome_name: str,
 ) -> list[int]:
-    """Assign material indices to faces based on slope angle and height.
+    """Assign material indices to faces based on slope angle, height, and geology.
 
     Pure-logic function -- no bpy dependency.
 
@@ -1107,7 +1107,14 @@ def assign_terrain_materials_by_slope(
             - "faces": list of vertex index tuples
             - "normals": list of (nx, ny, nz) face normals (one per face)
             - "water_level": float (optional, default 0.0)
-        biome_name: Name of the biome to use for material assignment.
+            - "rock_hardness": list of float per vertex in [0, 1] (optional).
+              Hard rock (>0.7) shifts the ground→slope transition threshold
+              upward by up to 15 degrees so hard rock terrain stays "ground"
+              at steeper angles — geologically accurate.
+            - "snow_line_z": float (optional). Faces above this Z elevation
+              are assigned a "cliffs" material as a proxy for snow/ice exposure
+              on vertical faces and pushed toward "slopes" on flat terrain.
+              Default: None (disabled).
 
     Returns:
         List of material indices, one per face. The index maps into the
@@ -1117,7 +1124,9 @@ def assign_terrain_materials_by_slope(
     vertices = mesh_data.get("vertices", [])
     faces = mesh_data.get("faces", [])
     normals = mesh_data.get("normals", [])
-    water_level = mesh_data.get("water_level", 0.0)
+    water_level = float(mesh_data.get("water_level", 0.0))
+    rock_hardness_per_vertex: list[float] | None = mesh_data.get("rock_hardness")
+    snow_line_z: float | None = mesh_data.get("snow_line_z")
 
     palette = get_biome_palette(biome_name)
 
@@ -1137,23 +1146,60 @@ def assign_terrain_materials_by_slope(
     for fi, face in enumerate(faces):
         normal = normals[fi] if fi < len(normals) else (0.0, 0.0, 1.0)
 
-        # Compute face center Z
+        # Compute face center Z and mean rock hardness
+        face_center_z = 0.0
+        face_hardness = 0.5  # default mid-hardness
         if face and vertices:
-            z_values = [
-                vertices[vi][2]
-                for vi in face
-                if vi < len(vertices)
-            ]
+            z_values = [vertices[vi][2] for vi in face if vi < len(vertices)]
             face_center_z = sum(z_values) / len(z_values) if z_values else 0.0
-        else:
-            face_center_z = 0.0
+            if rock_hardness_per_vertex is not None:
+                h_vals = [
+                    rock_hardness_per_vertex[vi]
+                    for vi in face
+                    if vi < len(rock_hardness_per_vertex)
+                ]
+                face_hardness = sum(h_vals) / len(h_vals) if h_vals else 0.5
 
-        zone = _classify_face(normal, face_center_z, water_level)
+        # rock_hardness slope transition modulation:
+        # Hard rock (hardness > 0.7) shifts the flat→slope threshold up by
+        # up to 15 degrees so hard-rock faces classify as "ground" at steeper
+        # angles. Soft rock (< 0.3) shifts it down by up to 10 degrees.
+        hardness_offset = 0.0
+        if face_hardness > 0.7:
+            hardness_offset = (face_hardness - 0.7) / 0.3 * 15.0  # up to +15 deg
+        elif face_hardness < 0.3:
+            hardness_offset = -(0.3 - face_hardness) / 0.3 * 10.0  # up to -10 deg
+
+        # Effective classification thresholds with hardness modulation
+        effective_flat_max = _FLAT_MAX_ANGLE + hardness_offset
+        effective_slope_max = _SLOPE_MAX_ANGLE + hardness_offset
+
+        # Snow line zone: faces above snow_line_z use cliff material on steep
+        # faces and slope material on flatter faces (snow/ice coverage).
+        if snow_line_z is not None and face_center_z >= snow_line_z:
+            angle = _face_slope_angle(normal)
+            if face_center_z < water_level + 0.5:
+                zone = "water_edges"
+            elif angle > effective_slope_max:
+                zone = "cliffs"   # ice-covered near-vertical faces
+            else:
+                zone = "slopes"   # snow-covered moderate slopes
+        else:
+            # Standard classification with hardness-modulated thresholds
+            if face_center_z < water_level + 0.5:
+                zone = "water_edges"
+            else:
+                angle = _face_slope_angle(normal)
+                if angle <= effective_flat_max:
+                    zone = "ground"
+                elif angle <= effective_slope_max:
+                    zone = "slopes"
+                else:
+                    zone = "cliffs"
 
         # Pick material within the zone (cycle through available materials)
         zone_materials = palette[zone]
         zone_idx = zone_start[zone]
-        # Distribute faces across materials in the zone by face index
         mat_offset = fi % len(zone_materials)
         material_indices.append(zone_idx + mat_offset)
 
@@ -1221,16 +1267,41 @@ def blend_terrain_vertex_colors(
         "water_edges": (0.1, 0.0, 0.3, 0.6), # Mostly special + dirt
     }
 
+    def _srgb_to_linear(c: float) -> float:
+        """Convert sRGB gamma-encoded value to linear light (IEC 61966-2-1)."""
+        if c <= 0.04045:
+            return c / 12.92
+        return ((c + 0.055) / 1.055) ** 2.4
+
+    def _linear_to_srgb(c: float) -> float:
+        """Convert linear light value back to sRGB gamma encoding."""
+        c = max(0.0, min(1.0, c))
+        if c <= 0.0031308:
+            return c * 12.92
+        return 1.055 * (c ** (1.0 / 2.4)) - 0.055
+
+    # Linearize zone_weights so blending happens in linear light space.
+    # The A channel (special/mask) is a linear weight, not a color — skip gamma.
+    zone_weights_linear: dict[str, tuple[float, float, float, float]] = {
+        zone: (
+            _srgb_to_linear(w[0]),
+            _srgb_to_linear(w[1]),
+            _srgb_to_linear(w[2]),
+            w[3],  # alpha: linear weight, no gamma
+        )
+        for zone, w in zone_weights.items()
+    }
+
     vertex_colors: list[tuple[float, float, float, float]] = []
 
     for vi in range(num_verts):
         adj = vert_faces[vi]
         if not adj:
-            # Isolated vertex -- default to dirt
-            vertex_colors.append((0.0, 0.0, 1.0, 0.0))
+            # Isolated vertex -- default to dirt (linearized)
+            vertex_colors.append((0.0, 0.0, _srgb_to_linear(1.0), 0.0))
             continue
 
-        # Average zone weights across adjacent faces
+        # Average zone weights across adjacent faces — blend in linear light
         r_sum, g_sum, b_sum, a_sum = 0.0, 0.0, 0.0, 0.0
         for fi in adj:
             normal = normals[fi] if fi < len(normals) else (0.0, 0.0, 1.0)
@@ -1247,13 +1318,13 @@ def blend_terrain_vertex_colors(
                 face_z = 0.0
 
             zone = _classify_face(normal, face_z, water_level)
-            w = zone_weights[zone]
+            w = zone_weights_linear[zone]
             r_sum += w[0]
             g_sum += w[1]
             b_sum += w[2]
             a_sum += w[3]
 
-        # Normalize
+        # Normalize in linear space
         total = r_sum + g_sum + b_sum + a_sum
         if total > 1e-9:
             r_sum /= total
@@ -1261,9 +1332,16 @@ def blend_terrain_vertex_colors(
             b_sum /= total
             a_sum /= total
         else:
-            r_sum, g_sum, b_sum, a_sum = 0.0, 0.0, 1.0, 0.0
+            r_sum, g_sum, b_sum = 0.0, 0.0, _srgb_to_linear(1.0)
+            a_sum = 0.0
 
-        vertex_colors.append((r_sum, g_sum, b_sum, a_sum))
+        # Gamma-correct RGB back to sRGB for storage; A stays linear
+        vertex_colors.append((
+            _linear_to_srgb(r_sum),
+            _linear_to_srgb(g_sum),
+            _linear_to_srgb(b_sum),
+            max(0.0, min(1.0, a_sum)),
+        ))
 
     return vertex_colors
 
@@ -1320,12 +1398,23 @@ def apply_corruption_tint(
 # Pure-logic: biome transition zone blending
 # ---------------------------------------------------------------------------
 
-def _simple_noise_2d(x: float, y: float, seed: int = 0) -> float:
-    """Deterministic pseudo-noise for transition edge irregularity.
+def _wang_hash(n: int) -> int:
+    """Wang hash — avalanche mixer producing well-distributed 32-bit output."""
+    n = (n ^ 61) ^ (n >> 16)
+    n = (n + (n << 3)) & 0xFFFFFFFF
+    n = n ^ (n >> 4)
+    n = (n * 0x27D4EB2D) & 0xFFFFFFFF
+    n = n ^ (n >> 15)
+    return n
 
-    Uses a hash-based approach (no external dependency) to produce values
-    in [-1, 1] that vary smoothly with position. Not true Perlin noise
-    but sufficient for organic-looking biome boundaries.
+
+def _simple_noise_2d(x: float, y: float, seed: int = 0) -> float:
+    """Deterministic gradient noise in [-1, 1] for biome transition irregularity.
+
+    Implements value noise with Wang-hash corner values and quintic (smoothstep5)
+    interpolation. The Wang hash gives better avalanche properties than the
+    original multiplicative hash, reducing visible grid artefacts in biome
+    boundary blending.
 
     Pure-logic function -- no bpy dependency.
     """
@@ -1335,24 +1424,28 @@ def _simple_noise_2d(x: float, y: float, seed: int = 0) -> float:
     fx = x - ix
     fy = y - iy
 
-    # Smooth interpolation (Hermite)
-    ux = fx * fx * (3.0 - 2.0 * fx)
-    uy = fy * fy * (3.0 - 2.0 * fy)
+    # Quintic smoothstep (Perlin's improved smoothstep): 6t^5 - 15t^4 + 10t^3
+    def _quintic(t: float) -> float:
+        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
-    def _hash(xi: int, yi: int) -> float:
-        # Simple hash producing a float in [-1, 1]
-        h = ((xi * 374761393 + yi * 668265263 + seed * 1274126177) ^ 0x5DEECE66D) & 0x7FFFFFFF
-        return (h % 10000) / 5000.0 - 1.0
+    ux = _quintic(fx)
+    uy = _quintic(fy)
 
-    n00 = _hash(ix, iy)
-    n10 = _hash(ix + 1, iy)
-    n01 = _hash(ix, iy + 1)
-    n11 = _hash(ix + 1, iy + 1)
+    def _hash_val(xi: int, yi: int) -> float:
+        """Wang-hash two ints + seed → float in [-1, 1]."""
+        h = _wang_hash(_wang_hash(xi & 0xFFFFFFFF) ^ (_wang_hash(yi & 0xFFFFFFFF) + seed))
+        # Map to [-1, 1] via mantissa extraction
+        return (h & 0xFFFFFF) / float(0x800000) - 1.0
 
-    nx0 = n00 * (1.0 - ux) + n10 * ux
-    nx1 = n01 * (1.0 - ux) + n11 * ux
+    n00 = _hash_val(ix, iy)
+    n10 = _hash_val(ix + 1, iy)
+    n01 = _hash_val(ix, iy + 1)
+    n11 = _hash_val(ix + 1, iy + 1)
 
-    return nx0 * (1.0 - uy) + nx1 * uy
+    nx0 = n00 + ux * (n10 - n00)
+    nx1 = n01 + ux * (n11 - n01)
+
+    return nx0 + uy * (nx1 - nx0)
 
 
 def compute_biome_transition(
@@ -1702,6 +1795,16 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
     if not biome_name:
         raise ValueError(
             "'biome_name' is required. Use list_biomes=True to see options."
+        )
+
+    # Validate biome_id exists in registry BEFORE any bpy operations so callers
+    # get a clear, actionable error message rather than a cryptic downstream failure.
+    if biome_name not in BIOME_PALETTES:
+        available = sorted(BIOME_PALETTES.keys())
+        raise ValueError(
+            f"Unknown biome '{biome_name}'. "
+            f"Available biomes: {available}. "
+            "Use list_biomes=True to inspect the full palette registry."
         )
 
     corruption_level = float(params.get("corruption_level", 0.0))

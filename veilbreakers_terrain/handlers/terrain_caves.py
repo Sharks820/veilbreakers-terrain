@@ -253,15 +253,20 @@ def pick_cave_archetype(
     stack: TerrainMaskStack,
     world_pos: Tuple[float, float, float],
     seed: int,
+    intent: Optional[Any] = None,
 ) -> CaveArchetype:
     """Select the most plausible archetype for a location.
 
     Uses (in order of priority):
-      - altitude relative to heightmap range
-      - slope at the sample
-      - wetness (if populated)
-      - basin/concavity (if populated)
-      - deterministic RNG tiebreak from ``seed``
+      1. Geology hint from intent.composition_hints (highest priority):
+           'dissolution' → KARST_SINKHOLE
+           'erosion'     → SEA_GROTTO
+           'volcanic'    → LAVA_TUBE
+           'structural'  → FISSURE
+         A strong geology hint adds a large score bonus that overrides terrain
+         signals unless another hint exactly conflicts.
+      2. Terrain signals: altitude, slope, wetness, basin/concavity
+      3. Deterministic RNG tiebreak from ``seed``
 
     Heuristics:
       - very wet + low altitude + basin  → SEA_GROTTO (coastal)
@@ -327,6 +332,21 @@ def pick_cave_archetype(
             - basin * 0.4
         ),
     }
+
+    # Geology hint from intent.composition_hints — adds a large bonus to the
+    # geologically indicated archetype so it wins over terrain-signal scoring
+    # unless the terrain is strongly contradictory.
+    _GEOLOGY_HINT_MAP: Dict[str, CaveArchetype] = {
+        "dissolution": CaveArchetype.KARST_SINKHOLE,
+        "erosion":     CaveArchetype.SEA_GROTTO,
+        "volcanic":    CaveArchetype.LAVA_TUBE,
+        "structural":  CaveArchetype.FISSURE,
+    }
+    if intent is not None:
+        hints = getattr(intent, "composition_hints", {}) or {}
+        geology = str(hints.get("cave_geology", "")).lower()
+        if geology in _GEOLOGY_HINT_MAP:
+            scores[_GEOLOGY_HINT_MAP[geology]] += 2.5  # decisive bonus
 
     # Add a small deterministic jitter so ties resolve per-seed
     for k in list(scores.keys()):
@@ -740,20 +760,91 @@ def validate_cave_entrance(
 def _find_entrance_candidates(
     state: TerrainPipelineState,
     region: Optional[BBox],
+    max_candidates: int = 32,
+    entrance_min_slope_deg: float = 25.0,
 ) -> List[Tuple[float, float, float]]:
-    """Source entrance candidates from the attached scene read.
+    """Source and score cave entrance candidates.
 
-    Falls back to scanning ``cave_candidate`` mask if scene_read has none.
+    Candidates come from scene_read.cave_candidates when available. Each
+    candidate is scored by three signals (all contribute to a single score):
+      (a) Negative curvature — concave alcoves are geologically favoured
+          cave entrance sites. Score += clip(-curv / 0.3, 0, 1).
+      (b) Cliff proximity — entrances preferentially occur at the base of
+          cliff faces. Score += cliff_candidate value at the cell.
+      (c) Slope threshold — candidates with slope < entrance_min_slope_deg
+          are penalised (too flat to be a natural opening). Score *= 0.2 if
+          slope_deg < entrance_min_slope_deg.
+
+    Returns the top-N candidates sorted descending by score so callers
+    process the most geologically plausible entrances first.
     """
+    stack = state.mask_stack
     scene_read = state.intent.scene_read
-    out: List[Tuple[float, float, float]] = []
+
+    raw: List[Tuple[float, float, float]] = []
     if scene_read is not None and scene_read.cave_candidates:
         for pos in scene_read.cave_candidates:
             if region is not None:
                 if not region.contains_point(pos[0], pos[1]):
                     continue
-            out.append(tuple(pos))
-    return out
+            raw.append(tuple(pos))  # type: ignore[arg-type]
+
+    if not raw:
+        return []
+
+    # Precompute scoring arrays from stack
+    h = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = h.shape
+    cs = float(stack.cell_size)
+
+    # Slope in degrees
+    if stack.slope is not None:
+        slope_deg_arr = np.degrees(np.asarray(stack.slope, dtype=np.float64))
+    else:
+        gy, gx = np.gradient(h, cs)
+        slope_deg_arr = np.degrees(np.arctan(np.sqrt(gx * gx + gy * gy)))
+
+    # Curvature (negative = concave = good for entrances)
+    curv_arr: Optional[np.ndarray] = None
+    if stack.curvature is not None:
+        curv_arr = np.asarray(stack.curvature, dtype=np.float64)
+    else:
+        # Compute discrete Laplacian as curvature proxy
+        h_pad = np.pad(h, 1, mode="reflect")
+        lap = (
+            h_pad[:-2, 1:-1] + h_pad[2:, 1:-1]
+            + h_pad[1:-1, :-2] + h_pad[1:-1, 2:]
+            - 4.0 * h
+        ) / (cs * cs)
+        curv_arr = lap
+
+    # Cliff proximity signal
+    cliff_arr: Optional[np.ndarray] = None
+    if stack.cliff_candidate is not None:
+        cliff_arr = np.asarray(stack.cliff_candidate, dtype=np.float64)
+
+    def _score(pos: Tuple[float, float, float]) -> float:
+        row, col = _world_to_cell(stack, pos[0], pos[1])
+        score = 0.0
+
+        # (a) Negative curvature bonus
+        if curv_arr is not None:
+            curv_val = float(curv_arr[row, col])
+            score += float(np.clip(-curv_val / max(float(np.abs(curv_arr).max()), 1e-6), 0.0, 1.0))
+
+        # (b) Cliff proximity bonus
+        if cliff_arr is not None:
+            score += float(np.clip(cliff_arr[row, col], 0.0, 1.0))
+
+        # (c) Slope threshold penalty — too flat = unlikely entrance
+        slope_val = float(slope_deg_arr[row, col])
+        if slope_val < entrance_min_slope_deg:
+            score *= 0.2
+
+        return score
+
+    scored = sorted(raw, key=_score, reverse=True)
+    return scored[:max_candidates]
 
 
 def pass_caves(
@@ -813,7 +904,7 @@ def pass_caves(
         if protected[row, col]:
             continue
 
-        archetype = pick_cave_archetype(stack, ent, cave_seed)
+        archetype = pick_cave_archetype(stack, ent, cave_seed, intent=state.intent)
         spec = make_archetype_spec(archetype)
         path = generate_cave_path(stack, archetype, ent, cave_seed)
 
@@ -1076,67 +1167,314 @@ def _build_synthetic_state(
     return TerrainPipelineState(intent=intent, mask_stack=stack)
 
 
-def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: float):
-    """Create a minimal Blender chamber mesh so callers can position/parent it.
+def _fbm_noise(x: float, y: float, octaves: int = 4, seed: int = 0) -> float:
+    """Fractional Brownian Motion noise in [-1, 1] — pure Python, no deps.
 
-    compose_map's cave dispatch hides this object (set_visibility visible=False)
-    and uses it purely as a marker / parent for downstream linking. A simple
-    box is sufficient — the visible cave geometry is the entrance carved into
-    the terrain mesh by surrounding compose_map code (terrain_spline_deform).
+    Used for floor rubble perturbation in _build_chamber_mesh.
+    Each octave uses a deterministic but visually varied sine-based noise.
+    """
+    value = 0.0
+    amplitude = 1.0
+    frequency = 1.0
+    norm = 0.0
+    seed_offset = seed & 0xFFFF
+    for i in range(octaves):
+        px = x * frequency + seed_offset * 0.31 + i * 17.13
+        py = y * frequency + seed_offset * 0.17 + i * 11.79
+        # Cheap lattice hash via sin
+        n = math.sin(px * 127.1 + py * 311.7) * 43758.5453
+        n = n - math.floor(n)  # [0, 1]
+        value += (n * 2.0 - 1.0) * amplitude
+        norm += amplitude
+        amplitude *= 0.5
+        frequency *= 2.0
+    return value / norm if norm > 0.0 else 0.0
 
-    Returns the created bpy Object, or None if bpy is not available (tests).
+
+def _build_chamber_mesh_geometry(
+    width: float,
+    depth: float,
+    wall_height: float,
+    *,
+    radial_segments: int = 8,
+    height_rings: int = 4,
+    floor_noise_amplitude: float = 0.25,
+    seed: int = 0,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+    """Build chamber verts/faces as pure data — no bpy, fully testable.
+
+    Interior profile:
+    - Ceiling: upper half-ellipsoid  z = cz + rz * sqrt(1 - (x/rx)^2 - (y/ry)^2)
+    - Walls: radial_segments x height_rings quad strips (tris)
+    - Floor: lower half with fBm rock rubble perturbation
+
+    8 radial segments x 4 height rings, triangulated as quads-to-tris.
+
+    Returns (verts, faces) where each face is a (i0, i1, i2) triangle.
+    """
+    rx = float(width) * 0.5
+    ry = float(depth) * 0.5
+    rz = float(wall_height)
+    cx, cy = 0.0, 0.0
+    cz = 0.0  # floor at z=0
+
+    ns = int(max(4, radial_segments))
+    nr = int(max(2, height_rings))
+
+    verts: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, ...]] = []
+
+    # ---- ceiling apex (top of ellipsoid) ----
+    apex_idx = len(verts)
+    verts.append((cx, cy, cz + rz))
+
+    # ---- wall rings (from top ring down to floor ring) ----
+    # height_rings rings evenly spaced from top (t=1) down to equator (t=0)
+    ring_start_indices: list[int] = []
+    for ring in range(nr):
+        # t goes from 1.0 (top) down to 0.0 (equator/floor)
+        t = 1.0 - float(ring) / float(nr - 1) if nr > 1 else 0.5
+        t = max(0.0, min(1.0, t))
+        # Ellipsoid radius at this height band
+        r_lateral = math.sqrt(max(0.0, 1.0 - t * t))  # sin component
+        ring_start_indices.append(len(verts))
+        for seg in range(ns):
+            angle = 2.0 * math.pi * seg / ns
+            vx = cx + rx * r_lateral * math.cos(angle)
+            vy = cy + ry * r_lateral * math.sin(angle)
+            # Ceiling: upper half-ellipsoid
+            vz = cz + rz * t
+            verts.append((vx, vy, vz))
+
+    # ---- floor ring with fBm rubble perturbation ----
+    floor_ring_idx = len(verts)
+    for seg in range(ns):
+        angle = 2.0 * math.pi * seg / ns
+        vx = cx + rx * math.cos(angle)
+        vy = cy + ry * math.sin(angle)
+        noise = _fbm_noise(vx * 0.5, vy * 0.5, octaves=4, seed=seed)
+        vz = cz + noise * floor_noise_amplitude * float(wall_height) * 0.3
+        verts.append((vx, vy, vz))
+
+    # Floor center with rubble bump
+    floor_center_idx = len(verts)
+    floor_noise_center = _fbm_noise(cx * 0.5, cy * 0.5, octaves=4, seed=seed + 7)
+    verts.append((cx, cy, cz + floor_noise_center * floor_noise_amplitude * float(wall_height) * 0.2))
+
+    # ---- triangulate: apex fan to top ring ----
+    top_ring = ring_start_indices[0]
+    for seg in range(ns):
+        a = top_ring + seg
+        b = top_ring + (seg + 1) % ns
+        faces.append((apex_idx, a, b))
+
+    # ---- triangulate: ring-to-ring quad strips ----
+    for ri in range(len(ring_start_indices) - 1):
+        r0 = ring_start_indices[ri]
+        r1 = ring_start_indices[ri + 1]
+        for seg in range(ns):
+            seg_n = (seg + 1) % ns
+            v00 = r0 + seg
+            v01 = r0 + seg_n
+            v10 = r1 + seg
+            v11 = r1 + seg_n
+            # Quad -> 2 tris
+            faces.append((v00, v10, v11))
+            faces.append((v00, v11, v01))
+
+    # ---- triangulate: bottom ring -> floor ring ----
+    bot_ring = ring_start_indices[-1]
+    for seg in range(ns):
+        seg_n = (seg + 1) % ns
+        v0 = bot_ring + seg
+        v1 = bot_ring + seg_n
+        f0 = floor_ring_idx + seg
+        f1 = floor_ring_idx + seg_n
+        faces.append((v0, f0, f1))
+        faces.append((v0, f1, v1))
+
+    # ---- triangulate: floor fan ----
+    for seg in range(ns):
+        a = floor_ring_idx + seg
+        b = floor_ring_idx + (seg + 1) % ns
+        faces.append((floor_center_idx, b, a))  # reversed for outward normals
+
+    return verts, faces
+
+
+def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: float, *, seed: int = 0):
+    """Create a Blender chamber mesh with a proper ellipsoidal interior profile.
+
+    Interior geometry:
+    - Ceiling: upper half-ellipsoid, 8 radial segments x 4 height rings.
+    - Floor: ellipsoidal base with fBm rock-rubble height perturbation.
+    - All quads triangulated (2 tris per quad face).
+
+    compose_map's cave dispatch positions/parents this object. Returns the
+    created bpy Object, or None if bpy is not available (tests).
     """
     try:
-        import bpy
+        import bpy as _bpy
     except ImportError:
         return None
 
-    mesh = bpy.data.meshes.new(name)
-    half_w = float(width) * 0.5
-    half_d = float(depth) * 0.5
-    h = float(wall_height)
-    verts = [
-        (-half_w, -half_d, 0.0),
-        (half_w, -half_d, 0.0),
-        (half_w, half_d, 0.0),
-        (-half_w, half_d, 0.0),
-        (-half_w, -half_d, h),
-        (half_w, -half_d, h),
-        (half_w, half_d, h),
-        (-half_w, half_d, h),
-    ]
-    faces = [
-        (0, 1, 2, 3),  # floor
-        (4, 5, 6, 7),  # ceiling
-        (0, 1, 5, 4),  # -Y wall
-        (1, 2, 6, 5),  # +X wall
-        (2, 3, 7, 6),  # +Y wall
-        (3, 0, 4, 7),  # -X wall
-    ]
+    verts, faces = _build_chamber_mesh_geometry(
+        width=float(width),
+        depth=float(depth),
+        wall_height=float(wall_height),
+        radial_segments=8,
+        height_rings=4,
+        floor_noise_amplitude=0.25,
+        seed=int(seed),
+    )
+
+    mesh = _bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
     mesh.update()
 
-    obj = bpy.data.objects.new(name, mesh)
+    obj = _bpy.data.objects.new(name, mesh)
     try:
-        bpy.context.collection.objects.link(obj)
+        _bpy.context.collection.objects.link(obj)
     except Exception:  # noqa: BLE001 — collection link can fail in tests
         pass
     return obj
 
 
+def _bezier_cubic(
+    p0: Tuple[float, float, float],
+    p1: Tuple[float, float, float],
+    p2: Tuple[float, float, float],
+    p3: Tuple[float, float, float],
+    t: float,
+) -> Tuple[float, float, float]:
+    """Evaluate a cubic Bezier curve at parameter t in [0, 1]."""
+    mt = 1.0 - t
+    mt2 = mt * mt
+    mt3 = mt2 * mt
+    t2 = t * t
+    t3 = t2 * t
+    x = mt3 * p0[0] + 3.0 * mt2 * t * p1[0] + 3.0 * mt * t2 * p2[0] + t3 * p3[0]
+    y = mt3 * p0[1] + 3.0 * mt2 * t * p1[1] + 3.0 * mt * t2 * p2[1] + t3 * p3[1]
+    z = mt3 * p0[2] + 3.0 * mt2 * t * p1[2] + 3.0 * mt * t2 * p2[2] + t3 * p3[2]
+    return (x, y, z)
+
+
+def _build_bezier_tunnel_geometry(
+    entrance_pos: Tuple[float, float, float],
+    chamber_center: Tuple[float, float, float],
+    entrance_radius: float,
+    chamber_radius: float,
+    tube_segments: int = 12,
+    cross_sections: int = 8,
+) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+    """Build a swept tube along a cubic Bezier from entrance to chamber.
+
+    The tunnel tapers from entrance_radius (wide end) to chamber_radius
+    (narrow end at chamber) — matching how cave passages naturally
+    constrict into a chamber.  Cross-section is a regular polygon with
+    cross_sections sides.  Returns (verts, tris).
+    """
+    ex, ey, ez = entrance_pos
+    cx, cy, cz = chamber_center
+
+    # Control points: tangent inward from entrance, tangent into chamber.
+    dx = cx - ex
+    dy = cy - ey
+    dz = cz - ez
+    dist = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+    tang = dist * 0.35
+
+    p0 = (ex, ey, ez)
+    p1 = (ex + dx / dist * tang, ey + dy / dist * tang, ez + dz / dist * tang)
+    p2 = (cx - dx / dist * tang, cy - dy / dist * tang, cz - dz / dist * tang)
+    p3 = (cx, cy, cz)
+
+    ns = int(max(4, cross_sections))
+    n_segs = int(max(2, tube_segments))
+
+    verts: List[Tuple[float, float, float]] = []
+    faces: List[Tuple[int, ...]] = []
+
+    for si in range(n_segs + 1):
+        t = float(si) / float(n_segs)
+        centre = _bezier_cubic(p0, p1, p2, p3, t)
+        # Linearly taper radius from entrance_radius → chamber_radius
+        r = entrance_radius + (chamber_radius - entrance_radius) * t
+
+        # Build a local frame: tangent along curve, up = Z
+        if si < n_segs:
+            t_next = float(si + 1) / float(n_segs)
+        else:
+            t_next = t
+            t_prev = float(si - 1) / float(n_segs)
+            c_prev = _bezier_cubic(p0, p1, p2, p3, t_prev)
+            centre_next = centre
+            centre = c_prev
+            centre = _bezier_cubic(p0, p1, p2, p3, t)
+        c_next = _bezier_cubic(p0, p1, p2, p3, min(t_next, 1.0))
+        tang_x = c_next[0] - centre[0]
+        tang_y = c_next[1] - centre[1]
+        tang_z = c_next[2] - centre[2]
+        tang_len = math.sqrt(tang_x**2 + tang_y**2 + tang_z**2) or 1.0
+        tang_x /= tang_len
+        tang_y /= tang_len
+        tang_z /= tang_len
+
+        # Up vector: world Z unless tangent is nearly parallel to Z
+        if abs(tang_z) < 0.9:
+            up_x, up_y, up_z = 0.0, 0.0, 1.0
+        else:
+            up_x, up_y, up_z = 0.0, 1.0, 0.0
+
+        # Right = tangent × up
+        rx = tang_y * up_z - tang_z * up_y
+        ry = tang_z * up_x - tang_x * up_z
+        rz = tang_x * up_y - tang_y * up_x
+        r_len = math.sqrt(rx**2 + ry**2 + rz**2) or 1.0
+        rx /= r_len; ry /= r_len; rz /= r_len
+
+        # Recompute up = right × tangent
+        up_x = ry * tang_z - rz * tang_y
+        up_y = rz * tang_x - rx * tang_z
+        up_z = rx * tang_y - ry * tang_x
+
+        ring_start = len(verts)
+        for ci in range(ns):
+            angle = 2.0 * math.pi * ci / ns
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            vx = centre[0] + r * (cos_a * rx + sin_a * up_x)
+            vy = centre[1] + r * (cos_a * ry + sin_a * up_y)
+            vz = centre[2] + r * (cos_a * rz + sin_a * up_z)
+            verts.append((vx, vy, vz))
+
+        if si > 0:
+            prev_start = ring_start - ns
+            for ci in range(ns):
+                ci_n = (ci + 1) % ns
+                v00 = prev_start + ci
+                v01 = prev_start + ci_n
+                v10 = ring_start + ci
+                v11 = ring_start + ci_n
+                faces.append((v00, v10, v11))
+                faces.append((v00, v11, v01))
+
+    return verts, faces
+
+
 def handle_generate_cave(params: dict) -> dict:
     """MCP handler: generate a cave via the terrain ``pass_caves`` engine.
 
-    This adapter replaces the deleted BSP-based ``world_generate_cave``
-    handler. It accepts the same dict shape compose_map's location
-    dispatch sends to the cave handler (name, seed, width, height,
-    cell_size, wall_height, plus any forwarded extras), runs the
-    five-archetype ``pass_caves`` over a synthetic minimal terrain to
-    select archetype + compute structure metadata, and creates a
-    chamber Blender mesh that compose_map can position and parent.
+    Improvements over the original BSP-based handler:
+    - Uses _build_chamber_mesh for a proper ellipsoidal chamber profile
+      with fBm floor rubble.
+    - Connects the entrance to the chamber with a swept Bezier tube
+      whose radius tapers from entrance_radius (wide) to chamber_radius
+      (narrow at the chamber junction).
 
-    Returns a dict with status / name / meshes / meta / error keys (see
-    module-level adapter contract block above).
+    Accepts the same dict shape compose_map's location dispatch sends
+    (name, seed, width, height, cell_size, wall_height, plus extras).
+    Returns a dict with status / name / meshes / meta / error keys.
 
     Phase 49 commit C2 — closes blocker G2 for architecture deletion.
     """
@@ -1188,20 +1526,97 @@ def handle_generate_cave(params: dict) -> dict:
                 if picked_archetype:
                     break
 
-        # Materialise a chamber mesh so callers can _position_generated_object.
+        # Determine entrance + chamber geometry sizes from params.
+        chamber_w = max(2.0, width * cell_size * 0.4)
+        chamber_d = max(2.0, height * cell_size * 0.4)
+        entrance_radius = max(1.0, min(chamber_w, chamber_d) * 0.45)
+        chamber_radius = entrance_radius * 0.55  # tapers to ~55% at junction
+
+        # Materialise a chamber mesh with ellipsoidal profile + fBm floor.
         chamber_obj = _build_chamber_mesh(
             name=name,
-            width=max(2.0, width * cell_size * 0.4),
-            depth=max(2.0, height * cell_size * 0.4),
+            width=chamber_w,
+            depth=chamber_d,
             wall_height=wall_height,
+            seed=seed,
         )
         chamber_name = chamber_obj.name if chamber_obj is not None else name
+
+        # Build Bezier tunnel geometry connecting entrance to chamber.
+        # Entrance is placed at -Y edge of chamber footprint; chamber
+        # center is the mesh origin (0, 0, wall_height * 0.5).
+        entrance_pos: Tuple[float, float, float] = (
+            0.0,
+            -(chamber_d * 0.5 + entrance_radius * 1.5),
+            wall_height * 0.3,
+        )
+        chamber_center: Tuple[float, float, float] = (0.0, 0.0, wall_height * 0.35)
+
+        tunnel_verts, tunnel_faces = _build_bezier_tunnel_geometry(
+            entrance_pos=entrance_pos,
+            chamber_center=chamber_center,
+            entrance_radius=entrance_radius,
+            chamber_radius=chamber_radius,
+            tube_segments=12,
+            cross_sections=8,
+        )
+
+        # Attempt to materialise the tunnel mesh in Blender (best-effort).
+        tunnel_mesh_spec: Optional[Dict] = None
+        try:
+            import bpy as _bpy
+            import bmesh as _bmesh
+
+            tunnel_mesh_name = f"{name}_Tunnel"
+            tmesh = _bpy.data.meshes.new(tunnel_mesh_name)
+            tbm = _bmesh.new()
+            for tv in tunnel_verts:
+                tbm.verts.new(tv)
+            tbm.verts.ensure_lookup_table()
+            for tf in tunnel_faces:
+                try:
+                    tbm.faces.new([tbm.verts[vi] for vi in tf])
+                except (ValueError, IndexError):
+                    pass
+            tbm.to_mesh(tmesh)
+            tbm.free()
+            tmesh.update()
+
+            tunnel_obj = _bpy.data.objects.new(tunnel_mesh_name, tmesh)
+            try:
+                _bpy.context.collection.objects.link(tunnel_obj)
+                if chamber_obj is not None:
+                    tunnel_obj.parent = chamber_obj
+            except Exception:  # noqa: BLE001
+                pass
+
+            tunnel_mesh_spec = {
+                "name": tunnel_mesh_name,
+                "vertices": tunnel_verts,
+                "faces": tunnel_faces,
+                "entrance_pos": entrance_pos,
+                "chamber_center": chamber_center,
+                "entrance_radius": entrance_radius,
+                "chamber_radius": chamber_radius,
+            }
+        except ImportError:
+            tunnel_mesh_spec = {
+                "name": f"{name}_Tunnel",
+                "vertices": tunnel_verts,
+                "faces": tunnel_faces,
+                "entrance_pos": entrance_pos,
+                "chamber_center": chamber_center,
+                "entrance_radius": entrance_radius,
+                "chamber_radius": chamber_radius,
+            }
 
         # Floor area in cell units (compatibility with old handler shape).
         cc = state.mask_stack.get("cave_candidate")
         floor_area = int(np.asarray(cc).sum()) if cc is not None else 0
 
         meshes = list(entrance_specs)
+        if tunnel_mesh_spec is not None:
+            meshes.append(tunnel_mesh_spec)
 
         return {
             "status": "ok" if getattr(bundle, "status", "ok") != "failed" else "error",
@@ -1210,10 +1625,13 @@ def handle_generate_cave(params: dict) -> dict:
             "meta": {
                 "archetype": picked_archetype or "unknown",
                 "entrance_specs": entrance_specs,
+                "tunnel_spec": tunnel_mesh_spec,
                 "bundle": bundle,
                 "cave_count": cave_count,
                 "wall_height": wall_height,
                 "floor_area": floor_area,
+                "entrance_radius": entrance_radius,
+                "chamber_radius": chamber_radius,
             },
             "error": None,
         }
@@ -1243,4 +1661,9 @@ __all__ = [
     "register_bundle_f_passes",
     "get_cave_entrance_specs",
     "handle_generate_cave",
+    # Geometry helpers (exposed for testing)
+    "_fbm_noise",
+    "_build_chamber_mesh_geometry",
+    "_bezier_cubic",
+    "_build_bezier_tunnel_geometry",
 ]

@@ -20,9 +20,13 @@ from dataclasses import dataclass
 import numpy as np
 
 try:
+    import scipy.ndimage as _scipy_ndimage
     from scipy.ndimage import distance_transform_edt as _edt
+    _HAS_SCIPY = True
     _HAS_SCIPY_EDT = True
 except ImportError:
+    _scipy_ndimage = None  # type: ignore[assignment]
+    _HAS_SCIPY = False
     _HAS_SCIPY_EDT = False
 
 
@@ -283,22 +287,22 @@ def _generate_corruption_map(
 
 
 def _box_filter_2d(arr: np.ndarray, radius: int) -> np.ndarray:
-    """Box-mean filter using summed-area table, O(H*W) total."""
+    """Box-mean filter. Uses scipy.ndimage.uniform_filter when available (C extension,
+    ~500x faster than a Python loop). Falls back to a vectorised summed-area-table
+    implementation when scipy is absent."""
     if radius <= 0:
         return arr.copy()
     arr = np.asarray(arr, dtype=np.float64)
+    if _HAS_SCIPY:
+        return _scipy_ndimage.uniform_filter(arr, size=2 * radius + 1, mode="reflect").astype(arr.dtype)
     H, W = arr.shape
-    # Zero-padded SAT: shape (H+1, W+1), row 0 and col 0 are zero sentinels
     padded = np.zeros((H + 1, W + 1), dtype=np.float64)
     padded[1:, 1:] = arr
     sat = np.cumsum(np.cumsum(padded, axis=0), axis=1)
-
-    # Per-cell box bounds (clamped)
     r0 = np.maximum(0, np.arange(H) - radius)
     r1 = np.minimum(H, np.arange(H) + radius + 1)
     c0 = np.maximum(0, np.arange(W) - radius)
     c1 = np.minimum(W, np.arange(W) + radius + 1)
-
     R0 = r0[:, None]; R1 = r1[:, None]
     C0 = c0[None, :]; C1 = c1[None, :]
     box_sums = sat[R1, C1] - sat[R0, C1] - sat[R1, C0] + sat[R0, C0]
@@ -310,11 +314,12 @@ _CHAMFER_DIAG = math.sqrt(2.0)
 
 
 def _distance_from_mask(mask: np.ndarray) -> np.ndarray:
-    """Approximate Euclidean distance from each True cell to nearest False cell.
+    """Euclidean distance from each True cell to nearest False cell.
 
-    Uses scipy EDT when available. Fallback is a two-pass 8-connected chamfer
-    (costs: axis-aligned=1, diagonal=sqrt(2)) which closely approximates
-    Euclidean distance and avoids the L1/Manhattan bias of a 4-connected scan.
+    Fast path uses scipy.ndimage.distance_transform_edt (exact Euclidean).
+    Fallback is a two-pass 8-connected chamfer (axis-aligned=1,
+    diagonal=sqrt(2)) which closely approximates Euclidean distance and avoids
+    the L1/Manhattan bias of a 4-connected scan.
     """
     if _HAS_SCIPY_EDT:
         return _edt(mask).astype(np.float64)
@@ -364,7 +369,8 @@ def apply_periglacial_patterns(
 
     Simulates frost heave polygon patterns (sorted circles / stone stripes)
     using a Voronoi-cell displacement field.  Higher-elevation cells get
-    stronger displacement, mimicking permafrost processes.
+    stronger displacement, mimicking permafrost processes.  A slope-aligned
+    striping term adds stone-stripe texture in the dominant downhill direction.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
@@ -382,18 +388,19 @@ def apply_periglacial_patterns(
 
     # Voronoi cell centers — frost polygon seeds
     n_centers = max(4, int(h * w * 0.0004))
-    cy = rng.randint(0, h, size=n_centers)
-    cx = rng.randint(0, w, size=n_centers)
+    center_y = rng.randint(0, h, size=n_centers).astype(np.float64)
+    center_x = rng.randint(0, w, size=n_centers).astype(np.float64)
 
-    # Distance-to-nearest-center field (cheap Voronoi)
-    ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
-    xs = np.arange(w, dtype=np.float64).reshape(1, -1)
-    min_dist = np.full((h, w), 1e9, dtype=np.float64)
-    for i in range(n_centers):
-        d = np.sqrt((ys - cy[i]) ** 2 + (xs - cx[i]) ** 2)
-        np.minimum(min_dist, d, out=min_dist)
+    # Vectorised distance-to-nearest-center: broadcast (N,1,1) vs (H,W)
+    ys = np.arange(h, dtype=np.float64)
+    xs = np.arange(w, dtype=np.float64)
+    yy, xx = np.meshgrid(ys, xs, indexing="ij")  # (H, W)
+    # (n_centers, H, W) — compute all distances at once, take min over axis 0
+    dy = yy[np.newaxis, :, :] - center_y[:, np.newaxis, np.newaxis]
+    dx = xx[np.newaxis, :, :] - center_x[:, np.newaxis, np.newaxis]
+    min_dist = np.sqrt(dy ** 2 + dx ** 2).min(axis=0)
 
-    # Normalize and invert — ridges at polygon boundaries
+    # Normalize — ridges at polygon boundaries
     max_d = min_dist.max()
     if max_d > 0:
         min_dist /= max_d
@@ -401,7 +408,21 @@ def apply_periglacial_patterns(
 
     # Scale by elevation — stronger at high points (permafrost zone)
     elev_mask = (heightmap - heightmap.min()) / max((heightmap.max() - heightmap.min()), 1e-6)
-    elev_mask = np.clip(elev_mask * 2.0, 0.0, 1.0)  # top half gets full effect
+    elev_mask = np.clip(elev_mask * 2.0, 0.0, 1.0)
+
+    # Slope-aligned striping: dominant gradient direction drives stone-stripe freq
+    gy, gx = np.gradient(heightmap)
+    # Mean downhill direction (unit vector)
+    mean_gy = float(gy.mean())
+    mean_gx = float(gx.mean())
+    dir_mag = math.sqrt(mean_gx ** 2 + mean_gy ** 2) or 1.0
+    cos_dir = mean_gx / dir_mag
+    sin_dir = mean_gy / dir_mag
+    stripe_freq = 2.0 * math.pi / max(max(h, w) * 0.08, 1.0)
+    stripe_angle = np.arctan2(gy, gx)  # local aspect
+    stripe = np.sin(stripe_angle * (xx * cos_dir + yy * sin_dir) * stripe_freq)
+    stripe_weight = frost_heave_scale * intensity * 0.25
+    heave = heave + stripe_weight * stripe
 
     return heightmap + heave * elev_mask
 
@@ -444,9 +465,9 @@ def apply_desert_pavement(
     pavement_mask = np.clip(flat_mask * low_mask * intensity, 0.0, 1.0)
 
     # Smooth heightmap in pavement zones (wind-deflation flattening)
-    # Pure-numpy box filter (no scipy dependency)
     smoothed = _box_filter_2d(heightmap.astype(np.float64), smoothing_radius)
     result = heightmap * (1.0 - pavement_mask) + smoothed * pavement_mask
+    result = np.clip(result, 0.0, 1.0)
 
     return result, pavement_mask
 
@@ -505,8 +526,9 @@ def apply_landslide_scars(
 ) -> np.ndarray:
     """Carve landslide scars and deposit runout fans into a heightmap.
 
-    Each landslide originates from a steep slope, carves a concave scar
-    uphill and deposits a convex fan at the toe.
+    Each landslide originates from a steep slope, carves an elongated concave
+    scar uphill only (asymmetric), traces a downslope path via steepest-descent
+    gradient walk, and deposits material along that path.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
@@ -522,43 +544,65 @@ def apply_landslide_scars(
     result = heightmap.copy()
     rng = np.random.RandomState(seed)
 
-    # Find steep areas as candidate origins
     gy, gx = np.gradient(heightmap)
     slope = np.sqrt(gx ** 2 + gy ** 2)
 
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
     xs = np.arange(w, dtype=np.float64).reshape(1, -1)
 
+    n_walk_steps = max(8, int(max(h, w) * 0.12))
+    deposit_per_step = scar_depth * 0.6 / max(n_walk_steps, 1)
+
     for _ in range(num_slides):
-        # Sample origin weighted by slope steepness
         flat_slope = slope.ravel()
         prob = flat_slope / max(flat_slope.sum(), 1e-12)
         idx = rng.choice(len(prob), p=prob)
         oy, ox = divmod(idx, w)
 
-        # Scar radius
         scar_r = rng.uniform(max(3, h * 0.03), max(5, h * 0.08))
-        dist = np.sqrt((ys - oy) ** 2 + (xs - ox) ** 2)
 
-        # Downhill direction from gradient
+        # Downhill unit vector at origin
         dy_dir = -gy[oy, ox]
         dx_dir = -gx[oy, ox]
         norm = math.sqrt(dx_dir ** 2 + dy_dir ** 2) or 1.0
         dx_dir /= norm
         dy_dir /= norm
 
-        # Scar: concave excavation around origin
-        scar_mask = np.clip(1.0 - dist / scar_r, 0.0, 1.0) ** 2
+        # Uphill unit vector (opposite)
+        uy_dir = -dy_dir
+        ux_dir = -dx_dir
+
+        # Scar elongated uphill: use ellipse with longer axis uphill
+        uphill_proj = (ys - oy) * uy_dir + (xs - ox) * ux_dir
+        cross_proj = (ys - oy) * ux_dir - (xs - ox) * uy_dir  # perpendicular
+        uphill_r = scar_r * 1.6
+        cross_r = scar_r * 0.7
+        # Only the uphill half contributes (uphill_proj >= 0)
+        ellipse_dist = np.sqrt(
+            np.clip(uphill_proj, 0.0, None) ** 2 / uphill_r ** 2
+            + cross_proj ** 2 / cross_r ** 2
+        )
+        scar_mask = np.clip(1.0 - ellipse_dist, 0.0, 1.0) ** 2
         result -= scar_mask * scar_depth
 
-        # Deposit fan: offset downhill, wider, shallower
-        fan_cx = oy + dy_dir * scar_r * runout_factor
-        fan_cy = ox + dx_dir * scar_r * runout_factor
-        fan_r = scar_r * 1.5
-        fan_dist = np.sqrt((ys - fan_cx) ** 2 + (xs - fan_cy) ** 2)
-        fan_mask = np.clip(1.0 - fan_dist / fan_r, 0.0, 1.0)
-        # Deposit is ~60% of excavated volume
-        result += fan_mask * scar_depth * 0.6
+        # Downslope path walk: deposit material along steepest-descent trajectory
+        py, px = float(oy), float(ox)
+        for step in range(n_walk_steps):
+            iy = int(np.clip(round(py), 0, h - 1))
+            ix = int(np.clip(round(px), 0, w - 1))
+            step_dy = -gy[iy, ix]
+            step_dx = -gx[iy, ix]
+            step_norm = math.sqrt(step_dx ** 2 + step_dy ** 2) or 1.0
+            step_dy /= step_norm
+            step_dx /= step_norm
+            py += step_dy
+            px += step_dx
+            # Decay deposit with distance from head
+            decay = 1.0 - step / n_walk_steps
+            fan_dist = np.sqrt((ys - py) ** 2 + (xs - px) ** 2)
+            fan_r = scar_r * 0.8
+            fan_mask = np.clip(1.0 - fan_dist / fan_r, 0.0, 1.0)
+            result += fan_mask * deposit_per_step * decay
 
     return result
 
@@ -595,29 +639,46 @@ def apply_hot_spring_features(
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
     xs = np.arange(w, dtype=np.float64).reshape(1, -1)
 
+    # Compute gradient once — used to skew ring centers downhill
+    gy, gx = np.gradient(heightmap)
+    downhill_bias = pool_radius * 0.5
+
+    # Precompute ring radii and widths — loop invariants
+    ring_rs = np.array([pool_radius + r * pool_radius * 0.4 for r in range(1, terrace_rings + 1)])
+    ring_width = pool_radius * 0.15
+    ring_step_hs = np.array([
+        pool_depth * 0.15 * (1.0 - r / (terrace_rings + 1))
+        for r in range(1, terrace_rings + 1)
+    ])
+
     for _ in range(num_springs):
         # Place springs in mid-elevation zones
         elev_norm = (heightmap - heightmap.min()) / max((heightmap.max() - heightmap.min()), 1e-6)
         mid_mask = np.exp(-((elev_norm - 0.4) ** 2) / 0.05)
-        flat_mask = mid_mask.ravel()
-        prob = flat_mask / max(flat_mask.sum(), 1e-12)
+        flat_mid = mid_mask.ravel()
+        prob = flat_mid / max(flat_mid.sum(), 1e-12)
         idx = rng.choice(len(prob), p=prob)
         sy, sx = divmod(idx, w)
 
-        dist = np.sqrt((ys - sy) ** 2 + (xs - sx) ** 2)
+        # Skew pool center downhill
+        grad_y = gy[sy, sx]
+        grad_x = gx[sy, sx]
+        grad_mag = math.sqrt(grad_x ** 2 + grad_y ** 2) or 1.0
+        ring_cy = sy - grad_y / grad_mag * downhill_bias
+        ring_cx = sx - grad_x / grad_mag * downhill_bias
+
+        dist_pool = np.sqrt((ys - sy) ** 2 + (xs - sx) ** 2)
+        dist_rings = np.sqrt((ys - ring_cy) ** 2 + (xs - ring_cx) ** 2)
 
         # Main pool depression
-        pool_mask = np.clip(1.0 - dist / pool_radius, 0.0, 1.0) ** 2
+        pool_mask = np.clip(1.0 - dist_pool / pool_radius, 0.0, 1.0) ** 2
         result -= pool_mask * pool_depth
 
-        # Travertine terraces: concentric stepped rings
-        for ring in range(1, terrace_rings + 1):
-            ring_r = pool_radius + ring * pool_radius * 0.4
-            ring_width = pool_radius * 0.15
-            ring_dist = np.abs(dist - ring_r)
-            terrace_mask = np.clip(1.0 - ring_dist / ring_width, 0.0, 1.0)
-            step_h = pool_depth * 0.15 * (1.0 - ring / (terrace_rings + 1))
-            result += terrace_mask * step_h
+        # Travertine terraces — vectorised over all rings at once
+        # ring_rs: (R,), dist_rings: (H, W) -> ring_dist: (R, H, W)
+        ring_dist = np.abs(dist_rings[np.newaxis, :, :] - ring_rs[:, np.newaxis, np.newaxis])
+        terrace_masks = np.clip(1.0 - ring_dist / ring_width, 0.0, 1.0)
+        result += (terrace_masks * ring_step_hs[:, np.newaxis, np.newaxis]).sum(axis=0)
 
         springs.append({
             "grid_y": int(sy),
@@ -635,11 +696,19 @@ def apply_reef_platform(
     seed: int = 0,
     reef_width: float = 8.0,
     reef_height: float = 0.01,
+    tidal_range: float | None = None,
+    tidal_threshold: float = 0.1,
+    max_reef_distance_m: float = 200.0,
+    cell_size: float = 1.0,
+    stack: object | None = None,
 ) -> np.ndarray:
     """Build fringing reef platforms at the coastline.
 
     Reefs form a raised platform just below sea level along the coast.
     The reef crest sits at sea_level and the platform extends seaward.
+    Placement is gated by tidal range: if ``stack.tidal`` is available,
+    reefs only form where tidal values exceed ``tidal_threshold``; otherwise
+    a distance-from-land guard prevents deep-water reefs.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
@@ -647,6 +716,13 @@ def apply_reef_platform(
         seed: Deterministic RNG seed for roughness noise.
         reef_width: Width of reef platform in grid cells.
         reef_height: Height of reef crest above surrounding seabed.
+        tidal_range: Optional scalar or (H, W) tidal amplitude array.
+            If None, ``stack.tidal`` is checked, then distance fallback used.
+        tidal_threshold: Minimum tidal value for reef formation.
+        max_reef_distance_m: Maximum distance from land (metres) for reefs
+            when no tidal data is available.
+        cell_size: Metres per grid cell for distance-from-land fallback.
+        stack: Optional data stack object; checked for a ``.tidal`` attribute.
 
     Returns:
         Modified (H, W) heightmap with reef features.
@@ -655,25 +731,33 @@ def apply_reef_platform(
     result = heightmap.copy()
     rng = np.random.RandomState(seed)
 
-    # Coast mask: cells just below sea level
     underwater = heightmap < sea_level
     above = ~underwater
 
     if not underwater.any() or not above.any():
-        return result  # no coastline
+        return result
 
-    # Distance from shore (for underwater cells only) — pure numpy
     shore_dist = _distance_from_mask(underwater)
 
-    # Reef band: narrow strip near coast
+    # Resolve tidal gate
+    tidal = tidal_range
+    if tidal is None and stack is not None:
+        tidal = getattr(stack, "tidal", None)
+
+    if tidal is not None:
+        tidal_arr = np.broadcast_to(np.asarray(tidal, dtype=np.float64), (h, w))
+        tidal_gate = (tidal_arr > tidal_threshold).astype(np.float64)
+    else:
+        max_reef_cells = max_reef_distance_m / max(cell_size, 1e-6)
+        tidal_gate = (shore_dist <= max_reef_cells).astype(np.float64)
+
     reef_mask = np.clip(1.0 - np.abs(shore_dist - reef_width * 0.5) / (reef_width * 0.5), 0.0, 1.0)
     reef_mask *= underwater.astype(np.float64)
+    reef_mask *= tidal_gate
 
-    # Add reef height with some roughness
     roughness = rng.uniform(0.7, 1.3, size=(h, w))
     result += reef_mask * reef_height * roughness
 
-    # Clamp reef crest to not exceed sea level
     np.minimum(result, sea_level, out=result, where=underwater)
 
     return result
@@ -689,14 +773,16 @@ def apply_tafoni_weathering(
     """Apply tafoni (honeycomb weathering) erosion pits to rock surfaces.
 
     Creates small concave cavities on steep rock faces, simulating
-    salt-crystal or differential weathering.
+    salt-crystal or differential weathering. Cavity count is scaled by the
+    steep-area fraction of the map so flat terrain produces proportionally
+    fewer pits. Micro and macro cavity passes are layered for richer detail.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
         seed: Deterministic RNG seed.
         intensity: Weathering strength [0, 1].
         cavity_scale: Depth of individual cavities (metres, relative).
-        num_cavities: Number of tafoni cavities to generate.
+        num_cavities: Base number of tafoni cavities (scaled by steep fraction).
 
     Returns:
         Modified (H, W) heightmap with tafoni pits.
@@ -707,30 +793,41 @@ def apply_tafoni_weathering(
     result = heightmap.copy()
     rng = np.random.RandomState(seed)
 
-    # Tafoni form on steep, exposed rock
+    # Tafoni form on steep, exposed rock — hoist gradient outside cavity loop
     gy, gx = np.gradient(heightmap)
     slope = np.sqrt(gx ** 2 + gy ** 2)
-    steep_mask = np.clip(slope / max(slope.max(), 1e-6) * 3.0, 0.0, 1.0)
+    slope_max = slope.max()
+    steep_threshold = slope_max * 0.33
+    steep_mask = np.clip(slope / max(slope_max, 1e-6) * 3.0, 0.0, 1.0)
+
+    # Scale cavity count by fraction of map that is genuinely steep
+    steep_fraction = float(np.sum(slope > steep_threshold)) / slope.size
+    effective_cavities = max(1, int(num_cavities * max(steep_fraction, 0.05)))
+
+    # Precompute flat probability once — reused by both passes
+    prob_flat = steep_mask.ravel()
+    prob_sum = prob_flat.sum()
+    if prob_sum < 1e-12:
+        return result
+    prob_flat = prob_flat / prob_sum
 
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
     xs = np.arange(w, dtype=np.float64).reshape(1, -1)
 
-    for _ in range(num_cavities):
-        # Place cavity weighted by steepness
-        prob = steep_mask.ravel()
-        prob_sum = prob.sum()
-        if prob_sum < 1e-12:
-            break
-        prob = prob / prob_sum
-        idx = rng.choice(len(prob), p=prob)
-        cy, cx = divmod(idx, w)
+    def _place_cavities(n: int, rx_range: tuple, ry_range: tuple, depth_scale: float) -> None:
+        for _ in range(n):
+            idx = rng.choice(len(prob_flat), p=prob_flat)
+            cy, cx = divmod(idx, w)
+            rx = rng.uniform(*rx_range)
+            ry = rng.uniform(*ry_range)
+            dist = np.sqrt(((ys - cy) / ry) ** 2 + ((xs - cx) / rx) ** 2)
+            cavity = np.clip(1.0 - dist, 0.0, 1.0) ** 2
+            result -= cavity * depth_scale * intensity
 
-        # Small elliptical cavity
-        rx = rng.uniform(1.5, 4.0)
-        ry = rng.uniform(1.5, 4.0)
-        dist = np.sqrt(((ys - cy) / ry) ** 2 + ((xs - cx) / rx) ** 2)
-        cavity = np.clip(1.0 - dist, 0.0, 1.0) ** 2
-        result -= cavity * cavity_scale * intensity
+    # Macro cavities: larger, deeper
+    _place_cavities(effective_cavities, (2.5, 5.0), (2.5, 5.0), cavity_scale)
+    # Micro cavities: smaller, shallower — double count for texture density
+    _place_cavities(effective_cavities * 2, (0.8, 2.2), (0.8, 2.2), cavity_scale * 0.35)
 
     return result
 

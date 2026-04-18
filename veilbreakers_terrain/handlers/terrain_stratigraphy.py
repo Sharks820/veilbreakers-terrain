@@ -269,7 +269,12 @@ def pass_stratigraphy(
     strat_stack = _default_strat_stack_from_hints(dict(hints))
 
     hardness = compute_rock_hardness(stack, strat_stack)
-    _ = compute_strata_orientation(stack, strat_stack)
+    strata_orient = compute_strata_orientation(stack, strat_stack)
+    stack.set("rock_hardness", hardness, "stratigraphy")
+    stack.set("strata_orientation", strata_orient, "stratigraphy")
+
+    erosion_delta = apply_differential_erosion(stack)
+    stack.set("strat_erosion_delta", erosion_delta, "stratigraphy")
 
     metrics = {
         "layer_count": len(strat_stack.layers),
@@ -277,6 +282,7 @@ def pass_stratigraphy(
         "hardness_min": float(hardness.min()),
         "hardness_max": float(hardness.max()),
         "strata_total_thickness_m": float(strat_stack.total_thickness()),
+        "erosion_delta_mean_m": float(erosion_delta.mean()),
     }
 
     return PassResult(
@@ -284,7 +290,7 @@ def pass_stratigraphy(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("rock_hardness", "strata_orientation"),
+        produced_channels=("rock_hardness", "strata_orientation", "strat_erosion_delta"),
         metrics=metrics,
         issues=issues,
     )

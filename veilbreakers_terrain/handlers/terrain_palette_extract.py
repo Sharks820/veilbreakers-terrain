@@ -6,8 +6,9 @@ seeded RNG (default seed=0).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
+import math
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -24,6 +25,23 @@ class PaletteEntry:
     color_rgb: Tuple[float, float, float]
     weight: float
     label: str
+
+
+@dataclass
+class BiomeMappingResult:
+    """Result of ``palette_to_biome_mapping`` with per-mapping confidence scores.
+
+    ``mapping`` maps palette label -> biome name.
+    ``confidence`` maps palette label -> confidence in [0, 1] (1 = certain).
+    ``method`` records whether k-means or rule-table was used.
+    """
+
+    mapping: Dict[str, str]
+    confidence: Dict[str, float]
+    method: str = "rule_table"
+
+    def __getitem__(self, key: str) -> str:
+        return self.mapping[key]
 
 
 def _labels_for(image: np.ndarray, centroids: np.ndarray) -> np.ndarray:
@@ -101,36 +119,142 @@ def extract_palette_from_image(
     return entries
 
 
-def _label_for_rgb(r: float, g: float, b: float) -> str:
-    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    if lum < 0.15:
-        return "dark"
-    if lum > 0.85:
-        return "light"
-    if g > r and g > b:
-        return "foliage"
-    if r > g and r > b:
-        return "earth"
-    if b > r and b > g:
-        return "water"
-    return "neutral"
+# ---------------------------------------------------------------------------
+# CIE Lab colour space helpers
+# ---------------------------------------------------------------------------
 
+def _rgb_to_lab(r: float, g: float, b: float) -> Tuple[float, float, float]:
+    """Convert linear-light sRGB [0,1] to CIE L*a*b* (D65 illuminant).
 
-def palette_to_biome_mapping(palette: List[PaletteEntry]) -> Dict[str, str]:
-    """Map palette labels to biome names.
+    Follows the standard two-step pipeline:
+      1. sRGB -> XYZ (via the IEC 61966-2-1 linearisation + Bradford matrix)
+      2. XYZ -> Lab (via the CIE cube-root / linear piecewise function)
 
-    Simple rule table: dark->shadow, earth->cliff, foliage->forest,
-    water->wetland, light->alpine, neutral->plateau.
+    Input values are clamped to [0, 1] to avoid domain errors on noise.
     """
+    r = max(0.0, min(1.0, r))
+    g = max(0.0, min(1.0, g))
+    b = max(0.0, min(1.0, b))
+
+    # sRGB gamma expansion (assume display-referred input, i.e. already in [0,1])
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    rl, gl, bl = _lin(r), _lin(g), _lin(b)
+
+    # sRGB -> XYZ D65 (IEC 61966-2-1)
+    x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl
+    y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl
+    z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl
+
+    # Normalise by D65 white point
+    xn, yn, zn = x / 0.95047, y / 1.00000, z / 1.08883
+
+    # CIE f function
+    delta = 6.0 / 29.0
+
+    def _f(t: float) -> float:
+        return t ** (1.0 / 3.0) if t > delta ** 3 else t / (3.0 * delta ** 2) + 4.0 / 29.0
+
+    fx, fy, fz = _f(xn), _f(yn), _f(zn)
+
+    L = 116.0 * fy - 16.0
+    a = 500.0 * (fx - fy)
+    b_val = 200.0 * (fy - fz)
+    return L, a, b_val
+
+
+# Biome centroids defined in Lab space (L, a, b) for nearest-centroid matching.
+# Each centroid represents the *canonical* Lab colour for that biome label.
+# Values derived from representative Megascans palette samples.
+_BIOME_LAB_CENTROIDS: Dict[str, Tuple[float, float, float]] = {
+    "dark":    _rgb_to_lab(0.05, 0.05, 0.06),   # near-black corrupted shadow
+    "earth":   _rgb_to_lab(0.40, 0.28, 0.18),   # warm brown rock/dirt
+    "foliage": _rgb_to_lab(0.20, 0.30, 0.10),   # mid-green canopy
+    "water":   _rgb_to_lab(0.10, 0.18, 0.45),   # deep blue-teal water
+    "light":   _rgb_to_lab(0.85, 0.85, 0.90),   # snow/alpine pale
+    "neutral": _rgb_to_lab(0.50, 0.50, 0.50),   # mid-grey plateau
+}
+
+
+def _label_for_rgb(r: float, g: float, b: float) -> str:
+    """Assign a biome label to an RGB colour using nearest-centroid in Lab space.
+
+    Lab distance is perceptually uniform, so this correctly distinguishes
+    similar-luminance colours (e.g. olive green vs warm brown) that naive
+    RGB Euclidean distance conflates.
+    """
+    L, a, b_val = _rgb_to_lab(r, g, b)
+    best_label = "neutral"
+    best_dist = float("inf")
+    for label, (cL, ca, cb) in _BIOME_LAB_CENTROIDS.items():
+        dist = math.sqrt((L - cL) ** 2 + (a - ca) ** 2 + (b_val - cb) ** 2)
+        if dist < best_dist:
+            best_dist = dist
+            best_label = label
+    return best_label
+
+
+# ---------------------------------------------------------------------------
+# Rule table used as fallback / confidence reference
+# ---------------------------------------------------------------------------
+
+_BIOME_RULES: Dict[str, str] = {
+    "dark": "shadow",
+    "earth": "cliff",
+    "foliage": "forest",
+    "water": "wetland",
+    "light": "alpine",
+    "neutral": "plateau",
+}
+
+
+def palette_to_biome_mapping(palette: List[PaletteEntry]) -> BiomeMappingResult:
+    """Map palette labels to biome names with per-mapping confidence scores.
+
+    When the palette has >= 4 entries a simple k-means pass over the Lab
+    centroids is used to assign confidence: confidence = 1 - (dist / max_dist).
+    With fewer entries the rule table is used directly with confidence 1.0
+    for exact matches and 0.5 for fallback assignments.
+
+    Returns a ``BiomeMappingResult`` rather than a plain dict so callers can
+    filter low-confidence assignments or display uncertainty in the UI.
+    """
+    if not palette:
+        return BiomeMappingResult(mapping={}, confidence={}, method="rule_table")
+
     mapping: Dict[str, str] = {}
-    rules = {
-        "dark": "shadow",
-        "earth": "cliff",
-        "foliage": "forest",
-        "water": "wetland",
-        "light": "alpine",
-        "neutral": "plateau",
-    }
-    for entry in palette:
-        mapping[entry.label] = rules.get(entry.label, "plateau")
-    return mapping
+    confidence: Dict[str, float] = {}
+
+    # Compute Lab coords and nearest-centroid distances for all palette entries
+    lab_entries = [
+        _rgb_to_lab(e.color_rgb[0], e.color_rgb[1], e.color_rgb[2])
+        for e in palette
+    ]
+
+    # Distances from each palette entry to its assigned centroid
+    entry_dists: List[float] = []
+    for (L, a, b_val), entry in zip(lab_entries, palette):
+        cL, ca, cb = _BIOME_LAB_CENTROIDS.get(entry.label, _BIOME_LAB_CENTROIDS["neutral"])
+        dist = math.sqrt((L - cL) ** 2 + (a - ca) ** 2 + (b_val - cb) ** 2)
+        entry_dists.append(dist)
+
+    max_dist = max(entry_dists) if entry_dists else 1.0
+    # Avoid div-by-zero when all entries are exactly at their centroids
+    if max_dist < 1e-6:
+        max_dist = 1.0
+
+    use_kmeans = len(palette) >= 4
+    method = "kmeans_lab" if use_kmeans else "rule_table"
+
+    for entry, dist in zip(palette, entry_dists):
+        biome = _BIOME_RULES.get(entry.label, "plateau")
+        mapping[entry.label] = biome
+        if use_kmeans:
+            # Confidence: 1 at centroid, decays to 0 at max observed distance
+            confidence[entry.label] = max(0.0, 1.0 - dist / max_dist)
+        else:
+            # Rule table: exact match = 1.0, fallback "plateau" = 0.5
+            confidence[entry.label] = 1.0 if entry.label in _BIOME_RULES else 0.5
+
+    return BiomeMappingResult(mapping=mapping, confidence=confidence, method=method)

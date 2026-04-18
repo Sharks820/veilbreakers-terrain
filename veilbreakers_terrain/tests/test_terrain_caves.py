@@ -21,7 +21,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_pass_registry():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     yield
@@ -42,7 +42,7 @@ def _build_state(
     protected_zones=(),
 ):
     from blender_addon.handlers.terrain_masks import compute_base_masks
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -507,7 +507,7 @@ def test_validate_entrance_rejects_short_lip():
 
 def test_register_bundle_f_passes_adds_caves():
     from blender_addon.handlers.terrain_caves import register_bundle_f_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()
     assert "caves" in TerrainPassController.PASS_REGISTRY
@@ -520,8 +520,8 @@ def test_register_bundle_f_passes_adds_caves():
 
 def test_pass_caves_requires_scene_read():
     from blender_addon.handlers.terrain_caves import register_bundle_f_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -554,7 +554,7 @@ def test_pass_caves_requires_scene_read():
 
 def test_pass_caves_populates_channels_and_structures():
     from blender_addon.handlers.terrain_caves import register_bundle_f_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()
     state = _build_state(
@@ -576,8 +576,8 @@ def test_pass_caves_populates_channels_and_structures():
 
 def test_pass_caves_region_scoping_filters_entrances():
     from blender_addon.handlers.terrain_caves import register_bundle_f_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     register_bundle_f_passes()
     state = _build_state(
@@ -594,8 +594,8 @@ def test_pass_caves_region_scoping_filters_entrances():
 
 def test_pass_caves_respects_protected_zones():
     from blender_addon.handlers.terrain_caves import register_bundle_f_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
 
     register_bundle_f_passes()
 
@@ -623,7 +623,7 @@ def test_pass_caves_respects_protected_zones():
 
 def test_pass_caves_empty_scene_read_still_ok():
     from blender_addon.handlers.terrain_caves import register_bundle_f_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()
     state = _build_state(cave_candidates=())

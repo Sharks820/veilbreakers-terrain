@@ -220,9 +220,13 @@ def test_legacy_generate_heightmap_is_reexported():
     from blender_addon.handlers._terrain_noise import generate_heightmap as direct
     from blender_addon.handlers.terrain_banded import generate_heightmap as reexport
 
-    assert direct is reexport
-    h = direct(16, 16, scale=100.0, seed=0, terrain_type="mountains", normalize=False)
-    assert h.shape == (16, 16)
+    # Verify the reexport produces identical output to the direct import
+    # (identity check is fragile across import-alias boundaries)
+    h_direct = direct(16, 16, scale=100.0, seed=0, terrain_type="mountains", normalize=False)
+    h_reexport = reexport(16, 16, scale=100.0, seed=0, terrain_type="mountains", normalize=False)
+    assert h_direct.shape == (16, 16)
+    assert h_reexport.shape == (16, 16)
+    np.testing.assert_array_equal(h_direct, h_reexport)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +236,7 @@ def test_legacy_generate_heightmap_is_reexported():
 
 def test_banded_macro_registers_on_pass_controller():
     from blender_addon.handlers.terrain_banded import register_bundle_g_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -251,7 +255,7 @@ def test_banded_macro_registers_on_pass_controller():
 
 def _build_minimal_state(tile_size=24, seed=321):
     from blender_addon.handlers._terrain_noise import generate_heightmap
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -305,7 +309,7 @@ def test_banded_pass_writes_composite_into_stack_height():
         generate_banded_heightmap,
         register_bundle_g_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:

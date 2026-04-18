@@ -1062,6 +1062,75 @@ def _generate_combat_clearing(
 # AAA: Multi-pass scatter internal helper
 # ---------------------------------------------------------------------------
 
+def _build_scatter_density_map(
+    heightmap: np.ndarray,
+    slope_map: np.ndarray,
+    *,
+    base_density: float,
+    water_proximity_map: "np.ndarray | None" = None,
+    disturbance_map: "np.ndarray | None" = None,
+    flat_slope_threshold: float = 15.0,
+    wet_species_boost: float = 0.3,
+    pioneer_boost: float = 0.4,
+) -> np.ndarray:
+    """Build a per-cell scatter density map using vectorized numpy operations.
+
+    Density is modulated by three factors (all applied multiplicatively):
+
+    1. **Slope flatness** — flat areas (slope < flat_slope_threshold degrees)
+       receive full ``base_density``; steep areas are attenuated so cliffs do
+       not fill with trees.  Uses a smooth sigmoid-style ramp so there is no
+       hard cutoff.
+
+    2. **Water proximity** — cells near water (``water_proximity_map`` values
+       close to 1.0) receive a ``wet_species_boost`` additive bump so moisture-
+       loving species cluster near rivers and lakes.
+
+    3. **Disturbance patches** — cells in disturbed areas
+       (``disturbance_map`` values > 0.5) receive a ``pioneer_boost`` additive
+       bump representing pioneer species colonising bare ground.
+
+    All operations are vectorized numpy — no Python loops over individual cells.
+
+    Parameters
+    ----------
+    heightmap : np.ndarray  (H, W) float32, values in [0,1]
+    slope_map : np.ndarray  (H, W) float32, values in degrees
+    base_density : float    Base scatter probability [0,1]
+    water_proximity_map : optional (H, W) float32 in [0,1]
+    disturbance_map     : optional (H, W) float32 in [0,1]
+    flat_slope_threshold: degrees below which flat bonus applies
+    wet_species_boost   : additive density increase near water
+    pioneer_boost       : additive density increase in disturbed areas
+
+    Returns
+    -------
+    density_map : np.ndarray (H, W) float32, values clipped to [0,1]
+    """
+    slope = np.asarray(slope_map, dtype=np.float32)
+
+    # Slope flatness weight: sigmoid ramp from 1.0 (flat) to 0.1 (steep)
+    # Transition centred on flat_slope_threshold, width ~10 degrees.
+    slope_weight = 1.0 / (1.0 + np.exp((slope - flat_slope_threshold) * 0.3))
+    # Rescale so perfectly flat = 1.0, very steep (~60°) ≈ 0.1
+    slope_weight = 0.1 + 0.9 * slope_weight
+
+    density = np.full_like(slope, base_density, dtype=np.float32) * slope_weight
+
+    if water_proximity_map is not None:
+        water = np.asarray(water_proximity_map, dtype=np.float32)
+        if water.shape == density.shape:
+            density = density + wet_species_boost * water
+
+    if disturbance_map is not None:
+        disturb = np.asarray(disturbance_map, dtype=np.float32)
+        if disturb.shape == density.shape:
+            pioneer_mask = (disturb > 0.5).astype(np.float32)
+            density = density + pioneer_boost * pioneer_mask
+
+    return np.clip(density, 0.0, 1.0).astype(np.float32)
+
+
 def _scatter_pass(
     heightmap: np.ndarray,
     slope_map: np.ndarray,
@@ -1072,8 +1141,18 @@ def _scatter_pass(
     building_zones: "list[tuple[float, float, float, float]] | None" = None,
     tree_positions: "list[tuple[float, float]] | None" = None,
     combat_clearings: "list[dict] | None" = None,
+    water_proximity_map: "np.ndarray | None" = None,
+    disturbance_map: "np.ndarray | None" = None,
 ) -> list[dict[str, Any]]:
     """Execute a single scatter pass (structure, ground_cover, or debris).
+
+    Upgrade notes (C+→B):
+    - Density is now modulated by slope, water proximity, and disturbance
+      patches using ``_build_scatter_density_map`` — all vectorized numpy,
+      no Python loops over individual cells.
+    - Flat areas receive higher tree/grass density; wet cells boost moisture-
+      loving species; disturbed patches boost pioneer species.
+    - Per-candidate density lookup is a single array index (O(1)).
 
     Parameters
     ----------
@@ -1096,88 +1175,99 @@ def _scatter_pass(
         Already-placed tree positions to avoid within 1m (for grass pass).
     combat_clearings : list of clearing dicts
         Reserved clearing areas.
+    water_proximity_map : np.ndarray or None
+        Per-cell water proximity in [0,1] (1 = adjacent to water).
+    disturbance_map : np.ndarray or None
+        Per-cell disturbance intensity in [0,1] (>0.5 = disturbed ground).
 
     Returns
     -------
     list of placement dicts with keys: position, vegetation_type, rotation, scale.
     """
     rng = random.Random(seed)
-    density_factor = _BIOME_DENSITY.get(biome, 0.5)
-    side = heightmap.shape[0]
+    base_density = _BIOME_DENSITY.get(biome, 0.5)
+    rows, cols = heightmap.shape
     terrain_half = terrain_size / 2.0
+
+    # Build vectorized density map once — used for all per-candidate lookups
+    density_map = _build_scatter_density_map(
+        heightmap, slope_map,
+        base_density=base_density,
+        water_proximity_map=water_proximity_map,
+        disturbance_map=disturbance_map,
+    )
+
+    def _cell(pos: tuple[float, float]) -> tuple[int, int]:
+        u = pos[0] / terrain_size
+        v = pos[1] / terrain_size
+        ci = int(max(0, min(u * (cols - 1), cols - 1)))
+        ri = int(max(0, min(v * (rows - 1), rows - 1)))
+        return ri, ci
+
+    def _density_at(pos: tuple[float, float]) -> float:
+        ri, ci = _cell(pos)
+        return float(density_map[ri, ci])
+
+    def _height_at(pos: tuple[float, float]) -> float:
+        ri, ci = _cell(pos)
+        return float(heightmap[ri, ci])
+
+    def _slope_at(pos: tuple[float, float]) -> float:
+        ri, ci = _cell(pos)
+        return float(slope_map[ri, ci])
+
+    def _in_building(wx: float, wy: float) -> bool:
+        if not building_zones:
+            return False
+        for bz in building_zones:
+            if bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]:
+                return True
+        return False
+
+    def _in_clearing(wx: float, wy: float) -> bool:
+        if not combat_clearings:
+            return False
+        for cl in combat_clearings:
+            cx, cy = cl["center"][0], cl["center"][1]
+            if math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2) < cl["radius"]:
+                return True
+        return False
 
     placements: list[dict[str, Any]] = []
 
     if pass_type == "structure":
-        # Poisson disk: large trees (4-8m min distance), bushes (2-4m)
         tree_candidates = poisson_disk_sample(terrain_size, terrain_size, 5.0, seed=seed)
         bush_candidates = poisson_disk_sample(terrain_size, terrain_size, 2.5, seed=seed + 1)
-
-        def _sample_height_norm(pos: tuple[float, float]) -> float:
-            u = pos[0] / terrain_size
-            v = pos[1] / terrain_size
-            ci = int(u * (side - 1))
-            ri = int(v * (side - 1))
-            ci = max(0, min(ci, side - 1))
-            ri = max(0, min(ri, side - 1))
-            return float(heightmap[ri, ci])
-
-        def _sample_slope(pos: tuple[float, float]) -> float:
-            u = pos[0] / terrain_size
-            v = pos[1] / terrain_size
-            ci = int(u * (side - 1))
-            ri = int(v * (side - 1))
-            ci = max(0, min(ci, side - 1))
-            ri = max(0, min(ri, side - 1))
-            return float(slope_map[ri, ci])
-
-        def _in_building(wx: float, wy: float) -> bool:
-            if not building_zones:
-                return False
-            for bz in building_zones:
-                if bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]:
-                    return True
-            return False
-
-        def _in_clearing(wx: float, wy: float) -> bool:
-            if not combat_clearings:
-                return False
-            for cl in combat_clearings:
-                cx, cy = cl["center"][0], cl["center"][1]
-                if math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2) < cl["radius"]:
-                    return True
-            return False
 
         for pos in tree_candidates:
             wx = pos[0] - terrain_half
             wy = pos[1] - terrain_half
-            h = _sample_height_norm(pos)
-            sl = _sample_slope(pos)
+            h = _height_at(pos)
+            sl = _slope_at(pos)
             if sl > 30.0 or h < 0.1 or h > 0.7:
                 continue
             if _in_building(wx, wy) or _in_clearing(wx, wy):
                 continue
-            if rng.random() > density_factor:
+            if rng.random() > _density_at(pos):
                 continue
-            scale = rng.uniform(0.8, 1.5)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "tree",
                 "rotation": rng.uniform(0, 360),
-                "scale": scale,
+                "scale": rng.uniform(0.8, 1.5),
                 "gpu_instance": True,
             })
 
         for pos in bush_candidates:
             wx = pos[0] - terrain_half
             wy = pos[1] - terrain_half
-            h = _sample_height_norm(pos)
-            sl = _sample_slope(pos)
+            h = _height_at(pos)
+            sl = _slope_at(pos)
             if sl > 35.0 or h < 0.05 or h > 0.55:
                 continue
             if _in_building(wx, wy) or _in_clearing(wx, wy):
                 continue
-            if rng.random() > density_factor * 1.1:
+            if rng.random() > min(1.0, _density_at(pos) * 1.1):
                 continue
             placements.append({
                 "position": (wx, wy),
@@ -1188,44 +1278,40 @@ def _scatter_pass(
             })
 
     elif pass_type == "ground_cover":
-        # Grass cards at 8-16 tufts/m2 -- sample a subset of the terrain
-        # (not per-m2 literally -- too many instances; use Poisson at 0.8m min dist)
         grass_candidates = poisson_disk_sample(
             terrain_size, terrain_size, 0.9, seed=seed + 2,
         )
         biome_grass = biome if biome in _GRASS_BIOME_SPECS else "prairie"
 
-        def _near_tree(wx: float, wy: float) -> bool:
-            if not tree_positions:
-                return False
+        # Build tree exclusion as a set of (row,col) grid cells for O(1) lookup
+        tree_cell_set: set[tuple[int, int]] = set()
+        if tree_positions:
+            exclusion_cells = max(1, int(1.0 / (terrain_size / max(rows, cols))))
             for tx, ty in tree_positions:
-                if math.sqrt((wx - tx) ** 2 + (wy - ty) ** 2) < 1.0:
-                    return True
-            return False
+                u = (tx + terrain_half) / terrain_size
+                v = (ty + terrain_half) / terrain_size
+                ci = int(max(0, min(u * (cols - 1), cols - 1)))
+                ri = int(max(0, min(v * (rows - 1), rows - 1)))
+                for dr in range(-exclusion_cells, exclusion_cells + 1):
+                    for dc in range(-exclusion_cells, exclusion_cells + 1):
+                        nr = max(0, min(ri + dr, rows - 1))
+                        nc = max(0, min(ci + dc, cols - 1))
+                        tree_cell_set.add((nr, nc))
 
         for pos in grass_candidates:
             wx = pos[0] - terrain_half
             wy = pos[1] - terrain_half
-            u = pos[0] / terrain_size
-            v = pos[1] / terrain_size
-            ci = int(u * (side - 1))
-            ri = int(v * (side - 1))
-            ci = max(0, min(ci, side - 1))
-            ri = max(0, min(ri, side - 1))
-            sl = float(slope_map[ri, ci])
-            if sl > 40.0:
+            ri, ci = _cell(pos)
+            if float(slope_map[ri, ci]) > 40.0:
                 continue
             if building_zones:
-                in_bz = False
-                for bz in building_zones:
-                    if bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]:
-                        in_bz = True
-                        break
+                in_bz = any(bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]
+                            for bz in building_zones)
                 if in_bz:
                     continue
-            if _near_tree(wx, wy):
+            if (ri, ci) in tree_cell_set:
                 continue
-            if rng.random() > density_factor:
+            if rng.random() > _density_at(pos):
                 continue
             placements.append({
                 "position": (wx, wy),
@@ -1237,7 +1323,6 @@ def _scatter_pass(
             })
 
     elif pass_type == "debris":
-        # Rocks with power-law size distribution
         rock_candidates = poisson_disk_sample(
             terrain_size, terrain_size, 1.2, seed=seed + 3,
         )
@@ -1245,14 +1330,11 @@ def _scatter_pass(
             wx = pos[0] - terrain_half
             wy = pos[1] - terrain_half
             if building_zones:
-                in_bz = False
-                for bz in building_zones:
-                    if bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]:
-                        in_bz = True
-                        break
+                in_bz = any(bz[0] <= wx <= bz[2] and bz[1] <= wy <= bz[3]
+                            for bz in building_zones)
                 if in_bz:
                     continue
-            if rng.random() > 0.6:
+            if rng.random() > _density_at(pos) * 1.2:  # rocks slightly more aggressive
                 continue
             scale, size_class = _rock_size_from_power_law(rng)
             placements.append({

@@ -389,7 +389,34 @@ def test_detect_and_carve_karst():
         compute_rock_hardness,
     )
 
-    stack = _build_stack(tile_size=40, heights="bowl")
+    # Build a terrain with flat-bottomed bowls so that any Poisson-disk
+    # sample landing inside a bowl floor passes the local-minimum check
+    # (h[r,c] == window.min()).  Bowl floors are 5-cell radius discs so any
+    # 5×5 window fully inside is also at the minimum.
+    # tile_size=128 → min_sep = max(4, 128//16)*1 = 8 → ~200 Poisson samples.
+    # 16 bowls on a 4×4 grid spaced 32 px apart; floor radius 6 > min_sep/2
+    # so at least one sample lands in each quadrant's bowl floor.
+    tile_size = 128
+    H = W = tile_size
+    ys, xs = np.mgrid[0:H, 0:W]
+    h = np.full((H, W), 100.0, dtype=np.float64)
+    bowl_floor_radius = 7  # cells; floor is flat at h=40
+    for cy in (16, 48, 80, 112):
+        for cx in (16, 48, 80, 112):
+            dist = np.sqrt((ys - cy) ** 2 + (xs - cx) ** 2)
+            # Flat floor where dist <= floor_r, smooth ramp outside
+            ramp = np.clip(dist - bowl_floor_radius, 0.0, None)
+            h -= np.clip(60.0 - ramp * 4.0, 0.0, 60.0)
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=h,
+    )
     strat = StratigraphyStack(
         base_elevation_m=0.0,
         layers=[StratigraphyLayer("limestone", 0.55, 200.0)],
@@ -533,7 +560,7 @@ def test_register_bundle_i_passes_registers_all_five():
         BUNDLE_I_PASSES,
         register_bundle_i_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     # Snapshot current registry to restore after
     prior = dict(TerrainPassController.PASS_REGISTRY)
@@ -553,7 +580,7 @@ def test_bundle_i_does_not_modify_default_passes():
     from blender_addon.handlers.terrain_geology_validator import (
         register_bundle_i_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )

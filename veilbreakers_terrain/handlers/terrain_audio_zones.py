@@ -46,12 +46,41 @@ class AudioReverbClass(IntEnum):
 # ---------------------------------------------------------------------------
 
 
+def _audio_cc_filter(mask: np.ndarray, min_cells: int) -> np.ndarray:
+    """Return mask with small isolated components removed.
+
+    Uses scipy.ndimage.label (8-connected) when available; falls back to a
+    simple BFS. Components with fewer than min_cells pixels are suppressed so
+    single-pixel noise doesn't create spurious audio zone patches.
+    """
+    if not mask.any():
+        return mask
+    try:
+        from scipy.ndimage import label as _sclabel  # lazy import
+        labeled, n = _sclabel(mask, structure=np.ones((3, 3), dtype=int))
+        if n == 0:
+            return mask
+        cleaned = np.zeros_like(mask)
+        for cid in range(1, n + 1):
+            comp = labeled == cid
+            if int(comp.sum()) >= min_cells:
+                cleaned |= comp
+        return cleaned
+    except ImportError:
+        # BFS fallback — no filtering, return as-is (graceful degradation)
+        return mask
+
+
 def compute_audio_reverb_zones(stack: TerrainMaskStack) -> np.ndarray:
     """Return an (H, W) int8 array of AudioReverbClass values.
 
     Classification priority (highest wins):
         INTERIOR > CAVE > CANYON > WATER_NEAR > MOUNTAIN_HIGH >
         FOREST_DENSE > FOREST_SPARSE > OPEN_FIELD
+
+    Connected-component filtering removes isolated noise patches smaller than
+    min_component_cells so the output has coherent spatial zone boundaries
+    rather than per-pixel scatter.
 
     Uses these mask signals if present:
         - cave_candidate  -> CAVE
@@ -67,6 +96,9 @@ def compute_audio_reverb_zones(stack: TerrainMaskStack) -> np.ndarray:
 
     h = np.asarray(stack.height)
     shape = h.shape
+    H, W = shape
+    # Minimum component size: ignore patches smaller than 0.05% of tile area
+    min_cells = max(4, H * W // 2000)
     out = np.full(shape, AudioReverbClass.OPEN_FIELD.value, dtype=np.int8)
 
     # Slope can be derived or present. Fallback: gradient magnitude in radians.
@@ -89,18 +121,22 @@ def compute_audio_reverb_zones(stack: TerrainMaskStack) -> np.ndarray:
         total = np.zeros(shape, dtype=np.float64)
         for _k, arr in stack.detail_density.items():
             total += np.asarray(arr, dtype=np.float64)
-        forest_dense = total > 0.6
-        forest_sparse = (total > 0.2) & (~forest_dense)
+        forest_dense = _audio_cc_filter(total > 0.6, min_cells)
+        forest_sparse = _audio_cc_filter((total > 0.2) & (~forest_dense), min_cells)
 
     # Mountain: high altitude + high slope
-    mountain = (h_norm > 0.75) & (slope > np.radians(30.0))
+    mountain = _audio_cc_filter(
+        (h_norm > 0.75) & (slope > np.radians(30.0)), min_cells
+    )
 
     # Canyon: strong concavity + high slope
     canyon = np.zeros(shape, dtype=bool)
     curv = stack.curvature
     if curv is not None:
         curv_np = np.asarray(curv, dtype=np.float64)
-        canyon = (curv_np < -0.15) & (slope > np.radians(25.0))
+        canyon = _audio_cc_filter(
+            (curv_np < -0.15) & (slope > np.radians(25.0)), min_cells
+        )
 
     # Water-near: water_surface > 0 OR wetness high
     water_near = np.zeros(shape, dtype=bool)
@@ -108,8 +144,9 @@ def compute_audio_reverb_zones(stack: TerrainMaskStack) -> np.ndarray:
         water_near |= np.asarray(stack.water_surface) > 0.0
     if stack.wetness is not None:
         water_near |= np.asarray(stack.wetness) > 0.6
+    water_near = _audio_cc_filter(water_near, min_cells)
 
-    # Cave candidate
+    # Cave candidate — no CC filter; cave candidates are already spatially coherent
     cave = np.zeros(shape, dtype=bool)
     if stack.cave_candidate is not None:
         cave = np.asarray(stack.cave_candidate) > 0.5

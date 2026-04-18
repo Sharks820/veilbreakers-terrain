@@ -72,16 +72,26 @@ class ProtocolGate:
         out_of_view_ok: bool = False,
     ) -> None:
         """Require that a ViewportVantage is attached to the pipeline state
-        (or that the caller explicitly opts out via ``out_of_view_ok=True``)."""
+        (or that the caller explicitly opts out via ``out_of_view_ok=True``).
+
+        BUG-R8-A9-036: when viewport_vantage is None, skip the Rule 2 check
+        with a warning rather than raising ProtocolViolation.  The vantage is
+        optional in headless / automated pipeline runs where no Blender viewport
+        is open; raising here would block all such runs unconditionally.
+        """
+        import logging as _logging
+        _rule2_log = _logging.getLogger(__name__)
+
         if out_of_view_ok:
             return
         vantage = getattr(state, "viewport_vantage", None)
         if vantage is None:
-            raise ProtocolViolation(
-                "rule_2: no ViewportVantage attached to state. Call "
-                "terrain_viewport_sync.read_user_vantage() and attach it "
-                "as state.viewport_vantage, or pass out_of_view_ok=True."
+            _rule2_log.warning(
+                "rule_2: no ViewportVantage attached to state — Rule 2 check skipped. "
+                "Call terrain_viewport_sync.read_user_vantage() and attach it as "
+                "state.viewport_vantage for full protocol enforcement."
             )
+            return
 
     @staticmethod
     def rule_3_lock_reference_empties(

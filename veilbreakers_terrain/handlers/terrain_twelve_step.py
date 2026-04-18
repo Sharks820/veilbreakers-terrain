@@ -12,7 +12,7 @@ filled in when road/water-body mesh bundles land.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -40,43 +40,289 @@ _log = logging.getLogger(__name__)
 
 
 def _apply_flatten_zones_stub(world_hmap: np.ndarray, intent: TerrainIntentState) -> np.ndarray:
-    """Step 4 — apply flatten zones on world heightmap. Stub pass-through."""
-    return world_hmap
+    """Step 4 — apply flatten zones declared in intent on the world heightmap.
+
+    Reads ``intent.composition_hints['flatten_zones']`` — a list of zone dicts,
+    each with keys understood by ``flatten_multiple_zones``:
+      - center_x, center_y  (world-space, required)
+      - radius               (world-space metres, required)
+      - target_height        (optional; defaults to local mean)
+      - blend_width          (optional; fraction of radius, default 0.1)
+      - seed                 (optional int)
+
+    The heightmap is treated as world-unit values (not normalised [0,1]).
+    ``flatten_multiple_zones`` operates on normalised values internally, so
+    we normalise before the call and denormalise afterwards to preserve
+    world-unit heights.
+
+    If no flatten_zones are configured the heightmap is returned unchanged.
+    """
+    from .terrain_advanced import flatten_multiple_zones  # relative import
+
+    zones = intent.composition_hints.get("flatten_zones", [])
+    if not zones:
+        return world_hmap
+
+    h_min = float(world_hmap.min())
+    h_max = float(world_hmap.max())
+    h_span = h_max - h_min
+    if h_span <= 0.0:
+        return world_hmap
+
+    # Normalise to [0, 1] for flatten_multiple_zones
+    normalised = (world_hmap - h_min) / h_span
+
+    # Normalise target_height values inside zone dicts if present
+    norm_zones = []
+    for z in zones:
+        nz = dict(z)
+        if "target_height" in nz and nz["target_height"] is not None:
+            nz["target_height"] = (float(nz["target_height"]) - h_min) / h_span
+        norm_zones.append(nz)
+
+    flattened_norm = flatten_multiple_zones(normalised, norm_zones)
+
+    # Denormalise back to world units
+    return flattened_norm * h_span + h_min
 
 
 def _apply_canyon_river_carves_stub(
     world_hmap: np.ndarray, intent: TerrainIntentState
 ) -> np.ndarray:
-    """Step 5 — apply canyon/river A* carves. Stub pass-through."""
-    return world_hmap
+    """Step 5 — carve canyon/river channels into the world heightmap.
+
+    Reads ``intent.composition_hints['river_carves']`` — a list of carve dicts,
+    each with keys:
+      - source: [row, col]  start cell (required)
+      - dest:   [row, col]  end cell   (required)
+      - width:  int         channel width in cells (optional, default 2)
+      - depth:  float       normalised carve depth (optional, default 0.05)
+      - seed:   int         (optional, default 0)
+
+    Uses ``carve_river_path`` from ``_terrain_noise`` which runs A* preferring
+    downhill routes, then lowers the heightmap along the carved path.
+
+    The heightmap is normalised to [0, 1] before carving and denormalised
+    afterwards so world-unit heights are preserved.
+
+    If no river_carves are configured the heightmap is returned unchanged.
+    """
+    from ._terrain_noise import carve_river_path  # relative import
+
+    carves = intent.composition_hints.get("river_carves", [])
+    if not carves:
+        return world_hmap
+
+    h_min = float(world_hmap.min())
+    h_max = float(world_hmap.max())
+    h_span = h_max - h_min
+    if h_span <= 0.0:
+        return world_hmap
+
+    result_norm = (world_hmap - h_min) / h_span
+
+    for carve in carves:
+        source = tuple(int(v) for v in carve["source"])
+        dest = tuple(int(v) for v in carve["dest"])
+        width = int(carve.get("width", 2))
+        depth = float(carve.get("depth", 0.05))
+        seed = int(carve.get("seed", 0))
+        try:
+            _path, result_norm = carve_river_path(
+                result_norm,
+                source=source,
+                dest=dest,
+                width=width,
+                depth=depth,
+                seed=seed,
+            )
+        except Exception as exc:
+            _log.warning("Step 5: river carve from %s to %s failed: %s", source, dest, exc)
+
+    return result_norm * h_span + h_min
 
 
-def _detect_cliff_edges_stub(world_hmap: np.ndarray) -> List[Tuple[int, int]]:
-    """Detect cliff edges via gradient magnitude threshold on the heightmap."""
+def _detect_cliff_edges_stub(
+    world_hmap: np.ndarray,
+    slope_threshold_deg: float = 55.0,
+    min_component_size: int = 20,
+    max_components: int = 50,
+) -> List[Tuple[int, int]]:
+    """Detect cliff edges using connected-component labeling on a slope mask.
+
+    Algorithm:
+      1. Compute gradient magnitude via ``np.gradient`` and convert to slope
+         degrees (assumes cell_size=1; the caller normalises if needed).
+      2. Threshold at ``slope_threshold_deg`` to produce a boolean cliff mask.
+      3. Run 8-connected BFS component labeling (mirrors the implementation in
+         ``terrain_cliffs._label_connected_components``).
+      4. Sort components by size descending; keep the top ``max_components``
+         components that have at least ``min_component_size`` cells.
+      5. Return the (x, y) grid coordinates of all retained component cells.
+
+    Falls back to the original gradient-percentile approach when the heightmap
+    is too small for reliable slope estimation (< 3 cells in either dimension).
+    """
     coords: List[Tuple[int, int]] = []
     if world_hmap.size == 0:
         return coords
+
+    rows, cols = world_hmap.shape
+
+    # --- Fallback for tiny arrays ---
+    if rows < 3 or cols < 3:
+        gy, gx = np.gradient(world_hmap)
+        grad_mag = np.sqrt(gx ** 2 + gy ** 2)
+        threshold = float(np.percentile(grad_mag, 95))
+        ys, xs = np.where(grad_mag >= threshold)
+        return [(int(x), int(y)) for y, x in zip(ys.tolist(), xs.tolist())]
+
+    # --- Slope-degree mask ---
     gy, gx = np.gradient(world_hmap)
     grad_mag = np.sqrt(gx ** 2 + gy ** 2)
-    threshold = float(np.percentile(grad_mag, 95))
-    ys, xs = np.where(grad_mag >= threshold)
-    for y, x in zip(ys.tolist(), xs.tolist()):
-        coords.append((int(x), int(y)))
-    return coords
+    # arctan gives slope in radians; convert to degrees
+    slope_deg = np.degrees(np.arctan(grad_mag))
+    cliff_mask = slope_deg >= slope_threshold_deg
+
+    if not cliff_mask.any():
+        return coords
+
+    # --- 8-connected BFS component labeling ---
+    labels = np.zeros((rows, cols), dtype=np.int32)
+    next_id = 1
+    for r0 in range(rows):
+        for c0 in range(cols):
+            if not cliff_mask[r0, c0] or labels[r0, c0] != 0:
+                continue
+            bfs = [(r0, c0)]
+            comp_id = next_id
+            next_id += 1
+            while bfs:
+                r, c = bfs.pop()
+                if r < 0 or r >= rows or c < 0 or c >= cols:
+                    continue
+                if not cliff_mask[r, c] or labels[r, c] != 0:
+                    continue
+                labels[r, c] = comp_id
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        if dr == 0 and dc == 0:
+                            continue
+                        bfs.append((r + dr, c + dc))
+
+    # --- Sort components by size, keep top-N above min_component_size ---
+    unique_ids, counts = np.unique(labels, return_counts=True)
+    component_pairs = sorted(
+        [(int(uid), int(cnt)) for uid, cnt in zip(unique_ids, counts) if uid != 0],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    kept_ids = {
+        uid
+        for uid, cnt in component_pairs[:max_components]
+        if cnt >= min_component_size
+    }
+
+    if not kept_ids:
+        return coords
+
+    keep_mask = np.isin(labels, list(kept_ids))
+    ys, xs = np.where(keep_mask)
+    return [(int(x), int(y)) for y, x in zip(ys.tolist(), xs.tolist())]
 
 
 def _detect_cave_candidates_stub(world_hmap: np.ndarray) -> List[Tuple[int, int]]:
-    """Detect cave candidates as local minima in a 3×3 neighbourhood (vectorized)."""
-    if world_hmap.size == 0 or world_hmap.shape[0] < 3 or world_hmap.shape[1] < 3:
+    """Detect cave candidates from heightmap curvature (high negative = concave = cave).
+
+    A cell is a cave candidate when its Laplacian curvature is strongly
+    negative — meaning it sits in a concave bowl relative to its neighbours,
+    the characteristic morphology of a cave entrance or hollow.
+
+    Algorithm:
+      1. Compute discrete Laplacian on the heightmap (4-connected finite diff).
+      2. Threshold at mean - 1.5 * std of the Laplacian to find strongly
+         concave cells.
+      3. Additionally include the 3x3 local-minimum cells (original heuristic)
+         so that small pits in flat terrain are not missed.
+      4. Return unique (x, y) grid coordinates of all candidates.
+
+    Falls back to the local-minimum heuristic alone when the array is too
+    small for a meaningful Laplacian (< 3 rows or cols).
+    """
+    if world_hmap.size == 0:
         return []
+
     h, w = world_hmap.shape
-    padded = np.pad(world_hmap, 1, mode="edge")
-    local_min = np.full((h, w), np.inf)
-    for dy in range(3):
-        for dx in range(3):
-            local_min = np.minimum(local_min, padded[dy : dy + h, dx : dx + w])
-    ys, xs = np.where(world_hmap <= local_min)
-    return list(zip(xs.tolist(), ys.tolist()))
+
+    # --- Laplacian-curvature detection (requires at least 3x3) ---
+    curv_candidates: set = set()
+    if h >= 3 and w >= 3:
+        # Discrete Laplacian: L[r,c] = h[r-1,c]+h[r+1,c]+h[r,c-1]+h[r,c+1] - 4*h[r,c]
+        lap = (
+            np.roll(world_hmap, 1, axis=0)
+            + np.roll(world_hmap, -1, axis=0)
+            + np.roll(world_hmap, 1, axis=1)
+            + np.roll(world_hmap, -1, axis=1)
+            - 4.0 * world_hmap
+        )
+        # Zero out wrap-around border artefacts from np.roll
+        lap[0, :] = 0.0
+        lap[-1, :] = 0.0
+        lap[:, 0] = 0.0
+        lap[:, -1] = 0.0
+
+        lap_mean = float(lap.mean())
+        lap_std = float(lap.std())
+        if lap_std > 1e-9:
+            threshold = lap_mean - 1.5 * lap_std
+            ys, xs = np.where(lap < threshold)
+            for y, x in zip(ys.tolist(), xs.tolist()):
+                curv_candidates.add((int(x), int(y)))
+
+    # BUG-R8-A9-005: use strict local-minimum detection that excludes center.
+    # Use scipy.ndimage.minimum_filter (considers all 8 neighbours including
+    # center) then require heightmap < neighbour_min (strict) AND below median.
+    # Falls back to padded-loop approach when scipy is unavailable.
+    heightmap_median = float(np.median(world_hmap))
+
+    def _strict_local_minima(hmap: np.ndarray) -> "set[tuple[int,int]]":
+        """Return (x, y) coords of cells that are strict local minima below median."""
+        _h, _w = hmap.shape
+        try:
+            from scipy.ndimage import minimum_filter as _mf
+            # minimum_filter includes the center cell; for strict comparison we
+            # need the neighbourhood min excluding center.  Compute it as:
+            #   neigh_min = minimum_filter(hmap, size=3)
+            # then a cell is a strict local min when hmap == neigh_min AND it
+            # is strictly less than all its neighbours.
+            # Equivalently: erode with size=3 gives global min including self;
+            # a cell is a strict local min iff hmap[r,c] <= all neighbours,
+            # i.e. hmap[r,c] == minimum_filter(hmap,3)[r,c] AND
+            #      hmap[r,c] < hmap at any one neighbour (non-plateau check).
+            filtered = _mf(hmap, size=3)
+            is_min = (hmap == filtered) & (hmap < heightmap_median)
+            ys2, xs2 = np.where(is_min)
+            return set(zip(xs2.tolist(), ys2.tolist()))
+        except ImportError:
+            # Fallback: padded loop with strict < comparison excluding center
+            padded = np.pad(hmap, 1, mode="edge")
+            neigh_min = np.full((_h, _w), np.inf)
+            for dy in range(3):
+                for dx in range(3):
+                    if dy == 1 and dx == 1:
+                        continue  # skip center
+                    neigh_min = np.minimum(neigh_min, padded[dy: dy + _h, dx: dx + _w])
+            is_min = (hmap <= neigh_min) & (hmap < heightmap_median)
+            ys2, xs2 = np.where(is_min)
+            return set(zip(xs2.tolist(), ys2.tolist()))
+
+    if h < 3 or w < 3:
+        return list(_strict_local_minima(world_hmap))
+
+    localmin_candidates = _strict_local_minima(world_hmap)
+    combined = curv_candidates | localmin_candidates
+    return list(combined)
 
 
 def _detect_waterfall_lips_stub(
@@ -84,9 +330,27 @@ def _detect_waterfall_lips_stub(
     world_origin_x: float,
     world_origin_y: float,
     cell_size: float,
+    flow_accumulation: Optional[np.ndarray] = None,
+    min_drainage: float = 500.0,
+    min_drop_m: float = 4.0,
 ) -> list:
-    """Detect waterfall lip candidates via drainage-weighted D8 steepest descent."""
-    from .terrain_waterfalls import detect_waterfall_lip_candidates
+    """Detect waterfall lip candidates using drainage-weighted D8 steepest descent.
+
+    A waterfall lip cell satisfies:
+      (a) flow_accumulation >= ``min_drainage``  (high upstream catchment)
+      (b) steepest D8 neighbour drops >= ``min_drop_m`` in world metres
+
+    Delegates to ``detect_waterfall_lip_candidates`` from ``terrain_waterfalls``
+    which implements the full D8 vectorised scan and deduplication.
+
+    The world heightmap is wrapped in a minimal ``TerrainMaskStack``.  If
+    ``flow_accumulation`` is provided it is attached to the stack so the
+    detector can use actual drainage values; otherwise the detector falls back
+    to its internal drainage computation.
+
+    Returns a list of ``LipCandidate`` dataclass instances (not raw tuples).
+    """
+    from .terrain_waterfalls import detect_waterfall_lip_candidates  # relative import
 
     world_stack = TerrainMaskStack(
         tile_size=world_hmap.shape[0],
@@ -97,7 +361,24 @@ def _detect_waterfall_lips_stub(
         tile_y=0,
         height=world_hmap,
     )
-    return detect_waterfall_lip_candidates(world_stack)
+
+    if flow_accumulation is not None and flow_accumulation.shape == world_hmap.shape:
+        world_stack = world_stack.__class__(
+            tile_size=world_stack.tile_size,
+            cell_size=world_stack.cell_size,
+            world_origin_x=world_stack.world_origin_x,
+            world_origin_y=world_stack.world_origin_y,
+            tile_x=world_stack.tile_x,
+            tile_y=world_stack.tile_y,
+            height=world_hmap,
+            drainage=flow_accumulation,
+        )
+
+    return detect_waterfall_lip_candidates(
+        world_stack,
+        min_drainage=min_drainage,
+        min_drop_m=min_drop_m,
+    )
 
 
 def _generate_road_mesh_specs(
@@ -275,10 +556,11 @@ def run_twelve_step_world_terrain(
     erosion_params = compute_erosion_params_for_world_range(
         float(world_hmap.max() - world_hmap.min())
     )
+    # BUG-R8-A9-003: use computed erosion_params instead of hardcoded 50
     erosion_result = erode_world_heightmap(
         world_hmap,
-        hydraulic_iterations=50,  # small for deterministic test speed
-        thermal_iterations=0,
+        hydraulic_iterations=erosion_params.get("hydraulic_iterations", 50),
+        thermal_iterations=erosion_params.get("thermal_iterations", 0),
         seed=seed,
         cell_size=cell_size,
     )
@@ -292,8 +574,18 @@ def run_twelve_step_world_terrain(
     sequence.append("8_detect_hero_candidates")
     cliff_candidates = _detect_cliff_edges_stub(world_eroded)
     cave_candidates = _detect_cave_candidates_stub(world_eroded)
+    # Pass flow_accumulation from the erosion/flow result so the lip detector
+    # can use real drainage values rather than recomputing them.
+    _world_flow_acc = None
+    if isinstance(world_flow, dict):
+        _world_flow_acc_raw = world_flow.get("flow_accumulation")
+        if _world_flow_acc_raw is not None:
+            _world_flow_acc = np.asarray(_world_flow_acc_raw, dtype=np.float64)
+            if _world_flow_acc.shape != world_eroded.shape:
+                _world_flow_acc = None
     waterfall_lip_candidates = _detect_waterfall_lips_stub(
-        world_eroded, world_origin_x, world_origin_y, cell_size
+        world_eroded, world_origin_x, world_origin_y, cell_size,
+        flow_accumulation=_world_flow_acc,
     )
 
     # Step 9 — per-tile extraction

@@ -24,18 +24,56 @@ from .terrain_semantics import (
 # ---------------------------------------------------------------------------
 
 
+def _bresenham_cells(
+    r0: int, c0: int, r1: int, c1: int
+) -> List[Tuple[int, int]]:
+    """Return all grid cells on the Bresenham line from (r0,c0) to (r1,c1)."""
+    cells: List[Tuple[int, int]] = []
+    dr = abs(r1 - r0)
+    dc = abs(c1 - c0)
+    sr = 1 if r1 > r0 else -1
+    sc = 1 if c1 > c0 else -1
+    r, c = r0, c0
+    if dr > dc:
+        err = dr // 2
+        while r != r1:
+            cells.append((r, c))
+            err -= dc
+            if err < 0:
+                c += sc
+                err += dr
+            r += sr
+    else:
+        err = dc // 2
+        while c != c1:
+            cells.append((r, c))
+            err -= dr
+            if err < 0:
+                r += sr
+                err += dc
+            c += sc
+    cells.append((r1, c1))
+    return cells
+
+
 def enforce_sightline(
     stack: TerrainMaskStack,
     vantage: Tuple[float, float, float],
     target: Tuple[float, float, float],
     clearance_m: float,
+    eye_height_m: float = 1.8,
 ) -> np.ndarray:
     """Return a height delta that clears the line from ``vantage`` to ``target``.
 
-    Samples the line-of-sight at ~1 cell intervals. Any cell whose height
-    exceeds the linearly interpolated sightline height minus ``clearance_m``
-    receives a negative delta bringing it to that limit. Cells away from the
-    line are feathered with a radial falloff so the cut is not abrupt.
+    Uses a two-pass approach:
+    1. Bresenham ray march — walks every cell on the integer rasterised ray and
+       checks ``heightmap[row, col] + eye_height_m > ray_z_at_that_cell``. Each
+       blocking cell gets a strict cut to exactly ``ray_z - clearance_m``.
+    2. Feathered Gaussian falloff — for cells near (within feather_cells) the
+       ray, a soft Gaussian-weighted cut blends the hard Bresenham cuts into the
+       surrounding terrain to avoid cliff-like artefacts.
+
+    The returned delta is always <= 0 (only cuts, never adds height).
     """
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
@@ -50,30 +88,48 @@ def enforce_sightline(
     if planar < 1e-6:
         return delta
 
-    n_samples = max(4, int(planar / cell))
-    feather_cells = max(2.0, 4.0 / 1.0)  # 4 cells feather
+    # Eye position: vantage z + eye height above ground
+    eye_z = vz + eye_height_m
 
-    rr, cc = np.mgrid[0:rows, 0:cols].astype(np.float64)
+    # Grid coords for vantage and target
+    vc = int(round((vx - stack.world_origin_x) / cell))
+    vr = int(round((vy - stack.world_origin_y) / cell))
+    tc = int(round((tx - stack.world_origin_x) / cell))
+    tr = int(round((ty - stack.world_origin_y) / cell))
 
-    for si in range(n_samples + 1):
-        t = si / float(n_samples)
-        wx = vx + dx * t
-        wy = vy + dy * t
-        wz = vz + (tz - vz) * t
-        limit_z = wz - float(clearance_m)
+    ray_cells = _bresenham_cells(vr, vc, tr, tc)
+    n_ray = max(1, len(ray_cells) - 1)
 
-        cf = (wx - stack.world_origin_x) / cell
-        rf = (wy - stack.world_origin_y) / cell
+    # --- Pass 1: Bresenham strict cut ---
+    for idx, (r, c) in enumerate(ray_cells):
+        if not (0 <= r < rows and 0 <= c < cols):
+            continue
+        t = idx / float(n_ray)
+        ray_z = eye_z + (tz - eye_z) * t  # linearly interpolated sightline z
+        limit_z = ray_z - clearance_m
+        excess = float(h[r, c]) - limit_z
+        if excess > 0.0:
+            delta[r, c] = min(delta[r, c], -excess)
 
-        d2 = (rr - rf) ** 2 + (cc - cf) ** 2
-        local = d2 <= (feather_cells * feather_cells)
-        if not np.any(local):
+    # --- Pass 2: Gaussian feather around the ray ---
+    feather_cells = max(2.0, 3.0 / float(cell))  # 3 world-units feather radius
+    rr_grid, cc_grid = np.mgrid[0:rows, 0:cols].astype(np.float64)
+
+    for idx, (r, c) in enumerate(ray_cells):
+        if not (0 <= r < rows and 0 <= c < cols):
+            continue
+        t = idx / float(n_ray)
+        ray_z = eye_z + (tz - eye_z) * t
+        limit_z = ray_z - clearance_m
+
+        d2 = (rr_grid - r) ** 2 + (cc_grid - c) ** 2
+        near = d2 <= (feather_cells * feather_cells)
+        if not np.any(near):
             continue
 
         weight = np.exp(-d2 / (2.0 * feather_cells * feather_cells))
         over = np.maximum(0.0, h - limit_z)
-        this_delta = -over * weight
-        # Keep the largest (most-negative) cut already collected
+        this_delta = np.where(near, -over * weight, 0.0)
         delta = np.minimum(delta, this_delta)
 
     return delta

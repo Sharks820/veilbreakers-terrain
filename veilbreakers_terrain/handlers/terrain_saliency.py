@@ -15,6 +15,12 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
+try:
+    from scipy.ndimage import map_coordinates as _map_coordinates
+    _SCIPY_AVAILABLE = True
+except ImportError:
+    _SCIPY_AVAILABLE = False
+
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -90,28 +96,60 @@ def compute_vantage_silhouettes(
         return out
 
     angles = np.linspace(0.0, 2.0 * np.pi, ray_count, endpoint=False)
-    cos_a = np.cos(angles)
-    sin_a = np.sin(angles)
+    cos_a = np.cos(angles)  # (ray_count,)
+    sin_a = np.sin(angles)  # (ray_count,)
+
+    # BUG-R8-A9-013: vectorize — precompute all sample coords as
+    # (V, ray_count, n_samples) arrays, then call map_coordinates once.
+    sample_indices = np.arange(1, n_samples + 1, dtype=np.float64)  # (n_samples,)
+    # distances: (ray_count, n_samples)
+    distances = cos_a[:, None] * 0.0 + sample_indices[None, :] * sample_step  # broadcast later
 
     for vi, (vx, vy, vz) in enumerate(vantage_points):
-        for ri in range(ray_count):
-            max_elev = 0.0
-            for si in range(1, n_samples + 1):
-                d = si * sample_step
-                wx = vx + cos_a[ri] * d
-                wy = vy + sin_a[ri] * d
-                cf = (wx - stack.world_origin_x) / cell
-                rf = (wy - stack.world_origin_y) / cell
-                if rf < 0 or rf > rows - 1 or cf < 0 or cf > cols - 1:
-                    break
-                hz = _sample_height_bilinear(h, rf, cf)
-                dz = hz - vz
-                if dz <= 0.0:
-                    continue
-                elev = float(np.arctan2(dz, d))
-                if elev > max_elev:
-                    max_elev = elev
-            out[vi, ri] = max_elev
+        # World coords for all (ray, sample) combinations
+        # cos_a/sin_a: (ray_count,), sample_indices: (n_samples,)
+        # -> wx_all, wy_all: (ray_count, n_samples)
+        d_all = sample_indices[None, :] * sample_step          # (1, n_samples)
+        wx_all = vx + cos_a[:, None] * d_all                  # (ray_count, n_samples)
+        wy_all = vy + sin_a[:, None] * d_all                  # (ray_count, n_samples)
+
+        # Convert to fractional grid coords
+        cf_all = (wx_all - stack.world_origin_x) / cell       # (ray_count, n_samples)
+        rf_all = (wy_all - stack.world_origin_y) / cell       # (ray_count, n_samples)
+
+        # Mask samples that fall outside the heightmap
+        in_bounds = (
+            (rf_all >= 0) & (rf_all <= rows - 1) &
+            (cf_all >= 0) & (cf_all <= cols - 1)
+        )
+
+        if _SCIPY_AVAILABLE:
+            # Clamp coords for map_coordinates (out-of-bounds will be masked anyway)
+            rf_clamped = np.clip(rf_all, 0.0, rows - 1)
+            cf_clamped = np.clip(cf_all, 0.0, cols - 1)
+            coords = np.array([rf_clamped.ravel(), cf_clamped.ravel()])
+            hz_all = _map_coordinates(h, coords, order=1, mode="nearest").reshape(ray_count, n_samples)
+        else:
+            # Fallback: vectorised bilinear without scipy
+            rf_c = np.clip(rf_all, 0.0, rows - 1.0001)
+            cf_c = np.clip(cf_all, 0.0, cols - 1.0001)
+            r0 = np.floor(rf_c).astype(np.int32)
+            c0 = np.floor(cf_c).astype(np.int32)
+            dr = rf_c - r0
+            dc = cf_c - c0
+            r0 = np.clip(r0, 0, rows - 2)
+            c0 = np.clip(c0, 0, cols - 2)
+            hz_all = (
+                (1 - dr) * ((1 - dc) * h[r0, c0] + dc * h[r0, c0 + 1])
+                + dr * ((1 - dc) * h[r0 + 1, c0] + dc * h[r0 + 1, c0 + 1])
+            )
+
+        dz_all = hz_all - vz                                    # (ray_count, n_samples)
+        d_all_2d = d_all * np.ones((ray_count, 1))              # (ray_count, n_samples)
+        # Elevation angle: only positive dz matters; mask out-of-bounds and dz<=0
+        valid = in_bounds & (dz_all > 0.0)
+        elev_all = np.where(valid, np.arctan2(dz_all, d_all_2d), 0.0)
+        out[vi] = elev_all.max(axis=1)
 
     return out
 
@@ -229,10 +267,29 @@ def _rasterize_vantage_silhouettes_onto_grid(
         theta_pos = np.where(theta < 0, theta + 2.0 * np.pi, theta)
         ray_idx = (theta_pos / (2.0 * np.pi) * ray_count).astype(np.int32) % ray_count
         ray_vals = silhouettes[vi][ray_idx]
-        # Distance falloff: close cells get the value more strongly
-        dist = np.sqrt(dx * dx + dy * dy)
+        # BUG-R8-A9-014: angle-based frustum cone check + inverse-square falloff
+        # view_dist_sq = (max tile diagonal)^2 used as the reference distance
+        dist_sq = dx * dx + dy * dy
         max_dist = float(max(rows, cols) * cell)
-        falloff = np.clip(1.0 - (dist / (max_dist + 1e-9)), 0.0, 1.0)
+        view_dist_sq = max_dist * max_dist
+
+        # Cone check: compute per-cell angle from the vantage forward direction.
+        # Forward direction is taken as the direction toward the grid centre.
+        grid_cx = stack.world_origin_x + (cols * 0.5) * cell
+        grid_cy = stack.world_origin_y + (rows * 0.5) * cell
+        fwd_x = grid_cx - vx
+        fwd_y = grid_cy - vy
+        fwd_len = float(np.hypot(fwd_x, fwd_y)) + 1e-9
+        fwd_x /= fwd_len
+        fwd_y /= fwd_len
+        # Dot product gives cosine of angle between vantage→cell and vantage forward
+        dist_safe = np.sqrt(dist_sq) + 1e-9
+        cos_angle = (dx * fwd_x + dy * fwd_y) / dist_safe
+        # Half-angle cone of 90° (cos > 0) — cells behind vantage get zero weight
+        in_frustum = cos_angle > 0.0
+
+        # Inverse-square falloff within cone
+        falloff = np.where(in_frustum, 1.0 / (1.0 + dist_sq / (view_dist_sq + 1e-9)), 0.0)
         best = np.maximum(best, ray_vals * falloff)
 
     # Normalize to 0..1 relative to the max elevation seen

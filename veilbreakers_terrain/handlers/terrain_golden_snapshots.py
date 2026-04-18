@@ -10,6 +10,7 @@ Pure numpy + stdlib — no bpy. See plan §19.
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import time
@@ -90,7 +91,11 @@ def save_golden_snapshot(
     *,
     seed: int = 0,
 ) -> GoldenSnapshot:
-    """Hash the stack, persist a .json record, and return the GoldenSnapshot."""
+    """Hash the stack, persist a .json record and companion .npz, and return the GoldenSnapshot.
+
+    BUG-R8-A9-026: also writes a companion .golden.npz so tolerance-based
+    comparisons can load actual array data.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     snap = GoldenSnapshot(
@@ -105,8 +110,13 @@ def save_golden_snapshot(
         cell_size=float(stack.cell_size),
         populated_by_pass=dict(stack.populated_by_pass),
     )
-    path = output_dir / f"{snapshot_id}.golden.json"
-    path.write_text(json.dumps(snap.to_dict(), sort_keys=True, indent=2))
+    json_path = output_dir / f"{snapshot_id}.golden.json"
+    # BUG-R8-A9-026: write companion .npz for tolerance-based comparison
+    npz_path = json_path.with_suffix(".npz")
+    stack.to_npz(npz_path)
+    snap_dict = snap.to_dict()
+    snap_dict["npz_path"] = str(npz_path)
+    json_path.write_text(json.dumps(snap_dict, sort_keys=True, indent=2))
     return snap
 
 
@@ -120,46 +130,68 @@ def compare_against_golden(
     stack: TerrainMaskStack,
     golden: GoldenSnapshot,
     tolerance: float = 0.0,
+    *,
+    golden_dir: Optional[Path] = None,
 ) -> List[ValidationIssue]:
     """Compare a fresh stack against a stored golden.
 
-    ``tolerance`` is reserved for future float-aware comparisons; currently
-    any content-hash mismatch is a hard failure.
+    BUG-R8-A9-025: when ``tolerance > 0`` and hashes differ, load the
+    companion ``.golden.npz`` and use ``np.allclose(atol=tolerance)`` per
+    channel before raising a hard failure — allowing intentional minor
+    floating-point drift to pass.
+
+    BUG-R8-A9-024: channels present in ``current`` but absent in ``golden``
+    are emitted as soft ``GOLDEN_CHANNEL_NEW`` issues.
     """
     issues: List[ValidationIssue] = []
     current_hash = stack.compute_hash()
-    if current_hash != golden.content_hash:
-        issues.append(
-            ValidationIssue(
-                code="GOLDEN_HASH_MISMATCH",
-                severity="hard",
-                message=(
-                    f"golden '{golden.snapshot_id}' content hash diverged: "
-                    f"expected {golden.content_hash[:16]}..., "
-                    f"got {current_hash[:16]}..."
-                ),
-                remediation=(
-                    "Regenerate the golden if the change is intentional, "
-                    "otherwise audit the offending pass."
-                ),
+    hash_match = current_hash == golden.content_hash
+
+    if not hash_match:
+        # BUG-R8-A9-025: tolerance path — load npz and compare with np.allclose
+        tolerance_passed = False
+        if tolerance > 0.0 and golden_dir is not None:
+            npz_path = Path(golden_dir) / f"{golden.snapshot_id}.golden.npz"
+            if npz_path.exists():
+                try:
+                    golden_stack = TerrainMaskStack.from_npz(npz_path)
+                    all_close = True
+                    for ch in golden.channel_hashes:
+                        cur_arr = stack.get(ch)
+                        gld_arr = golden_stack.get(ch)
+                        if cur_arr is None or gld_arr is None:
+                            all_close = False
+                            break
+                        if not np.allclose(np.asarray(cur_arr), np.asarray(gld_arr), atol=tolerance):
+                            all_close = False
+                            break
+                    tolerance_passed = all_close
+                except Exception:
+                    tolerance_passed = False
+
+        if not tolerance_passed:
+            issues.append(
+                ValidationIssue(
+                    code="GOLDEN_HASH_MISMATCH",
+                    severity="hard",
+                    message=(
+                        f"golden '{golden.snapshot_id}' content hash diverged: "
+                        f"expected {golden.content_hash[:16]}..., "
+                        f"got {current_hash[:16]}..."
+                    ),
+                    remediation=(
+                        "Regenerate the golden if the change is intentional, "
+                        "otherwise audit the offending pass."
+                    ),
+                )
             )
-        )
+
     current_channels = _channel_hashes(stack)
     divergences: List[str] = []
     for ch, h in golden.channel_hashes.items():
         if current_channels.get(ch) != h:
             divergences.append(ch)
-    new_channels = sorted(set(current_channels) - set(golden.channel_hashes))
-    if new_channels:
-        issues.append(
-            ValidationIssue(
-                code="GOLDEN_NEW_CHANNEL",
-                severity="soft",
-                message=(
-                    f"new channels present since golden capture: {new_channels}"
-                ),
-            )
-        )
+
     if divergences:
         issues.append(
             ValidationIssue(
@@ -171,6 +203,21 @@ def compare_against_golden(
                 ),
             )
         )
+
+    # BUG-R8-A9-024: emit soft issue for channels in current but absent in golden
+    for ch in current_channels:
+        if ch not in golden.channel_hashes:
+            issues.append(
+                ValidationIssue(
+                    code="GOLDEN_NEW_CHANNEL",
+                    severity="soft",
+                    message=(
+                        f"channel '{ch}' present in current stack but absent in "
+                        f"golden '{golden.snapshot_id}' — update the golden if intentional."
+                    ),
+                )
+            )
+
     if golden.pipeline_version != PIPELINE_VERSION:
         issues.append(
             ValidationIssue(
@@ -182,8 +229,48 @@ def compare_against_golden(
                 ),
             )
         )
-    _ = tolerance
     return issues
+
+
+def _seed_one(
+    i: int,
+    count: int,
+    controller: "TerrainPassController",
+    output_dir: Path,
+    base_intent: Optional[TerrainIntentState],
+    build_state_fn: Optional[Any],
+) -> Tuple[Optional[GoldenSnapshot], Optional[Tuple[int, str]]]:
+    """Worker for one golden snapshot generation. Returns (snap, None) or (None, (i, reason))."""
+    import copy
+    from dataclasses import replace as _replace
+
+    print(f"Seeding {i}/{count}...")
+    try:
+        if build_state_fn is not None:
+            state = build_state_fn(
+                seed=(base_intent.seed if base_intent else 0) + i,
+                tile_x=i % 8,
+                tile_y=i // 8,
+            )
+        else:
+            state = copy.deepcopy(controller.state)
+            new_seed = int(state.intent.seed) + i
+            state.intent = _replace(state.intent, seed=new_seed)
+
+        replay_ctrl = TerrainPassController(
+            state, checkpoint_dir=controller.checkpoint_dir
+        )
+        replay_ctrl.run_pipeline(checkpoint=False)
+        snap_id = f"golden_{i:04d}_seed{state.intent.seed}"
+        snap = save_golden_snapshot(
+            state.mask_stack,
+            output_dir,
+            snap_id,
+            seed=int(state.intent.seed),
+        )
+        return snap, None
+    except Exception as exc:  # noqa: BLE001
+        return None, (i, str(exc))
 
 
 def seed_golden_library(
@@ -204,43 +291,54 @@ def seed_golden_library(
     TerrainPipelineState`` allowing tests to inject lightweight state
     construction without requiring a fully-populated controller. If not
     provided, the controller's current state is cloned via deepcopy.
+
+    BUG-R8-A9-027: uses ProcessPoolExecutor when count > 4 for parallelism.
+    BUG-R8-A9-028: collects failures; raises RuntimeError if > 10% fail.
     """
-    import copy
-
-    from dataclasses import replace as _replace
-
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     snapshots: List[GoldenSnapshot] = []
+    # BUG-R8-A9-028: collect failures instead of silently continuing
+    failures: List[Tuple[int, str]] = []
 
-    for i in range(count):
-        if build_state_fn is not None:
-            state = build_state_fn(
-                seed=(base_intent.seed if base_intent else 0) + i,
-                tile_x=i % 8,
-                tile_y=i // 8,
-            )
-        else:
-            state = copy.deepcopy(controller.state)
-            new_seed = int(state.intent.seed) + i
-            state.intent = _replace(state.intent, seed=new_seed)
-
-        replay_ctrl = TerrainPassController(
-            state, checkpoint_dir=controller.checkpoint_dir
-        )
+    # BUG-R8-A9-027: parallel path when count > 4; fall back to sequential on
+    # pickling errors (e.g. when running under module-alias test environments).
+    _use_parallel = count > 4
+    if _use_parallel:
         try:
-            replay_ctrl.run_pipeline(checkpoint=False)
-        except Exception:
-            # Skip tiles that fail to generate — seed library is best-effort.
-            continue
-        snap_id = f"golden_{i:04d}_seed{state.intent.seed}"
-        snap = save_golden_snapshot(
-            state.mask_stack,
-            output_dir,
-            snap_id,
-            seed=int(state.intent.seed),
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                futures = {
+                    executor.submit(
+                        _seed_one, i, count, controller, output_dir, base_intent, build_state_fn
+                    ): i
+                    for i in range(count)
+                }
+                for fut in concurrent.futures.as_completed(futures):
+                    snap, failure = fut.result()
+                    if snap is not None:
+                        snapshots.append(snap)
+                    elif failure is not None:
+                        failures.append(failure)
+        except Exception as _parallel_exc:  # noqa: BLE001
+            # Pickling or spawn failure — fall back to sequential execution
+            snapshots.clear()
+            failures.clear()
+            _use_parallel = False
+
+    if not _use_parallel:
+        for i in range(count):
+            snap, failure = _seed_one(i, count, controller, output_dir, base_intent, build_state_fn)
+            if snap is not None:
+                snapshots.append(snap)
+            elif failure is not None:
+                failures.append(failure)
+
+    # BUG-R8-A9-028: raise if failure rate exceeds 10%; else include in manifest
+    if count > 0 and len(failures) > count * 0.1:
+        raise RuntimeError(
+            f"seed_golden_library: {len(failures)}/{count} tiles failed "
+            f"(>{count * 0.1:.0f} threshold). First failures: {failures[:5]}"
         )
-        snapshots.append(snap)
 
     manifest_path = output_dir / "golden_library_manifest.json"
     manifest_path.write_text(
@@ -250,6 +348,7 @@ def seed_golden_library(
                 "count": len(snapshots),
                 "snapshot_ids": [s.snapshot_id for s in snapshots],
                 "timestamp": time.time(),
+                "failures": failures,
             },
             sort_keys=True,
             indent=2,

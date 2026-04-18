@@ -163,19 +163,41 @@ def list_checkpoints(controller: TerrainPassController) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+_INTENT_SCHEMA_VERSION = "1.1"
+
+
+def _serialize_value(v: Any) -> Any:
+    """Recursively make a value JSON-safe: convert Path objects to strings."""
+    if isinstance(v, Path):
+        return str(v)
+    if isinstance(v, dict):
+        return {k: _serialize_value(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_serialize_value(item) for item in v]
+    return v
+
+
 def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
-    """Serialize TerrainIntentState to a JSON-safe dict (drops scene_read)."""
+    """Serialize TerrainIntentState to a JSON-safe dict (drops scene_read).
+
+    Includes a ``schema_version`` field so ``_intent_from_dict`` can detect
+    and handle round-trip compatibility mismatches gracefully.  All Path
+    objects are converted to strings via ``_serialize_value``.
+    """
     return {
+        "schema_version": _INTENT_SCHEMA_VERSION,
         "seed": int(intent.seed),
         "region_bounds": list(intent.region_bounds.to_tuple()),
         "tile_size": int(intent.tile_size),
         "cell_size": float(intent.cell_size),
-        "quality_profile": intent.quality_profile,
-        "biome_rules": intent.biome_rules,
-        "noise_profile": intent.noise_profile,
-        "erosion_profile": intent.erosion_profile,
-        "morphology_templates": list(intent.morphology_templates),
-        "composition_hints": dict(intent.composition_hints),
+        "quality_profile": str(intent.quality_profile) if intent.quality_profile is not None else None,
+        "biome_rules": _serialize_value(intent.biome_rules),
+        "noise_profile": str(intent.noise_profile) if intent.noise_profile is not None else None,
+        "erosion_profile": str(intent.erosion_profile) if intent.erosion_profile is not None else None,
+        "morphology_templates": [str(t) for t in intent.morphology_templates],
+        "composition_hints": _serialize_value(dict(intent.composition_hints)),
+        # heightmap_source may be a Path; serialize to string
+        "heightmap_source": str(intent.heightmap_source) if getattr(intent, "heightmap_source", None) is not None else None,
         "anchors": [
             {
                 "name": a.name,
@@ -208,21 +230,44 @@ def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
                 "anchor_name": h.anchor_name,
                 "tier": h.tier,
                 "exclusion_radius": float(h.exclusion_radius),
-                "parameters": dict(h.parameters),
+                "parameters": _serialize_value(dict(h.parameters)),
             }
             for h in intent.hero_feature_specs
         ],
     }
 
 
+import logging as _ckpt_log
+_ckpt_logger = _ckpt_log.getLogger(__name__)
+
+
 def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
+    """Deserialize a TerrainIntentState from a JSON-safe dict.
+
+    Uses `.get()` with safe defaults throughout so missing or renamed keys
+    (e.g. from an older schema version) do not raise KeyError.  When the
+    serialized ``schema_version`` does not match the current
+    ``_INTENT_SCHEMA_VERSION``, a WARNING is emitted and unknown fields are
+    silently replaced by their defaults — forward/backward compatibility.
+    """
     from .terrain_semantics import HeroFeatureSpec  # local to avoid cycles
 
-    region = BBox(*data["region_bounds"])
+    stored_version = data.get("schema_version", "1.0")
+    if stored_version != _INTENT_SCHEMA_VERSION:
+        _ckpt_logger.warning(
+            "_intent_from_dict: schema version mismatch (stored=%r, current=%r). "
+            "Unknown fields will use defaults.",
+            stored_version,
+            _INTENT_SCHEMA_VERSION,
+        )
+
+    region_raw = data.get("region_bounds", [0.0, 0.0, 1.0, 1.0])
+    region = BBox(*region_raw)
+
     anchors = tuple(
         TerrainAnchor(
-            name=a["name"],
-            world_position=tuple(a["world_position"]),
+            name=a.get("name", ""),
+            world_position=tuple(a.get("world_position", (0.0, 0.0, 0.0))),
             orientation=tuple(a.get("orientation", (0.0, 0.0, 0.0))),
             anchor_kind=a.get("anchor_kind", "generic"),
             radius=float(a.get("radius", 0.0)),
@@ -232,9 +277,9 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
     )
     protected = tuple(
         ProtectedZoneSpec(
-            zone_id=z["zone_id"],
-            bounds=BBox(*z["bounds"]),
-            kind=z["kind"],
+            zone_id=z.get("zone_id", ""),
+            bounds=BBox(*z.get("bounds", [0.0, 0.0, 1.0, 1.0])),
+            kind=z.get("kind", "generic"),
             allowed_mutations=frozenset(z.get("allowed_mutations", [])),
             forbidden_mutations=frozenset(z.get("forbidden_mutations", [])),
             description=z.get("description", ""),
@@ -243,9 +288,9 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
     )
     heroes = tuple(
         HeroFeatureSpec(
-            feature_id=h["feature_id"],
-            feature_kind=h["feature_kind"],
-            world_position=tuple(h["world_position"]),
+            feature_id=h.get("feature_id", ""),
+            feature_kind=h.get("feature_kind", "generic"),
+            world_position=tuple(h.get("world_position", (0.0, 0.0, 0.0))),
             orientation=tuple(h.get("orientation", (0.0, 0.0, 0.0))),
             bounds=BBox(*h["bounds"]) if h.get("bounds") else None,
             anchor_name=h.get("anchor_name"),
@@ -255,11 +300,16 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
         )
         for h in data.get("hero_feature_specs", [])
     )
-    return TerrainIntentState(
-        seed=int(data["seed"]),
+
+    # Reconstruct heightmap_source as a Path when present (v1.1+)
+    heightmap_source_raw = data.get("heightmap_source")
+    heightmap_source = Path(heightmap_source_raw) if heightmap_source_raw else None
+
+    kwargs: Dict[str, Any] = dict(
+        seed=int(data.get("seed", 0)),
         region_bounds=region,
-        tile_size=int(data["tile_size"]),
-        cell_size=float(data["cell_size"]),
+        tile_size=int(data.get("tile_size", 512)),
+        cell_size=float(data.get("cell_size", 1.0)),
         anchors=anchors,
         protected_zones=protected,
         hero_feature_specs=heroes,
@@ -270,6 +320,16 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
         erosion_profile=data.get("erosion_profile", "temperate"),
         composition_hints=dict(data.get("composition_hints", {})),
     )
+    # Only pass heightmap_source if the dataclass accepts it (v1.1+ field)
+    if heightmap_source is not None:
+        try:
+            return TerrainIntentState(**kwargs, heightmap_source=heightmap_source)
+        except TypeError:
+            _ckpt_logger.warning(
+                "_intent_from_dict: TerrainIntentState does not accept "
+                "'heightmap_source'; ignoring field from stored preset."
+            )
+    return TerrainIntentState(**kwargs)
 
 
 def save_preset(
@@ -327,6 +387,12 @@ def autosave_after_pass(controller: TerrainPassController, enabled: bool = True)
     When enabled, wraps ``controller.run_pass`` so every successful pass
     emits an additional labeled checkpoint tagged ``autosave_<pass>``.
     Disabling restores the original method.
+
+    Upgrade notes (C+→B):
+    - Checkpoint save happens AFTER PassResult is returned from the original
+      run_pass, so a failed pass never saves a partial checkpoint.
+    - Save duration is recorded in checkpoint metrics.
+    - Autosave failure logs a WARNING but never propagates the exception.
     """
     key = id(controller)
     if enabled:
@@ -342,19 +408,29 @@ def autosave_after_pass(controller: TerrainPassController, enabled: bool = True)
             force: bool = False,
             checkpoint: bool = True,
         ) -> PassResult:
+            # Run the pass first — checkpoint only happens on success so a
+            # failed pass never writes a partial/corrupt checkpoint.
             result = original(
                 pass_name, region=region, force=force, checkpoint=checkpoint
             )
             if result.status == "ok":
+                save_t0 = time.time()
                 try:
-                    save_checkpoint(
+                    ckpt = save_checkpoint(
                         controller,
                         pass_name=pass_name,
                         label=f"autosave_{pass_name}_{uuid.uuid4().hex[:4]}",
                     )
-                except Exception:
-                    # Autosave must never break the pipeline
-                    pass
+                    save_duration = time.time() - save_t0
+                    # Record save duration in the checkpoint metrics for observability.
+                    ckpt.metrics["autosave_duration_s"] = round(save_duration, 4)
+                except Exception as exc:
+                    # Autosave failure must never abort the pipeline.
+                    _ckpt_logger.warning(
+                        "autosave_after_pass: checkpoint save failed for pass '%s': %s",
+                        pass_name,
+                        exc,
+                    )
             return result
 
         controller.run_pass = wrapped_run_pass  # type: ignore[method-assign]

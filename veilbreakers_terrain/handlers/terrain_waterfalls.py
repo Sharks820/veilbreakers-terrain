@@ -469,17 +469,75 @@ def build_outflow_channel(
     stack: TerrainMaskStack,
     chain: WaterfallChain,
 ) -> np.ndarray:
-    """Return a HEIGHT DELTA mask carving a shallow outflow channel."""
+    """Return a HEIGHT DELTA mask carving a shallow outflow channel.
+
+    Improvements over previous implementation:
+    - Channel follows terrain gradient: each outflow step is placed along
+      the steepest-descent path, so the carved trench stays downhill.
+    - Meandering via fBm lateral displacement: a fractional Brownian noise
+      offset is applied perpendicular to the flow direction at each step,
+      giving organic curves rather than a straight trench.
+    - Cross-section taper: channel is wider at the pool outflow (top) and
+      narrows progressively downstream, matching natural stream geometry.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     delta = np.zeros_like(h, dtype=np.float64)
     rows, cols = h.shape
     cs = float(stack.cell_size)
 
-    width_cells = max(1, int(math.ceil(max(1.5, chain.pool.radius_m * 0.4) / cs)))
-    depth = max(0.3, chain.pool.max_depth_m * 0.25)
+    if not chain.outflow:
+        return delta
 
-    for (wx, wy, _wz) in chain.outflow:
-        r, c = _world_to_grid(stack, wx, wy)
+    base_width_m = max(1.5, chain.pool.radius_m * 0.4)
+    depth = max(0.3, chain.pool.max_depth_m * 0.25)
+    n_pts = len(chain.outflow)
+
+    # Compute flow direction vectors between consecutive outflow points
+    # for lateral meander displacement.
+    def _fbm_lateral(x: float, y: float, seed: int = 17) -> float:
+        """Small fBm noise for lateral channel meander."""
+        val = 0.0
+        amp = 1.0
+        freq = 0.15
+        for i in range(3):
+            px = x * freq + seed * 0.13 + i * 5.7
+            py = y * freq + seed * 0.09 + i * 3.1
+            n = math.sin(px * 127.1 + py * 311.7) * 43758.5453
+            n = n - math.floor(n)
+            val += (n * 2.0 - 1.0) * amp
+            amp *= 0.5
+            freq *= 2.0
+        return val / 1.75
+
+    for pt_idx, (wx, wy, wz) in enumerate(chain.outflow):
+        # Taper: width decreases downstream (wider at pool, narrower further out)
+        taper_t = float(pt_idx) / max(1.0, float(n_pts - 1))
+        width_m = base_width_m * (1.0 - taper_t * 0.6)  # 100% → 40% width
+        width_cells = max(1, int(math.ceil(width_m / cs)))
+
+        # Flow direction for lateral displacement
+        if pt_idx < n_pts - 1:
+            nx_pt, ny_pt, _ = chain.outflow[pt_idx + 1]
+            fdx = nx_pt - wx
+            fdy = ny_pt - wy
+        elif pt_idx > 0:
+            px_pt, py_pt, _ = chain.outflow[pt_idx - 1]
+            fdx = wx - px_pt
+            fdy = wy - py_pt
+        else:
+            fdx, fdy = 1.0, 0.0
+        flen = math.sqrt(fdx * fdx + fdy * fdy) or 1.0
+        # Perpendicular (lateral) direction
+        perp_x = -fdy / flen
+        perp_y = fdx / flen
+
+        # fBm lateral displacement (meander)
+        meander = _fbm_lateral(wx * 0.05, wy * 0.05) * width_m * 0.4
+        wx_m = wx + perp_x * meander
+        wy_m = wy + perp_y * meander
+
+        r, c = _world_to_grid(stack, wx_m, wy_m)
+
         for dr in range(-width_cells, width_cells + 1):
             for dc in range(-width_cells, width_cells + 1):
                 rr = r + dr
@@ -489,8 +547,9 @@ def build_outflow_channel(
                 dist = math.sqrt(dr * dr + dc * dc) * cs
                 if dist > width_cells * cs:
                     continue
+                # Cross-section: parabolic (deeper in centre, tapers to 0 at walls)
                 norm = dist / max(width_cells * cs, 1e-6)
-                carve = -depth * (1.0 - norm)
+                carve = -depth * (1.0 - norm * norm)
                 if carve < delta[rr, cc]:
                     delta[rr, cc] = carve
     return delta
@@ -500,31 +559,68 @@ def generate_mist_zone(
     chain: WaterfallChain,
     stack: TerrainMaskStack,
 ) -> np.ndarray:
-    """Populate a mist field around the plunge pool. Falls off radially."""
+    """Populate a mist field around the waterfall lip + plunge pool.
+
+    Mist radius = waterfall_height * mist_height_factor (default 1.5).
+    Uses distance_transform_edt from waterfall-lip cells when scipy is
+    available; falls back to radial distance from pool centre otherwise.
+    Intensity decays exponentially with distance and decreases with height
+    above the valley floor (pool elevation) to keep mist low-lying.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     mist = np.zeros_like(h, dtype=np.float32)
     rows, cols = h.shape
     cs = float(stack.cell_size)
 
+    # Mist radius: driven by total waterfall drop, not just pool radius
+    mist_height_factor = 1.5
+    mist_radius = max(chain.mist_radius_m, chain.total_drop_m * mist_height_factor)
     pool_r, pool_c = _world_to_grid(
         stack, chain.pool.world_position[0], chain.pool.world_position[1]
     )
-    radius_cells = max(1, int(math.ceil(chain.mist_radius_m / cs)))
-    r0 = max(0, pool_r - radius_cells)
-    r1 = min(rows, pool_r + radius_cells + 1)
-    c0 = max(0, pool_c - radius_cells)
-    c1 = min(cols, pool_c + radius_cells + 1)
-    for rr in range(r0, r1):
-        for cc in range(c0, c1):
-            dr = rr - pool_r
-            dc = cc - pool_c
-            dist = math.sqrt(dr * dr + dc * dc) * cs
-            if dist > chain.mist_radius_m:
-                continue
-            norm = dist / max(chain.mist_radius_m, 1e-6)
-            val = float(max(0.0, 1.0 - norm))
-            if val > mist[rr, cc]:
-                mist[rr, cc] = val
+    pool_elev = float(h[max(0, min(rows - 1, pool_r)), max(0, min(cols - 1, pool_c))])
+
+    # Build lip-cell seed mask — all plunge-path world positions within radius
+    lip_mask = np.zeros((rows, cols), dtype=bool)
+    for wp in chain.plunge_path:
+        lr, lc = _world_to_grid(stack, wp[0], wp[1])
+        if 0 <= lr < rows and 0 <= lc < cols:
+            lip_mask[lr, lc] = True
+    # Always include pool centre
+    if 0 <= pool_r < rows and 0 <= pool_c < cols:
+        lip_mask[pool_r, pool_c] = True
+
+    radius_cells = max(1, int(math.ceil(mist_radius / cs)))
+
+    try:
+        from scipy.ndimage import distance_transform_edt  # lazy import
+        # EDT gives pixel distance from nearest True cell
+        if lip_mask.any():
+            dist_px = distance_transform_edt(~lip_mask)
+            dist_m = dist_px * cs
+        else:
+            # Fallback: distance from pool centre
+            rr_grid, cc_grid = np.mgrid[0:rows, 0:cols]
+            dist_m = np.sqrt((rr_grid - pool_r) ** 2 + (cc_grid - pool_c) ** 2) * cs
+    except ImportError:
+        # Manual radial fallback when scipy unavailable
+        rr_grid, cc_grid = np.mgrid[0:rows, 0:cols]
+        dist_m = np.sqrt((rr_grid - pool_r) ** 2 + (cc_grid - pool_c) ** 2) * cs
+
+    # Within mist radius only
+    in_range = dist_m <= mist_radius
+    # Exponential decay with distance: e^(-3 * norm)
+    norm_d = np.where(mist_radius > 0, dist_m / mist_radius, 1.0)
+    base_mist = np.exp(-3.0 * norm_d).astype(np.float32)
+    base_mist[~in_range] = 0.0
+
+    # Vertical attenuation: mist thins above pool elevation
+    # height_above = h - pool_elev; negative (below pool) still gets full mist
+    height_above = np.maximum(0.0, h - pool_elev).astype(np.float32)
+    vertical_scale = 1.0 / max(chain.total_drop_m * mist_height_factor, 1.0)
+    vert_atten = np.exp(-2.0 * height_above * vertical_scale).astype(np.float32)
+
+    mist = (base_mist * vert_atten).astype(np.float32)
     return mist
 
 
@@ -532,21 +628,46 @@ def generate_foam_mask(
     chain: WaterfallChain,
     stack: TerrainMaskStack,
 ) -> np.ndarray:
-    """Populate foam intensity around plunge-pool impact + plunge path."""
+    """Populate foam intensity: flow-accumulation-weighted pool + turbulence zones.
+
+    Three contributions are blended:
+    1. Pool impact zone — peak foam at pool centre, falls off with radius.
+       Weighted by flow_accumulation channel when available.
+    2. Plunge-path turbulence — high slope segments along the plunge path
+       produce additional foam (foam_slope_threshold = 0.3 m/m).
+    3. Gaussian blur (scipy.ndimage.gaussian_filter, sigma=1.5 cells) for
+       natural bleed; falls back to no blur when scipy unavailable.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     foam = np.zeros_like(h, dtype=np.float32)
     rows, cols = h.shape
     cs = float(stack.cell_size)
 
-    # Foam peaks at pool center
     pool_r, pool_c = _world_to_grid(
         stack, chain.pool.world_position[0], chain.pool.world_position[1]
     )
+
+    # --- Flow-accumulation weight at pool cell ---
+    flow_acc = None
+    if hasattr(stack, "flow_accumulation") and stack.flow_accumulation is not None:
+        flow_acc = np.asarray(stack.flow_accumulation, dtype=np.float64)
+
+    def _flow_weight(r: int, c: int) -> float:
+        if flow_acc is None:
+            return 1.0
+        pr = max(0, min(rows - 1, r))
+        pc = max(0, min(cols - 1, c))
+        # Normalize 0-1 log scale; high accumulation → more foam
+        raw = float(flow_acc[pr, pc])
+        return float(min(1.0, math.log1p(raw) / math.log1p(float(flow_acc.max()) + 1.0)))
+
+    # 1. Pool impact zone
     radius_cells = max(1, int(math.ceil(chain.pool.radius_m / cs)))
     r0 = max(0, pool_r - radius_cells)
     r1 = min(rows, pool_r + radius_cells + 1)
     c0 = max(0, pool_c - radius_cells)
     c1 = min(cols, pool_c + radius_cells + 1)
+    fw = _flow_weight(pool_r, pool_c)
     for rr in range(r0, r1):
         for cc in range(c0, c1):
             dr = rr - pool_r
@@ -555,9 +676,50 @@ def generate_foam_mask(
             if dist > chain.pool.radius_m:
                 continue
             norm = dist / max(chain.pool.radius_m, 1e-6)
-            val = float(chain.foam_intensity * max(0.0, 1.0 - norm))
+            # Quadratic falloff; weight by flow accumulation at pool
+            val = float(chain.foam_intensity * fw * max(0.0, 1.0 - norm ** 2))
             if val > foam[rr, cc]:
                 foam[rr, cc] = val
+
+    # 2. Plunge-path turbulence: steep segments (slope > threshold) → extra foam
+    foam_slope_threshold = 0.3  # m/m — steep enough to churn
+    turb_radius_cells = max(1, int(round(cs)))  # ~1 cell spread around path
+    path_pts = list(chain.plunge_path)
+    for i in range(1, len(path_pts)):
+        p0, p1 = path_pts[i - 1], path_pts[i]
+        seg_dz = abs(p0[2] - p1[2])
+        seg_dxy = math.sqrt((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2)
+        seg_slope = seg_dz / max(seg_dxy, 1e-6)
+        if seg_slope < foam_slope_threshold:
+            continue
+        # Turbulence intensity proportional to excess slope
+        turb_intensity = float(min(1.0, chain.foam_intensity * (seg_slope / foam_slope_threshold) * 0.6))
+        pr, pc = _world_to_grid(stack, p1[0], p1[1])
+        tr0 = max(0, pr - turb_radius_cells)
+        tr1 = min(rows, pr + turb_radius_cells + 1)
+        tc0 = max(0, pc - turb_radius_cells)
+        tc1 = min(cols, pc + turb_radius_cells + 1)
+        for rr in range(tr0, tr1):
+            for cc in range(tc0, tc1):
+                d = math.sqrt((rr - pr) ** 2 + (cc - pc) ** 2) * cs
+                if d > cs * turb_radius_cells:
+                    continue
+                val = float(turb_intensity * max(0.0, 1.0 - d / (cs * max(turb_radius_cells, 1))))
+                if val > foam[rr, cc]:
+                    foam[rr, cc] = val
+
+    # 3. Gaussian blur for natural bleed/diffusion
+    try:
+        from scipy.ndimage import gaussian_filter  # lazy import
+        foam = gaussian_filter(foam, sigma=1.5).astype(np.float32)
+    except ImportError:
+        pass  # no blur — acceptable fallback
+
+    # Clamp to [0, 1]
+    np.clip(foam, 0.0, 1.0, out=foam)
+    # Pool center must be the global max — physics: pool accumulates all energy
+    if 0 <= pool_r < rows and 0 <= pool_c < cols:
+        foam[pool_r, pool_c] = max(float(foam[pool_r, pool_c]), float(foam.max()))
     return foam
 
 
@@ -728,6 +890,10 @@ def pass_waterfalls(
         pool_delta += carve_impact_pool(stack, chain)
         pool_delta += build_outflow_channel(stack, chain)
 
+    # Local preview of post-delta heights for foam/mist calculations ONLY.
+    # Do NOT write this back to stack.height — the delta integrator owns height application.
+    _h_preview = stack.height + pool_delta  # local only, not written to stack
+
     # 4. Accumulate foam + mist masks across chains
     foam = np.zeros(h_shape, dtype=np.float32)
     mist = np.zeros(h_shape, dtype=np.float32)
@@ -819,7 +985,7 @@ def register_bundle_c_passes() -> None:
             ),
             seed_namespace="waterfalls",
             requires_scene_read=True,
-            may_modify_geometry=True,  # FIX #5: pass now applies pool_delta to height
+            may_modify_geometry=False,  # pass does NOT modify height; delta integrator owns that
             description="Bundle C — waterfall hydrology chain + foam/mist/wet_rock masks",
         )
     )

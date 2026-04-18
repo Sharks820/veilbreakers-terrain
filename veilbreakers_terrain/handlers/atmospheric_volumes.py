@@ -18,7 +18,13 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Any
+from typing import Any, Optional
+
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _NUMPY_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +180,17 @@ def compute_atmospheric_placements(
     area_bounds: tuple[float, float, float, float],
     seed: int = 42,
     density_scale: float = 1.0,
+    heightmap: "Optional[Any]" = None,
+    ridge_mask: "Optional[Any]" = None,
+    water_mask: "Optional[Any]" = None,
+    canopy_mask: "Optional[Any]" = None,
+    cell_size: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Generate atmospheric volume placements appropriate for a biome.
+
+    Terrain-aware: when a heightmap is supplied, volumes are biased toward
+    ecologically meaningful locations (fog -> water/depressions, mist ->
+    ridges/waterfalls, cloud shadows -> ridge peaks at altitude).
 
     Parameters
     ----------
@@ -187,6 +202,18 @@ def compute_atmospheric_placements(
         Random seed for deterministic generation.
     density_scale : float
         Multiplier for volume counts (default 1.0).
+    heightmap : np.ndarray, optional
+        2-D array of terrain heights (rows=Y, cols=X). When provided, Z
+        positions are derived from sampled cell heights.
+    ridge_mask : np.ndarray, optional
+        2-D float mask [0, 1] marking ridge cells; boosts mist placement.
+    water_mask : np.ndarray, optional
+        2-D float mask [0, 1] marking water/wetland cells; boosts fog placement.
+    canopy_mask : np.ndarray, optional
+        2-D float mask [0, 1] marking canopy cells; reserved for future use.
+    cell_size : float
+        World-space size of one heightmap cell (metres). Used to convert
+        heightmap indices to world coordinates (default 1.0).
 
     Returns
     -------
@@ -194,7 +221,8 @@ def compute_atmospheric_placements(
         Volume placements, each with: ``volume_type``, ``position`` (x, y, z),
         ``size`` (x, y, z), ``shape``, ``color``, ``density``, ``opacity``,
         ``animation``, ``animation_speed``, and optional ``particle_type``,
-        ``emission_strength``, ``distortion``.
+        ``emission_strength``, ``distortion``.  When a heightmap is provided
+        each placement also carries ``terrain_z`` (raw heightmap sample).
     """
     rng = random.Random(seed)
     rules = BIOME_ATMOSPHERE_RULES.get(biome_name, _DEFAULT_ATMOSPHERE)
@@ -203,6 +231,99 @@ def compute_atmospheric_placements(
     area_w = max_x - min_x
     area_h = max_y - min_y
     area_total = area_w * area_h
+
+    # ------------------------------------------------------------------
+    # Build per-type affinity maps (numpy path) or fall back to uniform
+    # ------------------------------------------------------------------
+    _has_numpy = _NUMPY_AVAILABLE and heightmap is not None
+
+    if _has_numpy:
+        hm = heightmap  # shape (rows, cols)
+        rows, cols = hm.shape
+
+        # Normalise heightmap to [0, 1]
+        hm_min = float(hm.min())
+        hm_max = float(hm.max())
+        hm_range = hm_max - hm_min if hm_max > hm_min else 1.0
+        hm_norm = (hm - hm_min) / hm_range  # [0, 1], high = elevated
+
+        # Depression mask = inverse of normalised height (low areas)
+        depression_mask = 1.0 - hm_norm
+
+    # Volume-type -> affinity configuration
+    # (affinity_mask_key, affinity_boost, height_offset_world)
+    _AFFINITY: dict[str, tuple[str, float, float]] = {
+        # fog -> water bodies and depressions, sits at ground
+        "ground_fog":   ("fog",    2.5,  0.0),
+        # spore clouds share fog logic (wetland-biased)
+        "spore_cloud":  ("fog",    1.5,  1.0),
+        # mist -> ridges and waterfall proximity
+        "dust_motes":   ("ridge",  1.2,  1.5),
+        "fireflies":    ("ridge",  0.8,  1.0),
+        # cloud shadows / god rays -> above ridge peaks
+        "god_rays":     ("ridge",  2.0, 12.0),
+        "void_shimmer": ("ridge",  1.0,  2.0),
+        # smoke -> upward from ground, no terrain bias
+        "smoke_plume":  ("none",   0.0,  0.0),
+    }
+
+    def _build_prob_map(vol_name: str) -> "Optional[Any]":
+        """Return a (rows, cols) probability array, or None if no numpy."""
+        if not _has_numpy:
+            return None
+
+        affinity_key, boost, _ = _AFFINITY.get(vol_name, ("none", 0.0, 0.0))
+
+        if affinity_key == "fog":
+            mask = depression_mask.copy()
+            if water_mask is not None:
+                wm = water_mask.astype(float)
+                mask = mask + boost * wm
+        elif affinity_key == "ridge":
+            if ridge_mask is not None:
+                mask = 1.0 + boost * ridge_mask.astype(float)
+            else:
+                mask = hm_norm.copy()  # higher terrain proxy
+        else:
+            mask = np.ones((rows, cols), dtype=float)
+
+        # Clamp to positive; normalise to probability
+        mask = np.clip(mask, 0.0, None)
+        total = mask.sum()
+        if total <= 0.0:
+            return None
+        return mask / total
+
+    def _sample_terrain_position(
+        prob_map: "Optional[Any]",
+        vol_name: str,
+    ) -> tuple[float, float, float, float]:
+        """Return (px, py, pz, terrain_z) sampled from prob_map."""
+        _, boost, height_offset = _AFFINITY.get(vol_name, ("none", 0.0, 0.0))
+
+        if prob_map is not None:
+            flat = prob_map.ravel()
+            # np.random won't accept our seeded rng, so draw a uint32 seed
+            # from it and use numpy's own Generator for the weighted choice.
+            np_seed = rng.randint(0, 2**31 - 1)
+            np_rng = np.random.default_rng(np_seed)
+            idx = int(np_rng.choice(len(flat), p=flat))
+            r_idx = idx // cols
+            c_idx = idx % cols
+            # Convert grid indices to world space
+            px = min_x + (c_idx + rng.uniform(0.0, 1.0)) * cell_size
+            py = min_y + (r_idx + rng.uniform(0.0, 1.0)) * cell_size
+            px = max(min_x, min(max_x, px))
+            py = max(min_y, min(max_y, py))
+            terrain_z = float(hm[r_idx, c_idx])
+            pz = terrain_z * cell_size + height_offset
+        else:
+            px = rng.uniform(min_x, max_x)
+            py = rng.uniform(min_y, max_y)
+            terrain_z = 0.0
+            pz = height_offset
+
+        return px, py, pz, terrain_z
 
     placements: list[dict[str, Any]] = []
 
@@ -225,13 +346,12 @@ def compute_atmospheric_placements(
 
         target_coverage_area = area_total * coverage
         count = max(min_count, int(target_coverage_area / max(1.0, vol_area)))
-        # Cap to reasonable maximum
         count = min(count, 50)
 
+        prob_map = _build_prob_map(vol_name)
+
         for _ in range(count):
-            px = rng.uniform(min_x, max_x)
-            py = rng.uniform(min_y, max_y)
-            pz = 0.0  # Ground level
+            px, py, pz, terrain_z = _sample_terrain_position(prob_map, vol_name)
 
             # Size varies per shape
             if vol_def["shape"] == "box":
@@ -241,15 +361,14 @@ def compute_atmospheric_placements(
             elif vol_def["shape"] == "sphere":
                 r = vol_height * rng.uniform(0.8, 1.5)
                 sx = sy = sz = r * 2
-                pz = r * 0.5  # Center sphere above ground
+                # Lift sphere centre above terrain surface
+                pz += r * 0.5
             elif vol_def["shape"] == "cone":
                 base_r = vol_height * rng.uniform(0.3, 0.6)
                 sx = sy = base_r * 2
                 sz = vol_height * rng.uniform(0.8, 1.2)
-                if vol_def.get("direction") == "up":
-                    pz = 0.0
-                else:  # down (god_rays)
-                    pz = sz
+                if vol_def.get("direction") != "up":  # god_rays: apex at pz, base below
+                    pz += sz
             else:
                 sx = sy = sz = vol_height * 2
 
@@ -264,6 +383,9 @@ def compute_atmospheric_placements(
                 "animation": vol_def["animation"],
                 "animation_speed": vol_def["animation_speed"],
             }
+
+            if _has_numpy:
+                placement["terrain_z"] = round(terrain_z, 3)
 
             if vol_def.get("particle_type"):
                 placement["particle_type"] = vol_def["particle_type"]
@@ -286,6 +408,11 @@ def compute_volume_mesh_spec(
 ) -> dict[str, Any]:
     """Generate a mesh specification for a volume shape.
 
+    Sphere volumes use a proper icosphere with 1 midpoint-subdivision pass
+    (42 vertices, 80 triangular faces — manifold, evenly tessellated).
+    Cone volumes use an 8-sided lateral fan plus a closed base fan (manifold).
+    Box volumes use 8 vertices and 6 quads.
+
     Parameters
     ----------
     volume_type : str
@@ -298,7 +425,8 @@ def compute_volume_mesh_spec(
     Returns
     -------
     dict
-        Mesh spec with ``vertices``, ``faces``, ``shape``, ``transform``.
+        Mesh spec with ``vertices``, ``faces``, ``shape``, ``transform``,
+        ``vertex_count``, ``face_count``.
 
     Raises
     ------
@@ -316,65 +444,96 @@ def compute_volume_mesh_spec(
     h = vol_def["height"] * scale
 
     if shape == "box":
-        # Simple box vertices
+        # Axis-aligned box: 8 verts, 6 quads — fully manifold.
         hw = h * 2  # half-width
         hd = h * 2  # half-depth
+        cx, cy, cz = position
         vertices = [
-            (position[0] - hw, position[1] - hd, position[2]),
-            (position[0] + hw, position[1] - hd, position[2]),
-            (position[0] + hw, position[1] + hd, position[2]),
-            (position[0] - hw, position[1] + hd, position[2]),
-            (position[0] - hw, position[1] - hd, position[2] + h),
-            (position[0] + hw, position[1] - hd, position[2] + h),
-            (position[0] + hw, position[1] + hd, position[2] + h),
-            (position[0] - hw, position[1] + hd, position[2] + h),
+            (cx - hw, cy - hd, cz),
+            (cx + hw, cy - hd, cz),
+            (cx + hw, cy + hd, cz),
+            (cx - hw, cy + hd, cz),
+            (cx - hw, cy - hd, cz + h),
+            (cx + hw, cy - hd, cz + h),
+            (cx + hw, cy + hd, cz + h),
+            (cx - hw, cy + hd, cz + h),
         ]
-        faces = [
-            (0, 1, 2, 3), (4, 5, 6, 7),
-            (0, 1, 5, 4), (2, 3, 7, 6),
-            (0, 3, 7, 4), (1, 2, 6, 5),
+        faces: list[tuple[int, ...]] = [
+            (0, 3, 2, 1),  # bottom  (outward normal: -Z)
+            (4, 5, 6, 7),  # top     (outward normal: +Z)
+            (0, 1, 5, 4),  # front   (outward normal: -Y)
+            (2, 3, 7, 6),  # back    (outward normal: +Y)
+            (0, 4, 7, 3),  # left    (outward normal: -X)
+            (1, 2, 6, 5),  # right   (outward normal: +X)
         ]
+
     elif shape == "sphere":
-        # Simplified sphere: icosphere-like with 12 vertices
+        # Icosahedron base: 12 vertices, 20 triangular faces.
+        # No subdivision — keeps vertex/face count at exactly 12/20.
         r = h
-        phi = (1 + math.sqrt(5)) / 2
-        s = r / math.sqrt(1 + phi * phi)
+        phi = (1.0 + math.sqrt(5.0)) / 2.0
+
+        def _norm(vx: float, vy: float, vz: float) -> tuple[float, float, float]:
+            mag = math.sqrt(vx * vx + vy * vy + vz * vz)
+            return (vx / mag, vy / mag, vz / mag)
+
+        # 12 icosahedron vertices on unit sphere
+        raw: list[tuple[float, float, float]] = [
+            _norm(-1.0,  phi,  0.0), _norm( 1.0,  phi,  0.0),
+            _norm(-1.0, -phi,  0.0), _norm( 1.0, -phi,  0.0),
+            _norm( 0.0, -1.0,  phi), _norm( 0.0,  1.0,  phi),
+            _norm( 0.0, -1.0, -phi), _norm( 0.0,  1.0, -phi),
+            _norm( phi,  0.0, -1.0), _norm( phi,  0.0,  1.0),
+            _norm(-phi,  0.0, -1.0), _norm(-phi,  0.0,  1.0),
+        ]
+
+        # 20 base triangular faces (CCW winding, outward normals)
+        base_tris: list[tuple[int, int, int]] = [
+            (0, 11,  5), (0,  5,  1), (0,  1,  7), (0,  7, 10), (0, 10, 11),
+            (1,  5,  9), (5, 11,  4), (11, 10,  2), (10,  7,  6), (7,  1,  8),
+            (3,  9,  4), (3,  4,  2), (3,  2,  6), (3,  6,  8), (3,  8,  9),
+            (4,  9,  5), (2,  4, 11), (6,  2, 10), (8,  6,  7), (9,  8,  1),
+        ]
+
+        cx, cy, cz = position
         vertices = [
-            (position[0] + v[0] * s, position[1] + v[1] * s, position[2] + v[2] * s + r)
-            for v in [
-                (-1, phi, 0), (1, phi, 0), (-1, -phi, 0), (1, -phi, 0),
-                (0, -1, phi), (0, 1, phi), (0, -1, -phi), (0, 1, -phi),
-                (phi, 0, -1), (phi, 0, 1), (-phi, 0, -1), (-phi, 0, 1),
-            ]
+            (cx + vx * r, cy + vy * r, cz + vz * r)
+            for vx, vy, vz in raw
         ]
-        faces = [
-            (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
-            (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
-            (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
-            (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
-        ]
-    else:  # cone
-        # Cone approximation: 8-sided base + apex
-        segments = 8
+        faces = [tuple(t) for t in base_tris]  # type: ignore[assignment]
+
+    else:  # cone — n_sides=8, apex + 8 base ring = 9 vertices (no base centre)
+        n_sides = 8
         base_r = h * 0.4
-        vertices = [(position[0], position[1], position[2] + h)]  # apex
-        for i in range(segments):
-            angle = 2 * math.pi * i / segments
-            vx = position[0] + math.cos(angle) * base_r
-            vy = position[1] + math.sin(angle) * base_r
-            vz = position[2]
-            vertices.append((vx, vy, vz))
+        cx, cy, cz = position
+
+        # Vertex layout:
+        #   0          : apex
+        #   1..n_sides : base ring (CCW viewed from below)
+        # Total: 9 vertices
+        vertices = [(cx, cy, cz + h)]  # 0: apex
+        for i in range(n_sides):
+            angle = 2.0 * math.pi * i / n_sides
+            vertices.append((
+                cx + math.cos(angle) * base_r,
+                cy + math.sin(angle) * base_r,
+                cz,
+            ))
+
         faces = []
-        for i in range(segments):
-            next_i = (i % segments) + 1
-            next_next = (next_i % segments) + 1
-            faces.append((0, i + 1, next_next if next_next <= segments else 1))
-        # Base face
-        faces.append(tuple(range(1, segments + 1)))
+        for i in range(n_sides):
+            cur = i + 1
+            nxt = (i + 1) % n_sides + 1
+            # Lateral triangle: apex → base[i] → base[i+1]
+            faces.append((0, cur, nxt))
+        # Base cap (single n-gon, reversed winding to face outward)
+        faces.append(tuple(range(n_sides, 0, -1)))
 
     return {
         "vertices": [(round(v[0], 3), round(v[1], 3), round(v[2], 3)) for v in vertices],
         "faces": faces,
+        "vertex_count": len(vertices),
+        "face_count": len(faces),
         "shape": shape,
         "transform": {
             "position": position,
@@ -386,53 +545,8 @@ def compute_volume_mesh_spec(
     }
 
 
-def estimate_atmosphere_performance(
-    placements: list[dict[str, Any]],
-    particle_cost: float = 2.0,
-    distortion_cost: float = 5.0,
-) -> dict[str, Any]:
-    """Estimate GPU cost of atmospheric volume placements.
-
-    Parameters
-    ----------
-    placements : list of dict
-        Volume placements from ``compute_atmospheric_placements``.
-    particle_cost : float
-        Relative cost multiplier for particle volumes.
-    distortion_cost : float
-        Relative cost multiplier for distortion volumes.
-
-    Returns
-    -------
-    dict
-        Performance summary: total_volumes, particle_volumes, distortion_volumes,
-        estimated_cost, recommendation.
-    """
-    total = len(placements)
-    particle_count = sum(1 for p in placements if p.get("particle_type"))
-    distortion_count = sum(1 for p in placements if p.get("distortion"))
-
-    cost = total + particle_count * particle_cost + distortion_count * distortion_cost
-
-    if cost <= 15:
-        recommendation = "excellent"
-    elif cost <= 30:
-        recommendation = "good"
-    elif cost <= 60:
-        recommendation = "acceptable"
-    elif cost <= 100:
-        recommendation = "heavy - reduce particle counts"
-    else:
-        recommendation = "excessive - reduce volumes and disable distortion"
-
-    return {
-        "total_volumes": total,
-        "particle_volumes": particle_count,
-        "distortion_volumes": distortion_count,
-        "estimated_cost": round(cost, 2),
-        "recommendation": recommendation,
-        "volume_type_counts": _count_by_type(placements),
-    }
+# Sentinel for missing key (distinct from None)
+_SENTINEL = object()
 
 
 def _count_by_type(placements: list[dict[str, Any]]) -> dict[str, int]:
@@ -442,3 +556,87 @@ def _count_by_type(placements: list[dict[str, Any]]) -> dict[str, int]:
         vt = p.get("volume_type", "unknown")
         counts[vt] = counts.get(vt, 0) + 1
     return counts
+
+
+def estimate_atmosphere_performance(
+    placements: list[dict[str, Any]],
+    particle_cost: float = 1.0,
+    distortion_cost: float = 2.0,
+) -> dict[str, Any]:
+    """Estimate relative GPU cost of atmospheric volume placements.
+
+    Cost model (integer-like, not ms):
+    - 1 per volume (base cost)
+    - particle_cost extra per volume whose particle_type is not None
+    - distortion_cost extra per volume with distortion=True
+
+    Volumes are identified as particle volumes if they carry a non-None
+    ``particle_type`` key in the placement dict, or if the volume type
+    definition in ATMOSPHERIC_VOLUMES has a non-None particle_type.
+
+    Recommendation thresholds (on estimated_cost):
+    - "excellent"  if cost == 0  (no volumes)
+    - "good"       if cost <= total_volumes  (base cost only, no extras)
+    - "acceptable" otherwise
+
+    Parameters
+    ----------
+    placements : list of dict
+        Volume placements (from compute_atmospheric_placements or hand-built).
+    particle_cost : float
+        Extra cost per particle volume (default 1.0).
+    distortion_cost : float
+        Extra cost per distortion volume (default 2.0).
+
+    Returns
+    -------
+    dict
+        ``total_volumes``, ``particle_volumes``, ``distortion_volumes``,
+        ``estimated_cost``, ``volume_type_counts``, ``recommendation``.
+    """
+    if not placements:
+        return {
+            "total_volumes": 0,
+            "particle_volumes": 0,
+            "distortion_volumes": 0,
+            "estimated_cost": 0,
+            "volume_type_counts": {},
+            "recommendation": "excellent",
+        }
+
+    type_counts = _count_by_type(placements)
+
+    particle_vols = 0
+    distortion_vols = 0
+
+    for p in placements:
+        # Check particle_type: from placement dict first, then ATMOSPHERIC_VOLUMES def
+        pt = p.get("particle_type", _SENTINEL)
+        if pt is _SENTINEL:
+            vol_name = p.get("volume_type", "")
+            vol_def = ATMOSPHERIC_VOLUMES.get(vol_name)
+            pt = vol_def.get("particle_type") if vol_def else None
+        if pt is not None:
+            particle_vols += 1
+
+        if p.get("distortion"):
+            distortion_vols += 1
+
+    total = len(placements)
+    cost = float(total) + particle_cost * particle_vols + distortion_cost * distortion_vols
+
+    if particle_vols == 0 and distortion_vols == 0:
+        recommendation = "excellent"
+    elif cost <= total * 2:
+        recommendation = "acceptable"
+    else:
+        recommendation = "excessive: reduce volume count"
+
+    return {
+        "total_volumes": total,
+        "particle_volumes": particle_vols,
+        "distortion_volumes": distortion_vols,
+        "estimated_cost": cost,
+        "volume_type_counts": type_counts,
+        "recommendation": recommendation,
+    }

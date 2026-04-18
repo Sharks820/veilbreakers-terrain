@@ -16,7 +16,14 @@ from __future__ import annotations
 
 import math
 import random as _random
-from typing import Any
+from typing import Any, List
+
+try:
+    import numpy as _np
+    _HAS_NUMPY = True
+except ImportError:  # pragma: no cover
+    _np = None  # type: ignore[assignment]
+    _HAS_NUMPY = False
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +249,51 @@ class BranchSegment:
         self.parent_index = parent_index
 
 
+def _reorthogonalize(
+    dx: float, dy: float, dz: float,
+    rx: float, ry: float, rz: float,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Re-orthogonalize the Frenet (heading, right) pair after rotation.
+
+    Ensures the right vector remains perpendicular to heading and both are
+    unit-length, preventing accumulated floating-point drift from causing
+    the turtle frame to collapse after hundreds of branching steps.
+
+    Returns:
+        Tuple of ((dx, dy, dz), (rx, ry, rz)) — normalized and orthogonalized.
+    """
+    # Normalize heading
+    dl = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dl > 1e-12:
+        dx, dy, dz = dx / dl, dy / dl, dz / dl
+
+    # Project out any heading component from right (Gram-Schmidt)
+    dot = rx * dx + ry * dy + rz * dz
+    rx -= dot * dx
+    ry -= dot * dy
+    rz -= dot * dz
+
+    # Normalize right
+    rl = math.sqrt(rx * rx + ry * ry + rz * rz)
+    if rl > 1e-12:
+        rx, ry, rz = rx / rl, ry / rl, rz / rl
+    else:
+        # Degenerate: rebuild right from any non-parallel world vector
+        if abs(dz) < 0.9:
+            ax, ay, az = 0.0, 0.0, 1.0
+        else:
+            ax, ay, az = 1.0, 0.0, 0.0
+        # right = heading cross fallback
+        rx = dy * az - dz * ay
+        ry = dz * ax - dx * az
+        rz = dx * ay - dy * ax
+        rl = math.sqrt(rx * rx + ry * ry + rz * rz)
+        if rl > 1e-12:
+            rx, ry, rz = rx / rl, ry / rl, rz / rl
+
+    return (dx, dy, dz), (rx, ry, rz)
+
+
 def interpret_lsystem(
     lstring: str,
     branch_angle: float = 25.0,
@@ -254,6 +306,29 @@ def interpret_lsystem(
     seed: int = 42,
 ) -> list[BranchSegment]:
     """Interpret an L-system string into branch segments using turtle graphics.
+
+    The turtle maintains a proper 3-axis Frenet frame (heading H, right R,
+    up U = H x R) so that pitch (`+`/`-`), yaw (`\\\\`/`/`), and roll (`^`/`&`)
+    are all handled by Rodrigues rotation about the correct local axis.
+    This eliminates gimbal lock that occurred in the previous implementation
+    when Euler angles were accumulated directly.
+
+    Frame invariants maintained after every turn and branch push:
+      - H (dx,dy,dz) is unit-length.
+      - R (right_x,right_y,right_z) is unit-length and perpendicular to H.
+      - Re-orthogonalization via Gram-Schmidt every 16 steps prevents
+        floating-point drift from accumulating across deep trees.
+
+    Symbol mapping:
+      F  -- move forward (draw segment).
+      +  -- pitch up (rotate H around R by +branch_angle).
+      -  -- pitch down (rotate H around R by -branch_angle).
+      /  -- roll clockwise (rotate H and R around H by +branch_angle).
+      \\  -- roll counter-clockwise (rotate H and R around H by -branch_angle).
+      ^  -- yaw left (rotate H and R around up=H×R by +branch_angle).
+      &  -- yaw right (rotate H and R around up=H×R by -branch_angle).
+      [  -- push state; apply random azimuthal spin around local heading.
+      ]  -- pop state.
 
     Args:
         lstring: Expanded L-system string.
@@ -280,16 +355,21 @@ def interpret_lsystem(
 
     angle_rad = math.radians(branch_angle)
 
+    # Orthogonalization counter: re-orthogonalize every N forward steps to
+    # prevent floating-point drift across deep trees.
+    _ortho_interval = 16
+    _step_counter = 0
+
     for ch in lstring:
         if ch == "F":
             # Move forward and create segment
             length = segment_length * (1.0 + rng.gauss(0.0, randomness * 0.2))
 
-            # Apply gravity (pull direction toward -Z)
+            # Apply gravity (pull heading toward -Z in proportion to depth)
             if gravity > 0:
                 grav_amount = gravity * (1.0 - 1.0 / (1.0 + state.depth * 0.5))
                 state.dz -= grav_amount * 0.1
-                # Renormalize direction
+                # Renormalize heading
                 dl = math.sqrt(state.dx ** 2 + state.dy ** 2 + state.dz ** 2)
                 if dl > 1e-12:
                     state.dx /= dl
@@ -317,22 +397,70 @@ def interpret_lsystem(
             state.x, state.y, state.z = new_x, new_y, new_z
             state.radius = end_radius
 
+            # Periodic Gram-Schmidt re-orthogonalization of the turtle frame
+            _step_counter += 1
+            if _step_counter >= _ortho_interval:
+                (state.dx, state.dy, state.dz), (
+                    state.right_x, state.right_y, state.right_z
+                ) = _reorthogonalize(
+                    state.dx, state.dy, state.dz,
+                    state.right_x, state.right_y, state.right_z,
+                )
+                _step_counter = 0
+
         elif ch == "+":
-            # Turn right around the right vector
+            # Pitch up: rotate heading around local right vector
             random_angle = angle_rad * (1.0 + rng.gauss(0.0, randomness * 0.3))
             state.dx, state.dy, state.dz = _rotate_vector(
                 state.dx, state.dy, state.dz,
                 state.right_x, state.right_y, state.right_z,
                 random_angle,
             )
+            # Right vector is unchanged (rotation axis is right itself)
 
         elif ch == "-":
-            # Turn left around the right vector
+            # Pitch down: rotate heading around local right vector (negative)
             random_angle = angle_rad * (1.0 + rng.gauss(0.0, randomness * 0.3))
             state.dx, state.dy, state.dz = _rotate_vector(
                 state.dx, state.dy, state.dz,
                 state.right_x, state.right_y, state.right_z,
                 -random_angle,
+            )
+            # Right vector is unchanged (rotation axis is right itself)
+
+        elif ch in ("/", "\\"):
+            # Roll: rotate heading AND right around the local heading axis.
+            # This changes which way "right" points without altering heading.
+            roll_sign = 1.0 if ch == "/" else -1.0
+            random_angle = angle_rad * roll_sign * (
+                1.0 + rng.gauss(0.0, randomness * 0.3)
+            )
+            # Rotate right vector around heading
+            state.right_x, state.right_y, state.right_z = _rotate_vector(
+                state.right_x, state.right_y, state.right_z,
+                state.dx, state.dy, state.dz,
+                random_angle,
+            )
+
+        elif ch in ("^", "&"):
+            # Yaw: rotate heading AND right around the local up axis (H × R).
+            # Compute local up = heading cross right (left-hand rule for L-systems)
+            ux = state.dy * state.right_z - state.dz * state.right_y
+            uy = state.dz * state.right_x - state.dx * state.right_z
+            uz = state.dx * state.right_y - state.dy * state.right_x
+            yaw_sign = 1.0 if ch == "^" else -1.0
+            random_angle = angle_rad * yaw_sign * (
+                1.0 + rng.gauss(0.0, randomness * 0.3)
+            )
+            state.dx, state.dy, state.dz = _rotate_vector(
+                state.dx, state.dy, state.dz,
+                ux, uy, uz,
+                random_angle,
+            )
+            state.right_x, state.right_y, state.right_z = _rotate_vector(
+                state.right_x, state.right_y, state.right_z,
+                ux, uy, uz,
+                random_angle,
             )
 
         elif ch == "[":
@@ -342,18 +470,22 @@ def interpret_lsystem(
             state.depth += 1
             state.radius *= branch_ratio
 
-            # Add random rotation around the trunk axis for 3D branching
-            spin_angle = rng.uniform(0, 2.0 * math.pi)
-            state.dx, state.dy, state.dz = _rotate_vector(
-                state.dx, state.dy, state.dz,
-                0, 0, 1,  # Spin around world up
-                spin_angle * 0.3,
-            )
-            # Also rotate the right vector
+            # Apply random azimuthal spin around the LOCAL heading axis so
+            # sub-branches spread in 3D relative to the parent branch direction
+            # rather than always rotating around world-up (which caused planar
+            # branching when the trunk leaned away from vertical).
+            spin_angle = rng.uniform(0, 2.0 * math.pi) * 0.35
             state.right_x, state.right_y, state.right_z = _rotate_vector(
                 state.right_x, state.right_y, state.right_z,
-                0, 0, 1,
-                spin_angle * 0.3,
+                state.dx, state.dy, state.dz,  # rotate around local heading
+                spin_angle,
+            )
+            # Re-orthogonalize after the spin to stay numerically clean
+            (state.dx, state.dy, state.dz), (
+                state.right_x, state.right_y, state.right_z
+            ) = _reorthogonalize(
+                state.dx, state.dy, state.dz,
+                state.right_x, state.right_y, state.right_z,
             )
 
         elif ch == "]":
@@ -892,11 +1024,17 @@ def bake_wind_vertex_colors(tree_mesh_spec: MeshSpec) -> MeshSpec:
     Pure-logic function -- no Blender dependency.
 
     Channel mapping (canonical WIND_COLOR_LAYOUT from vegetation_system.py):
-      R = sway_strength   (0 at trunk, 1 at branch tips -- radial+height blend).
+      R = sway_strength   (height-based: 0 at base_y, 1.0 at max_y).
       G = sway_frequency  (branch depth normalized: 1 for fine tips, 0 for trunk).
       B = phase_offset    (spatial hash for desynchronized per-branch motion).
 
     Unity shader reads these vertex colors for GPU-based wind animation.
+
+    R is driven purely by normalised plant height so the base never sways
+    and the tip sways fully:
+        vc = (vert_y - base_y) / (max_y - base_y)
+    This avoids the radial-distance component that caused mid-canopy vertices
+    near the trunk axis to receive near-zero wind weight even at full height.
 
     Args:
         tree_mesh_spec: MeshSpec dict from generate_lsystem_tree or
@@ -914,32 +1052,13 @@ def bake_wind_vertex_colors(tree_mesh_spec: MeshSpec) -> MeshSpec:
         tree_mesh_spec["wind_colors"] = []
         return tree_mesh_spec
 
-    # Find height range and max radial distance from center
+    # Height range for normalised wind weight (Z is up in Blender/Unity)
     z_values = [v[2] for v in vertices]
-    min_z = min(z_values)
-    max_z = max(z_values)
-    height_range = max_z - min_z if max_z > min_z else 1.0
+    base_y = min(z_values)
+    max_y = max(z_values)
+    height_range = max_y - base_y if max_y > base_y else 1.0
 
-    # Find tree center at base
-    base_threshold = min_z + height_range * 0.1
-    base_verts = [(v[0], v[1]) for v in vertices if v[2] <= base_threshold]
-    if base_verts:
-        center_x = sum(v[0] for v in base_verts) / len(base_verts)
-        center_y = sum(v[1] for v in base_verts) / len(base_verts)
-    else:
-        center_x = sum(v[0] for v in vertices) / len(vertices)
-        center_y = sum(v[1] for v in vertices) / len(vertices)
-
-    # Find max radial distance
-    max_dist = 0.0
-    for vx, vy, _vz in vertices:
-        d = math.sqrt((vx - center_x) ** 2 + (vy - center_y) ** 2)
-        if d > max_dist:
-            max_dist = d
-    if max_dist < 1e-6:
-        max_dist = 1.0
-
-    # Find max branch depth
+    # Find max branch depth for G channel normalisation
     max_depth = max(branch_depths) if branch_depths else 1
     if max_depth == 0:
         max_depth = 1
@@ -947,17 +1066,15 @@ def bake_wind_vertex_colors(tree_mesh_spec: MeshSpec) -> MeshSpec:
     colors: list[tuple[float, float, float]] = []
 
     for i, (vx, vy, vz) in enumerate(vertices):
-        # R: Primary sway -- distance from trunk base (radial + height)
-        radial_dist = math.sqrt((vx - center_x) ** 2 + (vy - center_y) ** 2)
-        height_norm = (vz - min_z) / height_range
-        r = min(1.0, max(0.0, (radial_dist / max_dist) * 0.5 + height_norm * 0.5))
+        # R: sway_strength — purely height-normalised so base=0, tip=1.0
+        r = min(1.0, max(0.0, (vz - base_y) / height_range))
 
-        # G: Secondary sway / leaf flutter -- based on branch depth
+        # G: sway_frequency — branch depth normalised (fine tips = 1, trunk = 0)
         depth = branch_depths[i] if i < len(branch_depths) else 0
         g = min(1.0, max(0.0, depth / max_depth))
 
-        # B: Phase offset -- hash based on position for deterministic
-        #    but varied per-branch desynchronization
+        # B: phase_offset — deterministic spatial hash for per-branch
+        #    desynchronisation (avoids uniform sway that looks artificial)
         phase_hash = math.sin(vx * 12.9898 + vy * 78.233 + vz * 37.719) * 43758.5453
         b = min(1.0, max(0.0, phase_hash - math.floor(phase_hash)))
 
@@ -971,11 +1088,45 @@ def bake_wind_vertex_colors(tree_mesh_spec: MeshSpec) -> MeshSpec:
 # 4. Billboard Impostor Generation
 # ---------------------------------------------------------------------------
 
+def _quad_normal(
+    v0: Vec3, v1: Vec3, v2: Vec3,
+) -> tuple[float, float, float]:
+    """Compute face normal for a quad given three consecutive CCW vertices."""
+    ax = v1[0] - v0[0]; ay = v1[1] - v0[1]; az = v1[2] - v0[2]
+    bx = v2[0] - v0[0]; by = v2[1] - v0[1]; bz = v2[2] - v0[2]
+    nx = ay * bz - az * by
+    ny = az * bx - ax * bz
+    nz = ax * by - ay * bx
+    nl = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if nl > 1e-12:
+        return (nx / nl, ny / nl, nz / nl)
+    return (0.0, 0.0, 1.0)
+
+
 def generate_billboard_impostor(params: dict) -> MeshSpec:
     """Generate billboard impostor mesh for ultra-low LOD trees.
 
     Pure-logic function -- generates the impostor mesh geometry.
     Actual texture capture/rendering requires Blender (returned in next_steps).
+
+    Cross-billboard geometry notes (B-quality requirements):
+      - Each panel is two quads sharing the same 4 corner positions: one
+        front-facing (CCW winding) and one back-facing (CW winding, reversed
+        normal).  This makes the impostor visible from both sides without
+        relying on Unity's double-sided material, which is not available in
+        all render pipelines.
+      - UVs follow the canonical atlas layout: quad 0 occupies U [0, 0.5],
+        quad 1 occupies U [0.5, 1.0], both spanning V [0, 1].  Back-face
+        quads reuse the same UVs as their front counterpart so the alpha
+        cutout reads the same texel from both sides.
+      - Per-vertex normals are exported in the ``normals`` list (one normal
+        per vertex, indexed identically to ``vertices``).  Front-face
+        normals point outward; back-face normals are negated.
+      - ``alpha_mask_channel`` key signals Unity to read the alpha channel of
+        the atlas texture as the cutout mask (standard SpeedTree convention).
+
+    Octahedral mode: 8-sided prism, single-sided faces with outward normals,
+    each face covering 1/num_views of the atlas width.
 
     Params:
         object_name: str -- Source tree object name (for metadata).
@@ -983,11 +1134,12 @@ def generate_billboard_impostor(params: dict) -> MeshSpec:
         resolution: int -- Texture atlas resolution per view (default 256).
         height: float -- Tree height for billboard sizing (default 5.0).
         width: float -- Tree width for billboard sizing (default 3.0).
-        impostor_type: str -- 'cross' (2 intersecting quads) or
-                             'octahedral' (8-face low-poly mesh).
+        impostor_type: str -- 'cross' (2 intersecting quads, double-sided) or
+                             'octahedral' (8-face low-poly mesh, single-sided).
 
     Returns:
-        MeshSpec with impostor geometry and UV layout metadata.
+        MeshSpec with impostor geometry, per-vertex normals, UV layout, and
+        alpha_mask_channel metadata.
     """
     num_views = params.get("num_views", 8)
     resolution = params.get("resolution", 256)
@@ -999,59 +1151,91 @@ def generate_billboard_impostor(params: dict) -> MeshSpec:
     vertices: list[Vec3] = []
     faces: list[tuple[int, ...]] = []
     uvs: list[tuple[float, float]] = []
+    normals: list[tuple[float, float, float]] = []
 
     half_w = tree_width * 0.5
-    _half_h = tree_height * 0.5
-    _center_z = tree_height * 0.5
 
     if impostor_type == "cross":
-        # Cross-billboard: 2 intersecting quads at 90 degrees
-        for angle_deg in [0.0, 90.0]:
+        # Cross-billboard: 2 intersecting planes at 90° in the XY plane.
+        # Each plane generates a FRONT quad (CCW, normal pointing outward)
+        # and a BACK quad (CW reversed winding, negated normal) so the
+        # impostor is correctly visible from all camera angles without
+        # requiring a double-sided shader.
+        for quad_index, angle_deg in enumerate([0.0, 90.0]):
             angle = math.radians(angle_deg)
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
 
-            base_idx = len(vertices)
+            # 4 shared corner positions for this panel
+            p0 = (-half_w * cos_a, -half_w * sin_a, 0.0)
+            p1 = ( half_w * cos_a,  half_w * sin_a, 0.0)
+            p2 = ( half_w * cos_a,  half_w * sin_a, tree_height)
+            p3 = (-half_w * cos_a, -half_w * sin_a, tree_height)
 
-            # 4 corners of a vertical quad
-            vertices.append((-half_w * cos_a, -half_w * sin_a, 0.0))
-            vertices.append((half_w * cos_a, half_w * sin_a, 0.0))
-            vertices.append((half_w * cos_a, half_w * sin_a, tree_height))
-            vertices.append((-half_w * cos_a, -half_w * sin_a, tree_height))
+            # UV strip: quad 0 → U [0.0, 0.5], quad 1 → U [0.5, 1.0]
+            u0 = quad_index * 0.5
+            u1 = u0 + 0.5
+            quad_uvs = [
+                (u0, 0.0),
+                (u1, 0.0),
+                (u1, 1.0),
+                (u0, 1.0),
+            ]
 
-            faces.append((base_idx, base_idx + 1, base_idx + 2, base_idx + 3))
+            # Front face normal: perpendicular to the panel, pointing outward.
+            # For a panel along cos_a/sin_a the outward normal is (-sin_a, cos_a, 0).
+            fn = (-sin_a, cos_a, 0.0)
+            bn = ( sin_a, -cos_a, 0.0)
 
-            # UVs for this quad
-            u_offset = 0.0 if angle_deg == 0.0 else 0.5
+            # --- Front face (CCW winding: p0→p1→p2→p3) ---
+            base_f = len(vertices)
+            vertices.extend([p0, p1, p2, p3])
+            faces.append((base_f, base_f + 1, base_f + 2, base_f + 3))
+            uvs.extend(quad_uvs)
+            normals.extend([fn, fn, fn, fn])
+
+            # --- Back face (CW winding: p3→p2→p1→p0, negated normal) ---
+            base_b = len(vertices)
+            vertices.extend([p3, p2, p1, p0])
+            faces.append((base_b, base_b + 1, base_b + 2, base_b + 3))
+            # UVs are mirrored horizontally on back face so the alpha mask
+            # aligns correctly when seen from the opposite side.
             uvs.extend([
-                (u_offset, 0.0),
-                (u_offset + 0.5, 0.0),
-                (u_offset + 0.5, 1.0),
-                (u_offset, 1.0),
+                (u1, 1.0),
+                (u1, 0.0),
+                (u0, 0.0),
+                (u0, 1.0),
             ])
+            normals.extend([bn, bn, bn, bn])
 
     elif impostor_type == "octahedral":
-        # Octahedral impostor: 8-sided prism approximation
+        # Octahedral impostor: N-sided prism with outward-pointing normals.
+        # Single-sided faces suffice here because the prism wraps all the way
+        # around (no face is ever seen from the inside by a ground-level camera).
         for i in range(num_views):
-            angle = 2.0 * math.pi * i / num_views
-            next_angle = 2.0 * math.pi * (i + 1) / num_views
+            angle_a = 2.0 * math.pi * i / num_views
+            angle_b = 2.0 * math.pi * (i + 1) / num_views
 
-            cos_a = math.cos(angle)
-            sin_a = math.sin(angle)
-            cos_b = math.cos(next_angle)
-            sin_b = math.sin(next_angle)
+            cos_a = math.cos(angle_a); sin_a = math.sin(angle_a)
+            cos_b = math.cos(angle_b); sin_b = math.sin(angle_b)
+
+            p0 = (half_w * cos_a, half_w * sin_a, 0.0)
+            p1 = (half_w * cos_b, half_w * sin_b, 0.0)
+            p2 = (half_w * cos_b, half_w * sin_b, tree_height)
+            p3 = (half_w * cos_a, half_w * sin_a, tree_height)
 
             base_idx = len(vertices)
-
-            # Quad face of the prism
-            vertices.append((half_w * cos_a, half_w * sin_a, 0.0))
-            vertices.append((half_w * cos_b, half_w * sin_b, 0.0))
-            vertices.append((half_w * cos_b, half_w * sin_b, tree_height))
-            vertices.append((half_w * cos_a, half_w * sin_a, tree_height))
-
+            vertices.extend([p0, p1, p2, p3])
             faces.append((base_idx, base_idx + 1, base_idx + 2, base_idx + 3))
 
-            # UV layout: each view gets a section of the atlas
+            # Outward face normal = midpoint direction on XY plane
+            mid_angle = (angle_a + angle_b) * 0.5
+            face_norm: tuple[float, float, float] = (
+                math.cos(mid_angle), math.sin(mid_angle), 0.0
+            )
+            normals.extend([face_norm, face_norm, face_norm, face_norm])
+
+            # UV layout: each view occupies a horizontal strip of the atlas
             u_start = i / num_views
             u_end = (i + 1) / num_views
             uvs.extend([
@@ -1071,6 +1255,7 @@ def generate_billboard_impostor(params: dict) -> MeshSpec:
         "vertices": vertices,
         "faces": faces,
         "uvs": uvs,
+        "normals": normals,
         "vertex_count": len(vertices),
         "face_count": len(faces),
         "impostor_type": impostor_type,
@@ -1078,10 +1263,20 @@ def generate_billboard_impostor(params: dict) -> MeshSpec:
         "atlas_resolution": resolution,
         "object_name": object_name,
         "tree_dimensions": {"width": tree_width, "height": tree_height},
+        # Signal to Unity importer: read texture alpha channel as cutout mask.
+        # Equivalent to SpeedTree's alpha_cutout_threshold material property.
+        "alpha_mask_channel": "alpha",
+        "material_hints": {
+            "double_sided": False,   # explicit back-face quads handle both sides
+            "alpha_cutout": True,
+            "cast_shadows": True,
+            "receive_shadows": False,  # impostors are LOD3+ — skip shadow receive
+        },
         "next_steps": [
-            f"Render {num_views} views of '{object_name}' to texture atlas",
-            "Assign atlas texture to impostor material with alpha cutout",
-            "Set up LOD group: full tree -> impostor at distance",
+            f"Render {num_views} views of '{object_name}' to RGBA texture atlas "
+            f"({resolution * (2 if impostor_type == 'cross' else num_views)}×{resolution})",
+            "Assign atlas texture to impostor material with alpha cutout threshold ~0.5",
+            "Set up LOD group: full tree -> billboard impostor at distance",
         ],
     }
 
@@ -1106,7 +1301,12 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
         format: str -- 'json' or 'binary' (default 'json').
 
     Returns:
-        Dict with instance buffer summary and export metadata.
+        Dict with instance buffer summary, export metadata, and a flat
+        ``instance_buffer`` array of shape (N, 9) laid out as
+        [tx, ty, tz, rx, ry, rz, sx, sy, sz] per instance — ready for
+        Unity's ``Graphics.DrawMeshInstanced`` or a ComputeBuffer upload.
+        When numpy is available the buffer is a real ndarray; otherwise a
+        plain Python list of lists is returned under the same key.
     """
     instances = params.get("instances", [])
     output_path = params.get("output_path", "vegetation_instances.json")
@@ -1117,10 +1317,23 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
             "status": "empty",
             "instance_count": 0,
             "output_path": output_path,
+            "instance_buffer": [],
         }
 
     # Group instances by mesh name for batched rendering
     mesh_groups: dict[str, list[dict[str, Any]]] = {}
+
+    # Pre-allocate row storage for the flat transform buffer
+    tx_list: List[float] = []
+    ty_list: List[float] = []
+    tz_list: List[float] = []
+    rx_list: List[float] = []
+    ry_list: List[float] = []
+    rz_list: List[float] = []
+    sx_list: List[float] = []
+    sy_list: List[float] = []
+    sz_list: List[float] = []
+
     for inst in instances:
         mesh_name = inst.get("mesh_name", "unknown")
         if mesh_name not in mesh_groups:
@@ -1133,23 +1346,41 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
             scale = [scale, scale, scale]
         lod = inst.get("lod_level", 0)
 
+        px, py, pz = float(pos[0]), float(pos[1]), float(pos[2])
+        rxa, rya, rza = float(rot[0]), float(rot[1]), float(rot[2])
+        sxa, sya, sza = float(scale[0]), float(scale[1]), float(scale[2])
+
         mesh_groups[mesh_name].append({
-            "position": [float(pos[0]), float(pos[1]), float(pos[2])],
-            "rotation": [float(rot[0]), float(rot[1]), float(rot[2])],
-            "scale": [float(scale[0]), float(scale[1]), float(scale[2])],
+            "position": [px, py, pz],
+            "rotation": [rxa, rya, rza],
+            "scale": [sxa, sya, sza],
             "lod_level": int(lod),
         })
 
-    # Compute bounds for culling
-    all_positions = [
-        inst.get("position", [0, 0, 0]) for inst in instances
-    ]
-    min_x = min(p[0] for p in all_positions)
-    max_x = max(p[0] for p in all_positions)
-    min_y = min(p[1] for p in all_positions)
-    max_y = max(p[1] for p in all_positions)
-    min_z = min(p[2] for p in all_positions)
-    max_z = max(p[2] for p in all_positions)
+        tx_list.append(px);  ty_list.append(py);  tz_list.append(pz)
+        rx_list.append(rxa); ry_list.append(rya); rz_list.append(rza)
+        sx_list.append(sxa); sy_list.append(sya); sz_list.append(sza)
+
+    # Build flat [N, 9] transform buffer efficiently via numpy when available,
+    # falling back to a plain list-of-lists so the function works without numpy.
+    if _HAS_NUMPY:
+        instance_buffer = _np.column_stack([
+            tx_list, ty_list, tz_list,
+            rx_list, ry_list, rz_list,
+            sx_list, sy_list, sz_list,
+        ]).tolist()  # return as nested list for JSON-serializability
+    else:
+        instance_buffer = [
+            [tx_list[i], ty_list[i], tz_list[i],
+             rx_list[i], ry_list[i], rz_list[i],
+             sx_list[i], sy_list[i], sz_list[i]]
+            for i in range(len(instances))
+        ]
+
+    # Compute bounds for frustum culling
+    min_x = min(tx_list); max_x = max(tx_list)
+    min_y = min(ty_list); max_y = max(ty_list)
+    min_z = min(tz_list); max_z = max(tz_list)
 
     # LOD distribution
     lod_counts: dict[int, int] = {}
@@ -1157,8 +1388,13 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
         lod = inst.get("lod_level", 0)
         lod_counts[lod] = lod_counts.get(lod, 0) + 1
 
+    bounds = {
+        "min": [min_x, min_y, min_z],
+        "max": [max_x, max_y, max_z],
+    }
+
     export_data = {
-        "version": "1.0",
+        "version": "1.1",
         "instance_count": len(instances),
         "mesh_groups": {
             name: {
@@ -1167,11 +1403,10 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
             }
             for name, group in mesh_groups.items()
         },
-        "bounds": {
-            "min": [min_x, min_y, min_z],
-            "max": [max_x, max_y, max_z],
-        },
+        "bounds": bounds,
         "lod_distribution": lod_counts,
+        # Flat buffer: [tx,ty,tz, rx,ry,rz, sx,sy,sz] × N_instances
+        "instance_buffer": instance_buffer,
     }
 
     return {
@@ -1179,9 +1414,11 @@ def prepare_gpu_instancing_export(params: dict) -> dict:
         "instance_count": len(instances),
         "mesh_group_count": len(mesh_groups),
         "mesh_groups": {name: len(group) for name, group in mesh_groups.items()},
-        "bounds": export_data["bounds"],
+        "bounds": bounds,
         "lod_distribution": lod_counts,
         "output_path": output_path,
         "format": export_format,
+        # Flat [N,9] transform array for GPU upload
+        "instance_buffer": instance_buffer,
         "export_data": export_data,
     }

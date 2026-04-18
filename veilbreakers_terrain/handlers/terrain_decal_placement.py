@@ -33,13 +33,22 @@ class DecalKind(str, Enum):
 def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarray:
     """Return (H, W) float32 density in [0, 1] for the given decal kind.
 
-    Each kind uses a different combination of mask signals:
-      - MOSS_PATCH: wetness + curvature concave + low slope
-      - WATER_STAIN: wetness + basin
-      - CRACK: erosion_amount + convex curvature
+    Each kind uses a different combination of mask signals. All kinds apply
+    three shared modulations before final clamp:
+      1. Slope modulation — density falls off on steep terrain (> 45 deg = 0)
+         so decals don't appear floating on near-vertical cliff faces.
+      2. Water proximity mud — near water (wetness > 0.4) adds a mud-decal
+         contribution to FOOTPRINT_TRAIL and WATER_STAIN.
+      3. Erosion_amount modulation — high erosion boosts CRACK and suppresses
+         MOSS_PATCH (eroded surfaces are too raw for moss colonisation).
+
+    Per-kind heuristics:
+      - MOSS_PATCH: wetness + curvature concave + low slope, suppressed by erosion
+      - WATER_STAIN: wetness + basin + water-proximity boost
+      - CRACK: erosion_amount * convex curvature, slope-capped at 80 deg
       - SCORCH: high ridge, high altitude, dry (inverse wetness)
       - BLOOD_STAIN: gameplay_zone == COMBAT + low slope
-      - FOOTPRINT_TRAIL: traversability near water
+      - FOOTPRINT_TRAIL: traversability near water + mud near-water boost
     """
     if stack.height is None:
         raise ValueError("compute_decal_density requires stack.height")
@@ -52,6 +61,10 @@ def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarra
         gy, gx = np.gradient(h, float(stack.cell_size))
         slope = np.arctan(np.sqrt(gx * gx + gy * gy))
     slope_np = np.asarray(slope, dtype=np.float64)
+    slope_deg = np.degrees(slope_np)
+
+    # Shared: slope modulation — decals thin out above 25 deg, gone at 45 deg
+    slope_mod = np.clip(1.0 - (slope_deg - 25.0) / 20.0, 0.0, 1.0)
 
     wetness = (
         np.asarray(stack.wetness, dtype=np.float64)
@@ -68,6 +81,10 @@ def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarra
         if stack.erosion_amount is not None
         else np.zeros(shape, dtype=np.float64)
     )
+    # Normalise erosion to [0, 1]
+    erosion_max = float(erosion.max())
+    erosion_norm = erosion / max(erosion_max, 1e-9)
+
     basin = (
         np.asarray(stack.basin, dtype=np.float64)
         if stack.basin is not None
@@ -81,6 +98,9 @@ def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarra
     gameplay = stack.gameplay_zone
     trav = stack.traversability
 
+    # Water proximity: cells with wetness > 0.4 gain a mud contribution
+    water_proximity = np.clip((wetness - 0.4) / 0.6, 0.0, 1.0)
+
     def norm(a: np.ndarray) -> np.ndarray:
         lo, hi = float(a.min()), float(a.max())
         if hi - lo < 1e-9:
@@ -88,30 +108,45 @@ def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarra
         return (a - lo) / (hi - lo)
 
     if kind == DecalKind.MOSS_PATCH:
-        density = wetness * np.clip(-curv, 0.0, 1.0) * (1.0 - np.clip(slope_np / np.radians(60.0), 0.0, 1.0))
+        # Suppressed by high erosion — eroded rock is too raw for moss
+        erosion_suppress = 1.0 - np.clip(erosion_norm * 2.0, 0.0, 1.0)
+        density = (
+            wetness
+            * np.clip(-curv, 0.0, 1.0)
+            * (1.0 - np.clip(slope_deg / 60.0, 0.0, 1.0))
+            * erosion_suppress
+        )
     elif kind == DecalKind.WATER_STAIN:
-        density = 0.5 * wetness + 0.5 * (basin > 0).astype(np.float64)
+        # Water proximity boosts water-stain density (mud at water edges)
+        density = (
+            0.4 * wetness
+            + 0.3 * (basin > 0).astype(np.float64)
+            + 0.3 * water_proximity
+        ) * slope_mod
     elif kind == DecalKind.CRACK:
-        density = norm(erosion) * np.clip(curv, 0.0, 1.0)
+        # Erosion_amount drives cracks; slope capped at 80 deg (vertical faces crack too)
+        steep_ok = np.clip(1.0 - np.maximum(0.0, slope_deg - 80.0) / 10.0, 0.0, 1.0)
+        density = norm(erosion) * np.clip(curv, 0.0, 1.0) * steep_ok
     elif kind == DecalKind.SCORCH:
         hmin = float(stack.height_min_m) if stack.height_min_m is not None else float(h.min())
         hmax = float(stack.height_max_m) if stack.height_max_m is not None else float(h.max())
         h_norm = (h - hmin) / max(hmax - hmin, 1e-6)
-        density = np.clip(ridge, 0.0, 1.0) * h_norm * (1.0 - wetness)
+        density = np.clip(ridge, 0.0, 1.0) * h_norm * (1.0 - wetness) * slope_mod
     elif kind == DecalKind.BLOOD_STAIN:
         combat_mask = np.zeros(shape, dtype=np.float64)
         if gameplay is not None:
             # COMBAT = 1 from GameplayZoneType
             combat_mask = (np.asarray(gameplay) == 1).astype(np.float64)
-        density = combat_mask * (1.0 - np.clip(slope_np / np.radians(30.0), 0.0, 1.0))
+        density = combat_mask * (1.0 - np.clip(slope_deg / 30.0, 0.0, 1.0))
     elif kind == DecalKind.FOOTPRINT_TRAIL:
         trav_np = (
             np.asarray(trav, dtype=np.float64)
             if trav is not None
             else np.ones(shape, dtype=np.float64) * 0.5
         )
-        water_near = wetness > 0.5
-        density = trav_np * water_near.astype(np.float64)
+        # Mud near water boosts footprint density
+        mud_boost = water_proximity * 0.4
+        density = (trav_np * (wetness > 0.5).astype(np.float64) + mud_boost) * slope_mod
     else:
         density = np.zeros(shape, dtype=np.float64)
 
@@ -151,6 +186,7 @@ def pass_decals(
         consumed_channels=("height",),
         produced_channels=("decal_density",),
         metrics=metrics,
+        issues=[],
     )
 
 

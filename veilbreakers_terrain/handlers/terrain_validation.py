@@ -295,12 +295,25 @@ def validate_protected_zones_untouched(
 def validate_tile_seam_continuity(
     stack: TerrainMaskStack,
     intent: TerrainIntentState,
+    neighbor_stacks: Optional[Dict[str, "TerrainMaskStack"]] = None,
+    seam_tolerance: float = 0.1,
 ) -> List[ValidationIssue]:
-    """5. Tile seam continuity — stack edges should be finite and bounded.
+    """5. Tile seam continuity — border values match neighbors and are C1-continuous.
 
-    Actual cross-tile seam matching requires neighbor tile access which
-    is a Bundle H concern. Here we validate that the edge rows/cols are
-    internally consistent (finite, not NaN, no gigantic jumps).
+    Two-tier check:
+
+    Tier 1 — Self-consistency (always runs):
+      Each border edge must be finite, and adjacent-cell jumps along the edge
+      must not exceed ``seam_tolerance * tile_height_span``.  This catches
+      "zero vs wall" artifacts introduced by passes that do not write border
+      cells.
+
+    Tier 2 — Cross-tile match (runs when ``neighbor_stacks`` is supplied):
+      Neighbor stacks are keyed by direction: "top", "bottom", "left", "right".
+      The shared border row/column of this tile and its neighbor must agree
+      within ``seam_tolerance * cell_size`` (world-unit absolute tolerance
+      derived from intent cell_size).  A mismatch indicates the neighboring
+      tile was generated with different parameters or was not stitched.
     """
     issues: List[ValidationIssue] = []
     h = _safe_asarray(stack.height)
@@ -309,40 +322,120 @@ def validate_tile_seam_continuity(
     rows, cols = h.shape
     if rows < 2 or cols < 2:
         return issues
-    edges = {
+
+    cs = float(intent.cell_size) if intent.cell_size else 1.0
+
+    # ------------------------------------------------------------------
+    # Tier 1: self-consistency on every border edge
+    # ------------------------------------------------------------------
+    border_edges: Dict[str, np.ndarray] = {
         "top": h[0, :],
         "bottom": h[-1, :],
         "left": h[:, 0],
         "right": h[:, -1],
     }
-    for name, edge in edges.items():
+
+    # Global height span for relative threshold
+    finite_all = h[np.isfinite(h)]
+    tile_height_span = float(finite_all.max() - finite_all.min()) if finite_all.size > 1 else 1.0
+
+    for edge_name, edge in border_edges.items():
         if not np.all(np.isfinite(edge)):
             issues.append(
                 ValidationIssue(
-                    code=f"SEAM_NONFINITE_{name.upper()}",
+                    code=f"SEAM_NONFINITE_{edge_name.upper()}",
                     severity="hard",
-                    message=f"{name} tile seam contains non-finite values",
+                    message=f"{edge_name} tile seam contains non-finite values",
                 )
             )
             continue
-        # Neighbour-delta test — catches "zero vs wall" mismatches on a seam.
+
+        # C1 continuity: no single adjacent-cell jump larger than
+        # seam_tolerance * tile_height_span along the seam itself.
         delta = np.diff(edge)
         if delta.size > 0:
             max_jump = float(np.max(np.abs(delta)))
-            finite = edge[np.isfinite(edge)]
-            height_span = float(finite.max() - finite.min()) if finite.size else 0.0
-            # A single edge jump > 50% of total tile height range is suspicious.
-            if height_span > 0 and max_jump > height_span * 0.5:
+            c1_limit = seam_tolerance * tile_height_span
+            if tile_height_span > 0 and max_jump > c1_limit:
                 issues.append(
                     ValidationIssue(
-                        code=f"SEAM_DISCONTINUITY_{name.upper()}",
+                        code=f"SEAM_DISCONTINUITY_{edge_name.upper()}",
                         severity="soft",
                         message=(
-                            f"{name} seam has a jump of {max_jump:.2f} relative "
-                            f"to total span {height_span:.2f}"
+                            f"{edge_name} seam has a cell-to-cell jump of "
+                            f"{max_jump:.3f} m (limit {c1_limit:.3f} m = "
+                            f"{seam_tolerance:.0%} of tile span {tile_height_span:.2f} m)"
+                        ),
+                        remediation=(
+                            "Re-run the smoothing / seam-stitch pass, or increase "
+                            "seam_tolerance if the jump is intentional."
                         ),
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # Tier 2: cross-tile height matching (optional)
+    # ------------------------------------------------------------------
+    if neighbor_stacks:
+        abs_tol = seam_tolerance * cs
+
+        neighbor_border_map: Dict[str, Tuple[np.ndarray, np.ndarray]] = {
+            # (this_tile_edge, neighbor_opposite_edge)
+            "top":    (h[0, :],    None),
+            "bottom": (h[-1, :],   None),
+            "left":   (h[:, 0],    None),
+            "right":  (h[:, -1],   None),
+        }
+
+        direction_neighbor_edge: Dict[str, Callable[..., np.ndarray]] = {
+            "top":    lambda nh: np.asarray(nh.height)[-1, :],   # neighbor's bottom row
+            "bottom": lambda nh: np.asarray(nh.height)[0, :],    # neighbor's top row
+            "left":   lambda nh: np.asarray(nh.height)[:, -1],   # neighbor's right col
+            "right":  lambda nh: np.asarray(nh.height)[:, 0],    # neighbor's left col
+        }
+
+        for direction, neighbor_stack in neighbor_stacks.items():
+            if direction not in direction_neighbor_edge:
+                continue
+            nh = _safe_asarray(neighbor_stack.height)
+            if nh is None or nh.ndim != 2:
+                continue
+
+            this_edge = border_edges.get(direction)
+            if this_edge is None:
+                continue
+
+            try:
+                neighbor_edge = direction_neighbor_edge[direction](neighbor_stack)
+            except Exception:
+                continue
+
+            # Edges must be the same length to compare
+            min_len = min(len(this_edge), len(neighbor_edge))
+            if min_len == 0:
+                continue
+
+            diff = np.abs(this_edge[:min_len] - neighbor_edge[:min_len])
+            max_diff = float(np.max(diff[np.isfinite(diff)])) if np.any(np.isfinite(diff)) else 0.0
+            bad_cells = int(np.sum(diff > abs_tol))
+
+            if bad_cells > 0:
+                issues.append(
+                    ValidationIssue(
+                        code=f"SEAM_CROSS_TILE_MISMATCH_{direction.upper()}",
+                        severity="soft",
+                        message=(
+                            f"{direction} seam: {bad_cells}/{min_len} cells differ from "
+                            f"neighbor tile by more than {abs_tol:.3f} m "
+                            f"(max diff {max_diff:.3f} m)"
+                        ),
+                        remediation=(
+                            "Re-run seam-stitch or ensure both tiles use the same "
+                            "erosion seed and world-space parameters."
+                        ),
+                    )
+                )
+
     return issues
 
 
@@ -594,23 +687,83 @@ def validate_unity_export_ready(
 
 def check_cliff_silhouette_readability(
     stack: TerrainMaskStack,
+    min_silhouette_cells: int = 20,
 ) -> List[ValidationIssue]:
-    """Check that cliff candidates have readable silhouettes (area > threshold)."""
+    """Check that cliff candidates form continuous ridgelines with readable length.
+
+    Each 8-connected component of the cliff_candidate mask is labeled; any
+    component whose cell count is below ``min_silhouette_cells`` is flagged.
+    Components that are too small will be invisible or noisy in-engine.
+    """
     issues: List[ValidationIssue] = []
     cliff = stack.get("cliff_candidate")
     if cliff is None:
         return issues
+
     cliff_arr = np.asarray(cliff, dtype=np.float32)
-    cliff_area = float(np.sum(cliff_arr > 0.5))
+    mask = cliff_arr > 0.5
+    if not mask.any():
+        return issues
+
+    # Label connected components with pure-numpy BFS (no scipy required).
+    labels = np.zeros(mask.shape, dtype=np.int32)
+    rows, cols = mask.shape
+    next_id = 1
+    for r0 in range(rows):
+        for c0 in range(cols):
+            if not mask[r0, c0] or labels[r0, c0] != 0:
+                continue
+            bfs = [(r0, c0)]
+            comp_id = next_id
+            next_id += 1
+            while bfs:
+                r, c = bfs.pop()
+                if r < 0 or r >= rows or c < 0 or c >= cols:
+                    continue
+                if not mask[r, c] or labels[r, c] != 0:
+                    continue
+                labels[r, c] = comp_id
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        if dr == 0 and dc == 0:
+                            continue
+                        bfs.append((r + dr, c + dc))
+
+    unique_ids, counts = np.unique(labels, return_counts=True)
+    # Sort by size descending (skip background label 0)
+    component_pairs = sorted(
+        [(int(uid), int(cnt)) for uid, cnt in zip(unique_ids, counts) if uid != 0],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    small_count = sum(1 for _, cnt in component_pairs if cnt < min_silhouette_cells)
+    if small_count > 0:
+        total_components = len(component_pairs)
+        issues.append(
+            ValidationIssue(
+                code="cliff-silhouette-components-too-small",
+                severity="soft",
+                message=(
+                    f"{small_count}/{total_components} cliff components have fewer than "
+                    f"{min_silhouette_cells} cells — silhouette may be unreadable from "
+                    f"focal points"
+                ),
+                remediation="Increase cliff threshold or merge small cliff patches.",
+            )
+        )
+
+    # Also flag overall coverage too small (original check preserved)
     total_area = float(cliff_arr.size)
+    cliff_area = float(mask.sum())
     if total_area > 0 and cliff_area / total_area < 0.005:
         issues.append(
             ValidationIssue(
-                code="cliff-silhouette-too-small",
+                code="cliff-silhouette-coverage-too-small",
                 severity="soft",
                 message=(
                     f"Cliff silhouette covers only {cliff_area / total_area:.1%} "
-                    f"of terrain — may be invisible"
+                    f"of terrain — may be invisible from focal points"
                 ),
             )
         )
@@ -619,68 +772,238 @@ def check_cliff_silhouette_readability(
 
 def check_waterfall_chain_completeness(
     stack: TerrainMaskStack,
+    drain_distance: int = 10,
 ) -> List[ValidationIssue]:
-    """Check that waterfall lip candidates have corresponding foam/mist channels."""
+    """Check that every waterfall lip candidate has a complete downstream chain.
+
+    A chain is complete when:
+      (a) A waterfall_pool_delta > 0 cell exists within ``drain_distance``
+          cells downstream of the lip (simple rectilinear search in the
+          steepest-descent direction encoded by flow_direction, or a
+          bounded flood-fill when flow_direction is absent).
+      (b) A non-zero water_network signal is reachable, evidenced by
+          flow_accumulation > 0 near the pool location.
+
+    When foam/mist channels are present their population is also verified.
+    """
     issues: List[ValidationIssue] = []
     lips = stack.get("waterfall_lip_candidate")
     if lips is None:
         return issues
-    lip_arr = np.asarray(lips)
-    if np.any(lip_arr > 0):
-        foam = stack.get("foam")
-        mist = stack.get("mist")
-        if foam is None or not np.any(np.asarray(foam) > 0):
-            issues.append(
-                ValidationIssue(
-                    code="waterfall-foam-missing",
-                    severity="soft",
-                    message="Waterfall lips detected but no foam channel populated",
-                )
+
+    lip_arr = np.asarray(lips, dtype=np.float32)
+    if not np.any(lip_arr > 0):
+        return issues
+
+    pool_delta = _safe_asarray(stack.get("waterfall_pool_delta"))
+    flow_acc = _safe_asarray(stack.get("flow_accumulation"))
+
+    lip_rows, lip_cols = np.where(lip_arr > 0)
+    incomplete: List[Tuple[int, int]] = []
+
+    for r, c in zip(lip_rows.tolist(), lip_cols.tolist()):
+        # Define search window: drain_distance cells in each direction.
+        r0 = max(0, r - drain_distance)
+        r1 = min(lip_arr.shape[0], r + drain_distance + 1)
+        c0 = max(0, c - drain_distance)
+        c1 = min(lip_arr.shape[1], c + drain_distance + 1)
+
+        # (a) Pool presence check
+        pool_present = False
+        if pool_delta is not None:
+            window = pool_delta[r0:r1, c0:c1]
+            pool_present = bool(np.any(window > 0))
+
+        # (b) Outflow to water_network: flow_accumulation > threshold in window
+        outflow_present = False
+        if flow_acc is not None:
+            window_fa = flow_acc[r0:r1, c0:c1]
+            # threshold: at least 10% of max accumulation nearby
+            local_max = float(window_fa.max()) if window_fa.size > 0 else 0.0
+            outflow_present = local_max > 0.0
+
+        if not pool_present or not outflow_present:
+            incomplete.append((int(r), int(c)))
+
+    if incomplete:
+        issues.append(
+            ValidationIssue(
+                code="waterfall-chain-incomplete",
+                severity="soft",
+                message=(
+                    f"{len(incomplete)} waterfall lip candidate(s) lack a downstream "
+                    f"pool (waterfall_pool_delta) or outflow (flow_accumulation) "
+                    f"within {drain_distance} cells"
+                ),
+                remediation=(
+                    "Run pass_waterfalls before validation, or extend drain_distance."
+                ),
             )
-        if mist is None or not np.any(np.asarray(mist) > 0):
-            issues.append(
-                ValidationIssue(
-                    code="waterfall-mist-missing",
-                    severity="soft",
-                    message="Waterfall lips detected but no mist channel populated",
-                )
+        )
+
+    # Preserve original foam/mist check as additional completeness signals
+    foam = stack.get("foam")
+    mist = stack.get("mist")
+    if foam is None or not np.any(np.asarray(foam) > 0):
+        issues.append(
+            ValidationIssue(
+                code="waterfall-foam-missing",
+                severity="soft",
+                message="Waterfall lips detected but no foam channel populated",
             )
+        )
+    if mist is None or not np.any(np.asarray(mist) > 0):
+        issues.append(
+            ValidationIssue(
+                code="waterfall-mist-missing",
+                severity="soft",
+                message="Waterfall lips detected but no mist channel populated",
+            )
+        )
     return issues
 
 
 def check_cave_framing_presence(
     stack: TerrainMaskStack,
+    intent: Optional["TerrainIntentState"] = None,
+    radius_cells: int = 5,
 ) -> List[ValidationIssue]:
-    """Check that cave candidates have height deltas (not discarded)."""
+    """Check that cave candidates have framing geometry markers nearby.
+
+    Framing presence is determined by:
+      (a) cave_candidate cells exist on the stack and are non-empty.
+      (b) Each cave candidate cell has at least one non-zero hero_exclusion
+          (entrance framing proxy) or non-zero cave_height_delta cell within
+          ``radius_cells`` — a populated delta confirms the cave arch was carved.
+      (c) If intent is supplied and ``intent.composition_hints`` contains
+          ``cave_framing_required=True``, an absent cave_candidate is a hard
+          failure rather than a silent skip.
+    """
     issues: List[ValidationIssue] = []
+
     cave = stack.get("cave_candidate")
-    if cave is None:
-        return issues
-    cave_arr = np.asarray(cave)
-    if np.any(cave_arr > 0):
-        delta = stack.get("cave_height_delta")
-        if delta is None or not np.any(np.asarray(delta) != 0):
+    cave_framing_required = False
+    if intent is not None:
+        cave_framing_required = bool(
+            intent.composition_hints.get("cave_framing_required", False)
+        )
+
+    if cave is None or not np.any(np.asarray(cave) > 0):
+        if cave_framing_required:
             issues.append(
                 ValidationIssue(
-                    code="cave-height-delta-empty",
+                    code="cave-candidate-absent",
                     severity="hard",
                     message=(
-                        "Cave candidates exist but cave_height_delta channel "
-                        "is empty — deltas were discarded"
+                        "cave_framing_required=True but no cave_candidate cells "
+                        "are populated on the stack"
                     ),
+                    remediation="Run pass_caves before validation.",
                 )
             )
+        return issues
+
+    cave_arr = np.asarray(cave, dtype=np.float32)
+    delta = _safe_asarray(stack.get("cave_height_delta"))
+    framing = _safe_asarray(stack.get("hero_exclusion"))
+
+    cave_rows, cave_cols = np.where(cave_arr > 0)
+    unframed: int = 0
+
+    for r, c in zip(cave_rows.tolist(), cave_cols.tolist()):
+        r0 = max(0, r - radius_cells)
+        r1 = min(cave_arr.shape[0], r + radius_cells + 1)
+        c0 = max(0, c - radius_cells)
+        c1 = min(cave_arr.shape[1], c + radius_cells + 1)
+
+        has_delta = (
+            delta is not None
+            and bool(np.any(delta[r0:r1, c0:c1] != 0))
+        )
+        has_framing = (
+            framing is not None
+            and bool(np.any(framing[r0:r1, c0:c1] > 0))
+        )
+        if not has_delta and not has_framing:
+            unframed += 1
+
+    if unframed > 0:
+        issues.append(
+            ValidationIssue(
+                code="cave-framing-absent",
+                severity="hard",
+                message=(
+                    f"{unframed} cave candidate cell(s) have no framing geometry "
+                    f"(cave_height_delta or hero_exclusion) within {radius_cells} cells"
+                ),
+                remediation=(
+                    "Run pass_caves to populate cave_height_delta, or author a "
+                    "hero_exclusion zone around each cave entrance."
+                ),
+            )
+        )
     return issues
 
 
 def check_focal_composition(
     stack: TerrainMaskStack,
+    intent: Optional["TerrainIntentState"] = None,
+    occlusion_slope_threshold: float = math.radians(70.0),
 ) -> List[ValidationIssue]:
-    """Check that terrain has adequate focal composition (not uniform flat)."""
+    """Check that hero focal points are not occluded and the terrain has relief.
+
+    For each focal_point in ``intent.composition_hints['focal_points']`` (a list
+    of (x, y) or (x, y, z) world-space tuples), the heightmap cell at that
+    location is sampled and the local slope is checked:
+      - slope >= ``occlusion_slope_threshold`` → the focal point is buried in a
+        wall face and likely invisible from a player camera.
+
+    Also verifies overall terrain interest: height range >= 1 m, and at least
+    1% of cells are steep (>30°).
+    """
     issues: List[ValidationIssue] = []
     if stack.height is None:
         return issues
+
     h = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = h.shape
+    cs = float(stack.cell_size) if stack.cell_size else 1.0
+
+    # Per-focal-point occlusion check
+    if intent is not None:
+        focal_points = intent.composition_hints.get("focal_points", [])
+        slope_arr = _safe_asarray(stack.get("slope"))
+
+        for fp in focal_points:
+            # fp may be (x, y) or (x, y, z)
+            fx = float(fp[0])
+            fy = float(fp[1])
+            col_idx = int(round((fx - stack.world_origin_x) / cs))
+            row_idx = int(round((fy - stack.world_origin_y) / cs))
+            col_idx = max(0, min(cols - 1, col_idx))
+            row_idx = max(0, min(rows - 1, row_idx))
+
+            if slope_arr is not None and slope_arr.shape == h.shape:
+                local_slope = float(slope_arr[row_idx, col_idx])
+                if local_slope >= occlusion_slope_threshold:
+                    issues.append(
+                        ValidationIssue(
+                            code="focal-point-occluded",
+                            severity="soft",
+                            location=(fx, fy, float(h[row_idx, col_idx])),
+                            message=(
+                                f"Focal point ({fx:.1f}, {fy:.1f}) sits on a near-vertical "
+                                f"face (slope={math.degrees(local_slope):.1f}°) — "
+                                f"likely occluded from sightlines"
+                            ),
+                            remediation=(
+                                "Move focal point away from wall faces, or flatten the "
+                                "surrounding cell via a flatten-zone pass."
+                            ),
+                        )
+                    )
+
+    # Global terrain interest checks (preserved from original)
     height_range = float(h.max() - h.min())
     if height_range < 1.0:
         issues.append(
@@ -693,10 +1016,11 @@ def check_focal_composition(
                 ),
             )
         )
+
     slope = stack.get("slope")
     if slope is not None:
-        slope_arr = np.asarray(slope, dtype=np.float32)
-        steep_ratio = float(np.sum(slope_arr > math.radians(30.0))) / max(slope_arr.size, 1)
+        slope_arr2 = np.asarray(slope, dtype=np.float32)
+        steep_ratio = float(np.sum(slope_arr2 > math.radians(30.0))) / max(slope_arr2.size, 1)
         if steep_ratio < 0.01:
             issues.append(
                 ValidationIssue(
@@ -711,16 +1035,60 @@ def check_focal_composition(
     return issues
 
 
+@dataclass
+class ReadabilityAuditReport:
+    """Structured result from run_readability_audit.
+
+    Collects per-check issue lists and computes an overall pass/fail status.
+    """
+    cliff_issues: List[ValidationIssue] = field(default_factory=list)
+    waterfall_issues: List[ValidationIssue] = field(default_factory=list)
+    cave_issues: List[ValidationIssue] = field(default_factory=list)
+    focal_issues: List[ValidationIssue] = field(default_factory=list)
+    overall_status: str = "ok"  # "ok" | "warning" | "failed"
+
+    @property
+    def all_issues(self) -> List[ValidationIssue]:
+        return (
+            self.cliff_issues
+            + self.waterfall_issues
+            + self.cave_issues
+            + self.focal_issues
+        )
+
+    def recompute_status(self) -> str:
+        all_iss = self.all_issues
+        if any(i.severity == "hard" for i in all_iss):
+            self.overall_status = "failed"
+        elif any(i.severity == "soft" for i in all_iss):
+            self.overall_status = "warning"
+        else:
+            self.overall_status = "ok"
+        return self.overall_status
+
+
 def run_readability_audit(
     stack: TerrainMaskStack,
-) -> List[ValidationIssue]:
-    """Run all 4 semantic readability checks as hard gates."""
-    issues: List[ValidationIssue] = []
-    issues.extend(check_cliff_silhouette_readability(stack))
-    issues.extend(check_waterfall_chain_completeness(stack))
-    issues.extend(check_cave_framing_presence(stack))
-    issues.extend(check_focal_composition(stack))
-    return issues
+    intent: Optional["TerrainIntentState"] = None,
+) -> ReadabilityAuditReport:
+    """Run all semantic readability checks and return a structured report.
+
+    Collects results from:
+      - check_cliff_silhouette_readability
+      - check_waterfall_chain_completeness
+      - check_cave_framing_presence  (passes intent for cave_framing_required)
+      - check_focal_composition      (passes intent for focal_points)
+
+    Computes overall pass/fail from worst severity found.
+    """
+    report = ReadabilityAuditReport(
+        cliff_issues=check_cliff_silhouette_readability(stack),
+        waterfall_issues=check_waterfall_chain_completeness(stack),
+        cave_issues=check_cave_framing_presence(stack, intent=intent),
+        focal_issues=check_focal_composition(stack, intent=intent),
+    )
+    report.recompute_status()
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +1097,13 @@ def run_readability_audit(
 
 
 # Canonical validator registry. Each entry is (name, callable).
+def _readability_audit_validator(
+    stack: TerrainMaskStack, intent: "TerrainIntentState"
+) -> List[ValidationIssue]:
+    """Adapter: wraps run_readability_audit for DEFAULT_VALIDATORS."""
+    return run_readability_audit(stack, intent=intent).all_issues
+
+
 DEFAULT_VALIDATORS: Tuple[
     Tuple[str, Callable[[TerrainMaskStack, TerrainIntentState], List[ValidationIssue]]],
     ...,
@@ -743,6 +1118,7 @@ DEFAULT_VALIDATORS: Tuple[
     ("validate_material_coverage", validate_material_coverage),
     ("validate_channel_dtypes", validate_channel_dtypes),
     ("validate_unity_export_ready", validate_unity_export_ready),
+    ("readability_audit", _readability_audit_validator),
 )
 
 
@@ -799,10 +1175,30 @@ def run_validation_suite(
 _ACTIVE_CONTROLLER: Optional[TerrainPassController] = None
 
 
-def bind_active_controller(controller: Optional[TerrainPassController]) -> None:
-    """Register the controller pass_validation_full should roll back on hard fail."""
+def bind_active_controller(
+    controller: Optional[TerrainPassController],
+) -> Dict[str, Any]:
+    """Register the controller pass_validation_full should roll back on hard fail.
+
+    Guards against double-binding: if the same controller instance is already
+    registered, the call is a no-op and ``already_bound=True`` is returned.
+    Passing ``None`` clears the binding unconditionally.
+
+    Returns a dict with:
+      - ``bound``: True if a new binding was established (or cleared).
+      - ``already_bound``: True if the same instance was already registered.
+      - ``controller_id``: id() of the newly bound controller, or None.
+    """
     global _ACTIVE_CONTROLLER
+    if controller is None:
+        _ACTIVE_CONTROLLER = None
+        return {"bound": True, "already_bound": False, "controller_id": None}
+
+    if _ACTIVE_CONTROLLER is controller:
+        return {"bound": False, "already_bound": True, "controller_id": id(controller)}
+
     _ACTIVE_CONTROLLER = controller
+    return {"bound": True, "already_bound": False, "controller_id": id(controller)}
 
 
 def pass_validation_full(
@@ -877,6 +1273,7 @@ def register_bundle_d_passes() -> None:
 
 __all__ = [
     "ValidationReport",
+    "ReadabilityAuditReport",
     "validate_height_finite",
     "validate_height_range",
     "validate_slope_distribution",

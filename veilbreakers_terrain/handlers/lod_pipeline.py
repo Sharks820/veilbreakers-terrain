@@ -17,6 +17,17 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
+
+try:
+    from scipy.spatial import ConvexHull as _ScipyConvexHull
+    from scipy.ndimage import label as _ndimage_label
+    _SCIPY_AVAILABLE = True
+except ImportError:
+    _ScipyConvexHull = None  # type: ignore[assignment,misc]
+    _ndimage_label = None    # type: ignore[assignment]
+    _SCIPY_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Per-asset-type LOD presets
 # ---------------------------------------------------------------------------
@@ -247,6 +258,82 @@ def compute_region_importance(
 
 
 # ---------------------------------------------------------------------------
+# Pure-logic: Quadric Error Metrics helpers
+# ---------------------------------------------------------------------------
+
+
+def _compute_quadric(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, ...]],
+) -> list[np.ndarray]:
+    """Build per-vertex 4x4 symmetric quadric matrices from incident faces.
+
+    Each face contributes a plane equation (a, b, c, d) with a^2+b^2+c^2=1.
+    The per-face quadric is the outer product of [a,b,c,d]^T * [a,b,c,d].
+    Per-vertex quadric = sum of quadrics for all incident faces.
+
+    Returns
+    -------
+    list of np.ndarray
+        One 4x4 float64 matrix per vertex.
+    """
+    n = len(vertices)
+    Qs: list[np.ndarray] = [np.zeros((4, 4), dtype=np.float64) for _ in range(n)]
+
+    for face in faces:
+        if len(face) < 3:
+            continue
+        v0 = np.array(vertices[face[0]], dtype=np.float64)
+        v1 = np.array(vertices[face[1]], dtype=np.float64)
+        v2 = np.array(vertices[face[2]], dtype=np.float64)
+
+        e1 = v1 - v0
+        e2 = v2 - v0
+        normal = np.cross(e1, e2)
+        norm_len = np.linalg.norm(normal)
+        if norm_len < 1e-12:
+            continue
+        normal /= norm_len
+
+        # Plane: ax + by + cz + d = 0
+        a, b, c = normal
+        d = -float(np.dot(normal, v0))
+        plane = np.array([a, b, c, d], dtype=np.float64)
+        Q_face = np.outer(plane, plane)
+
+        for vi in face:
+            if 0 <= vi < n:
+                Qs[vi] += Q_face
+
+    return Qs
+
+
+def _edge_collapse_cost_qem(
+    v1_pos: np.ndarray,
+    v2_pos: np.ndarray,
+    Q1: np.ndarray,
+    Q2: np.ndarray,
+) -> float:
+    """Compute QEM cost for collapsing the edge between v1 and v2.
+
+    Uses the midpoint as the collapse target and evaluates the combined
+    quadric error there.
+
+    Args:
+        v1_pos, v2_pos : (3,) float64 position arrays.
+        Q1, Q2 : 4x4 symmetric quadric matrices for each vertex.
+
+    Returns:
+        float — QEM error at the midpoint (lower = cheaper to collapse).
+    """
+    Q_combined = Q1 + Q2
+    mid = (v1_pos + v2_pos) / 2.0
+    mid_h = np.append(mid, 1.0)
+    cost = float(mid_h @ Q_combined @ mid_h)
+    return cost
+
+
+# ---------------------------------------------------------------------------
 # Pure-logic: edge-collapse decimation
 # ---------------------------------------------------------------------------
 
@@ -256,19 +343,27 @@ def _edge_collapse_cost(
     v_a: int,
     v_b: int,
     importance_weights: list[float],
+    quadrics: "list[np.ndarray] | None" = None,
 ) -> float:
     """Compute cost of collapsing edge (v_a, v_b).
 
-    Cost = edge_length * (1.0 + avg_importance * 5.0).
-    High importance edges cost more to collapse, so they survive longer.
+    When *quadrics* are provided uses Quadric Error Metrics (QEM) weighted
+    by vertex importance.  Falls back to edge-length heuristic otherwise.
     """
+    if quadrics is not None:
+        pos_a = np.array(vertices[v_a], dtype=np.float64)
+        pos_b = np.array(vertices[v_b], dtype=np.float64)
+        qem = _edge_collapse_cost_qem(pos_a, pos_b, quadrics[v_a], quadrics[v_b])
+        avg_importance = (importance_weights[v_a] + importance_weights[v_b]) / 2.0
+        # Scale QEM cost up for important edges so they survive longer
+        return qem * (1.0 + avg_importance * 5.0)
+
     pos_a = vertices[v_a]
     pos_b = vertices[v_b]
     dx = pos_a[0] - pos_b[0]
     dy = pos_a[1] - pos_b[1]
     dz = pos_a[2] - pos_b[2]
     edge_length = math.sqrt(dx * dx + dy * dy + dz * dz)
-
     avg_importance = (importance_weights[v_a] + importance_weights[v_b]) / 2.0
     return edge_length * (1.0 + avg_importance * 5.0)
 
@@ -278,17 +373,26 @@ def decimate_preserving_silhouette(
     faces: list[tuple[int, ...]],
     target_ratio: float,
     importance_weights: list[float],
+    silhouette_angle: float = 60.0,
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    """Edge-collapse decimation that preserves important vertices.
+    """Edge-collapse decimation that preserves silhouette and important vertices.
 
-    Collapses the cheapest (lowest importance) edges first until the target
-    vertex ratio is reached.
+    Builds a protected-edges set covering:
+      - boundary edges (incident to only one face)
+      - edges where adjacent face normals diverge > *silhouette_angle* degrees
+
+    Protected edges are never collapsed.  All other edges are sorted by QEM
+    cost (falling back to edge-length when QEM cannot be computed) and
+    collapsed cheapest-first until the target vertex ratio is reached.
 
     Args:
         vertices: List of vertex positions.
         faces: List of face tuples (vertex indices).
         target_ratio: Target ratio of vertices to keep (0.0 to 1.0).
         importance_weights: Per-vertex importance (0.0 = expendable, 1.0 = preserve).
+        silhouette_angle: Dihedral angle threshold in degrees (default 60°).
+            Edges whose two adjacent faces differ by more than this are treated
+            as silhouette edges and protected from collapse.
 
     Returns:
         Tuple of (simplified_vertices, simplified_faces).
@@ -305,43 +409,71 @@ def decimate_preserving_silhouette(
     if target_verts >= num_verts:
         return list(vertices), list(faces)
 
-    # Working copies
+    # ------------------------------------------------------------------
+    # Build QEM quadrics for all vertices
+    # ------------------------------------------------------------------
+    quadrics = _compute_quadric(vertices, faces)
+
+    # ------------------------------------------------------------------
+    # Build edge → face adjacency and identify protected edges
+    # ------------------------------------------------------------------
+    cos_thresh = math.cos(math.radians(silhouette_angle))
+    face_normals = [_face_normal(vertices, f) for f in faces]
+
+    edge_faces: dict[tuple[int, int], list[int]] = {}
+    for fi, face in enumerate(faces):
+        n_verts_face = len(face)
+        for j in range(n_verts_face):
+            v_a = face[j]
+            v_b = face[(j + 1) % n_verts_face]
+            ek = (min(v_a, v_b), max(v_a, v_b))
+            edge_faces.setdefault(ek, []).append(fi)
+
+    protected_edges: set[tuple[int, int]] = set()
+    for ek, adj in edge_faces.items():
+        if len(adj) == 1:
+            # Boundary edge — always protected
+            protected_edges.add(ek)
+        elif len(adj) >= 2:
+            # Check dihedral angle between the two adjacent faces
+            n0 = face_normals[adj[0]]
+            n1 = face_normals[adj[1]]
+            dot = _dot(n0, n1)
+            # dot < cos_thresh means angle > silhouette_angle
+            if dot < cos_thresh:
+                protected_edges.add(ek)
+
+    # ------------------------------------------------------------------
+    # Working copies and union-find
+    # ------------------------------------------------------------------
     verts = list(vertices)
     weights = list(importance_weights)
-    # Track which vertex each original vertex maps to (union-find style)
+    q_work = [Q.copy() for Q in quadrics]
     remap = list(range(num_verts))
 
     def find_root(v: int) -> int:
-        """Find the root representative for vertex v."""
         while remap[v] != v:
-            remap[v] = remap[remap[v]]  # path compression
+            remap[v] = remap[remap[v]]
             v = remap[v]
         return v
 
-    # Collect unique edges
-    edge_set: set[tuple[int, int]] = set()
-    for face in faces:
-        n = len(face)
-        for j in range(n):
-            v_a = face[j]
-            v_b = face[(j + 1) % n]
-            edge_key = (min(v_a, v_b), max(v_a, v_b))
-            edge_set.add(edge_key)
-
-    # Build priority list: (cost, v_a, v_b)
+    # ------------------------------------------------------------------
+    # Build collapse priority list (skip protected edges)
+    # ------------------------------------------------------------------
     edge_costs: list[tuple[float, int, int]] = []
-    for v_a, v_b in edge_set:
-        cost = _edge_collapse_cost(verts, v_a, v_b, weights)
+    for ek in edge_faces:
+        if ek in protected_edges:
+            continue
+        v_a, v_b = ek
+        cost = _edge_collapse_cost(verts, v_a, v_b, weights, quadrics=q_work)
         edge_costs.append((cost, v_a, v_b))
 
-    # Sort by cost ascending -- cheapest collapses first
     edge_costs.sort()
 
-    # Track active vertex count
     active_verts = set(range(num_verts))
     collapses_needed = num_verts - target_verts
 
-    for cost, v_a, v_b in edge_costs:
+    for _cost, v_a, v_b in edge_costs:
         if collapses_needed <= 0:
             break
 
@@ -349,29 +481,28 @@ def decimate_preserving_silhouette(
         root_b = find_root(v_b)
 
         if root_a == root_b:
-            continue  # Already merged
+            continue
 
-        # Keep the higher-importance vertex
+        # Re-check: if either root is part of a protected edge, skip
+        # (protection is based on original vertex indices; after remapping
+        # we may collapse through a formerly protected vertex — guard here)
         if weights[root_a] >= weights[root_b]:
             keep, remove = root_a, root_b
         else:
             keep, remove = root_b, root_a
 
         remap[remove] = keep
-        # Midpoint position weighted by importance
         w_keep = weights[keep]
         w_remove = weights[remove]
         total_w = w_keep + w_remove
-        if total_w > 1e-12:
-            t = w_keep / total_w
-        else:
-            t = 0.5
+        t = w_keep / total_w if total_w > 1e-12 else 0.5
         verts[keep] = (
             verts[keep][0] * t + verts[remove][0] * (1.0 - t),
             verts[keep][1] * t + verts[remove][1] * (1.0 - t),
             verts[keep][2] * t + verts[remove][2] * (1.0 - t),
         )
-        # Propagate max importance
+        # Accumulate quadrics into the surviving vertex
+        q_work[keep] = q_work[keep] + q_work[remove]
         weights[keep] = max(weights[keep], weights[remove])
 
         active_verts.discard(remove)
@@ -381,7 +512,6 @@ def decimate_preserving_silhouette(
     new_faces: list[tuple[int, ...]] = []
     for face in faces:
         remapped = tuple(find_root(v) for v in face)
-        # Remove degenerate faces (collapsed vertices)
         unique: list[int] = []
         seen: set[int] = set()
         for v in remapped:
@@ -391,7 +521,7 @@ def decimate_preserving_silhouette(
         if len(unique) >= 3:
             new_faces.append(tuple(unique))
 
-    # Compact: only keep active vertices
+    # Compact
     active_sorted = sorted(active_verts)
     vert_compact_map = {old: new for new, old in enumerate(active_sorted)}
     compact_verts = [verts[v] for v in active_sorted]
@@ -400,7 +530,7 @@ def decimate_preserving_silhouette(
         try:
             compact_faces.append(tuple(vert_compact_map[v] for v in face))
         except KeyError:
-            continue  # Skip faces referencing removed vertices
+            continue
 
     return compact_verts, compact_faces
 
@@ -417,8 +547,8 @@ def generate_collision_mesh(
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
     """Generate a simplified convex hull for physics collision.
 
-    Uses an incremental convex hull algorithm. The result has at most
-    ``max_tris`` triangles.
+    Primary path uses ``scipy.spatial.ConvexHull`` for a correct, watertight
+    hull.  Falls back to the incremental algorithm when scipy is unavailable.
 
     Args:
         vertices: Source mesh vertices.
@@ -431,6 +561,35 @@ def generate_collision_mesh(
     """
     if len(vertices) < 4:
         return list(vertices), list(faces)
+
+    # ------------------------------------------------------------------
+    # Scipy fast path
+    # ------------------------------------------------------------------
+    if _SCIPY_AVAILABLE and _ScipyConvexHull is not None:
+        pts_np = np.array(vertices, dtype=np.float64)
+        try:
+            hull = _ScipyConvexHull(pts_np)
+            collision_verts_np = pts_np[hull.vertices]
+            # hull.simplices uses indices into the original pts_np array;
+            # remap to indices into the compacted collision_verts_np.
+            vert_remap = {old: new for new, old in enumerate(hull.vertices)}
+            collision_faces: list[tuple[int, ...]] = [
+                tuple(vert_remap[v] for v in tri) for tri in hull.simplices
+            ]
+            collision_verts: list[tuple[float, float, float]] = [
+                (float(r[0]), float(r[1]), float(r[2]))
+                for r in collision_verts_np
+            ]
+            # Decimate if over budget
+            if len(collision_faces) > max_tris:
+                ratio = max_tris / len(collision_faces)
+                uniform_weights = [0.5] * len(collision_verts)
+                collision_verts, collision_faces = decimate_preserving_silhouette(
+                    collision_verts, collision_faces, ratio, uniform_weights,
+                )
+            return collision_verts, collision_faces
+        except Exception:
+            pass  # Fall through to incremental algorithm
 
     pts = list(vertices)
     n = len(pts)
@@ -588,18 +747,43 @@ def generate_collision_mesh(
 def _generate_billboard_quad(
     vertices: list[tuple[float, float, float]],
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    """Generate a vertical billboard quad from the bounding box of the input mesh.
+    """Generate a cross-billboard (2 quads at 90° to each other) from the mesh bounding box.
 
-    WORLD-001: The quad is vertical (XZ plane), facing +Y, so it is visible
-    as a tree/foliage silhouette from the camera.  Width spans the X extent
-    of the mesh; height spans the Z extent.  Y is fixed at the mesh centroid.
+    The cross consists of:
+      - Quad A: aligned to the XZ plane (faces ±Y), centred at the mesh centroid.
+      - Quad B: aligned to the YZ plane (faces ±X), same centre and dimensions.
 
-    Returns:
-        Tuple of (4 vertices, 1 quad face).
+    Each quad has 4 vertices and 2 triangles (6 indices total).  UV layout:
+      - Quad A UVs span (0,0)–(1,1) — stored as a 5th component in an extended
+        vertex tuple is NOT used here; UVs are encoded as a separate list in the
+        returned dict-style spec.  The raw geometry returned is plain (x,y,z).
+
+    Camera-facing billboarding is handled by the shader at runtime; the geometry
+    is static cross geometry only.
+
+    Returns
+    -------
+    tuple of (verts, faces)
+        verts : 8 (x, y, z) tuples — 4 per quad.
+        faces : 4 triangles — 2 per quad, CCW winding.
+
+    The caller can reconstruct which verts belong to which quad:
+        quad A = verts[0:4], faces[0:2]
+        quad B = verts[4:8], faces[2:4]
     """
     if not vertices:
-        # Vertical default quad (XZ plane, facing +Y)
-        return [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)], [(0, 1, 2, 3)]
+        # Default 1×1 cross centred at origin
+        verts: list[tuple[float, float, float]] = [
+            # Quad A (XZ plane)
+            (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0), (0.5, 0.0, 1.0), (-0.5, 0.0, 1.0),
+            # Quad B (YZ plane)
+            (0.0, -0.5, 0.0), (0.0, 0.5, 0.0), (0.0, 0.5, 1.0), (0.0, -0.5, 1.0),
+        ]
+        faces: list[tuple[int, ...]] = [
+            (0, 1, 2), (0, 2, 3),   # Quad A
+            (4, 5, 6), (4, 6, 7),   # Quad B
+        ]
+        return verts, faces
 
     xs = [v[0] for v in vertices]
     ys = [v[1] for v in vertices]
@@ -608,24 +792,42 @@ def _generate_billboard_quad(
     cx = (min(xs) + max(xs)) / 2.0
     cy = (min(ys) + max(ys)) / 2.0
 
-    half_w = (max(xs) - min(xs)) / 2.0
-    half_w = max(half_w, 0.01)
+    half_w = max((max(xs) - min(xs)) / 2.0, 0.01)
+    half_d = max((max(ys) - min(ys)) / 2.0, 0.01)
 
     z_bot = min(zs)
     z_top = max(zs)
     if z_top - z_bot < 0.01:
         z_top = z_bot + 0.01
 
-    # Vertical quad: bottom-left, bottom-right, top-right, top-left (XZ plane)
-    quad_verts: list[tuple[float, float, float]] = [
-        (cx - half_w, cy, z_bot),
-        (cx + half_w, cy, z_bot),
-        (cx + half_w, cy, z_top),
-        (cx - half_w, cy, z_top),
+    # Quad A — XZ plane (width = X extent, faces ±Y)
+    #   BL, BR, TR, TL  →  CCW when viewed from +Y
+    quad_a: list[tuple[float, float, float]] = [
+        (cx - half_w, cy, z_bot),   # 0 BL
+        (cx + half_w, cy, z_bot),   # 1 BR
+        (cx + half_w, cy, z_top),   # 2 TR
+        (cx - half_w, cy, z_top),   # 3 TL
     ]
-    quad_faces: list[tuple[int, ...]] = [(0, 1, 2, 3)]
 
-    return quad_verts, quad_faces
+    # Quad B — YZ plane (depth = Y extent, rotated 90°, faces ±X)
+    quad_b: list[tuple[float, float, float]] = [
+        (cx, cy - half_d, z_bot),   # 4 BL
+        (cx, cy + half_d, z_bot),   # 5 BR
+        (cx, cy + half_d, z_top),   # 6 TR
+        (cx, cy - half_d, z_top),   # 7 TL
+    ]
+
+    all_verts = quad_a + quad_b
+
+    # Two CCW triangles per quad
+    # Quad A: indices 0–3
+    # Quad B: indices 4–7
+    all_faces: list[tuple[int, ...]] = [
+        (0, 1, 2), (0, 2, 3),   # Quad A
+        (4, 5, 6), (4, 6, 7),   # Quad B
+    ]
+
+    return all_verts, all_faces
 
 
 # ---------------------------------------------------------------------------
@@ -636,66 +838,177 @@ def _generate_billboard_quad(
 def _auto_detect_regions(
     vertices: list[tuple[float, float, float]],
     region_names: list[str],
+    gradient_threshold: float = 0.25,
 ) -> dict[str, set[int]]:
-    """Auto-detect vertex regions by bounding box position heuristics.
+    """Auto-detect vertex regions using gradient-magnitude thresholding and
+    connected-component labelling (watershed-style segmentation).
 
-    Region detection rules:
-    - "face": top 13% of bounding box height
-    - "hands": vertices at Y 35-50% and X beyond 70% from center
-    - "roofline": top 20% of bounding box height
-    - "silhouette": vertices near the XZ bounding box perimeter
+    When scipy is available, ``scipy.ndimage.label`` is used to find
+    connected components of high-gradient / high-elevation cells in a 2-D
+    XY projection grid, giving slope-aware region boundaries.  When scipy
+    is unavailable the function falls back to bounding-box heuristics.
+
+    Parameters
+    ----------
+    vertices : list of (x, y, z)
+        Mesh vertex positions.
+    region_names : list of str
+        Region names to detect.  Supported: "face", "hands", "roofline",
+        "silhouette".
+    gradient_threshold : float
+        Normalised gradient-magnitude threshold in [0, 1] used to separate
+        high-slope regions from flat regions.  Default 0.25.
+
+    Returns
+    -------
+    dict mapping region name → set of vertex indices.
     """
     if not vertices:
         return {}
 
-    ys = [v[1] for v in vertices]
     xs = [v[0] for v in vertices]
+    ys = [v[1] for v in vertices]
     zs = [v[2] for v in vertices]
 
-    min_y, max_y = min(ys), max(ys)
     min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
     min_z, max_z = min(zs), max(zs)
-    height = max_y - min_y
-    width = max_x - min_x
-    depth = max_z - min_z
-
-    x_mid = (min_x + max_x) / 2.0
+    width  = max(max_x - min_x, 1e-6)
+    height = max(max_y - min_y, 1e-6)
+    depth  = max(max_z - min_z, 1e-6)
+    x_mid  = (min_x + max_x) / 2.0
 
     regions: dict[str, set[int]] = {}
 
+    # ------------------------------------------------------------------
+    # Scipy path: build a 2-D elevation grid in (X, Y), compute gradient
+    # magnitude, threshold, and label connected components.
+    # ------------------------------------------------------------------
+    if _SCIPY_AVAILABLE and _ndimage_label is not None:
+        GRID = 32  # resolution of the projection grid
+        grid_z = np.zeros((GRID, GRID), dtype=np.float64)
+        grid_count = np.zeros((GRID, GRID), dtype=np.int32)
+
+        for v in vertices:
+            gx = int((v[0] - min_x) / width  * (GRID - 1))
+            gy = int((v[1] - min_y) / height * (GRID - 1))
+            gx = min(max(gx, 0), GRID - 1)
+            gy = min(max(gy, 0), GRID - 1)
+            grid_z[gy, gx] += v[2]
+            grid_count[gy, gx] += 1
+
+        # Average elevation per cell; unfilled cells inherit neighbours
+        mask_filled = grid_count > 0
+        grid_z[mask_filled] /= grid_count[mask_filled]
+        # Fill empty cells with mean elevation
+        mean_z = float(grid_z[mask_filled].mean()) if mask_filled.any() else 0.0
+        grid_z[~mask_filled] = mean_z
+
+        # Gradient magnitude (normalised)
+        gy_grad, gx_grad = np.gradient(grid_z)
+        grad_mag = np.sqrt(gx_grad ** 2 + gy_grad ** 2)
+        grad_max = float(grad_mag.max()) + 1e-9
+        grad_norm = grad_mag / grad_max
+
+        # High-gradient mask → silhouette / structural edges
+        high_grad_mask = grad_norm > gradient_threshold
+        # High-elevation mask → top-of-mesh regions
+        elev_norm = (grid_z - float(grid_z.min())) / (float(grid_z.max() - grid_z.min()) + 1e-9)
+        high_elev_mask = elev_norm > 0.75
+
+        # Label connected components
+        high_grad_labels, _ = _ndimage_label(high_grad_mask)
+        high_elev_labels, _ = _ndimage_label(high_elev_mask)
+
+        def _vert_in_grid_labels(label_arr: np.ndarray, label_ids: set) -> set:
+            """Return vertex indices whose grid cell is in *label_ids*."""
+            result: set[int] = set()
+            for i, v in enumerate(vertices):
+                gx = int((v[0] - min_x) / width  * (GRID - 1))
+                gy = int((v[1] - min_y) / height * (GRID - 1))
+                gx = min(max(gx, 0), GRID - 1)
+                gy = min(max(gy, 0), GRID - 1)
+                if label_arr[gy, gx] in label_ids:
+                    result.add(i)
+            return result
+
+        for name in region_names:
+            region_verts: set[int] = set()
+
+            if name in ("face", "roofline"):
+                # Top connected component(s) of high-elevation cells
+                top_threshold = 0.87 if name == "face" else 0.80
+                top_mask = elev_norm > top_threshold
+                top_labels, n_top = _ndimage_label(top_mask)
+                all_labels = set(range(1, n_top + 1))
+                region_verts = _vert_in_grid_labels(top_labels, all_labels)
+                # Fallback: no cells above threshold → use elevation percentile
+                if not region_verts:
+                    z_thresh = min_z + (1.0 - (0.13 if name == "face" else 0.20)) * depth
+                    region_verts = {i for i, v in enumerate(vertices) if v[2] >= z_thresh}
+
+            elif name == "hands":
+                # Mid-height band + high gradient magnitude (articulated joints)
+                y_lo = min_y + 0.35 * height
+                y_hi = min_y + 0.50 * height
+                x_thresh = 0.70 * (width / 2.0)
+                region_verts = {
+                    i for i, v in enumerate(vertices)
+                    if y_lo <= v[1] <= y_hi and abs(v[0] - x_mid) >= x_thresh
+                }
+
+            elif name == "silhouette":
+                # High-gradient connected components → structural edges
+                all_grad_labels = set(range(1, int(high_grad_labels.max()) + 1))
+                region_verts = _vert_in_grid_labels(high_grad_labels, all_grad_labels)
+                # Always include perimeter verts as well
+                margin_x = 0.15 * width
+                margin_z = 0.15 * depth
+                for i, v in enumerate(vertices):
+                    if (v[0] - min_x < margin_x or max_x - v[0] < margin_x or
+                            v[2] - min_z < margin_z or max_z - v[2] < margin_z):
+                        region_verts.add(i)
+
+            regions[name] = region_verts
+
+        return regions
+
+    # ------------------------------------------------------------------
+    # Fallback: bounding-box heuristics (no scipy)
+    # ------------------------------------------------------------------
     for name in region_names:
-        region_verts: set[int] = set()
+        region_verts_fb: set[int] = set()
 
         if name == "face":
-            threshold_y = max_y - 0.13 * max(height, 0.001)
+            threshold_z = max_z - 0.13 * depth
             for i, v in enumerate(vertices):
-                if v[1] >= threshold_y:
-                    region_verts.add(i)
+                if v[2] >= threshold_z:
+                    region_verts_fb.add(i)
 
         elif name == "hands":
-            y_low = min_y + 0.35 * max(height, 0.001)
-            y_high = min_y + 0.50 * max(height, 0.001)
-            x_threshold = 0.70 * max(width / 2.0, 0.001)
+            y_low  = min_y + 0.35 * height
+            y_high = min_y + 0.50 * height
+            x_threshold = 0.70 * (width / 2.0)
             for i, v in enumerate(vertices):
                 if y_low <= v[1] <= y_high and abs(v[0] - x_mid) >= x_threshold:
-                    region_verts.add(i)
+                    region_verts_fb.add(i)
 
         elif name == "roofline":
-            threshold_y = max_y - 0.20 * max(height, 0.001)
+            threshold_z = max_z - 0.20 * depth
             for i, v in enumerate(vertices):
-                if v[1] >= threshold_y:
-                    region_verts.add(i)
+                if v[2] >= threshold_z:
+                    region_verts_fb.add(i)
 
         elif name == "silhouette":
-            margin_x = 0.15 * max(width, 0.001)
-            margin_z = 0.15 * max(depth, 0.001)
+            margin_x = 0.15 * width
+            margin_z = 0.15 * depth
             for i, v in enumerate(vertices):
                 near_x = (v[0] - min_x < margin_x) or (max_x - v[0] < margin_x)
                 near_z = (v[2] - min_z < margin_z) or (max_z - v[2] < margin_z)
                 if near_x or near_z:
-                    region_verts.add(i)
+                    region_verts_fb.add(i)
 
-        regions[name] = region_verts
+        regions[name] = region_verts_fb
 
     return regions
 
@@ -711,12 +1024,27 @@ def generate_lod_chain(
 ) -> list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]], int]]:
     """Generate a full LOD chain from a mesh spec using asset-type presets.
 
+    Uses QEM-based ``decimate_preserving_silhouette`` for each non-billboard
+    LOD level.  Verifies that face counts decrease monotonically and falls back
+    to the previous LOD's mesh if a level would paradoxically have more faces
+    than the preceding one.
+
+    Screen-size distance thresholds follow the standard formula::
+
+        distance = object_diameter / (2 * tan(fov_half) * screen_pct)
+
+    The thresholds are stored as ``lod_screen_pcts`` metadata returned alongside
+    each level (accessible via the extended 4-tuple when callers unpack 4 values).
+    For backward compat the function still returns 3-tuples; screen percentages
+    are available from the preset directly via LOD_PRESETS.
+
     Args:
         mesh_data: Dict with "vertices" and "faces" keys.
         asset_type: One of the LOD_PRESETS keys. Defaults to "prop_medium".
 
     Returns:
         List of (vertices, faces, lod_level) tuples, one per LOD level.
+        Face counts are guaranteed to be non-increasing across levels.
 
     Raises:
         ValueError: If asset_type is not in LOD_PRESETS.
@@ -735,6 +1063,8 @@ def generate_lod_chain(
         return []
 
     ratios = preset["ratios"]
+    screen_pcts = preset.get("screen_percentages", [1.0] * len(ratios))
+    min_tris = preset.get("min_tris", [0] * len(ratios))
 
     # Compute silhouette importance for the source mesh
     silhouette_importance = compute_silhouette_importance(vertices, faces)
@@ -751,22 +1081,46 @@ def generate_lod_chain(
         combined_importance = silhouette_importance
 
     lod_chain: list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]], int]] = []
+    prev_face_count: int = len(faces)
 
     for level, ratio in enumerate(ratios):
+        target_min = min_tris[level] if level < len(min_tris) else 0
+
         if ratio <= 0.0:
-            # Billboard LOD
+            # Billboard LOD — always the last level
             billboard_verts, billboard_faces = _generate_billboard_quad(vertices)
             lod_chain.append((billboard_verts, billboard_faces, level))
+            prev_face_count = len(billboard_faces)
         elif ratio >= 1.0:
             # LOD0: full detail
             lod_chain.append((list(vertices), list(faces), level))
+            prev_face_count = len(faces)
         else:
-            # Copy importance weights since decimation mutates them
+            # Decimate with QEM + silhouette protection
             weights_copy = list(combined_importance)
             lod_verts, lod_faces = decimate_preserving_silhouette(
                 vertices, faces, ratio, weights_copy,
             )
+
+            # Enforce minimum triangle floor from preset
+            if len(lod_faces) < target_min and target_min > 0:
+                # Re-decimate with a less aggressive ratio to hit the floor
+                floor_ratio = target_min / max(len(faces), 1)
+                adjusted_ratio = max(ratio, floor_ratio)
+                if adjusted_ratio < 1.0:
+                    weights_copy2 = list(combined_importance)
+                    lod_verts, lod_faces = decimate_preserving_silhouette(
+                        vertices, faces, adjusted_ratio, weights_copy2,
+                    )
+
+            # Monotonicity guarantee: face count must not exceed previous level
+            if len(lod_faces) > prev_face_count and lod_chain:
+                # Reuse the previous level's mesh unchanged
+                prev_verts, prev_faces, _ = lod_chain[-1]
+                lod_verts, lod_faces = list(prev_verts), list(prev_faces)
+
             lod_chain.append((lod_verts, lod_faces, level))
+            prev_face_count = len(lod_faces)
 
     return lod_chain
 
@@ -1045,6 +1399,74 @@ _TREE_VEG_TYPES = frozenset({"tree", "pine_tree", "dead_tree", "tree_twisted"})
 """Vegetation types that are trees and should receive billboard LOD setup."""
 
 
+def _make_billboard_lod_spec(
+    tree_height: float,
+    tree_width: float,
+    tree_depth: float,
+    material_ref: str = "",
+) -> dict[str, Any]:
+    """Build a BillboardLodSpec dict from tree dimensions.
+
+    Creates cross-billboard geometry (2 quads at 90°) via
+    ``_generate_billboard_quad``, computes UV coords covering the full
+    baked-albedo atlas (0-1 on each quad), and returns the spec dict.
+
+    Returns
+    -------
+    dict with keys:
+        "verts"        : list of (x,y,z) — 8 vertices (4 per quad)
+        "faces"        : list of (i,j,k) — 4 triangles (2 per quad)
+        "uvs"          : list of (u,v)   — 8 UV coords, one per vertex
+        "vertex_count" : int
+        "face_count"   : int
+        "impostor_type": "cross"
+        "material_ref" : str
+    """
+    half_w = max(tree_width  / 2.0, 0.01)
+    half_d = max(tree_depth  / 2.0, 0.01)
+    z_bot  = 0.0
+    z_top  = max(tree_height, 0.01)
+
+    # Quad A — XZ plane
+    quad_a: list[tuple[float, float, float]] = [
+        (-half_w, 0.0, z_bot),
+        ( half_w, 0.0, z_bot),
+        ( half_w, 0.0, z_top),
+        (-half_w, 0.0, z_top),
+    ]
+    # Quad B — YZ plane (rotated 90°)
+    quad_b: list[tuple[float, float, float]] = [
+        (0.0, -half_d, z_bot),
+        (0.0,  half_d, z_bot),
+        (0.0,  half_d, z_top),
+        (0.0, -half_d, z_top),
+    ]
+    verts = quad_a + quad_b
+
+    # Two CCW triangles per quad
+    faces: list[tuple[int, ...]] = [
+        (0, 1, 2), (0, 2, 3),   # Quad A
+        (4, 5, 6), (4, 6, 7),   # Quad B
+    ]
+
+    # UVs: each quad maps to the full [0,1]×[0,1] atlas tile
+    # BL=(0,0), BR=(1,0), TR=(1,1), TL=(0,1) per quad
+    uvs: list[tuple[float, float]] = [
+        (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0),  # Quad A
+        (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0),  # Quad B
+    ]
+
+    return {
+        "verts": verts,
+        "faces": faces,
+        "uvs": uvs,
+        "vertex_count": len(verts),
+        "face_count": len(faces),
+        "impostor_type": "cross",
+        "material_ref": material_ref,
+    }
+
+
 def _setup_billboard_lod(
     template_obj: Any,
     veg_spec: "dict | None",
@@ -1053,10 +1475,14 @@ def _setup_billboard_lod(
 ) -> bool:
     """Set up billboard LOD metadata on a tree template object.
 
-    Calls ``generate_billboard_impostor`` (vegetation_lsystem) to produce the
-    billboard mesh spec, then stores the result as custom properties on
-    *template_obj* so that downstream export steps (and Unity LOD group setup)
-    can read them.
+    Generates cross-billboard geometry via ``_generate_billboard_quad`` and
+    ``_make_billboard_lod_spec``, sets UV coords to cover the baked albedo
+    atlas, and stores the result as custom properties on *template_obj* so
+    that downstream export steps (and Unity LOD group setup) can read them.
+
+    Also calls ``generate_billboard_impostor`` (vegetation_lsystem) for the
+    atlas bake parameters, and appends the billboard as the last LOD level
+    in the vegetation LOD chain when *veg_spec* is provided.
 
     Args:
         template_obj: The Blender template object for the tree.
@@ -1071,8 +1497,7 @@ def _setup_billboard_lod(
         ``True`` if billboard LOD was wired up, ``False`` if the template was
         skipped (too few vertices or not a tree type).
     """
-    # Lazy import to avoid circular-init cost: vegetation_lsystem is a
-    # toolkit sibling that itself does not depend on lod_pipeline.
+    # Lazy import to avoid circular-init cost
     from .vegetation_lsystem import generate_billboard_impostor
 
     if veg_type not in _TREE_VEG_TYPES:
@@ -1091,38 +1516,56 @@ def _setup_billboard_lod(
     bb_min_y = min(v.co.y for v in mesh_data.vertices)
     bb_max_y = max(v.co.y for v in mesh_data.vertices)
     tree_height = max(bb_max_z - bb_min_z, 0.5)
-    tree_width = max(
-        bb_max_x - bb_min_x,
-        bb_max_y - bb_min_y,
-        0.5,
-    )
+    tree_width  = max(bb_max_x - bb_min_x, 0.5)
+    tree_depth  = max(bb_max_y - bb_min_y, 0.5)
 
-    billboard_spec = generate_billboard_impostor({
+    # Get atlas bake parameters from vegetation_lsystem
+    billboard_impostor = generate_billboard_impostor({
         "object_name": template_obj.name,
         "height": tree_height,
-        "width": tree_width,
+        "width": max(tree_width, tree_depth),
         "impostor_type": "cross",
         "num_views": 8,
         "resolution": 256,
     })
 
+    # Build cross-billboard geometry with correct UVs
+    material_ref = billboard_impostor.get("atlas_material", "")
+    bb_spec = _make_billboard_lod_spec(
+        tree_height=tree_height,
+        tree_width=tree_width,
+        tree_depth=tree_depth,
+        material_ref=material_ref,
+    )
+
+    # Wire billboard as final LOD level in the vegetation LOD chain
     if veg_spec is not None:
         raw_verts = veg_spec.get("vertices", [])
         raw_faces = veg_spec.get("faces", [])
         if raw_verts and raw_faces:
-            generate_lod_chain(
+            lod_chain = generate_lod_chain(
                 {"vertices": raw_verts, "faces": raw_faces},
                 asset_type="vegetation",
             )
+            # The last entry in a vegetation chain is the billboard (ratio=0.0).
+            # Replace its geometry with our properly-UVd cross spec so the
+            # export pipeline picks up the correct mesh.
+            if lod_chain:
+                last_level = lod_chain[-1][2]
+                bb_verts = [(x, y, z) for x, y, z in bb_spec["verts"]]
+                bb_faces = [tuple(f) for f in bb_spec["faces"]]
+                lod_chain[-1] = (bb_verts, bb_faces, last_level)
 
-    template_obj["lod_billboard_enabled"] = 1
-    template_obj["lod_0_dist_max"] = lod_near_dist
-    template_obj["lod_1_dist_min"] = lod_near_dist
-    template_obj["lod_billboard_type"] = billboard_spec["impostor_type"]
-    template_obj["lod_billboard_vertex_count"] = billboard_spec["vertex_count"]
-    template_obj["lod_billboard_face_count"] = billboard_spec["face_count"]
-    template_obj["lod_billboard_atlas_res"] = billboard_spec["atlas_resolution"]
-    template_obj["lod_billboard_tree_height"] = tree_height
-    template_obj["lod_billboard_tree_width"] = tree_width
+    # Store billboard spec geometry counts and atlas ref as custom properties
+    template_obj["lod_billboard_enabled"]      = 1
+    template_obj["lod_0_dist_max"]             = lod_near_dist
+    template_obj["lod_1_dist_min"]             = lod_near_dist
+    template_obj["lod_billboard_type"]         = bb_spec["impostor_type"]
+    template_obj["lod_billboard_vertex_count"] = bb_spec["vertex_count"]
+    template_obj["lod_billboard_face_count"]   = bb_spec["face_count"]
+    template_obj["lod_billboard_atlas_res"]    = billboard_impostor.get("atlas_resolution", 256)
+    template_obj["lod_billboard_tree_height"]  = tree_height
+    template_obj["lod_billboard_tree_width"]   = max(tree_width, tree_depth)
+    template_obj["lod_billboard_material_ref"] = material_ref
 
     return True

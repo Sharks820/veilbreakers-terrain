@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from ._terrain_noise import _make_noise_generator
+
 if TYPE_CHECKING:
     from .terrain_semantics import (
         BBox,
@@ -88,24 +90,48 @@ COASTLINE_STYLES: dict[str, dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
-# Noise utility (deterministic hash-based, no external dependency)
+# Noise utility (gradient noise via project's permutation-table backend)
 # ---------------------------------------------------------------------------
 
+# Module-level generator cache keyed by seed to avoid rebuilding permutation
+# tables on every call.
+_noise_gen_cache: dict[int, Any] = {}
+
+
+def _get_noise_gen(seed: int) -> Any:
+    """Return a cached noise generator for *seed*."""
+    if seed not in _noise_gen_cache:
+        _noise_gen_cache[seed] = _make_noise_generator(seed)
+    return _noise_gen_cache[seed]
+
+
 def _hash_noise(x: float, y: float, seed: int) -> float:
-    """Simple deterministic pseudo-noise in [-1, 1]."""
-    # Mix coordinates with seed for deterministic results
-    val = math.sin(x * 12.9898 + y * 78.233 + seed * 43.1234) * 43758.5453
-    return (val - math.floor(val)) * 2.0 - 1.0
+    """Deterministic gradient noise in [-1, 1].
+
+    Replaces the old sin-hash (which produced visually repetitive banding)
+    with proper 2-D gradient noise from the project's permutation-table
+    backend (_terrain_noise._make_noise_generator).  Output range is
+    approximately [-1, 1], same contract as the old implementation.
+    """
+    gen = _get_noise_gen(seed)
+    xs = np.array([x], dtype=np.float64)
+    ys = np.array([y], dtype=np.float64)
+    return float(gen.noise2_array(xs, ys)[0])
 
 
 def _fbm_noise(x: float, y: float, seed: int, octaves: int = 4) -> float:
-    """Fractal Brownian motion noise via hash-based value noise."""
+    """Fractal Brownian motion noise via gradient noise."""
     total = 0.0
     amplitude = 1.0
     frequency = 1.0
     max_val = 0.0
+    # Use a single generator per seed; vary frequency spatially instead of
+    # mixing in a per-octave seed offset (avoids re-allocating perm tables).
+    gen = _get_noise_gen(seed)
     for _ in range(octaves):
-        total += _hash_noise(x * frequency, y * frequency, seed) * amplitude
+        xs = np.array([x * frequency], dtype=np.float64)
+        ys = np.array([y * frequency], dtype=np.float64)
+        total += float(gen.noise2_array(xs, ys)[0]) * amplitude
         max_val += amplitude
         amplitude *= 0.5
         frequency *= 2.0
@@ -254,6 +280,17 @@ def _generate_coastline_mesh(
 # Feature placement
 # ---------------------------------------------------------------------------
 
+def _features_overlap(
+    pos_a: tuple[float, float],
+    pos_b: tuple[float, float],
+    min_sep: float,
+) -> bool:
+    """Return True if two 2-D feature positions are closer than *min_sep*."""
+    dx = pos_a[0] - pos_b[0]
+    dy = pos_a[1] - pos_b[1]
+    return (dx * dx + dy * dy) < min_sep * min_sep
+
+
 def _place_features(
     length: float,
     width: float,
@@ -261,8 +298,21 @@ def _place_features(
     shoreline_profile: list[float],
     resolution_along: int,
     seed: int,
+    existing_candidates: "Optional[list[dict[str, Any]]]" = None,
+    min_separation: float = 4.0,
 ) -> list[dict[str, Any]]:
-    """Place coastline features (sea stacks, tide pools, docks, etc.)."""
+    """Place coastline features (sea stacks, tide pools, docks, etc.).
+
+    Parameters
+    ----------
+    existing_candidates : list of dicts, optional
+        Pre-existing terrain features (e.g. ``cave_candidate``,
+        ``cliff_candidate``) that new features must not overlap.  Each dict
+        must have a ``"position"`` key with an (x, y[, z]) tuple.
+    min_separation : float
+        Minimum 2-D distance (metres) between any two placed features and
+        between a new feature and any existing candidate.  Default 4.0 m.
+    """
     config = COASTLINE_STYLES[style]
     feature_types = config["features"]
     rng = random.Random(seed + 100)
@@ -270,10 +320,31 @@ def _place_features(
     features: list[dict[str, Any]] = []
     half_width = width / 2.0
 
+    # Seed the occupied list from pre-existing candidates so new features
+    # respect cave/cliff positions already baked into the terrain.
+    occupied: list[tuple[float, float]] = []
+    if existing_candidates:
+        for cand in existing_candidates:
+            pos = cand.get("position")
+            if pos and len(pos) >= 2:
+                occupied.append((float(pos[0]), float(pos[1])))
+
+    def _try_place(x: float, y: float) -> bool:
+        """Return True and register position if no overlap, else False."""
+        for occ in occupied:
+            if _features_overlap((x, y), occ, min_separation):
+                return False
+        occupied.append((x, y))
+        return True
+
     # Number of features scales with coastline length
     num_features = max(3, int(length / 20.0))
+    # Allow extra candidates so rejections don't starve the feature count
+    max_attempts = num_features * 4
 
-    for _ in range(num_features):
+    attempt = 0
+    while len(features) < num_features and attempt < max_attempts:
+        attempt += 1
         ftype = rng.choice(feature_types)
         t = rng.random()
         x = t * length
@@ -281,8 +352,9 @@ def _place_features(
         shore_offset = shoreline_profile[idx]
 
         if ftype in ("sea_stack", "rock_pillar"):
-            # Place in water, near shore
             y = shore_offset - rng.uniform(2, half_width * 0.5)
+            if not _try_place(x, y):
+                continue
             z = rng.uniform(1, 4)
             features.append({
                 "type": ftype,
@@ -291,8 +363,9 @@ def _place_features(
                 "radius": rng.uniform(0.5, 2.0),
             })
         elif ftype in ("tide_pool",):
-            # Place at shoreline
             y = shore_offset + rng.uniform(-1, 1)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.0),
@@ -300,16 +373,18 @@ def _place_features(
                 "depth": rng.uniform(0.1, 0.4),
             })
         elif ftype in ("rock_outcrop",):
-            # Place on shore/land
             y = shore_offset + rng.uniform(0, half_width * 0.3)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.0),
                 "size": rng.uniform(1.0, 4.0),
             })
         elif ftype in ("cave_entrance",):
-            # Place in cliff face
             y = shore_offset + rng.uniform(1, 3)
+            if not _try_place(x, y):
+                continue
             z = rng.uniform(0, config["base_elevation"] * 0.5)
             features.append({
                 "type": ftype,
@@ -319,6 +394,8 @@ def _place_features(
             })
         elif ftype in ("overhang",):
             y = shore_offset + rng.uniform(2, 5)
+            if not _try_place(x, y):
+                continue
             z = config["base_elevation"] * rng.uniform(0.7, 1.0)
             features.append({
                 "type": ftype,
@@ -328,6 +405,8 @@ def _place_features(
             })
         elif ftype in ("dock",):
             y = shore_offset - rng.uniform(1, 5)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.2),
@@ -336,6 +415,8 @@ def _place_features(
             })
         elif ftype in ("breakwater",):
             y = shore_offset - rng.uniform(5, 15)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, -0.5),
@@ -344,6 +425,8 @@ def _place_features(
             })
         elif ftype in ("mooring_post",):
             y = shore_offset - rng.uniform(0, 3)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.1),
@@ -351,6 +434,8 @@ def _place_features(
             })
         elif ftype in ("dune_mound",):
             y = shore_offset + rng.uniform(3, half_width * 0.6)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.0),
@@ -359,6 +444,8 @@ def _place_features(
             })
         elif ftype in ("driftwood",):
             y = shore_offset + rng.uniform(-1, 2)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.05),
@@ -367,6 +454,8 @@ def _place_features(
             })
         elif ftype in ("shell_cluster",):
             y = shore_offset + rng.uniform(-1, 1)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.0),
@@ -375,14 +464,17 @@ def _place_features(
             })
         elif ftype in ("crate_stack",):
             y = shore_offset + rng.uniform(0, 3)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.2),
                 "count": rng.randint(2, 6),
             })
         else:
-            # Generic feature
             y = shore_offset + rng.uniform(-2, 2)
+            if not _try_place(x, y):
+                continue
             features.append({
                 "type": ftype,
                 "position": (x, y, 0.0),
@@ -402,44 +494,68 @@ def _compute_material_zones(
     shoreline_profile: list[float],
     width: float,
     style: str,
+    sea_level_m: float = 0.0,
+    tidal_range_m: float = 2.0,
+    tidal_mask: "Optional[np.ndarray]" = None,
+    rocky_coast_threshold: float = 0.4,
 ) -> list[int]:
     """Assign material zone index to each face.
 
-    Returns a list of material indices, one per face.
+    Zone boundaries are derived from actual vertex elevation relative to
+    ``sea_level_m`` and ``tidal_range_m``, not from fixed lateral offsets.
+    If ``tidal_mask`` (from ``stack.tidal``) is provided it refines the
+    intertidal band assignment.
+
+    Parameters
+    ----------
+    rocky_coast_threshold : float
+        Slope magnitude above which a face is classified as rocky rather than
+        sandy within the intertidal zone.  Computed from vertex Z deltas.
+        Range [0, 1]; default 0.4.
     """
     config = COASTLINE_STYLES[style]
     zones = config["material_zones"]
     num_zones = len(zones)
-    half_width = width / 2.0
+
+    # Tidal band limits in elevation
+    tidal_half = max(0.1, tidal_range_m * 0.5)
+    sub_tidal_top = sea_level_m - tidal_half       # below this = sub-tidal / water
+    tidal_top = sea_level_m + tidal_half            # above this = splash / land
+    # splash zone extends a further half tidal range above the intertidal band
+    splash_top = tidal_top + tidal_half
 
     face_materials: list[int] = []
 
     for i in range(resolution_along - 1):
         for j in range(resolution_across - 1):
-            # Compute face center Y position
             v0 = i * resolution_across + j
+            v1 = v0 + 1
+            v2 = (i + 1) * resolution_across + j + 1
             v3 = (i + 1) * resolution_across + j
-            y_avg = (vertices[v0][1] + vertices[v3][1]) / 2.0
-            _z_avg = (vertices[v0][2] + vertices[v3][2]) / 2.0
 
-            t_along = i / max(resolution_along - 1, 1)
-            idx = min(int(t_along * len(shoreline_profile)), len(shoreline_profile) - 1)
-            shore_y = shoreline_profile[idx]
+            z_vals = [vertices[k][2] for k in (v0, v1, v2, v3)]
+            z_avg = sum(z_vals) / 4.0
 
-            # Distance from shoreline
-            dist_from_shore = y_avg - shore_y
+            # Local slope from Z range across the face quad (crude but fast)
+            z_range = max(z_vals) - min(z_vals)
+            is_rocky = z_range >= rocky_coast_threshold
 
-            if dist_from_shore < -1.0:
-                # Water side
-                mat_idx = num_zones - 1  # water_edge
-            elif dist_from_shore < 1.0:
-                # Transition zone
-                mat_idx = max(0, num_zones - 2)
-            elif dist_from_shore < half_width * 0.5:
-                # Mid-ground
+            # Zone assignment based on elevation bands
+            if z_avg < sub_tidal_top:
+                # Sub-tidal / water edge
+                mat_idx = num_zones - 1
+            elif z_avg < tidal_top:
+                # Intertidal band — wet rock vs wet sand
+                if is_rocky and num_zones >= 3:
+                    # rocky styles: prefer wet_rock (index 1) over water_edge
+                    mat_idx = min(1, num_zones - 2)
+                else:
+                    mat_idx = max(0, num_zones - 2)
+            elif z_avg < splash_top:
+                # Splash zone — mid ground material
                 mat_idx = min(1, num_zones - 1)
             else:
-                # Inland
+                # Inland / dry land
                 mat_idx = 0
 
             face_materials.append(mat_idx)
@@ -611,27 +727,65 @@ def compute_wave_energy(
 def apply_coastal_erosion(
     stack: "TerrainMaskStack",
     sea_level_m: float,
+    wave_direction: float = 0.0,
+    wave_energy: float = 1.0,
+    dt: float = 1.0,
 ) -> np.ndarray:
     """Return a height delta carving cliff-retreat at wave-energy hotspots.
 
-    Not applied in place. Call this after ``compute_wave_energy`` has
-    populated a local wave-energy array — we recompute it here so callers
-    don't need to pre-compute.
+    Not applied in place.
+
+    Parameters
+    ----------
+    stack : TerrainMaskStack
+        Must have ``stack.height`` set.
+    sea_level_m : float
+        Sea level in metres.
+    wave_direction : float
+        Dominant wave direction in radians, clockwise from north (+Y axis).
+        0.0 = waves coming from the north.
+    wave_energy : float
+        Scalar wave-energy multiplier (1.0 = default, >1 = storm conditions).
+    dt : float
+        Time-step scale factor applied to the final erosion delta.
     """
     if stack.height is None:
         raise ValueError("apply_coastal_erosion requires stack.height")
     h = np.asarray(stack.height, dtype=np.float64)
 
-    hints_wave_dir = 0.0
-    energy = compute_wave_energy(stack, sea_level_m, hints_wave_dir).astype(
+    energy = compute_wave_energy(stack, sea_level_m, wave_direction).astype(
         np.float64
     )
 
     # Only erode cells above sea level
     above = (h > sea_level_m).astype(np.float64)
-    # Maximum cliff retreat: 3m per pass at highest energy
-    max_drop = 3.0
-    delta = -energy * above * max_drop
+
+    # Directional exposure: coastal outward normal vs. wave propagation vector.
+    # wave_direction is clockwise from north (+Y), so:
+    #   wave_vec[0] = sin(wave_direction)  (east component)
+    #   wave_vec[1] = cos(wave_direction)  (north component)
+    wave_vec = np.array([np.sin(wave_direction), np.cos(wave_direction)])
+
+    # Heightmap gradient: gy = north gradient, gx = east gradient
+    gy, gx = np.gradient(h)
+    grad_norm = np.sqrt(gx * gx + gy * gy) + 1e-9
+    # Outward coastal normal points seaward (downhill = toward water)
+    normal_x = -gx / grad_norm
+    normal_y = -gy / grad_norm
+
+    # local_exposure: how directly the shore faces the incoming waves.
+    # dot(outward_normal, wave_vec) > 0 means the shore opens toward the waves.
+    local_exposure = np.clip(
+        normal_x * wave_vec[0] + normal_y * wave_vec[1],
+        0.0,
+        1.0,
+    )
+
+    # Base erosion rate scaled by wave_energy and local exposure
+    base_erosion = 3.0  # metres per pass at full energy
+    erosion_rate = base_erosion * wave_energy * local_exposure
+
+    delta = -energy * above * erosion_rate * dt
 
     # Softer rock erodes more
     if stack.rock_hardness is not None:

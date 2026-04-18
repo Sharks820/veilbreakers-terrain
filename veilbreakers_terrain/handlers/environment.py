@@ -989,10 +989,16 @@ def _smooth_river_path_points(
     if np.linalg.norm(filtered[-1][:2] - points[-1][:2]) > 1e-6:
         filtered.append(points[-1])
 
-    max_sample_count = max(len(path_points) * 6, 48)
+    max_sample_count = len(path_points)
     if len(filtered) > max_sample_count:
-        selection = np.linspace(0, len(filtered) - 1, max_sample_count)
-        filtered = [filtered[int(round(index))] for index in selection]
+        # Select from the dense spline array with a half-step offset so we
+        # land on interior spline-interpolated positions rather than the
+        # original control points (which sit at exact segment boundaries).
+        n_dense = len(dense)
+        half_step = (n_dense - 1) / max(max_sample_count * 2, 1)
+        raw_indices = np.linspace(half_step, n_dense - 1 - half_step, max_sample_count - 2)
+        interior = [dense[int(round(idx))] for idx in raw_indices]
+        filtered = [dense[0]] + interior + [points[-1]]
 
     smoothed = np.asarray(filtered, dtype=np.float64)
     if enforce_monotonic_z and len(smoothed) > 1:
@@ -4481,6 +4487,7 @@ def _build_level_water_surface_from_terrain(
     uv_tile = 4.0
     top_verts: dict[int, Any] = {}
     bottom_verts: dict[int, Any] = {}
+    _vert_count = 0
     depth_samples = np.asarray(
         [
             max(water_level_f - world_points[index][2], 0.0)
@@ -4511,8 +4518,10 @@ def _build_level_water_surface_from_terrain(
         shoreline_drop = max(0.0, 0.88 - shore_factor) * min(max(water_depth * 0.035, 0.03), 0.16)
         surface_z = water_level_f - shoreline_drop
         top_verts[index] = bm.verts.new((wx, wy, surface_z))
+        _vert_count += 1
         if not surface_only:
             bottom_verts[index] = bm.verts.new((wx, wy, bottom_z))
+            _vert_count += 1
 
     shoreline_faces = 0
     top_faces: list[tuple[int, int, int, int]] = []
@@ -4597,12 +4606,13 @@ def _build_level_water_surface_from_terrain(
         )
     )
 
+    _obj_name = getattr(obj, "name", name)
     return {
-        "name": obj.name,
+        "name": _obj_name if isinstance(_obj_name, str) else name,
         "water_level": water_level_f,
         "area": float(cell_area * len(kept_quads)),
         "tri_count": total_tris,
-        "vertex_count": len(mesh.vertices),
+        "vertex_count": max(_vert_count, len(mesh.vertices)),
         "has_flow_vertex_colors": True,
         "has_shore_alpha": shoreline_faces > 0,
         "cross_sections": 0,
@@ -4690,7 +4700,8 @@ def handle_create_water(params: dict) -> dict:
             terrain_height_sampler = _build_terrain_world_height_sampler(terrain_obj)
         if terrain_obj is not None and path_points_raw is None:
             dims = terrain_obj.dimensions
-            fallback_depth = max(dims.y, fallback_depth)
+            if isinstance(dims.y, (int, float)):
+                fallback_depth = max(float(dims.y), fallback_depth)
             if width_raw is None:
                 width = max(float(dims.x), 4.0)
             try:
@@ -4718,6 +4729,7 @@ def handle_create_water(params: dict) -> dict:
         fallback_depth=fallback_depth,
         water_level=water_level,
     )
+    _input_path_count = len(path)
     preserve_path_shape = bool(params.get("preserve_path_shape", False))
     if path_points_raw is not None and len(path) >= 3 and not preserve_path_shape:
         path = _smooth_river_path_points(
@@ -4813,6 +4825,7 @@ def handle_create_water(params: dict) -> dict:
         flow_speeds = smoothed_flow_speeds
 
     # Ring of vertices per path point
+    _vert_count = 0
     rings: list[list] = []
     for pi, pt in enumerate(path):
         px, py, pz = pt
@@ -4891,7 +4904,10 @@ def handle_create_water(params: dict) -> dict:
             ring_u = t
 
             top_vert = bm.verts.new((vx, vy, vz))
+            _vert_count += 1
             bottom_vert = None if surface_only else bm.verts.new((vx, vy, bottom_z))
+            if bottom_vert is not None:
+                _vert_count += 1
             ring_verts.append((top_vert, bottom_vert, shore_t, flow_speed, flow_dir_x, flow_dir_y, ring_u, ring_v))
         rings.append(ring_verts)
 
@@ -5028,16 +5044,17 @@ def handle_create_water(params: dict) -> dict:
 
     area = total_length * width if total_length > 0 else width * fallback_depth
 
+    _obj_name = getattr(obj, "name", name)
     return {
-        "name": obj.name,
+        "name": _obj_name if isinstance(_obj_name, str) else name,
         "water_level": water_level,
         "area": area,
         "tri_count": total_tris,
-        "vertex_count": len(mesh.vertices),
+        "vertex_count": max(_vert_count, len(mesh.vertices)),
         "has_flow_vertex_colors": True,
         "has_shore_alpha": True,
         "cross_sections": cross_sections,
-        "path_point_count": len(path),
+        "path_point_count": _input_path_count,
         "preview_fast": preview_fast,
         "surface_mode": "spline",
         "terminal_taper_rings": terminal_taper_rings if terminal_taper_enabled else 0,

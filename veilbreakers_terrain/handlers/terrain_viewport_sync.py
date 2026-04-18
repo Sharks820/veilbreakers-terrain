@@ -36,6 +36,34 @@ class ViewportVantage:
     view_matrix_hash: str
 
 
+def _read_from_blender_context() -> "dict | None":
+    """Read the active 3D viewport camera from bpy.context when running in Blender."""
+    try:
+        import bpy
+        # Find the active 3D viewport
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                r3d = area.spaces.active.region_3d
+                # Invert view matrix to get camera world position
+                import mathutils
+                view_mat = r3d.view_matrix
+                cam_pos = view_mat.inverted().col[3][:3]
+                # view_rotation is quaternion
+                rot = r3d.view_rotation
+                look_dir = rot @ mathutils.Vector((0, 0, -1))
+                up_dir = rot @ mathutils.Vector((0, 1, 0))
+                return {
+                    "position": (cam_pos.x, cam_pos.y, cam_pos.z),
+                    "look": (look_dir.x, look_dir.y, look_dir.z),
+                    "up": (up_dir.x, up_dir.y, up_dir.z),
+                    "fov_deg": math.degrees(r3d.view_camera_zoom) if r3d.view_perspective == 'CAMERA' else 60.0,
+                    "distance": r3d.view_distance,
+                }
+    except Exception:
+        pass
+    return None
+
+
 def _unit(v: Tuple[float, float, float]) -> Tuple[float, float, float]:
     x, y, z = v
     n = math.sqrt(x * x + y * y + z * z)
@@ -64,9 +92,26 @@ def read_user_vantage(
 ) -> ViewportVantage:
     """Return a ``ViewportVantage`` — real Blender reads region_data.
 
-    In headless mode the caller supplies a synthetic vantage that still
-    satisfies the contract. Z-up convention: ``up=(0,0,1)``.
+    When running inside Blender, attempts to read the active 3D viewport
+    via ``_read_from_blender_context()`` first. Falls back to the supplied
+    (or default) synthetic values when bpy is unavailable or the context
+    read fails. Z-up convention: ``up=(0,0,1)``.
     """
+    bpy_ctx = _read_from_blender_context()
+    if bpy_ctx is not None:
+        camera_position = bpy_ctx["position"]
+        look = bpy_ctx["look"]
+        up = bpy_ctx["up"]
+        fov_deg = bpy_ctx["fov_deg"]
+        fov = math.radians(fov_deg)
+        distance = bpy_ctx["distance"]
+        # Derive focal_point from camera position + look direction * distance
+        focal_point = (
+            camera_position[0] + look[0] * distance,
+            camera_position[1] + look[1] * distance,
+            camera_position[2] + look[2] * distance,
+        )
+
     direction = _unit(
         (
             focal_point[0] - camera_position[0],

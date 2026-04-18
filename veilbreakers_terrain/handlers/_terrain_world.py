@@ -373,21 +373,109 @@ def pass_macro_world(
 ) -> PassResult:
     """Pass 1: generate or confirm the base height field on the mask stack.
 
-    For Bundle A the height is normally populated at state construction
-    time. This pass is idempotent — it verifies the height channel is
-    present and records metrics. Future bundles may extend it to call
-    ``generate_world_heightmap`` against the authoring intent.
+    Upgrade notes (B-→B+):
+    - When the mask stack has no height (or has a flat/zero placeholder),
+      this pass now GENERATES the heightmap via ``generate_world_heightmap``
+      driven by the authoring intent.  It is no longer a validator-only stub.
+    - If ``state.intent.heightmap_source`` is set (a Path to a pre-baked
+      heightmap), that file is loaded instead of noise-generating.
+    - The noise stack reads ``intent.noise_profile``, ``intent.seed``, and
+      tile coordinates from the mask stack for deterministic, tile-safe output.
+    - Pass still succeeds when height was pre-populated (e.g. by tests or
+      a preset restore) — existing data is not overwritten.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
     issues: list[ValidationIssue] = []
+
+    intent = state.intent
+    seed = int(deterministic_seed_override if deterministic_seed_override is not None
+               else (intent.seed if intent else 0))
+
+    # Determine whether we need to generate height from scratch.
+    needs_generate = stack.height is None or stack.height.size == 0
+
+    # Also regenerate if the existing height is a flat/zero placeholder
+    # (max - min < epsilon), which indicates state construction filled it
+    # with zeros rather than real terrain data.
+    if not needs_generate and stack.height is not None:
+        h_range = float(stack.height.max()) - float(stack.height.min())
+        if h_range < 1e-6:
+            needs_generate = True
+
+    if needs_generate:
+        tile_size = int(stack.tile_size)
+
+        # Check for a pre-baked heightmap source on the intent
+        heightmap_source = getattr(intent, "heightmap_source", None) if intent else None
+        if heightmap_source is not None:
+            from pathlib import Path as _Path
+            src = _Path(heightmap_source)
+            if src.exists():
+                try:
+                    loaded = np.load(str(src))
+                    if isinstance(loaded, np.ndarray):
+                        hmap = loaded.astype(np.float32)
+                    else:
+                        # .npz archive — expect key "height"
+                        hmap = loaded["height"].astype(np.float32)
+                    stack.set("height", hmap, "macro_world")
+                except Exception as exc:
+                    issues.append(ValidationIssue(
+                        code="MACRO_HEIGHTMAP_SOURCE_FAILED",
+                        severity="soft",
+                        message=f"Failed to load heightmap_source '{src}': {exc}. Falling back to noise.",
+                    ))
+                    heightmap_source = None  # fall through to noise generation
+
+        if heightmap_source is None:
+            # Generate via the macro_world noise stack.
+            # terrain_type is taken from noise_profile; default to "mountains"
+            # for the dark-fantasy aesthetic.
+            noise_profile = (intent.noise_profile if intent else None) or "dark_fantasy_default"
+            terrain_type_map = {
+                "dark_fantasy_default": "mountains",
+                "temperate": "mountains",
+                "arid": "desert",
+                "arctic": "mountains",
+                "coastal": "coastal",
+            }
+            terrain_type = terrain_type_map.get(str(noise_profile), "mountains")
+
+            # World-space origin from tile coordinates and cell_size
+            cell_size = float(stack.cell_size)
+            world_origin_x = float(stack.world_origin_x)
+            world_origin_y = float(stack.world_origin_y)
+
+            hmap = generate_world_heightmap(
+                width=tile_size,
+                height=tile_size,
+                scale=float(tile_size) * cell_size,
+                world_origin_x=world_origin_x,
+                world_origin_y=world_origin_y,
+                cell_size=cell_size,
+                seed=seed,
+                terrain_type=terrain_type,
+                normalize=False,
+            ).astype(np.float32)
+
+            stack.set("height", hmap, "macro_world")
+            issues.append(ValidationIssue(
+                code="MACRO_HEIGHT_GENERATED",
+                severity="info",
+                message=(
+                    f"pass_macro_world generated height via noise "
+                    f"(terrain_type={terrain_type!r}, seed={seed}, "
+                    f"tile_size={tile_size})."
+                ),
+            ))
 
     if stack.height is None or stack.height.size == 0:
         issues.append(
             ValidationIssue(
                 code="MACRO_NO_HEIGHT",
                 severity="hard",
-                message="mask stack has no height channel",
+                message="mask stack has no height channel after generation attempt",
             )
         )
         return PassResult(
@@ -400,6 +488,7 @@ def pass_macro_world(
     # Ensure height is tracked as populated by this pass
     stack.populated_by_pass.setdefault("height", "macro_world")
 
+    soft_issues = [i for i in issues if not i.is_hard()]
     return PassResult(
         pass_name="macro_world",
         status="ok",
@@ -410,7 +499,9 @@ def pass_macro_world(
             "height_max": float(stack.height.max()),
             "height_mean": float(stack.height.mean()),
             "shape": tuple(stack.height.shape),
+            "generated": needs_generate,
         },
+        issues=soft_issues,
     )
 
 

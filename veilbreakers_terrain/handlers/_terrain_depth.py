@@ -238,12 +238,17 @@ def generate_biome_transition_mesh(
     zone_depth: float = 20.0,
     segments: int = 12,
     seed: int = 0,
+    heightmap_a: Any = None,
+    heightmap_b: Any = None,
+    heightmap_scale: float = 1.0,
 ) -> MeshSpec:
     """Generate a ground-level transition strip between two biomes.
 
-    Creates a subdivided ground plane with noise-displaced height.
-    Vertex blend weights transition from 0.0 (biome_a) to 1.0 (biome_b)
-    across the width axis.
+    Creates a subdivided ground plane whose height is sampled from
+    biome-specific heightmaps (``heightmap_a`` / ``heightmap_b``) when
+    provided, blended across the transition width. The blend factor is
+    noise-displaced at the boundary so the edge reads as natural terrain
+    rather than a straight seam.
 
     Args:
         biome_a: Name of the first biome.
@@ -251,12 +256,45 @@ def generate_biome_transition_mesh(
         zone_width: Width of the transition zone (X-axis).
         zone_depth: Depth of the transition zone (Z-axis).
         segments: Grid subdivisions in each direction.
-        seed: Random seed for height noise.
+        seed: Random seed for boundary noise.
+        heightmap_a: Optional 2-D array (H×W, values in [0,1]) for biome_a.
+            When provided, Z is sampled from this map on the biome_a side.
+        heightmap_b: Optional 2-D array (H×W, values in [0,1]) for biome_b.
+            When provided, Z is sampled from this map on the biome_b side.
+        heightmap_scale: World-space multiplier applied to sampled height values.
 
     Returns:
         MeshSpec with transition zone geometry and blend weights in metadata.
     """
     rng = random.Random(seed)
+
+    # Pre-build noise table for boundary displacement: one value per column so
+    # adjacent rows share the same X-axis noise (coherent boundary wiggle).
+    boundary_noise = [
+        rng.uniform(-0.25, 0.25) for _ in range(segments + 1)
+    ]
+
+    def _sample_hmap(hmap: Any, u: float, v: float) -> float:
+        """Bilinear sample from a 2-D heightmap at normalised [0,1] coords."""
+        if hmap is None:
+            return 0.0
+        arr = np.asarray(hmap, dtype=np.float64)
+        if arr.ndim != 2:
+            return 0.0
+        rows, cols = arr.shape
+        if rows < 2 or cols < 2:
+            return float(arr.flat[0]) if arr.size else 0.0
+        col_f = max(0.0, min(u, 1.0)) * (cols - 1)
+        row_f = max(0.0, min(v, 1.0)) * (rows - 1)
+        c0 = int(col_f); c1 = min(c0 + 1, cols - 1)
+        r0 = int(row_f); r1 = min(r0 + 1, rows - 1)
+        cf = col_f - c0; rf = row_f - r0
+        return float(
+            arr[r0, c0] * (1 - cf) * (1 - rf)
+            + arr[r0, c1] * cf * (1 - rf)
+            + arr[r1, c0] * (1 - cf) * rf
+            + arr[r1, c1] * cf * rf
+        )
 
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, ...]] = []
@@ -270,15 +308,19 @@ def generate_biome_transition_mesh(
             x = (x_frac - 0.5) * zone_width
             y = (z_frac - 0.5) * zone_depth
 
-            # Noise-displaced height for uneven ground (Z is up in Blender)
-            z = rng.gauss(0.0, 0.15) * (
-                math.sin(x_frac * 3.0 * math.pi) * 0.5 + 0.5
-            )
+            # Noise-displace the blend boundary so it reads as natural terrain
+            # rather than a straight-line seam.  boundary_noise is coherent
+            # along X so the displaced edge forms a continuous wiggly curve.
+            noise_offset = boundary_noise[ix] * math.sin(z_frac * math.pi)
+            raw_blend = x_frac + noise_offset
+            blend = max(0.0, min(1.0, raw_blend))
+
+            # Sample height from biome heightmaps and blend
+            h_a = _sample_hmap(heightmap_a, x_frac, z_frac) * heightmap_scale
+            h_b = _sample_hmap(heightmap_b, x_frac, z_frac) * heightmap_scale
+            z = h_a * (1.0 - blend) + h_b * blend
 
             vertices.append((x, y, z))
-
-            # Blend weight: 0.0 at biome_a edge, 1.0 at biome_b edge
-            blend = max(0.0, min(1.0, x_frac))
             vertex_groups.append(blend)
 
     # Quad faces
@@ -299,6 +341,8 @@ def generate_biome_transition_mesh(
         biome_a=biome_a,
         biome_b=biome_b,
         vertex_groups=vertex_groups,
+        has_heightmap_a=heightmap_a is not None,
+        has_heightmap_b=heightmap_b is not None,
     )
 
 
@@ -315,20 +359,34 @@ def generate_waterfall_mesh(
     pool_radius: float = 2.0,
     style: str = "rocky_cascade",
     seed: int = 0,
+    curtain_thickness_top: float = 0.25,
+    curtain_thickness_bottom: float = 0.05,
+    curtain_front_segs: int = 3,
 ) -> MeshSpec:
-    """Generate a stepped waterfall cascade with pool at base.
+    """Generate a stepped waterfall cascade with volumetric curtains and bowl pool.
 
-    Creates horizontal water surface planes at decreasing heights connected
-    by vertical water curtain faces. A circular pool disk sits at the base.
+    Upgrade notes (C+→B):
+    - Curtain is now volumetric: each curtain has ``curtain_front_segs`` (≥3)
+      depth segments forming a curved front face, plus a matching back face and
+      capped sides, so the water sheet has real thickness.
+    - Thickness tapers from ``curtain_thickness_top`` at the crest to
+      ``curtain_thickness_bottom`` at the base (mimics real falling water
+      thinning as it accelerates).
+    - Plunge pool is a hemispherical bowl (not a flat fan disk): ring rows step
+      down in Z to form a shallow basin, capped by a bottom center vertex.
 
     Args:
         width: Width of the waterfall.
         height: Total vertical height of the cascade.
         steps: Number of cascade steps.
         step_depth: Horizontal depth of each step ledge.
-        pool_radius: Radius of the base pool.
+        pool_radius: Radius of the base plunge pool.
         style: Visual style label.
         seed: Random seed for surface variation.
+        curtain_thickness_top: Water sheet thickness at the crest (metres).
+        curtain_thickness_bottom: Water sheet thickness at the base (metres).
+        curtain_front_segs: Number of horizontal curvature segments across the
+            curtain front face (minimum 3 for visible curvature).
 
     Returns:
         MeshSpec with waterfall geometry.
@@ -338,83 +396,157 @@ def generate_waterfall_mesh(
 
     step_height = height / steps
     half_w = width / 2.0
+    curtain_front_segs = max(3, curtain_front_segs)
 
-    current_y = 0.0  # Each step pushes forward in Y (depth axis)
+    current_y = 0.0  # Each step pushes forward in Y
 
     for si in range(steps):
         z_top = height - si * step_height
         z_bottom = z_top - step_height
 
-        # Slight random width variation per step
-        w_var = rng.uniform(-0.1, 0.1)
+        # Thickness tapers linearly from top to bottom of this step
+        t_top = curtain_thickness_top
+        t_bot = curtain_thickness_bottom + (curtain_thickness_top - curtain_thickness_bottom) * (
+            (steps - 1 - si) / max(steps - 1, 1)
+        )
+
+        w_var = rng.uniform(-0.05, 0.05)
         sw = half_w + w_var
 
-        # Horizontal ledge surface (top of this step)
+        # Horizontal ledge surface
+        ledge_segs = 4
         ledge_verts: list[tuple[float, float, float]] = []
         ledge_faces: list[tuple[int, ...]] = []
-
-        # Subdivide the ledge for non-uniform surface
-        ledge_segs = 4
         for ly in range(ledge_segs + 1):
             for lx in range(ledge_segs + 1):
                 x_frac = lx / ledge_segs
                 y_frac = ly / ledge_segs
                 x = (x_frac - 0.5) * 2.0 * sw
                 y = current_y + y_frac * step_depth
-                z_noise = rng.gauss(0.0, 0.02)
+                z_noise = rng.gauss(0.0, 0.015)
                 ledge_verts.append((x, y, z_top + z_noise))
-
         for ly in range(ledge_segs):
             for lx in range(ledge_segs):
-                row_w = ledge_segs + 1
-                v0 = ly * row_w + lx
-                v1 = v0 + 1
-                v2 = v0 + row_w + 1
-                v3 = v0 + row_w
-                ledge_faces.append((v0, v1, v2, v3))
-
+                rw = ledge_segs + 1
+                v0 = ly * rw + lx
+                ledge_faces.append((v0, v0 + 1, v0 + rw + 1, v0 + rw))
         parts.append((ledge_verts, ledge_faces))
 
-        # Vertical curtain face (waterfall between this step and next)
+        # Volumetric curtain: front face curves outward (partial-cylinder),
+        # back face is flat, sides cap the volume.
+        y_front = current_y + step_depth
+        cx_segs = curtain_front_segs  # horizontal subdivisions
+        # Height rows: top and bottom
         curtain_verts: list[tuple[float, float, float]] = []
         curtain_faces: list[tuple[int, ...]] = []
-        curtain_segs = 4
-        y_front = current_y + step_depth
 
-        for cx_i in range(curtain_segs + 1):
-            x_frac = cx_i / curtain_segs
-            x = (x_frac - 0.5) * 2.0 * sw
-            noise = rng.gauss(0.0, 0.03)
-            curtain_verts.append((x, y_front, z_top + noise))
-            curtain_verts.append((x, y_front, z_bottom + noise))
+        # Build two vertical rows (top, bottom) × two depth faces (front, back)
+        # Front face has a slight forward bow (cosine curve) for curvature.
+        # Layout per Z level (top then bottom): front_row then back_row
+        def _curtain_row(z_val: float, thickness: float) -> list[tuple[float, float, float]]:
+            row: list[tuple[float, float, float]] = []
+            for ci in range(cx_segs + 1):
+                x_frac = ci / cx_segs
+                x = (x_frac - 0.5) * 2.0 * sw
+                # Front vertex: bowed slightly forward
+                bow = math.sin(x_frac * math.pi) * thickness * 0.5
+                noise = rng.gauss(0.0, 0.015)
+                row.append((x, y_front + bow + noise, z_val))
+            for ci in range(cx_segs + 1):
+                x_frac = ci / cx_segs
+                x = (x_frac - 0.5) * 2.0 * sw
+                # Back vertex: flat, recessed by thickness
+                noise = rng.gauss(0.0, 0.010)
+                row.append((x, y_front - thickness + noise, z_val))
+            return row
 
-        for ci in range(curtain_segs):
-            b = ci * 2
-            curtain_faces.append((b, b + 2, b + 3, b + 1))
+        row_top = _curtain_row(z_top, t_top)
+        row_bot = _curtain_row(z_bottom, t_bot)
+        base_cv = 0
+        curtain_verts.extend(row_top)
+        curtain_verts.extend(row_bot)
+
+        stride = (cx_segs + 1) * 2  # verts per Z level (front + back)
+        front_count = cx_segs + 1
+
+        # Front face quads (top-row front to bottom-row front)
+        for ci in range(cx_segs):
+            tf0 = base_cv + ci
+            tf1 = base_cv + ci + 1
+            bf0 = base_cv + stride + ci
+            bf1 = base_cv + stride + ci + 1
+            curtain_faces.append((tf0, tf1, bf1, bf0))
+
+        # Back face quads (reversed winding for outward normal)
+        for ci in range(cx_segs):
+            tb0 = base_cv + front_count + ci
+            tb1 = base_cv + front_count + ci + 1
+            bb0 = base_cv + stride + front_count + ci
+            bb1 = base_cv + stride + front_count + ci + 1
+            curtain_faces.append((tb1, tb0, bb0, bb1))
+
+        # Left cap
+        curtain_faces.append((
+            base_cv + 0,
+            base_cv + front_count,
+            base_cv + stride + front_count,
+            base_cv + stride + 0,
+        ))
+        # Right cap
+        curtain_faces.append((
+            base_cv + cx_segs,
+            base_cv + stride + cx_segs,
+            base_cv + stride + front_count + cx_segs,
+            base_cv + front_count + cx_segs,
+        ))
 
         parts.append((curtain_verts, curtain_faces))
-
         current_y += step_depth
 
-    # Circular pool disk at the base
-    pool_segs = 16
+    # Plunge pool: hemispherical bowl (not a flat disk)
+    pool_z_surface = height - steps * step_height
+    pool_center_y = current_y + pool_radius
+    pool_ring_segs = 16
+    pool_depth_rings = 4  # rings stepping down into the bowl
+
     pool_verts: list[tuple[float, float, float]] = []
     pool_faces: list[tuple[int, ...]] = []
 
-    # Center vertex
-    pool_z = height - steps * step_height  # bottom of cascade
-    pool_verts.append((0.0, current_y + pool_radius, pool_z - 0.05))
+    # Generate rings from surface down to bowl bottom
+    ring_indices: list[list[int]] = []
+    for ri in range(pool_depth_rings + 1):
+        frac = ri / pool_depth_rings
+        # Radius shrinks toward bowl centre; depth increases (hemisphere shape)
+        ring_radius = pool_radius * math.cos(frac * math.pi * 0.5)
+        ring_z = pool_z_surface - pool_radius * math.sin(frac * math.pi * 0.5) * 0.4
+        row: list[int] = []
+        for pi in range(pool_ring_segs):
+            angle = 2.0 * math.pi * pi / pool_ring_segs
+            px = math.cos(angle) * ring_radius
+            py = pool_center_y + math.sin(angle) * ring_radius
+            noise = rng.gauss(0.0, 0.01)
+            pool_verts.append((px, py, ring_z + noise))
+            row.append(len(pool_verts) - 1)
+        ring_indices.append(row)
 
-    for pi in range(pool_segs):
-        angle = 2.0 * math.pi * pi / pool_segs
-        px = math.cos(angle) * pool_radius
-        py = current_y + pool_radius + math.sin(angle) * pool_radius
-        pool_verts.append((px, py, pool_z - 0.05 + rng.gauss(0.0, 0.01)))
+    # Quad faces between rings
+    for ri in range(pool_depth_rings):
+        for pi in range(pool_ring_segs):
+            pi_next = (pi + 1) % pool_ring_segs
+            pool_faces.append((
+                ring_indices[ri][pi],
+                ring_indices[ri][pi_next],
+                ring_indices[ri + 1][pi_next],
+                ring_indices[ri + 1][pi],
+            ))
 
-    # Fan triangles from center
-    for pi in range(pool_segs):
-        pi_next = (pi + 1) % pool_segs
-        pool_faces.append((0, pi + 1, pi_next + 1))
+    # Bottom cap: fan triangles from a single center vertex
+    bottom_center_z = pool_z_surface - pool_radius * 0.4
+    pool_verts.append((0.0, pool_center_y, bottom_center_z))
+    center_idx = len(pool_verts) - 1
+    for pi in range(pool_ring_segs):
+        pi_next = (pi + 1) % pool_ring_segs
+        pool_faces.append((center_idx, ring_indices[-1][pi], ring_indices[-1][pi_next]))
 
     parts.append((pool_verts, pool_faces))
 
@@ -427,6 +559,8 @@ def generate_waterfall_mesh(
         style=style,
         cascade_steps=steps,
         has_pool=True,
+        volumetric_curtain=True,
+        curtain_front_segs=curtain_front_segs,
     )
 
 

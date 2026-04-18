@@ -118,15 +118,15 @@ def test_rule_2_attached_viewport_passes():
     ProtocolGate.rule_2_sync_to_user_viewport(state)
 
 
-def test_rule_2_missing_viewport_raises():
-    from blender_addon.handlers.terrain_protocol import (
-        ProtocolGate,
-        ProtocolViolation,
-    )
+def test_rule_2_missing_viewport_logs_warning(caplog):
+    import logging
+    from blender_addon.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state(include_viewport=False)
-    with pytest.raises(ProtocolViolation, match="rule_2"):
+    with caplog.at_level(logging.WARNING):
         ProtocolGate.rule_2_sync_to_user_viewport(state)
+    assert any("rule_2" in r.message.lower() or "viewport" in r.message.lower()
+               for r in caplog.records)
 
 
 def test_rule_2_out_of_view_ok_bypasses():

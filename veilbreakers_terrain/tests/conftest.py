@@ -157,7 +157,16 @@ class _AliasLoader:
 
     def exec_module(self, module):  # noqa: D401, ARG002
         # Module already fully executed (it was real-imported first).
-        return None
+        # Python 3.13 may skip create_module and hand us a fresh module
+        # instead of self._real.  Fix up sys.modules so both alias and
+        # canonical names point to the same object, preserving shared state
+        # (e.g. _LOCKED_ANCHORS in terrain_reference_locks).
+        if module is not self._real:
+            import sys as _sys
+            try:
+                _sys.modules[module.__spec__.name] = self._real
+            except AttributeError:
+                pass
 
 
 def _install_blender_addon_alias() -> None:
@@ -180,5 +189,36 @@ def _install_blender_addon_alias() -> None:
     if not any(isinstance(f, _BlenderAddonHandlersAliasFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _BlenderAddonHandlersAliasFinder())
 
+    # Eagerly load terrain_semantics and terrain_pipeline so their module
+    # objects are locked into sys.modules under BOTH the real and alias keys
+    # before any test can trigger a second load via the alias path.  Without
+    # this, a test that does ``from blender_addon.handlers.terrain_semantics
+    # import …`` before terrain_pipeline has been imported can create a second
+    # module object, breaking isinstance checks in run_pass().
+    for _eager in (
+        "terrain_semantics",
+        "terrain_pipeline",
+        "terrain_reference_locks",
+        "animation_gaits",
+        "animation_environment",
+        "environment",
+    ):
+        _real_name = f"veilbreakers_terrain.handlers.{_eager}"
+        _alias_name = f"blender_addon.handlers.{_eager}"
+        try:
+            _mod = importlib.import_module(_real_name)
+        except ModuleNotFoundError:
+            continue
+        sys.modules[_real_name] = _mod
+        sys.modules[_alias_name] = _mod
+
 
 _install_blender_addon_alias()
+
+# ---------------------------------------------------------------------------
+# blender_addon.socket_server -> veilbreakers_terrain.socket_server alias
+# ---------------------------------------------------------------------------
+import veilbreakers_terrain.socket_server as _ss_mod  # noqa: E402
+sys.modules["blender_addon.socket_server"] = _ss_mod
+if "blender_addon" in sys.modules:
+    sys.modules["blender_addon"].socket_server = _ss_mod  # type: ignore[attr-defined]

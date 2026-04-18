@@ -182,8 +182,8 @@ def test_compute_mist_envelope_near_water(stack):
     env = compute_mist_envelope(stack, wet)
     assert env.shape == stack.height.shape
     assert env.dtype == np.float32
-    # Center should have max, dilated cells slightly less.
-    assert float(env[62, 62]) >= 0.99
+    # Center should have high mist (vertical attenuation may reduce slightly from 1.0).
+    assert float(env[62, 62]) >= 0.9
     assert float(env[58, 62]) > 0.0
     # Far from water should be 0.
     assert float(env[0, 0]) == 0.0
@@ -280,7 +280,7 @@ def test_register_bundle_l_passes_registers_all_three():
         BUNDLE_L_PASSES,
         register_bundle_l_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_l_passes()
     for name in BUNDLE_L_PASSES:
@@ -295,7 +295,7 @@ def test_bundle_l_passes_have_distinct_seed_namespaces():
         BUNDLE_L_PASSES,
         register_bundle_l_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_l_passes()
     namespaces = {

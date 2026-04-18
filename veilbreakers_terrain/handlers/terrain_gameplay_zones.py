@@ -33,6 +33,43 @@ class GameplayZoneType(IntEnum):
     PUZZLE = 6
 
 
+def _label_zones(mask: np.ndarray, eight_connected: bool = True) -> np.ndarray:
+    """Return connected-component labels for a boolean mask.
+
+    Uses scipy.ndimage.label when available; falls back to a BFS flood-fill.
+    Returns int32 array of the same shape (0 = background, 1..N = components).
+    """
+    try:
+        from scipy.ndimage import label as _sclabel  # lazy import
+        structure = np.ones((3, 3), dtype=int) if eight_connected else None
+        labeled, _ = _sclabel(mask.astype(bool), structure=structure)
+        return labeled.astype(np.int32)
+    except ImportError:
+        pass
+    # BFS fallback
+    from collections import deque
+    H, W = mask.shape
+    labeled = np.zeros((H, W), dtype=np.int32)
+    comp_id = 0
+    offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)] if eight_connected else [(-1, 0), (0, -1), (0, 1), (1, 0)]
+    for start_r in range(H):
+        for start_c in range(W):
+            if not mask[start_r, start_c] or labeled[start_r, start_c]:
+                continue
+            comp_id += 1
+            q: deque = deque()
+            q.append((start_r, start_c))
+            labeled[start_r, start_c] = comp_id
+            while q:
+                r, c = q.popleft()
+                for dr, dc in offsets:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < H and 0 <= nc < W and mask[nr, nc] and not labeled[nr, nc]:
+                        labeled[nr, nc] = comp_id
+                        q.append((nr, nc))
+    return labeled
+
+
 def compute_gameplay_zones(
     stack: TerrainMaskStack,
     intent: Optional[Any] = None,
@@ -47,12 +84,20 @@ def compute_gameplay_zones(
       - PUZZLE: cave_candidate regions
       - NARRATIVE: within hero feature footprint (from intent)
       - BOSS_ARENA: authored via intent.composition_hints['boss_arena_bbox']
+
+    Connected-component labelling is applied to each raw zone mask so that
+    spatially isolated patches share a consistent zone boundary (e.g. a
+    single large SAFE basin is one component, not a collection of unrelated
+    pixels). Small isolated components below min_component_cells are
+    reassigned to EXPLORATION to avoid tiny noise-driven zone patches.
     """
     if stack.height is None:
         raise ValueError("compute_gameplay_zones requires stack.height")
 
     h = np.asarray(stack.height, dtype=np.float64)
     shape = h.shape
+    H, W = shape
+    min_component_cells = max(4, H * W // 2000)  # ignore tiny specks
     out = np.full(shape, GameplayZoneType.EXPLORATION.value, dtype=np.int32)
 
     slope = stack.slope
@@ -84,11 +129,26 @@ def compute_gameplay_zones(
         else np.zeros(shape, dtype=bool)
     )
 
-    # Apply priority (later overrides earlier)
-    out[safe] = GameplayZoneType.SAFE.value
-    out[combat] = GameplayZoneType.COMBAT.value
-    out[stealth] = GameplayZoneType.STEALTH.value
-    out[puzzle] = GameplayZoneType.PUZZLE.value
+    def _apply_zone_with_cc(mask: np.ndarray, zone_val: int) -> None:
+        """Write zone_val into out for spatially connected components in mask.
+
+        Components with fewer than min_component_cells pixels are skipped
+        so small noise patches don't pollute the zone map.
+        """
+        labels = _label_zones(mask)
+        if labels.max() == 0:
+            return
+        comp_ids, comp_sizes = np.unique(labels[labels > 0], return_counts=True)
+        for cid, csz in zip(comp_ids, comp_sizes):
+            if csz < min_component_cells:
+                continue
+            out[labels == cid] = zone_val
+
+    # Apply priority (later overrides earlier) — each via CC filtering
+    _apply_zone_with_cc(safe, GameplayZoneType.SAFE.value)
+    _apply_zone_with_cc(combat, GameplayZoneType.COMBAT.value)
+    _apply_zone_with_cc(stealth, GameplayZoneType.STEALTH.value)
+    _apply_zone_with_cc(puzzle, GameplayZoneType.PUZZLE.value)
 
     # NARRATIVE from hero features
     if intent is not None and getattr(intent, "hero_feature_specs", ()):

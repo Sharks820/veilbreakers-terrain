@@ -9,6 +9,7 @@ Pure Python + numpy -- no bpy imports, fully testable without Blender.
 
 from __future__ import annotations
 
+import heapq
 import math
 from collections import deque
 from dataclasses import dataclass, asdict
@@ -172,11 +173,26 @@ def detect_lakes(
     flow_accumulation: np.ndarray,
     min_area: float = 100.0,
 ) -> list[dict]:
-    """Detect lake basins as local minima with sufficient drainage.
+    """Detect lake basins using Barnes 2014 priority-flood algorithm.
 
-    A lake forms at a pit cell (local minimum) where enough water accumulates.
-    We flood-fill from each pit up to a spill height to determine the lake
-    surface area and shape.
+    Priority-flood correctly handles spill-over cascading: water can spill
+    over one rim into a lower basin rather than always flooding to the
+    immediate local minimum.  Each flooded basin becomes a connected
+    component tracked by a lake label; the surface_z of each lake is the
+    elevation of the spill point (the lowest rim cell through which water
+    exits the basin).
+
+    Algorithm (Barnes et al. 2014 — "Priority-Flood"):
+        1. Seed an open min-heap with all border cells (already open to the
+           outside world).
+        2. Pop the lowest cell; for each 4-connected neighbor not yet closed:
+               * If neighbor_h < current water level → spill path; the
+                 neighbor is open to the outside so it is NOT a lake cell.
+               * Otherwise → potential lake cell; push neighbor with
+                 max(neighbor_h, current_h) as its priority so water fills
+                 the basin from below.
+        3. Connected components of cells whose fill-level exceeds their
+           raw elevation constitute lake bodies.
 
     Args:
         heightmap: 2D elevation array.
@@ -185,66 +201,120 @@ def detect_lakes(
 
     Returns:
         List of dicts, each with:
-            - "center_row", "center_col": pit cell coordinates
-            - "surface_z": water surface elevation
+            - "center_row", "center_col": pit cell (lowest elevation in lake)
+            - "surface_z": water surface elevation (spill height)
             - "cells": list of (row, col) cells comprising the lake
             - "area": number of cells
             - "inflow": total flow accumulation at pit
     """
     hmap = np.asarray(heightmap, dtype=np.float64)
+    flow_acc = np.asarray(flow_accumulation, dtype=np.float64)
     rows, cols = hmap.shape
+
+    # --- Priority-flood pass: compute water-surface elevation per cell -------
+    # water_level[r,c] = elevation of the water surface that reaches cell (r,c)
+    # from the border.  Cells on the border are open to drainage; interior
+    # cells can be higher than their raw elevation if they are in a closed
+    # basin.
+    water_level = np.full((rows, cols), np.inf, dtype=np.float64)
+    closed = np.zeros((rows, cols), dtype=bool)
+
+    open_heap: list[tuple[float, int, int]] = []
+
+    # Seed all border cells
+    for r in range(rows):
+        for c in (0, cols - 1):
+            if not closed[r, c]:
+                heapq.heappush(open_heap, (hmap[r, c], r, c))
+                water_level[r, c] = hmap[r, c]
+                closed[r, c] = True
+    for c in range(1, cols - 1):
+        for r in (0, rows - 1):
+            if not closed[r, c]:
+                heapq.heappush(open_heap, (hmap[r, c], r, c))
+                water_level[r, c] = hmap[r, c]
+                closed[r, c] = True
+
+    # 4-connected neighbors only (avoids diagonal seam artefacts in lake shapes)
+    _4_OFFSETS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    while open_heap:
+        wl, r, c = heapq.heappop(open_heap)
+        for dr, dc in _4_OFFSETS:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            if closed[nr, nc]:
+                continue
+            closed[nr, nc] = True
+            # Fill level: water cannot flow uphill so the neighbor's level
+            # is at least as high as the current cell's water level.
+            new_wl = max(wl, hmap[nr, nc])
+            water_level[nr, nc] = new_wl
+            heapq.heappush(open_heap, (new_wl, nr, nc))
+
+    # --- Identify lake cells: interior cells where water_level > raw height --
+    # A cell is a lake cell when water is pooled above its terrain surface.
+    lake_mask = (water_level > hmap + 1e-9)
+
+    # --- Connected-component labeling of lake cells -------------------------
+    label_grid = np.full((rows, cols), -1, dtype=np.int32)
+    next_label = 0
     lakes: list[dict] = []
-    visited_pits: set[tuple[int, int]] = set()
 
-    # Find pit cells: cells lower than all their neighbors
-    for r in range(1, rows - 1):
-        for c in range(1, cols - 1):
-            if (r, c) in visited_pits:
+    for seed_r in range(rows):
+        for seed_c in range(cols):
+            if not lake_mask[seed_r, seed_c]:
                 continue
-            is_pit = True
-            min_neighbor_h = float("inf")
-            for dr, dc in _D8_OFFSETS:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < rows and 0 <= nc < cols:
-                    if hmap[nr, nc] <= hmap[r, c]:
-                        is_pit = False
-                        break
-                    min_neighbor_h = min(min_neighbor_h, hmap[nr, nc])
-
-            if not is_pit:
-                continue
-            if flow_accumulation[r, c] < min_area * 0.5:
+            if label_grid[seed_r, seed_c] >= 0:
                 continue
 
-            visited_pits.add((r, c))
+            # BFS flood-fill this connected component
+            component: list[tuple[int, int]] = []
+            q: deque[tuple[int, int]] = deque()
+            q.append((seed_r, seed_c))
+            label_grid[seed_r, seed_c] = next_label
 
-            # Flood fill up to spill height (lowest neighbor ridge height)
-            spill_z = min_neighbor_h
-            lake_cells: list[tuple[int, int]] = []
-            queue: deque[tuple[int, int]] = deque()
-            queue.append((r, c))
-            seen: set[tuple[int, int]] = {(r, c)}
+            while q:
+                cr, cc = q.popleft()
+                component.append((cr, cc))
+                for dr, dc in _4_OFFSETS:
+                    nr, nc = cr + dr, cc + dc
+                    if not (0 <= nr < rows and 0 <= nc < cols):
+                        continue
+                    if label_grid[nr, nc] >= 0:
+                        continue
+                    if not lake_mask[nr, nc]:
+                        continue
+                    label_grid[nr, nc] = next_label
+                    q.append((nr, nc))
 
-            while queue:
-                cr, cc = queue.popleft()
-                if hmap[cr, cc] <= spill_z:
-                    lake_cells.append((cr, cc))
-                    for dr2, dc2 in _D8_OFFSETS:
-                        nr2, nc2 = cr + dr2, cc + dc2
-                        if 0 <= nr2 < rows and 0 <= nc2 < cols and (nr2, nc2) not in seen:
-                            seen.add((nr2, nc2))
-                            if hmap[nr2, nc2] <= spill_z:
-                                queue.append((nr2, nc2))
+            next_label += 1
 
-            if len(lake_cells) >= min_area:
-                lakes.append({
-                    "center_row": r,
-                    "center_col": c,
-                    "surface_z": float(spill_z),
-                    "cells": lake_cells,
-                    "area": len(lake_cells),
-                    "inflow": float(flow_accumulation[r, c]),
-                })
+            if len(component) < min_area:
+                continue
+
+            # Surface elevation is the maximum water_level in the component
+            # (== the spill height — the lowest rim cell the basin drains over)
+            surface_z = float(
+                max(water_level[cr, cc] for cr, cc in component)
+            )
+
+            # Pit cell: component member with the lowest raw elevation
+            pit_r, pit_c = min(component, key=lambda rc: hmap[rc[0], rc[1]])
+
+            # Gate on drainage area at the pit
+            if flow_acc[pit_r, pit_c] < min_area * 0.5:
+                continue
+
+            lakes.append({
+                "center_row": pit_r,
+                "center_col": pit_c,
+                "surface_z": surface_z,
+                "cells": component,
+                "area": len(component),
+                "inflow": float(flow_acc[pit_r, pit_c]),
+            })
 
     return lakes
 
@@ -486,8 +556,11 @@ class WaterNetwork:
         # Store raw traced paths with their network ids
         traced_paths: list[tuple[int, list[tuple[int, int]]]] = []
 
-        # Sort sources by accumulation (lowest first so bigger rivers claim later)
-        sources.sort(key=lambda rc: flow_acc[rc[0], rc[1]])
+        # Sort sources highest-accumulation-first so trunk rivers claim cells
+        # before tributaries.  The old lowest-first order caused tributary
+        # cells to be marked claimed before the main stem could reach them,
+        # trimming the trunk at false confluences.
+        sources.sort(key=lambda rc: flow_acc[rc[0], rc[1]], reverse=True)
 
         for sr, sc in sources:
             path = trace_river_from_flow(flow_dir, flow_acc, sr, sc, min_accumulation=0.0)
@@ -663,9 +736,22 @@ class WaterNetwork:
         traced_paths: list[tuple[int, list[tuple[int, int]]]],
         river_threshold: float,
     ) -> None:
-        """Compute tile edge contracts by intersecting river paths with tile grid lines."""
+        """Compute tile edge contracts using cell-center coordinates throughout.
+
+        All coordinates are converted to cell-center space before any
+        boundary test, removing the center-vs-corner convention mismatch
+        present in the previous implementation.  Tile boundary lines are
+        at half-integer cell positions in cell-center space:
+            east/west boundary between tile tx and tx+1 is at cx = (tx+1)*ts - 0.5
+            north/south boundary between tile ty and ty+1 is at cy = (ty+1)*ts - 0.5
+
+        Intersection with the boundary is solved analytically (parametric
+        segment test) so the reported world_x/world_y are the exact crossing
+        points rather than the midpoint approximation used previously.
+        """
         rows, cols = heightmap.shape
         ts = self._tile_size
+        cs = self._cell_size
 
         # Determine tile grid dimensions
         num_tiles_x = max(1, (cols + ts - 1) // ts)
@@ -678,112 +764,172 @@ class WaterNetwork:
                     "north": [], "south": [], "east": [], "west": [],
                 }
 
+        def _cell_center(row: int, col: int) -> tuple[float, float]:
+            """Cell-center coordinates: cx = (col + 0.5) * cs, cy = (row + 0.5) * cs."""
+            return (col + 0.5) * cs, (row + 0.5) * cs
+
+        def _liang_barsky_t(
+            cx0: float, cy0: float, cx1: float, cy1: float,
+            xmin: float, xmax: float, ymin: float, ymax: float,
+        ) -> float | None:
+            """Return the parametric t in [0,1] where segment (p0→p1) first
+            enters the AABB [xmin,xmax]×[ymin,ymax], or None if no crossing.
+
+            Uses the Liang-Barsky clipping algorithm.
+            """
+            dx = cx1 - cx0
+            dy = cy1 - cy0
+            t0, t1 = 0.0, 1.0
+
+            for p, q in (
+                (-dx, cx0 - xmin),
+                ( dx, xmax - cx0),
+                (-dy, cy0 - ymin),
+                ( dy, ymax - cy0),
+            ):
+                if abs(p) < 1e-12:
+                    if q < 0:
+                        return None  # parallel and outside
+                    continue
+                t = q / p
+                if p < 0:
+                    if t > t1:
+                        return None
+                    t0 = max(t0, t)
+                else:
+                    if t < t0:
+                        return None
+                    t1 = min(t1, t)
+
+            if t0 > t1:
+                return None
+            return t0  # first entry point
+
         # For each river path, check where it crosses tile boundaries
         for network_id, path in traced_paths:
             for i in range(len(path) - 1):
                 r0, c0 = path[i]
                 r1, c1 = path[i + 1]
 
-                # Determine which tiles these cells belong to
+                # Convert to cell-center coordinates (in cell-units * cs)
+                cx0, cy0 = _cell_center(r0, c0)
+                cx1, cy1 = _cell_center(r1, c1)
+
+                # Which tiles do start and end cells belong to?
                 tx0, ty0 = c0 // ts, r0 // ts
                 tx1, ty1 = c1 // ts, r1 // ts
 
                 if tx0 == tx1 and ty0 == ty1:
-                    continue  # Same tile, no crossing
+                    continue  # same tile, no crossing
 
-                # A crossing happens -- compute the contract at the crossing point
-                # Interpolate crossing position
-                cross_r = (r0 + r1) / 2.0
-                cross_c = (c0 + c1) / 2.0
-                wx, wy = self._grid_to_world(int(round(cross_r)), int(round(cross_c)))
-                wz = float(
-                    heightmap[min(r0, rows - 1), min(c0, cols - 1)]
-                    + heightmap[min(r1, rows - 1), min(c1, cols - 1)]
-                ) / 2.0
-                acc = max(
-                    flow_accumulation[r0, c0],
-                    flow_accumulation[r1, c1],
-                )
+                # Accumulation, width, depth
+                acc = max(flow_accumulation[r0, c0], flow_accumulation[r1, c1])
                 w = compute_river_width(acc)
                 dep = _compute_river_depth(acc)
-
-                # Flow direction vector (world space)
-                dx = float(c1 - c0) * self._cell_size
-                dy = float(r1 - r0) * self._cell_size
-                mag = math.sqrt(dx * dx + dy * dy)
-                if mag > 0:
-                    dx /= mag
-                    dy /= mag
-
                 wtype = "river" if acc >= river_threshold else "stream"
 
-                # Determine which edge is crossed and compute normalized position
-                if tx1 > tx0:
-                    # Crossing from tile (tx0,ty0) east -> tile (tx1,ty1) west
-                    edge_row = cross_r
-                    # Position along the east/west edge (row-based)
-                    tile_row_start = ty0 * ts
-                    pos = (edge_row - tile_row_start) / ts
+                # Flow direction vector (world space, unit length)
+                fdx = cx1 - cx0
+                fdy = cy1 - cy0
+                fmag = math.sqrt(fdx * fdx + fdy * fdy)
+                if fmag > 0:
+                    fdx /= fmag
+                    fdy /= fmag
+
+                # Average height at crossing (linear interpolation at t=0.5)
+                wz = (
+                    float(heightmap[r0, c0]) + float(heightmap[r1, c1])
+                ) / 2.0
+
+                # Determine every pair of adjacent tiles crossed by this step.
+                # In a D8 step the path can cross at most one vertical and one
+                # horizontal tile boundary, but we handle the general case.
+                crossed_tx_pairs: list[tuple[int, int]] = []
+                for tx_lo in range(min(tx0, tx1), max(tx0, tx1)):
+                    crossed_tx_pairs.append((tx_lo, tx_lo + 1))
+
+                crossed_ty_pairs: list[tuple[int, int]] = []
+                for ty_lo in range(min(ty0, ty1), max(ty0, ty1)):
+                    crossed_ty_pairs.append((ty_lo, ty_lo + 1))
+
+                def _make_contract(cross_cx: float, cross_cy: float) -> WaterEdgeContract:
+                    wx = self._world_origin_x + cross_cx
+                    wy = self._world_origin_y + cross_cy
+                    return WaterEdgeContract(
+                        position=0.0,  # overwritten by caller
+                        world_x=wx,
+                        world_y=wy,
+                        world_z=wz,
+                        flow_direction=(fdx, fdy),
+                        width=w,
+                        depth=dep,
+                        water_type=wtype,
+                        network_id=network_id,
+                    )
+
+                def _ensure_tile(tx: int, ty: int) -> None:
+                    self.tile_contracts.setdefault((tx, ty), {
+                        "north": [], "south": [], "east": [], "west": [],
+                    })
+
+                # East/west crossings (vertical boundary lines)
+                for tx_lo, tx_hi in crossed_tx_pairs:
+                    # Boundary line: cx = (tx_hi * ts - 0.5) * cs
+                    bx = (tx_hi * ts - 0.5) * cs
+                    # Parametric t where segment crosses this vertical line
+                    if abs(cx1 - cx0) < 1e-12:
+                        continue
+                    t = (bx - cx0) / (cx1 - cx0)
+                    if not (0.0 <= t <= 1.0):
+                        continue
+                    cross_cx = bx
+                    cross_cy = cy0 + t * (cy1 - cy0)
+
+                    # Normalized position along the tile edge (row direction)
+                    tile_row_origin_cy = ty0 * ts * cs
+                    pos = (cross_cy - tile_row_origin_cy) / (ts * cs)
                     pos = max(0.0, min(1.0, pos))
 
-                    contract = WaterEdgeContract(
-                        position=pos, world_x=wx, world_y=wy, world_z=wz,
-                        flow_direction=(dx, dy), width=w, depth=dep,
-                        water_type=wtype, network_id=network_id,
-                    )
-                    self.tile_contracts[(tx0, ty0)]["east"].append(contract)
-                    self.tile_contracts.setdefault((tx1, ty1), {
-                        "north": [], "south": [], "east": [], "west": [],
-                    })["west"].append(contract)
+                    contract = _make_contract(cross_cx, cross_cy)
+                    contract.position = pos
 
-                elif tx1 < tx0:
-                    edge_row = cross_r
-                    tile_row_start = ty0 * ts
-                    pos = (edge_row - tile_row_start) / ts
+                    _ensure_tile(tx_lo, ty0)
+                    _ensure_tile(tx_hi, ty0)
+                    if tx1 > tx0:
+                        self.tile_contracts[(tx_lo, ty0)]["east"].append(contract)
+                        self.tile_contracts[(tx_hi, ty0)]["west"].append(contract)
+                    else:
+                        self.tile_contracts[(tx_lo, ty0)]["west"].append(contract)
+                        self.tile_contracts[(tx_hi, ty0)]["east"].append(contract)
+
+                # North/south crossings (horizontal boundary lines)
+                for ty_lo, ty_hi in crossed_ty_pairs:
+                    # Boundary line: cy = (ty_hi * ts - 0.5) * cs
+                    by = (ty_hi * ts - 0.5) * cs
+                    if abs(cy1 - cy0) < 1e-12:
+                        continue
+                    t = (by - cy0) / (cy1 - cy0)
+                    if not (0.0 <= t <= 1.0):
+                        continue
+                    cross_cy = by
+                    cross_cx = cx0 + t * (cx1 - cx0)
+
+                    # Normalized position along the tile edge (col direction)
+                    tile_col_origin_cx = tx0 * ts * cs
+                    pos = (cross_cx - tile_col_origin_cx) / (ts * cs)
                     pos = max(0.0, min(1.0, pos))
 
-                    contract = WaterEdgeContract(
-                        position=pos, world_x=wx, world_y=wy, world_z=wz,
-                        flow_direction=(dx, dy), width=w, depth=dep,
-                        water_type=wtype, network_id=network_id,
-                    )
-                    self.tile_contracts[(tx0, ty0)]["west"].append(contract)
-                    self.tile_contracts.setdefault((tx1, ty1), {
-                        "north": [], "south": [], "east": [], "west": [],
-                    })["east"].append(contract)
+                    contract = _make_contract(cross_cx, cross_cy)
+                    contract.position = pos
 
-                if ty1 > ty0:
-                    # Crossing south (row increases)
-                    edge_col = cross_c
-                    tile_col_start = tx0 * ts
-                    pos = (edge_col - tile_col_start) / ts
-                    pos = max(0.0, min(1.0, pos))
-
-                    contract = WaterEdgeContract(
-                        position=pos, world_x=wx, world_y=wy, world_z=wz,
-                        flow_direction=(dx, dy), width=w, depth=dep,
-                        water_type=wtype, network_id=network_id,
-                    )
-                    self.tile_contracts[(tx0, ty0)]["south"].append(contract)
-                    self.tile_contracts.setdefault((tx1, ty1), {
-                        "north": [], "south": [], "east": [], "west": [],
-                    })["north"].append(contract)
-
-                elif ty1 < ty0:
-                    edge_col = cross_c
-                    tile_col_start = tx0 * ts
-                    pos = (edge_col - tile_col_start) / ts
-                    pos = max(0.0, min(1.0, pos))
-
-                    contract = WaterEdgeContract(
-                        position=pos, world_x=wx, world_y=wy, world_z=wz,
-                        flow_direction=(dx, dy), width=w, depth=dep,
-                        water_type=wtype, network_id=network_id,
-                    )
-                    self.tile_contracts[(tx0, ty0)]["north"].append(contract)
-                    self.tile_contracts.setdefault((tx1, ty1), {
-                        "north": [], "south": [], "east": [], "west": [],
-                    })["south"].append(contract)
+                    _ensure_tile(tx0, ty_lo)
+                    _ensure_tile(tx0, ty_hi)
+                    if ty1 > ty0:
+                        self.tile_contracts[(tx0, ty_lo)]["south"].append(contract)
+                        self.tile_contracts[(tx0, ty_hi)]["north"].append(contract)
+                    else:
+                        self.tile_contracts[(tx0, ty_lo)]["north"].append(contract)
+                        self.tile_contracts[(tx0, ty_hi)]["south"].append(contract)
 
     # ------------------------------------------------------------------
     # Public query API

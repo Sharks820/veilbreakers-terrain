@@ -289,6 +289,10 @@ class TerrainMaskStack:
     wind_erosion_delta: Optional[np.ndarray] = None
     glacial_delta: Optional[np.ndarray] = None
 
+    # Bundle K channels
+    stochastic_uv_mask: Optional[np.ndarray] = None
+    shadow_map: Optional[np.ndarray] = None
+
     # -- Unity integratable channels (AAA round-trip contract) --
     # Per-layer splatmap weights (Unity Terrain Layer alphamaps). Shape (H, W, L).
     splatmap_weights_layer: Optional[np.ndarray] = None
@@ -325,6 +329,10 @@ class TerrainMaskStack:
     content_hash: Optional[str] = None
     dirty_channels: Set[str] = field(default_factory=set)
     populated_by_pass: Dict[str, str] = field(default_factory=dict)
+
+    # BUG-R8-A9-033: strict tile contract flag (LOW priority — False default,
+    # no other logic changes). When True, rejects non-(tile_size+1, tile_size+1) shapes.
+    strict_tile_contract: bool = False
 
     # Set of channel names that are scalar ndarrays (not dict-of-ndarray).
     # Used by compute_hash / to_npz / from_npz — any new ndarray field MUST
@@ -427,15 +435,25 @@ class TerrainMaskStack:
             ts = int(self.tile_size)
             expected_new = (ts + 1, ts + 1)
             expected_legacy = (ts, ts)
-            # Only enforce the square tile contract for square shapes — legacy
-            # non-tile mask stacks (e.g. rows != cols) are allowed through.
-            if h.shape[0] == h.shape[1] and h.shape not in (expected_new, expected_legacy):
-                raise ValueError(
-                    f"TerrainMaskStack height shape {h.shape} violates tile "
-                    f"resolution contract: tile_size={self.tile_size} requires "
-                    f"{expected_new} (new Addendum 2.A.1 contract) or "
-                    f"{expected_legacy} (legacy)."
-                )
+            # BUG-R8-A9-033: when strict_tile_contract=True, only accept the
+            # canonical (tile_size+1, tile_size+1) shape — no legacy fallback.
+            if self.strict_tile_contract:
+                if h.shape != expected_new:
+                    raise ValueError(
+                        f"TerrainMaskStack strict_tile_contract=True: "
+                        f"height shape {h.shape} must be {expected_new} "
+                        f"(tile_size={self.tile_size})."
+                    )
+            else:
+                # Only enforce the square tile contract for square shapes — legacy
+                # non-tile mask stacks (e.g. rows != cols) are allowed through.
+                if h.shape[0] == h.shape[1] and h.shape not in (expected_new, expected_legacy):
+                    raise ValueError(
+                        f"TerrainMaskStack height shape {h.shape} violates tile "
+                        f"resolution contract: tile_size={self.tile_size} requires "
+                        f"{expected_new} (new Addendum 2.A.1 contract) or "
+                        f"{expected_legacy} (legacy)."
+                    )
         object.__setattr__(self, "_guard_active", True)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -468,7 +486,13 @@ class TerrainMaskStack:
         """Store a channel value, record provenance, clear dirty flag."""
         if not hasattr(self, channel):
             raise AttributeError(f"Unknown mask channel: {channel}")
-        object.__setattr__(self, channel, np.ascontiguousarray(value))
+        # Dict-valued channels (decal_density, wildlife_affinity, detail_density)
+        # must be stored as-is; np.ascontiguousarray would wrap them in a 0-d
+        # object array, breaking downstream dict operations.
+        if channel in self._DICT_CHANNELS:
+            object.__setattr__(self, channel, value)
+        else:
+            object.__setattr__(self, channel, np.ascontiguousarray(value))
         self.populated_by_pass[channel] = pass_name
         self.dirty_channels.discard(channel)
         # Any mutation invalidates cached hash
@@ -494,6 +518,7 @@ class TerrainMaskStack:
 
     # -- Unity export manifest -------------------------------------------------
 
+    # BUG-R8-A9-034: added foam, mist, wet_rock, tidal
     UNITY_EXPORT_CHANNELS: Tuple[str, ...] = (
         "height",
         "splatmap_weights_layer",
@@ -510,6 +535,10 @@ class TerrainMaskStack:
         "traversability",
         "gameplay_zone",
         "audio_reverb_class",
+        "foam",
+        "mist",
+        "wet_rock",
+        "tidal",
     )
 
     def unity_export_manifest(self) -> Dict[str, Any]:
@@ -594,7 +623,7 @@ class TerrainMaskStack:
 
         for dict_field in ("wildlife_affinity", "decal_density", "detail_density"):
             container = getattr(self, dict_field, None)
-            if not container:
+            if not container or not isinstance(container, dict):
                 continue
             for k in sorted(container.keys()):
                 arr = np.ascontiguousarray(container[k])
@@ -644,6 +673,12 @@ class TerrainMaskStack:
             "dirty_channels": sorted(self.dirty_channels),
             "dict_channels": dict_channels_meta,
             "content_hash": self.compute_hash(),
+            # BUG-R8-A9-035: persist Unity-export scalar metadata so from_npz
+            # can reconstruct a bit-exact stack without re-deriving these values.
+            "unity_export_schema_version": self.unity_export_schema_version,
+            "coordinate_system": self.coordinate_system,
+            "height_min_m": float(self.height_min_m) if self.height_min_m is not None else None,
+            "height_max_m": float(self.height_max_m) if self.height_max_m is not None else None,
         }
         arrays["__meta__"] = np.array(json.dumps(meta), dtype=object)
         np.savez_compressed(path, **arrays)
@@ -655,6 +690,10 @@ class TerrainMaskStack:
             meta_raw = data["__meta__"].item()
             meta = json.loads(meta_raw)
             height = np.array(data["height"])
+            # BUG-R8-A9-035: restore Unity-export scalar metadata from the
+            # persisted meta dict so the round-tripped stack is bit-exact.
+            _height_min = meta.get("height_min_m")
+            _height_max = meta.get("height_max_m")
             stack = cls(
                 tile_size=int(meta["tile_size"]),
                 cell_size=float(meta["cell_size"]),
@@ -663,6 +702,12 @@ class TerrainMaskStack:
                 tile_x=int(meta["tile_x"]),
                 tile_y=int(meta["tile_y"]),
                 height=height,
+                unity_export_schema_version=str(
+                    meta.get("unity_export_schema_version", "1.0")
+                ),
+                coordinate_system=str(meta.get("coordinate_system", "z-up")),
+                height_min_m=float(_height_min) if _height_min is not None else None,
+                height_max_m=float(_height_max) if _height_max is not None else None,
             )
             for name in cls._ARRAY_CHANNELS:
                 if name == "height":
@@ -786,6 +831,10 @@ class TerrainSceneRead:
 
     The orchestrator refuses to run mutating passes without this attached
     to the current ``TerrainIntentState``.
+
+    BUG-R8-A9-020: Addendum 1.A.7 extended fields are now direct dataclass
+    fields with defaults so the frozen dataclass is safely hashable/picklable
+    without the id()-keyed sidecar registry.
     """
 
     timestamp: float
@@ -799,6 +848,11 @@ class TerrainSceneRead:
     edit_scope: BBox
     success_criteria: Tuple[str, ...]
     reviewer: str
+
+    # Addendum 1.A.7 extended fields (BUG-R8-A9-020)
+    addon_version: Optional[Tuple[int, int, int]] = None
+    lockable_anchors: Tuple[str, ...] = ()
+    extended_at: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1084,9 @@ class TerrainPipelineState:
     # FIX: Pipeline-break #1/#2 — water_network was never wired through state.
     # Holds an optional WaterNetwork (or duck-typed equivalent with .nodes/.segments).
     water_network: Optional[Any] = None
+    # FIX BUG-R8-A9-001 — viewport_vantage was missing; terrain_protocol.py rule_2
+    # does getattr(state, "viewport_vantage", None) and raises ProtocolViolation if absent.
+    viewport_vantage: Optional[Any] = None
 
     @property
     def tile_x(self) -> int:

@@ -48,6 +48,9 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
       * elevation is low relative to the tile range (altitude weight)
       * the local neighbourhood is concave (basin / valley weight)
 
+    The Laplacian and box-blur use reflect boundary conditions (NOT toroidal
+    np.roll wrapping, which creates seam artefacts at tile edges).
+
     Returns
     -------
     np.ndarray
@@ -69,13 +72,25 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
     alt_weight = np.power(1.0 - alt_norm, 1.5)
 
     # Concavity weight: positive laplacian => basin, negative => ridge.
-    lap = (
-        np.roll(h, 1, 0)
-        + np.roll(h, -1, 0)
-        + np.roll(h, 1, 1)
-        + np.roll(h, -1, 1)
-        - 4.0 * h
-    ) / (float(stack.cell_size) ** 2)
+    # Use reflect-padded neighbours instead of np.roll to avoid tile-edge seams.
+    cs2 = float(stack.cell_size) ** 2
+    try:
+        from scipy.ndimage import uniform_filter  # lazy import
+        # 3×3 uniform filter with reflect mode is equivalent to a neighbourhood
+        # mean; Laplacian = mean_of_neighbours - centre (for 4-connected approx).
+        h_mean = uniform_filter(h, size=3, mode="reflect")
+        lap = (h_mean - h) * 4.0 / cs2  # scale matches 4-neighbour sum convention
+    except ImportError:
+        # Manual reflect-padded Laplacian fallback
+        h_pad = np.pad(h, 1, mode="reflect")
+        lap = (
+            h_pad[:-2, 1:-1]
+            + h_pad[2:, 1:-1]
+            + h_pad[1:-1, :-2]
+            + h_pad[1:-1, 2:]
+            - 4.0 * h
+        ) / cs2
+
     # Normalise to [-1, 1] via robust percentile scaling.
     p_lo, p_hi = np.percentile(lap, [5.0, 95.0])
     spread = max(abs(p_lo), abs(p_hi), 1e-6)
@@ -84,14 +99,19 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
 
     fog = 0.65 * alt_weight + 0.35 * basin_weight
 
-    # Light smoothing via a 3x3 box blur (toroidal) for visual coherence.
-    smoothed = (
-        fog
-        + np.roll(fog, 1, 0)
-        + np.roll(fog, -1, 0)
-        + np.roll(fog, 1, 1)
-        + np.roll(fog, -1, 1)
-    ) / 5.0
+    # Light smoothing via 3×3 box blur — reflect mode, no toroidal wrapping.
+    try:
+        from scipy.ndimage import uniform_filter  # already imported above, re-use
+        smoothed = uniform_filter(fog, size=3, mode="reflect")
+    except ImportError:
+        fog_pad = np.pad(fog, 1, mode="reflect")
+        smoothed = (
+            fog_pad[:-2, 1:-1]
+            + fog_pad[2:, 1:-1]
+            + fog_pad[1:-1, :-2]
+            + fog_pad[1:-1, 2:]
+            + fog
+        ) / 5.0
     return np.clip(smoothed, 0.0, 1.0).astype(np.float32)
 
 
@@ -106,9 +126,15 @@ def compute_mist_envelope(
 ) -> np.ndarray:
     """Mist intensity near wet / water cells. Float32 [0, 1].
 
-    A simple multi-step dilation of the wetness mask produces a falloff
-    envelope. Cells directly on water get max mist; cells N steps away
-    get ``(1 - N/steps)`` mist.
+    Uses binary dilation with reflect boundary conditions to propagate a
+    falloff envelope outward from wet cells. Avoids np.roll toroidal wrap
+    (which injects false mist at tile edges). Intensity additionally
+    decreases with height above the local valley floor so mist stays
+    low-lying rather than floating uniformly across ridges.
+
+    Cells directly on water get intensity = max(wetness). Cells N dilation
+    steps away get ``(1 - N/(steps+1))`` intensity. A vertical gradient
+    further attenuates cells above the mean wet-zone elevation.
     """
     if stack.height is None:
         raise ValueError("compute_mist_envelope requires stack.height")
@@ -118,20 +144,54 @@ def compute_mist_envelope(
             f"wetness shape {w.shape} must match height shape {stack.height.shape}"
         )
 
+    h = np.asarray(stack.height, dtype=np.float64)
     steps = 4
     env = w.copy()
-    current = (w > 0.05).astype(np.float32)
-    for s in range(1, steps + 1):
-        dilated = (
-            current
-            + np.roll(current, 1, 0)
-            + np.roll(current, -1, 0)
-            + np.roll(current, 1, 1)
-            + np.roll(current, -1, 1)
-        )
-        dilated = (dilated > 0.5).astype(np.float32)
-        env = np.maximum(env, dilated * (1.0 - s / (steps + 1)))
-        current = dilated
+
+    wet_bool = w > 0.05
+    # Valley floor reference: mean elevation of wet cells (or global min if none)
+    if wet_bool.any():
+        valley_elev = float(h[wet_bool].mean())
+    else:
+        valley_elev = float(h.min())
+
+    # Mist vertical scale: thins out over one tile-height-range above valley
+    h_range = max(float(h.max()) - valley_elev, 1.0)
+
+    try:
+        from scipy.ndimage import binary_dilation  # lazy import
+        # 3×3 cross structuring element (4-connected dilation)
+        struct = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
+        current = wet_bool.copy()
+        for s in range(1, steps + 1):
+            # binary_dilation uses reflect border by default for bool arrays
+            dilated = binary_dilation(current, structure=struct, border_value=False)
+            # Only new fringe cells get this step's intensity
+            new_cells = dilated & ~current
+            intensity = float(1.0 - s / (steps + 1))
+            env = np.maximum(env, new_cells.astype(np.float32) * intensity)
+            current = dilated
+    except ImportError:
+        # Reflect-padded manual dilation fallback (no toroidal wrap)
+        current = wet_bool.astype(np.float32)
+        for s in range(1, steps + 1):
+            c_pad = np.pad(current, 1, mode="reflect")
+            dilated_sum = (
+                c_pad[:-2, 1:-1]
+                + c_pad[2:, 1:-1]
+                + c_pad[1:-1, :-2]
+                + c_pad[1:-1, 2:]
+                + current
+            )
+            dilated = (dilated_sum > 0.5).astype(np.float32)
+            env = np.maximum(env, dilated * float(1.0 - s / (steps + 1)))
+            current = dilated
+
+    # Vertical gradient: mist decreases above valley floor
+    height_above = np.maximum(0.0, h - valley_elev).astype(np.float32)
+    vert_atten = np.exp(-2.5 * height_above / h_range).astype(np.float32)
+    env = (env * vert_atten).astype(np.float32)
+
     return np.clip(env, 0.0, 1.0).astype(np.float32)
 
 

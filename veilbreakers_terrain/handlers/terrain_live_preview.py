@@ -10,8 +10,11 @@ Pure Python + numpy. No bpy.
 from __future__ import annotations
 
 import copy
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from .terrain_dirty_tracking import DirtyTracker, attach_dirty_tracker
 from .terrain_mask_cache import MaskCache, pass_with_cache
@@ -58,6 +61,15 @@ class LivePreviewSession:
     def __post_init__(self) -> None:
         if self.tracker is None:
             self.tracker = attach_dirty_tracker(self.controller.state)
+        # BUG-R8-A9-008: seed history with baseline hash so diff_preview
+        # can always find a valid "before" entry even on the first apply_edit.
+        initial_hash = self.controller.state.mask_stack.compute_hash()
+        self.history.append({
+            "hash_before": None,
+            "hash_after": initial_hash,
+            "pass_name": "__init__",
+            "timestamp": time.time(),
+        })
 
     @property
     def state(self) -> TerrainPipelineState:
@@ -80,6 +92,8 @@ class LivePreviewSession:
         dirty_channels: List[str] = list(edit.get("dirty_channels", []))
         use_cache: bool = bool(edit.get("use_cache", True))
 
+        hash_before = self.current_hash()
+
         if dirty_channels and region is not None:
             for ch in dirty_channels:
                 self.tracker.mark_dirty(ch, region)
@@ -96,15 +110,19 @@ class LivePreviewSession:
         else:
             results = execute_region(self.controller, passes, region or self.state.intent.region_bounds, pad=False)
 
-        preview_hash = self.current_hash()
+        hash_after = self.current_hash()
         self.history.append(
             {
                 "edit": edit,
                 "results": results,
-                "hash": preview_hash,
+                "hash": hash_after,
+                "hash_before": hash_before,
+                "hash_after": hash_after,
+                "pass_name": passes[0] if len(passes) == 1 else str(passes),
+                "timestamp": time.time(),
             }
         )
-        return preview_hash
+        return hash_after
 
     def diff_preview(self, hash_before: str, hash_after: str) -> Dict[str, Any]:
         """Look up stored snapshots and compute a diff between them.
@@ -115,8 +133,8 @@ class LivePreviewSession:
         Returns only a summary dict — for a full visual diff the caller
         must hold references to actual stacks.
         """
-        matched_before = [h for h in self.history if h["hash"] == hash_before]
-        matched_after = [h for h in self.history if h["hash"] == hash_after]
+        matched_before = [h for h in self.history if h.get("hash") == hash_before]
+        matched_after = [h for h in self.history if h.get("hash") == hash_after]
         return {
             "hash_before": hash_before,
             "hash_after": hash_after,
@@ -134,6 +152,47 @@ class LivePreviewSession:
         """Return a deep-copied snapshot of the current mask stack for later diffing."""
         return _clone_stack_for_diff(self.state.mask_stack)
 
+    def render_thumbnail_png(self, path: str, view: str = "top") -> str:
+        """Render a thumbnail preview of the current terrain state.
+
+        In Blender: uses bpy.ops.render.opengl for a quick viewport render.
+        Headless: uses matplotlib to render a heightmap color-map image.
+        Returns the path written, or an "ERROR: ..." string on failure.
+        """
+        from pathlib import Path
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Try Blender render path
+        try:
+            import bpy
+            old_path = bpy.context.scene.render.filepath
+            bpy.context.scene.render.filepath = str(output_path)
+            bpy.context.scene.render.image_settings.file_format = 'PNG'
+            bpy.ops.render.opengl(write_still=True)
+            bpy.context.scene.render.filepath = old_path
+            return str(output_path)
+        except Exception:
+            pass
+
+        # Headless fallback: matplotlib heightmap
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            stack = self.controller.state.mask_stack
+            height = np.asarray(stack.height, dtype=np.float32)
+            fig, ax = plt.subplots(figsize=(8, 8), dpi=128)
+            im = ax.imshow(height, cmap="terrain", origin="lower")
+            plt.colorbar(im, ax=ax, label="Height (m)")
+            ax.set_title(f"VeilBreakers Terrain — {view}")
+            plt.tight_layout()
+            plt.savefig(str(output_path), dpi=128)
+            plt.close(fig)
+            return str(output_path)
+        except Exception as e:
+            return f"ERROR: {e}"
+
 
 def edit_hero_feature(
     state: TerrainPipelineState,
@@ -142,45 +201,125 @@ def edit_hero_feature(
 ) -> Dict[str, Any]:
     """Orchestrate modular editing of a single hero feature in-place.
 
-    Looks up the feature by ID in state.side_effects, applies each mutation
-    sequentially (position shift, scale change, rotation, material swap),
-    and re-validates the affected region.
+    Looks up the HeroFeatureSpec by feature_id in
+    ``state.intent.hero_feature_specs``, applies each mutation via
+    ``dataclasses.replace``, then writes the mutated spec back into
+    ``state.intent.composition_hints['hero_features']`` and updates
+    ``state.intent.hero_feature_specs`` via a frozen-dataclass replace.
 
-    Returns a dict with applied_mutations count and any validation issues.
+    Supported mutation types: translate, scale, rotate, material.
+
+    Returns a dict with applied count, dirty_channels, region BBox (as
+    a 4-tuple), and any validation issues.
     """
+    import dataclasses
+    from .terrain_semantics import BBox, HeroFeatureSpec
+
     applied = 0
     issues: List[str] = []
 
-    # Find the feature in side_effects
-    matching = [s for s in state.side_effects if feature_id in s]
-    if not matching:
-        return {"applied": 0, "issues": [f"Feature '{feature_id}' not found in side_effects"]}
+    # Find the feature spec by ID
+    spec: "HeroFeatureSpec | None" = None
+    for s in state.intent.hero_feature_specs:
+        if s.feature_id == feature_id:
+            spec = s
+            break
 
+    if spec is None:
+        return {
+            "applied": 0,
+            "issues": [f"Feature '{feature_id}' not found in hero_feature_specs"],
+            "feature_id": feature_id,
+            "dirty_channels": [],
+            "region": None,
+        }
+
+    new_spec = spec
     for mutation in mutations:
         mut_type = mutation.get("type", "unknown")
         if mut_type == "translate":
             dx = float(mutation.get("dx", 0))
             dy = float(mutation.get("dy", 0))
             dz = float(mutation.get("dz", 0))
-            state.side_effects.append(f"edit:{feature_id}:translate:{dx},{dy},{dz}")
+            wp = new_spec.world_position
+            new_spec = dataclasses.replace(
+                new_spec,
+                world_position=(wp[0] + dx, wp[1] + dy, wp[2] + dz),
+            )
             applied += 1
         elif mut_type == "scale":
             factor = float(mutation.get("factor", 1.0))
-            state.side_effects.append(f"edit:{feature_id}:scale:{factor}")
+            new_params = dict(new_spec.parameters)
+            new_params["scale_factor"] = factor
+            new_spec = dataclasses.replace(new_spec, parameters=new_params)
             applied += 1
         elif mut_type == "rotate":
             angle_deg = float(mutation.get("angle_deg", 0))
-            axis = mutation.get("axis", "z")
-            state.side_effects.append(f"edit:{feature_id}:rotate:{axis}:{angle_deg}")
+            axis = str(mutation.get("axis", "z"))
+            ori = list(new_spec.orientation)
+            axis_idx = {"x": 0, "y": 1, "z": 2}.get(axis.lower(), 2)
+            ori[axis_idx] = ori[axis_idx] + angle_deg
+            new_spec = dataclasses.replace(new_spec, orientation=tuple(ori))
             applied += 1
         elif mut_type == "material":
-            material_id = mutation.get("material_id", "")
-            state.side_effects.append(f"edit:{feature_id}:material:{material_id}")
+            material_id = str(mutation.get("material_id", ""))
+            new_params = dict(new_spec.parameters)
+            new_params["material_id"] = material_id
+            new_spec = dataclasses.replace(new_spec, parameters=new_params)
             applied += 1
         else:
             issues.append(f"Unknown mutation type: {mut_type}")
 
-    return {"applied": applied, "issues": issues, "feature_id": feature_id}
+    if applied == 0:
+        return {
+            "applied": 0,
+            "issues": issues,
+            "feature_id": feature_id,
+            "dirty_channels": [],
+            "region": None,
+        }
+
+    # Write mutated spec back into intent (frozen dataclass — replace tuple entry)
+    new_specs = tuple(
+        new_spec if s.feature_id == feature_id else s
+        for s in state.intent.hero_feature_specs
+    )
+    new_intent = dataclasses.replace(state.intent, hero_feature_specs=new_specs)
+    # TerrainPipelineState.intent is not frozen — assign directly
+    state.intent = new_intent
+
+    # Also update composition_hints['hero_features'] list if it exists
+    hints = dict(state.intent.composition_hints)
+    hf_list: List[Dict[str, Any]] = list(hints.get("hero_features", []))
+    for i, hf in enumerate(hf_list):
+        if hf.get("feature_id") == feature_id:
+            hf_list[i] = {
+                **hf,
+                "world_position": list(new_spec.world_position),
+                "orientation": list(new_spec.orientation),
+                "parameters": dict(new_spec.parameters),
+            }
+            break
+    hints["hero_features"] = hf_list
+    state.intent = dataclasses.replace(state.intent, composition_hints=hints)
+
+    # Compute region bounding box around the mutated feature position
+    wp = new_spec.world_position
+    r = max(new_spec.exclusion_radius, 10.0)
+    region = BBox(
+        min_x=wp[0] - r,
+        min_y=wp[1] - r,
+        max_x=wp[0] + r,
+        max_y=wp[1] + r,
+    )
+
+    return {
+        "applied": applied,
+        "issues": issues,
+        "feature_id": feature_id,
+        "dirty_channels": ["hero_exclusion", "cliff_candidate", "cave_candidate"],
+        "region": list(region.to_tuple()),
+    }
 
 
 __all__ = [

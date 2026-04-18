@@ -10,6 +10,7 @@ See Addendum 1.A.7.
 from __future__ import annotations
 
 import time
+import weakref as _weakref
 from typing import Optional, Sequence, Tuple
 
 from .terrain_semantics import (
@@ -18,6 +19,56 @@ from .terrain_semantics import (
     TerrainSceneRead,
     WaterfallChainRef,
 )
+
+
+def _walk_scene() -> dict:
+    """Walk bpy.data to extract real scene state when running in Blender."""
+    result = {}
+    try:
+        import bpy
+        # Collect objects with vb_feature_id custom property
+        hero_features = []
+        for obj in bpy.data.objects:
+            if "vb_feature_id" in obj:
+                hero_features.append({
+                    "id": obj["vb_feature_id"],
+                    "type": obj.get("vb_feature_type", "unknown"),
+                    "location": list(obj.location),
+                    "name": obj.name,
+                })
+        result["hero_features"] = hero_features
+
+        # Find focal point from active camera
+        cam = bpy.context.scene.camera
+        if cam:
+            result["focal_point"] = list(cam.location)
+            result["focal_direction"] = list(cam.matrix_world.col[2][:3])
+
+        # Waterfall chain empties
+        waterfall_chains = []
+        for obj in bpy.data.objects:
+            if obj.name.startswith("vb_waterfall_chain_"):
+                waterfall_chains.append({
+                    "name": obj.name,
+                    "location": list(obj.location),
+                })
+        result["waterfall_chains"] = waterfall_chains
+
+        # Cave candidates
+        cave_candidates = []
+        for obj in bpy.data.objects:
+            if obj.name.startswith("vb_cave_"):
+                cave_candidates.append({
+                    "name": obj.name,
+                    "location": list(obj.location),
+                    "type": obj.get("vb_cave_type", "unknown"),
+                })
+        result["cave_candidates"] = cave_candidates
+
+        result["timestamp"] = bpy.data.scenes[0].name  # use scene name as identifier
+    except Exception:
+        pass
+    return result
 
 
 def capture_scene_read(
@@ -51,6 +102,48 @@ def capture_scene_read(
     frozen dataclass surface stays stable while new consumers can
     read them without another contract break.
     """
+    # When running inside Blender, merge real scene state over kwargs.
+    _live = _walk_scene()
+    if _live:
+        if focal_point_hint is None and "focal_point" in _live:
+            _fp = tuple(_live["focal_point"])
+            if len(_fp) >= 2:
+                focal_point_hint = _fp
+        if not hero_features_present and _live.get("hero_features"):
+            # Convert raw dicts to HeroFeatureRef instances where possible
+            _built: list = []
+            for _hf in _live["hero_features"]:
+                loc = _hf.get("location", [0.0, 0.0, 0.0])
+                _built.append(
+                    HeroFeatureRef(
+                        feature_id=str(_hf.get("id", _hf["name"])),
+                        feature_kind=str(_hf.get("type", "unknown")),
+                        world_position=(float(loc[0]), float(loc[1]), float(loc[2])),
+                        blender_object_name=str(_hf["name"]),
+                    )
+                )
+            hero_features_present = _built
+        if not waterfall_chains and _live.get("waterfall_chains"):
+            # Waterfall chains from scene are location-only empties; build
+            # minimal WaterfallChainRef stubs so they are visible in the snapshot.
+            _wf_built: list = []
+            for _wf in _live["waterfall_chains"]:
+                _loc = _wf.get("location", [0.0, 0.0, 0.0])
+                _wf_built.append(
+                    WaterfallChainRef(
+                        chain_id=str(_wf["name"]),
+                        lip_position=(float(_loc[0]), float(_loc[1]), float(_loc[2])),
+                        pool_position=(float(_loc[0]), float(_loc[1]), float(_loc[2])),
+                        drop_height=0.0,
+                    )
+                )
+            waterfall_chains = _wf_built
+        if not cave_candidates and _live.get("cave_candidates"):
+            cave_candidates = [
+                (float(c["location"][0]), float(c["location"][1]), float(c["location"][2]))
+                for c in _live["cave_candidates"]
+            ]
+
     focal = (
         tuple(float(x) for x in focal_point_hint)
         if focal_point_hint is not None
@@ -62,6 +155,8 @@ def capture_scene_read(
         max_x=focal[0] + 25.0,
         max_y=focal[1] + 25.0,
     )
+    # BUG-R8-A9-020: store Addendum 1.A.7 fields directly on the dataclass
+    # instead of a sidecar id()-keyed dict (id() is reused after GC).
     sr = TerrainSceneRead(
         timestamp=time.time(),
         major_landforms=tuple(major_landforms),
@@ -74,26 +169,32 @@ def capture_scene_read(
         edit_scope=scope,
         success_criteria=tuple(success_criteria),
         reviewer=str(reviewer),
+        addon_version=tuple(addon_version) if addon_version is not None else None,
+        lockable_anchors=tuple(lockable_anchors),
+        extended_at=time.time(),
     )
-    # Stash the Addendum 1.A.7 extended metadata in a sidecar registry
-    # so the frozen dataclass stays untouched.
-    _EXTENDED_METADATA[id(sr)] = {
-        "viewport_vantage": viewport_vantage,
-        "addon_version": tuple(addon_version) if addon_version is not None else None,
-        "terrain_content_hash": terrain_content_hash,
-        "lockable_anchors": tuple(lockable_anchors),
-    }
+    # Keep viewport_vantage in a WeakKeyDictionary sidecar — it is an
+    # arbitrary object that may not be picklable, so it stays off the frozen
+    # dataclass. The frozen dataclass is now weakly referenceable because it
+    # has no __slots__.
+    _VIEWPORT_VANTAGE[sr] = viewport_vantage
     return sr
 
 
-# Module-level registry of extended metadata keyed by id(scene_read). Frozen
-# dataclasses can't carry arbitrary attributes, so we keep this sidecar.
-_EXTENDED_METADATA: "dict[int, dict]" = {}
+# BUG-R8-A9-020: WeakKeyDictionary for the one non-serialisable field.
+_VIEWPORT_VANTAGE: "_weakref.WeakKeyDictionary[TerrainSceneRead, Optional[object]]" = (
+    _weakref.WeakKeyDictionary()
+)
 
 
 def get_extended_metadata(sr: TerrainSceneRead) -> Optional[dict]:
     """Return the Addendum 1.A.7 extended metadata for ``sr``, if any."""
-    return _EXTENDED_METADATA.get(id(sr))
+    return {
+        "viewport_vantage": _VIEWPORT_VANTAGE.get(sr),
+        "addon_version": sr.addon_version,
+        "terrain_content_hash": getattr(sr, "terrain_content_hash", None),
+        "lockable_anchors": sr.lockable_anchors,
+    }
 
 
 def _coerce_bbox(raw) -> Optional[BBox]:

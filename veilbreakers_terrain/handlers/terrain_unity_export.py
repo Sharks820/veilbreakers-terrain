@@ -76,6 +76,10 @@ def _export_heightmap(heightmap: np.ndarray, bit_depth: int = 16) -> np.ndarray:
     Unity Terrain RAW ingest is 16-bit, so production profiles preserve
     precision via ``height_min_m`` / ``height_max_m`` metadata rather than
     switching the RAW payload dtype.
+
+    Uses ``np.round`` + ``astype(np.uint16)`` for correct nearest-integer
+    rounding (not truncation-after-bias). Returns a C-contiguous array via
+    ``np.ascontiguousarray`` so callers can call ``.tobytes()`` safely.
     """
     _ = bit_depth
     h = np.asarray(heightmap, dtype=np.float64)
@@ -83,7 +87,8 @@ def _export_heightmap(heightmap: np.ndarray, bit_depth: int = 16) -> np.ndarray:
     hi = float(h.max()) if h.size else 0.0
     span = max(hi - lo, 1e-9)
     norm = np.clip((h - lo) / span, 0.0, 1.0)
-    return (norm * 65535.0 + 0.5).astype(np.uint16)
+    quantized = np.round(norm * 65535.0).astype(np.uint16)
+    return np.ascontiguousarray(quantized)
 
 
 def _bit_depth_for_profile(profile: Optional[str]) -> int:
@@ -320,12 +325,41 @@ def _write_splatmap_groups(
     return group_files
 
 
+_MANIFEST_REQUIRED_FIELDS = (
+    "height",
+    "tile_x",
+    "tile_y",
+    "tile_size",
+    "cell_size",
+    "world_origin_x",
+    "world_origin_y",
+)
+
+
 def export_unity_manifest(
     stack: TerrainMaskStack,
     output_dir: Path,
     profile: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Write a Unity-consumable export bundle to ``output_dir``."""
+    """Write a Unity-consumable export bundle to ``output_dir``.
+
+    Validates required stack fields before writing any files so callers get
+    a descriptive error rather than a cryptic AttributeError mid-export.
+    Required: height, tile_x, tile_y, tile_size, cell_size, world_origin_x,
+    world_origin_y. Missing fields raise ValueError listing all absent fields.
+    """
+    # --- Required field validation ---
+    missing: List[str] = []
+    for field_name in _MANIFEST_REQUIRED_FIELDS:
+        val = getattr(stack, field_name, None)
+        if val is None:
+            missing.append(field_name)
+    if missing:
+        raise ValueError(
+            f"export_unity_manifest: stack is missing required fields: {missing}. "
+            "Ensure the terrain pipeline has run at least the height pass before export."
+        )
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -407,7 +441,7 @@ def export_unity_manifest(
                 extra={"species": key},
             )
 
-    if stack.decal_density:
+    if stack.decal_density and isinstance(stack.decal_density, dict):
         for key, value in stack.decal_density.items():
             _write_raw_array(
                 files,
@@ -599,7 +633,7 @@ def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     decals: Dict[str, List[Dict[str, Any]]] = {}
-    if not stack.decal_density:
+    if not stack.decal_density or not isinstance(stack.decal_density, dict):
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
     for kind, arr in stack.decal_density.items():

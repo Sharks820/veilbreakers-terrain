@@ -88,21 +88,141 @@ def apply_bank_asymmetry(water_network: Any, bias: float) -> None:
 def solve_outflow(
     water_network: Any,
     pool: "ImpactPool",
-) -> List[Tuple[float, float]]:
-    """Solve a downstream outflow path from a pool.
+) -> List[Tuple[int, int]]:
+    """Solve a downstream outflow path from a pool via heightmap-aware walk.
 
-    The solver walks in the pool's outflow direction in fixed steps for
-    up to 16 nodes. If ``water_network`` exposes a heightmap we could
-    refine this further; for now we emit a straight polyline that
-    Bundle D's solver will later replace with a flow-aware trace.
+    Performs a steepest-descent walk on the heightmap exposed by
+    ``water_network`` (via ``water_network._heightmap`` or the ``height``
+    channel of an attached ``TerrainMaskStack``).  Each step moves to the
+    neighbor with the largest negative height difference (steepest downhill).
+
+    Termination conditions:
+        (a) Boundary reached — next step would leave the grid.
+        (b) Local minimum (sink) — no lower neighbor exists.
+        (c) Existing water body reached — a cell flagged in the
+            ``water_surface`` channel (if available) is encountered.
+
+    Falls back to the previous straight-line approximation when no
+    heightmap is available on ``water_network``.
+
+    Args:
+        water_network: WaterNetwork instance or any object that may expose
+            a ``_heightmap`` numpy array.
+        pool: ImpactPool whose ``world_position`` and ``outflow_direction_rad``
+            seed the walk.
+
+    Returns:
+        List of (row, col) grid-coordinate tuples tracing the outflow path.
+        Returns an empty list if the pool position cannot be resolved to a
+        grid cell.
     """
-    path: List[Tuple[float, float]] = []
-    cx, cy, _cz = pool.world_position
-    dx = math.cos(pool.outflow_direction_rad)
-    dy = math.sin(pool.outflow_direction_rad)
-    step = max(1.0, pool.radius_m * 0.5)
-    for i in range(1, 17):
-        path.append((cx + dx * step * i, cy + dy * step * i))
+    # Resolve heightmap from water_network
+    hmap: "np.ndarray | None" = None
+    for attr in ("_heightmap", "heightmap"):
+        candidate = getattr(water_network, attr, None)
+        if candidate is not None:
+            hmap = np.asarray(candidate, dtype=np.float64)
+            break
+
+    # If no heightmap, fall back to straight-line polyline (legacy behaviour)
+    if hmap is None:
+        cx, cy, _cz = pool.world_position
+        dx = math.cos(pool.outflow_direction_rad)
+        dy = math.sin(pool.outflow_direction_rad)
+        step = max(1.0, pool.radius_m * 0.5)
+        fallback: List[Tuple[int, int]] = []
+        for i in range(1, 17):
+            # Return integer grid coords approximated from world position
+            fallback.append((int(cy + dy * step * i), int(cx + dx * step * i)))
+        return fallback
+
+    # Import _steepest_descent_step at call time to avoid circular imports at
+    # module level (_water_network_ext ← terrain_waterfalls ← _water_network_ext).
+    try:
+        from .terrain_waterfalls import _steepest_descent_step  # type: ignore
+    except ImportError:
+        _steepest_descent_step = None  # type: ignore
+
+    rows, cols = hmap.shape
+
+    # Resolve pool world position to grid cell
+    origin_x: float = getattr(water_network, "_world_origin_x", 0.0)
+    origin_y: float = getattr(water_network, "_world_origin_y", 0.0)
+    cell_size: float = float(getattr(water_network, "_cell_size", 1.0))
+
+    px, py, _ = pool.world_position
+    start_c = int(round((px - origin_x) / cell_size))
+    start_r = int(round((py - origin_y) / cell_size))
+
+    # Clamp to grid
+    start_r = max(0, min(rows - 1, start_r))
+    start_c = max(0, min(cols - 1, start_c))
+
+    # Resolve optional water_surface mask for termination condition (c)
+    water_surface: "np.ndarray | None" = None
+    stack = getattr(water_network, "_mask_stack", None)
+    if stack is not None:
+        ws = getattr(stack, "water_surface", None)
+        if ws is not None:
+            water_surface = np.asarray(ws)
+
+    path: List[Tuple[int, int]] = [(start_r, start_c)]
+    visited: set[Tuple[int, int]] = {(start_r, start_c)}
+    r, c = start_r, start_c
+
+    max_steps = max(rows, cols) * 2  # safety cap
+
+    for _ in range(max_steps):
+        # Termination (c): existing water body
+        if water_surface is not None and (r, c) != (start_r, start_c):
+            if water_surface[r, c] > 0.01:
+                break
+
+        # Use _steepest_descent_step if available, else manual scan
+        if _steepest_descent_step is not None:
+            result = _steepest_descent_step(hmap, r, c)
+        else:
+            # Inline steepest-descent: move to neighbor with greatest height drop
+            _D8 = [(-1, 0), (-1, 1), (0, 1), (1, 1),
+                   (1, 0), (1, -1), (0, -1), (-1, -1)]
+            _DIST = [1.0, math.sqrt(2.0), 1.0, math.sqrt(2.0),
+                     1.0, math.sqrt(2.0), 1.0, math.sqrt(2.0)]
+            best_drop = 0.0
+            best_next: "Tuple[int, int] | None" = None
+            h0 = hmap[r, c]
+            for (dr, dc), dist in zip(_D8, _DIST):
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < rows and 0 <= nc < cols):
+                    continue
+                drop = (h0 - hmap[nr, nc]) / dist
+                if drop > best_drop:
+                    best_drop = drop
+                    best_next = (nr, nc)
+            result = (best_next[0], best_next[1], 0) if best_next else None
+
+        # Termination (b): local minimum / sink
+        if result is None:
+            break
+
+        nr, nc = result[0], result[1]
+
+        # Termination (a): boundary
+        if not (0 <= nr < rows and 0 <= nc < cols):
+            path.append((nr, nc))
+            break
+
+        # Cycle guard
+        if (nr, nc) in visited:
+            break
+
+        visited.add((nr, nc))
+        path.append((nr, nc))
+        r, c = nr, nc
+
+        # Termination (a): reached grid edge
+        if nr == 0 or nr == rows - 1 or nc == 0 or nc == cols - 1:
+            break
+
     return path
 
 
@@ -129,28 +249,29 @@ def compute_wet_rock_mask(
 ) -> np.ndarray:
     """Build a wet-rock mask around water surfaces.
 
-    The mask is 1.0 at cells near a water surface (or existing
-    ``water_surface`` / ``flow_accumulation`` cell) and falls off to 0 at
-    ``radius_m``. If ``water_network`` is provided and exposes ``nodes``,
-    each node also contributes a wet disc.
+    Uses ``scipy.ndimage.distance_transform_edt`` on a seed mask for an
+    accurate Euclidean distance falloff, then normalises to [0, 1].  Falls
+    back to the manual per-seed radial stamp when scipy is unavailable.
+
+    The mask is 1.0 at seed cells (on/adjacent to water) and falls linearly
+    to 0 at ``radius_m`` metres away.  Seeds are drawn from:
+        - The ``water_surface`` channel on the stack (cells > 0.01).
+        - Each node in ``water_network.nodes`` projected to grid space.
     """
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
-    wet = np.zeros((rows, cols), dtype=np.float32)
     cs = float(stack.cell_size)
     radius_cells = max(1, int(math.ceil(radius_m / cs)))
 
-    # Seed from existing water_surface channel
-    seeds: List[Tuple[int, int]] = []
+    # Build boolean seed mask
+    seed_mask = np.zeros((rows, cols), dtype=bool)
+
     surface = stack.water_surface
     if surface is not None:
         surface_arr = np.asarray(surface)
         if surface_arr.shape == h.shape:
-            ys, xs = np.where(surface_arr > 0.01)
-            for r, c in zip(ys.tolist(), xs.tolist()):
-                seeds.append((int(r), int(c)))
+            seed_mask |= surface_arr > 0.01
 
-    # Seed from WaterNetwork nodes (if any)
     if water_network is not None:
         nodes = getattr(water_network, "nodes", {}) or {}
         for node in nodes.values():
@@ -158,14 +279,25 @@ def compute_wet_rock_mask(
             wy = getattr(node, "world_y", None)
             if wx is None or wy is None:
                 continue
-            r, c = _world_to_grid(stack, float(wx), float(wy))
-            seeds.append((r, c))
+            nr, nc = _world_to_grid(stack, float(wx), float(wy))
+            seed_mask[nr, nc] = True
 
-    if not seeds:
-        return wet
+    if not seed_mask.any():
+        return np.zeros((rows, cols), dtype=np.float32)
 
-    # Stamp a radial falloff at every seed
-    for (r, c) in seeds:
+    # --- scipy path (preferred) -------------------------------------------
+    try:
+        from scipy.ndimage import distance_transform_edt  # type: ignore
+        dist = distance_transform_edt(~seed_mask, sampling=cs)
+        wet = 1.0 - np.clip(dist / max(radius_m, 1e-6), 0.0, 1.0)
+        return wet.astype(np.float32)
+    except ImportError:
+        pass
+
+    # --- Fallback: manual per-seed radial stamp ---------------------------
+    wet = np.zeros((rows, cols), dtype=np.float32)
+    seed_coords = list(zip(*np.where(seed_mask)))
+    for (r, c) in seed_coords:
         r0 = max(0, r - radius_cells)
         r1 = min(rows, r + radius_cells + 1)
         c0 = max(0, c - radius_cells)
@@ -174,10 +306,10 @@ def compute_wet_rock_mask(
             for cc in range(c0, c1):
                 dr = rr - r
                 dc = cc - c
-                dist = math.sqrt(dr * dr + dc * dc) * cs
-                if dist > radius_m:
+                dist_m = math.sqrt(dr * dr + dc * dc) * cs
+                if dist_m > radius_m:
                     continue
-                val = float(max(0.0, 1.0 - dist / max(radius_m, 1e-6)))
+                val = float(max(0.0, 1.0 - dist_m / max(radius_m, 1e-6)))
                 if val > wet[rr, cc]:
                     wet[rr, cc] = val
     return wet
@@ -186,19 +318,58 @@ def compute_wet_rock_mask(
 def compute_foam_mask(
     chain: "WaterfallChain",
     stack: TerrainMaskStack,
+    foam_threshold: float = 500.0,
+    min_slope_for_foam: float = 0.1,
 ) -> np.ndarray:
-    """Shared foam-mask builder — delegates to terrain_waterfalls for the math.
+    """Build a foam mask driven by flow turbulence zones.
 
-    Kept here so downstream modules can depend on ``_water_network_ext``
-    without importing ``terrain_waterfalls`` (which imports this module
-    for ``compute_wet_rock_mask``). Breaks a potential import cycle by
-    doing the computation inline.
+    Foam occurs where flow accumulation is high AND terrain slope is steep —
+    i.e. at turbulent zones such as rapid-water and waterfall impact pools.
+
+    Formula:
+        foam = clip(flow_accumulation / foam_threshold, 0, 1)
+               * (slope > min_slope_for_foam)
+               * chain.foam_intensity
+
+    An optional Gaussian blur (sigma=1.5 cells) is applied via scipy to
+    soften hard transitions.  Falls back to the previous radial-disc stamp
+    when flow_accumulation or slope are unavailable on the stack.
+
+    Args:
+        chain: WaterfallChain providing pool position and foam_intensity.
+        stack: TerrainMaskStack with height, and optionally flow_accumulation
+               and slope channels.
+        foam_threshold: Flow accumulation value that maps to full foam (1.0).
+        min_slope_for_foam: Minimum slope (rise/run) required to produce foam.
     """
     h = np.asarray(stack.height, dtype=np.float64)
-    foam = np.zeros_like(h, dtype=np.float32)
     rows, cols = h.shape
     cs = float(stack.cell_size)
 
+    flow_acc = stack.flow_accumulation
+    slope_ch = stack.slope
+
+    if flow_acc is not None and slope_ch is not None:
+        fa = np.asarray(flow_acc, dtype=np.float64)
+        sl = np.asarray(slope_ch, dtype=np.float64)
+
+        foam = (
+            np.clip(fa / max(foam_threshold, 1e-6), 0.0, 1.0)
+            * (sl > min_slope_for_foam).astype(np.float64)
+            * float(chain.foam_intensity)
+        )
+
+        # Optional Gaussian smoothing for natural edge blending
+        try:
+            from scipy.ndimage import gaussian_filter  # type: ignore
+            foam = gaussian_filter(foam, sigma=1.5)
+        except ImportError:
+            pass
+
+        return foam.astype(np.float32)
+
+    # --- Fallback: radial disc centred on the impact pool -----------------
+    foam = np.zeros((rows, cols), dtype=np.float32)
     pool_r, pool_c = _world_to_grid(
         stack, chain.pool.world_position[0], chain.pool.world_position[1]
     )
@@ -224,33 +395,76 @@ def compute_foam_mask(
 def compute_mist_mask(
     chain: "WaterfallChain",
     stack: TerrainMaskStack,
+    mist_height_range: float = 20.0,
 ) -> np.ndarray:
-    """Shared mist-mask builder — radial falloff around pool center."""
+    """Build a mist mask combining waterfall proximity and low-elevation fog.
+
+    Two components are combined with ``np.maximum``:
+
+    1. **Waterfall mist** — Euclidean distance falloff from the impact pool
+       centroid (the waterfall_mask seed), normalised by ``chain.mist_radius_m``.
+       Uses ``scipy.ndimage.distance_transform_edt`` for accuracy; falls back
+       to a manual radial disc stamp when scipy is unavailable.
+
+    2. **Low-elevation mist** — fog that settles in valley floors.
+       ``low_elev_mist = 1 - clip((height - valley_floor) / mist_height_range, 0, 1)``
+       where ``valley_floor`` is the minimum height in the tile.
+
+    Args:
+        chain: WaterfallChain providing pool position and mist_radius_m.
+        stack: TerrainMaskStack with at minimum a ``height`` channel.
+        mist_height_range: Elevation range above the valley floor over which
+            low-elevation mist fades from 1 to 0 (metres).
+    """
     h = np.asarray(stack.height, dtype=np.float64)
-    mist = np.zeros_like(h, dtype=np.float32)
     rows, cols = h.shape
     cs = float(stack.cell_size)
 
+    # --- Component 1: waterfall proximity mist ----------------------------
+    # Build a single-pixel seed mask at the pool centre
     pool_r, pool_c = _world_to_grid(
         stack, chain.pool.world_position[0], chain.pool.world_position[1]
     )
-    radius_cells = max(1, int(math.ceil(chain.mist_radius_m / cs)))
-    r0 = max(0, pool_r - radius_cells)
-    r1 = min(rows, pool_r + radius_cells + 1)
-    c0 = max(0, pool_c - radius_cells)
-    c1 = min(cols, pool_c + radius_cells + 1)
-    for rr in range(r0, r1):
-        for cc in range(c0, c1):
-            dr = rr - pool_r
-            dc = cc - pool_c
-            dist = math.sqrt(dr * dr + dc * dc) * cs
-            if dist > chain.mist_radius_m:
-                continue
-            norm = dist / max(chain.mist_radius_m, 1e-6)
-            val = float(max(0.0, 1.0 - norm))
-            if val > mist[rr, cc]:
-                mist[rr, cc] = val
-    return mist
+    waterfall_mask = np.zeros((rows, cols), dtype=bool)
+    waterfall_mask[pool_r, pool_c] = True
+
+    mist_radius_cells = max(1.0, chain.mist_radius_m / cs)
+
+    try:
+        from scipy.ndimage import distance_transform_edt  # type: ignore
+        dist = distance_transform_edt(~waterfall_mask, sampling=cs)
+        waterfall_mist = np.clip(
+            1.0 - dist / max(chain.mist_radius_m, 1e-6), 0.0, 1.0
+        )
+    except ImportError:
+        # Fallback radial disc
+        waterfall_mist = np.zeros((rows, cols), dtype=np.float64)
+        radius_cells = int(math.ceil(mist_radius_cells))
+        r0 = max(0, pool_r - radius_cells)
+        r1 = min(rows, pool_r + radius_cells + 1)
+        c0 = max(0, pool_c - radius_cells)
+        c1 = min(cols, pool_c + radius_cells + 1)
+        for rr in range(r0, r1):
+            for cc in range(c0, c1):
+                dr = rr - pool_r
+                dc = cc - pool_c
+                dist_m = math.sqrt(dr * dr + dc * dc) * cs
+                if dist_m > chain.mist_radius_m:
+                    continue
+                waterfall_mist[rr, cc] = max(
+                    waterfall_mist[rr, cc],
+                    1.0 - dist_m / max(chain.mist_radius_m, 1e-6),
+                )
+
+    # --- Component 2: low-elevation valley mist ---------------------------
+    valley_floor = float(h.min())
+    low_elev_mist = 1.0 - np.clip(
+        (h - valley_floor) / max(mist_height_range, 1e-6), 0.0, 1.0
+    )
+
+    # --- Combine ---------------------------------------------------------
+    mist = np.maximum(waterfall_mist, low_elev_mist)
+    return mist.astype(np.float32)
 
 
 __all__ = [

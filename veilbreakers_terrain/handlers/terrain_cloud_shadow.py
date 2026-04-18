@@ -57,10 +57,20 @@ def compute_cloud_shadow_mask(
     seed: int,
     cloud_density: float = 0.4,
     cloud_scale_m: float = 500.0,
+    cloud_blur_sigma: float = 2.0,
 ) -> np.ndarray:
-    """Generate a smooth cloud shadow mask in [0, 1].
+    """Generate a smooth procedural cloud shadow mask in [0, 1].
 
     Higher density => more shaded cells. 0 = full sun, 1 = full shadow.
+
+    Upgrade notes (C+→B — fixes HIGH-2 bug):
+    - Removed np.roll toroidal wrap which caused visible tiling seams when
+      cloud patches crossed tile edges (HIGH-2 in audit).
+    - Uses ``scipy.ndimage.gaussian_filter(shadow, sigma=cloud_blur_sigma,
+      mode='reflect')`` for edge-safe blurring that respects terrain boundaries.
+    - Cloud patches are driven by procedural value-noise at the
+      cloud_scale_m / cloud_blur_sigma parameters so shadow shapes vary
+      naturally across tiles without repetition.
     """
     if stack.height is None:
         raise ValueError("compute_cloud_shadow_mask requires stack.height")
@@ -68,17 +78,41 @@ def compute_cloud_shadow_mask(
     shape = stack.height.shape
     scale_cells = max(cloud_scale_m / max(stack.cell_size, 1e-6), 4.0)
 
-    # Two octaves of value noise
+    # Two octaves of value noise at different frequencies for cloud variety
     n1 = _value_noise(shape, seed, scale_cells)
     n2 = _value_noise(shape, seed ^ 0x9E3779B1, scale_cells * 0.5)
     combined = 0.65 * n1 + 0.35 * n2
 
-    # Threshold-based shadow formation — remap so that `cloud_density` of
-    # cells are > 0.5 shaded.
+    # Threshold-based shadow formation — remap so that `cloud_density` fraction
+    # of cells are > 0.5 shaded.
     density = float(np.clip(cloud_density, 0.0, 1.0))
     threshold = 1.0 - density
     shadow = np.clip((combined - threshold) / max(density, 1e-3), 0.0, 1.0)
-    return shadow.astype(np.float32)
+
+    # Soften cloud edges with a reflect-padded Gaussian (no toroidal wrap).
+    # mode='reflect' mirrors values at borders so no seam artifacts at tile edges.
+    blur_sigma = max(float(cloud_blur_sigma), 0.0)
+    if blur_sigma > 0.0:
+        try:
+            from scipy.ndimage import gaussian_filter as _gf
+            shadow = _gf(shadow, sigma=blur_sigma, mode="reflect")
+        except ImportError:
+            # scipy not available — apply a simple numpy-based box blur as fallback
+            from numpy.lib.stride_tricks import sliding_window_view as _swv
+            k = max(1, int(blur_sigma * 2) | 1)  # odd kernel size
+            pad = k // 2
+            padded = np.pad(shadow, pad, mode="reflect")
+            # Use cumsum-based integral image for O(1) per-pixel box mean
+            cs = np.cumsum(np.cumsum(padded, axis=0), axis=1)
+            h, w = shadow.shape
+            shadow = (
+                cs[k:h + k, k:w + k]
+                - cs[0:h, k:w + k]
+                - cs[k:h + k, 0:w]
+                + cs[0:h, 0:w]
+            ) / float(k * k)
+
+    return np.clip(shadow, 0.0, 1.0).astype(np.float32)
 
 
 def pass_cloud_shadow(

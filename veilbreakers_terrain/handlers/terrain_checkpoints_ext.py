@@ -87,7 +87,7 @@ def save_every_n_operations(
             if callable(save_fn):
                 pass_name = getattr(result, "pass_name", "autosave")
                 try:
-                    save_fn(pass_name, result)
+                    save_fn(pass_name)
                 except Exception as exc:
                     _log.warning("save_every_n_operations: checkpoint save failed: %r", exc)
         return result

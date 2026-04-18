@@ -516,7 +516,6 @@ def register_default_passes() -> None:
             requires_channels=("height",),
             produces_channels=(
                 "height",
-                "ridge",
                 "erosion_amount",
                 "deposition_amount",
                 "wetness",
