@@ -11,9 +11,12 @@ Per Addendum 1.B.4. No bpy imports.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any, Callable, List, Set
+
+_log = logging.getLogger(__name__)
 
 from .terrain_quality_profiles import TerrainQualityProfile
 
@@ -84,10 +87,9 @@ def save_every_n_operations(
             if callable(save_fn):
                 pass_name = getattr(result, "pass_name", "autosave")
                 try:
-                    save_fn(pass_name)
-                except Exception:
-                    # Autosave must never bring down the pipeline.
-                    pass
+                    save_fn(pass_name, result)
+                except Exception as exc:
+                    _log.warning("save_every_n_operations: checkpoint save failed: %r", exc)
         return result
 
     controller.run_pass = wrapped  # type: ignore[assignment]

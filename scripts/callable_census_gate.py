@@ -23,7 +23,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HANDLERS_DIR = REPO_ROOT / "veilbreakers_terrain" / "handlers"
