@@ -410,9 +410,17 @@ def detect_lakes(
             water_level[nr, nc] = new_wl
             heapq.heappush(open_heap, (new_wl, nr, nc))
 
-    # --- Identify lake cells: interior cells where water_level > raw height --
-    # A cell is a lake cell when water is pooled above its terrain surface.
-    lake_mask = (water_level > hmap + 1e-9)
+    # --- Identify lake cells: interior cells where water_level >= raw height --
+    # BUG-76 fix: use >= (minus epsilon) so flat-floored pits where
+    # water_level == hmap are correctly detected as lake cells.
+    # Border cells are excluded because they were seeded open to the outside
+    # and should never be classified as lake cells regardless of elevation.
+    border_mask = np.zeros((rows, cols), dtype=bool)
+    border_mask[0, :] = True
+    border_mask[-1, :] = True
+    border_mask[:, 0] = True
+    border_mask[:, -1] = True
+    lake_mask = (water_level >= hmap - 1e-9) & ~border_mask
 
     # --- Connected-component labeling of lake cells -------------------------
     label_grid = np.full((rows, cols), -1, dtype=np.int32)

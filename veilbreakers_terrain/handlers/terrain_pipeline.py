@@ -569,6 +569,74 @@ def register_terrain_label_passes() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Snow line pass (Phase 10 / Fix 10.5 / REQ-P10-006)
+# ---------------------------------------------------------------------------
+
+
+def pass_compute_snow_line(
+    state: "TerrainPipelineState",
+    region: Optional[BBox],
+) -> "PassResult":
+    """Compute and write snow_line_factor channel (Fix 10.5 / REQ-P10-006).
+
+    Contract:
+        Consumes: height (normalized 0-1), slope (radians)
+        Produces: snow_line_factor
+    """
+    import time
+    import numpy as np
+
+    from .terrain_materials_v2 import compute_snow_line_factor as _compute_snow
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+
+    # Normalize height to 0-1 using stack's declared range
+    raw_height = np.asarray(stack.height, dtype=np.float32)
+    h_min = float(getattr(stack, "height_min_m", None) or raw_height.min())
+    h_max = float(getattr(stack, "height_max_m", None) or raw_height.max())
+    h_range = h_max - h_min if (h_max - h_min) > 1e-9 else 1.0
+    height_norm = ((raw_height - h_min) / h_range).astype(np.float32)
+
+    slope = stack.get("slope")
+    if slope is None:
+        slope = np.zeros_like(height_norm)
+
+    climate_params: dict = {}
+    if state.intent is not None:
+        intent_dict = getattr(state.intent, "__dict__", {})
+        climate_params = intent_dict.get("climate_params", {}) or {}
+
+    factor = _compute_snow(height_norm, slope, climate_params)
+    stack.set("snow_line_factor", factor, "snow_line")
+
+    return PassResult(
+        pass_name="snow_line",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height", "slope"),
+        produced_channels=("snow_line_factor",),
+        metrics={"snow_coverage_mean": float(factor.mean())},
+    )
+
+
+def register_snow_line_pass() -> None:
+    """Register the snow_line pass on TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="snow_line",
+            func=pass_compute_snow_line,
+            requires_channels=("height",),
+            produces_channels=("snow_line_factor",),
+            seed_namespace="snow_line",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Compute snow_line_factor: sigmoid altitude curve modulated by slope.",
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Default pass registration
 # ---------------------------------------------------------------------------
 
@@ -686,6 +754,7 @@ def register_default_passes() -> None:
     from .terrain_delta_integrator import register_integrator_pass
     register_integrator_pass()
     register_terrain_label_passes()
+    register_snow_line_pass()
 
 
 __all__ = [
@@ -694,4 +763,6 @@ __all__ = [
     "register_default_passes",
     "pass_compute_terrain_labels",
     "register_terrain_label_passes",
+    "pass_compute_snow_line",
+    "register_snow_line_pass",
 ]

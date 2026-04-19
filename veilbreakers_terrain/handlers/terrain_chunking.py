@@ -259,9 +259,12 @@ def compute_terrain_chunks(
     if ov < 0:
         raise ValueError(f"overlap_cells must be >= 0, got {ov}")
 
-    # Number of chunks in each direction
-    grid_cols = max(1, total_cols // chunk_size)
-    grid_rows = max(1, total_rows // chunk_size)
+    # Number of chunks in each direction — use math.ceil so trailing cells
+    # (e.g. the last 1 row when total_rows == chunk_size + 1) are not dropped.
+    # The final chunk's r_end / c_end is already clamped to total_rows/total_cols
+    # via min(total_rows, r_core_end + ov) in the loop below, so no OOB risk.
+    grid_cols = max(1, math.ceil(total_cols / chunk_size))
+    grid_rows = max(1, math.ceil(total_rows / chunk_size))
 
     chunk_world_size = chunk_size * world_scale
     overlap_world = ov * world_scale
@@ -497,7 +500,9 @@ def validate_tile_seams(
             "error": "channel shape mismatch",
         }
 
-    if direction in {"east", "west"}:
+    if direction == "east":
+        # tile_b is the EAST neighbor of tile_a:
+        # right edge of A (last col) must match left edge of B (col 0).
         if rows_a != rows_b:
             return {
                 "match": False,
@@ -509,7 +514,23 @@ def validate_tile_seams(
             }
         edge_a = arr_a[:, cols_a - 1, ...]
         edge_b = arr_b[:, 0, ...]
-    elif direction in {"north", "south"}:
+    elif direction == "west":
+        # tile_b is the WEST neighbor of tile_a:
+        # left edge of A (col 0) must match right edge of B (last col).
+        if rows_a != rows_b:
+            return {
+                "match": False,
+                "direction": direction,
+                "sample_count": 0,
+                "max_delta": None,
+                "mean_delta": None,
+                "error": "row count mismatch",
+            }
+        edge_a = arr_a[:, 0, ...]
+        edge_b = arr_b[:, cols_b - 1, ...]
+    elif direction == "south":
+        # tile_b is the SOUTH neighbor of tile_a:
+        # bottom edge of A (last row) must match top edge of B (row 0).
         if cols_a != cols_b:
             return {
                 "match": False,
@@ -521,6 +542,20 @@ def validate_tile_seams(
             }
         edge_a = arr_a[rows_a - 1, :, ...]
         edge_b = arr_b[0, :, ...]
+    elif direction == "north":
+        # tile_b is the NORTH neighbor of tile_a:
+        # top edge of A (row 0) must match bottom edge of B (last row).
+        if cols_a != cols_b:
+            return {
+                "match": False,
+                "direction": direction,
+                "sample_count": 0,
+                "max_delta": None,
+                "mean_delta": None,
+                "error": "column count mismatch",
+            }
+        edge_a = arr_a[0, :, ...]
+        edge_b = arr_b[rows_b - 1, :, ...]
     else:
         raise ValueError("direction must be one of: east, west, north, south")
 

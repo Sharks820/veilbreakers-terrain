@@ -1290,6 +1290,7 @@ _D8_DISTANCES = [
 def compute_flow_map(
     heightmap: list[list[float]] | np.ndarray,
     resolution: int | None = None,
+    cell_size: float = 1.0,
 ) -> dict[str, Any]:
     """Compute water flow direction from heightmap using D8 algorithm.
 
@@ -1298,6 +1299,10 @@ def compute_flow_map(
     Args:
         heightmap: 2D array of height values (list of lists or numpy array).
         resolution: Unused, kept for API compatibility.
+        cell_size: Physical size of each cell in meters (default 1.0).
+            Scales D8 slopes to physical gradients (meters/meter).
+            Does not affect flow direction on uniform-cell grids but
+            ensures correct hydraulic gradient magnitudes.
 
     Returns:
         Dict with:
@@ -1310,6 +1315,7 @@ def compute_flow_map(
     """
     hmap = np.asarray(heightmap, dtype=np.float64)
     rows, cols = hmap.shape
+    _cell_size = max(float(cell_size), 1e-9)  # guard against zero/negative
 
     # --- Step 1: Compute flow direction (D8 steepest descent) ---
     slopes_vec = np.full((8, rows, cols), -np.inf, dtype=np.float64)
@@ -1318,7 +1324,7 @@ def compute_flow_map(
         _r_s = slice(max(0,  _dr), rows - max(0, -_dr))
         _c_d = slice(max(0, -_dc), cols - max(0, _dc))
         _c_s = slice(max(0,  _dc), cols - max(0, -_dc))
-        slopes_vec[_d_idx, _r_d, _c_d] = (hmap[_r_d, _c_d] - hmap[_r_s, _c_s]) / _dist
+        slopes_vec[_d_idx, _r_d, _c_d] = (hmap[_r_d, _c_d] - hmap[_r_s, _c_s]) / (_dist * _cell_size)
 
     _best_d8 = np.argmax(slopes_vec, axis=0)
     _ri_v = np.arange(rows)[:, None]

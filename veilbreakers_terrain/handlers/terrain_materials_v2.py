@@ -225,6 +225,123 @@ def triplanar_blend(
 
 
 # ---------------------------------------------------------------------------
+# Normal-z rock mask helpers (Fix 10.1 / REQ-P10-002)
+# ---------------------------------------------------------------------------
+
+ROCK_NORMAL_THRESHOLD: float = 0.65
+"""Surface normal z-component below this threshold → classify as rock face.
+Replaces the former slope > slope_threshold check (Fix 10.1 / REQ-P10-002).
+Handles overhangs and cave ceilings correctly; slope threshold cannot.
+"""
+
+
+def compute_normal_z(heightmap: np.ndarray) -> np.ndarray:
+    """Return the z-component of the unit surface normal for every cell.
+
+    Uses numpy gradient (consistent with existing codebase convention).
+    Result is in [0, 1]: 1.0 = perfectly flat, approaching 0 = vertical wall.
+
+    Formula (from CONTEXT.md Fix 10.1):
+        dy, dx = np.gradient(heightmap)
+        denom  = np.sqrt(dx**2 + dy**2 + 1.0)
+        normal_z = 1.0 / denom
+
+    NaN/Inf in heightmap are replaced with 0 before gradient (T-10-02-01).
+    """
+    h = np.nan_to_num(np.asarray(heightmap, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    dy, dx = np.gradient(h)
+    denom = np.sqrt(dx ** 2 + dy ** 2 + 1.0)
+    return np.clip(1.0 / denom, 0.0, 1.0).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Brucks height-blend (Fix 10.6 / REQ-P10-003)
+# ---------------------------------------------------------------------------
+
+
+def apply_brucks_blend(
+    blend_alpha: np.ndarray,
+    rock_height_factor: np.ndarray,
+    dirt_height_factor: float = 0.5,
+    contrast: float = 0.2,
+) -> "Tuple[np.ndarray, np.ndarray]":
+    """Brucks height-blend for rock/dirt boundary (Fix 10.6 / REQ-P10-003).
+
+    Rock strata 'poke through' dirt based on strata band height.
+    Eliminates the flat uniform paint-over look at material boundaries.
+
+    Formula (from CONTEXT.md Fix 10.6):
+        ma     = max(rock_height_factor + (1-blend_alpha),
+                     dirt_height_factor + blend_alpha) - contrast
+        b_rock = max(rock_height_factor + (1-blend_alpha) - ma, 0)
+        b_dirt = max(dirt_height_factor + blend_alpha - ma, 0)
+
+    Args:
+        blend_alpha: float32 array [0..1], current analytical blend weight
+                     (0 = fully dirt, 1 = fully rock).
+        rock_height_factor: float32 array, strata band height from stratigraphy
+                            pass (stack.get("strata_height"), fallback 0.5).
+        dirt_height_factor: scalar, uniform soft material constant (default 0.5).
+        contrast: scalar, boundary sharpness (default 0.2).
+
+    Returns:
+        (b_rock, b_dirt) — unnormalised weight arrays; caller divides by sum+1e-8.
+    """
+    rock_h = np.asarray(rock_height_factor, dtype=np.float64)
+    d_h = float(dirt_height_factor)
+    alpha = np.asarray(blend_alpha, dtype=np.float64)
+    c = float(contrast)
+
+    rock_contrib = rock_h + (1.0 - alpha)
+    dirt_contrib = d_h + alpha
+    ma = np.maximum(rock_contrib, dirt_contrib) - c
+    b_rock = np.maximum(rock_contrib - ma, 0.0).astype(np.float32)
+    b_dirt = np.maximum(dirt_contrib - ma, 0.0).astype(np.float32)
+    return b_rock, b_dirt
+
+
+# ---------------------------------------------------------------------------
+# Snow line factor (Fix 10.5 / REQ-P10-006)
+# ---------------------------------------------------------------------------
+
+
+def compute_snow_line_factor(
+    height: np.ndarray,
+    slope: np.ndarray,
+    climate_params: Optional[dict] = None,
+) -> np.ndarray:
+    """Compute snow line coverage factor per cell (Fix 10.5 / REQ-P10-006).
+
+    Returns float32 array in [0..1]. High values = snow-eligible altitude.
+
+    Formula (from CONTEXT.md Fix 10.5):
+        snow_alt   = climate_params.get("snow_altitude", 0.7)   # 0-1 normalized
+        snow_width = climate_params.get("snow_transition", 0.1)
+        base       = 1.0 / (1.0 + exp(-(height - snow_alt) / snow_width))  # sigmoid
+        slope_mod  = 1.0 - 0.3 * abs(sin(slope))  # reduce on steep slopes
+        return base * slope_mod
+
+    Args:
+        height:        float32 (H,W), normalized 0-1 height values.
+        slope:         float32 (H,W), slope in radians.
+        climate_params: dict with optional keys snow_altitude (default 0.7)
+                        and snow_transition (default 0.1).
+
+    Guards (T-10-02-02): snow_width clamped to [1e-6, inf] to avoid /0.
+    Guards (T-10-02-04): snow_altitude clamped to [0,1]; snow_transition to [0.01, 0.5].
+    """
+    if climate_params is None:
+        climate_params = {}
+    snow_alt = float(np.clip(climate_params.get("snow_altitude", 0.7), 0.0, 1.0))
+    snow_width = float(np.clip(climate_params.get("snow_transition", 0.1), 0.01, 0.5))
+    h = np.asarray(height, dtype=np.float64)
+    s = np.asarray(slope, dtype=np.float64)
+    base = 1.0 / (1.0 + np.exp(-(h - snow_alt) / snow_width))
+    slope_mod = 1.0 - 0.3 * np.abs(np.sin(s))
+    return (base * slope_mod).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
 
@@ -278,10 +395,27 @@ def compute_slope_material_weights(
     H, W = slope.shape
     weights = np.zeros((H, W, L), dtype=np.float32)
 
+    # Fix 10.1 (REQ-P10-002): Compute surface normal z-component for rock masking.
+    # normal_z < ROCK_NORMAL_THRESHOLD → rock face (replaces slope threshold).
+    surface_normal_z = compute_normal_z(stack.height)
+
+    # Fix 10.4 (REQ-P10-006): Read snow_line_factor for top-facing snow mask.
+    snow_line_factor = stack.get("snow_line_factor")
+
     for idx, ch in enumerate(rules.channels):
-        slope_w = _smoothstep_band(
-            slope, ch.slope_min_rad, ch.slope_max_rad, ch.slope_falloff_rad
-        )
+        # Fix 10.1: For triplanar/rock channels, use normal_z instead of slope.
+        if ch.triplanar:
+            # normal_z < ROCK_NORMAL_THRESHOLD indicates a rock face.
+            # Map to [0,1] weight using a smoothstep over a 0.1 transition band.
+            rock_normal_w = np.clip(
+                (ROCK_NORMAL_THRESHOLD - surface_normal_z.astype(np.float64)) / 0.1 + 1.0,
+                0.0, 1.0
+            )
+            slope_w = rock_normal_w
+        else:
+            slope_w = _smoothstep_band(
+                slope, ch.slope_min_rad, ch.slope_max_rad, ch.slope_falloff_rad
+            )
         alt_w = _smoothstep_band(
             height, ch.altitude_min_m, ch.altitude_max_m, ch.altitude_falloff_m
         )
@@ -325,6 +459,37 @@ def compute_slope_material_weights(
             combined = combined * (0.8 + 0.4 * noise_perturb)
 
         weights[:, :, idx] = combined.astype(np.float32)
+
+    # Fix 10.4 (REQ-P10-006): Top-facing snow mask — normal.z > 0.9 AND above snow line.
+    # Applied BEFORE Brucks blend and label overrides so labels can still override snow.
+    if snow_line_factor is not None:
+        snow_mask = (surface_normal_z > 0.9).astype(np.float32) * np.asarray(
+            snow_line_factor, dtype=np.float32
+        )
+        try:
+            snow_idx = rules.index_of("snow")
+            weights[:, :, snow_idx] = snow_mask
+        except KeyError:
+            pass  # No snow channel in this rule set; skip silently.
+
+    # Fix 10.6 (REQ-P10-003): Brucks height-blend at rock/dirt boundary.
+    # Rock strata poke through dirt according to strata band height.
+    try:
+        cliff_idx = rules.index_of("cliff")
+        ground_idx = rules.index_of("ground")
+        strata_h = stack.get("strata_height")
+        if strata_h is not None:
+            rock_h_factor = np.asarray(strata_h, dtype=np.float32)
+            blend_alpha = weights[:, :, cliff_idx].copy()
+            b_rock, b_dirt = apply_brucks_blend(
+                blend_alpha=blend_alpha,
+                rock_height_factor=rock_h_factor,
+            )
+            total_bd = b_rock + b_dirt + 1e-8
+            weights[:, :, cliff_idx] = (b_rock / total_bd).astype(np.float32)
+            weights[:, :, ground_idx] = (b_dirt / total_bd).astype(np.float32)
+    except KeyError:
+        pass  # rule set doesn't have cliff or ground channel; skip silently
 
     # --- Structural label overrides (Fix 10.10 / REQ-P10-001) ---
     # Feature generators stamp labels during generation; labels take priority over
@@ -504,6 +669,10 @@ __all__ = [
     "MaterialChannel",
     "MaterialRuleSet",
     "default_dark_fantasy_rules",
+    "ROCK_NORMAL_THRESHOLD",
+    "compute_normal_z",
+    "apply_brucks_blend",
+    "compute_snow_line_factor",
     "compute_slope_material_weights",
     "pass_materials",
     "register_bundle_b_material_passes",

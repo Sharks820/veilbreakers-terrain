@@ -1,0 +1,19 @@
+name: Callable Census Gate
+
+on:
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  callable-census:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
+      - name: Run callable census gate
+        run: python scripts/callable_census_gate.py --report
