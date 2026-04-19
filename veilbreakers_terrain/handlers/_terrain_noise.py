@@ -453,6 +453,237 @@ def phacelle_noise_simple(
 
 
 # ---------------------------------------------------------------------------
+# Fix 11.8 / REQ-P11-003 — Voronoise: IQ reference implementation
+# ---------------------------------------------------------------------------
+
+
+def _hash2_scalar(ix: int, iy: int, seed: int, component: int) -> float:
+    """Scalar hash returning float in [0, 1] for Voronoise feature offsets.
+
+    component selects which hash stream (0=x offset, 1=y offset, 2=feature value).
+    Distinct from _hash2 which returns [-1,1] and operates on numpy arrays.
+    """
+    h = (int(ix) * 374761393 ^ int(iy) * 668265263
+         ^ (seed & 0x7FFFFFFF) ^ (component * 1234567)) & 0xFFFFFFFF
+    h ^= h >> 16
+    h = (h * 0x45D9F3B) & 0xFFFFFFFF
+    h ^= h >> 16
+    return (h & 0xFFFFFFFF) / 4294967295.0  # [0, 1]
+
+
+def _smoothstep(a: float, b: float, x: float) -> float:
+    """Standard Hermite smoothstep between a and b."""
+    if b <= a:
+        return 0.0 if x <= a else 1.0
+    t = max(0.0, min(1.0, (x - a) / (b - a)))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def voronoise(
+    px: float,
+    py: float,
+    u: float,
+    v: float,
+    seed: int = 0,
+) -> float:
+    """Voronoise: continuous blend from Voronoi F1 to smooth noise (Fix 11.8 / REQ-P11-003).
+
+    Follows IQ's Voronoise reference (shadertoy.com/view/Xd23Dh):
+      u=0, v=0  -> Voronoi F1 character (sharp cellular boundaries)
+      u=1, v=1  -> smooth noise character
+      intermediate u/v -> parametric blend
+
+    Parameters
+    ----------
+    px, py : float
+        World-space query coordinates.
+    u : float
+        Feature-offset amount in [0, 1]; 0=grid-aligned, 1=fully jittered.
+    v : float
+        Smoothness in [0, 1]; 0=sharp Voronoi, 1=smooth noise.
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    float
+        Noise value in approximately [-1, 1].
+    """
+    import math as _math
+
+    ix = _math.floor(px)
+    iy = _math.floor(py)
+    fx = px - ix
+    fy = py - iy
+
+    # k controls sharpness: high k -> near-Voronoi (sharp), k=1 -> smooth noise
+    k = 1.0 + 63.0 * (1.0 - v) ** 4
+
+    va = 0.0
+    wt = 0.0
+    for jy in range(-2, 3):
+        for jx in range(-2, 3):
+            # Feature point position (jittered by u)
+            hx = _hash2_scalar(int(ix) + jx, int(iy) + jy, seed, 0)
+            hy = _hash2_scalar(int(ix) + jx, int(iy) + jy, seed, 1)
+            # dx, dy: distance from query to feature point
+            dx = float(jx) - fx + hx * u
+            dy = float(jy) - fy + hy * u
+            d = _math.sqrt(dx * dx + dy * dy)
+            # Weight: smoothstep falloff raised to k
+            w_base = 1.0 - _smoothstep(0.0, 1.4142, d)  # sqrt(2) ~= 1.4142
+            w = w_base ** k
+            # Feature value in [0,1] -> remap to [-1,1]
+            fv = _hash2_scalar(int(ix) + jx, int(iy) + jy, seed, 2) * 2.0 - 1.0
+            va += w * fv
+            wt += w
+
+    if wt < 1e-12:
+        return 0.0
+    return float(max(-1.0, min(1.0, va / wt)))
+
+
+# ---------------------------------------------------------------------------
+# Fix 11.3 / REQ-P11-004 — IQ three-level domain warping fBm
+# ---------------------------------------------------------------------------
+
+
+def domain_warp_fbm(
+    p_x: float,
+    p_y: float,
+    octaves: int = 6,
+    warp_strength: float = 0.5,
+    seed: int = 0,
+) -> float:
+    """Three-level IQ domain warping fBm (Fix 11.3 / REQ-P11-004).
+
+    Computes IQ's canonical domain warp pattern:
+      q = fbm_iq(p)
+      r = fbm_iq(p + q * warp_strength)
+      result = fbm_iq(p + r * warp_strength)
+
+    Each level passes the previous fBm output as a coordinate offset,
+    producing the characteristic swirling, organic distortion seen in
+    IQ's terrain references. warp_strength controls the offset amplitude.
+
+    Parameters
+    ----------
+    p_x, p_y : float
+        World-space coordinates.
+    octaves : int
+        Number of octaves for each fbm_iq call.
+    warp_strength : float
+        Coordinate offset amplitude for each warp pass (in noise-space units).
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    float
+        fBm value after three passes of domain warping.
+    """
+    # Pass 1: q = fbm(p)
+    q = fbm_iq(p_x, p_y, octaves=octaves, seed=seed)
+
+    # Pass 2: r = fbm(p + q)
+    r = fbm_iq(
+        p_x + q * warp_strength,
+        p_y + q * warp_strength,
+        octaves=octaves,
+        seed=seed + 1,
+    )
+
+    # Pass 3: result = fbm(p + r)
+    return fbm_iq(
+        p_x + r * warp_strength,
+        p_y + r * warp_strength,
+        octaves=octaves,
+        seed=seed + 2,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 11.4 / REQ-P11-004 — Cellular noise with smooth minimum (smin)
+# ---------------------------------------------------------------------------
+
+
+def _cellular_f1_f2(
+    x: float,
+    y: float,
+    seed: int,
+) -> tuple[float, float]:
+    """Compute F1 (nearest) and F2 (second-nearest) Voronoi distances.
+
+    Uses the same _hash2_scalar helper as voronoise for consistency.
+    Returns distances in coordinate-space units.
+    """
+    import math as _math
+
+    ix = int(_math.floor(x))
+    iy = int(_math.floor(y))
+    f1 = 1e38
+    f2 = 1e38
+
+    for jy in range(-2, 3):
+        for jx in range(-2, 3):
+            cx, cy = ix + jx, iy + jy
+            hx = _hash2_scalar(cx, cy, seed, 0)
+            hy = _hash2_scalar(cx, cy, seed, 1)
+            fx = cx + hx - x
+            fy = cy + hy - y
+            d = _math.sqrt(fx * fx + fy * fy)
+            if d < f1:
+                f2 = f1
+                f1 = d
+            elif d < f2:
+                f2 = d
+    return f1, f2
+
+
+def cellular_smin(
+    x: float,
+    y: float,
+    k: float = 5.0,
+    seed: int = 0,
+) -> float:
+    """Cellular noise via smooth minimum of F1 and F2 Voronoi distances (Fix 11.4 / REQ-P11-004).
+
+    Uses log-sum-exp smooth minimum (IQ's recommended formulation):
+      smin(a, b, k) = -log(exp(-k*a) + exp(-k*b)) / k
+
+    As k->0 the function approaches the hard minimum of F1,F2.
+    As k->inf the function blends F1 and F2 more smoothly.
+    k=5 is a good default for organic cave/rock pocket shapes.
+
+    Parameters
+    ----------
+    x, y : float
+        World-space coordinates.
+    k : float
+        Smoothing factor. Larger = smoother blend.
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    float
+        Non-negative smooth-minimum distance value. Typical range [0, 1.5].
+    """
+    import math as _math
+
+    f1, f2 = _cellular_f1_f2(x, y, seed)
+    if k < 1e-9:
+        return min(f1, f2)
+
+    # Log-sum-exp smooth min (numerically stable with shift)
+    # smin(a, b, k) = -log(exp(-k*a) + exp(-k*b)) / k
+    # Shift by min to prevent exp overflow
+    shift = min(k * f1, k * f2)
+    lse = _math.log(_math.exp(shift - k * f1) + _math.exp(shift - k * f2))
+    return float((shift - lse) / k)
+
+
+# ---------------------------------------------------------------------------
 # Terrain type presets
 # ---------------------------------------------------------------------------
 
