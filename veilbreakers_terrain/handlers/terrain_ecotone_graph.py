@@ -48,22 +48,48 @@ def _find_adjacencies(biome: np.ndarray) -> Dict[Tuple[int, int], int]:
     """Return a dict of (a, b) -> number of shared 4-neighbor borders.
 
     Always stores with ``a < b`` to deduplicate.
+
+    Fully vectorised — no Python per-border loop.  All differing pairs are
+    extracted as two flat arrays, canonicalised (min, max) with numpy, then
+    counted via np.unique with return_counts=True.  O(N) in the number of
+    border cells, all inside numpy C-layer.
     """
+    def _count_pairs(arr_a: np.ndarray, arr_b: np.ndarray) -> Dict[Tuple[int, int], int]:
+        """Vectorised count of canonicalised (min, max) pairs."""
+        if arr_a.size == 0:
+            return {}
+        lo = np.minimum(arr_a, arr_b)   # canonical ordering — no Python loop
+        hi = np.maximum(arr_a, arr_b)
+        # Encode as single int64 key: lo * stride + hi.
+        # Biome IDs are small (<2^24), stride = 2^24 is collision-free.
+        _STRIDE = np.int64(1 << 24)
+        encoded = lo.astype(np.int64) * _STRIDE + hi.astype(np.int64)
+        unique_enc, counts = np.unique(encoded, return_counts=True)
+        result: Dict[Tuple[int, int], int] = {}
+        for enc, cnt in zip(unique_enc.tolist(), counts.tolist()):
+            a = int(enc // _STRIDE)
+            b = int(enc %  _STRIDE)
+            result[(a, b)] = int(cnt)
+        return result
+
     pairs: Dict[Tuple[int, int], int] = {}
+
     # Horizontal neighbors
-    left = biome[:, :-1]
+    left  = biome[:, :-1]
     right = biome[:, 1:]
     diff_h = left != right
-    for a, b in zip(left[diff_h].tolist(), right[diff_h].tolist()):
-        key = (int(min(a, b)), int(max(a, b)))
-        pairs[key] = pairs.get(key, 0) + 1
+    h_pairs = _count_pairs(left[diff_h], right[diff_h])
+    for k, v in h_pairs.items():
+        pairs[k] = pairs.get(k, 0) + v
+
     # Vertical neighbors
-    up = biome[:-1, :]
+    up   = biome[:-1, :]
     down = biome[1:, :]
     diff_v = up != down
-    for a, b in zip(up[diff_v].tolist(), down[diff_v].tolist()):
-        key = (int(min(a, b)), int(max(a, b)))
-        pairs[key] = pairs.get(key, 0) + 1
+    v_pairs = _count_pairs(up[diff_v], down[diff_v])
+    for k, v in v_pairs.items():
+        pairs[k] = pairs.get(k, 0) + v
+
     return pairs
 
 

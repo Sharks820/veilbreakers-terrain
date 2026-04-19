@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -786,6 +787,7 @@ def pass_water_variants(
         logger.debug("detect_perched_lakes failed (non-fatal): %s", exc)
 
     # --- Wetlands: boost wetness in low-slope/high-wetness regions ---
+    # Vectorized: numpy slice + np.where replaces O(cells_per_wetland) Python loop.
     try:
         wetland_list = detect_wetlands(stack)
         wetland_count = len(wetland_list)
@@ -795,10 +797,15 @@ def pass_water_variants(
             wr0 = max(0, int(np.floor((b.min_y - stack.world_origin_y) / stack.cell_size)))
             wc1 = min(cols, int(np.ceil((b.max_x - stack.world_origin_x) / stack.cell_size)))
             wr1 = min(rows, int(np.ceil((b.max_y - stack.world_origin_y) / stack.cell_size)))
-            for wr in range(wr0, wr1):
-                for wc in range(wc0, wc1):
-                    if not protected[wr, wc]:
-                        wetness[wr, wc] = max(wetness[wr, wc], 0.7)
+            if wr0 >= wr1 or wc0 >= wc1:
+                continue
+            # Vectorized: only write to unprotected cells in this bounding slice
+            region_prot = protected[wr0:wr1, wc0:wc1]
+            wetness[wr0:wr1, wc0:wc1] = np.where(
+                region_prot,
+                wetness[wr0:wr1, wc0:wc1],
+                np.maximum(wetness[wr0:wr1, wc0:wc1], 0.7),
+            )
     except Exception as exc:
         logger.debug("detect_wetlands failed (non-fatal): %s", exc)
 

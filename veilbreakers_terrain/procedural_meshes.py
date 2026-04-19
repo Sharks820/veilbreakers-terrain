@@ -6341,13 +6341,29 @@ def generate_bridge_mesh(
         deck_thick = 0.15
         wall_h = 0.5
 
-        # Deck surface (slightly curved)
+        # Deck surface — catenary crown y = a*(cosh(x/a) - 1)
+        # 'a' is tuned so peak crown at mid-span equals arch_h * 0.1
+        # Solve: crown_height = a*(cosh(half/a) - 1)  =>  iterate or use closed form.
+        crown_h = arch_h * 0.1
+        _half = span / 2.0
+        # catenary parameter: a = crown_h / (cosh(_half / a) - 1).
+        # Use bisection on f(a) = a*(cosh(_half/a) - 1) - crown_h = 0.
+        # For small crown_h relative to span a >> half; seed with a = half^2 / (2*crown_h).
+        _a_cat = (_half ** 2) / (2.0 * max(crown_h, 1e-6))
+        for _ in range(32):
+            _f = _a_cat * (math.cosh(_half / _a_cat) - 1.0) - crown_h
+            _df = math.cosh(_half / _a_cat) - 1.0 - (_half / _a_cat) * math.sinh(_half / _a_cat)
+            if abs(_df) < 1e-12:
+                break
+            _a_cat -= _f / _df
+
         deck_verts: list[tuple[float, float, float]] = []
         deck_faces: list[tuple[int, ...]] = []
         for i in range(arch_segs + 1):
             t = i / arch_segs
-            z = -span / 2 + t * span
-            y_arch = math.sin(t * math.pi) * arch_h * 0.1  # Slight crown
+            z = -span / 2 + t * span           # z in [-half, +half]
+            # Catenary referenced from endpoints (y=0) with peak at z=0
+            y_arch = _a_cat * (math.cosh(z / _a_cat) - 1.0) - crown_h
             # Inner left, outer left, outer right, inner right
             deck_verts.append((-width / 2, y_arch, z))
             deck_verts.append((-width / 2, y_arch - deck_thick, z))
@@ -6401,11 +6417,27 @@ def generate_bridge_mesh(
         plank_thick = 0.03
         plank_d = 0.12
 
+        # Catenary sag: y = a*(cosh(x/a) - 1) with sag_depth at mid-span.
+        # sag_depth chosen as span * 0.05 (same physical magnitude as before).
+        _sag_depth = span * 0.05
+        _half_r = span / 2.0
+        # Solve catenary parameter _a_r via Newton: a*(cosh(half/a)-1) = sag_depth
+        _a_r = (_half_r ** 2) / (2.0 * max(_sag_depth, 1e-6))
+        for _ in range(32):
+            _f_r = _a_r * (math.cosh(_half_r / _a_r) - 1.0) - _sag_depth
+            _df_r = (math.cosh(_half_r / _a_r) - 1.0
+                     - (_half_r / _a_r) * math.sinh(_half_r / _a_r))
+            if abs(_df_r) < 1e-12:
+                break
+            _a_r -= _f_r / _df_r
+
+        def _rope_sag(z_pos: float) -> float:
+            """Return catenary y-offset (negative = sag below endpoints)."""
+            return -(_a_r * (math.cosh(z_pos / _a_r) - 1.0))
+
         for i in range(plank_count):
             z = -span / 2 + i * span / plank_count
-            # Slight sag in the middle
-            t = (z + span / 2) / span
-            sag = -math.sin(t * math.pi) * span * 0.05
+            sag = _rope_sag(z)
             pv, pf = _make_box(0, sag, z, plank_w / 2, plank_thick / 2, plank_d / 2)
             parts.append((pv, pf))
 
@@ -6415,8 +6447,7 @@ def generate_bridge_mesh(
         for x_side in [-width / 2, width / 2]:
             for i in range(plank_count // 2):
                 z = -span / 2 + i * 2 * span / plank_count
-                t = (z + span / 2) / span
-                sag = -math.sin(t * math.pi) * span * 0.05
+                sag = _rope_sag(z)
                 # Vertical rope post
                 pv, pf = _make_cylinder(x_side, sag, z, rope_r * 2, rope_h,
                                         segments=4)

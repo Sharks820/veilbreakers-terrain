@@ -74,20 +74,24 @@ def compute_horizon_lod(
     block_h = max(1, int(np.ceil(src_h / out_res)))
     block_w = max(1, int(np.ceil(src_w / out_res)))
 
-    out = np.empty((out_res, out_res), dtype=np.float32)
-    for i in range(out_res):
-        r0 = i * block_h
-        r1 = min(src_h, r0 + block_h)
-        if r0 >= r1:
-            r0 = max(0, src_h - 1)
-            r1 = src_h
-        for j in range(out_res):
-            c0 = j * block_w
-            c1 = min(src_w, c0 + block_w)
-            if c0 >= c1:
-                c0 = max(0, src_w - 1)
-                c1 = src_w
-            out[i, j] = float(h[r0:r1, c0:c1].max())
+    # Vectorised max-pool via reshape+max — no Python per-cell loop.
+    # Pad height to exact multiples of (block_h, block_w) so reshape is exact.
+    pad_h = (block_h - src_h % block_h) % block_h
+    pad_w = (block_w - src_w % block_w) % block_w
+    if pad_h > 0 or pad_w > 0:
+        # Pad by repeating the last row/column (silhouette-safe: max-pool keeps
+        # the highest sample so neutral padding = min value is incorrect; we
+        # use edge padding to avoid introducing spurious peaks).
+        h_pad = np.pad(h, ((0, pad_h), (0, pad_w)), mode="edge")
+    else:
+        h_pad = h
+    padded_h, padded_w = h_pad.shape
+
+    # Reshape into (out_res, block_h, out_res, block_w), then max over blocks.
+    # The reshape is exact because padded dims are exact multiples of blocks.
+    blocks = h_pad.reshape(out_res, block_h, out_res, block_w)
+    # Max over the two block axes (1 and 3 after reshape)
+    out = blocks.max(axis=(1, 3)).astype(np.float32)
     return out
 
 

@@ -30,7 +30,39 @@ VALID_PLACEMENT_CLASSES = frozenset(
 
 
 class ProtocolViolation(RuntimeError):
-    """Raised when a terrain mutation bypasses one of the 7 enforced rules."""
+    """Raised when a terrain mutation bypasses one of the 7 enforced rules.
+
+    Attributes:
+        rule_number: Integer 1–7 identifying which rule was violated, or 0 if
+                     unknown/multiple.
+        severity:    'hard' (operation must abort) or 'soft' (warning-level;
+                     current policy always aborts, but callers may inspect to
+                     route differently in future).
+        description: Human-readable explanation of the violation including the
+                     corrective action.
+
+    The string representation is ``"rule_<N>/<severity>: <description>"`` so
+    log lines are greppable without parsing the exception attributes.
+    """
+
+    def __init__(
+        self,
+        description: str,
+        *,
+        rule_number: int = 0,
+        severity: str = "hard",
+    ) -> None:
+        self.rule_number = int(rule_number)
+        self.severity = str(severity)
+        self.description = str(description)
+        tag = f"rule_{self.rule_number}/{self.severity}: " if self.rule_number else ""
+        super().__init__(f"{tag}{self.description}")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"ProtocolViolation(rule_number={self.rule_number!r}, "
+            f"severity={self.severity!r}, description={self.description!r})"
+        )
 
 
 class ProtocolGate:
@@ -51,8 +83,10 @@ class ProtocolGate:
         sr = state.intent.scene_read
         if sr is None:
             raise ProtocolViolation(
-                "rule_1: no TerrainSceneRead attached to intent — "
-                "capture one via terrain_scene_read.capture_scene_read() first."
+                "no TerrainSceneRead attached to intent — "
+                "capture one via terrain_scene_read.capture_scene_read() first.",
+                rule_number=1,
+                severity="hard",
             )
         current = time.time() if now is None else now
         age = current - float(sr.timestamp)
@@ -61,8 +95,10 @@ class ProtocolGate:
             age = 0.0
         if age > max_age_s:
             raise ProtocolViolation(
-                f"rule_1: scene_read is {age:.0f}s old (max {max_age_s:.0f}s). "
-                "Re-capture before running further mutations."
+                f"scene_read is {age:.0f}s old (max {max_age_s:.0f}s). "
+                "Re-capture before running further mutations.",
+                rule_number=1,
+                severity="hard",
             )
 
     @staticmethod
@@ -71,25 +107,36 @@ class ProtocolGate:
         *,
         out_of_view_ok: bool = False,
     ) -> None:
-        """Require that a ViewportVantage is attached to the pipeline state
-        (or that the caller explicitly opts out via ``out_of_view_ok=True``).
+        """Require that a ViewportVantage is attached to the pipeline state,
+        or that the caller explicitly opts out via ``out_of_view_ok=True``.
 
-        BUG-R8-A9-036: when viewport_vantage is None, skip the Rule 2 check
-        with a warning rather than raising ProtocolViolation.  The vantage is
-        optional in headless / automated pipeline runs where no Blender viewport
-        is open; raising here would block all such runs unconditionally.
+        ``TerrainPipelineState.viewport_vantage`` is a declared ``Optional[Any]``
+        field (default ``None``).  Headless / automated pipeline runs that have
+        no Blender viewport open should pass ``out_of_view_ok=True`` (or supply
+        the vantage) so that Rule 2 is satisfied without raising.
+
+        When ``viewport_vantage`` is ``None`` and ``out_of_view_ok`` is not set,
+        the gate logs a warning and skips rather than raising
+        :class:`ProtocolViolation`.  This preserves backward compatibility with
+        automated runs that predate the vantage field while still surfacing the
+        gap visibly in logs.  Future hardening: change the warning to a raise
+        once all automated callers are confirmed to set ``out_of_view_ok=True``.
+
+        Args:
+            state: current pipeline state; ``state.viewport_vantage`` is read.
+            out_of_view_ok: suppress the Rule 2 check entirely (e.g. headless CI).
         """
         import logging as _logging
         _rule2_log = _logging.getLogger(__name__)
 
         if out_of_view_ok:
             return
-        vantage = getattr(state, "viewport_vantage", None)
+        vantage = state.viewport_vantage  # declared field — no getattr fallback needed
         if vantage is None:
             _rule2_log.warning(
-                "rule_2: no ViewportVantage attached to state — Rule 2 check skipped. "
-                "Call terrain_viewport_sync.read_user_vantage() and attach it as "
-                "state.viewport_vantage for full protocol enforcement."
+                "rule_2/soft: state.viewport_vantage is None — Rule 2 check skipped. "
+                "Call terrain_viewport_sync.read_user_vantage() and assign the result "
+                "to state.viewport_vantage, or pass out_of_view_ok=True for headless runs."
             )
             return
 
@@ -108,19 +155,64 @@ class ProtocolGate:
         if drifted:
             names = ", ".join(r.anchor_name for r in drifted)
             raise ProtocolViolation(
-                f"rule_3: anchor drift detected for: {names}. "
-                "Re-lock anchors or revert the drifting mutation."
+                f"anchor drift detected for: {names}. "
+                "Re-lock anchors or revert the drifting mutation.",
+                rule_number=3,
+                severity="hard",
             )
+
+    # Canonical set of hero feature kinds that require real mesh additions.
+    # Kept in sync with terrain_hierarchy.cinematic_kinds — if you add a kind
+    # there, add it here too.  Previously this was a hardcoded local set that
+    # diverged from hierarchy (cliff/cave/waterfall vs canyon/arch/megaboss_arena
+    # /sanctum/waterfall).  Now unified: any cinematic-tier hero feature is
+    # forbidden from using vertex-color fakes.
+    HERO_MESH_REQUIRED_KINDS: "frozenset[str]" = frozenset(
+        {
+            # From terrain_hierarchy.cinematic_kinds
+            "canyon",
+            "waterfall",
+            "arch",
+            "megaboss_arena",
+            "sanctum",
+            # Additional hero kinds always requiring real geometry
+            "cliff",
+            "cave",
+        }
+    )
 
     @staticmethod
     def rule_4_real_geometry_not_vertex_tricks(params: dict) -> None:
-        """Forbid vertex-color-only fakes for hero features."""
+        """Forbid vertex-color-only fakes for any hero / cinematic feature kind.
+
+        Hero features (cliffs, caves, waterfalls, canyons, arches, boss arenas,
+        sanctums) must land as real mesh additions in the scene.  A pass that
+        sets ``vertex_color_fake=True`` for any of these kinds is a protocol
+        violation — vertex-color tricks produce visually convincing screenshots
+        but break navmesh baking, physics colliders, and LOD generation.
+
+        The allowed hero kinds are defined in ``HERO_MESH_REQUIRED_KINDS`` and
+        intentionally mirror ``terrain_hierarchy.cinematic_kinds`` so there is
+        a single canonical list.  If you add a new cinematic kind to the
+        hierarchy, add it here too.
+
+        Args:
+            params: mutation parameter dict.  Relevant keys:
+                ``feature_kind`` (str) — the kind being placed.
+                ``vertex_color_fake`` (bool) — True if the caller wants to skip
+                    real geometry and use vertex-color shading only.
+        """
         feature_kind = str(params.get("feature_kind", "")).lower()
-        hero_kinds = {"cliff", "cave", "waterfall"}
-        if feature_kind in hero_kinds and bool(params.get("vertex_color_fake", False)):
+        if feature_kind in ProtocolGate.HERO_MESH_REQUIRED_KINDS and bool(
+            params.get("vertex_color_fake", False)
+        ):
             raise ProtocolViolation(
-                f"rule_4: hero feature '{feature_kind}' cannot be a vertex-color fake. "
-                "Cliffs, caves, and waterfalls must land as real mesh additions."
+                f"hero feature '{feature_kind}' cannot be a vertex-color fake. "
+                f"All cinematic-tier hero features "
+                f"({sorted(ProtocolGate.HERO_MESH_REQUIRED_KINDS)}) "
+                "must land as real mesh additions.",
+                rule_number=4,
+                severity="hard",
             )
 
     @staticmethod
@@ -140,15 +232,19 @@ class ProtocolGate:
         cell_frac = cells_affected / tile_cells
         if cell_frac > cell_fraction_threshold:
             raise ProtocolViolation(
-                f"rule_5: mutation affects {cell_frac*100:.1f}% of tile "
+                f"mutation affects {cell_frac*100:.1f}% of tile "
                 f"(threshold {cell_fraction_threshold*100:.0f}%). "
-                "Use a region-scoped pass or set bulk_edit=True."
+                "Use a region-scoped pass or set bulk_edit=True.",
+                rule_number=5,
+                severity="hard",
             )
         if objects_affected > object_count_threshold:
             raise ProtocolViolation(
-                f"rule_5: mutation affects {objects_affected} objects "
+                f"mutation affects {objects_affected} objects "
                 f"(threshold {object_count_threshold}). "
-                "Split into smaller edits or set bulk_edit=True."
+                "Split into smaller edits or set bulk_edit=True.",
+                rule_number=5,
+                severity="hard",
             )
 
     @staticmethod
@@ -166,9 +262,11 @@ class ProtocolGate:
                 bad.append(f"[{idx}] {placement.get('id', 'anon')!r}: {pc!r}")
         if bad:
             raise ProtocolViolation(
-                "rule_6: invalid placement_class on: "
+                "invalid placement_class on: "
                 + ", ".join(bad)
-                + f". Must be one of {sorted(VALID_PLACEMENT_CLASSES)}."
+                + f". Must be one of {sorted(VALID_PLACEMENT_CLASSES)}.",
+                rule_number=6,
+                severity="hard",
             )
 
     @staticmethod
@@ -193,16 +291,48 @@ def enforce_protocol(
     require_rule_5: bool = True,
     require_rule_6: bool = True,
     require_rule_7: bool = True,
-) -> Callable:
-    """Wrap a terrain mutation handler so that all 7 gates must pass.
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Decorator that enforces all 7 terrain-editing protocol gates before a handler runs.
 
-    The wrapped function must accept ``state: TerrainPipelineState`` as its
-    first positional arg and ``params: dict`` as its second. Individual rule
-    requirements can be toggled off via the kwargs (useful for unit-test
-    fixtures that cannot stand up a full scene read).
+    Wrap any terrain mutation handler with this decorator to guarantee that the
+    7 rules from ``TERRAIN_EDITING_PROTOCOL.md`` are checked at every call site.
+    Any gate failure raises :class:`ProtocolViolation` and the wrapped handler
+    body is never entered.
+
+    The decorated function **must** accept:
+      - ``state: TerrainPipelineState`` as its first positional argument.
+      - ``params: dict | None`` as its second positional argument.
+
+    Additional positional and keyword arguments are forwarded unchanged.
+
+    Rule toggle kwargs (all default ``True``) let test fixtures opt out of
+    gates that require a live Blender scene or addon:
+
+    - ``require_rule_1`` — scene_read freshness (Rule 1)
+    - ``require_rule_2`` — viewport vantage sync (Rule 2)
+    - ``require_rule_3`` — reference-empty anchor drift (Rule 3)
+    - ``require_rule_4`` — no vertex-color fakes for hero features (Rule 4)
+    - ``require_rule_5`` — smallest-diff / bulk_edit guard (Rule 5)
+    - ``require_rule_6`` — placement_class tags (Rule 6)
+    - ``require_rule_7`` — addon version check (Rule 7)
+
+    Example::
+
+        @enforce_protocol(require_rule_7=False)  # skip addon check in CI
+        def my_pass(state: TerrainPipelineState, params: dict) -> PassResult:
+            ...
+
+    Params extracted from the ``params`` dict by the wrapper:
+      - ``out_of_view_ok`` (bool)  — Rule 2 opt-out for headless runs.
+      - ``cells_affected`` (int)   — Rule 5 cell count.
+      - ``objects_affected`` (int) — Rule 5 object count.
+      - ``bulk_edit`` (bool)       — Rule 5 bulk override.
+      - ``placements`` (list)      — Rule 6 placement descriptor list.
+      - ``feature_kind`` (str)     — Rule 4 hero kind.
+      - ``vertex_color_fake`` (bool) — Rule 4 fake flag.
     """
 
-    def decorator(fn: Callable) -> Callable:
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(fn)
         def wrapper(
             state: TerrainPipelineState,

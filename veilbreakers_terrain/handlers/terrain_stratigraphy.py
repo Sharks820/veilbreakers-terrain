@@ -296,12 +296,22 @@ def apply_differential_erosion(
     # ------------------------------------------------------------------
     # 1. Topographic exposure depth — base erosion depth per cell
     #    Cells above local mean are exposed; sheltered cells erode less.
+    #    Vectorised 3×3 mean via uniform_filter (no Python neighbourhood loop).
     # ------------------------------------------------------------------
-    neighbourhood_mean = np.zeros_like(h)
-    for dr in (-1, 0, 1):
-        for dc in (-1, 0, 1):
-            neighbourhood_mean += np.roll(np.roll(h, dr, axis=0), dc, axis=1)
-    neighbourhood_mean /= 9.0
+    try:
+        from scipy.ndimage import uniform_filter as _uf
+        neighbourhood_mean = _uf(h, size=3, mode="nearest")
+    except ImportError:
+        # Pure-numpy fallback: accumulate all 9 shifts without Python loop.
+        # Shape: (9, H, W) stacked shifts, mean over axis 0.
+        _offsets = [(-1, -1), (-1, 0), (-1, 1),
+                    ( 0, -1), ( 0, 0), ( 0, 1),
+                    ( 1, -1), ( 1, 0), ( 1, 1)]
+        neighbourhood_mean = np.mean(
+            np.stack([np.roll(np.roll(h, dr, axis=0), dc, axis=1)
+                      for dr, dc in _offsets], axis=0),
+            axis=0,
+        )
 
     relative_exposure = h - neighbourhood_mean
     exp_span = float(np.abs(relative_exposure).max())

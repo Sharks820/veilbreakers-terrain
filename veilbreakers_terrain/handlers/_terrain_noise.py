@@ -2330,9 +2330,12 @@ def hydraulic_erosion(
 
             delta_h = new_h - old_h
 
-            # Sediment capacity: slope normalised by cell_size keeps the
-            # threshold dimensionally consistent regardless of grid resolution.
-            slope = max(abs(delta_h) / cs, min_slope_px)
+            # Sediment capacity: Olsen 2004 / Beyer 2015 particle model — capacity
+            # uses DOWNHILL slope only: max(-delta_h, min_slope).  Using abs(delta_h)
+            # (the previous bug) inflated capacity on uphill moves, letting particles
+            # pick up sediment while climbing — physically wrong and the root cause of
+            # the marble-cake deposition pattern flagged in BUG-R8-A3-002.
+            slope = max(-delta_h / cs, min_slope_px)
             capacity = max(
                 min_sediment_capacity,
                 slope * speed * water * sediment_capacity_factor,
@@ -2909,8 +2912,12 @@ def auto_splat_terrain(
         altitude_moisture = 1.0 - np.abs(heightmap - 0.4) * 2.5
         moisture = np.clip(altitude_moisture, 0.0, 1.0)
 
-    # Curvature: Laplacian of heightmap (convex=positive, concave=negative)
-    # Use simple 3x3 discrete Laplacian
+    # Curvature: Laplacian of heightmap (convex ridge = negative, concave valley = positive
+    # for the 4-neighbour discrete form: centre > neighbours → negative).
+    # Normalization uses the theoretical 4-neighbour kernel response (4 * max_height_diff)
+    # rather than the data-dependent max(|laplacian|) so identical terrain always maps to
+    # the same curvature range regardless of seed — the previous curv_max = max(|L|) was
+    # seed-dependent and broke material consistency across tiles.
     if rows >= 3 and cols >= 3:
         padded = np.pad(heightmap, 1, mode="edge")
         laplacian = (
@@ -2923,9 +2930,13 @@ def auto_splat_terrain(
     else:
         laplacian = np.zeros_like(heightmap)
 
-    # Normalize curvature to [-1, 1]
-    curv_max = max(float(np.abs(laplacian).max()), 1e-8)
-    curvature = np.clip(laplacian / curv_max, -1.0, 1.0)
+    # Kernel-normalized curvature: divide by 4 * height_range (the theoretical maximum
+    # absolute Laplacian response for a 4-neighbour stencil on a [0,1] heightmap).
+    # This is seed-invariant: the same geometric feature always produces the same
+    # curvature value regardless of the full-tile height distribution.
+    h_range = float(heightmap.max()) - float(heightmap.min())
+    curv_scale = max(4.0 * h_range, 1e-8)
+    curvature = np.clip(laplacian / curv_scale, -1.0, 1.0)
 
     # Splat layer indices: 0=grass, 1=rock, 2=cliff, 3=snow, 4=mud
     N_LAYERS = 5
@@ -2971,10 +2982,15 @@ def auto_splat_terrain(
         np.where(material_ids == MUD, 0.55,
         0.88)))  # grass default
     )
-    # Laplacian sign: convex peak -> negative (center > neighbors),
-    # concave valley -> positive (center < neighbors).
-    # Convex ridges: smoother (wind erosion); concave valleys: rougher (debris).
-    roughness_adj = np.where(curvature < -0.1, -0.15, np.where(curvature > 0.1, 0.20, 0.0))
+    # Laplacian sign: convex peak -> negative curvature (center > neighbours),
+    # concave valley -> positive curvature (center < neighbours).
+    # Roughness adjustment via sigmoid so the transition is gradual — the
+    # previous hard-threshold version (curvature < -0.1 → -0.15, > 0.1 → +0.20)
+    # produced visible step discontinuities at cliff-grass boundaries.
+    # sigmoid(curvature * k) maps [-1,1] curvature to (0,1); subtract 0.5 to
+    # centre on zero, then scale to [-0.20, +0.25] range (ridge smooth, valley rough).
+    _curv_sigmoid = 1.0 / (1.0 + np.exp(-curvature * 6.0))  # steepness k=6
+    roughness_adj = (_curv_sigmoid - 0.5) * 0.45  # range ≈ [-0.225, +0.225]
     roughness_map = np.clip(base_roughness + roughness_adj, 0.0, 1.0)
 
     return {

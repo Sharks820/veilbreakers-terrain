@@ -1264,16 +1264,17 @@ def _create_grass_card(
         rx5, ry5 = _rot(-bw * 0.15, bend_offset * 2)
 
         phase = rng.random()
-        # SpeedTree wind packing: R=phase, G=amplitude, B=frequency, A=0
+        # SpeedTree wind packing: R=amplitude (flutter weight), G=frequency, B=phase, A=0
+        # R=0.0 at root (no sway), R=1.0 at tip (full sway) — matches SpeedTree primary wind weight.
         amp_base, amp_mid, amp_tip = 0.0, 0.5, 1.0
         freq_base, freq_mid, freq_tip = 0.5, 0.75, 1.0
 
-        vv0 = bm.verts.new((rx0, ry0, 0.0));    vv0[wind_layer] = (phase, amp_base, freq_base, 0.0)
-        vv1 = bm.verts.new((rx1, ry1, 0.0));    vv1[wind_layer] = (phase, amp_base, freq_base, 0.0)
-        vv2 = bm.verts.new((rx2, ry2, mid_z));  vv2[wind_layer] = (phase, amp_mid,  freq_mid,  0.0)
-        vv3 = bm.verts.new((rx3, ry3, mid_z));  vv3[wind_layer] = (phase, amp_mid,  freq_mid,  0.0)
-        vv4 = bm.verts.new((rx4, ry4, height)); vv4[wind_layer] = (phase, amp_tip,  freq_tip,  0.0)
-        vv5 = bm.verts.new((rx5, ry5, height)); vv5[wind_layer] = (phase, amp_tip,  freq_tip,  0.0)
+        vv0 = bm.verts.new((rx0, ry0, 0.0));    vv0[wind_layer] = (amp_base, freq_base, phase, 0.0)
+        vv1 = bm.verts.new((rx1, ry1, 0.0));    vv1[wind_layer] = (amp_base, freq_base, phase, 0.0)
+        vv2 = bm.verts.new((rx2, ry2, mid_z));  vv2[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
+        vv3 = bm.verts.new((rx3, ry3, mid_z));  vv3[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
+        vv4 = bm.verts.new((rx4, ry4, height)); vv4[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
+        vv5 = bm.verts.new((rx5, ry5, height)); vv5[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
 
         # Lower quad (root → mid)
         try:

@@ -244,8 +244,20 @@ def _generate_corruption_map(
     seed: int,
     scale: float,
     octaves: int = 4,
+    warp_strength: float = 0.45,
 ) -> np.ndarray:
-    """Generate a per-cell corruption intensity map using fBm noise.
+    """Generate a per-cell corruption intensity map using Perlin domain-warp fBm.
+
+    Corruption spreads in organic, non-repetitive tendrils rather than banded
+    concentric rings because the input coordinates are domain-warped before
+    the fBm evaluation.  Two passes of Perlin warp (IQ-style) are applied:
+
+        q  = fBm(p)                      # first pass — coarse warp field
+        r  = fBm(p + q * warp_strength)  # second pass — refine warp
+        result = fBm(p + r * warp_strength)  # final sample at warped coord
+
+    Each fBm call uses a fresh generator derived from the master seed with an
+    offset prime so the three noise layers are decorrelated.
 
     Returns np.ndarray (height, width) in [0, 1]. Values scaled by `scale`
     so corruption_level=0.0 returns all-zeros, 1.0 returns full noise range.
@@ -256,6 +268,9 @@ def _generate_corruption_map(
         seed: RNG seed for this corruption pattern.
         scale: Global multiplier [0, 1]. If 0, returns all-zeros.
         octaves: Number of fBm octaves.
+        warp_strength: Coordinate offset amplitude for each domain-warp pass.
+            0.45 produces organic corruption tendrils without over-distorting
+            the underlying noise structure.
 
     Returns:
         np.ndarray (height, width) float64 clipped to [0, 1].
@@ -264,24 +279,47 @@ def _generate_corruption_map(
         return np.zeros((height, width), dtype=np.float64)
 
     from ._terrain_noise import _make_noise_generator
-    gen = _make_noise_generator(seed)
+
+    # Three decorrelated generators — prime offsets prevent correlated warp paths
+    gen_base  = _make_noise_generator(seed)
+    gen_warp1 = _make_noise_generator(seed ^ 0x6C62272E)   # XOR with large prime
+    gen_warp2 = _make_noise_generator(seed ^ 0xA5A5A5A5)
 
     ys = np.arange(height, dtype=np.float64) / height
-    xs = np.arange(width, dtype=np.float64) / width
-    yy, xx = np.meshgrid(ys, xs, indexing="ij")
+    xs = np.arange(width,  dtype=np.float64) / width
+    yy, xx = np.meshgrid(ys, xs, indexing="ij")   # (H, W)
 
-    # fBm noise
-    noise = np.zeros((height, width), dtype=np.float64)
-    amplitude = 1.0
-    frequency = 3.0
-    total_amp = 0.0
-    for _ in range(octaves):
-        noise += gen.noise2_array(xx * frequency, yy * frequency) * amplitude
-        total_amp += amplitude
-        amplitude *= 0.5
-        frequency *= 2.0
+    def _fbm_grid(gen, x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
+        """Vectorised fBm over coordinate grids using the noise generator."""
+        noise = np.zeros_like(x_grid, dtype=np.float64)
+        amp   = 1.0
+        freq  = 3.0
+        total = 0.0
+        for _ in range(octaves):
+            noise += gen.noise2_array(x_grid * freq, y_grid * freq) * amp
+            total += amp
+            amp  *= 0.5
+            freq *= 2.0
+        return noise / max(total, 1e-9)  # in ~[-1, 1]
 
-    noise = noise / total_amp  # normalize to ~[-1, 1]
+    # --- Pass 1: coarse warp field q = fBm(p) ---
+    q = _fbm_grid(gen_base, xx, yy)
+
+    # --- Pass 2: refined warp r = fBm(p + q * s + fixed_offset) ---
+    # Fixed offset (5.2, 1.3) breaks diagonal symmetry (IQ reference)
+    r = _fbm_grid(
+        gen_warp1,
+        xx + q * warp_strength + 5.2,
+        yy + q * warp_strength + 1.3,
+    )
+
+    # --- Final sample at double-warped coordinates ---
+    noise = _fbm_grid(
+        gen_warp2,
+        xx + r * warp_strength,
+        yy + r * warp_strength,
+    )
+
     noise = (noise + 1.0) / 2.0  # remap to [0, 1]
     return np.clip(noise * scale, 0.0, 1.0)
 
@@ -731,8 +769,15 @@ def compute_spring_line_mask(
     """Identify spring line positions where water emerges at geological layer boundaries.
 
     Returns a (H, W) float mask [0, 1] where 1 marks likely spring locations.
-    Spring lines form where an impermeable layer meets a permeable layer at
-    the surface, approximated here by elevation contour bands.
+    Springs form at the intersection of two conditions:
+      1. Geological stratum boundaries (impermeable/permeable contact zones).
+      2. Topographic convergence — hollows and valley axes where subsurface
+         flow accumulates before surfacing.
+
+    Topographic convergence is computed via a D8 multi-directional flow
+    accumulation pass: each cell drains to its lowest neighbour; accumulated
+    upslope cell count is log-normalised so valley-bottom convergence zones
+    score near 1.0 and divergent ridgelines score near 0.0.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
@@ -747,24 +792,74 @@ def compute_spring_line_mask(
 
     elev_norm = (heightmap - heightmap.min()) / max((heightmap.max() - heightmap.min()), 1e-6)
 
-    # Compute slope — springs emerge on slopes, not flats or cliffs
+    # ------------------------------------------------------------------
+    # 1. Slope — springs emerge on mid-range slopes (not flats/cliffs)
+    # ------------------------------------------------------------------
     gy, gx = np.gradient(heightmap)
     slope = np.sqrt(gx ** 2 + gy ** 2)
     slope_norm = slope / max(slope.max(), 1e-6)
-    # Mid-range slope is ideal for springs
     slope_band = np.exp(-((slope_norm - 0.3) ** 2) / 0.02)
 
-    # Layer boundaries: quantize elevation into strata, mark transitions
+    # ------------------------------------------------------------------
+    # 2. Flow accumulation (D8) — topographic convergence
+    #    Each cell routes to its single steepest-descent neighbour.
+    #    Accumulation = number of upstream contributing cells (log-scaled).
+    # ------------------------------------------------------------------
+    # 8-directional neighbour offsets (row, col)
+    _D8_ROWS = np.array([-1, -1, -1,  0,  0,  1,  1,  1], dtype=np.int32)
+    _D8_COLS = np.array([-1,  0,  1, -1,  1, -1,  0,  1], dtype=np.int32)
+
+    # For each cell find index of lowest neighbour (steepest descent D8)
+    flat_h = heightmap.ravel()
+    n_cells = h * w
+
+    # Build row/col index arrays
+    row_idx = np.repeat(np.arange(h, dtype=np.int32), w)
+    col_idx = np.tile(np.arange(w, dtype=np.int32), h)
+
+    # Receiver array: initially self (outlet/boundary cells)
+    receiver = np.arange(n_cells, dtype=np.int32)
+    min_elev = flat_h.copy()
+
+    for dr, dc in zip(_D8_ROWS, _D8_COLS):
+        nr = row_idx + dr
+        nc = col_idx + dc
+        valid = (nr >= 0) & (nr < h) & (nc >= 0) & (nc < w)
+        nb_flat = np.where(valid, nr * w + nc, -1)
+        nb_elev = np.where(valid, flat_h[np.clip(nb_flat, 0, n_cells - 1)], np.inf)
+        lower = nb_elev < min_elev
+        receiver = np.where(lower, nb_flat.astype(np.int32), receiver)
+        min_elev = np.where(lower, nb_elev, min_elev)
+
+    # Topological sort (process high-to-low) for accumulation pass
+    sort_order = np.argsort(-flat_h)  # descending elevation
+    accumulation = np.ones(n_cells, dtype=np.float64)  # each cell starts as 1
+    for idx in sort_order:
+        rcv = receiver[idx]
+        if rcv != idx:  # not a local outlet
+            accumulation[rcv] += accumulation[idx]
+
+    # Log-normalise to [0, 1]: high accumulation = convergence zones
+    log_acc = np.log1p(accumulation)
+    convergence = log_acc.reshape(h, w)
+    convergence /= max(convergence.max(), 1e-9)
+
+    # ------------------------------------------------------------------
+    # 3. Geological layer boundaries
+    # ------------------------------------------------------------------
     layer_thickness = 1.0 / max(geology_layers, 1)
     offsets = rng.uniform(-0.02, 0.02, size=geology_layers)
-    spring_mask = np.zeros((h, w), dtype=np.float64)
+    strata_mask = np.zeros((h, w), dtype=np.float64)
     for i in range(geology_layers):
         boundary = layer_thickness * (i + 1) + offsets[i]
         dist_to_boundary = np.abs(elev_norm - boundary)
-        # Narrow band around each boundary
-        spring_mask += np.exp(-(dist_to_boundary ** 2) / 0.001)
+        strata_mask += np.exp(-(dist_to_boundary ** 2) / 0.001)
+    strata_mask = np.clip(strata_mask, 0.0, 1.0)
 
-    spring_mask = np.clip(spring_mask, 0.0, 1.0) * slope_band
+    # ------------------------------------------------------------------
+    # 4. Combine: stratum contact × convergence × slope suitability
+    # ------------------------------------------------------------------
+    spring_mask = strata_mask * convergence * slope_band
     return np.clip(spring_mask, 0.0, 1.0)
 
 

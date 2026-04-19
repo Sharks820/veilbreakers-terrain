@@ -38,6 +38,22 @@ LOD_TRI_BUDGETS: Dict[int, int] = {
     2: 50_000,    # LOD2 — distant
 }
 
+# ---------------------------------------------------------------------------
+# Unity batch limits (Unity 2022+ static/dynamic batching thresholds)
+# ---------------------------------------------------------------------------
+
+UNITY_STATIC_BATCH_TRI_LIMIT: int = 150_000
+"""Maximum triangles Unity will accept in a single static-batched draw call.
+Objects exceeding this are split into multiple batches or excluded from
+static batching entirely (Unity 2022 documentation: Static Batching Limits).
+"""
+
+UNITY_DYNAMIC_BATCH_TRI_LIMIT: int = 75_000
+"""Maximum triangles per dynamic batch call.  GPU instancing bypasses this
+limit but requires identical materials; procedural terrain chunks use dynamic
+batching.
+"""
+
 
 @dataclass
 class BudgetReport:
@@ -145,6 +161,15 @@ class TerrainBudget:
     # Soft-warn thresholds as a fraction of max (default 80%)
     warn_fraction: float = 0.80
 
+    # Unity batch limits — per-chunk enforcement
+    # Static batching: objects > 150k tris are excluded from static batches.
+    # Dynamic batching: Unity CPU-side limit per draw call before splitting.
+    unity_static_batch_tri_limit: int = UNITY_STATIC_BATCH_TRI_LIMIT   # 150k
+    unity_dynamic_batch_tri_limit: int = UNITY_DYNAMIC_BATCH_TRI_LIMIT  # 75k
+    # Number of chunks the tile is divided into for per-chunk batch checking.
+    # Default 4×4 = 16 chunks per tile (matches Unity's default terrain chunk split).
+    chunk_grid: int = 4
+
 
 def _km2_from_stack(stack: TerrainMaskStack) -> float:
     cs = float(stack.cell_size) if stack.cell_size else 1.0
@@ -182,16 +207,29 @@ def _count_scatter_instances(stack: TerrainMaskStack) -> int:
 
 
 def _estimate_tri_count_per_lod(stack: TerrainMaskStack) -> Dict[int, int]:
-    """Estimate triangle count at each LOD level (0, 1, 2).
+    """Estimate triangle count at each LOD level (0, 1, 2) with per-feature tracking.
 
-    LOD0: full resolution heightmap triangles (2*(rows-1)*(cols-1)) + cliff
-    LOD1: half-resolution (quarter cell count)
-    LOD2: quarter-resolution (1/16 cell count)
+    LOD0 triangle sources
+    ---------------------
+    1. Base terrain mesh:  2 * (rows-1) * (cols-1)
+    2. Cliff-face surcharge: 2 tris per cliff cell (vertical quad faces at LOD0 only)
+    3. Hero feature surcharge: _HERO_TRI_PER_FEATURE[0] per authored hero feature
+       (ruins, arches, geysers — conservative full-res mesh estimate)
 
-    Cliff-face surcharge applies only to LOD0 — hero mesh insertions are
-    full-res only; LOD1/2 use flat billboard patches.
+    LOD1: half-resolution in each axis → 1/4 quad count; no cliff/hero surcharge
+          (cliff faces replaced by billboard patches; hero meshes simplified)
 
-    Returns dict mapping LOD level → estimated triangle count.
+    LOD2: quarter-resolution → 1/16 quad count; no surcharges (impostor quads)
+
+    Per-chunk batch awareness
+    -------------------------
+    Unity splits a terrain tile into a chunk_grid × chunk_grid sub-grid for
+    static batching.  If the per-chunk LOD0 triangle count exceeds
+    UNITY_STATIC_BATCH_TRI_LIMIT, that chunk must be split further or
+    excluded from batching (runtime draw-call overhead).  The chunk count
+    is returned in the ``chunk_analysis`` key of ``compute_tile_budget_usage``.
+
+    Returns dict mapping LOD level → estimated triangle count (tile total).
     """
     h = stack.get("height")
     if h is None:
@@ -215,7 +253,7 @@ def _estimate_tri_count_per_lod(stack: TerrainMaskStack) -> Dict[int, int]:
 
     lod0_tris = base_lod0 + cliff_surcharge
 
-    # LOD1: half res in each dimension → 1/4 quad count
+    # LOD1: half res in each dimension → 1/4 quad count (no cliff/hero surcharge)
     rows1, cols1 = max(2, rows // 2), max(2, cols // 2)
     lod1_tris = int(2 * (rows1 - 1) * (cols1 - 1))
 
@@ -224,6 +262,15 @@ def _estimate_tri_count_per_lod(stack: TerrainMaskStack) -> Dict[int, int]:
     lod2_tris = int(2 * (rows2 - 1) * (cols2 - 1))
 
     return {0: lod0_tris, 1: lod1_tris, 2: lod2_tris}
+
+
+# Per-feature hero mesh triangle estimates at each LOD level.
+# Used in enforce_budget to check per-feature budget contribution.
+_HERO_TRI_PER_FEATURE: Dict[int, int] = {
+    0: 2_000,   # LOD0 — full-res ruin/arch/geyser mesh
+    1:   500,   # LOD1 — simplified mesh
+    2:   100,   # LOD2 — impostor quad
+}
 
 
 def _estimate_tri_count(stack: TerrainMaskStack) -> int:
@@ -249,8 +296,26 @@ def compute_tile_budget_usage(
 ) -> Dict[str, Any]:
     """Compute current-vs-max usage for each budget axis.
 
-    Returns a dict with per-category breakdown including separate LOD-level
-    triangle counts (LOD0=250k, LOD1=100k, LOD2=50k budgets).
+    Returns a dict with per-category breakdown including:
+    - Separate LOD-level triangle counts (LOD0=250k, LOD1=100k, LOD2=50k)
+    - Per-feature hero budget contribution (tris consumed by hero meshes)
+    - Per-chunk Unity batch analysis (static ≤150k, dynamic ≤75k per chunk)
+
+    Per-chunk analysis
+    ------------------
+    The tile is divided into a ``chunk_grid × chunk_grid`` sub-grid (default 4×4=16
+    chunks).  Unity's static batching engine processes each terrain chunk as a
+    separate draw call.  If a chunk's LOD0 tri count exceeds the static batch
+    limit (150k), Unity falls back to unbatched rendering for that chunk,
+    incurring extra draw calls and CPU overhead.  The ``chunk_analysis`` sub-dict
+    reports the worst-case chunk tri count and how many chunks would exceed
+    the static/dynamic limits.
+
+    Per-feature budget
+    ------------------
+    Hero features (ruins, arches, geysers) each contribute ~2000 tris at LOD0.
+    The ``hero_tri_contribution`` key reports how many tile tris are consumed
+    by hero meshes alone, and what fraction of the LOD0 budget they represent.
     """
     b = budget or TerrainBudget()
     km2 = _km2_from_stack(stack)
@@ -265,6 +330,42 @@ def compute_tile_budget_usage(
     unique_materials = _count_unique_materials(stack)
     scatter = _count_scatter_instances(stack)
     npz_mb = _estimate_npz_mb(stack)
+
+    # --- Per-feature hero budget contribution ---
+    hero_tri_lod0 = hero_count * _HERO_TRI_PER_FEATURE[0]
+    hero_tri_fraction = hero_tri_lod0 / max(b.max_tri_lod0, 1)
+    hero_tri_contribution = {
+        "lod0_tris": hero_tri_lod0,
+        "lod1_tris": hero_count * _HERO_TRI_PER_FEATURE[1],
+        "lod2_tris": hero_count * _HERO_TRI_PER_FEATURE[2],
+        "fraction_of_lod0_budget": hero_tri_fraction,
+        "over_30pct_warning": hero_tri_fraction > 0.30,
+    }
+
+    # --- Per-chunk Unity batch analysis ---
+    # Distribute total LOD0 tris uniformly across chunk_grid^2 chunks.
+    # This is conservative — real non-uniform terrain will have some chunks
+    # heavier than others — but provides a hard lower bound on worst-case.
+    chunk_grid = max(1, b.chunk_grid)
+    num_chunks = chunk_grid * chunk_grid
+    # Terrain tris only (hero meshes are separate objects — not in terrain chunk)
+    terrain_lod0 = lod_tris[0]
+    tris_per_chunk = terrain_lod0 / max(num_chunks, 1)
+    chunks_over_static = int(tris_per_chunk > b.unity_static_batch_tri_limit)
+    chunks_over_dynamic = int(tris_per_chunk > b.unity_dynamic_batch_tri_limit)
+    chunk_analysis = {
+        "chunk_grid": chunk_grid,
+        "num_chunks": num_chunks,
+        "tris_per_chunk_lod0": tris_per_chunk,
+        "static_batch_limit": b.unity_static_batch_tri_limit,
+        "dynamic_batch_limit": b.unity_dynamic_batch_tri_limit,
+        # Number of chunks (out of num_chunks) estimated to exceed each limit.
+        # With uniform distribution either all or none exceed; this is a flag.
+        "chunks_over_static_limit": chunks_over_static,
+        "chunks_over_dynamic_limit": chunks_over_dynamic,
+        "static_batch_ok": chunks_over_static == 0,
+        "dynamic_batch_ok": chunks_over_dynamic == 0,
+    }
 
     return {
         "tile_km2": km2,
@@ -311,6 +412,9 @@ def compute_tile_budget_usage(
             "max": b.max_npz_mb,
             "utilization": npz_mb / max(b.max_npz_mb, 1e-9),
         },
+        # New — AAA breakdown keys
+        "hero_tri_contribution": hero_tri_contribution,
+        "chunk_analysis": chunk_analysis,
     }
 
 
@@ -419,14 +523,21 @@ def enforce_budget(
 ) -> List[ValidationIssue]:
     """Compare usage against budget, return all violations as ValidationIssue.
 
-    Evaluates per-LOD triangle budgets (LOD0=250k, LOD1=100k, LOD2=50k)
-    independently, then material count (≤8), scatter instances (≤2000),
-    and archive size.
+    Checks (in order):
+    1. Per-LOD triangle budgets: LOD0 ≤ 250k, LOD1 ≤ 100k, LOD2 ≤ 50k
+    2. Material count: unique active splatmap layers ≤ 8
+    3. Scatter instances: ≤ 2000 visible
+    4. Archive size: ≤ 64 MB per tile .npz
+    5. Hero feature density: ≤ 4 per km2
+    6. Unity batch limits (per-chunk):
+       - Static batching: LOD0 tris per chunk ≤ 150k
+       - Dynamic batching: LOD0 tris per chunk ≤ 75k
+    7. Per-feature hero budget: hero meshes consuming > 30% of LOD0 budget → soft warn
     """
     usage = compute_tile_budget_usage(stack, budget=budget, intent=intent)
     issues: List[ValidationIssue] = []
 
-    # Per-LOD triangle checks
+    # 1. Per-LOD triangle checks
     lod_checks = [
         ("lod0_tris", "lod0_tris", float(budget.max_tri_lod0),
          "BUDGET_TRI_LOD0_EXCEEDED", "BUDGET_TRI_LOD0_NEAR", " tris (LOD0)"),
@@ -444,7 +555,7 @@ def enforce_budget(
         if issue is not None:
             issues.append(issue)
 
-    # Non-triangle budget checks
+    # 2–5. Non-triangle budget checks
     other_checks = [
         ("hero_per_km2", "hero_per_km2", budget.max_hero_features_per_km2,
          "BUDGET_HERO_DENSITY_EXCEEDED", "BUDGET_HERO_DENSITY_NEAR", "/km2"),
@@ -464,6 +575,54 @@ def enforce_budget(
         if issue is not None:
             issues.append(issue)
 
+    # 6. Unity per-chunk batch limit checks
+    chunk = usage.get("chunk_analysis", {})
+    tris_per_chunk = float(chunk.get("tris_per_chunk_lod0", 0.0))
+    static_limit = float(budget.unity_static_batch_tri_limit)
+    dynamic_limit = float(budget.unity_dynamic_batch_tri_limit)
+    num_chunks = int(chunk.get("num_chunks", 1))
+
+    if tris_per_chunk > static_limit:
+        issues.append(ValidationIssue(
+            code="BUDGET_UNITY_STATIC_BATCH_EXCEEDED",
+            severity="hard",
+            message=(
+                f"LOD0 tris per chunk ({tris_per_chunk:.0f}) exceeds Unity static "
+                f"batch limit ({static_limit:.0f}). Chunks: {num_chunks}. "
+                "Unity will exclude affected chunks from static batching, "
+                "increasing draw call count at runtime."
+            ),
+            remediation=(
+                "Increase chunk_grid (subdivide tile further) or reduce terrain "
+                "resolution so each chunk stays under 150k tris."
+            ),
+        ))
+    elif tris_per_chunk > dynamic_limit:
+        issues.append(ValidationIssue(
+            code="BUDGET_UNITY_DYNAMIC_BATCH_NEAR",
+            severity="soft",
+            message=(
+                f"LOD0 tris per chunk ({tris_per_chunk:.0f}) exceeds Unity dynamic "
+                f"batch limit ({dynamic_limit:.0f}). Dynamic batching will split "
+                "affected chunks into multiple draw calls."
+            ),
+        ))
+
+    # 7. Per-feature hero budget warning (> 30% of LOD0 consumed by hero meshes)
+    hero_tri = usage.get("hero_tri_contribution", {})
+    if hero_tri.get("over_30pct_warning"):
+        hero_tris = int(hero_tri.get("lod0_tris", 0))
+        frac = float(hero_tri.get("fraction_of_lod0_budget", 0.0))
+        issues.append(ValidationIssue(
+            code="BUDGET_HERO_TRI_DOMINANCE",
+            severity="soft",
+            message=(
+                f"Hero feature meshes consume ~{hero_tris} LOD0 tris "
+                f"({frac * 100:.1f}% of LOD0 budget). Consider reducing "
+                "hero feature count or using lower-tri hero mesh variants."
+            ),
+        ))
+
     return issues
 
 
@@ -471,6 +630,8 @@ __all__ = [
     "BudgetReport",
     "TerrainBudget",
     "LOD_TRI_BUDGETS",
+    "UNITY_STATIC_BATCH_TRI_LIMIT",
+    "UNITY_DYNAMIC_BATCH_TRI_LIMIT",
     "compute_tile_budget_usage",
     "compute_budget_report",
     "enforce_budget",

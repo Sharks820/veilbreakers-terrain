@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     FrozenSet,
     List,
@@ -83,17 +84,45 @@ class WorldHeightTransform:
     world_range: float = 0.0
 
     def __post_init__(self) -> None:
-        rng = float(self.world_max) - float(self.world_min)
-        # Guard against degenerate/zero range — keep adapter usable.
-        self.world_range = rng if rng != 0.0 else 1.0
-        self.world_min = float(self.world_min)
-        self.world_max = float(self.world_max)
+        wmin = float(self.world_min)
+        wmax = float(self.world_max)
+        rng = wmax - wmin
+        # Floating-point equality check is fragile; use epsilon guard.
+        # A degenerate range (e.g. flat world) is allowed — clamp to 1.0 so
+        # callers get well-behaved [0,1] values rather than division-by-zero.
+        if abs(rng) < 1e-10:
+            rng = 1.0
+        self.world_min = wmin
+        self.world_max = wmax
+        self.world_range = rng
 
     def to_normalized(self, world_heights: np.ndarray) -> np.ndarray:
+        """Map world-space heights to [0, 1].
+
+        Values outside [world_min, world_max] produce values outside [0, 1];
+        no clamping is applied — callers that need it should use np.clip.
+
+        Args:
+            world_heights: Scalar, 1-D, or 2-D float array of world-space Z values.
+
+        Returns:
+            float64 array of the same shape, normalized to [0, 1] range.
+        """
         arr = np.asarray(world_heights, dtype=np.float64)
         return (arr - self.world_min) / self.world_range
 
     def from_normalized(self, normalized: np.ndarray) -> np.ndarray:
+        """Map [0, 1] heights back to world space.
+
+        Exact inverse of ``to_normalized``. Round-trips without loss
+        (within float64 precision) for any finite world range.
+
+        Args:
+            normalized: Scalar, 1-D, or 2-D float array in [0, 1] (unclamped).
+
+        Returns:
+            float64 array of the same shape in world-space meters.
+        """
         arr = np.asarray(normalized, dtype=np.float64)
         return arr * self.world_range + self.world_min
 
@@ -546,17 +575,72 @@ class TerrainMaskStack:
             return None
         return getattr(self, channel, None)
 
+    # Expected dtype + shape constraints for channels that have a strict Unity
+    # export contract.  Shape entries use ``None`` for "must match height shape"
+    # and explicit tuples for channels whose trailing dimensions are fixed.
+    # Checked only when the constraint is registered here — all other channels
+    # are accepted as-is (compatible with legacy and experimental passes).
+    _CHANNEL_CONSTRAINTS: ClassVar[Dict[str, Tuple[Optional[type], Optional[Tuple]]]] = {
+        # (expected_dtype_kind, expected_ndim)  — 'f' = float, 'u' = uint
+        "heightmap_raw_u16":      ("u", 2),
+        "terrain_normals":        ("f", 3),
+        "splatmap_weights_layer": ("f", 3),
+        "navmesh_area_id":        ("u", 2),
+        "physics_collider_mask":  ("u", 2),
+        "lightmap_uv_chart_id":   ("u", 2),
+        "lod_bias":               ("f", 2),
+        "ambient_occlusion_bake": ("f", 2),
+        "albedo_shift_rgb":       ("f", 3),
+    }
+
     def set(self, channel: str, value: np.ndarray, pass_name: str) -> None:
-        """Store a channel value, record provenance, clear dirty flag."""
+        """Store a channel value with dtype/shape validation, provenance, and dirty-flag clearing.
+
+        Dict-valued channels (``decal_density``, ``wildlife_affinity``,
+        ``detail_density``) are accepted as plain dicts and stored as-is.
+        All other channels are coerced to contiguous arrays.
+
+        For Unity-export channels listed in ``_CHANNEL_CONSTRAINTS``, the
+        incoming array's dtype kind and ndim are validated eagerly so that
+        type mismatches surface at the write site rather than at Unity export
+        time — which may be tens of pipeline passes later.
+
+        Raises:
+            AttributeError: channel is not a declared field on this dataclass.
+            TypeError: Unity-export channel constraint violation (dtype kind
+                or ndim mismatch).
+        """
         if not hasattr(self, channel):
-            raise AttributeError(f"Unknown mask channel: {channel}")
+            raise AttributeError(
+                f"Unknown mask channel: {channel!r}. "
+                "Add the field to TerrainMaskStack before writing it."
+            )
         # Dict-valued channels (decal_density, wildlife_affinity, detail_density)
         # must be stored as-is; np.ascontiguousarray would wrap them in a 0-d
         # object array, breaking downstream dict operations.
         if channel in self._DICT_CHANNELS:
             object.__setattr__(self, channel, value)
         else:
-            object.__setattr__(self, channel, np.ascontiguousarray(value))
+            arr = np.ascontiguousarray(value)
+            # Validate dtype kind + ndim for Unity-export channels.
+            constraint = self._CHANNEL_CONSTRAINTS.get(channel)
+            if constraint is not None:
+                expected_kind, expected_ndim = constraint
+                if expected_kind is not None and arr.dtype.kind != expected_kind:
+                    kind_names = {"f": "float", "u": "unsigned int"}
+                    raise TypeError(
+                        f"TerrainMaskStack.set({channel!r}): expected "
+                        f"{kind_names.get(expected_kind, expected_kind)} array "
+                        f"(dtype kind '{expected_kind}'), got dtype '{arr.dtype}'. "
+                        f"Pass: {pass_name!r}."
+                    )
+                if expected_ndim is not None and arr.ndim != expected_ndim:
+                    raise TypeError(
+                        f"TerrainMaskStack.set({channel!r}): expected "
+                        f"{expected_ndim}D array, got shape {arr.shape}. "
+                        f"Pass: {pass_name!r}."
+                    )
+            object.__setattr__(self, channel, arr)
         self.populated_by_pass[channel] = pass_name
         self.dirty_channels.discard(channel)
         # Any mutation invalidates cached hash
@@ -998,8 +1082,32 @@ class ValidationIssue:
     message: str = ""
     remediation: Optional[str] = None
 
+    _VALID_SEVERITIES: "Tuple[str, ...]" = field(
+        init=False, repr=False, compare=False,
+        default=("hard", "soft", "info"),
+    )
+
+    def __post_init__(self) -> None:
+        if self.severity not in self._VALID_SEVERITIES:
+            raise ValueError(
+                f"ValidationIssue severity {self.severity!r} is not one of "
+                f"{self._VALID_SEVERITIES}. Use 'hard' (blocks pipeline), "
+                f"'soft' (warning), or 'info' (informational)."
+            )
+        if not self.code:
+            raise ValueError("ValidationIssue.code must be a non-empty string.")
+
     def is_hard(self) -> bool:
+        """Return True iff this issue blocks pipeline execution."""
         return self.severity == "hard"
+
+    def is_soft(self) -> bool:
+        """Return True iff this issue is a non-blocking warning."""
+        return self.severity == "soft"
+
+    def is_info(self) -> bool:
+        """Return True iff this issue is purely informational."""
+        return self.severity == "info"
 
 
 # ---------------------------------------------------------------------------
@@ -1023,8 +1131,46 @@ class PassResult:
     content_hash_after: Optional[str] = None
     checkpoint_path: Optional[str] = None
 
+    _VALID_STATUSES: "Tuple[str, ...]" = field(
+        init=False, repr=False, compare=False,
+        default=("ok", "warning", "failed"),
+    )
+
+    def __post_init__(self) -> None:
+        if self.status not in self._VALID_STATUSES:
+            raise ValueError(
+                f"PassResult status {self.status!r} must be one of "
+                f"{self._VALID_STATUSES}."
+            )
+        if not self.pass_name:
+            raise ValueError("PassResult.pass_name must be a non-empty string.")
+        if self.duration_seconds < 0.0:
+            raise ValueError(
+                f"PassResult.duration_seconds must be >= 0, got {self.duration_seconds}."
+            )
+
     def ok(self) -> bool:
+        """Return True iff the pass completed without errors."""
         return self.status == "ok"
+
+    def failed(self) -> bool:
+        """Return True iff the pass status is 'failed'."""
+        return self.status == "failed"
+
+    def has_hard_issues(self) -> bool:
+        """Return True iff any ValidationIssue in issues is hard-severity."""
+        return any(i.is_hard() for i in self.issues)
+
+    def summary(self) -> str:
+        """One-line log-friendly summary: pass name, status, duration, issue counts."""
+        n_hard = sum(1 for i in self.issues if i.is_hard())
+        n_soft = sum(1 for i in self.issues if i.is_soft())
+        return (
+            f"[{self.pass_name}] {self.status} "
+            f"({self.duration_seconds:.3f}s) "
+            f"hard={n_hard} soft={n_soft} "
+            f"channels={len(self.produced_channels)}"
+        )
 
 
 # ---------------------------------------------------------------------------

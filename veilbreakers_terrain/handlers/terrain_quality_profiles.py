@@ -863,49 +863,87 @@ def write_profile_jsons(root: Path) -> List[Path]:
     missing a required key the call raises ``ProfileValidationError``
     rather than writing an incomplete file.
 
-    Rejects path-traversal and forbids writing outside either the
-    repo's ``Tools/mcp-toolkit/`` tree or a caller-supplied
-    ``tempfile.gettempdir()`` ancestor, so poisoned callers cannot
-    clobber unrelated filesystem state.
+    Sandbox enforcement
+    -------------------
+    Writing is restricted to two locations:
+      * ``tempfile.gettempdir()`` subtree (tests and CI scratch space).
+      * The repo's ``Tools/mcp-toolkit/`` subtree (production preset store).
+
+    Path-traversal is rejected on the *raw* input string before resolution
+    so that symbolic-link tricks that survive ``Path.resolve()`` are also
+    caught.  The resolved path is then checked via ``Path.is_relative_to()``
+    (Python ≥ 3.9) so the sandbox check is immune to string-startswith
+    false-positives on similar-prefix directory names (e.g. ``/tmp-other``
+    incorrectly matching ``/tmp``).
     """
+    import logging as _qlog
+    _log = _qlog.getLogger(__name__)
+
+    raw_root = str(root)
+    # Reject traversal components in the *raw* path before resolution
+    # (Path.resolve() collapses ".." so the check must run first).
+    raw_parts = Path(raw_root).parts
+    if ".." in raw_parts:
+        raise ValueError(
+            f"write_profile_jsons: path traversal component '..' rejected in: {raw_root!r}"
+        )
+
     root = Path(root).resolve()
-    if ".." in str(root):
-        raise ValueError(f"write_profile_jsons: path traversal rejected: {root}")
     tmp_root = Path(tempfile.gettempdir()).resolve()
     this_file = Path(__file__).resolve()
-    # walk up to find Tools/mcp-toolkit ancestor
+
+    # Walk up the source tree to find the Tools/mcp-toolkit ancestor
     repo_root: Optional[Path] = None
     for ancestor in this_file.parents:
         if ancestor.name == "mcp-toolkit":
             repo_root = ancestor
             break
+
     allowed_roots: List[Path] = [tmp_root]
     if repo_root is not None:
         allowed_roots.append(repo_root.resolve())
-    if not any(
-        str(root).startswith(str(allowed) + os.sep) or str(root) == str(allowed)
-        for allowed in allowed_roots
-    ):
+
+    # Use Path.is_relative_to() (Py 3.9+) to avoid string-prefix false positives.
+    # e.g. /tmp-other would incorrectly match /tmp with a startswith check.
+    def _is_under(path: Path, allowed: Path) -> bool:
+        try:
+            return path == allowed or path.is_relative_to(allowed)
+        except AttributeError:
+            # Python < 3.9 fallback: resolve both and compare string prefix with sep
+            p_str = str(path) + os.sep
+            a_str = str(allowed) + os.sep
+            return p_str.startswith(a_str) or str(path) == str(allowed)
+
+    if not any(_is_under(root, allowed) for allowed in allowed_roots):
         raise ValueError(
             f"write_profile_jsons: refusing to write outside sandbox. "
-            f"root={root} allowed={allowed_roots}"
+            f"root={root!r}  allowed={[str(a) for a in allowed_roots]}"
         )
+
     root.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
+
     # Write canonical names first, then legacy aliases
     canonical = list_quality_profiles_canonical()
     legacy = [n for n in list_quality_profiles() if n not in canonical]
     all_names = canonical + legacy
+
     for name in all_names:
         profile = _BUILTIN_PROFILES[name]
         payload = asdict(profile)
-        # ErosionStrategy is an Enum — serialize as its .value string
-        if isinstance(payload.get("erosion_strategy"), ErosionStrategy):
-            payload["erosion_strategy"] = payload["erosion_strategy"].value
-        elif hasattr(profile.erosion_strategy, "value"):
-            payload["erosion_strategy"] = profile.erosion_strategy.value
+
+        # ErosionStrategy is an Enum — serialize as its .value string.
+        # asdict() leaves Enum members as-is in Python < 3.11; normalise
+        # explicitly so the output is always a plain string regardless of version.
+        strat = payload.get("erosion_strategy")
+        if isinstance(strat, ErosionStrategy):
+            payload["erosion_strategy"] = strat.value
+        elif hasattr(strat, "value"):
+            payload["erosion_strategy"] = strat.value
+
         # Schema validation before touching the filesystem
         _validate_profile_schema(payload)
+
         out = root / f"{name}.json"
         tmp_path = out.with_suffix(".json.tmp")
         try:
@@ -919,6 +957,13 @@ def write_profile_jsons(root: Path) -> List[Path]:
                 pass
             raise
         written.append(out)
+
+    _log.info(
+        "write_profile_jsons: wrote %d profile JSON(s) to %s: %s",
+        len(written),
+        root,
+        [p.name for p in written],
+    )
     return written
 
 

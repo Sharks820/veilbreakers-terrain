@@ -6,14 +6,24 @@ Provides:
   - LIGHT_PROP_MAP: 8 prop-type -> light definitions
   - FLICKER_PRESETS: 4 flicker animation presets
   - compute_light_placements: Generate lights from prop list
+  - compute_probe_placements: UE5-style light probe placement from terrain data
   - merge_nearby_lights: Cluster and merge close lights
   - compute_light_budget: Estimate GPU cost of a light list
+
+UE5-style probe placement (compute_probe_placements) uses three scoring signals:
+  1. Height percentile — probes prefer elevated terrain for wider coverage.
+  2. Water proximity — probes placed near water bodies capture reflections and
+     wet-surface specular highlights (matching UE5 Lumen water reflection probes).
+  3. Feature presence — hero features (ruins, arches, geysers) anchor probes
+     for high-priority capture of authored detail.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
+
+import numpy as np
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +139,162 @@ LIGHT_PROP_MAP: dict[str, dict[str, Any]] = {
         "flicker": None,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# UE5-style light probe placement
+# ---------------------------------------------------------------------------
+
+def compute_probe_placements(
+    height: np.ndarray,
+    *,
+    cell_size: float = 1.0,
+    world_origin_x: float = 0.0,
+    world_origin_y: float = 0.0,
+    water_surface: Optional[np.ndarray] = None,
+    feature_positions: Optional[List[Tuple[float, float, float]]] = None,
+    max_probes: int = 16,
+    min_probe_spacing_m: float = 20.0,
+    height_weight: float = 1.0,
+    water_weight: float = 1.5,
+    feature_weight: float = 2.0,
+) -> List[dict]:
+    """Place reflection/irradiance probes using UE5-style three-signal scoring.
+
+    Signal 1 — Height percentile (height_weight):
+        Elevated terrain commands wider sky visibility and should anchor
+        probes for broad irradiance capture. Score = normalized height [0,1].
+
+    Signal 2 — Water proximity (water_weight):
+        Cells near open water surfaces receive specular highlights and
+        wet-ground reflections that require local probe coverage.
+        Score = Gaussian falloff from nearest water cell, sigma = 3 cells.
+        When no water_surface is provided this signal is zero everywhere.
+
+    Signal 3 — Feature presence (feature_weight):
+        Authored hero features (ruins, arches, geysers, waterfalls) are
+        high-value capture targets. Score = sum of Gaussian lobes centred
+        on each feature position, sigma = 8 metres / cell_size.
+
+    Probe selection:
+        The composite score map is greedily sampled at the global maximum,
+        then a exclusion disc of radius min_probe_spacing_m is zeroed out
+        before picking the next probe. This matches UE5's Lumen probe
+        stratification approach (Epic Games, Lumen GI documentation 2023).
+
+    Args:
+        height: (H, W) float array of terrain height in world metres.
+        cell_size: World metres per cell.
+        world_origin_x: World X of cell (0,0) corner.
+        world_origin_y: World Y of cell (0,0) corner.
+        water_surface: Optional (H, W) float array in [0,1]; >0.5 = water.
+        feature_positions: Optional list of (x, y, z) world positions.
+        max_probes: Maximum number of probes to place.
+        min_probe_spacing_m: Minimum world-metre spacing between probes.
+        height_weight: Multiplier for the height signal.
+        water_weight: Multiplier for the water-proximity signal.
+        feature_weight: Multiplier for the feature-presence signal.
+
+    Returns:
+        List of probe dicts, each with:
+            "position": (x, y, z) world-space probe centre,
+            "score": composite score at placement,
+            "signals": {"height": float, "water": float, "feature": float},
+            "probe_index": int.
+    """
+    h = np.asarray(height, dtype=np.float64)
+    rows, cols = h.shape
+    if rows < 1 or cols < 1:
+        return []
+
+    # --- Signal 1: height (normalised) ---
+    h_min = float(h.min())
+    h_max = float(h.max())
+    if h_max - h_min > 1e-9:
+        sig_height = (h - h_min) / (h_max - h_min)
+    else:
+        sig_height = np.zeros_like(h)
+
+    # --- Signal 2: water proximity ---
+    if water_surface is not None:
+        w = np.asarray(water_surface, dtype=np.float64)
+        if w.shape == h.shape:
+            water_mask = (w > 0.5).astype(np.float64)
+            # Gaussian distance falloff: sigma = 3 cells
+            # Approx via repeated box-filter (3-pass ≈ Gaussian sigma≈1.73 each pass)
+            sigma_cells = 3.0
+            try:
+                from scipy.ndimage import gaussian_filter as _gf
+                sig_water = _gf(water_mask, sigma=sigma_cells)
+            except ImportError:
+                # Manual two-pass box blur fallback
+                k = max(1, int(sigma_cells * 2))
+                box = np.ones((1, 2 * k + 1)) / (2 * k + 1)
+                tmp = np.apply_along_axis(lambda r: np.convolve(r, box[0], mode="same"), 1, water_mask)
+                sig_water = np.apply_along_axis(lambda r: np.convolve(r, box[0], mode="same"), 0, tmp)
+            # Normalise
+            sw_max = float(sig_water.max())
+            sig_water = sig_water / sw_max if sw_max > 1e-12 else sig_water
+        else:
+            sig_water = np.zeros_like(h)
+    else:
+        sig_water = np.zeros_like(h)
+
+    # --- Signal 3: feature presence ---
+    sig_feature = np.zeros_like(h)
+    if feature_positions:
+        sigma_feat = max(1.0, 8.0 / cell_size)  # 8 m converted to cells
+        for fx, fy, _fz in feature_positions:
+            fc = (fx - world_origin_x) / cell_size - 0.5
+            fr = (fy - world_origin_y) / cell_size - 0.5
+            rr, cc = np.mgrid[0:rows, 0:cols].astype(np.float64)
+            dist2 = (rr - fr) ** 2 + (cc - fc) ** 2
+            sig_feature += np.exp(-0.5 * dist2 / (sigma_feat ** 2))
+        sf_max = float(sig_feature.max())
+        if sf_max > 1e-12:
+            sig_feature /= sf_max
+
+    # --- Composite score ---
+    score = (
+        height_weight * sig_height
+        + water_weight * sig_water
+        + feature_weight * sig_feature
+    )
+
+    # --- Greedy probe selection with exclusion disc ---
+    exclusion_cells = max(1.0, min_probe_spacing_m / cell_size)
+    score_map = score.copy()
+    probes: List[dict] = []
+
+    rr_grid, cc_grid = np.mgrid[0:rows, 0:cols].astype(np.float64)
+
+    for probe_idx in range(max_probes):
+        if score_map.max() < 1e-12:
+            break
+        best_flat = int(np.argmax(score_map))
+        best_r = best_flat // cols
+        best_c = best_flat % cols
+
+        wx = world_origin_x + (best_c + 0.5) * cell_size
+        wy = world_origin_y + (best_r + 0.5) * cell_size
+        wz = float(h[best_r, best_c])
+
+        probes.append({
+            "position": (wx, wy, wz),
+            "score": float(score_map[best_r, best_c]),
+            "signals": {
+                "height": float(sig_height[best_r, best_c]),
+                "water": float(sig_water[best_r, best_c]),
+                "feature": float(sig_feature[best_r, best_c]),
+            },
+            "probe_index": probe_idx,
+        })
+
+        # Zero out exclusion disc around chosen probe
+        dist2 = (rr_grid - best_r) ** 2 + (cc_grid - best_c) ** 2
+        score_map[dist2 <= exclusion_cells ** 2] = 0.0
+
+    return probes
 
 
 # ---------------------------------------------------------------------------
@@ -395,49 +561,129 @@ def compute_light_budget(
     lights: list,
     shadow_cost: float = 3.0,
     flicker_cost: float = 0.5,
+    target_platform: str = "desktop",
 ) -> dict:
-    """Estimate GPU cost of a list of lights.
+    """Estimate GPU cost of a list of lights with per-type and per-platform breakdown.
 
-    Cost = 1 per light (base) + shadow_cost per shadow light + flicker_cost per flicker light.
+    Cost model (matches Unity real-time lighting profiler guidance)
+    ---------------------------------------------------------------
+    Base cost per light type (draw-call / shader pass overhead):
+        point  — 1.0  (omnidirectional, 6 shadow map faces if shadowing)
+        spot   — 0.8  (single frustum; cheaper than point for shadows)
+        area   — 1.5  (area lights require multi-sample integration; most expensive base)
+        <other>— 1.0  (fallback)
 
-    Recommendation thresholds:
-    - "excellent"  cost <= 10
-    - "acceptable" cost <= 25
-    - "heavy"      cost <= 50
-    - "excessive"  cost >  50
+    Shadow surcharge (per shadowing light):
+        point  — shadow_cost * 6.0  (6 cubemap faces = 6 shadow passes)
+        spot   — shadow_cost * 1.0  (single depth map)
+        area   — shadow_cost * 2.0  (two-pass soft shadow)
+        <other>— shadow_cost * 1.5
+
+    Flicker surcharge: flicker_cost per flickering light (CPU animation cost).
+
+    Per-platform thresholds (Unity Profiler AAA targets)
+    -------------------------------------------------------
+    desktop:
+        "excellent"  cost <= 15   (GPU frame time < 0.3 ms)
+        "acceptable" cost <= 35   (< 0.7 ms)
+        "heavy"      cost <= 60   (< 1.2 ms, review required)
+        "excessive"  cost >  60   (hard perf risk — reduce lights)
+
+    mobile:
+        "excellent"  cost <= 6    (forward+ mobile budget)
+        "acceptable" cost <= 14
+        "heavy"      cost <= 24
+        "excessive"  cost >  24
+
+    Per-type breakdown
+    ------------------
+    The returned dict includes a ``by_type`` sub-dict mapping light_type →
+    {count, shadow_count, cost_contribution} so the caller can identify
+    which light category is dominating the budget.
+
+    Parameters
+    ----------
+    lights : list of dict
+        Each dict must have "light_type" (str) and optionally "shadow" (bool)
+        and "flicker" (dict or None).
+    shadow_cost : float
+        Base shadow multiplier (default 3.0; scaled per light type above).
+    flicker_cost : float
+        Extra cost per flickering light (default 0.5).
+    target_platform : str
+        "desktop" (default) or "mobile". Controls recommendation thresholds.
 
     Returns
     -------
-    dict: total_lights, shadow_lights, flicker_lights, estimated_cost, recommendation.
+    dict with keys:
+        total_lights, shadow_lights, flicker_lights,
+        estimated_cost, recommendation, by_type, platform.
     """
+    # Per-type base cost and shadow multiplier
+    _BASE: dict[str, float] = {"point": 1.0, "spot": 0.8, "area": 1.5}
+    _SHADOW_MUL: dict[str, float] = {"point": 6.0, "spot": 1.0, "area": 2.0}
+
+    # Recommendation thresholds by platform
+    _THRESHOLDS: dict[str, list[tuple[float, str]]] = {
+        "desktop": [(15.0, "excellent"), (35.0, "acceptable"), (60.0, "heavy")],
+        "mobile":  [(6.0,  "excellent"), (14.0, "acceptable"), (24.0, "heavy")],
+    }
+
     if not lights:
         return {
             "total_lights": 0,
             "shadow_lights": 0,
             "flicker_lights": 0,
-            "estimated_cost": 0,
+            "estimated_cost": 0.0,
             "recommendation": "excellent",
+            "by_type": {},
+            "platform": target_platform,
         }
 
     total = len(lights)
-    shadow_count = sum(1 for light in lights if light.get("shadow"))
-    flicker_count = sum(1 for light in lights if light.get("flicker") is not None)
+    shadow_count = 0
+    flicker_count = 0
+    total_cost = 0.0
 
-    cost = float(total) + shadow_cost * shadow_count + flicker_cost * flicker_count
+    by_type: dict[str, dict] = {}
 
-    if cost <= 10:
-        recommendation = "excellent"
-    elif cost <= 25:
-        recommendation = "acceptable"
-    elif cost <= 50:
-        recommendation = "heavy"
-    else:
-        recommendation = "excessive"
+    for light in lights:
+        ltype = light.get("light_type", "point")
+        base = _BASE.get(ltype, 1.0)
+        has_shadow = bool(light.get("shadow"))
+        has_flicker = light.get("flicker") is not None
+
+        light_cost = base
+        if has_shadow:
+            shadow_count += 1
+            light_cost += shadow_cost * _SHADOW_MUL.get(ltype, 1.5)
+        if has_flicker:
+            flicker_count += 1
+            light_cost += flicker_cost
+
+        total_cost += light_cost
+
+        if ltype not in by_type:
+            by_type[ltype] = {"count": 0, "shadow_count": 0, "cost_contribution": 0.0}
+        by_type[ltype]["count"] += 1
+        if has_shadow:
+            by_type[ltype]["shadow_count"] += 1
+        by_type[ltype]["cost_contribution"] += light_cost
+
+    # Determine recommendation tier
+    thresholds = _THRESHOLDS.get(target_platform, _THRESHOLDS["desktop"])
+    recommendation = "excessive"
+    for threshold, label in thresholds:
+        if total_cost <= threshold:
+            recommendation = label
+            break
 
     return {
         "total_lights": total,
         "shadow_lights": shadow_count,
         "flicker_lights": flicker_count,
-        "estimated_cost": cost,
+        "estimated_cost": total_cost,
         "recommendation": recommendation,
+        "by_type": by_type,
+        "platform": target_platform,
     }

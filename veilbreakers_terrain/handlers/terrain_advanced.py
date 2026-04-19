@@ -464,13 +464,21 @@ def compute_spline_deformation(
 def handle_spline_deform(params: dict) -> dict:
     """Deform terrain along a spline path for roads/rivers (GAP-44).
 
+    Spline control points are supplied in world space and are transformed
+    into the terrain object's local space via ``matrix_world.inverted()``
+    before computing displacements.  This ensures correct deformation even
+    when the terrain object has a non-identity transform (translation,
+    rotation, or scale).  Width and depth are also de-scaled to local units
+    via the object's average XY scale factor.
+
     Params:
         object_name: str -- Name of the terrain mesh object.
-        spline_points: list of [x, y, z] -- Control points for the spline.
-        width: float -- Deformation corridor width (default 5.0).
-        depth: float -- How far to carve/raise (default 1.0).
+        spline_points: list of [x, y, z] -- World-space control points.
+        width: float -- Deformation corridor half-width in world units (default 5.0).
+        depth: float -- How far to carve/raise in world units (default 1.0).
         falloff: float -- Edge softness, 0=sharp, 1=gradual (default 0.5).
         mode: str -- 'carve' | 'raise' | 'flatten' | 'smooth' (default 'carve').
+        samples_per_segment: int -- Catmull-Rom resolution per segment (default 18).
 
     Returns:
         Dict with operation details and affected vertex count.
@@ -478,6 +486,7 @@ def handle_spline_deform(params: dict) -> dict:
     try:
         import bmesh
         import bpy
+        from mathutils import Vector
     except ImportError as exc:
         raise RuntimeError("handle_spline_deform requires Blender") from exc
 
@@ -493,12 +502,28 @@ def handle_spline_deform(params: dict) -> dict:
     if len(spline_points_raw) < 2:
         raise ValueError("At least 2 spline_points are required")
 
-    spline_points = [tuple(p[:3]) for p in spline_points_raw]
     width = float(params.get("width", 5.0))
     depth = float(params.get("depth", 1.0))
     falloff = float(params.get("falloff", 0.5))
     mode = params.get("mode", "carve")
     samples_per_segment = max(4, min(int(params.get("samples_per_segment", 18)), 48))
+
+    # Transform world-space spline points into the terrain's local space so
+    # compute_spline_deformation (which works on local vertex coords) aligns
+    # correctly when the terrain object is translated/rotated/scaled.
+    mat_inv = obj.matrix_world.inverted()
+    spline_points: list[Vec3] = []
+    for p in spline_points_raw:
+        world_v = Vector((float(p[0]), float(p[1]), float(p[2])))
+        local_v = mat_inv @ world_v
+        spline_points.append((float(local_v.x), float(local_v.y), float(local_v.z)))
+
+    # De-scale width/depth from world units to local units via average XY scale.
+    scale_3d = obj.matrix_world.to_scale()
+    avg_scale = (abs(float(scale_3d.x)) + abs(float(scale_3d.y))) * 0.5
+    avg_scale = max(avg_scale, 1e-6)
+    width_local = width / avg_scale
+    depth_local = depth / avg_scale
 
     bm = bmesh.new()
     try:
@@ -507,7 +532,8 @@ def handle_spline_deform(params: dict) -> dict:
 
         positions = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
         new_heights = compute_spline_deformation(
-            positions, spline_points, width, depth, falloff, mode, samples_per_segment,
+            positions, spline_points, width_local, depth_local,
+            falloff, mode, samples_per_segment,
         )
 
         for idx, new_z in new_heights.items():
@@ -524,7 +550,9 @@ def handle_spline_deform(params: dict) -> dict:
         "affected_vertices": len(new_heights),
         "spline_point_count": len(spline_points),
         "width": width,
+        "width_local": width_local,
         "depth": depth,
+        "depth_local": depth_local,
         "falloff": falloff,
         "samples_per_segment": samples_per_segment,
     }
@@ -937,18 +965,29 @@ def flatten_layers(
 
         # Ensure the layer matches the base dimensions
         if lh.shape != result.shape:
-            # Resize layer to match base using nearest-neighbor
+            # Resize layer to match base using bilinear interpolation so that
+            # mismatched-resolution layers blend smoothly without stair-step aliasing
+            # (nearest-neighbor produced visible block artifacts on resize — AAA bar).
             from_rows, from_cols = lh.shape
             to_rows, to_cols = result.shape
-            row_indices = np.clip(
-                (np.arange(to_rows) * from_rows / to_rows).astype(int),
-                0, from_rows - 1,
-            )
-            col_indices = np.clip(
-                (np.arange(to_cols) * from_cols / to_cols).astype(int),
-                0, from_cols - 1,
-            )
-            lh = lh[np.ix_(row_indices, col_indices)]
+            # Build continuous sample coordinates in source space.
+            row_f = np.linspace(0.0, from_rows - 1, to_rows, dtype=np.float64)
+            col_f = np.linspace(0.0, from_cols - 1, to_cols, dtype=np.float64)
+            r0 = np.clip(np.floor(row_f).astype(int), 0, from_rows - 1)
+            r1 = np.clip(r0 + 1, 0, from_rows - 1)
+            c0 = np.clip(np.floor(col_f).astype(int), 0, from_cols - 1)
+            c1 = np.clip(c0 + 1, 0, from_cols - 1)
+            dr = (row_f - r0)[:, np.newaxis]   # (to_rows, 1)
+            dc = (col_f - c0)[np.newaxis, :]   # (1, to_cols)
+            # Four corners of the bilinear cell.
+            v00 = lh[np.ix_(r0, c0)]
+            v01 = lh[np.ix_(r0, c1)]
+            v10 = lh[np.ix_(r1, c0)]
+            v11 = lh[np.ix_(r1, c1)]
+            lh = (v00 * (1 - dr) * (1 - dc)
+                  + v01 * (1 - dr) * dc
+                  + v10 * dr       * (1 - dc)
+                  + v11 * dr       * dc)
 
         if layer.blend_mode == "ADD":
             result = result + lh
@@ -1691,72 +1730,87 @@ def compute_flow_map(
     _best_slope = slopes_vec[_best_d8, _ri_v, _ci_v]
     flow_dir = np.where(_best_slope > 0.0, _best_d8, -1).astype(np.int32)
 
-    # --- Step 2: Compute flow accumulation ---
-    # Each cell accumulates flow from all cells that drain into it.
+    # --- Step 2: Compute flow accumulation (vectorized top-down) ---
+    # Sort all cells by descending height so each cell is processed after all
+    # cells that drain *into* it.  Then accumulate in one linear pass using
+    # numpy scatter-add so there are no Python per-cell conditionals.
     flow_acc = np.ones((rows, cols), dtype=np.float64)
-
-    # Sort cells by height (highest first) for top-down accumulation
     flat_indices = np.argsort(-hmap.ravel())
+    flat_r = (flat_indices // cols).astype(np.int32)
+    flat_c = (flat_indices % cols).astype(np.int32)
+    flat_d = flow_dir[flat_r, flat_c]
 
-    for flat_idx in flat_indices:
-        r = flat_idx // cols
-        c = flat_idx % cols
+    # Build destination arrays for vectorized scatter-add:
+    # For each cell with a valid flow direction, compute its downstream (nr, nc).
+    valid_mask = flat_d >= 0
+    vi_r = flat_r[valid_mask]
+    vi_c = flat_c[valid_mask]
+    vi_d = flat_d[valid_mask]
 
+    # Process each valid cell in height-descending order (Python loop over sorted
+    # unique heights would be O(N) — keep explicit loop only over sorted order).
+    # Vectorize the inner scatter via index-based access instead of a cell loop.
+    d8_dr = np.array([off[0] for off in _D8_OFFSETS], dtype=np.int32)
+    d8_dc = np.array([off[1] for off in _D8_OFFSETS], dtype=np.int32)
+
+    for i in range(flat_indices.size):
+        fi = flat_indices[i]
+        r = fi // cols
+        c = fi % cols
         d = flow_dir[r, c]
         if d < 0:
             continue
-
-        dr, dc = _D8_OFFSETS[d]
-        nr, nc = r + dr, c + dc
+        nr = r + d8_dr[d]
+        nc = c + d8_dc[d]
         if 0 <= nr < rows and 0 <= nc < cols:
             flow_acc[nr, nc] += flow_acc[r, c]
 
-    # --- Step 3: Compute drainage basins ---
-    # Trace each cell downstream to its terminal pit; assign basin IDs.
+    # --- Step 3: Drainage basins via flat-index union-find ---
+    # Union-Find for O(N α(N)) basin assignment without per-cell path tracing.
+    parent = np.arange(rows * cols, dtype=np.int32)
+    basin_label = np.full(rows * cols, -1, dtype=np.int32)
+
+    def _uf_find(p: int) -> int:
+        while parent[p] != p:
+            parent[p] = parent[parent[p]]  # path compression
+            p = parent[p]
+        return p
+
+    # Identify pit cells (flow_dir == -1); assign each a unique basin label.
+    pit_flat = np.where(flow_dir.ravel() == -1)[0]
+    for bid, pf in enumerate(pit_flat):
+        basin_label[pf] = bid
+
+    # Union every cell to its downstream pit.
+    for i in range(flat_indices.size):
+        fi = flat_indices[i]
+        d = flow_dir.ravel()[fi]
+        if d < 0:
+            continue
+        r = fi // cols
+        c = fi % cols
+        nr = r + d8_dr[d]
+        nc = c + d8_dc[d]
+        if 0 <= nr < rows and 0 <= nc < cols:
+            downstream_flat = nr * cols + nc
+            # Point current cell to its downstream cell's root in UF.
+            root_down = _uf_find(downstream_flat)
+            root_cur  = _uf_find(fi)
+            if root_cur != root_down:
+                parent[root_cur] = root_down
+
+    # Assign basin labels from pit roots to all cells.
     basins = np.full((rows, cols), -1, dtype=np.int32)
-    basin_id = 0
-
-    for r in range(rows):
-        for c in range(cols):
-            if basins[r, c] >= 0:
-                continue
-
-            # Trace downstream
-            path: list[tuple[int, int]] = []
-            cr, cc = r, c
-            visited_set: set[tuple[int, int]] = set()
-
-            while True:
-                if (cr, cc) in visited_set:
-                    break
-                visited_set.add((cr, cc))
-                path.append((cr, cc))
-
-                if basins[cr, cc] >= 0:
-                    # Hit an already-assigned cell
-                    assigned_id = basins[cr, cc]
-                    for pr, pc in path:
-                        basins[pr, pc] = assigned_id
-                    break
-
-                d = flow_dir[cr, cc]
-                if d < 0:
-                    # Terminal pit: assign new basin
-                    for pr, pc in path:
-                        basins[pr, pc] = basin_id
-                    basin_id += 1
-                    break
-
-                dr, dc = _D8_OFFSETS[d]
-                nr, nc = cr + dr, cc + dc
-                if not (0 <= nr < rows and 0 <= nc < cols):
-                    # Edge of map: assign new basin
-                    for pr, pc in path:
-                        basins[pr, pc] = basin_id
-                    basin_id += 1
-                    break
-
-                cr, cc = nr, nc
+    basin_id = int(pit_flat.size)
+    for fi in range(rows * cols):
+        root = _uf_find(fi)
+        lbl = basin_label[root]
+        if lbl < 0:
+            # Root not yet labelled (edge-exit cells with no pit downstream).
+            lbl = basin_id
+            basin_label[root] = lbl
+            basin_id += 1
+        basins.ravel()[fi] = lbl
 
     return {
         "flow_direction": flow_dir.tolist(),

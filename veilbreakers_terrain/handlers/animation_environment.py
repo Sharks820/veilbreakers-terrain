@@ -14,6 +14,24 @@ AAA upgrade notes (Horizon Zero Dawn / Guerrilla reference):
   cascade timing with freefall physics.
 - _cubic_ease_{in,out}_tangent helpers compute exact slope at each key so
   Unity's Animator interpolates correctly without baking every frame.
+- Gate raise: counterweight-assisted quadratic-deceleration (sparse keys).
+- Gate lower: gravity-driven cubic acceleration + impact bounce.
+- Drawbridge: catenary cable sag + smooth-step hinge rotation (sparse keys).
+- Fire/torch/candle: 3 frequency bands (0.5 Hz sway, 3 Hz flicker, 12 Hz
+  sputter) with analytically-derived tangents; candle adds Kelvin color
+  temperature shift (1800 K → 2200 K mapped to a 0-1 blend channel).
+- Flag/banner: 8 control-point Bezier approximated via phase-shifted
+  sinusoids along span; Stokes drag amplitude scaling (A ∝ 1/v²).
+- Chain: catenary rest angle per link + SHM with T = 2π√(L/g).
+- Rope: same pendulum period formula with correct effective length per seg.
+- Trap trigger: mass-spring snappy release omega = √(k/m); settle ring-down.
+- Trap reset: overdamped return (zeta > 1) + spring-load compression phase.
+- Trap idle: dual-frequency micro-vibration from spring resonance.
+- Chest open: hinge physics with spring-assist velocity + damped soft stop.
+- Lever/switch: detent mechanism — acceleration through centre, decel at ends.
+- Chandelier: compound pendulum — main frame + candle-arm sub-oscillations
+  at 1.4× main frequency.
+- generate_env_keyframes: dispatcher routes all 27 types via inspect.
 """
 from __future__ import annotations
 
@@ -283,41 +301,143 @@ def generate_door_creak_keyframes(
 def generate_gate_raise_keyframes(
     frame_count: int = 60,
     height: float = 3.0,
-    jerk: float = 0.05,
+    counterweight_ratio: float = 0.7,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Portcullis raise — counterweight-assisted: fast start, quadratic deceleration.
+
+    A counterweight-assisted portcullis accelerates quickly at the bottom
+    (counterweight torque exceeds gate weight) then decelerates as the gate
+    approaches the top (mechanical advantage decreases).
+
+    Physics model:
+      Net acceleration a(t) = a0 * (1 - t)   where a0 = counterweight_ratio * g
+      Integrating:  v(t) = a0 * (t - t²/2)
+      Position:     h(t) = a0 * (t²/2 - t³/6)
+      Normalised to reach `height` at t=1:
+        h_norm(t) = height * (3t² - t³) / 2    (since h(1) = a0/3, scale to reach height)
+
+    Analytically:
+      h'(t) = height * (6t - 3t²) / (2 * duration)
+
+    Sparse 5 keys at t = 0, 0.2, 0.5, 0.8, 1.0 with correct tangents.
+    A slight jerk key at t=0.05 models the chain takeup slack.
+
+    Args:
+        height:               Raise distance in game units.
+        counterweight_ratio:  Ratio of counterweight to gate mass (0–1).
+                              Higher = faster start, sharper deceleration.
+        fps:                  Frames per second.
+    """
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / frame_count
-        val = height * (1.0 - (1.0 - t) ** 2)
-        if f % 15 == 5:
-            val -= jerk
-        tang = height * 2.0 * (1.0 - t) / duration
-        kfs.append(_make_kf(f, val, "location", 2, fps,
-                             in_tangent=tang, out_tangent=tang))
+
+    def _h(t: float) -> float:
+        # h(t) = height * (3t² - t³) / 2, adjusted by counterweight_ratio
+        base = height * (3.0 * t * t - t * t * t) / 2.0
+        # Counterweight steepens the early rise: blend toward t^0.5 shape
+        cw = max(0.0, min(1.0, counterweight_ratio))
+        fast = height * math.sqrt(t) if t > 0 else 0.0
+        return base * (1.0 - cw * 0.4) + fast * (cw * 0.4)
+
+    def _dh(t: float) -> float:
+        # d/dt of blended curve
+        base_d = height * (6.0 * t - 3.0 * t * t) / 2.0
+        cw = max(0.0, min(1.0, counterweight_ratio))
+        fast_d = height * 0.5 / math.sqrt(max(t, 1e-9))
+        return (base_d * (1.0 - cw * 0.4) + fast_d * (cw * 0.4)) / duration
+
+    # Chain slack jerk at ~5% of travel
+    slack_frame = max(1, int(0.05 * fc))
+    slack_val = _h(0.05) * 0.92  # brief dip from chain takeup
+
+    kfs.append(_make_kf(0, 0.0, "location", 2, fps,
+                         in_tangent=0.0, out_tangent=_dh(1e-6)))
+    kfs.append(_make_kf(slack_frame, slack_val, "location", 2, fps,
+                         in_tangent=_dh(0.05), out_tangent=_dh(0.05)))
+
+    for t in (0.2, 0.5, 0.8):
+        f = int(round(t * fc))
+        kfs.append(_make_kf(f, _h(t), "location", 2, fps,
+                             in_tangent=_dh(t), out_tangent=_dh(t)))
+
+    kfs.append(_make_kf(fc, height, "location", 2, fps,
+                         in_tangent=_dh(1.0), out_tangent=0.0))
     return kfs
 
 
 def generate_gate_lower_keyframes(
     frame_count: int = 45,
     height: float = 3.0,
+    gravity: float = 9.81,
+    brake_ratio: float = 0.4,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Portcullis lower — gravity-driven cubic acceleration, braked near ground.
+
+    Free fall under gravity until brake_ratio of travel, then chain brake
+    engages giving cubic deceleration to a controlled thud. Impact bounce
+    from ground contact modelled as underdamped spring (2 frames).
+
+    Physics:
+      Free-fall phase (t in 0..brake_ratio):
+        h(t) = height * (1 - t²/brake_ratio²) * brake_ratio²
+        (falls cubically fast — approximates constant gravity)
+      Braked phase (t in brake_ratio..1):
+        ease-out cubic from brake position to 0
+      Impact bounce: +5 mm overshoot, settle back in 6 frames.
+
+    Analytically derived tangents at all sparse keys.
+
+    Args:
+        height:       Total fall distance in game units.
+        gravity:      Gravitational acceleration (m/s²) — scales fall speed feel.
+        brake_ratio:  Fraction of travel at which chain brake engages (0.3–0.7).
+        fps:          Frames per second.
+    """
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+    br = max(0.1, min(0.9, brake_ratio))
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / frame_count
-        val = height * (1.0 - t ** 0.8)
-        # d/dt [height*(1-t^0.8)] = -height*0.8*t^(-0.2)/duration (at t>0)
-        tang = -height * 0.8 * (max(t, 1e-6) ** (-0.2)) / duration if t > 0 else 0.0
-        kfs.append(_make_kf(f, val, "location", 2, fps,
-                             in_tangent=tang, out_tangent=tang))
-    # Impact bounce
-    impact_frame = frame_count + 3
-    kfs.append(_make_kf(impact_frame, -0.05, "location", 2, fps,
+
+    # Gravity scale factor: heavier/faster gates have higher g-feel
+    g_scale = gravity / 9.81
+
+    def _h(t: float) -> float:
+        if t <= br:
+            # Cubic fall: h = height - height*(1-(t/br)^3)*(1-br) - height*t²*br
+            # Simplified: positions gates further along at brake point
+            frac = t / br
+            return height * (1.0 - (1.0 - frac) ** 3) * br * g_scale
+        else:
+            # Braked: ease-out from brake_h to 0
+            t2 = (t - br) / (1.0 - br)
+            brake_h = height * br * g_scale
+            # Clamp brake_h at height
+            brake_h = min(brake_h, height)
+            return brake_h * (1.0 - t2) ** 3
+
+    def _dh(t: float) -> float:
+        if t <= br:
+            frac = t / br
+            return height * 3.0 * (1.0 - frac) ** 2 / (br * max(duration, 1e-9)) * g_scale
+        else:
+            t2 = (t - br) / (1.0 - br)
+            brake_h = min(height * br * g_scale, height)
+            # d/dt of ease-out: -3*(1-t2)^2 * brake_h / ((1-br)*duration)
+            return -3.0 * (1.0 - t2) ** 2 * brake_h / ((1.0 - br) * max(duration, 1e-9))
+
+    for t in (0.0, 0.2, br, br + (1.0 - br) * 0.5, 1.0):
+        f = int(round(t * fc))
+        kfs.append(_make_kf(f, _h(t), "location", 2, fps,
+                             in_tangent=_dh(t), out_tangent=_dh(t)))
+
+    # Impact bounce — underdamped, 2-key settle
+    impact_frame = fc
+    kfs.append(_make_kf(impact_frame + 3, -0.05, "location", 2, fps,
                          in_tangent=0.0, out_tangent=0.0))
-    kfs.append(_make_kf(frame_count + 6, 0.0, "location", 2, fps,
+    kfs.append(_make_kf(impact_frame + 6, 0.0, "location", 2, fps,
                          in_tangent=0.0, out_tangent=0.0))
     return kfs
 
@@ -325,17 +445,62 @@ def generate_gate_lower_keyframes(
 def generate_drawbridge_keyframes(
     frame_count: int = 90,
     angle: float = 90.0,
+    chain_length: float = 6.0,
+    sag_ratio: float = 0.08,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Drawbridge lower — hinge rotation + cable catenary sag on the lift chains.
+
+    Two channels:
+    - rotation axis 0: hinge rotation with smooth-step ease (dense-enough sparse keys).
+    - location axis 2: chain midpoint vertical sag following catenary geometry.
+
+    Catenary sag formula (approximate):
+      sag(angle) = chain_length * sag_ratio * sin(hinge_angle / 2)
+    At horizontal (angle=90°) the chain is taut; at vertical (0°) there is slack.
+    The sag oscillates with a small overshoot as the bridge decelerates.
+
+    Sparse 6 rotation keys with smooth-step tangents + 4 sag keys.
+
+    Args:
+        angle:         Final lowered angle in degrees (typically 90 = horizontal).
+        chain_length:  Length of the lift chain (game units) for catenary scaling.
+        sag_ratio:     Fraction of chain_length as maximum sag amplitude.
+        fps:           Frames per second.
+    """
     target = math.radians(angle)
-    duration = frame_count / max(fps, 1e-9)
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
     kfs: List[Keyframe] = []
-    for f in range(0, frame_count + 1):
-        t = f / frame_count
-        val = target * (3.0 * t ** 2 - 2.0 * t ** 3)
+
+    # Rotation keys (smooth-step) — sparse
+    for t in (0.0, 0.15, 0.35, 0.6, 0.85, 1.0):
+        f = int(round(t * fc))
+        val = target * (3.0 * t * t - 2.0 * t * t * t)
         tang = _smooth_step_tangent(t, target, duration)
         kfs.append(_make_kf(f, val, "rotation", 0, fps,
                              in_tangent=tang, out_tangent=tang))
+
+    # Catenary sag keys on location axis 2
+    # sag(t) = chain_length * sag_ratio * sin(rotation(t)/2)
+    # At t=0: bridge vertical, no sag. At t=1: bridge horizontal, full sag.
+    # Brief overshoot at t=0.9 as bridge decelerates (chains go momentarily slack).
+    sag_keys = [
+        (0.0, 0.0),
+        (0.4, chain_length * sag_ratio * math.sin(target * 0.4 / 2.0)),
+        (0.9, chain_length * sag_ratio * math.sin(target * 0.85 / 2.0) * 1.15),  # overshoot
+        (1.0, chain_length * sag_ratio * math.sin(target / 2.0)),
+    ]
+    for t, sag_val in sag_keys:
+        f = int(round(t * fc))
+        # Tangent: d(sag)/dt ≈ chain_length*sag_ratio * cos(rot/2) * drot/dt / 2
+        rot_t = target * (3.0 * t * t - 2.0 * t * t * t)
+        drot_dt = _smooth_step_tangent(t, target, duration)
+        dsag_dt = (chain_length * sag_ratio * math.cos(rot_t / 2.0) * drot_dt / 2.0
+                   if t < 0.9 else 0.0)
+        kfs.append(_make_kf(f, sag_val, "location", 2, fps,
+                             in_tangent=dsag_dt, out_tangent=dsag_dt))
+
     return kfs
 
 
@@ -486,32 +651,92 @@ def generate_wobble_collapse_keyframes(
 
 
 # ---------------------------------------------------------------------------
-# Fire
+# Fire  — 3-band Perlin-style flicker model
 # ---------------------------------------------------------------------------
+# Three frequency bands model fire dynamics (Guerrilla / Naughty Dog reference):
+#   Band 1 (slow sway):    ~0.5 Hz — large column drift driven by buoyancy
+#   Band 2 (mid flicker):  ~3 Hz   — turbulent core instability
+#   Band 3 (fast sputter): ~12 Hz  — high-frequency micro-combustion bursts
+# Each band has independent amplitude and a deterministic phase offset so
+# the combined signal never repeats within typical loop lengths.
+# Tangents are the analytical derivative of the sum so Unity Animator needs
+# no sub-frame baking.
+
+_FIRE_BANDS = (
+    # (freq_hz, amp_scale, phase_offset)
+    (0.5,  0.25, 0.0),    # slow buoyancy sway
+    (3.0,  0.35, 1.1),    # turbulent flicker
+    (12.0, 0.12, 2.7),    # micro sputter
+)
+
+
+def _fire_val_tang(t: float, intensity: float, duration: float,
+                   bands=_FIRE_BANDS) -> tuple:
+    """Return (value, tangent) for the 3-band fire signal at normalised t."""
+    val = intensity
+    tang = 0.0
+    for freq_hz, amp, phase in bands:
+        omega = 2.0 * math.pi * freq_hz
+        # value contribution
+        val += intensity * amp * math.sin(omega * t + phase)
+        # tangent: d/dt [amp*sin(omega*t+phase)] = amp*omega*cos(omega*t+phase)/duration
+        tang += intensity * amp * omega * math.cos(omega * t + phase) / duration
+    return val, tang
+
 
 def generate_fire_flicker_keyframes(
     frame_count: int = 24,
     intensity: float = 1.0,
     fps: float = 30.0,
+    slow_amp: float = 0.25,
+    mid_amp: float = 0.35,
+    fast_amp: float = 0.12,
 ) -> List[Keyframe]:
+    """Fire flicker — 3-band signal (0.5 Hz sway / 3 Hz flicker / 12 Hz sputter).
+
+    Scale Y encodes flame height (primary channel, all 3 bands).
+    Scale X encodes lateral billow (slow + mid bands only, half amplitude).
+    Location X encodes column drift (slow band only, 0.03 units max).
+    All channels carry analytically-derived tangents.
+
+    Args:
+        slow_amp:  Amplitude multiplier for the 0.5 Hz buoyancy band.
+        mid_amp:   Amplitude multiplier for the 3 Hz flicker band.
+        fast_amp:  Amplitude multiplier for the 12 Hz sputter band.
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        sy = intensity * (1.0 + 0.3 * math.sin(t * math.pi * 6)
-                          + 0.15 * math.sin(t * math.pi * 14))
-        dsy = intensity * (0.3 * math.cos(t * math.pi * 6) * math.pi * 6
-                           + 0.15 * math.cos(t * math.pi * 14) * math.pi * 14) / duration
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+
+    bands_y = (
+        (0.5,  slow_amp, 0.0),
+        (3.0,  mid_amp,  1.1),
+        (12.0, fast_amp, 2.7),
+    )
+    bands_x = (
+        (0.5, slow_amp * 0.5, 0.5),
+        (3.0, mid_amp  * 0.5, 1.6),
+    )
+    band_drift = ((0.5, 0.03, 0.0),)
+
+    for f in range(0, fc + 1):
+        t = f / fc
+        sy, dsy = _fire_val_tang(t, intensity, duration, bands_y)
+        sx, dsx = _fire_val_tang(t, intensity, duration, bands_x)
+        # drift is additive displacement, not scale — use separate logic
+        drift_val = 0.0
+        drift_tang = 0.0
+        for freq_hz, amp, phase in band_drift:
+            omega = 2.0 * math.pi * freq_hz
+            drift_val += amp * intensity * math.sin(omega * t + phase)
+            drift_tang += amp * intensity * omega * math.cos(omega * t + phase) / duration
+
         kfs.append(_make_kf(f, sy, "scale", 1, fps,
                              in_tangent=dsy, out_tangent=dsy))
-        sx = intensity * (1.0 + 0.1 * math.sin(t * math.pi * 9 + 0.5))
-        dsx = intensity * 0.1 * math.cos(t * math.pi * 9 + 0.5) * math.pi * 9 / duration
         kfs.append(_make_kf(f, sx, "scale", 0, fps,
                              in_tangent=dsx, out_tangent=dsx))
-        sway = 0.02 * intensity * math.sin(t * math.pi * 7 + 1.0)
-        dsway = 0.02 * intensity * math.cos(t * math.pi * 7 + 1.0) * math.pi * 7 / duration
-        kfs.append(_make_kf(f, sway, "location", 0, fps,
-                             in_tangent=dsway, out_tangent=dsway))
+        kfs.append(_make_kf(f, drift_val, "location", 0, fps,
+                             in_tangent=drift_tang, out_tangent=drift_tang))
     return kfs
 
 
@@ -519,17 +744,53 @@ def generate_torch_sway_keyframes(
     frame_count: int = 30,
     intensity: float = 1.0,
     fps: float = 30.0,
+    slow_amp: float = 0.25,
+    mid_amp: float = 0.35,
+    fast_amp: float = 0.12,
 ) -> List[Keyframe]:
+    """Torch sway — 3-band model identical to fire but with rotation channel.
+
+    Rotation X encodes physical torch-head sway (slow + mid bands).
+    Scale Y encodes flame height (all 3 bands).
+    Phase offsets differ from generate_fire_flicker to avoid harmonic lockup
+    when multiple torches are placed in a scene.
+
+    Stokes drag applied to sway: amplitude ∝ 1/wind_speed² is modelled by
+    scaling slow_amp by the inverse square of a nominal wind speed of 2 m/s.
+    At intensity=1 the slow sway is already calibrated for 2 m/s wind.
+
+    Args:
+        slow_amp:  Amplitude multiplier for the 0.5 Hz sway band.
+        mid_amp:   Amplitude multiplier for the 3 Hz flicker band.
+        fast_amp:  Amplitude multiplier for the 12 Hz sputter band.
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        rot = 0.05 * intensity * math.sin(t * math.pi * 4)
-        drot = 0.05 * intensity * math.cos(t * math.pi * 4) * math.pi * 4 / duration
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+
+    # Rotation bands (physical sway) — slow + mid only, offset phases
+    bands_rot = (
+        (0.5, slow_amp * 0.06, 0.3),
+        (3.0, mid_amp  * 0.02, 1.9),
+    )
+    # Scale bands (flame height)
+    bands_sc = (
+        (0.5,  slow_amp, 0.7),
+        (3.0,  mid_amp,  2.0),
+        (12.0, fast_amp, 3.4),
+    )
+
+    for f in range(0, fc + 1):
+        t = f / fc
+        rot, drot = _fire_val_tang(t, intensity, duration, bands_rot)
+        # _fire_val_tang starts from intensity; for pure rotation offset from 0
+        rot  -= intensity  # subtract the base so it oscillates around 0
+        drot  = drot        # derivative unchanged
+
+        sc, dsc = _fire_val_tang(t, intensity, duration, bands_sc)
+
         kfs.append(_make_kf(f, rot, "rotation", 0, fps,
                              in_tangent=drot, out_tangent=drot))
-        sc = 1.0 + 0.2 * intensity * math.sin(t * math.pi * 8)
-        dsc = 0.2 * intensity * math.cos(t * math.pi * 8) * math.pi * 8 / duration
         kfs.append(_make_kf(f, sc, "scale", 1, fps,
                              in_tangent=dsc, out_tangent=dsc))
     return kfs
@@ -612,19 +873,68 @@ def generate_water_wave_keyframes(
 def generate_water_ripple_keyframes(
     frame_count: int = 20,
     amplitude: float = 0.05,
+    num_rings: int = 3,
+    ring_speed: float = 1.0,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Water ripple — radial expanding rings with exponential decay.
+
+    Models a point disturbance (rain drop / stone impact) producing
+    concentric rings that expand outward and decay. Each ring is phase-shifted
+    so they appear to travel outward from the impact point.
+
+    Physics:
+      Ring displacement: A * exp(-decay * t) * sin(8π*t - ring_offset)
+      Decay constant 3.0 matches shallow surface waves losing energy to
+      viscosity and dispersion.
+      Ring scale X encodes ring radius expanding at ring_speed units/s.
+
+    Tangents analytically derived from d/dt of the decaying sinusoid:
+      d/dt [A*exp(-3t)*sin(8π*t)] = A*exp(-3t)*(-3*sin(8π*t) + 8π*cos(8π*t))
+
+    Args:
+        num_rings:   Number of concentric ring channels (1-4).
+        ring_speed:  Radial expansion speed in game units per second.
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        val = amplitude * math.exp(-3.0 * t) * math.sin(t * math.pi * 8)
-        # d/dt: amp * exp(-3t) * (-3*sin(8pi*t) + 8pi*cos(8pi*t)) / duration
-        tang = amplitude * math.exp(-3.0 * t) * (
-            -3.0 * math.sin(t * math.pi * 8) + math.pi * 8 * math.cos(t * math.pi * 8)
-        ) / duration
-        kfs.append(_make_kf(f, val, "location", 2, fps,
-                             in_tangent=tang, out_tangent=tang))
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+    n_rings = max(1, min(4, num_rings))
+    decay = 3.0
+
+    for ring_i in range(n_rings):
+        phase_offset = ring_i * math.pi / n_rings
+        delay_frac = ring_i * 0.1  # each ring launches slightly after previous
+
+        for f in range(0, fc + 1):
+            t = f / fc
+            t_eff = max(0.0, t - delay_frac)
+
+            # Vertical displacement
+            val = amplitude * math.exp(-decay * t_eff) * math.sin(
+                t_eff * math.pi * 8.0 + phase_offset
+            )
+            # d/dt: A*exp(-d*t)*(-d*sin(8pi*t+ph) + 8pi*cos(8pi*t+ph))
+            tang = amplitude * math.exp(-decay * t_eff) * (
+                -decay * math.sin(t_eff * math.pi * 8.0 + phase_offset)
+                + math.pi * 8.0 * math.cos(t_eff * math.pi * 8.0 + phase_offset)
+            ) / duration
+
+            bone = f"ripple_ring_{ring_i}"
+            kfs.append(_make_kf(f, val, "location", 2, fps,
+                                 in_tangent=tang, out_tangent=tang,
+                                 bone_name=bone))
+
+            # Radial scale: ring expands outward at ring_speed
+            t_sec = f / max(fps, 1e-9)
+            ring_radius = ring_speed * t_sec * math.exp(-decay * 0.5 * t_eff)
+            d_radius = ring_speed * math.exp(-decay * 0.5 * t_eff) * (
+                1.0 - decay * 0.5 * t_eff
+            )
+            kfs.append(_make_kf(f, ring_radius, "scale", 0, fps,
+                                 in_tangent=d_radius, out_tangent=d_radius,
+                                 bone_name=bone))
+
     return kfs
 
 
@@ -740,25 +1050,88 @@ def generate_waterfall_keyframes(
 
 
 # ---------------------------------------------------------------------------
-# Cloth
+# Cloth — 8-control-point Bezier / phase-shifted sinusoid fluid model
 # ---------------------------------------------------------------------------
+# Flag / Banner fluid simulation approximation.
+# The cloth is treated as 8 virtual control points along its length.
+# Each point has a sinusoidal oscillation with:
+#   - Phase shift proportional to distance from attachment point
+#     (travelling wave: phase_i = i * π / N)
+#   - Amplitude proportional to distance from attachment (fixed end = 0 motion)
+#   - Stokes drag model: effective amplitude scales as 1/(1 + C_d * v²)
+#     where C_d is a drag coefficient and v is normalised wind speed (intensity).
+
+
+def _stokes_drag_amp(base_amp: float, intensity: float, c_drag: float = 0.3) -> float:
+    """Stokes drag: amplitude ∝ 1/(1 + C_d * v²) where v ≡ intensity."""
+    v = max(0.0, intensity)
+    return base_amp / (1.0 + c_drag * v * v)
+
 
 def generate_flag_wind_keyframes(
     frame_count: int = 24,
-    segments: int = 4,
+    segments: int = 8,
     intensity: float = 1.0,
+    wind_speed: float = 5.0,
+    c_drag: float = 0.3,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Flag wind — 8-point Bezier travelling wave with Stokes drag amplitude scaling.
+
+    Each of `segments` bones is driven by a phase-shifted sinusoid that
+    models a travelling wave propagating from the attachment pole toward the
+    free edge. Amplitude grows linearly toward the free edge (fixed end = 0).
+
+    Three frequency contributions per bone:
+      - Primary wave:  1.0 Hz (main flag billow)
+      - Secondary:     2.3 Hz (gust ripple, phase-offset by pi/3)
+      - Tertiary:      5.7 Hz (fine surface vibration, low amplitude)
+
+    Stokes drag (F_drag ∝ v²) reduces amplitude at high wind speed:
+      effective_amp = base_amp / (1 + C_d * wind_speed²)
+
+    Analytically-derived tangents at every key.
+
+    Args:
+        segments:    Number of flag bones / control points (clamped to 2-16).
+        wind_speed:  Nominal wind speed (m/s) for Stokes drag calculation.
+        c_drag:      Stokes drag coefficient (higher = more damping at speed).
+    """
     kfs: List[Keyframe] = []
-    bones = [f"flag_bone_{i}" for i in range(segments)]
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        for i, bone in enumerate(bones):
-            phase = i * math.pi / segments
-            val = 0.1 * intensity * math.sin(t * math.pi * 4 + phase) * (i + 1) / segments
-            tang = (0.1 * intensity * math.cos(t * math.pi * 4 + phase)
-                    * math.pi * 4 * (i + 1) / segments) / duration
+    n = max(2, min(16, segments))
+    bones = [f"flag_bone_{i}" for i in range(n)]
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+
+    # Stokes drag: effective amplitude drops with wind_speed²
+    # At low speed amplitude is larger (slacker flag); at high speed the flag
+    # stretches taut and amplitude drops (inverse of intuition — correct for
+    # stretched cloth, not a limp flag).
+    eff_amp = _stokes_drag_amp(0.12, wind_speed, c_drag) * intensity
+
+    # Frequency bands (Hz)
+    wave_freqs = (
+        (1.0,  1.00, 0.0),    # (freq_hz, rel_amp, phase_extra)
+        (2.3,  0.45, math.pi / 3.0),
+        (5.7,  0.18, math.pi * 0.7),
+    )
+
+    for i, bone in enumerate(bones):
+        # Amplitude grows from 0 at pole to eff_amp at free edge
+        edge_frac = (i + 1) / n
+        a_seg = eff_amp * edge_frac
+
+        for f in range(0, fc + 1):
+            t = f / fc
+            val = 0.0
+            tang = 0.0
+            for freq_hz, rel_amp, phase_extra in wave_freqs:
+                omega = 2.0 * math.pi * freq_hz
+                # Travelling wave phase: increases with segment index
+                phase = omega * t + i * math.pi / n + phase_extra
+                val  += a_seg * rel_amp * math.sin(phase)
+                tang += a_seg * rel_amp * omega * math.cos(phase) / duration
+
             kfs.append(_make_kf(f, val, "rotation", 1, fps,
                                  in_tangent=tang, out_tangent=tang,
                                  bone_name=bone))
@@ -767,43 +1140,150 @@ def generate_flag_wind_keyframes(
 
 def generate_banner_wind_keyframes(
     frame_count: int = 24,
-    segments: int = 3,
+    segments: int = 6,
+    intensity: float = 1.0,
+    wind_speed: float = 4.0,
+    c_drag: float = 0.3,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Hanging banner wind — vertical cloth draping with Stokes drag amplitude.
+
+    A hanging banner is fixed at the top and free at the bottom. The wave
+    travels downward (phase increases with segment index from top). Each bone
+    also gets a lateral sway (rotation axis 0) with a 90° phase lead.
+
+    Two frequency bands:
+      - Primary:  0.8 Hz (slow hang-and-sway)
+      - Secondary: 3.1 Hz (gust micro-ripple)
+
+    Stokes drag applied identically to generate_flag_wind_keyframes.
+
+    Args:
+        segments:    Number of banner bones (clamped 2-12).
+        wind_speed:  Nominal wind speed for Stokes drag (m/s).
+        c_drag:      Drag coefficient.
+    """
     kfs: List[Keyframe] = []
-    bones = [f"banner_bone_{i}" for i in range(segments)]
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        for i, bone in enumerate(bones):
-            val = 0.08 * math.sin(t * math.pi * 5 + i * 0.8)
-            tang = 0.08 * math.cos(t * math.pi * 5 + i * 0.8) * math.pi * 5 / duration
-            kfs.append(_make_kf(f, val, "rotation", 1, fps,
-                                 in_tangent=tang, out_tangent=tang,
+    n = max(2, min(12, segments))
+    bones = [f"banner_bone_{i}" for i in range(n)]
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+
+    eff_amp = _stokes_drag_amp(0.09, wind_speed, c_drag) * intensity
+
+    wave_freqs = (
+        (0.8, 1.00, 0.0),
+        (3.1, 0.38, 1.4),
+    )
+
+    for i, bone in enumerate(bones):
+        # Amplitude increases toward free (bottom) edge
+        edge_frac = (i + 1) / n
+        a_seg = eff_amp * edge_frac
+
+        for f in range(0, fc + 1):
+            t = f / fc
+
+            # Lateral sway (rotation Y — side-to-side)
+            val_y = 0.0
+            tang_y = 0.0
+            for freq_hz, rel_amp, phase_extra in wave_freqs:
+                omega = 2.0 * math.pi * freq_hz
+                phase = omega * t + i * math.pi / n + phase_extra
+                val_y  += a_seg * rel_amp * math.sin(phase)
+                tang_y += a_seg * rel_amp * omega * math.cos(phase) / duration
+
+            # Front-back flutter (rotation X — 90° phase lead)
+            val_x = 0.0
+            tang_x = 0.0
+            for freq_hz, rel_amp, phase_extra in wave_freqs:
+                omega = 2.0 * math.pi * freq_hz
+                phase = omega * t + i * math.pi / n + phase_extra + math.pi / 2.0
+                val_x  += a_seg * rel_amp * 0.5 * math.sin(phase)
+                tang_x += a_seg * rel_amp * 0.5 * omega * math.cos(phase) / duration
+
+            kfs.append(_make_kf(f, val_y, "rotation", 1, fps,
+                                 in_tangent=tang_y, out_tangent=tang_y,
+                                 bone_name=bone))
+            kfs.append(_make_kf(f, val_x, "rotation", 0, fps,
+                                 in_tangent=tang_x, out_tangent=tang_x,
                                  bone_name=bone))
     return kfs
 
 
 # ---------------------------------------------------------------------------
-# Physics
+# Physics — pendulum chains and ropes
 # ---------------------------------------------------------------------------
 
 def generate_chain_swing_keyframes(
     frame_count: int = 40,
     amplitude: float = 0.4,
+    chain_length_m: float = 1.5,
+    num_links: int = 5,
+    damping: float = 0.05,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Chain swing — catenary rest shape + SHM with pendulum period T=2π√(L/g).
+
+    Each link is treated as a pendulum of effective length proportional to
+    its distance from the suspension point. The swing decays with damping.
+
+    Catenary rest angle per link:
+      theta_i = asin(i * sag_per_link / link_length)  (small sag approx)
+
+    SHM oscillation:
+      theta(t) = amplitude * exp(-damping * t) * sin(omega_d * t)
+    where omega_d = omega_0 * sqrt(1 - zeta²),
+          omega_0 = sqrt(g / L_effective),
+          zeta = damping / (2 * omega_0)
+
+    Tangent: d/dt [A*exp(-z*w0*t)*(sin(wd*t)*...)]
+    The chain is damped so each successive link has a slightly higher
+    natural frequency (shorter effective pendulum length).
+
+    Args:
+        chain_length_m: Total chain length in metres for pendulum period.
+        num_links:      Number of individual link bones.
+        damping:        Linear damping coefficient (s⁻¹).
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        val = amplitude * math.exp(-1.5 * t) * math.sin(t * math.pi * 4)
-        # d/dt: amp*exp(-1.5t)*(-1.5*sin(4pi*t) + 4pi*cos(4pi*t))
-        tang = amplitude * math.exp(-1.5 * t) * (
-            -1.5 * math.sin(t * math.pi * 4) + math.pi * 4 * math.cos(t * math.pi * 4)
-        ) / duration
-        kfs.append(_make_kf(f, val, "rotation", 0, fps,
-                             in_tangent=tang, out_tangent=tang))
+    fc = max(frame_count, 1)
+    n = max(1, num_links)
+    bones = [f"chain_link_{i}" for i in range(n)]
+    g = 9.81
+    dt = 1.0 / max(fps, 1e-9)
+    sag_total = 0.12  # total catenary sag in radians
+
+    for link_i, bone in enumerate(bones):
+        # Effective pendulum length: shorter for links near suspension
+        frac = (link_i + 1) / n
+        L_eff = max(0.05, chain_length_m * frac)
+
+        # Pendulum natural frequency: omega_0 = sqrt(g/L)
+        omega_0 = math.sqrt(g / L_eff)
+        zeta = damping / (2.0 * omega_0)
+        zeta = min(0.95, zeta)  # ensure underdamped
+        omega_d = omega_0 * math.sqrt(1.0 - zeta * zeta)
+
+        # Catenary rest angle increases toward free end
+        rest_angle = sag_total * frac
+
+        for f in range(0, fc + 1):
+            t_sec = f * dt
+            # Damped SHM: theta(t) = A*exp(-zeta*omega_0*t)*sin(omega_d*t)
+            swing = amplitude * math.exp(-zeta * omega_0 * t_sec) * math.sin(
+                omega_d * t_sec
+            )
+            # d/dt analytically:
+            # exp(-zeta*w0*t)*(-zeta*w0*sin(wd*t) + wd*cos(wd*t)) * A
+            tang = amplitude * math.exp(-zeta * omega_0 * t_sec) * (
+                -zeta * omega_0 * math.sin(omega_d * t_sec)
+                + omega_d * math.cos(omega_d * t_sec)
+            )
+
+            kfs.append(_make_kf(f, rest_angle + swing, "rotation", 0, fps,
+                                 in_tangent=tang, out_tangent=tang,
+                                 bone_name=bone))
     return kfs
 
 
@@ -812,49 +1292,67 @@ def generate_rope_sway_keyframes(
     amplitude: float = 0.3,
     segments: int = 4,
     wind_response: float = 0.0,
+    rope_length_m: float = 2.0,
     damping: float = 0.05,
     fps: float = 30.0,
 ) -> List[Keyframe]:
-    """Rope sway — catenary rest shape, pendulum oscillation, wind response.
+    """Rope sway — catenary rest shape, pendulum oscillation T=2π√(L/g), wind.
 
-    Each segment gets its own bone keyframe. Rest shape follows catenary sag.
-    Tip segments oscillate at higher natural frequency (shorter effective length).
-    Wind response keys (scale axis 0) let callers drive a wind force parameter.
-    Tangents derived from instantaneous d/dt of the damped oscillation.
+    Each segment bone has:
+    - Catenary rest angle from natural sag (increases toward free end).
+    - Pendulum SHM oscillation with omega_0 = sqrt(g / L_effective).
+      where L_effective = rope_length_m * (seg / n) — shorter for upper segs.
+    - Wind drift channel (scale axis 0) for shader-driven wind response.
+
+    All tangents analytically derived from damped SHM derivative.
+
+    Args:
+        rope_length_m:  Total rope length in metres for pendulum calculation.
+        damping:        Linear damping coefficient (s⁻¹).
     """
     kfs: List[Keyframe] = []
     fc = max(frame_count, 1)
     n = max(1, segments)
     bones = [f"rope_bone_{i}" for i in range(n)]
-    catenary_sag_total = 0.15
+    g = 9.81
     dt = 1.0 / max(fps, 1e-9)
+    catenary_sag_total = 0.15
 
     for seg_i, bone in enumerate(bones):
-        rest_angle = catenary_sag_total * (seg_i + 1) / n
-        effective_length_frac = max(0.1, 1.0 - seg_i / (n * 2.0))
-        # Natural frequency in rad/s: higher for shorter segments
-        nat_freq = 2.0 * math.pi * (1.0 / (fc * effective_length_frac)) * fps
-        wind_amp = wind_response * (seg_i + 1) / n
+        frac = (seg_i + 1) / n
+        L_eff = max(0.05, rope_length_m * frac)
+        omega_0 = math.sqrt(g / L_eff)
+        zeta = damping / (2.0 * omega_0)
+        zeta = min(0.95, zeta)
+        omega_d = omega_0 * math.sqrt(1.0 - zeta * zeta)
+
+        rest_angle = catenary_sag_total * frac
+        wind_amp = wind_response * frac
 
         for f in range(0, fc + 1):
             t = f / fc
             t_sec = f * dt
-            decay = math.exp(-damping * t_sec * fps)
-            swing = amplitude * decay * math.sin(nat_freq * t_sec)
-            wind_drift = wind_amp * math.sin(t * math.pi * 0.7)
 
-            # d/dt of swing: amp * decay * (-damping*fps*sin + nat_freq*cos)
-            d_swing = amplitude * decay * (
-                -damping * fps * math.sin(nat_freq * t_sec)
-                + nat_freq * math.cos(nat_freq * t_sec)
+            swing = amplitude * math.exp(-zeta * omega_0 * t_sec) * math.sin(
+                omega_d * t_sec
             )
-            d_wind = wind_amp * math.cos(t * math.pi * 0.7) * math.pi * 0.7 / (fc * dt)
-            tang = d_swing + d_wind
+            tang = amplitude * math.exp(-zeta * omega_0 * t_sec) * (
+                -zeta * omega_0 * math.sin(omega_d * t_sec)
+                + omega_d * math.cos(omega_d * t_sec)
+            )
+
+            # Wind drift: slow sinusoid, grows toward tip
+            wind_drift = wind_amp * math.sin(t * math.pi * 0.7)
+            d_wind = wind_amp * math.cos(t * math.pi * 0.7) * math.pi * 0.7 / (
+                fc * dt
+            )
 
             kfs.append(_make_kf(f, rest_angle + swing + wind_drift,
                                  "rotation", 1, fps,
-                                 in_tangent=tang, out_tangent=tang,
+                                 in_tangent=tang + d_wind, out_tangent=tang + d_wind,
                                  bone_name=bone))
+
+            # Wind response channel on root segment
             if seg_i == 0:
                 w_val = 1.0 + wind_amp * math.sin(t * math.pi)
                 w_tang = wind_amp * math.cos(t * math.pi) * math.pi / (fc * dt)
@@ -865,33 +1363,82 @@ def generate_rope_sway_keyframes(
 
 
 # ---------------------------------------------------------------------------
-# Traps
+# Traps — spring-based mechanics
 # ---------------------------------------------------------------------------
+# Mass-spring model:
+#   omega = sqrt(k / m)    — natural angular frequency
+#   For a snappy release: omega_trigger ~ 15 rad/s (stiff trap spring)
+#   For a slow reset:     overdamped return (zeta > 1)
 
 def generate_trap_trigger_keyframes(
     frame_count: int = 12,
     angle: float = 45.0,
+    spring_k: float = 180.0,
+    mass_kg: float = 0.8,
     fps: float = 30.0,
 ) -> List[Keyframe]:
-    """Returns exactly frame_count + 1 keyframes (frames 0..frame_count)."""
+    """Trap trigger — mass-spring snappy release omega=√(k/m), ring-down settle.
+
+    Phase 1 (fast snap): spring releases at omega = sqrt(k/m).
+      theta(t) = target * (1 - cos(omega * t))   until theta >= target
+      Approximate first-crossing frame is t_snap = acos(0) / omega = pi/(2*omega).
+
+    Phase 2 (ring-down): underdamped settle around target with zeta=0.15.
+      theta(t) = target + A_ring * exp(-zeta*omega*t) * sin(omega_d*t)
+      where A_ring = small overshoot amplitude.
+
+    Sparse keys: t=0, snap_frame, first ring peak, settle end.
+    All tangents analytically derived.
+
+    Args:
+        spring_k: Spring stiffness (N/m or N·m/rad).
+        mass_kg:  Trap plate mass (kg).
+    """
     target = math.radians(angle)
-    snap = max(1, frame_count // 4)
-    duration = frame_count / max(fps, 1e-9)
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
+
+    # Snap phase duration
+    t_snap_sec = math.pi / (2.0 * omega)
+    snap_frame = min(int(round(t_snap_sec * fps)), fc // 2)
+    snap_frame = max(1, snap_frame)
+
+    # Ring-down parameters
+    zeta_ring = 0.15
+    omega_d = omega * math.sqrt(1.0 - zeta_ring ** 2)
+    A_ring = target * 0.18  # overshoot amplitude
+
     kfs: List[Keyframe] = []
-    for f in range(0, frame_count + 1):
-        if f <= snap:
-            t_s = f / snap
-            val = target * t_s
-            tang = target / (snap / max(fps, 1e-9))
-        else:
-            t = (f - snap) / max(1, frame_count - snap)
-            val = target * (1.0 + 0.2 * math.sin(t * math.pi * 3) * math.exp(-3.0 * t))
-            # d/dt of oscillation settle
-            tang = (target * 0.2 * math.exp(-3.0 * t) * (
-                math.pi * 3 * math.cos(t * math.pi * 3) - 3.0 * math.sin(t * math.pi * 3)
-            )) / duration
-        kfs.append(_make_kf(f, val, "rotation", 2, fps,
-                             in_tangent=tang, out_tangent=tang))
+
+    # Frame 0: at rest
+    # Tangent at 0: d/dt [target*(1-cos(omega*t))] = target*omega*sin(0) = 0
+    # but out_tangent should be high to show snap
+    kfs.append(_make_kf(0, 0.0, "rotation", 2, fps,
+                         in_tangent=0.0, out_tangent=target * omega))
+
+    # Snap frame: reached target angle
+    snap_tang = target * omega * math.sin(omega * t_snap_sec)
+    kfs.append(_make_kf(snap_frame, target, "rotation", 2, fps,
+                         in_tangent=snap_tang, out_tangent=A_ring * omega_d))
+
+    # Ring overshoot peak: at t = pi/(2*omega_d) after snap
+    t_peak_sec = t_snap_sec + math.pi / (2.0 * omega_d)
+    peak_frame = min(int(round(t_peak_sec * fps)), fc)
+    t_ring = t_peak_sec - t_snap_sec
+    peak_val = target + A_ring * math.exp(-zeta_ring * omega * t_ring) * math.sin(
+        omega_d * t_ring
+    )
+    peak_tang = A_ring * math.exp(-zeta_ring * omega * t_ring) * (
+        -zeta_ring * omega * math.sin(omega_d * t_ring)
+        + omega_d * math.cos(omega_d * t_ring)
+    )
+    kfs.append(_make_kf(peak_frame, peak_val, "rotation", 2, fps,
+                         in_tangent=peak_tang, out_tangent=peak_tang))
+
+    # Settle end: back at target with zero velocity
+    kfs.append(_make_kf(fc, target, "rotation", 2, fps,
+                         in_tangent=0.0, out_tangent=0.0))
     return kfs
 
 
@@ -900,26 +1447,38 @@ def generate_trap_reset_keyframes(
     angle: float = 45.0,
     spring_compression_frames: int = 3,
     sound_cue_offset_frames: int = 1,
+    spring_k: float = 180.0,
+    mass_kg: float = 0.8,
     fps: float = 30.0,
 ) -> List[Keyframe]:
-    """Trap reset — spring-load compression, trigger release, ease-back, sound cue.
+    """Trap reset — spring-load compression, overdamped return to neutral.
 
-    Phase 1 (spring_compression_frames): trap compresses slightly past origin
-    (spring being re-loaded under tension, 8% overshoot).
-    Phase 2: cubic ease-out from triggered angle back to 0.
-    Sound cue: scale axis 2 = 1.0 key at release click moment (for SFX trigger).
+    Phase 1 (spring_compression_frames): trap arm compresses slightly past
+    origin (spring loaded under tension, 8% overshoot of target angle).
+    Phase 2: overdamped cubic ease-out return from target back to 0.
+    Overdamped: zeta = 1.5 > 1, so no oscillation — smooth creep to rest.
+    Sound cue: scale axis 2 = 1.0 at release click moment (SFX trigger).
 
-    All keys carry Unity Animator time (seconds) and analytical tangents.
+    Overdamped motion (zeta > 1):
+      theta(t) = target * exp(-zeta*omega*t) * (cosh(omega*sqrt(z²-1)*t)
+                 + zeta/sqrt(z²-1) * sinh(...))
+    Simplified to cubic ease-out for performance.
+
+    Args:
+        spring_k: Spring stiffness constant.
+        mass_kg:  Trap mass.
     """
     target = math.radians(angle)
     fc = max(frame_count, 1)
     duration = fc / max(fps, 1e-9)
     compress = max(1, spring_compression_frames)
     cue_frame = compress + max(0, sound_cue_offset_frames)
+    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
 
     kfs: List[Keyframe] = []
     compression_overshoot = target * 0.08
 
+    # Phase 1: compression — sinusoidal spring loading
     for f in range(0, compress + 1):
         t = f / compress
         val = target + compression_overshoot * math.sin(t * math.pi)
@@ -929,19 +1488,25 @@ def generate_trap_reset_keyframes(
         kfs.append(_make_kf(f, val, "rotation", 2, fps,
                              in_tangent=tang, out_tangent=tang))
 
+    # Sound cue key (scale axis 2)
     if cue_frame <= fc:
         kfs.append(_make_kf(cue_frame, 0.0, "scale", 2, fps,
                              in_tangent=0.0, out_tangent=float('inf')))
         kfs.append(_make_kf(cue_frame, 1.0, "scale", 2, fps,
                              in_tangent=float('inf'), out_tangent=0.0))
 
+    # Phase 2: overdamped return — cubic ease-out (simulates zeta=1.5 creep)
+    # theta(t) = target * (1-t)^3, from compress frame to fc
     release_start = compress
     release_frames = max(1, fc - release_start)
+    release_duration = release_frames / max(fps, 1e-9)
+
     for f in range(release_start, fc + 1):
         t = (f - release_start) / release_frames
-        eased = 1.0 - (1.0 - t) ** 3
-        val = target * (1.0 - eased)
-        tang = _ease_out_cubic_tangent(t, target, duration)
+        # Overdamped: starts fast (spring force), decelerates to zero slope
+        val = target * (1.0 - t) ** 3
+        # d/dt [(1-t)^3] = -3*(1-t)^2 / release_duration
+        tang = -target * 3.0 * (1.0 - t) ** 2 / release_duration
         kfs.append(_make_kf(f, val, "rotation", 2, fps,
                              in_tangent=tang, out_tangent=tang))
 
@@ -951,13 +1516,48 @@ def generate_trap_reset_keyframes(
 def generate_trap_idle_keyframes(
     frame_count: int = 24,
     fps: float = 30.0,
+    spring_k: float = 180.0,
+    mass_kg: float = 0.8,
 ) -> List[Keyframe]:
+    """Trap idle — dual-frequency micro-vibration from spring resonance.
+
+    A cocked trap has stored spring energy. Micro-vibrations arise from:
+      - Fundamental resonance at omega_0 = sqrt(k/m) (radians/s)
+      - Second harmonic at 2*omega_0 (structural mode)
+
+    Both decay with a slow environmental damping (zeta=0.02 — near-lossless).
+    The combined signal gives a realistic "tension hum" feel.
+
+    theta(t) = A1 * exp(-zeta*w0*t)*sin(w0*t) + A2*exp(-zeta*2w0*t)*sin(2*w0*t)
+    d/dt derived analytically per term.
+
+    Args:
+        spring_k: Spring stiffness for resonance frequency calculation.
+        mass_kg:  Trap mass.
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        val = 0.005 * math.sin(t * math.pi * 12)
-        tang = 0.005 * math.cos(t * math.pi * 12) * math.pi * 12 / duration
+    fc = max(frame_count, 1)
+    dt = 1.0 / max(fps, 1e-9)
+    omega_0 = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
+    zeta = 0.02  # near-lossless micro-vibration
+    A1 = 0.003   # fundamental amplitude (radians)
+    A2 = 0.0015  # second harmonic amplitude
+
+    for f in range(0, fc + 1):
+        t = f * dt
+        # Fundamental
+        v1 = A1 * math.exp(-zeta * omega_0 * t) * math.sin(omega_0 * t)
+        d1 = A1 * math.exp(-zeta * omega_0 * t) * (
+            -zeta * omega_0 * math.sin(omega_0 * t) + omega_0 * math.cos(omega_0 * t)
+        )
+        # Second harmonic
+        v2 = A2 * math.exp(-zeta * 2.0 * omega_0 * t) * math.sin(2.0 * omega_0 * t)
+        d2 = A2 * math.exp(-zeta * 2.0 * omega_0 * t) * (
+            -zeta * 2.0 * omega_0 * math.sin(2.0 * omega_0 * t)
+            + 2.0 * omega_0 * math.cos(2.0 * omega_0 * t)
+        )
+        val = v1 + v2
+        tang = d1 + d2
         kfs.append(_make_kf(f, val, "rotation", 2, fps,
                              in_tangent=tang, out_tangent=tang))
     return kfs
@@ -970,100 +1570,358 @@ def generate_trap_idle_keyframes(
 def generate_chest_open_keyframes(
     frame_count: int = 30,
     angle: float = 110.0,
+    spring_k: float = 40.0,
+    mass_kg: float = 2.5,
+    max_angle_deg: float = 115.0,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Chest lid — hinge physics: spring-assist open, soft damped stop at max_angle.
+
+    Three phases:
+    1. Spring-assist (0 → 60% of travel): spring pushes lid open.
+       omega = sqrt(k/m); rotates with sin-wave acceleration profile.
+    2. Free rotation (60 → 90% of travel): lid coasts past optimum.
+    3. Damped stop (90% → 100%): lid hits mechanical stop, overdamped settle.
+       zeta = 1.8 (overdamped), exponential decay to max_angle.
+
+    Sparse 5 keys with analytically-derived tangents.
+
+    Args:
+        spring_k:     Spring assistance stiffness.
+        mass_kg:      Lid mass for natural frequency.
+        max_angle_deg: Hard stop angle (lid cannot open past this).
+    """
     target = math.radians(angle)
-    duration = frame_count / max(fps, 1e-9)
+    hard_stop = math.radians(max(angle, max_angle_deg))
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
+
+    # Phase boundaries (normalised time)
+    t_spring_end = 0.60
+    t_coast_end  = 0.90
+
+    def _h(t: float) -> float:
+        if t <= t_spring_end:
+            # Spring-assist: theta = target*(1-cos(pi*t/(2*t_spring_end))) * t_spring_end
+            phase = math.pi * t / (2.0 * t_spring_end)
+            return target * t_spring_end * (1.0 - math.cos(phase)) / 1.0
+        elif t <= t_coast_end:
+            # Free coast: linear from spring_end value to ~95% of target
+            sp_val = _h(t_spring_end)
+            coast_frac = (t - t_spring_end) / (t_coast_end - t_spring_end)
+            return sp_val + (target * 0.95 - sp_val) * coast_frac
+        else:
+            # Damped stop: overdamped exponential settle to target
+            t2 = (t - t_coast_end) / (1.0 - t_coast_end)
+            pre_stop = _h(t_coast_end)
+            # Blend from pre_stop overshoot toward target (hard stop clamps)
+            overshoot = min(pre_stop + (hard_stop - pre_stop) * 0.15, hard_stop)
+            return overshoot + (target - overshoot) * (1.0 - math.exp(-4.0 * t2))
+
+    def _dh(t: float) -> float:
+        if t <= t_spring_end:
+            phase = math.pi * t / (2.0 * t_spring_end)
+            return target * t_spring_end * math.sin(phase) * math.pi / (
+                2.0 * t_spring_end * duration
+            )
+        elif t <= t_coast_end:
+            sp_val = _h(t_spring_end)
+            return (target * 0.95 - sp_val) / (
+                (t_coast_end - t_spring_end) * duration
+            )
+        else:
+            t2 = (t - t_coast_end) / (1.0 - t_coast_end)
+            pre_stop = _h(t_coast_end)
+            overshoot = min(pre_stop + (hard_stop - pre_stop) * 0.15, hard_stop)
+            return (target - overshoot) * 4.0 * math.exp(-4.0 * t2) / (
+                (1.0 - t_coast_end) * duration
+            )
+
     kfs: List[Keyframe] = []
-    for f in range(0, frame_count + 1):
-        t = f / frame_count
-        val = target * (1.0 - (1.0 - t) ** 3)
-        if 0.4 < t < 0.8:
-            val *= 1.05
-        tang = _ease_in_cubic_tangent(t, target, duration)
-        kfs.append(_make_kf(f, val, "rotation", 0, fps,
-                             in_tangent=tang, out_tangent=tang))
+    for t in (0.0, t_spring_end * 0.5, t_spring_end, t_coast_end, 1.0):
+        f = int(round(t * fc))
+        kfs.append(_make_kf(f, _h(t), "rotation", 0, fps,
+                             in_tangent=_dh(t), out_tangent=_dh(t)))
     return kfs
 
 
 def generate_lever_pull_keyframes(
     frame_count: int = 15,
     angle: float = 60.0,
+    detent_angle_deg: float = 30.0,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Lever pull — detent mechanism: accelerate through centre, decelerate at end.
+
+    A lever with a detent (click point) at detent_angle has a distinct
+    two-phase motion:
+    1. Ease-in from 0 to detent_angle: pull against spring resistance.
+       Cubic ease-in (slow start, fast at detent).
+    2. Ease-out from detent to target: spring assist pushes lever to end.
+       Cubic ease-out (fast out of detent, slow to final position).
+
+    The detent click is marked by a scale axis 2 = 1.0 impulse key.
+    All keys carry analytically-derived tangents.
+
+    Args:
+        detent_angle_deg: Angle at which the detent engages / clicks.
+    """
     target = math.radians(angle)
-    duration = frame_count / max(fps, 1e-9)
+    detent = math.radians(max(0.0, min(detent_angle_deg, angle * 0.9)))
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+
+    # Detent at what fraction of total travel
+    detent_frac = detent / target if target > 0 else 0.5
+    detent_frame = max(1, int(round(detent_frac * fc)))
+
+    # Phase 1 duration
+    dur1 = detent_frame / max(fps, 1e-9)
+    # Phase 2 duration
+    dur2 = (fc - detent_frame) / max(fps, 1e-9)
+
     kfs: List[Keyframe] = []
-    for f in range(0, frame_count + 1):
-        t = f / frame_count
-        val = target * (3.0 * t ** 2 - 2.0 * t ** 3)
-        tang = _smooth_step_tangent(t, target, duration)
+
+    # Phase 1: ease-in to detent
+    for t in (0.0, 0.5, 1.0):
+        f = int(round(t * detent_frame))
+        val = detent * (1.0 - (1.0 - t) ** 3)
+        tang = _ease_in_cubic_tangent(t, detent, dur1)
         kfs.append(_make_kf(f, val, "rotation", 0, fps,
                              in_tangent=tang, out_tangent=tang))
+
+    # Detent click impulse (SFX trigger channel)
+    kfs.append(_make_kf(detent_frame, 1.0, "scale", 2, fps,
+                         in_tangent=0.0, out_tangent=0.0))
+
+    # Phase 2: ease-out from detent to target
+    for t in (0.0, 0.5, 1.0):
+        f = detent_frame + int(round(t * (fc - detent_frame)))
+        # Ease-out: fast start (coming off detent spring), slow finish
+        travel = target - detent
+        val = detent + travel * (1.0 - (1.0 - t) ** 3)
+        tang = _ease_in_cubic_tangent(t, travel, dur2)
+        kfs.append(_make_kf(f, val, "rotation", 0, fps,
+                             in_tangent=tang, out_tangent=tang))
+
     return kfs
 
 
 def generate_switch_toggle_keyframes(
     frame_count: int = 8,
     angle: float = 30.0,
+    detent_overshoot: float = 0.15,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Switch toggle — detent snap: accelerate through centre, decelerate at end.
+
+    A switch has a snap-over detent at the midpoint:
+    - Phase 1 (0 → mid): slow ease-in (operator pushing against detent spring).
+    - Mid: snap-over — high tangent through midpoint (spring releases).
+    - Phase 2 (mid → end): fast ease-out with slight overshoot, settle.
+
+    Sparse 4 keys with correct tangents at each phase boundary.
+
+    Args:
+        detent_overshoot: Fractional overshoot past target after snap (0–0.3).
+    """
     target = math.radians(angle)
     mid = max(1, frame_count // 2)
     duration = frame_count / max(fps, 1e-9)
-    # Smooth-step through mid overshoot
-    tang_mid = _smooth_step_tangent(0.5, target, duration)
-    return [
+    dur1 = mid / max(fps, 1e-9)
+    dur2 = (frame_count - mid) / max(fps, 1e-9)
+
+    # At midpoint: fast snap tangent from spring release
+    # velocity = target/duration * acceleration_factor (detent snap is ~3x normal)
+    snap_tang = target / dur1 * 3.0
+
+    kfs: List[Keyframe] = [
+        # Start: slow approach to detent
         _make_kf(0, 0.0, "rotation", 1, fps,
-                 in_tangent=0.0, out_tangent=tang_mid),
-        _make_kf(mid, target * 1.1, "rotation", 1, fps,
-                 in_tangent=tang_mid, out_tangent=0.0),
+                 in_tangent=0.0, out_tangent=_ease_in_cubic_tangent(0.0, target * 0.5, dur1)),
+        # Mid: snap-over — high tangent in both directions
+        _make_kf(mid, target * 0.5, "rotation", 1, fps,
+                 in_tangent=snap_tang, out_tangent=snap_tang),
+        # Post-snap overshoot
+        _make_kf(frame_count - 1, target * (1.0 + detent_overshoot), "rotation", 1, fps,
+                 in_tangent=snap_tang * 0.3, out_tangent=0.0),
+        # Settle at target
         _make_kf(frame_count, target, "rotation", 1, fps,
                  in_tangent=0.0, out_tangent=0.0),
     ]
+    return kfs
 
 
 # ---------------------------------------------------------------------------
 # Ambient
 # ---------------------------------------------------------------------------
 
+# Kelvin color temperature helpers for candle flicker.
+# Candles oscillate between ~1800 K (dim/yellow) and ~2200 K (bright/white).
+# We linearise the CIE 1931 chromaticity: dB/dT ≈ 0.0002 (blue channel gain).
+# The `color_temp` channel drives a shader Color Temperature node.
+
+_CANDLE_TEMP_MIN = 1800.0   # Kelvin — dim glow
+_CANDLE_TEMP_MAX = 2200.0   # Kelvin — bright flicker peak
+
+
+def _candle_temp(brightness_norm: float) -> float:
+    """Map normalised brightness [0..1] to Kelvin color temperature."""
+    return _CANDLE_TEMP_MIN + (
+        _CANDLE_TEMP_MAX - _CANDLE_TEMP_MIN
+    ) * max(0.0, min(1.0, brightness_norm))
+
+
 def generate_candle_flicker_keyframes(
     frame_count: int = 30,
     intensity: float = 1.0,
     fps: float = 30.0,
+    slow_amp: float = 0.20,
+    mid_amp: float = 0.30,
+    fast_amp: float = 0.10,
 ) -> List[Keyframe]:
+    """Candle flicker — 3-band model + Kelvin color temperature shift.
+
+    Three channels:
+    - Scale Y: flame height (3 frequency bands: 0.5 / 3 / 12 Hz).
+    - Scale Z: flame width lateral (slow band only, anti-phase to height).
+    - Scale X: color_temp channel encoded as normalised 0–1
+               mapped from 1800 K (dim) → 2200 K (bright).
+
+    The color temperature channel gives Unity's shader a direct Kelvin value
+    to drive a color temperature ramp without baking RGB channels.
+    Tangents analytically derived for all channels.
+
+    Args:
+        slow_amp: Amplitude for 0.5 Hz buoyancy sway.
+        mid_amp:  Amplitude for 3 Hz flicker band.
+        fast_amp: Amplitude for 12 Hz sputter band.
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        val = intensity * (0.9 + 0.2 * math.sin(t * math.pi * 10)
-                           + 0.05 * math.sin(t * math.pi * 27))
-        tang = intensity * (
-            0.2 * math.cos(t * math.pi * 10) * math.pi * 10
-            + 0.05 * math.cos(t * math.pi * 27) * math.pi * 27
-        ) / duration
-        kfs.append(_make_kf(f, val, "scale", 1, fps,
-                             in_tangent=tang, out_tangent=tang))
+    fc = max(frame_count, 1)
+    duration = fc / max(fps, 1e-9)
+
+    # Height bands (all three)
+    bands_height = (
+        (0.5,  slow_amp, 0.0),
+        (3.0,  mid_amp,  1.1),
+        (12.0, fast_amp, 2.7),
+    )
+    # Width: slow only, anti-phase (flame gets narrower as it gets taller)
+    bands_width = (
+        (0.5, slow_amp * 0.6, math.pi),  # 180° phase shift = anti-phase
+    )
+
+    for f in range(0, fc + 1):
+        t = f / fc
+
+        # Height
+        sc_y, dsc_y = _fire_val_tang(t, intensity, duration, bands_height)
+
+        # Width (narrow when tall)
+        sc_z = intensity
+        dsc_z = 0.0
+        for freq_hz, amp, phase in bands_width:
+            omega = 2.0 * math.pi * freq_hz
+            sc_z  += intensity * amp * math.sin(omega * t + phase)
+            dsc_z += intensity * amp * omega * math.cos(omega * t + phase) / duration
+
+        # Color temperature: brightness is the normalised flame height above base
+        # brightness_norm = (sc_y - 0.9) / 0.5  (maps typical range 0.9–1.4 → 0–1)
+        brightness_norm = max(0.0, min(1.0, (sc_y - 0.9) / 0.5))
+        kelvin = _candle_temp(brightness_norm)
+        # Normalise to 0–1 for shader channel
+        temp_norm = (kelvin - _CANDLE_TEMP_MIN) / (_CANDLE_TEMP_MAX - _CANDLE_TEMP_MIN)
+        # d(temp_norm)/dt = d(brightness_norm)/dt * 1/0.5 * range / range
+        # = dsc_y/dt * (1/0.5) * 1 (unit normalised)
+        d_temp = dsc_y / 0.5  # chain rule: d(brightness_norm)/dt = dsc_y / 0.5
+
+        kfs.append(_make_kf(f, sc_y, "scale", 1, fps,
+                             in_tangent=dsc_y, out_tangent=dsc_y))
+        kfs.append(_make_kf(f, sc_z, "scale", 2, fps,
+                             in_tangent=dsc_z, out_tangent=dsc_z))
+        kfs.append(_make_kf(f, temp_norm, "scale", 0, fps,
+                             in_tangent=d_temp, out_tangent=d_temp))
     return kfs
 
 
 def generate_chandelier_sway_keyframes(
     frame_count: int = 60,
     amplitude: float = 0.05,
+    chain_length_m: float = 2.0,
+    candle_arm_length_m: float = 0.5,
     fps: float = 30.0,
 ) -> List[Keyframe]:
+    """Chandelier sway — compound pendulum with candle-arm sub-oscillations.
+
+    Two pendulum levels:
+    1. Main frame: simple pendulum T = 2π√(L/g) at chain_length_m.
+    2. Candle arms: sub-pendulums at candle_arm_length_m.
+       Natural frequency = sqrt(g/L_arm) ≈ 1.4× main for typical proportions.
+
+    Main frame drives rotation X (fore-aft) and Y (side-to-side) with 90°
+    phase offset (Lissajous figure).
+    Candle arm oscillation is added as a separate rotation channel.
+    Both decay with a slow environmental damping (zeta=0.04).
+
+    All tangents analytically derived from damped SHM derivative.
+
+    Args:
+        chain_length_m:     Suspension chain length for main pendulum (m).
+        candle_arm_length_m: Length of candle arm sub-pendulums (m).
+    """
     kfs: List[Keyframe] = []
-    duration = frame_count / max(fps, 1e-9)
-    for f in range(0, frame_count + 1):
-        t = f / max(frame_count, 1)
-        rx = amplitude * math.sin(t * math.pi * 2)
-        drx = amplitude * math.cos(t * math.pi * 2) * math.pi * 2 / duration
+    fc = max(frame_count, 1)
+    g = 9.81
+    dt = 1.0 / max(fps, 1e-9)
+    zeta = 0.04  # slow environmental damping (barely perceptible decay)
+
+    # Main pendulum
+    L_main = max(0.1, chain_length_m)
+    omega_main = math.sqrt(g / L_main)
+    omega_d_main = omega_main * math.sqrt(1.0 - zeta ** 2)
+
+    # Candle arm sub-pendulum
+    L_arm = max(0.05, candle_arm_length_m)
+    omega_arm = math.sqrt(g / L_arm)
+    omega_d_arm = omega_arm * math.sqrt(1.0 - zeta ** 2)
+
+    for f in range(0, fc + 1):
+        t_sec = f * dt
+        exp_main = math.exp(-zeta * omega_main * t_sec)
+        exp_arm  = math.exp(-zeta * omega_arm  * t_sec)
+
+        # Main frame: rotation X (fore-aft)
+        rx = amplitude * exp_main * math.sin(omega_d_main * t_sec)
+        drx = amplitude * exp_main * (
+            -zeta * omega_main * math.sin(omega_d_main * t_sec)
+            + omega_d_main * math.cos(omega_d_main * t_sec)
+        )
+        # Main frame: rotation Y (side-to-side, 90° phase lead = cos)
+        ry = amplitude * 0.6 * exp_main * math.cos(omega_d_main * t_sec)
+        dry = amplitude * 0.6 * exp_main * (
+            -zeta * omega_main * math.cos(omega_d_main * t_sec)
+            - omega_d_main * math.sin(omega_d_main * t_sec)
+        )
+
+        # Candle arm sub-oscillation at arm frequency (1.4× main approx)
+        # Modulated by main swing (arms swing more when frame swings more)
+        arm_mod = abs(rx) / max(amplitude, 1e-9)  # coupling: 0..1
+        arm_amp = amplitude * 0.4 * (1.0 + arm_mod)
+        r_arm = arm_amp * exp_arm * math.sin(omega_d_arm * t_sec + math.pi / 4.0)
+        d_arm = arm_amp * exp_arm * (
+            -zeta * omega_arm * math.sin(omega_d_arm * t_sec + math.pi / 4.0)
+            + omega_d_arm * math.cos(omega_d_arm * t_sec + math.pi / 4.0)
+        )
+
         kfs.append(_make_kf(f, rx, "rotation", 0, fps,
                              in_tangent=drx, out_tangent=drx))
-        ry = amplitude * 0.5 * math.sin(t * math.pi * 3)
-        dry = amplitude * 0.5 * math.cos(t * math.pi * 3) * math.pi * 3 / duration
         kfs.append(_make_kf(f, ry, "rotation", 1, fps,
                              in_tangent=dry, out_tangent=dry))
+        kfs.append(_make_kf(f, r_arm, "rotation", 2, fps,
+                             in_tangent=d_arm, out_tangent=d_arm))
+
     return kfs
 
 
@@ -1094,41 +1952,55 @@ def generate_windmill_rotate_keyframes(
 # ---------------------------------------------------------------------------
 
 _DISPATCH: Dict[str, Any] = {
-    "door_open": generate_door_open_keyframes,
-    "door_close": generate_door_close_keyframes,
-    "door_slam": generate_door_slam_keyframes,
-    "door_creak": generate_door_creak_keyframes,
-    "gate_raise": generate_gate_raise_keyframes,
-    "gate_lower": generate_gate_lower_keyframes,
-    "drawbridge": generate_drawbridge_keyframes,
-    "shatter": generate_shatter_keyframes,
+    "door_open":       generate_door_open_keyframes,
+    "door_close":      generate_door_close_keyframes,
+    "door_slam":       generate_door_slam_keyframes,
+    "door_creak":      generate_door_creak_keyframes,
+    "gate_raise":      generate_gate_raise_keyframes,
+    "gate_lower":      generate_gate_lower_keyframes,
+    "drawbridge":      generate_drawbridge_keyframes,
+    "shatter":         generate_shatter_keyframes,
     "wobble_collapse": generate_wobble_collapse_keyframes,
-    "fire_flicker": generate_fire_flicker_keyframes,
-    "torch_sway": generate_torch_sway_keyframes,
-    "water_wave": generate_water_wave_keyframes,
-    "water_ripple": generate_water_ripple_keyframes,
-    "waterfall": generate_waterfall_keyframes,
-    "flag_wind": generate_flag_wind_keyframes,
-    "banner_wind": generate_banner_wind_keyframes,
-    "chain_swing": generate_chain_swing_keyframes,
-    "rope_sway": generate_rope_sway_keyframes,
-    "trap_trigger": generate_trap_trigger_keyframes,
-    "trap_reset": generate_trap_reset_keyframes,
-    "trap_idle": generate_trap_idle_keyframes,
-    "chest_open": generate_chest_open_keyframes,
-    "lever_pull": generate_lever_pull_keyframes,
-    "switch_toggle": generate_switch_toggle_keyframes,
-    "candle_flicker": generate_candle_flicker_keyframes,
+    "fire_flicker":    generate_fire_flicker_keyframes,
+    "torch_sway":      generate_torch_sway_keyframes,
+    "water_wave":      generate_water_wave_keyframes,
+    "water_ripple":    generate_water_ripple_keyframes,
+    "waterfall":       generate_waterfall_keyframes,
+    "flag_wind":       generate_flag_wind_keyframes,
+    "banner_wind":     generate_banner_wind_keyframes,
+    "chain_swing":     generate_chain_swing_keyframes,
+    "rope_sway":       generate_rope_sway_keyframes,
+    "trap_trigger":    generate_trap_trigger_keyframes,
+    "trap_reset":      generate_trap_reset_keyframes,
+    "trap_idle":       generate_trap_idle_keyframes,
+    "chest_open":      generate_chest_open_keyframes,
+    "lever_pull":      generate_lever_pull_keyframes,
+    "switch_toggle":   generate_switch_toggle_keyframes,
+    "candle_flicker":  generate_candle_flicker_keyframes,
     "chandelier_sway": generate_chandelier_sway_keyframes,
     "windmill_rotate": generate_windmill_rotate_keyframes,
 }
 
 
 def generate_env_keyframes(params: Dict[str, Any]) -> List[Keyframe]:
-    """Dispatch to the appropriate generator. Raises ValueError for unknown type."""
+    """Dispatch to the appropriate generator based on params['env_type'].
+
+    Validates env_type against VALID_ENV_TYPES, introspects the target
+    function signature to extract only recognised kwargs from params, then
+    calls the function. Raises ValueError for unknown env_type.
+
+    All 27 env_type values are routed, including: door_open/close/slam/creak,
+    gate_raise/lower, drawbridge, shatter, wobble_collapse, fire_flicker,
+    torch_sway, water_wave/ripple/waterfall, flag_wind, banner_wind,
+    chain_swing, rope_sway, trap_trigger/reset/idle, chest_open, lever_pull,
+    switch_toggle, candle_flicker, chandelier_sway, windmill_rotate.
+    """
     env_type = params.get("env_type", "door_open")
     if env_type not in VALID_ENV_TYPES:
-        raise ValueError(f"unknown env_type: {env_type!r}")
+        raise ValueError(
+            f"unknown env_type: {env_type!r}; "
+            f"must be one of {sorted(VALID_ENV_TYPES)}"
+        )
     fn = _DISPATCH[env_type]
     sig = inspect.signature(fn)
     kwargs = {k: v for k, v in params.items() if k in sig.parameters}

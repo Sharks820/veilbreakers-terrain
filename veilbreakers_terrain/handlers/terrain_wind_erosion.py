@@ -260,35 +260,44 @@ def generate_dunes(
         delta = profile * mod * amplitude
 
     elif wv < 0.55:
-        # --- Barchan dunes ---
-        # Scatter barchan centres deterministically across the field
+        # --- Barchan dunes — fully vectorised over all N barchans at once ---
+        # Scatter barchan centres deterministically across the field.
         spacing = max(8, min(H, W) // 6)
-        delta = np.zeros((H, W), dtype=np.float64)
         n_barchans = max(4, (H * W) // (spacing * spacing * 3))
         centres_u = rng.uniform(0.0, float(max(u.max(), 1.0)), size=n_barchans)
         centres_v = rng.uniform(float(v.min()), float(v.max()), size=n_barchans)
+        scale_factors = rng.uniform(0.7, 1.3, size=n_barchans)
         sigma_u = float(spacing) * 0.6   # mound half-width downwind
         sigma_v = float(spacing) * 0.45  # mound half-width cross-wind
-        for cu, cv in zip(centres_u, centres_v):
-            du = u - cu
-            dv = v - cv
-            # Central mound
-            mound = np.exp(-(du / sigma_u) ** 2 - (dv / sigma_v) ** 2)
-            # Horns: advanced downwind, offset laterally
-            horn_u = cu + sigma_u * 0.5
-            for horn_sign in (-1.0, 1.0):
-                horn_v = cv + horn_sign * sigma_v * 0.7
-                dhu = u - horn_u
-                dhv = v - horn_v
-                horn = 0.6 * np.exp(
-                    -(dhu / (sigma_u * 0.4)) ** 2 - (dhv / (sigma_v * 0.35)) ** 2
-                )
-                mound = np.maximum(mound, horn)
-            # Slip-face asymmetry: attenuate upwind half of mound
-            upwind_mask = du < 0
-            mound = np.where(upwind_mask, mound * 0.4, mound)
-            delta += mound * amplitude * rng.uniform(0.7, 1.3)
-        delta = delta * mod
+
+        # Broadcast: u/v are (H, W); centres are (N,) → work in (N, H, W).
+        cu = centres_u[:, np.newaxis, np.newaxis]   # (N, 1, 1)
+        cv = centres_v[:, np.newaxis, np.newaxis]
+        u3 = u[np.newaxis, :, :]                    # (1, H, W)
+        v3 = v[np.newaxis, :, :]
+
+        du = u3 - cu   # (N, H, W)
+        dv = v3 - cv
+
+        # Central mound Gaussian
+        mound = np.exp(-(du / sigma_u) ** 2 - (dv / sigma_v) ** 2)
+
+        # Horns: two per barchan (+1 and -1 lateral), advanced downwind
+        horn_du = u3 - (cu + sigma_u * 0.5)
+        for horn_sign in (-1.0, 1.0):
+            horn_dv = v3 - (cv + horn_sign * sigma_v * 0.7)
+            horn = 0.6 * np.exp(
+                -(horn_du / (sigma_u * 0.4)) ** 2
+                - (horn_dv / (sigma_v * 0.35)) ** 2
+            )
+            mound = np.maximum(mound, horn)
+
+        # Slip-face asymmetry: attenuate upwind half of each mound
+        mound = np.where(du < 0, mound * 0.4, mound)
+
+        # Scale each barchan by its random amplitude factor, then sum over N
+        sf = scale_factors[:, np.newaxis, np.newaxis]  # (N, 1, 1)
+        delta = (mound * sf * amplitude).sum(axis=0) * mod  # (H, W)
 
     else:
         # --- Star dunes (multi-directional) ---

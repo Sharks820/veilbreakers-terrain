@@ -65,9 +65,19 @@ def _merge_pass_outputs(
             )
 
     for channel in definition.produces_channels:
-        if not hasattr(source_stack, channel):
+        # Use stack.get() so we only accept channels that are actually populated,
+        # not arbitrary attributes that happen to share the name (hasattr would
+        # match __class__, __dict__, etc.).  Raises PassDAGError with a clear
+        # message if the worker function forgot to write a declared channel.
+        val = source_stack.get(channel)
+        if val is None:
+            # Check whether the channel attribute exists at all (vs. just unset).
+            # A None value from get() could mean "channel key absent" or "set to
+            # None"; either way the contract is violated for a non-None channel.
             raise PassDAGError(
-                f"Pass '{source_result.pass_name}' declared unknown channel '{channel}'"
+                f"Pass '{source_result.pass_name}' declared produces_channels "
+                f"includes '{channel}' but the worker's mask stack has no value "
+                f"for it. Check that the pass function calls stack.set('{channel}', ...)."
             )
 
         # Conflict detection: another pass already wrote this channel in the
@@ -83,10 +93,20 @@ def _merge_pass_outputs(
                 source_result.pass_name,
             )
 
-        val = copy.deepcopy(getattr(source_stack, channel))
+        # Prefer numpy .copy() over copy.deepcopy for array channels — 10-100x
+        # faster on large heightmaps (deepcopy walks every element via Python).
+        # Fall back to deepcopy for non-array channel values (e.g. metadata dicts).
+        try:
+            import numpy as _np
+            if isinstance(val, _np.ndarray):
+                val = val.copy()
+            else:
+                val = copy.deepcopy(val)
+        except ImportError:
+            val = copy.deepcopy(val)
+
         object.__setattr__(target_stack, channel, val)
-        if val is not None:
-            target_stack.populated_by_pass[channel] = source_result.pass_name
+        target_stack.populated_by_pass[channel] = source_result.pass_name
         target_stack.dirty_channels.discard(channel)
 
     target_stack.height_min_m = source_stack.height_min_m
@@ -103,11 +123,42 @@ class PassDAG:
     """Dependency graph over a set of PassDefinitions."""
 
     def __init__(self, passes: Sequence[PassDefinition]) -> None:
+        # Detect duplicate pass names before building the dict — dict comprehension
+        # silently drops all but the last definition for a repeated name, which
+        # hides wiring bugs in multi-bundle pipelines.
+        seen_names: Dict[str, int] = {}
+        for p in passes:
+            seen_names[p.name] = seen_names.get(p.name, 0) + 1
+        duplicates = [name for name, count in seen_names.items() if count > 1]
+        if duplicates:
+            logger.warning(
+                "PassDAG.__init__: duplicate pass name(s) in input — only the last "
+                "definition will be kept for: %s. Deduplicate your pass list to "
+                "avoid silent channel-ownership surprises.",
+                sorted(duplicates),
+            )
+
         self._passes: Dict[str, PassDefinition] = {p.name: p for p in passes}
         self._producers: Dict[str, List[str]] = {}
         for p in passes:
             for ch in p.produces_channels:
                 self._producers.setdefault(ch, []).append(p.name)
+
+        # Warn when the same channel is claimed by more than one pass — this is
+        # not necessarily wrong (e.g. erosion overwrites height) but it IS worth
+        # surfacing so authors can verify the ordering is intentional.
+        contested: List[str] = [
+            ch for ch, producers in self._producers.items() if len(producers) > 1
+        ]
+        if contested:
+            for ch in contested:
+                logger.warning(
+                    "PassDAG: channel '%s' is produced by multiple passes %s — "
+                    "execution order determines which value survives. "
+                    "Verify produces_channels declarations are intentional.",
+                    ch,
+                    self._producers[ch],
+                )
 
     @classmethod
     def from_registry(cls, pass_names: Optional[Sequence[str]] = None) -> "PassDAG":

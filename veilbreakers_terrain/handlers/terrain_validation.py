@@ -49,12 +49,39 @@ class ValidationReport:
       - any hard issue -> "failed"
       - any soft issue -> "warning"
       - otherwise      -> "ok"
+
+    Issues are stored in three severity lists AND in a nested
+    ``categories`` dict for structured access by domain category
+    (7-domain AAA bar requirement):
+
+        report.categories["geometry"]    -> List[ValidationIssue]
+        report.categories["water"]       -> List[ValidationIssue]
+        report.categories["materials"]   -> List[ValidationIssue]
+        report.categories["erosion"]     -> List[ValidationIssue]
+        report.categories["scatter"]     -> List[ValidationIssue]
+        report.categories["readability"] -> List[ValidationIssue]
+        report.categories["pipeline"]    -> List[ValidationIssue]
+
+    Category assignment is derived from the ValidationIssue.code prefix
+    using ``_issue_category()``.  Callers that only care about severity
+    can use the flat lists; callers that want per-domain dashboards use
+    ``categories``.
     """
 
     pass_name: str = "validation_full"
     hard_issues: List[ValidationIssue] = field(default_factory=list)
     soft_issues: List[ValidationIssue] = field(default_factory=list)
     info_issues: List[ValidationIssue] = field(default_factory=list)
+    categories: Dict[str, List[ValidationIssue]] = field(default_factory=lambda: {
+        # 7-domain structured issues dict (AAA bar requirement)
+        "geometry":   [],   # height, slope, seam, strata, glacial, karst, hero features
+        "water":      [],   # waterfall, foam, mist, drainage
+        "materials":  [],   # splatmap weights, channel dtypes, layer coverage
+        "erosion":    [],   # mass conservation, sediment transport
+        "scatter":    [],   # tree/rock placement, debris density
+        "readability":[],   # cliff silhouette, cave framing, focal composition
+        "pipeline":   [],   # export readiness, validator crashes, protected zones
+    })
     metrics: Dict[str, Any] = field(default_factory=dict)
     overall_status: str = "ok"
 
@@ -63,12 +90,15 @@ class ValidationReport:
         return list(self.hard_issues) + list(self.soft_issues) + list(self.info_issues)
 
     def add(self, issue: ValidationIssue) -> None:
+        """Add an issue to the appropriate severity list and category bucket."""
         if issue.severity == "hard":
             self.hard_issues.append(issue)
         elif issue.severity == "soft":
             self.soft_issues.append(issue)
         else:
             self.info_issues.append(issue)
+        cat = _issue_category(issue.code)
+        self.categories.setdefault(cat, []).append(issue)
 
     def recompute_status(self) -> str:
         if self.hard_issues:
@@ -78,6 +108,76 @@ class ValidationReport:
         else:
             self.overall_status = "ok"
         return self.overall_status
+
+    def category_summary(self) -> Dict[str, Dict[str, int]]:
+        """Return per-category severity counts for dashboards/logging.
+
+        Example::
+
+            {
+                "geometry":   {"hard": 2, "soft": 0, "info": 1},
+                "water":      {"hard": 0, "soft": 1, "info": 0},
+                "materials":  {"hard": 0, "soft": 0, "info": 0},
+                "erosion":    {"hard": 0, "soft": 0, "info": 0},
+                "scatter":    {"hard": 0, "soft": 0, "info": 0},
+                "readability":{"hard": 0, "soft": 0, "info": 0},
+                "pipeline":   {"hard": 0, "soft": 0, "info": 0},
+            }
+        """
+        summary: Dict[str, Dict[str, int]] = {}
+        for cat, issues in self.categories.items():
+            summary[cat] = {
+                "hard": sum(1 for i in issues if i.severity == "hard"),
+                "soft": sum(1 for i in issues if i.severity == "soft"),
+                "info": sum(1 for i in issues if i.severity not in ("hard", "soft")),
+            }
+        return summary
+
+
+# ---------------------------------------------------------------------------
+# Category routing helper
+# ---------------------------------------------------------------------------
+
+_CATEGORY_PREFIXES: Tuple[Tuple[str, str], ...] = (
+    # (code_prefix_lower, category) — maps to the 7 AAA-bar domains:
+    # geometry | water | materials | erosion | scatter | readability | pipeline
+    ("height_",          "geometry"),
+    ("slope_",           "geometry"),
+    ("seam_",            "geometry"),
+    ("strata_",          "geometry"),   # geological strata = geometry domain
+    ("glacial_",         "geometry"),   # glacial plausibility = geometry domain
+    ("karst_",           "geometry"),   # karst plausibility = geometry domain
+    ("hero_feature",     "geometry"),
+    ("protected_",       "pipeline"),   # protected zone mutations = pipeline concern
+    ("erosion_",         "erosion"),
+    ("material_",        "materials"),
+    ("channel_dtype",    "materials"),
+    ("unity_export",     "pipeline"),   # export readiness = pipeline concern
+    ("validator_crashed","pipeline"),
+    ("waterfall",        "water"),
+    ("foam",             "water"),
+    ("mist",             "water"),
+    ("scatter",          "scatter"),
+    ("tree_",            "scatter"),
+    ("debris_",          "scatter"),
+    ("cave",             "readability"),
+    ("cliff",            "readability"),
+    ("focal",            "readability"),
+    ("terrain-",         "readability"),
+)
+
+
+def _issue_category(code: str) -> str:
+    """Map a ValidationIssue code to a domain category string.
+
+    Matching is done by lowercase prefix scan in priority order.
+    Returns ``"other"`` when no prefix matches.
+    """
+    lower = code.lower()
+    for prefix, cat in _CATEGORY_PREFIXES:
+        if lower.startswith(prefix):
+            return cat
+    return "other"
 
 
 # ---------------------------------------------------------------------------
@@ -688,12 +788,30 @@ def validate_unity_export_ready(
 def check_cliff_silhouette_readability(
     stack: TerrainMaskStack,
     min_silhouette_cells: int = 20,
+    min_sky_exposure_pct: float = 5.0,
 ) -> List[ValidationIssue]:
-    """Check that cliff candidates form continuous ridgelines with readable length.
+    """Check cliff candidates for readable sky-silhouette and ridgeline continuity.
 
-    Each 8-connected component of the cliff_candidate mask is labeled; any
-    component whose cell count is below ``min_silhouette_cells`` is flagged.
-    Components that are too small will be invisible or noisy in-engine.
+    Three-tier check:
+
+    Tier 1 — Sky-exposure percentage (AAA requirement):
+        A cliff cell is sky-exposed when its height equals the maximum of
+        its 3×3 neighbourhood — meaning nothing above it blocks the
+        vertical sightline to the sky.
+
+            sky_exposure_pct = sky_exposed_cliff_cells / total_cliff_cells * 100
+
+        Must be >= ``min_sky_exposure_pct`` (default 5%).  A cliff entirely
+        buried under overhanging terrain has zero sky exposure and will be
+        unreadable as a silhouette feature.  Requires the height channel.
+
+    Tier 2 — Overall coverage:
+        Cliff footprint must be >= 0.5% of the tile or the feature is
+        invisible.
+
+    Tier 3 — Component continuity:
+        Each 8-connected component must have >= ``min_silhouette_cells``
+        cells; tiny fragments produce noisy, unreadable ridgelines.
     """
     issues: List[ValidationIssue] = []
     cliff = stack.get("cliff_candidate")
@@ -705,12 +823,71 @@ def check_cliff_silhouette_readability(
     if not mask.any():
         return issues
 
-    # Label connected components with pure-numpy BFS (no scipy required).
+    cliff_cells = int(mask.sum())
+    total_area = float(cliff_arr.size)
+
+    # ------------------------------------------------------------------
+    # Tier 1: sky-exposure percentage — requires height channel
+    # ------------------------------------------------------------------
+    h = _safe_asarray(stack.height)
+    if h is not None and h.ndim == 2 and h.shape == cliff_arr.shape:
+        rows, cols = h.shape
+        if rows >= 3 and cols >= 3:
+            h_pad = np.pad(h, 1, mode="reflect")
+            local_max = h_pad[:-2, :-2].copy()
+            for dr in range(3):
+                for dc in range(3):
+                    if dr == 0 and dc == 0:
+                        continue
+                    local_max = np.maximum(
+                        local_max, h_pad[dr: dr + rows, dc: dc + cols]
+                    )
+            sky_exposed = h >= (local_max - 1e-9)
+            sky_exposed_cliff = mask & sky_exposed
+            sky_exposure_pct = float(sky_exposed_cliff.sum()) / float(cliff_cells) * 100.0
+        else:
+            sky_exposure_pct = 100.0  # grid too small; assume all exposed
+
+        if sky_exposure_pct < min_sky_exposure_pct:
+            issues.append(
+                ValidationIssue(
+                    code="cliff-silhouette-sky-exposure-low",
+                    severity="soft",
+                    message=(
+                        f"cliff sky-exposure is {sky_exposure_pct:.1f}% "
+                        f"(minimum {min_sky_exposure_pct:.1f}%) — cliff is buried "
+                        f"below surrounding terrain and will not silhouette against sky"
+                    ),
+                    remediation=(
+                        "Raise cliff cells above surrounding terrain, or adjust the "
+                        "cliff_candidate threshold so only protruding faces are marked."
+                    ),
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # Tier 2: overall footprint coverage
+    # ------------------------------------------------------------------
+    if total_area > 0 and cliff_cells / total_area < 0.005:
+        issues.append(
+            ValidationIssue(
+                code="cliff-silhouette-coverage-too-small",
+                severity="soft",
+                message=(
+                    f"Cliff silhouette covers only {cliff_cells / total_area:.1%} "
+                    f"of terrain — may be invisible from focal points"
+                ),
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Tier 3: connected-component minimum size
+    # ------------------------------------------------------------------
     labels = np.zeros(mask.shape, dtype=np.int32)
-    rows, cols = mask.shape
+    n_rows, n_cols = mask.shape
     next_id = 1
-    for r0 in range(rows):
-        for c0 in range(cols):
+    for r0 in range(n_rows):
+        for c0 in range(n_cols):
             if not mask[r0, c0] or labels[r0, c0] != 0:
                 continue
             bfs = [(r0, c0)]
@@ -718,7 +895,7 @@ def check_cliff_silhouette_readability(
             next_id += 1
             while bfs:
                 r, c = bfs.pop()
-                if r < 0 or r >= rows or c < 0 or c >= cols:
+                if r < 0 or r >= n_rows or c < 0 or c >= n_cols:
                     continue
                 if not mask[r, c] or labels[r, c] != 0:
                     continue
@@ -730,7 +907,6 @@ def check_cliff_silhouette_readability(
                         bfs.append((r + dr, c + dc))
 
     unique_ids, counts = np.unique(labels, return_counts=True)
-    # Sort by size descending (skip background label 0)
     component_pairs = sorted(
         [(int(uid), int(cnt)) for uid, cnt in zip(unique_ids, counts) if uid != 0],
         key=lambda x: x[1],
@@ -753,20 +929,6 @@ def check_cliff_silhouette_readability(
             )
         )
 
-    # Also flag overall coverage too small (original check preserved)
-    total_area = float(cliff_arr.size)
-    cliff_area = float(mask.sum())
-    if total_area > 0 and cliff_area / total_area < 0.005:
-        issues.append(
-            ValidationIssue(
-                code="cliff-silhouette-coverage-too-small",
-                severity="soft",
-                message=(
-                    f"Cliff silhouette covers only {cliff_area / total_area:.1%} "
-                    f"of terrain — may be invisible from focal points"
-                ),
-            )
-        )
     return issues
 
 
@@ -1717,6 +1879,7 @@ def register_bundle_d_passes() -> None:
 
 __all__ = [
     "ValidationReport",
+    "_issue_category",
     "ReadabilityAuditReport",
     "validate_height_finite",
     "validate_height_range",

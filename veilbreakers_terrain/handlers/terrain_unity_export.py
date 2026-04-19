@@ -379,6 +379,24 @@ def _write_splatmap_groups(
     output_dir: Path,
     stack: TerrainMaskStack,
 ) -> list[str]:
+    """Write splatmap groups as Unity-compliant RGBA uint8 RAW files.
+
+    Unity TerrainData splatmap format requirements
+    -----------------------------------------------
+    * Unity's ``TerrainData.alphamapTextures`` is an array of RGBA Texture2D.
+      Each texture encodes 4 terrain layer weights in R, G, B, A channels.
+    * Channel packing: layer N*4+0 → R, N*4+1 → G, N*4+2 → B, N*4+3 → A.
+    * Weights are normalised floats [0,1] quantised to uint8 [0,255].
+    * Per-group weights across all 4 channels must sum to ≤ 1.0 (Unity
+      does NOT automatically re-normalise splatmap reads — unnormalised
+      weights cause rendering artefacts).  We enforce normalisation here.
+    * Unity TerrainLayer asset format: each layer slot corresponds to one
+      TerrainLayer .asset file; the manifest records ``layer_asset_path``
+      as the expected relative asset path so the Unity importer can bind
+      them without manual slot assignment.
+    * Y-flip: applied by ``_write_raw_array`` → ``_flip_for_unity``.
+    * Endianness: single-byte (uint8) — no endian tag needed.
+    """
     weights = stack.splatmap_weights_layer
     if weights is None:
         return []
@@ -387,16 +405,40 @@ def _write_splatmap_groups(
     if weights_np.ndim != 3:
         raise ValueError("splatmap_weights_layer must be 3D (H, W, L)")
 
+    H, W, L = weights_np.shape
+
+    # Normalise per-pixel so all active layers across the full stack sum to 1.
+    # This matches Unity's expectation: SetAlphamaps requires normalised weights.
+    total_weight = weights_np.sum(axis=2, keepdims=True)
+    # Only normalise pixels where total > 0; leave zero pixels as zero.
+    safe_total = np.where(total_weight > 1e-7, total_weight, 1.0)
+    weights_norm = (weights_np / safe_total).astype(np.float32)
+
     group_files: list[str] = []
-    layers = int(weights_np.shape[2])
-    group_count = max(1, (layers + 3) // 4)
+    group_count = max(1, (L + 3) // 4)
     for group_index in range(group_count):
         start = group_index * 4
-        end = min(start + 4, layers)
-        block = weights_np[:, :, start:end]
-        padded = np.zeros((weights_np.shape[0], weights_np.shape[1], 4), dtype=np.float32)
+        end = min(start + 4, L)
+        block = weights_norm[:, :, start:end]
+
+        # Pad to exactly 4 channels (RGBA) — unused channels are zero weight.
+        padded = np.zeros((H, W, 4), dtype=np.float32)
         padded[:, :, : end - start] = np.clip(block, 0.0, 1.0)
+
+        # Quantise to uint8 using round-half-up to minimise weight drift.
         block_u8 = np.rint(padded * 255.0).astype(np.uint8)
+
+        # Unity TerrainLayer asset path hints — one per valid channel in this group.
+        # Format matches Unity's TerrainLayer asset naming convention:
+        #   "Assets/Terrain/Layers/Layer_NNN.terrainlayer"
+        layer_asset_paths = [
+            f"Assets/Terrain/Layers/Layer_{start + i:03d}.terrainlayer"
+            for i in range(end - start)
+        ]
+        # Pad to 4 slots (empty string = unused channel / no asset).
+        while len(layer_asset_paths) < 4:
+            layer_asset_paths.append("")
+
         filename = f"splatmap_{group_index:02d}.raw"
         group_files.append(
             _write_raw_array(
@@ -408,9 +450,19 @@ def _write_splatmap_groups(
                 encoding="raw_rgba_u8",
                 extra={
                     "channels": 4,
+                    "channel_layout": "RGBA",
                     "group_index": group_index,
                     "layer_range": [start, end - 1],
                     "valid_layer_count": end - start,
+                    # Unity TerrainLayer asset binding per channel slot.
+                    "terrain_layer_assets": {
+                        "R": layer_asset_paths[0],
+                        "G": layer_asset_paths[1],
+                        "B": layer_asset_paths[2],
+                        "A": layer_asset_paths[3],
+                    },
+                    # Normalisation applied before quantisation (required by Unity).
+                    "weights_normalised": True,
                 },
             )
         )

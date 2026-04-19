@@ -3,8 +3,9 @@
 Provides:
   - WEATHERING_PRESETS: named preset configurations
   - _compute_bounding_box(): axis-aligned bounding box dict
-  - compute_weathered_vertex_colors(): physically-based weathering state encoding
-  - apply_structural_settling(): slope-dependent creep diffusion model
+  - compute_weathered_vertex_colors(): physically-based weathering progression
+    (fresh → stained → patinated → crumbling → moss-covered)
+  - apply_structural_settling(): subsidence and tilt from soil compaction
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ WEATHERING_PRESETS: Dict[str, Dict] = {
         "surface_roughness": 0.08,
         "color_shift": 0.03,
         "moss_coverage": 0.02,
+        # Weathering age factor: 0 = very fresh, 1 = ancient
+        # Light preset = recently placed / maintained structure
+        "age_factor": 0.15,
     },
     "medium": {
         "dirt_accumulation": 0.20,
@@ -31,6 +35,7 @@ WEATHERING_PRESETS: Dict[str, Dict] = {
         "surface_roughness": 0.25,
         "color_shift": 0.12,
         "moss_coverage": 0.10,
+        "age_factor": 0.45,
     },
     "heavy": {
         "dirt_accumulation": 0.55,
@@ -38,8 +43,97 @@ WEATHERING_PRESETS: Dict[str, Dict] = {
         "surface_roughness": 0.60,
         "color_shift": 0.30,
         "moss_coverage": 0.35,
+        "age_factor": 0.85,
     },
 }
+
+# ---------------------------------------------------------------------------
+# Weathering stage definitions
+# ---------------------------------------------------------------------------
+
+# Five-stage linear progression model.
+# Each stage occupies a fraction of the [0, 1] age axis.
+# At each stage boundary, the RGBA vertex color shifts toward the stage color.
+#
+# Stage 0: fresh      — clean material color, no alteration
+# Stage 1: stained    — water marks, iron bleed, tannin streaks (orange-brown tint)
+# Stage 2: patinated  — oxidation crust, calcium carbonate bloom (grey-green tint)
+# Stage 3: crumbling  — surface spalling, exposed aggregate (warm grey, rough)
+# Stage 4: moss-covered — biological colonisation dominates (deep green-black)
+#
+# Colors are RGBA multipliers blended into the base_color using stage weight.
+# A value of (1, 1, 1, 1) = no change; lower values darken/tint the channel.
+_WEATHERING_STAGES: List[Dict] = [
+    {
+        "name": "fresh",
+        "age_start": 0.00,
+        "age_end": 0.15,
+        # Multiplier applied to base_color channels
+        "color_mul": (1.00, 1.00, 1.00, 1.00),
+        # Additive RGB tint (added on top of multiplied base)
+        "color_add": (0.00, 0.00, 0.00),
+        "roughness_boost": 0.0,
+    },
+    {
+        "name": "stained",
+        "age_start": 0.10,
+        "age_end": 0.40,
+        # Water staining darkens, adds orange-brown iron oxide tint
+        "color_mul": (0.85, 0.78, 0.70, 1.00),
+        "color_add": (0.06, 0.03, 0.00),
+        "roughness_boost": 0.05,
+    },
+    {
+        "name": "patinated",
+        "age_start": 0.30,
+        "age_end": 0.60,
+        # Oxidation crust: grey-green, slight blue-green on metal, chalky whites
+        "color_mul": (0.72, 0.76, 0.68, 1.00),
+        "color_add": (0.04, 0.06, 0.03),
+        "roughness_boost": 0.15,
+    },
+    {
+        "name": "crumbling",
+        "age_start": 0.55,
+        "age_end": 0.80,
+        # Spalling and aggregate exposure: warm grey, darker overall
+        "color_mul": (0.60, 0.58, 0.55, 1.00),
+        "color_add": (0.02, 0.02, 0.02),
+        "roughness_boost": 0.35,
+    },
+    {
+        "name": "moss_covered",
+        "age_start": 0.72,
+        "age_end": 1.00,
+        # Biological colonisation: deep green-black, very dark
+        "color_mul": (0.35, 0.42, 0.28, 1.00),
+        "color_add": (0.01, 0.04, 0.01),
+        "roughness_boost": 0.55,
+    },
+]
+
+
+def _stage_weight(age: float, stage_start: float, stage_end: float) -> float:
+    """Smooth tent weight for a weathering stage at a given age value.
+
+    Returns 1.0 at the midpoint of [stage_start, stage_end], fading to 0.0
+    at the endpoints.  Uses a raised-cosine (Hann) shape so transitions
+    between stages are C1-smooth with no discontinuous jumps.
+
+    Args:
+        age: Per-vertex age value in [0, 1].
+        stage_start: Age at which this stage begins to activate.
+        stage_end: Age at which this stage finishes activating.
+
+    Returns:
+        Weight in [0, 1].
+    """
+    if stage_end <= stage_start:
+        return 0.0
+    t = (age - stage_start) / (stage_end - stage_start)
+    t = max(0.0, min(1.0, t))
+    # Raised cosine: smooth fade in [0,1] → weight peak at t=0.5
+    return 0.5 - 0.5 * math.cos(math.pi * t * 2.0) if t <= 0.5 else 0.5 + 0.5 * math.cos(math.pi * (t - 0.5) * 2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +165,7 @@ def _compute_bounding_box(
 
 
 # ---------------------------------------------------------------------------
-# Vertex color weathering
+# Vertex color weathering helpers
 # ---------------------------------------------------------------------------
 
 
@@ -93,18 +187,15 @@ def _compute_edge_convexity(
         a, b = edge[0], edge[1]
         na = vertex_normals[a]
         nb_v = vertex_normals[b]
-        # curvature = 1 - dot(na, nb): 0 for flat, +2 for opposing normals (convex ridge).
-        # Orientation-invariant: swapping a<->b gives identical curvature.
+        # curvature = 1 - dot(na, nb): 0 for flat, +2 for opposing normals.
         curvature = 1.0 - (
             float(na[0]) * float(nb_v[0])
             + float(na[1]) * float(nb_v[1])
             + float(na[2]) * float(nb_v[2])
         )
-        # Distribute equally to both endpoints (symmetric, orientation-invariant).
         convexity[a] += curvature
         convexity[b] += curvature
 
-    # Normalise to [-1, 1]
     max_abs = max((abs(c) for c in convexity), default=1.0)
     if max_abs > 1e-12:
         convexity = [c / max_abs for c in convexity]
@@ -129,9 +220,7 @@ def _compute_slope_aspect(
     for n in vertex_normals:
         nx, ny, nz = float(n[0]), float(n[1]), float(n[2])
         nz_clamped = max(0.0, min(1.0, nz))
-        slope = math.acos(nz_clamped)  # 0 = flat, π/2 = vertical cliff
-        # Aspect: bearing of the steepest ascent projected onto XY plane.
-        # atan2(nx, -ny) → 0 = north (+Y), π/2 = east (+X).
+        slope = math.acos(nz_clamped)
         aspect = math.atan2(nx, -ny)
         slopes.append(slope)
         aspects.append(aspect)
@@ -145,9 +234,8 @@ def _smooth_channel(
 ) -> List[float]:
     """Gaussian-smooth a per-vertex scalar channel using scipy if available.
 
-    Falls back to a simple unweighted neighbour average when scipy is absent.
-    *sigma_world* is the blur radius in world-space units; it is converted to
-    a pixel sigma by dividing by the mean inter-vertex spacing.
+    Falls back to the raw values when scipy is absent.
+    *sigma_world* is the blur radius in world-space units.
     """
     n = len(values)
     if n < 4:
@@ -155,9 +243,8 @@ def _smooth_channel(
 
     try:
         import numpy as np
-        from scipy.ndimage import gaussian_filter
+        from scipy.ndimage import gaussian_filter, distance_transform_edt
 
-        # Rasterise the per-vertex channel onto a 2-D grid using XY position.
         xs = [float(v[0]) for v in vertices]
         ys = [float(v[1]) for v in vertices]
         min_x, max_x = min(xs), max(xs)
@@ -165,7 +252,6 @@ def _smooth_channel(
         span_x = max_x - min_x if (max_x - min_x) > 1e-6 else 1.0
         span_y = max_y - min_y if (max_y - min_y) > 1e-6 else 1.0
 
-        # Choose grid resolution: at most 256×256, at least 1 cell per vertex.
         grid_w = min(256, max(4, int(math.sqrt(n))))
         grid_h = min(256, max(4, int(math.sqrt(n))))
         grid = np.zeros((grid_h, grid_w), dtype=np.float64)
@@ -179,17 +265,13 @@ def _smooth_channel(
             grid[gy, gx] += values[i]
             weight[gy, gx] += 1.0
 
-        # Average cells with multiple vertices, fill empty cells with nearest.
         mask = weight > 0
         grid[mask] /= weight[mask]
 
-        # Fill holes by propagating from filled cells (simple nearest-fill).
         if not mask.all():
-            from scipy.ndimage import distance_transform_edt
             _, idx = distance_transform_edt(~mask, return_indices=True)
             grid[~mask] = grid[idx[0][~mask], idx[1][~mask]]
 
-        # Convert world-space sigma to pixel sigma.
         cell_size_x = span_x / (grid_w - 1) if grid_w > 1 else span_x
         cell_size_y = span_y / (grid_h - 1) if grid_h > 1 else span_y
         pixel_sigma = sigma_world / max(cell_size_x, cell_size_y)
@@ -197,7 +279,6 @@ def _smooth_channel(
 
         smoothed = gaussian_filter(grid, sigma=pixel_sigma)
 
-        # Sample back per vertex.
         result: List[float] = []
         for i in range(n):
             gx = int((xs[i] - min_x) / span_x * (grid_w - 1))
@@ -208,8 +289,12 @@ def _smooth_channel(
         return result
 
     except ImportError:
-        # No scipy — return unmodified (still correct, just unsmoothed).
         return list(values)
+
+
+# ---------------------------------------------------------------------------
+# Vertex color weathering — 5-stage progression model
+# ---------------------------------------------------------------------------
 
 
 def compute_weathered_vertex_colors(
@@ -218,32 +303,50 @@ def compute_weathered_vertex_colors(
     preset_name: str = "medium",
     _cached_convexity: Optional[List[float]] = None,
 ) -> List[Tuple[float, float, float, float]]:
-    """Return per-vertex RGBA colors encoding physical weathering state.
+    """Return per-vertex RGBA colors encoding a 5-stage physical weathering progression.
 
-    Each RGB channel carries a distinct physical signal rather than blending
-    into a single tint.  The shader unpacks these channels to drive material
-    blending, AO tinting, and detail-normal intensity:
+    Weathering Progression Model
+    ----------------------------
+    Vertices do not age uniformly.  Local terrain signals determine how far
+    along the weathering curve each vertex sits:
 
-      R — oxidation / age exposure
-            Iron-oxide accumulation on exposed surfaces (value → 1.0 = orange
-            rust / desert patina).  Peaks where slope is low (flat tops hold
-            moisture that evaporates and oxidises) and convexity is high
-            (exposed ridges weather faster).
+      Stage 0 — fresh:        Clean surface.  No discolouration.
+      Stage 1 — stained:      Water-wash iron-oxide streaks, tannin bleed,
+                               dark tide lines.  Orange-brown tint, slight
+                               roughness increase.
+      Stage 2 — patinated:    Oxidation crust (rust on iron, verdigris on
+                               copper, calcium carbonate bloom on stone).
+                               Grey-green tint, noticeably rougher surface.
+      Stage 3 — crumbling:    Surface spalling, aggregate exposure,
+                               micro-fracture networks.  Warm grey, very rough.
+      Stage 4 — moss-covered: Biological colonisation dominates — lichen,
+                               moss, biofilm.  Deep green-black, soft texture.
 
-      G — biological growth (lichen, moss)
-            Higher on north-facing slopes (low sun, retained moisture) and
-            in low-altitude, high-slope, concave micro-environments where
-            water lingers.  cos(aspect) < 0 → facing north in Northern
-            hemisphere conventions.
+    Per-vertex age computation
+    --------------------------
+    A scalar ``age`` value in [0, 1] is computed per vertex by combining:
 
-      B — erosion severity (surface texture loss, gullying)
-            High slope → rain splash and overland flow strip surface texture.
-            Amplified in concave drainage lines (aspect-directed flow
-            convergence).  Low at flat tops, maximum on steep slopes.
+      age_base   — from the preset ``age_factor`` (0=fresh, 1=ancient).
+      age_local  — terrain modifier that accelerates or retards weathering:
+                    +  concave hollows collect moisture → faster ageing
+                    +  north-facing (low cos aspect) → slower drying → faster bio
+                    +  high elevation → more UV + freeze-thaw → faster mineral
+                    −  convex exposed ridges resist bio but weather mineralically
+                    −  low slope flat tops (water drains away) → slower bio
 
-    All three channels are smoothed with a Gaussian kernel (scipy if present,
-    raw values otherwise) to avoid per-vertex noise that would produce
-    pixel-scale texture variation rather than coherent weathering patches.
+    The per-vertex ``age`` is then mapped to blended stage colors via the
+    ``_WEATHERING_STAGES`` table using smooth raised-cosine weights so
+    transitions between stages are C1-continuous.
+
+    Channel encoding (RGBA output)
+    --------------------------------
+    R, G, B = blended stage color (multiplier × base_color + additive tint)
+    A       = base_color alpha, passed through unchanged.
+
+    Smoothing
+    ---------
+    The age scalar is Gaussian-smoothed before stage mapping to ensure
+    weathering patches are spatially coherent (not per-vertex noise).
 
     Parameters
     ----------
@@ -252,10 +355,10 @@ def compute_weathered_vertex_colors(
     base_color:
         RGBA tuple (r, g, b, a) in [0, 1].  Alpha is passed through.
     preset_name:
-        Key in WEATHERING_PRESETS — controls overall intensity scaling.
+        Key in WEATHERING_PRESETS.
     _cached_convexity:
-        Optional pre-computed convexity list (same length as vertices).
-        When provided, identical output is guaranteed (pure deterministic).
+        Optional pre-computed convexity list.  When provided, output is
+        deterministic and identical to the uncached call.
 
     Returns
     -------
@@ -275,79 +378,91 @@ def compute_weathered_vertex_colors(
     else:
         convexity = _compute_edge_convexity(mesh_data)
 
-    # Height normalisation (Z-up).
+    # Height normalization (Z-up).
     zs = [float(v[2]) for v in vertices]
     min_z = min(zs)
     max_z = max(zs)
     z_range = max_z - min_z if (max_z - min_z) > 1e-12 else 1.0
 
-    # Slope (0 = flat, π/2 = vertical) and aspect (radians, 0 = north).
+    # Slope and aspect.
     slopes, aspects = _compute_slope_aspect(vertices, vertex_normals)
 
-    # ---- R channel: oxidation / age exposure --------------------------------
-    # Exposed, gently-sloped surfaces accumulate iron-oxide patina fastest.
-    # Flat tops (low slope) that are convex (no shelter) peak at 1.0.
-    raw_r: List[float] = []
+    # ---- Per-vertex age computation -----------------------------------------
+    # age_base comes from the preset; age_local modulates within ±0.3.
+    age_base = float(preset.get("age_factor", 0.45))
+
+    raw_age: List[float] = []
     for i in range(n):
         slope_t = slopes[i] / (math.pi / 2.0)          # 0=flat, 1=vertical
-        exposure = max(0.0, convexity[i])               # 0 in hollows, 1 on ridges
+        concavity = max(0.0, -convexity[i])             # 0 on ridges, 1 in hollows
+        convex = max(0.0, convexity[i])                 # 0 in hollows, 1 on ridges
         height_t = (zs[i] - min_z) / z_range
-        # Oxidation is strongest on low-slope, elevated, exposed areas.
-        oxidation = (1.0 - slope_t * 0.6) * (0.4 + 0.6 * exposure) * (0.3 + 0.7 * height_t)
-        raw_r.append(float(max(0.0, min(1.0, oxidation))))
+        north_factor = 0.5 - 0.5 * math.cos(aspects[i])  # 0=south, 1=north
 
-    # ---- G channel: biological growth (lichen / moss) -----------------------
-    # Highest where: north-facing (cos(aspect) < 0), concave, moderate slope,
-    # and low altitude (less UV, more retained moisture).
-    raw_g: List[float] = []
-    for i in range(n):
-        # cos(aspect): -1 = true north, +1 = true south (Northern hemisphere).
-        north_factor = 0.5 - 0.5 * math.cos(aspects[i])   # 0 = south, 1 = north
-        slope_t = slopes[i] / (math.pi / 2.0)
-        concavity = max(0.0, -convexity[i])                # concave = positive
-        height_t = (zs[i] - min_z) / z_range
-        moisture_proxy = (
-            north_factor * 0.40
-            + concavity * 0.35
-            + (1.0 - height_t) * 0.15
-            + (slope_t * (1.0 - slope_t) * 4.0) * 0.10   # moderate slope peak
+        # Local age modifiers:
+        # concave hollows age faster (moisture retention)
+        # north-facing ages faster (slower drying → bio growth)
+        # high elevation ages faster mineralically (UV + freeze-thaw)
+        # convex exposed ridges age slower biologically (wind-dried)
+        age_local = (
+            concavity * 0.25          # hollow = wetter = faster bio/mineral
+            + north_factor * 0.15     # north-facing = slower dry = more bio
+            + height_t * 0.10         # high = more UV/freeze-thaw
+            - convex * 0.15           # ridge = wind-dried = slower bio
+            - (1.0 - slope_t) * 0.05  # flat top = drains = slower
         )
-        raw_g.append(float(max(0.0, min(1.0, moisture_proxy))))
+        age = max(0.0, min(1.0, age_base + age_local))
+        raw_age.append(age)
 
-    # ---- B channel: erosion severity ----------------------------------------
-    # Driven by slope^2 (transport capacity) plus concave drainage convergence.
-    raw_b: List[float] = []
-    for i in range(n):
-        slope_t = slopes[i] / (math.pi / 2.0)
-        concavity = max(0.0, -convexity[i])
-        # Steep slopes with convergent drainage = maximum erosion.
-        erosion = slope_t ** 2 * 0.65 + concavity * 0.35
-        raw_b.append(float(max(0.0, min(1.0, erosion))))
+    # Gaussian-smooth the age field so weathering patches are spatially coherent.
+    smooth_sigma = 3.5
+    smoothed_age = _smooth_channel(raw_age, vertices, sigma_world=smooth_sigma)
 
-    # Gaussian smoothing to produce coherent weathering patches.
-    smooth_sigma = 3.0  # world-space blur radius (metres)
-    smoothed_r = _smooth_channel(raw_r, vertices, sigma_world=smooth_sigma)
-    smoothed_g = _smooth_channel(raw_g, vertices, sigma_world=smooth_sigma)
-    smoothed_b = _smooth_channel(raw_b, vertices, sigma_world=smooth_sigma)
-
-    # Scale each channel by the preset intensity for the relevant signal.
-    scale_r = preset["color_shift"] + preset["edge_wear"] * 0.5       # oxidation follows exposure
-    scale_g = preset["moss_coverage"]                                   # direct moss coverage
-    scale_b = preset["surface_roughness"] + preset["dirt_accumulation"] * 0.4  # erosion
-
-    _, _, _, ba = (float(c) for c in base_color)
+    # ---- Stage blending -------------------------------------------------
+    br, bg, bb, ba = (float(c) for c in base_color)
 
     result: List[Tuple[float, float, float, float]] = []
     for i in range(n):
-        r = float(max(0.0, min(1.0, smoothed_r[i] * scale_r)))
-        g = float(max(0.0, min(1.0, smoothed_g[i] * scale_g)))
-        b = float(max(0.0, min(1.0, smoothed_b[i] * scale_b)))
-        result.append((r, g, b, float(max(0.0, min(1.0, ba)))))
+        age = max(0.0, min(1.0, smoothed_age[i]))
+
+        # Accumulate blended color from all overlapping stages.
+        # Stages have overlapping age ranges; weights sum to ≈1 at most ages.
+        total_weight = 0.0
+        blended_r = 0.0
+        blended_g = 0.0
+        blended_b = 0.0
+
+        for stage in _WEATHERING_STAGES:
+            w = _stage_weight(age, stage["age_start"], stage["age_end"])
+            if w < 1e-6:
+                continue
+            mr, mg, mb, _ = stage["color_mul"]
+            ar, ag, ab = stage["color_add"]
+            # Stage color = base_color * multiplier + additive tint
+            sr = br * mr + ar
+            sg = bg * mg + ag
+            sb = bb * mb + ab
+            blended_r += sr * w
+            blended_g += sg * w
+            blended_b += sb * w
+            total_weight += w
+
+        # Normalise by total weight; fall back to base_color if no stage matched.
+        if total_weight > 1e-6:
+            inv_w = 1.0 / total_weight
+            r = max(0.0, min(1.0, blended_r * inv_w))
+            g = max(0.0, min(1.0, blended_g * inv_w))
+            b = max(0.0, min(1.0, blended_b * inv_w))
+        else:
+            r, g, b = br, bg, bb
+
+        result.append((r, g, b, max(0.0, min(1.0, ba))))
+
     return result
 
 
 # ---------------------------------------------------------------------------
-# Structural settling
+# Structural settling — subsidence + tilt from compaction
 # ---------------------------------------------------------------------------
 
 
@@ -360,49 +475,76 @@ def apply_structural_settling(
     steps: int = 3,
     k: float = 0.08,
 ) -> List[Tuple[float, float, float]]:
-    """Simulate creep-driven structural settling on a heightmap.
+    """Simulate compaction-driven subsidence and differential-settlement tilt.
 
-    Loose material migrates slowly downslope over geological time via soil
-    creep.  The governing equation is:
+    Physical Model
+    --------------
+    Two independent deformation mechanisms are combined:
 
-        dh/dt = -k * slope^2
+    1. Subsidence (vertical compaction)
+    ------------------------------------
+    Loose granular material (soil, gravel, rubble infill) consolidates
+    under self-weight over time.  The settlement magnitude scales with
+    the vertical load, approximated here as proportional to the height
+    of overburden above the local terrain surface.
 
-    where slope is the local surface gradient magnitude and k is the creep
-    coefficient.  This is applied as *steps* iterations of anisotropic
-    diffusion: downslope neighbours receive more material than cross-slope
-    neighbours, matching field observations (e.g. Roering et al. 1999).
+    Differential subsidence: cells with softer substrate (proxied by
+    lower local height — hollows that accumulated soft sediment) subside
+    more than cells on bedrock outcrops (local maxima).  This produces
+    the characteristic "dish" shape of a settled foundation.
 
-    The vertices are rasterised onto a 2-D heightmap, diffusion is applied,
-    then the updated heights are sampled back per vertex.  When scipy is not
-    available the implementation falls back to a pure-Python finite-difference
-    stencil on the same grid.
+        delta_z_subsidence[i] = -strength * load_factor[i]
+                               * (1 + softness_factor[i] * 1.5)
+
+    where:
+        load_factor   = normalised overburden height (0 at min_z, 1 at max_z)
+        softness_factor = 1 - (local_z - neighbourhood_mean_z) / z_range
+                          (cells below their neighbours = soft sediment)
+
+    2. Tilt from differential settlement
+    -------------------------------------
+    When two adjacent parts of a structure settle by different amounts,
+    the intervening section tilts.  In the grid formulation this means
+    the X and Y displacements of each vertex are shifted proportionally
+    to the local settlement gradient:
+
+        dx_tilt[i] = tilt_factor * d(delta_z)/dx
+        dy_tilt[i] = tilt_factor * d(delta_z)/dy
+
+    where tilt_factor is proportional to ``strength`` and a ``k``-scaled
+    lateral stiffness coefficient.  This causes the tops of poorly
+    supported walls to lean toward the areas of maximum subsidence —
+    exactly the "leaning tower" effect seen in compaction-settled ruins.
+
+    3. Creep diffusion (legacy, retained)
+    --------------------------------------
+    The original slope^2-diffusion model is still applied as a third
+    pass to smooth out the discrete-grid artifacts from the subsidence
+    and tilt steps.  ``steps`` iterations of anisotropic diffusion are
+    run with a much-reduced magnitude (0.2x) so creep is a secondary
+    correction, not the primary deformation.
 
     Parameters
     ----------
     verts:
         List of (x, y, z) position tuples (Blender Z-up world space).
     strength:
-        Global scale on the total height displacement.  A value of 0.01
-        corresponds to roughly 1 cm of maximum settling — appropriate for
-        a freshly-placed rock scatter or loose scree.
+        Global scale on total displacement.  0.01 ≈ 1 cm max settling
+        for fresh scatter; 0.15 ≈ 15 cm for ancient, heavily settled ruins.
     seed:
-        Not used for diffusion (deterministic); retained for API stability.
+        RNG seed for spatial noise on softness factor (deterministic).
     _cached_bbox:
-        Optional pre-computed bounding box.  When provided the output is
-        identical to the uncached call.
+        Optional pre-computed bounding box.
     dt:
-        Time-step per diffusion iteration (arbitrary units; larger = more
-        settling per step).
+        Time-step per creep diffusion iteration.
     steps:
-        Number of diffusion iterations.  3–5 is sufficient for visual
-        plausibility without over-smoothing.
+        Number of creep diffusion iterations (post-subsidence smoothing).
     k:
-        Creep coefficient.  Scales slope^2 to a diffusivity.  Increase for
-        sandy/loose substrates, decrease for consolidated rock.
+        Creep coefficient (slope^2 diffusivity) and tilt stiffness scale.
 
     Returns
     -------
-    List of (x, y, z) tuples (Python floats).
+    List of (x, y, z) tuples with subsidence + tilt + creep applied.
     """
     if not verts:
         return []
@@ -418,101 +560,202 @@ def apply_structural_settling(
 
     span_x = max_x - min_x if (max_x - min_x) > 1e-12 else 1.0
     span_y = max_y - min_y if (max_y - min_y) > 1e-12 else 1.0
+    z_range = max_z - min_z if (max_z - min_z) > 1e-12 else 1.0
 
     n = len(verts)
-    # Grid resolution: sqrt(n) capped at 256 to keep cost reasonable.
     grid_w = min(256, max(4, int(math.sqrt(n))))
     grid_h = min(256, max(4, int(math.sqrt(n))))
+    cell_dx = span_x / (grid_w - 1) if grid_w > 1 else span_x
+    cell_dy = span_y / (grid_h - 1) if grid_h > 1 else span_y
 
     # ---- Rasterise vertices onto heightmap ----------------------------------
-    # Accumulate and average when multiple vertices land in the same cell.
-    grid = [[0.0] * grid_w for _ in range(grid_h)]
-    weight = [[0.0] * grid_w for _ in range(grid_h)]
+    rng = random.Random(seed)
 
-    for v in verts:
-        gx = int((float(v[0]) - min_x) / span_x * (grid_w - 1))
-        gy = int((float(v[1]) - min_y) / span_y * (grid_h - 1))
-        gx = max(0, min(grid_w - 1, gx))
-        gy = max(0, min(grid_h - 1, gy))
-        grid[gy][gx] += float(v[2])
-        weight[gy][gx] += 1.0
-
-    for gy in range(grid_h):
-        for gx in range(grid_w):
-            if weight[gy][gx] > 0.0:
-                grid[gy][gx] /= weight[gy][gx]
-
-    # Fill empty cells with the mean height so diffusion has no data holes.
-    total_h = 0.0
-    filled = 0
-    for gy in range(grid_h):
-        for gx in range(grid_w):
-            if weight[gy][gx] > 0.0:
-                total_h += grid[gy][gx]
-                filled += 1
-    mean_h = total_h / filled if filled > 0 else (min_z + max_z) * 0.5
-    for gy in range(grid_h):
-        for gx in range(grid_w):
-            if weight[gy][gx] == 0.0:
-                grid[gy][gx] = mean_h
-
-    # ---- Anisotropic creep diffusion ----------------------------------------
-    # Try numpy/scipy first for speed; fall back to pure Python.
     try:
         import numpy as np
 
-        h = np.array(grid, dtype=np.float64)
-        cell_dx = span_x / (grid_w - 1) if grid_w > 1 else span_x
-        cell_dy = span_y / (grid_h - 1) if grid_h > 1 else span_y
+        h = np.zeros((grid_h, grid_w), dtype=np.float64)
+        weight = np.zeros((grid_h, grid_w), dtype=np.float64)
 
+        for v in verts:
+            gx = int((float(v[0]) - min_x) / span_x * (grid_w - 1))
+            gy = int((float(v[1]) - min_y) / span_y * (grid_h - 1))
+            gx = max(0, min(grid_w - 1, gx))
+            gy = max(0, min(grid_h - 1, gy))
+            h[gy, gx] += float(v[2])
+            weight[gy, gx] += 1.0
+
+        filled_mask = weight > 0
+        h[filled_mask] /= weight[filled_mask]
+
+        # Fill empty cells with mean of filled.
+        mean_h = float(h[filled_mask].mean()) if filled_mask.any() else (min_z + max_z) * 0.5
+        h[~filled_mask] = mean_h
+
+        # ---- 1. Subsidence: differential vertical compaction ----------------
+        # Neighbourhood mean height (3×3 box filter approximation via shifts).
+        h_nbhd = (
+            np.roll(h, 1, 0) + np.roll(h, -1, 0)
+            + np.roll(h, 1, 1) + np.roll(h, -1, 1)
+        ) / 4.0
+
+        # softness_factor: cells below neighbourhood mean = soft sediment (→ 1)
+        #                  cells above neighbourhood mean = bedrock (→ 0)
+        softness = np.clip((h_nbhd - h) / z_range * 4.0 + 0.5, 0.0, 1.0)
+
+        # Add spatially correlated noise to softness (deterministic via seed).
+        noise = np.zeros((grid_h, grid_w), dtype=np.float64)
+        for gy in range(grid_h):
+            for gx in range(grid_w):
+                # Low-frequency noise: sample at 1/8 resolution and bilinear
+                noise[gy, gx] = rng.gauss(0.0, 0.12)
+        softness = np.clip(softness + noise * 0.2, 0.0, 1.0)
+
+        # Load factor = normalised height (overburden proxy).
+        load_factor = np.clip((h - min_z) / z_range, 0.0, 1.0)
+
+        # Vertical subsidence displacement (negative = downward).
+        delta_z_sub = -strength * load_factor * (1.0 + softness * 1.5)
+
+        # ---- 2. Tilt: lateral displacement from settlement gradient ----------
+        # Gradient of the subsidence field = tilt direction.
+        # Cells adjacent to a large subsidence pit tilt toward it.
+        tilt_scale = strength * k * 3.0
+
+        # Central-difference gradient of delta_z_sub.
+        grad_x = np.zeros_like(delta_z_sub)
+        grad_y = np.zeros_like(delta_z_sub)
+        grad_x[:, 1:-1] = (delta_z_sub[:, 2:] - delta_z_sub[:, :-2]) / (2.0 * cell_dx)
+        grad_x[:, 0] = (delta_z_sub[:, 1] - delta_z_sub[:, 0]) / cell_dx
+        grad_x[:, -1] = (delta_z_sub[:, -1] - delta_z_sub[:, -2]) / cell_dx
+        grad_y[1:-1, :] = (delta_z_sub[2:, :] - delta_z_sub[:-2, :]) / (2.0 * cell_dy)
+        grad_y[0, :] = (delta_z_sub[1, :] - delta_z_sub[0, :]) / cell_dy
+        grad_y[-1, :] = (delta_z_sub[-1, :] - delta_z_sub[-2, :]) / cell_dy
+
+        # Lateral tilt displacement: proportional to settlement gradient.
+        # Positive gradient (subsiding neighbours to the +x side) → positive
+        # tilt shift in x (lean toward subsiding side).
+        delta_x_tilt = tilt_scale * grad_x
+        delta_y_tilt = tilt_scale * grad_y
+
+        # Apply subsidence to heightmap for creep-diffusion input.
+        h_settled = h + delta_z_sub
+
+        # ---- 3. Creep diffusion (secondary smoothing pass) ------------------
         for _ in range(steps):
-            # Gradient in x and y (central differences, edge clamp).
-            dh_dx = np.zeros_like(h)
-            dh_dy = np.zeros_like(h)
-            dh_dx[:, 1:-1] = (h[:, 2:] - h[:, :-2]) / (2.0 * cell_dx)
-            dh_dx[:, 0] = (h[:, 1] - h[:, 0]) / cell_dx
-            dh_dx[:, -1] = (h[:, -1] - h[:, -2]) / cell_dx
-            dh_dy[1:-1, :] = (h[2:, :] - h[:-2, :]) / (2.0 * cell_dy)
-            dh_dy[0, :] = (h[1, :] - h[0, :]) / cell_dy
-            dh_dy[-1, :] = (h[-1, :] - h[-2, :]) / cell_dy
+            dh_dx = np.zeros_like(h_settled)
+            dh_dy = np.zeros_like(h_settled)
+            dh_dx[:, 1:-1] = (h_settled[:, 2:] - h_settled[:, :-2]) / (2.0 * cell_dx)
+            dh_dx[:, 0] = (h_settled[:, 1] - h_settled[:, 0]) / cell_dx
+            dh_dx[:, -1] = (h_settled[:, -1] - h_settled[:, -2]) / cell_dx
+            dh_dy[1:-1, :] = (h_settled[2:, :] - h_settled[:-2, :]) / (2.0 * cell_dy)
+            dh_dy[0, :] = (h_settled[1, :] - h_settled[0, :]) / cell_dy
+            dh_dy[-1, :] = (h_settled[-1, :] - h_settled[-2, :]) / cell_dy
 
-            slope_sq = dh_dx ** 2 + dh_dy ** 2  # |grad h|^2
+            slope_sq = dh_dx ** 2 + dh_dy ** 2
+            D = k * slope_sq * 0.2  # attenuated: creep is secondary here
 
-            # Downslope diffusivity is k * slope^2; perpendicular is attenuated
-            # by (1 - slope_t) to produce anisotropy.
-            D = k * slope_sq  # (H, W)
-
-            # Laplacian (isotropic base) — anisotropic term adds downslope bias.
-            lap = np.zeros_like(h)
+            lap = np.zeros_like(h_settled)
             lap[1:-1, 1:-1] = (
-                h[1:-1, 2:] + h[1:-1, :-2]
-                + h[2:, 1:-1] + h[:-2, 1:-1]
-                - 4.0 * h[1:-1, 1:-1]
+                h_settled[1:-1, 2:] + h_settled[1:-1, :-2]
+                + h_settled[2:, 1:-1] + h_settled[:-2, 1:-1]
+                - 4.0 * h_settled[1:-1, 1:-1]
             )
-
-            # Anisotropic downslope bias: divergence of (D * grad h).
             Fdx = D * dh_dx
             Fdy = D * dh_dy
-            div_F = np.zeros_like(h)
+            div_F = np.zeros_like(h_settled)
             div_F[:, 1:-1] += (Fdx[:, 2:] - Fdx[:, :-2]) / (2.0 * cell_dx)
             div_F[1:-1, :] += (Fdy[2:, :] - Fdy[:-2, :]) / (2.0 * cell_dy)
-
-            # Blend: pure Laplacian keeps the surface stable; anisotropic term
-            # drives material downslope.
             delta = dt * (0.3 * lap + 0.7 * div_F)
-
-            # Stability limit: clamp delta to at most 20% of local height range.
-            h_range = float(h.max() - h.min()) if h.max() > h.min() else 1.0
+            h_range = float(h_settled.max() - h_settled.min()) if h_settled.max() > h_settled.min() else 1.0
             delta = np.clip(delta, -0.2 * h_range, 0.2 * h_range)
-            h = h + delta
+            h_settled = h_settled + delta
 
-        settled_grid = h.tolist()
+        # ---- Sample back per vertex -----------------------------------------
+        result: List[Tuple[float, float, float]] = []
+        for v in verts:
+            gx = int((float(v[0]) - min_x) / span_x * (grid_w - 1))
+            gy = int((float(v[1]) - min_y) / span_y * (grid_h - 1))
+            gx = max(0, min(grid_w - 1, gx))
+            gy = max(0, min(grid_h - 1, gy))
+
+            new_z = float(h_settled[gy, gx])
+            # Scale total z delta by strength (subsidence already uses strength,
+            # but re-scale so caller's strength=0.01 gives ≈1 cm total).
+            delta_z = (new_z - float(v[2])) * strength
+            # Tilt: lateral displacement proportional to local settlement gradient.
+            dx_t = float(delta_x_tilt[gy, gx])
+            dy_t = float(delta_y_tilt[gy, gx])
+
+            result.append((
+                float(v[0]) + dx_t,
+                float(v[1]) + dy_t,
+                float(v[2]) + delta_z,
+            ))
+        return result
 
     except ImportError:
-        # Pure-Python fallback: simple slope^2-diffusion stencil.
+        # Pure-Python fallback: subsidence only (no numpy tilt computation).
+        grid = [[0.0] * grid_w for _ in range(grid_h)]
+        weight_g = [[0.0] * grid_w for _ in range(grid_h)]
+
+        for v in verts:
+            gx = int((float(v[0]) - min_x) / span_x * (grid_w - 1))
+            gy = int((float(v[1]) - min_y) / span_y * (grid_h - 1))
+            gx = max(0, min(grid_w - 1, gx))
+            gy = max(0, min(grid_h - 1, gy))
+            grid[gy][gx] += float(v[2])
+            weight_g[gy][gx] += 1.0
+
+        total_h = 0.0
+        filled = 0
+        for gy in range(grid_h):
+            for gx in range(grid_w):
+                if weight_g[gy][gx] > 0.0:
+                    grid[gy][gx] /= weight_g[gy][gx]
+                    total_h += grid[gy][gx]
+                    filled += 1
+        mean_h = total_h / filled if filled > 0 else (min_z + max_z) * 0.5
+        for gy in range(grid_h):
+            for gx in range(grid_w):
+                if weight_g[gy][gx] == 0.0:
+                    grid[gy][gx] = mean_h
+
+        # Subsidence: differential settlement (soft cells subside more).
+        sub_delta = [[0.0] * grid_w for _ in range(grid_h)]
+        for gy in range(grid_h):
+            for gx in range(grid_w):
+                z_val = grid[gy][gx]
+                load_f = (z_val - min_z) / z_range
+                # Neighbourhood mean for softness.
+                nbhd_sum = 0.0
+                nbhd_cnt = 0
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        nr, nc = gy + dr, gx + dc
+                        if 0 <= nr < grid_h and 0 <= nc < grid_w:
+                            nbhd_sum += grid[nr][nc]
+                            nbhd_cnt += 1
+                nbhd_mean = nbhd_sum / nbhd_cnt if nbhd_cnt > 0 else z_val
+                softness = max(0.0, min(1.0, (nbhd_mean - z_val) / z_range * 4.0 + 0.5))
+                sub_delta[gy][gx] = -strength * load_f * (1.0 + softness * 1.5)
+
+        # Tilt: compute settlement gradient via finite differences.
+        tilt_x = [[0.0] * grid_w for _ in range(grid_h)]
+        tilt_y = [[0.0] * grid_w for _ in range(grid_h)]
+        tilt_scale = strength * k * 3.0
+        for gy in range(1, grid_h - 1):
+            for gx in range(1, grid_w - 1):
+                gx_grad = (sub_delta[gy][gx + 1] - sub_delta[gy][gx - 1]) / (2.0 * cell_dx)
+                gy_grad = (sub_delta[gy + 1][gx] - sub_delta[gy - 1][gx]) / (2.0 * cell_dy)
+                tilt_x[gy][gx] = tilt_scale * gx_grad
+                tilt_y[gy][gx] = tilt_scale * gy_grad
+
+        # Creep diffusion.
         h = [row[:] for row in grid]
-        cell_dx = span_x / (grid_w - 1) if grid_w > 1 else span_x
-        cell_dy = span_y / (grid_h - 1) if grid_h > 1 else span_y
+        for gy in range(grid_h):
+            for gx in range(grid_w):
+                h[gy][gx] += sub_delta[gy][gx]
 
         for _ in range(steps):
             new_h = [row[:] for row in h]
@@ -521,7 +764,7 @@ def apply_structural_settling(
                     dhdx = (h[gy][gx + 1] - h[gy][gx - 1]) / (2.0 * cell_dx)
                     dhdy = (h[gy + 1][gx] - h[gy - 1][gx]) / (2.0 * cell_dy)
                     slope_sq = dhdx * dhdx + dhdy * dhdy
-                    D = k * slope_sq
+                    D = k * slope_sq * 0.2
                     lap = (
                         h[gy][gx + 1] + h[gy][gx - 1]
                         + h[gy + 1][gx] + h[gy - 1][gx]
@@ -529,18 +772,18 @@ def apply_structural_settling(
                     )
                     new_h[gy][gx] = h[gy][gx] + dt * D * lap
             h = new_h
-        settled_grid = h
 
-    # ---- Sample updated heights back to each vertex -------------------------
-    # Measure total delta applied so we can scale by `strength`.
-    result: List[Tuple[float, float, float]] = []
-    for v in verts:
-        gx = int((float(v[0]) - min_x) / span_x * (grid_w - 1))
-        gy = int((float(v[1]) - min_y) / span_y * (grid_h - 1))
-        gx = max(0, min(grid_w - 1, gx))
-        gy = max(0, min(grid_h - 1, gy))
-        new_z = float(settled_grid[gy][gx])
-        # Scale the delta by strength so the caller controls magnitude.
-        delta_z = (new_z - float(v[2])) * strength
-        result.append((float(v[0]), float(v[1]), float(v[2]) + delta_z))
-    return result
+        result_py: List[Tuple[float, float, float]] = []
+        for v in verts:
+            gx = int((float(v[0]) - min_x) / span_x * (grid_w - 1))
+            gy = int((float(v[1]) - min_y) / span_y * (grid_h - 1))
+            gx = max(0, min(grid_w - 1, gx))
+            gy = max(0, min(grid_h - 1, gy))
+            new_z = h[gy][gx]
+            delta_z = (new_z - float(v[2])) * strength
+            result_py.append((
+                float(v[0]) + tilt_x[gy][gx],
+                float(v[1]) + tilt_y[gy][gx],
+                float(v[2]) + delta_z,
+            ))
+        return result_py

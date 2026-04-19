@@ -3511,10 +3511,23 @@ def handle_carve_river(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _clamp01(value: float) -> float:
+    """Clamp a scalar float to [0, 1].
+
+    Accepts any numeric type by coercing through float(); raises TypeError
+    for non-numeric inputs rather than silently returning a wrong value.
+    Used throughout road/river profile math — must be zero-overhead.
+    """
     return max(0.0, min(1.0, float(value)))
 
 
 def _smootherstep(value: float) -> float:
+    """Smootherstep C2-continuous transition (Ken Perlin / UE5 convention).
+
+    Returns 0 for value <= 0, 1 for value >= 1, with zero first and second
+    derivative at both endpoints.  Stronger S-curve than smoothstep; avoids
+    the perceptible inflection that Hermite smoothstep shows in terrain blend
+    zones.  Formula: 6t^5 - 15t^4 + 10t^3 (Perlin 2002).
+    """
     x = _clamp01(value)
     return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
 
@@ -6224,6 +6237,22 @@ def handle_carve_water_basin(params: dict) -> dict:
     seed_param = params.get("seed")
 
     # ------------------------------------------------------------------
+    # World-space coordinate arrays — must be defined before any mask or
+    # flood-fill that references them.
+    # ------------------------------------------------------------------
+    _tw = max(float(terrain_width), 1e-9)
+    _th = max(float(terrain_height_dim), 1e-9)
+    _ox = float(obj.location.x)
+    _oy = float(obj.location.y)
+    _col_w = _ox + np.arange(cols, dtype=np.float64) / max(cols - 1, 1) * _tw - _tw * 0.5
+    _row_w = _oy + np.arange(rows, dtype=np.float64) / max(rows - 1, 1) * _th - _th * 0.5
+    cell_area = (_tw / max(cols - 1, 1)) * (_th / max(rows - 1, 1))
+    outer_radius = radius + shore_width
+    shoreline_radius = max(radius * 0.94, 1.0)
+    dx = _col_w[np.newaxis, :] - cx
+    dy = (_row_w[:, np.newaxis] - cy) / aspect_y
+
+    # ------------------------------------------------------------------
     # Protected zone mask — AABB list, world space
     # ------------------------------------------------------------------
     pz_mask = np.zeros((rows, cols), dtype=bool)
@@ -6248,6 +6277,8 @@ def handle_carve_water_basin(params: dict) -> dict:
     seed_col = int(np.clip(round((cx - (_ox - _tw * 0.5)) / (_tw / max(cols - 1, 1))), 0, cols - 1))
     seed_row = int(np.clip(round((cy - (_oy - _th * 0.5)) / (_th / max(rows - 1, 1))), 0, rows - 1))
     max_radius_cells = int(math.ceil(outer_radius / cell_size_approx)) + 2
+    # Pre-compute dist for flood-fill radius check (uses undistorted distance)
+    dist_raw_pre = np.hypot(dx, dy)
     _flood_mask = _priority_flood_fill_basin(
         heights,
         seed_row=seed_row,
@@ -6255,26 +6286,13 @@ def handle_carve_water_basin(params: dict) -> dict:
         water_level=water_level,
         max_radius_cells=max_radius_cells,
     )
-    basin_contained: bool = bool((_flood_mask & ~(dist <= outer_radius * 1.1)).sum() == 0)
+    basin_contained: bool = bool((_flood_mask & ~(dist_raw_pre <= outer_radius * 1.1)).sum() == 0)
     if not basin_contained and not containment_rim:
         containment_rim = True  # auto-enable to prevent spill
 
     result = heights.copy()
     cells_modified = 0
     beach_rim = max(depth * 0.08, 0.14)
-    outer_radius = radius + shore_width
-    shoreline_radius = max(radius * 0.94, 1.0)
-
-    _tw = max(float(terrain_width), 1e-9)
-    _th = max(float(terrain_height_dim), 1e-9)
-    _ox = float(obj.location.x)
-    _oy = float(obj.location.y)
-    _col_w = _ox + np.arange(cols, dtype=np.float64) / max(cols - 1, 1) * _tw - _tw * 0.5
-    _row_w = _oy + np.arange(rows, dtype=np.float64) / max(rows - 1, 1) * _th - _th * 0.5
-    cell_area = (_tw / max(cols - 1, 1)) * (_th / max(rows - 1, 1))
-
-    dx = _col_w[np.newaxis, :] - cx
-    dy = (_row_w[:, np.newaxis] - cy) / aspect_y
 
     def _ss(x: np.ndarray) -> np.ndarray:
         return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)

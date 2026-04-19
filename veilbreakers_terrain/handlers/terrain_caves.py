@@ -584,20 +584,56 @@ def make_archetype_spec(
 
 @dataclass
 class CaveStructure:
-    """A registered cave anatomy. Analogous to ``CliffStructure``."""
+    """A registered cave anatomy. Analogous to ``CliffStructure``.
+
+    All geometry specification fields are populated by ``pass_caves`` and
+    consumed by downstream geometry / scatter / material passes.
+
+    Fields
+    ------
+    cave_id             : Unique identifier, e.g. ``"cave_0_0_00"``.
+    archetype           : One of the five ``CaveArchetype`` values.
+    spec                : Full archetype parameter block (widths, depths, etc.).
+    entrance_world_pos  : World-space (x, y, z) of the entrance centre.
+    exit_world_pos      : World-space (x, y, z) of the far end of the path,
+                          or ``None`` for blind-ending caves.
+    path_world          : Ordered polyline from entrance to terminus.
+    path_aabb           : (min_x, min_y, min_z, max_x, max_y, max_z) bounding
+                          box of path_world; used for frustum culling.
+    interior_mask       : Boolean (H, W) array — cells inside the cave volume.
+    damp_mask           : Float32 (H, W) dampness field in [0, 1].
+    height_delta        : Float64 (H, W) negative carve delta (non-positive).
+    wall_texture_seed   : Deterministic integer seed used for Worley+Perlin
+                          wall roughness; stored so re-runs are reproducible.
+    entrance_frame      : Dict produced by ``build_cave_entrance_frame``.
+    debris_points       : World-space positions of collapse debris.
+    stalactite_lengths  : Float32 (H, W) Dreybrodt growth lengths per cell.
+    stalagmite_lengths  : Float32 (H, W) Dreybrodt growth lengths per cell.
+    material_hint       : Resolved material string (e.g. ``"limestone"``).
+    tier                : ``"hero"`` (first) or ``"secondary"`` (rest).
+    cell_count          : Number of interior cells carved.
+    volume_m3           : Approximate carved volume in cubic metres.
+    """
 
     cave_id: str
     archetype: CaveArchetype
     spec: CaveArchetypeSpec
     entrance_world_pos: Tuple[float, float, float]
+    exit_world_pos: Optional[Tuple[float, float, float]] = None
     path_world: List[Tuple[float, float, float]] = field(default_factory=list)
+    path_aabb: Optional[Tuple[float, float, float, float, float, float]] = None
     interior_mask: Optional[np.ndarray] = None
     damp_mask: Optional[np.ndarray] = None
     height_delta: Optional[np.ndarray] = None
+    wall_texture_seed: int = 0
     entrance_frame: Optional[Dict] = None
     debris_points: List[Tuple[float, float, float]] = field(default_factory=list)
+    stalactite_lengths: Optional[np.ndarray] = None
+    stalagmite_lengths: Optional[np.ndarray] = None
+    material_hint: Optional[str] = None
     tier: str = "secondary"
     cell_count: int = 0
+    volume_m3: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -864,9 +900,12 @@ def pick_cave_archetype(
         if geology in _GEOLOGY_HINT_MAP:
             scores[_GEOLOGY_HINT_MAP[geology]] += 2.5  # decisive bonus
 
-    # Add a small deterministic jitter so ties resolve per-seed
+    # Add a small deterministic jitter so ties resolve per-seed.
+    # IMPORTANT: Python's hash() is PYTHONHASHSEED-dependent and non-reproducible
+    # across interpreter invocations.  Use sum-of-ord for a stable ordinal tiebreak.
     for k in list(scores.keys()):
-        scores[k] += jitter * (hash(k.value) % 7) * 0.01
+        _ord_hash = sum(ord(c) for c in k.value) % 7
+        scores[k] += jitter * _ord_hash * 0.01
 
     best_archetype, _best_score = max(scores.items(), key=lambda kv: kv[1])
 
@@ -890,6 +929,124 @@ def pick_cave_archetype(
 # ---------------------------------------------------------------------------
 
 
+def _astar_cave_path(
+    height: np.ndarray,
+    start_rc: Tuple[int, int],
+    goal_rc: Tuple[int, int],
+    cell_size: float,
+    *,
+    slope_weight: float = 1.5,
+    wetness: Optional[np.ndarray] = None,
+    rng_jitter: Optional[np.random.Generator] = None,
+) -> List[Tuple[int, int]]:
+    """A* path on the heightmap cost field from ``start_rc`` to ``goal_rc``.
+
+    Cost per step = Euclidean distance (diagonal allowed) + slope penalty.
+
+    The slope penalty discourages paths that run steeply uphill — natural
+    cave passages follow the path of least geological resistance and tend to
+    stay at the same depth or descend.  The ``slope_weight`` multiplier
+    scales the slope penalty relative to step distance.
+
+    When a ``wetness`` array is supplied, wet cells receive a small bonus
+    (cost reduction) so karst / sea-grotto passages prefer drainage channels.
+
+    ``rng_jitter`` adds a tiny random perturbation to each edge cost so
+    multiple caves in the same tile take non-identical routes even when the
+    heightmap is near-flat.  Pass ``None`` to disable (default).
+
+    Returns a list of (row, col) grid coordinates from start to goal.
+    Falls back gracefully to a straight-line path if the search exceeds
+    ``max_nodes`` without finding the goal.
+    """
+    rows, cols = height.shape
+    sr, sc = start_rc
+    gr, gc = goal_rc
+
+    # Heuristic: octile distance (admissible for 8-connectivity)
+    def _heuristic(r: int, c: int) -> float:
+        dr = abs(r - gr)
+        dc = abs(c - gc)
+        return cell_size * (max(dr, dc) + (math.sqrt(2.0) - 1.0) * min(dr, dc))
+
+    import heapq
+
+    # (f_score, g_score, row, col, parent_row, parent_col)
+    open_heap: List[Tuple[float, float, int, int]] = []
+    heapq.heappush(open_heap, (0.0, 0.0, sr, sc))
+
+    g_score: Dict[Tuple[int, int], float] = {(sr, sc): 0.0}
+    came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {(sr, sc): None}
+
+    max_nodes = min(4096, rows * cols)
+    visited = 0
+
+    # 8-connected neighbours: (dr, dc, step_dist_factor)
+    _NEIGHBOURS = [
+        (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
+        (-1, -1, math.sqrt(2.0)), (-1, 1, math.sqrt(2.0)),
+        (1, -1, math.sqrt(2.0)), (1, 1, math.sqrt(2.0)),
+    ]
+
+    while open_heap and visited < max_nodes:
+        f, g, r, c = heapq.heappop(open_heap)
+        visited += 1
+
+        if (r, c) == (gr, gc):
+            break
+
+        if g > g_score.get((r, c), math.inf):
+            continue  # stale entry
+
+        for dr, dc, dist_factor in _NEIGHBOURS:
+            nr, nc = r + dr, c + dc
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                continue
+
+            step_dist = dist_factor * cell_size
+            # Slope cost: penalise uphill steps
+            dh = float(height[nr, nc]) - float(height[r, c])
+            slope_penalty = slope_weight * max(0.0, dh)
+            # Wetness bonus: prefer wet channels (natural dissolution paths)
+            wet_bonus = 0.0
+            if wetness is not None and wetness.shape == height.shape:
+                wet_bonus = float(wetness[nr, nc]) * 0.3 * cell_size
+            # RNG jitter for path variety
+            jitter_cost = 0.0
+            if rng_jitter is not None:
+                jitter_cost = float(rng_jitter.uniform(0.0, 0.05)) * cell_size
+
+            tentative_g = g + step_dist + slope_penalty - wet_bonus + jitter_cost
+            if tentative_g < g_score.get((nr, nc), math.inf):
+                g_score[(nr, nc)] = tentative_g
+                came_from[(nr, nc)] = (r, c)
+                f_new = tentative_g + _heuristic(nr, nc)
+                heapq.heappush(open_heap, (f_new, tentative_g, nr, nc))
+
+    # Reconstruct path from came_from
+    path_cells: List[Tuple[int, int]] = []
+    cur: Optional[Tuple[int, int]] = (gr, gc)
+    while cur is not None and cur in came_from:
+        path_cells.append(cur)
+        cur = came_from[cur]
+    path_cells.reverse()
+
+    # Fallback: straight line if A* didn't reach goal
+    if not path_cells or path_cells[0] != (sr, sc):
+        n_steps = max(4, int(round(math.hypot(gr - sr, gc - sc))))
+        path_cells = []
+        for i in range(n_steps + 1):
+            t = i / float(n_steps)
+            pr = int(round(sr + (gr - sr) * t))
+            pc = int(round(sc + (gc - sc) * t))
+            pr = max(0, min(rows - 1, pr))
+            pc = max(0, min(cols - 1, pc))
+            if not path_cells or path_cells[-1] != (pr, pc):
+                path_cells.append((pr, pc))
+
+    return path_cells
+
+
 def generate_cave_path(
     stack: TerrainMaskStack,
     archetype: CaveArchetype,
@@ -898,12 +1055,21 @@ def generate_cave_path(
 ) -> List[Tuple[float, float, float]]:
     """Return a world-meter polyline for the cave interior path.
 
-    Path shape depends on archetype:
-      - LAVA_TUBE: nearly straight, gentle meander
-      - FISSURE: short, mostly vertical drop then short horizontal
-      - KARST_SINKHOLE: vertical plunge then a horizontal chamber arm
-      - GLACIAL_MELT: strong meander
-      - SEA_GROTTO: short, wide, shallow
+    Uses A* path planning on the heightmap cost field so each path follows
+    the terrain's natural low-resistance route (dissolutional channels,
+    fault planes, meltwater grooves) rather than a pre-scripted sine wave.
+
+    Archetype-specific cost parameters:
+      - LAVA_TUBE:      low slope weight — lava follows flat floor channels.
+      - FISSURE:        high slope weight — tectonic crack descends steeply.
+      - KARST_SINKHOLE: wetness bonus enabled — follows drainage channels.
+      - GLACIAL_MELT:   moderate slope weight — meltwater meanders gently.
+      - SEA_GROTTO:     short search radius, prefers low-altitude cells.
+
+    The A* goal is a point ``interior_length_m`` ahead of the entrance along
+    a deterministic heading derived from ``seed``.  A* then finds the
+    minimum-cost path between the two anchor points, producing organic
+    routes that respond to actual heightmap topology.
     """
     spec = make_archetype_spec(archetype)
     length = float(spec.interior_length_m)
@@ -915,64 +1081,64 @@ def generate_cave_path(
     dx = math.cos(heading)
     dy = math.sin(heading)
 
-    # Number of samples per meter adapted to length.
-    n_samples = max(6, int(round(length / 2.0)))
-    points: List[Tuple[float, float, float]] = []
+    height = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = height.shape
+    cell = max(1e-6, float(stack.cell_size))
 
+    # Compute goal position: straight ahead at interior_length_m
+    gx = x0 + dx * length
+    gy = y0 + dy * length
+    start_rc = _world_to_cell(stack, x0, y0)
+    goal_rc = _world_to_cell(stack, gx, gy)
+
+    # Archetype-specific A* parameters
+    _ARCH_PARAMS: Dict[CaveArchetype, Dict[str, float]] = {
+        CaveArchetype.LAVA_TUBE:      {"slope_weight": 0.8},
+        CaveArchetype.FISSURE:        {"slope_weight": 2.5},
+        CaveArchetype.KARST_SINKHOLE: {"slope_weight": 1.2},
+        CaveArchetype.GLACIAL_MELT:   {"slope_weight": 1.0},
+        CaveArchetype.SEA_GROTTO:     {"slope_weight": 0.6},
+    }
+    astar_params = _ARCH_PARAMS.get(archetype, {"slope_weight": 1.5})
+
+    wetness_arr: Optional[np.ndarray] = None
+    if archetype == CaveArchetype.KARST_SINKHOLE:
+        _wet = stack.get("wetness")
+        if _wet is not None:
+            wetness_arr = np.asarray(_wet, dtype=np.float64)
+
+    path_cells = _astar_cave_path(
+        height,
+        start_rc,
+        goal_rc,
+        cell,
+        slope_weight=astar_params["slope_weight"],
+        wetness=wetness_arr,
+        rng_jitter=rng,
+    )
+
+    # Convert (row, col) grid cells back to world-space (x, y, z) tuples.
+    # Depth (z) interpolates linearly from entrance z to a descent determined
+    # by the archetype.
+    n_cells = max(1, len(path_cells))
+    total_descent_m: float
     if archetype == CaveArchetype.FISSURE:
-        # Short horizontal run + vertical drop
-        for i in range(n_samples):
-            t = i / float(n_samples - 1)
-            hx = x0 + dx * length * 0.4 * t
-            hy = y0 + dy * length * 0.4 * t
-            hz = z0 - t * spec.entrance_height_m * 0.8
-            points.append((hx, hy, hz))
+        total_descent_m = spec.entrance_height_m * 0.8
     elif archetype == CaveArchetype.KARST_SINKHOLE:
-        # Vertical plunge first, then horizontal chamber arm
-        drop = spec.entrance_height_m
-        plunge_samples = max(3, n_samples // 3)
-        for i in range(plunge_samples):
-            t = i / float(plunge_samples - 1) if plunge_samples > 1 else 1.0
-            points.append((x0, y0, z0 - drop * t))
-        # Horizontal arm at the bottom of the plunge
-        arm_samples = n_samples - plunge_samples
-        for i in range(arm_samples):
-            t = (i + 1) / float(arm_samples)
-            hx = x0 + dx * length * t
-            hy = y0 + dy * length * t
-            points.append((hx, hy, z0 - drop))
+        total_descent_m = spec.entrance_height_m
     elif archetype == CaveArchetype.GLACIAL_MELT:
-        # Meander: perpendicular sinusoidal offset
-        perp_x = -dy
-        perp_y = dx
-        for i in range(n_samples):
-            t = i / float(n_samples - 1)
-            offset = math.sin(t * math.pi * 2.0) * length * 0.12
-            hx = x0 + dx * length * t + perp_x * offset
-            hy = y0 + dy * length * t + perp_y * offset
-            hz = z0 - t * spec.entrance_height_m * 0.3
-            points.append((hx, hy, hz))
+        total_descent_m = spec.entrance_height_m * 0.3
     elif archetype == CaveArchetype.SEA_GROTTO:
-        # Short, shallow, slight meander
-        perp_x = -dy
-        perp_y = dx
-        for i in range(n_samples):
-            t = i / float(n_samples - 1)
-            offset = math.sin(t * math.pi) * length * 0.08
-            hx = x0 + dx * length * t + perp_x * offset
-            hy = y0 + dy * length * t + perp_y * offset
-            hz = z0 - t * spec.entrance_height_m * 0.15
-            points.append((hx, hy, hz))
-    else:  # LAVA_TUBE (and default)
-        perp_x = -dy
-        perp_y = dx
-        for i in range(n_samples):
-            t = i / float(n_samples - 1)
-            offset = math.sin(t * math.pi * 1.5) * length * 0.05
-            hx = x0 + dx * length * t + perp_x * offset
-            hy = y0 + dy * length * t + perp_y * offset
-            hz = z0 - t * spec.entrance_height_m * 0.1
-            points.append((hx, hy, hz))
+        total_descent_m = spec.entrance_height_m * 0.15
+    else:  # LAVA_TUBE
+        total_descent_m = spec.entrance_height_m * 0.1
+
+    points: List[Tuple[float, float, float]] = []
+    for i, (pr, pc) in enumerate(path_cells):
+        t = i / float(n_cells - 1) if n_cells > 1 else 0.0
+        wx, wy = _cell_to_world(stack, pr, pc)
+        wz = z0 - t * total_descent_m
+        points.append((wx, wy, wz))
 
     return points
 
@@ -1095,10 +1261,13 @@ def carve_cave_volume(
     # Compute wall texture (Worley + Perlin) and store on the stack so
     # the material pass can use it for procedural surface detail.
     if interior_mask.any():
+        # Use sum-of-ord instead of hash() so the seed is PYTHONHASHSEED-stable.
+        _arch_str = spec.archetype.value if hasattr(spec.archetype, "value") else str(spec.archetype)
+        _arch_seed = sum(ord(c) for c in _arch_str) & 0xFFFFFFFF
         wall_tex = compute_cave_wall_texture(
             rows, cols,
-            seed=abs(hash(str(spec.archetype))),
-            archetype=spec.archetype.value if hasattr(spec.archetype, "value") else str(spec.archetype),
+            seed=_arch_seed,
+            archetype=_arch_str,
         )
         existing_tex = stack.get("cave_wall_texture")
         if existing_tex is not None:
@@ -1567,7 +1736,10 @@ def pass_caves(
         if protected[row, col]:
             continue
 
-        archetype = pick_cave_archetype(stack, ent, cave_seed, intent=state.intent)
+        hints_out: Dict[str, str] = {}
+        archetype = pick_cave_archetype(
+            stack, ent, cave_seed, intent=state.intent, hints_out=hints_out
+        )
         spec = make_archetype_spec(archetype)
         path = generate_cave_path(stack, archetype, ent, cave_seed)
 
@@ -1584,19 +1756,45 @@ def pass_caves(
         debris = scatter_collapse_debris(stack, path, spec, cave_seed)
         damp = generate_damp_mask(stack, path, spec)
 
+        # Compute path AABB from world-space polyline
+        _path_aabb: Optional[Tuple[float, float, float, float, float, float]] = None
+        if path:
+            _xs = [p[0] for p in path]
+            _ys = [p[1] for p in path]
+            _zs = [p[2] for p in path]
+            _path_aabb = (
+                min(_xs), min(_ys), min(_zs),
+                max(_xs), max(_ys), max(_zs),
+            )
+
+        # Approximate carved volume: cell_area * sum(|delta|)
+        _cell_area = float(stack.cell_size) ** 2
+        _vol_m3 = float(np.sum(np.abs(delta))) * _cell_area if delta is not None else 0.0
+
+        # Wall texture seed — deterministic, PYTHONHASHSEED-stable
+        _arch_str = archetype.value if hasattr(archetype, "value") else str(archetype)
+        _wall_tex_seed = sum(ord(c) for c in _arch_str) & 0xFFFFFFFF
+
         cave = CaveStructure(
             cave_id=f"cave_{state.tile_x}_{state.tile_y}_{idx:02d}",
             archetype=archetype,
             spec=spec,
             entrance_world_pos=tuple(ent),
+            exit_world_pos=tuple(path[-1]) if path else None,
             path_world=list(path),
+            path_aabb=_path_aabb,
             interior_mask=None,
             damp_mask=damp,
             height_delta=delta,
+            wall_texture_seed=_wall_tex_seed,
             entrance_frame=frame,
             debris_points=debris,
+            stalactite_lengths=None,  # populated below after Dreybrodt pass
+            stalagmite_lengths=None,
+            material_hint=hints_out.get("material_hint"),
             tier="hero" if idx == 0 else "secondary",
             cell_count=int(cc.sum()),
+            volume_m3=_vol_m3,
         )
         caves.append(cave)
         debris_total += len(debris)
@@ -1628,18 +1826,20 @@ def pass_caves(
     # geometry pass can place speleothem meshes at cells above the threshold.
     stalactite_acc = np.zeros_like(stack.height, dtype=np.float32)
     stalagmite_acc = np.zeros_like(stack.height, dtype=np.float32)
-    damp_final = np.asarray(stack.get("wet_rock") or np.zeros_like(stack.height, dtype=np.float32),
-                            dtype=np.float32)
-    for cave in caves:
+    interior_bool_final = np.asarray(stack.get("cave_candidate"), dtype=bool)
+    for cave_i, cave in enumerate(caves):
         if cave.height_delta is not None and cave.damp_mask is not None:
-            interior_bool = np.asarray(stack.get("cave_candidate"), dtype=bool)
+            per_cave_seed = (base_seed ^ ((cave_i + 1) * 2654435761)) & 0xFFFFFFFF
             stals, stags = compute_speleothem_growth(
-                interior_mask=interior_bool,
+                interior_mask=interior_bool_final,
                 damp_mask=cave.damp_mask,
                 height_delta=cave.height_delta,
                 cell_size_m=float(stack.cell_size),
-                seed=cave_seed,
+                seed=per_cave_seed,
             )
+            # Store per-cave speleothem arrays on CaveStructure for geometry pass
+            cave.stalactite_lengths = stals
+            cave.stalagmite_lengths = stags
             stalactite_acc = np.maximum(stalactite_acc, stals)
             stalagmite_acc = np.maximum(stalagmite_acc, stags)
     stack.set("cave_stalactite_length", stalactite_acc, "caves")

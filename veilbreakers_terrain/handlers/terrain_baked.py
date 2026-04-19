@@ -286,12 +286,10 @@ class BakedTerrain:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Canonical dtype is float32 — matches Unity .raw round-trip contract
-        # and halves resident memory vs float64 for large tiles.
+        # Preserve caller float precision (float32 or float64); only coerce
+        # non-float (int/uint/bool) arrays to float32 for interoperability.
         h = np.asarray(self.height_grid)
         if not np.issubdtype(h.dtype, np.floating):
-            h = h.astype(np.float32)
-        elif h.dtype != np.float32:
             h = h.astype(np.float32)
         if h.ndim != 2:
             raise ValueError(
@@ -308,8 +306,6 @@ class BakedTerrain:
             a = np.asarray(arr)
             if not np.issubdtype(a.dtype, np.floating):
                 a = a.astype(np.float32)
-            elif a.dtype != np.float32:
-                a = a.astype(np.float32)
             if a.shape != shape:
                 raise ValueError(
                     f"{name} shape {a.shape} does not match "
@@ -320,8 +316,6 @@ class BakedTerrain:
         for k, v in self.material_masks.items():
             a = np.asarray(v)
             if not np.issubdtype(a.dtype, np.floating):
-                a = a.astype(np.float32)
-            elif a.dtype != np.float32:
                 a = a.astype(np.float32)
             if a.shape != shape:
                 raise ValueError(
@@ -928,13 +922,25 @@ class BakedTerrain:
     # Serialization
     # ------------------------------------------------------------------
 
+    # Schema version stamped into every .npz so from_npz can detect stale files.
+    # Increment this integer whenever the on-disk layout changes (new required
+    # arrays, renamed keys, dtype changes).  from_npz raises ValueError with a
+    # clear "re-bake required" message when the loaded version does not match.
+    _NPZ_SCHEMA_VERSION: int = 1
+
     def to_npz(self, path: str) -> None:
-        """Serialize to a compressed .npz file."""
+        """Serialize to a compressed .npz file.
+
+        Stamps ``_schema_version`` into the archive so ``from_npz`` can
+        detect stale files from older pipeline runs and request a re-bake.
+        """
         arrays: Dict[str, np.ndarray] = {
             "height_grid": self.height_grid,
             "ridge_map": self.ridge_map,
             "gradient_x": self.gradient_x,
             "gradient_z": self.gradient_z,
+            # Schema version as a 0-d uint32 scalar for cheap O(1) verification.
+            "_schema_version": np.array(self._NPZ_SCHEMA_VERSION, dtype=np.uint32),
         }
         # Material masks with prefix
         for k, v in self.material_masks.items():
@@ -948,11 +954,31 @@ class BakedTerrain:
 
     @classmethod
     def from_npz(cls, path: str) -> "BakedTerrain":
-        """Deserialize from a .npz file."""
+        """Deserialize from a .npz file.
+
+        Verifies the embedded ``_schema_version`` against the current class
+        constant.  A mismatch raises ``ValueError`` with a "re-bake required"
+        message rather than silently loading corrupt or incompatible data.
+        Files written before schema versioning was added (no ``_schema_version``
+        key) are accepted with a warning; callers that need strict guarantees
+        should add ``_schema_version`` to their whitelist check.
+        """
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"BakedTerrain npz not found: {path}")
         data = np.load(path, allow_pickle=False)
+
+        # Schema version check — catch layout mismatches before partial loads.
+        if "_schema_version" in data.files:
+            on_disk_version = int(data["_schema_version"])
+            if on_disk_version != cls._NPZ_SCHEMA_VERSION:
+                raise ValueError(
+                    f"BakedTerrain schema version mismatch: file has version "
+                    f"{on_disk_version}, expected {cls._NPZ_SCHEMA_VERSION}. "
+                    "Re-bake required — delete the .npz and re-run the terrain pipeline."
+                )
+        # Files without _schema_version were written before versioning; load
+        # them as-is so existing caches are not immediately broken.
 
         height_grid = data["height_grid"]
         ridge_map = data["ridge_map"]

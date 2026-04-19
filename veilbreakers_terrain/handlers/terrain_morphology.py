@@ -29,6 +29,22 @@ class MorphologyTemplate:
     scale_m: float  # characteristic XY extent in world meters
     aspect_ratio: float  # length/width ratio (>= 1 means elongated)
     params: Dict[str, Any] = field(default_factory=dict)  # REVIEW-IGNORE PY-COR-17: frozen+mutable safe — params treated as read-only after construction
+    # --- Geological morphology parameters (AAA requirement) ---
+    # rock_hardness: [0,1] — 0=soft sedimentary, 1=hard crystalline (granite/basalt).
+    #   Drives erosion resistance in wind_erosion and hydraulic passes.
+    rock_hardness: float = 0.5
+    # erosion_resistance: [0,1] — how strongly this landform resists fluvial
+    #   incision. Sandstone mesas = low (0.2), granite ridges = high (0.9).
+    erosion_resistance: float = 0.5
+    # drainage_pattern: one of "dendritic", "radial", "parallel", "trellis",
+    #   "rectangular", "none". Determines how water networks branch over the form.
+    drainage_pattern: str = "dendritic"
+    # deposition_type: one of "alluvial", "aeolian", "glacial", "colluvial",
+    #   "fluvial", "none". Affects scatter density and sediment channel width.
+    deposition_type: str = "none"
+    # bedding_strike_rad: orientation of rock strata in radians (0 = N–S).
+    #   Used by canyon/mesa forms to tilt their profile along structural grain.
+    bedding_strike_rad: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -62,41 +78,196 @@ def _valley_params(depth_m: float, broadness: float) -> Dict[str, Any]:
 
 DEFAULT_TEMPLATES: Tuple[MorphologyTemplate, ...] = (
     # --- Ridge variants (5) ---
-    MorphologyTemplate("ridge_low_rolling", "ridge_spur", 80.0, 3.0, _ridge_params(12.0, 0.15)),
-    MorphologyTemplate("ridge_sharp_spine", "ridge_spur", 120.0, 4.5, _ridge_params(40.0, 0.60)),
-    MorphologyTemplate("ridge_broken_teeth", "ridge_spur", 150.0, 4.0, _ridge_params(55.0, 0.85)),
-    MorphologyTemplate("ridge_snaking", "ridge_spur", 200.0, 6.0, _ridge_params(30.0, 0.35)),
-    MorphologyTemplate("ridge_alpine_crest", "ridge_spur", 300.0, 5.0, _ridge_params(90.0, 0.50)),
+    # Low rolling ridge: soft sedimentary (shale/mudstone), gentle dendritic drainage.
+    MorphologyTemplate("ridge_low_rolling", "ridge_spur", 80.0, 3.0,
+                       _ridge_params(12.0, 0.15),
+                       rock_hardness=0.30, erosion_resistance=0.25,
+                       drainage_pattern="dendritic", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+    # Sharp spine: hard metamorphic quartzite, trellis drainage along strike.
+    MorphologyTemplate("ridge_sharp_spine", "ridge_spur", 120.0, 4.5,
+                       _ridge_params(40.0, 0.60),
+                       rock_hardness=0.85, erosion_resistance=0.80,
+                       drainage_pattern="trellis", deposition_type="none",
+                       bedding_strike_rad=0.52),   # ~30° strike
+    # Broken teeth: resistant igneous intrusions, rectangular joint drainage.
+    MorphologyTemplate("ridge_broken_teeth", "ridge_spur", 150.0, 4.0,
+                       _ridge_params(55.0, 0.85),
+                       rock_hardness=0.90, erosion_resistance=0.85,
+                       drainage_pattern="rectangular", deposition_type="colluvial",
+                       bedding_strike_rad=0.79),   # ~45°
+    # Snaking ridge: moderate sandstone, parallel drainage parallel to crest.
+    MorphologyTemplate("ridge_snaking", "ridge_spur", 200.0, 6.0,
+                       _ridge_params(30.0, 0.35),
+                       rock_hardness=0.55, erosion_resistance=0.50,
+                       drainage_pattern="parallel", deposition_type="fluvial",
+                       bedding_strike_rad=0.0),
+    # Alpine crest: hard granite/gneiss, radial drainage off dome.
+    MorphologyTemplate("ridge_alpine_crest", "ridge_spur", 300.0, 5.0,
+                       _ridge_params(90.0, 0.50),
+                       rock_hardness=0.95, erosion_resistance=0.90,
+                       drainage_pattern="radial", deposition_type="glacial",
+                       bedding_strike_rad=0.0),
+
     # --- Canyon variants (5) ---
-    MorphologyTemplate("canyon_narrow_slot", "canyon", 30.0, 8.0, _canyon_params(45.0, 0.90)),
-    MorphologyTemplate("canyon_wide_gorge", "canyon", 180.0, 3.0, _canyon_params(80.0, 0.55)),
-    MorphologyTemplate("canyon_meander", "canyon", 220.0, 5.5, _canyon_params(50.0, 0.45)),
-    MorphologyTemplate("canyon_box_end", "canyon", 90.0, 2.0, _canyon_params(65.0, 0.75)),
-    MorphologyTemplate("canyon_branching", "canyon", 260.0, 4.0, _canyon_params(55.0, 0.60)),
+    # Narrow slot: very hard sandstone/Navajo ss, near-vertical walls, no drainage.
+    MorphologyTemplate("canyon_narrow_slot", "canyon", 30.0, 8.0,
+                       _canyon_params(45.0, 0.90),
+                       rock_hardness=0.70, erosion_resistance=0.65,
+                       drainage_pattern="parallel", deposition_type="aeolian",
+                       bedding_strike_rad=0.0),
+    # Wide gorge: moderate limestone, karst-influenced, dendritic tributaries.
+    MorphologyTemplate("canyon_wide_gorge", "canyon", 180.0, 3.0,
+                       _canyon_params(80.0, 0.55),
+                       rock_hardness=0.60, erosion_resistance=0.55,
+                       drainage_pattern="dendritic", deposition_type="alluvial",
+                       bedding_strike_rad=0.0),
+    # Meander canyon: soft sedimentary (mudstone), entrenched meander pattern.
+    MorphologyTemplate("canyon_meander", "canyon", 220.0, 5.5,
+                       _canyon_params(50.0, 0.45),
+                       rock_hardness=0.35, erosion_resistance=0.30,
+                       drainage_pattern="dendritic", deposition_type="alluvial",
+                       bedding_strike_rad=0.26),   # ~15° dip
+    # Box-end canyon: hard caprock over soft core, trellis side drainage.
+    MorphologyTemplate("canyon_box_end", "canyon", 90.0, 2.0,
+                       _canyon_params(65.0, 0.75),
+                       rock_hardness=0.75, erosion_resistance=0.70,
+                       drainage_pattern="trellis", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+    # Branching canyon: moderate hardness, rectangular joint-controlled branches.
+    MorphologyTemplate("canyon_branching", "canyon", 260.0, 4.0,
+                       _canyon_params(55.0, 0.60),
+                       rock_hardness=0.55, erosion_resistance=0.50,
+                       drainage_pattern="rectangular", deposition_type="fluvial",
+                       bedding_strike_rad=1.05),   # ~60°
+
     # --- Mesa / plateau variants (5) ---
-    MorphologyTemplate("mesa_classic", "mesa", 150.0, 1.2, _mesa_params(60.0, 0.85)),
-    MorphologyTemplate("mesa_stepped", "mesa", 180.0, 1.5, _mesa_params(70.0, 0.65)),
-    MorphologyTemplate("mesa_fractured", "mesa", 200.0, 1.3, _mesa_params(55.0, 0.50)),
-    MorphologyTemplate("plateau_vast", "mesa", 400.0, 1.1, _mesa_params(35.0, 0.95)),
-    MorphologyTemplate("mesa_butte_small", "mesa", 60.0, 1.0, _mesa_params(45.0, 0.80)),
+    # Classic mesa: hard caprock (basalt) over soft sedimentary, radial runoff.
+    MorphologyTemplate("mesa_classic", "mesa", 150.0, 1.2,
+                       _mesa_params(60.0, 0.85),
+                       rock_hardness=0.80, erosion_resistance=0.75,
+                       drainage_pattern="radial", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+    # Stepped mesa: alternating hard/soft strata, trellis benches.
+    MorphologyTemplate("mesa_stepped", "mesa", 180.0, 1.5,
+                       _mesa_params(70.0, 0.65),
+                       rock_hardness=0.65, erosion_resistance=0.60,
+                       drainage_pattern="trellis", deposition_type="colluvial",
+                       bedding_strike_rad=0.17),   # ~10° dip
+    # Fractured mesa: jointed sandstone, rectangular drainage on top.
+    MorphologyTemplate("mesa_fractured", "mesa", 200.0, 1.3,
+                       _mesa_params(55.0, 0.50),
+                       rock_hardness=0.60, erosion_resistance=0.55,
+                       drainage_pattern="rectangular", deposition_type="aeolian",
+                       bedding_strike_rad=0.79),
+    # Vast plateau: flat-lying sedimentary succession, dendritic edge drainage.
+    MorphologyTemplate("plateau_vast", "mesa", 400.0, 1.1,
+                       _mesa_params(35.0, 0.95),
+                       rock_hardness=0.50, erosion_resistance=0.45,
+                       drainage_pattern="dendritic", deposition_type="fluvial",
+                       bedding_strike_rad=0.0),
+    # Small butte: remnant hard caprock, rapid radial erosion.
+    MorphologyTemplate("mesa_butte_small", "mesa", 60.0, 1.0,
+                       _mesa_params(45.0, 0.80),
+                       rock_hardness=0.75, erosion_resistance=0.70,
+                       drainage_pattern="radial", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+
     # --- Pinnacle variants (5) ---
-    MorphologyTemplate("pinnacle_needle", "pinnacle", 20.0, 1.0, _pinnacle_params(80.0, 0.95)),
-    MorphologyTemplate("pinnacle_finger", "pinnacle", 30.0, 1.2, _pinnacle_params(55.0, 0.80)),
-    MorphologyTemplate("pinnacle_stack", "pinnacle", 40.0, 1.1, _pinnacle_params(65.0, 0.70)),
-    MorphologyTemplate("pinnacle_cluster", "pinnacle", 70.0, 1.3, _pinnacle_params(45.0, 0.65)),
-    MorphologyTemplate("pinnacle_solitary_tower", "pinnacle", 50.0, 1.0, _pinnacle_params(95.0, 0.85)),
+    # Needle: extremely hard igneous neck / phonolite, no drainage.
+    MorphologyTemplate("pinnacle_needle", "pinnacle", 20.0, 1.0,
+                       _pinnacle_params(80.0, 0.95),
+                       rock_hardness=0.98, erosion_resistance=0.95,
+                       drainage_pattern="none", deposition_type="none",
+                       bedding_strike_rad=0.0),
+    # Finger: hard metamorphic quartzite, colluvial debris apron.
+    MorphologyTemplate("pinnacle_finger", "pinnacle", 30.0, 1.2,
+                       _pinnacle_params(55.0, 0.80),
+                       rock_hardness=0.88, erosion_resistance=0.85,
+                       drainage_pattern="none", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+    # Stack: coastal hard basalt sea stack, no internal drainage.
+    MorphologyTemplate("pinnacle_stack", "pinnacle", 40.0, 1.1,
+                       _pinnacle_params(65.0, 0.70),
+                       rock_hardness=0.92, erosion_resistance=0.88,
+                       drainage_pattern="none", deposition_type="none",
+                       bedding_strike_rad=0.0),
+    # Cluster: grouped volcanic plugs, shared colluvial skirt.
+    MorphologyTemplate("pinnacle_cluster", "pinnacle", 70.0, 1.3,
+                       _pinnacle_params(45.0, 0.65),
+                       rock_hardness=0.85, erosion_resistance=0.80,
+                       drainage_pattern="radial", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+    # Solitary tower: massive granite monolith, sheet-wash drainage.
+    MorphologyTemplate("pinnacle_solitary_tower", "pinnacle", 50.0, 1.0,
+                       _pinnacle_params(95.0, 0.85),
+                       rock_hardness=0.96, erosion_resistance=0.92,
+                       drainage_pattern="radial", deposition_type="none",
+                       bedding_strike_rad=0.0),
+
     # --- Spur variants (5) ---
-    MorphologyTemplate("spur_long_tapered", "spur", 140.0, 5.0, _spur_params(35.0, 0.70)),
-    MorphologyTemplate("spur_short_blunt", "spur", 60.0, 2.0, _spur_params(25.0, 0.30)),
-    MorphologyTemplate("spur_forked", "spur", 160.0, 4.0, _spur_params(40.0, 0.55)),
-    MorphologyTemplate("spur_hooked", "spur", 120.0, 3.5, _spur_params(30.0, 0.60)),
-    MorphologyTemplate("spur_stepped_ridge", "spur", 180.0, 4.5, _spur_params(50.0, 0.65)),
+    # Long tapered spur: moderate sandstone, parallel flank drainage.
+    MorphologyTemplate("spur_long_tapered", "spur", 140.0, 5.0,
+                       _spur_params(35.0, 0.70),
+                       rock_hardness=0.55, erosion_resistance=0.50,
+                       drainage_pattern="parallel", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+    # Short blunt spur: soft shale/mudstone, dendritic gully drainage.
+    MorphologyTemplate("spur_short_blunt", "spur", 60.0, 2.0,
+                       _spur_params(25.0, 0.30),
+                       rock_hardness=0.30, erosion_resistance=0.25,
+                       drainage_pattern="dendritic", deposition_type="alluvial",
+                       bedding_strike_rad=0.0),
+    # Forked spur: jointed limestone, trellis drainage between forks.
+    MorphologyTemplate("spur_forked", "spur", 160.0, 4.0,
+                       _spur_params(40.0, 0.55),
+                       rock_hardness=0.60, erosion_resistance=0.55,
+                       drainage_pattern="trellis", deposition_type="fluvial",
+                       bedding_strike_rad=0.52),
+    # Hooked spur: folded metamorphic, curving trellis drainage.
+    MorphologyTemplate("spur_hooked", "spur", 120.0, 3.5,
+                       _spur_params(30.0, 0.60),
+                       rock_hardness=0.70, erosion_resistance=0.65,
+                       drainage_pattern="trellis", deposition_type="colluvial",
+                       bedding_strike_rad=0.35),
+    # Stepped ridge spur: alternating hardness, stepped parallel drainage.
+    MorphologyTemplate("spur_stepped_ridge", "spur", 180.0, 4.5,
+                       _spur_params(50.0, 0.65),
+                       rock_hardness=0.65, erosion_resistance=0.60,
+                       drainage_pattern="parallel", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
+
     # --- Valley variants (5) ---
-    MorphologyTemplate("valley_u_shaped", "valley", 220.0, 4.0, _valley_params(50.0, 0.80)),
-    MorphologyTemplate("valley_v_shaped", "valley", 150.0, 3.5, _valley_params(60.0, 0.40)),
-    MorphologyTemplate("valley_hanging", "valley", 100.0, 3.0, _valley_params(35.0, 0.55)),
-    MorphologyTemplate("valley_glaciated", "valley", 350.0, 5.0, _valley_params(70.0, 0.85)),
-    MorphologyTemplate("valley_headwater_bowl", "valley", 120.0, 1.5, _valley_params(40.0, 0.70)),
+    # U-shaped glacial valley: hard granite, glacial deposition floor.
+    MorphologyTemplate("valley_u_shaped", "valley", 220.0, 4.0,
+                       _valley_params(50.0, 0.80),
+                       rock_hardness=0.90, erosion_resistance=0.85,
+                       drainage_pattern="parallel", deposition_type="glacial",
+                       bedding_strike_rad=0.0),
+    # V-shaped fluvial valley: moderate sandstone, dendritic drainage.
+    MorphologyTemplate("valley_v_shaped", "valley", 150.0, 3.5,
+                       _valley_params(60.0, 0.40),
+                       rock_hardness=0.55, erosion_resistance=0.45,
+                       drainage_pattern="dendritic", deposition_type="alluvial",
+                       bedding_strike_rad=0.0),
+    # Hanging valley: resistant lip, glacial tributary above main trunk.
+    MorphologyTemplate("valley_hanging", "valley", 100.0, 3.0,
+                       _valley_params(35.0, 0.55),
+                       rock_hardness=0.85, erosion_resistance=0.80,
+                       drainage_pattern="parallel", deposition_type="glacial",
+                       bedding_strike_rad=0.0),
+    # Glaciated trough: very hard gneiss, over-deepened glacial basin, moraines.
+    MorphologyTemplate("valley_glaciated", "valley", 350.0, 5.0,
+                       _valley_params(70.0, 0.85),
+                       rock_hardness=0.92, erosion_resistance=0.88,
+                       drainage_pattern="parallel", deposition_type="glacial",
+                       bedding_strike_rad=0.0),
+    # Headwater bowl: soft volcanic tuff, cirque-like, radial drainage.
+    MorphologyTemplate("valley_headwater_bowl", "valley", 120.0, 1.5,
+                       _valley_params(40.0, 0.70),
+                       rock_hardness=0.45, erosion_resistance=0.40,
+                       drainage_pattern="radial", deposition_type="colluvial",
+                       bedding_strike_rad=0.0),
 )
 
 

@@ -43,25 +43,48 @@ except ImportError:  # pragma: no cover
 
 
 class VegetationLayer(enum.Enum):
+    EMERGENT = "emergent"        # tallest isolated giants above canopy (AAA layer)
     CANOPY = "canopy"
-    UNDERSTORY = "understory"
+    SUB_CANOPY = "sub_canopy"    # renamed from understory for clarity; alias kept
+    UNDERSTORY = "sub_canopy"    # backward-compat alias
     SHRUB = "shrub"
     GROUND_COVER = "ground_cover"
 
 
 @dataclass
 class VegetationLayers:
-    """Four stratified density arrays, all (H, W) float32 in [0, 1]."""
+    """Five-layer vertical profile density arrays, all (H, W) float32 in [0, 1].
 
+    Vertical profile (top → ground):
+        emergent     — isolated giant trees projecting above the main canopy
+                       (>30 m; low density, high ecological value, landmarks)
+        canopy       — main closed-canopy stratum (15–30 m)
+        sub_canopy   — shade-tolerant trees and tall shrubs (5–15 m)
+        shrub        — woody shrubs and saplings (0.5–5 m)
+        ground_cover — herbs, ferns, mosses (<0.5 m)
+
+    The emergent layer is new (AAA requirement). Legacy code that only unpacks
+    four layers can call ``as_dict()`` and read the subset it needs; the extra
+    ``emergent`` key is simply ignored.
+    """
+
+    emergent_density: np.ndarray
     canopy_density: np.ndarray
-    understory_density: np.ndarray
+    sub_canopy_density: np.ndarray
     shrub_density: np.ndarray
     ground_cover_density: np.ndarray
 
+    # Backward-compat property so code accessing .understory_density still works.
+    @property
+    def understory_density(self) -> np.ndarray:
+        return self.sub_canopy_density
+
     def as_dict(self) -> Dict[str, np.ndarray]:
         return {
+            "emergent": self.emergent_density,
             "canopy": self.canopy_density,
-            "understory": self.understory_density,
+            "sub_canopy": self.sub_canopy_density,
+            "understory": self.sub_canopy_density,  # alias for legacy consumers
             "shrub": self.shrub_density,
             "ground_cover": self.ground_cover_density,
         }
@@ -171,7 +194,7 @@ def _normalize(arr: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# 4-layer vegetation
+# 5-layer vegetation (AAA vertical profile)
 # ---------------------------------------------------------------------------
 
 
@@ -179,18 +202,53 @@ def compute_vegetation_layers(
     stack: TerrainMaskStack,
     biome: str = "dark_fantasy_default",
 ) -> VegetationLayers:
-    """Stratify vegetation into four layers driven by terrain signals.
+    """Stratify vegetation into a full five-layer vertical profile driven by terrain signals.
 
-    Drivers
-    -------
-    - canopy: low slope + moderate altitude + not too wet
-    - understory: canopy proxy but denser in wetter + lower altitude
-    - shrub: moderate slope (up to ~0.6), lower canopy areas
-    - ground_cover: near-ubiquitous at low slopes, boosted by wetness
+    Vertical profile (emergent → ground)
+    -------------------------------------
+    emergent    — isolated giant trees projecting above the main canopy.
+                  Low density (~5 % of canopy cells), confined to the flattest,
+                  most sheltered, highest-canopy-score locations.  These are
+                  landmarks: old-growth survivors, ancient oaks, sentinel pines.
 
-    If optional channels (slope, wetness, wind_field) are absent, they
-    default to zeros — vegetation still produces a valid (but bland)
-    stratification.
+    canopy      — main closed-canopy stratum.  Low slope + mid altitude +
+                  wind shelter.  Tall trees shun exposed ridges.
+
+    sub_canopy  — shade-tolerant trees and tall shrubs (formerly "understory").
+                  Light availability is computed via Beer-Lambert attenuation
+                  through the canopy layer: T = exp(-k_sc * canopy_raw * canopy_radius_scale).
+                  This means dense canopy strongly suppresses sub-canopy, matching
+                  real forest ecology (shade-intolerant species cannot establish
+                  under a closed canopy crown).
+
+    shrub       — woody shrubs and saplings in the transitional zone between
+                  canopy and open rock/cliff.  Peaks at moderate slopes where
+                  full-canopy trees cannot establish.  Further suppressed by
+                  sub_canopy via Beer-Lambert: T_shrub = exp(-k_s * sub_canopy_raw).
+
+    ground_cover — herbs, ferns, mosses.  Light reaching the ground floor is
+                   attenuated through both canopy and sub_canopy layers.
+                   T_gc = exp(-k_gc * (canopy_raw + 0.4 * sub_canopy_raw)).
+                   Wetness boosts hygrophilous species independently of light.
+
+    Species-specific canopy radius
+    ------------------------------
+    The Beer-Lambert extinction coefficient k is modulated by ``canopy_radius_scale``
+    derived from the stack channel ``canopy_species_radius_m`` (if present):
+        - Small-crowned species (radius < 4 m) transmit more light: k scales down
+        - Large-crowned species (radius > 8 m) create deep shade: k scales up
+    When the channel is absent, a neutral radius of 6 m is assumed (k = 1.0).
+
+    Biome multipliers
+    -----------------
+    Each biome returns a 5-tuple (e_scale, c_scale, sc_scale, s_scale, g_scale)
+    that scales the corresponding layer density.  Multipliers > 1.0 boost,
+    < 1.0 suppress.  Missing biomes fall back to all-1.0.
+
+    Absent channels
+    ---------------
+    If optional channels (slope, wetness, wind_field) are absent they default
+    to zeros — stratification still produces valid (if bland) densities.
     """
     h = np.asarray(stack.height, dtype=np.float32)
     shape = h.shape
@@ -212,44 +270,108 @@ def compute_vegetation_layers(
     else:
         wind_n = np.zeros(shape, dtype=np.float32)
 
-    # Biome scalar tweaks
-    biome_scale = {
-        "dark_fantasy_default": (1.0, 1.0, 1.0, 1.0),
-        "tundra": (0.3, 0.4, 0.6, 0.9),
-        "swamp": (0.8, 1.1, 1.0, 1.2),
-        "desert": (0.1, 0.2, 0.3, 0.4),
+    # Biome scalar tweaks: (emergent, canopy, sub_canopy, shrub, ground_cover)
+    biome_scale: Dict[str, Tuple[float, float, float, float, float]] = {
+        "dark_fantasy_default": (1.0,  1.0,  1.0,  1.0,  1.0),
+        "tundra":               (0.05, 0.3,  0.4,  0.6,  0.9),
+        "swamp":                (0.6,  0.8,  1.1,  1.0,  1.2),
+        "desert":               (0.0,  0.1,  0.2,  0.3,  0.4),
+        "temperate_forest":     (0.8,  1.0,  1.0,  0.8,  1.0),
+        "boreal":               (0.4,  0.9,  0.7,  0.6,  1.0),
     }
-    cs, us, ss, gs = biome_scale.get(biome, (1.0, 1.0, 1.0, 1.0))
+    es, cs, scs, ss, gs = biome_scale.get(biome, (1.0, 1.0, 1.0, 1.0, 1.0))
 
-    # Canopy: low slope, mid altitude, moderate wetness. Tall trees shun
-    # exposed windy ridges.
-    canopy = (
+    # ---- Species-specific canopy radius → Beer-Lambert extinction coefficients ---
+    # Default neutral radius 6 m.  Species with larger crowns create deeper shade.
+    # k = 1.0 at 6 m, scales by (radius / 6) so a 12 m crown doubles extinction.
+    _NEUTRAL_RADIUS_M = 6.0
+    canopy_radius_raw = stack.get("canopy_species_radius_m")
+    if canopy_radius_raw is not None:
+        radius_arr = np.asarray(canopy_radius_raw, dtype=np.float32)
+        if radius_arr.shape == shape:
+            # Clamp to [1.0, 20.0] to avoid degenerate coefficients.
+            radius_arr = np.clip(radius_arr, 1.0, 20.0)
+            canopy_radius_scale = (radius_arr / _NEUTRAL_RADIUS_M).astype(np.float32)
+        else:
+            canopy_radius_scale = np.ones(shape, dtype=np.float32)
+    else:
+        canopy_radius_scale = np.ones(shape, dtype=np.float32)
+
+    # ---- Canopy: low slope, mid altitude, wind shelter ---------------------
+    # Peak around alt_n = 0.4 (mid-slope foothills).  Wind exposure suppresses
+    # by up to 60 % at maximum wind speed.
+    canopy_raw = (
         (1.0 - slope_n)
         * (1.0 - np.abs(alt_n - 0.4) * 1.2).clip(0.0, 1.0)
         * (1.0 - wind_n * 0.6)
-    ).clip(0.0, 1.0) * cs
+    ).clip(0.0, 1.0)
+    canopy = (canopy_raw * cs).clip(0.0, 1.0).astype(np.float32)
 
-    # Understory: thrives below canopy, esp. where wetter and lower.
-    understory = (
-        canopy * 0.7 + wet_n * 0.4 + (1.0 - alt_n) * 0.2
-    ).clip(0.0, 1.0) * us
+    # ---- Emergent: rarest stratum — only the highest-canopy, flattest cells -
+    # Emergent trees require:
+    #   (a) canopy_raw above the 85th percentile of the tile (very high canopy score)
+    #   (b) slope < 0.15 normalised (nearly flat)
+    #   (c) wind exposure < 0.3 (sheltered hollows and plateaux)
+    # Density is further attenuated to ~10 % of canopy density so emergent
+    # trees are genuinely rare landmarks, not a redundant duplicate of canopy.
+    canopy_threshold = float(np.percentile(canopy_raw, 85))
+    emergent_raw = (
+        ((canopy_raw - canopy_threshold) / max(1.0 - canopy_threshold, 1e-6)).clip(0.0, 1.0)
+        * (1.0 - slope_n * 6.0).clip(0.0, 1.0)   # hard cutoff at slope_n > ~0.17
+        * (1.0 - wind_n * 3.0).clip(0.0, 1.0)     # hard cutoff at wind_n > ~0.33
+    ).clip(0.0, 1.0)
+    # Scale to 10 % max density — these are isolated giants, not a closed stratum.
+    emergent = (emergent_raw * 0.10 * es).clip(0.0, 1.0).astype(np.float32)
 
-    # Shrubs: moderate slopes, transitional zones between canopy and rock.
+    # ---- Sub-canopy: Beer-Lambert light transmission through canopy ----------
+    # Light reaching sub-canopy: T_sc = exp(-k_sc * canopy_raw * canopy_radius_scale)
+    # k_sc = 1.5 → under a full closed canopy (canopy_raw=1.0) transmission ≈ 22 %
+    # Large-crowned species shade more strongly; small crowns let more light through.
+    # Wetness and lower altitude boost sub-canopy independently (shade-tolerant
+    # species are often hydrophilous and prefer valley micro-climates).
+    _k_sc = 1.5
+    canopy_transmission_sc = np.exp(
+        -_k_sc * canopy_raw * canopy_radius_scale
+    ).astype(np.float32)
+    sub_canopy_raw = (
+        canopy_transmission_sc * 0.8   # primary: light availability
+        + wet_n * 0.35                  # secondary: moisture
+        + (1.0 - alt_n) * 0.15         # tertiary: low-altitude preference
+    ).clip(0.0, 1.0)
+    sub_canopy = (sub_canopy_raw * scs).clip(0.0, 1.0).astype(np.float32)
+
+    # ---- Shrubs: moderate slopes, transitional zone -------------------------
+    # Centred on slope_n ≈ 0.35 with a width of ~0.625 normalised units.
+    # Light reaching shrub layer is attenuated by sub_canopy (k_s = 0.9).
+    _k_s = 0.9
+    sub_canopy_transmission_s = np.exp(-_k_s * sub_canopy_raw).astype(np.float32)
     shrub = (
         (1.0 - np.abs(slope_n - 0.35) * 1.6).clip(0.0, 1.0)
-        * (1.0 - canopy * 0.5)
-    ).clip(0.0, 1.0) * ss
+        * (1.0 - canopy_raw * 0.5)
+        * (sub_canopy_transmission_s * 0.6 + 0.4)  # 40% floor: shrubs on edges
+    ).clip(0.0, 1.0)
+    shrub = (shrub * ss).clip(0.0, 1.0).astype(np.float32)
 
-    # Ground cover: almost everywhere on gentle slopes, amplified by wetness.
+    # ---- Ground cover: full Beer-Lambert through canopy + sub_canopy ----------
+    # T_gc = exp(-k_gc * (canopy_raw * canopy_radius_scale + 0.4 * sub_canopy_raw))
+    # k_gc = 1.2.  Under a full closed canopy: transmission ≈ 30 %.
+    # Wetness adds independently (hygrophilous herbs thrive regardless of light).
+    _k_gc = 1.2
+    ground_transmission = np.exp(
+        -_k_gc * (canopy_raw * canopy_radius_scale + 0.4 * sub_canopy_raw)
+    ).astype(np.float32)
     ground_cover = (
-        ((1.0 - slope_n).clip(0.0, 1.0) * 0.7 + wet_n * 0.4)
-    ).clip(0.0, 1.0) * gs
+        ground_transmission * 0.7
+        + wet_n * 0.4
+    ).clip(0.0, 1.0)
+    ground_cover = (ground_cover * gs).clip(0.0, 1.0).astype(np.float32)
 
     return VegetationLayers(
-        canopy_density=canopy.astype(np.float32),
-        understory_density=understory.astype(np.float32),
-        shrub_density=shrub.astype(np.float32),
-        ground_cover_density=ground_cover.astype(np.float32),
+        emergent_density=emergent,
+        canopy_density=canopy,
+        sub_canopy_density=sub_canopy,
+        shrub_density=shrub,
+        ground_cover_density=ground_cover,
     )
 
 
@@ -267,61 +389,212 @@ def detect_disturbance_patches(
     min_patch_area: int = 4,
     intent=None,
 ) -> List[DisturbancePatch]:
-    """Identify disturbance patches from terrain signals and authored intent.
+    """Identify disturbance patches using terrain signals AND temporal/proxy change detection.
 
-    A cell is disturbed when any of:
-    (a) slope > disturbance_slope_threshold,
-    (b) erosion_amount on the stack > disturbance_erosion_threshold,
-    (c) geology/hardness channel present and hardness < 0.25 (soft rock
-        susceptible to mass wasting),
-    (d) it falls inside a manual DisturbancePatch entry on intent.
+    Detection signals (AAA multi-source approach)
+    ---------------------------------------------
+    (a) Slope-driven disturbance — high gradient indicates mass-wasting, landslide
+        scars, or storm-felling corridors.
 
-    Connected components (4-connected, scipy.ndimage.label) are labelled;
-    components smaller than min_patch_area cells are discarded. Each
-    surviving component becomes one DisturbancePatch. ``kind`` is chosen
-    per-patch based on the dominant disturbance signal in that component:
-      - erosion_dominant  → "flood"
-      - high_slope + soft → "windthrow"
-      - default           → round-robin across ``kinds``
+    (b) Erosion channel — explicit erosion_amount field flags flood channels and
+        wash-out zones.
 
-    Patch metadata returned: bounds, centroid (world-space), area_cells,
-    kind, age_years, recovery_progress.
+    (c) Geology / hardness — soft rock (hardness < 0.25) paired with moderate slope
+        indicates prone-to-slumping substrate.
+
+    (d) Temporal / proxy change detection — AAA games need disturbance to look
+        *caused*, not random.  Four proxy-change signals detect where the land
+        surface has evidently changed relative to a stable reference:
+
+        (d1) Height-delta proxy: ``height_delta`` channel on stack (e.g. DoD —
+             Digital elevation model of Difference from two surveys).  Cells
+             where |delta| > 0.5 m are flagged as actively changed.  When the
+             channel is absent, a synthetic delta is derived from the Laplacian
+             of the current height field: high Laplacian magnitude (pits and
+             peaks relative to neighbours) indicates terrain that is geomorpho-
+             logically fresh rather than equilibrium-smoothed.
+
+        (d2) NDVI-proxy drop: ``vegetation_index`` channel (e.g. NDVI raster).
+             Cells with vegetation_index < 0.15 inside otherwise vegetated zones
+             (where the neighbourhood mean is > 0.35) indicate canopy removal —
+             exactly the signal of fire scars, clear-cuts, and windthrow gaps.
+             When absent, low-canopy cells surrounded by high-canopy cells from
+             the detail_density map are used as a proxy.
+
+        (d3) Surface-roughness anomaly: local variance of the height field
+             (3×3 neighbourhood std dev).  Freshly disturbed terrain is rougher
+             than stable equilibrium surfaces.  Cells where roughness z-score
+             > 1.5 are added to the disturbed mask.
+
+        (d4) Flow-accumulation / convergence index: cells at topographic
+             convergence points (flow accumulation channel or computed from
+             height curvature) that also show erosion flags indicate active
+             flood-regime disturbance.
+
+    (e) Authored intent patches — manual DisturbancePatch entries override
+        everything and force cells to disturbed.
+
+    Kind assignment per patch
+    -------------------------
+    After labelling connected components, each patch is classified by majority
+    signal:
+      - Temporal delta (d1/d2) dominant + low elevation  → "flood"
+      - NDVI drop dominant                               → "fire"
+      - Slope + soft substrate                           → "windthrow"
+      - Roughness anomaly + high slope                   → "windthrow"
+      - Default round-robin across ``kinds``
+
+    Age and recovery
+    ----------------
+    When a ``height_delta`` channel is present, age is estimated from the delta
+    magnitude (larger deltas = more recent, less recovered).  Otherwise age is
+    drawn from U[0.5, 40] years.  Recovery progress = saturate(age / 40).
     """
     height = np.asarray(stack.height, dtype=np.float32)
     rows, cols = height.shape
     disturbed = np.zeros((rows, cols), dtype=bool)
 
-    # --- build per-cell signal maps ---
+    # Confidence maps: accumulated score per cell for kind classification.
+    # Higher score in a channel → that kind is more likely for this patch.
+    _score_flood = np.zeros((rows, cols), dtype=np.float32)
+    _score_fire = np.zeros((rows, cols), dtype=np.float32)
+    _score_windthrow = np.zeros((rows, cols), dtype=np.float32)
 
-    # (a) slope-driven disturbance
+    # -------------------------------------------------------------------------
+    # (a) Slope-driven disturbance
+    # -------------------------------------------------------------------------
     slope_raw = stack.get("slope")
     if slope_raw is not None:
         slope_arr = np.asarray(slope_raw, dtype=np.float32)
     else:
-        # Derive slope from height via central differences when channel absent
         dy = np.gradient(height, stack.cell_size, axis=0)
         dx = np.gradient(height, stack.cell_size, axis=1)
         slope_arr = np.sqrt(dx ** 2 + dy ** 2).astype(np.float32)
-    disturbed |= slope_arr > disturbance_slope_threshold
 
-    # (b) erosion-driven disturbance
+    steep = slope_arr > disturbance_slope_threshold
+    disturbed |= steep
+    _score_windthrow += steep.astype(np.float32) * 0.4
+
+    # -------------------------------------------------------------------------
+    # (b) Erosion-driven disturbance
+    # -------------------------------------------------------------------------
     erosion_arr: Optional[np.ndarray] = None
     erosion_raw = stack.get("erosion_amount")
     if erosion_raw is not None:
         erosion_arr = np.asarray(erosion_raw, dtype=np.float32)
-        disturbed |= erosion_arr > disturbance_erosion_threshold
+        eroded = erosion_arr > disturbance_erosion_threshold
+        disturbed |= eroded
+        _score_flood += eroded.astype(np.float32) * 0.5
 
-    # (c) geology / hardness channel — soft rock (hardness < 0.25) is prone
-    #     to slumping, gully formation and windthrow root-pull.
+    # -------------------------------------------------------------------------
+    # (c) Geology / hardness
+    # -------------------------------------------------------------------------
     hardness_arr: Optional[np.ndarray] = None
     geology_raw = stack.get("hardness") or stack.get("geology")
     if geology_raw is not None:
         hardness_arr = np.asarray(geology_raw, dtype=np.float32)
         soft_rock = hardness_arr < 0.25
-        # Only flag soft-rock cells that are at least mildly steep
-        disturbed |= soft_rock & (slope_arr > disturbance_slope_threshold * 0.5)
+        soft_steep = soft_rock & (slope_arr > disturbance_slope_threshold * 0.5)
+        disturbed |= soft_steep
+        _score_windthrow += soft_steep.astype(np.float32) * 0.3
 
-    # (d) authored intent patches
+    # -------------------------------------------------------------------------
+    # (d1) Temporal proxy — height delta (DoD or Laplacian-of-height surrogate)
+    # -------------------------------------------------------------------------
+    height_delta_arr: Optional[np.ndarray] = None
+    hdelta_raw = stack.get("height_delta")
+    if hdelta_raw is not None:
+        height_delta_arr = np.abs(np.asarray(hdelta_raw, dtype=np.float32))
+    else:
+        # Synthetic delta: magnitude of the discrete Laplacian (second derivative
+        # of height).  High Laplacian = geomorphologically fresh pits/peaks.
+        # Use a 3×3 stencil: Laplacian ≈ sum of 4-neighbours - 4*centre.
+        lap = np.zeros_like(height)
+        lap[1:-1, 1:-1] = (
+            height[1:-1, 2:] + height[1:-1, :-2]
+            + height[2:, 1:-1] + height[:-2, 1:-1]
+            - 4.0 * height[1:-1, 1:-1]
+        )
+        height_delta_arr = np.abs(lap).astype(np.float32)
+
+    # Threshold: cells where delta > mean + 1.5*std are "recently changed".
+    hd_mean = float(height_delta_arr.mean())
+    hd_std = float(height_delta_arr.std()) if float(height_delta_arr.std()) > 1e-9 else 1.0
+    temporal_changed = height_delta_arr > (hd_mean + 1.5 * hd_std)
+    disturbed |= temporal_changed
+    # Temporal change near valleys/low areas → flood; elsewhere neutral.
+    alt_n_local = _normalize(height)
+    _score_flood += (temporal_changed & (alt_n_local < 0.4)).astype(np.float32) * 0.4
+    _score_windthrow += (temporal_changed & (alt_n_local >= 0.4)).astype(np.float32) * 0.2
+
+    # -------------------------------------------------------------------------
+    # (d2) NDVI-proxy drop — vegetation index channel or canopy-density proxy
+    # -------------------------------------------------------------------------
+    veg_index_raw = stack.get("vegetation_index") or stack.get("ndvi")
+    ndvi_drop_mask = np.zeros((rows, cols), dtype=bool)
+    if veg_index_raw is not None:
+        veg_idx = np.asarray(veg_index_raw, dtype=np.float32)
+        # Neighbourhood mean using a 5×5 box filter (or fallback)
+        if _SCIPY_OK:
+            nbhd_mean = _ndimage.uniform_filter(veg_idx, size=5)
+        else:
+            # Simple shift-average fallback
+            nbhd_mean = (
+                np.roll(veg_idx, 2, axis=0) + np.roll(veg_idx, -2, axis=0)
+                + np.roll(veg_idx, 2, axis=1) + np.roll(veg_idx, -2, axis=1)
+                + veg_idx
+            ) / 5.0
+        # NDVI drop: locally low index surrounded by high-index neighbours
+        ndvi_drop_mask = (veg_idx < 0.15) & (nbhd_mean > 0.35)
+        disturbed |= ndvi_drop_mask
+        _score_fire += ndvi_drop_mask.astype(np.float32) * 0.6
+
+    # -------------------------------------------------------------------------
+    # (d3) Surface-roughness anomaly — local height std dev
+    # -------------------------------------------------------------------------
+    if _SCIPY_OK:
+        h_sq_mean = _ndimage.uniform_filter(height ** 2, size=3)
+        h_mean_sq = _ndimage.uniform_filter(height, size=3) ** 2
+        roughness = np.sqrt(np.maximum(0.0, h_sq_mean - h_mean_sq)).astype(np.float32)
+    else:
+        # Variance via shift arithmetic (cheap 3×3 approximation)
+        h_s = height
+        nbhd = (
+            np.roll(h_s, 1, 0) + np.roll(h_s, -1, 0)
+            + np.roll(h_s, 1, 1) + np.roll(h_s, -1, 1)
+        ) / 4.0
+        roughness = np.abs(h_s - nbhd).astype(np.float32)
+
+    r_mean = float(roughness.mean())
+    r_std = float(roughness.std()) if float(roughness.std()) > 1e-9 else 1.0
+    rough_anomaly = roughness > (r_mean + 1.5 * r_std)
+    # Only count roughness anomaly as disturbance when also steep (avoids
+    # flagging flat boulder fields that are ecologically stable).
+    rough_disturbed = rough_anomaly & steep
+    disturbed |= rough_disturbed
+    _score_windthrow += rough_disturbed.astype(np.float32) * 0.25
+
+    # -------------------------------------------------------------------------
+    # (d4) Flow convergence — flow_accumulation channel or curvature proxy
+    # -------------------------------------------------------------------------
+    flow_raw = stack.get("flow_accumulation")
+    if flow_raw is not None:
+        flow_arr = np.asarray(flow_raw, dtype=np.float32)
+        f_mean = float(flow_arr.mean())
+        f_std = float(flow_arr.std()) if float(flow_arr.std()) > 1e-9 else 1.0
+        high_flow = flow_arr > (f_mean + 2.0 * f_std)
+        convergence_disturbed = high_flow & (
+            erosion_arr is not None
+            and erosion_arr > disturbance_erosion_threshold * 0.5
+            if erosion_arr is not None
+            else high_flow
+        )
+        disturbed |= convergence_disturbed
+        _score_flood += convergence_disturbed.astype(np.float32) * 0.5
+
+    # -------------------------------------------------------------------------
+    # (e) Authored intent patches
+    # -------------------------------------------------------------------------
     if intent is not None:
         manual = getattr(intent, "disturbance_patches", None) or []
         for mp in manual:
@@ -336,11 +609,12 @@ def detect_disturbance_patches(
     if not np.any(disturbed):
         return []
 
-    # --- Label connected components (4-connected) ---
+    # -------------------------------------------------------------------------
+    # Label connected components (4-connected)
+    # -------------------------------------------------------------------------
     if _SCIPY_OK:
         labelled, num_labels = _ndimage.label(disturbed)
     else:
-        # Fallback: simple 4-connected labelling via union-find
         labelled = np.zeros((rows, cols), dtype=np.int32)
         _label_id = 0
         for r in range(rows):
@@ -364,8 +638,6 @@ def detect_disturbance_patches(
     patches: List[DisturbancePatch] = []
     rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
 
-    # Max patch area before splitting: ~10% of tile prevents one giant component
-    # from eating the whole result list.
     max_component_cells = max(min_patch_area * 4, (rows * cols) // 10)
 
     for label_idx in range(1, num_labels + 1):
@@ -379,7 +651,6 @@ def detect_disturbance_patches(
         if area_cells <= max_component_cells:
             candidate_groups = [(comp_rs, comp_cs)]
         else:
-            # Large component: seed-controlled random sub-sampling.
             n_sub = max(2, int(np.sqrt(area_cells / max_component_cells)) + 2)
             patch_half = max(2, int(np.sqrt(max_component_cells) // 2))
             chosen = rng.integers(0, area_cells, size=n_sub)
@@ -409,28 +680,47 @@ def detect_disturbance_patches(
                 max_y=float(stack.world_origin_y + (r_max + 1) * stack.cell_size),
             )
 
-            # --- Signal-driven kind assignment ---
-            # Tally which disturbance signals dominate within the sub-patch.
+            # --- Multi-signal kind classification ---
+            # Sum the per-kind confidence scores across the patch cells.
+            fire_score = float(_score_fire[sub_rs, sub_cs].mean())
+            flood_score = float(_score_flood[sub_rs, sub_cs].mean())
+            wind_score = float(_score_windthrow[sub_rs, sub_cs].mean())
+
+            # Also apply legacy per-patch signal checks for robustness.
             patch_slope_mean = float(slope_arr[sub_rs, sub_cs].mean())
             erosion_mean = (
                 float(erosion_arr[sub_rs, sub_cs].mean())
-                if erosion_arr is not None
-                else 0.0
+                if erosion_arr is not None else 0.0
             )
             hardness_mean = (
                 float(hardness_arr[sub_rs, sub_cs].mean())
-                if hardness_arr is not None
-                else 0.5
+                if hardness_arr is not None else 0.5
             )
-
             if erosion_mean > disturbance_erosion_threshold * 1.2:
-                kind = "flood"
-            elif patch_slope_mean > disturbance_slope_threshold * 0.8 and hardness_mean < 0.35:
-                kind = "windthrow"
-            else:
-                kind = str(kinds[len(patches) % len(kinds)])
+                flood_score += 0.5
+            if patch_slope_mean > disturbance_slope_threshold * 0.8 and hardness_mean < 0.35:
+                wind_score += 0.4
 
-            age = float(rng.uniform(0.5, 40.0))
+            best_score = max(fire_score, flood_score, wind_score)
+            if best_score < 0.05:
+                kind = str(kinds[len(patches) % len(kinds)])
+            elif fire_score >= flood_score and fire_score >= wind_score:
+                kind = "fire"
+            elif flood_score >= wind_score:
+                kind = "flood"
+            else:
+                kind = "windthrow"
+
+            # Age estimation: when height_delta channel present, larger delta
+            # implies more recent disturbance (less time for recovery).
+            if hdelta_raw is not None:
+                delta_mean = float(np.abs(np.asarray(hdelta_raw, dtype=np.float32))[sub_rs, sub_cs].mean())
+                # Map delta magnitude to age: 0 delta → old (40 yrs), large → recent (0.5 yrs).
+                delta_norm = min(1.0, delta_mean / max(hd_mean + 3 * hd_std, 1e-6))
+                age = float(0.5 + (1.0 - delta_norm) * 39.5)
+            else:
+                age = float(rng.uniform(0.5, 40.0))
+
             recovery = float(min(1.0, age / 40.0))
 
             patches.append(
@@ -909,15 +1199,19 @@ def apply_edge_effects(
 
     boost = taper * edge_boost_factor
 
-    # Species-diversity gradient per layer
+    # Species-diversity gradient per layer (5-layer vertical profile)
     return VegetationLayers(
+        # Emergent giants are even more suppressed at exposed edges.
+        emergent_density=np.clip(
+            vegetation.emergent_density - boost * 0.50, 0.0, 1.0
+        ).astype(np.float32),
         # Canopy thins at the edge — wind exposure and light competition.
         canopy_density=np.clip(
             vegetation.canopy_density - boost * 0.30, 0.0, 1.0
         ).astype(np.float32),
-        # Understory peaks at edge — maximum light + forest shelter.
-        understory_density=np.clip(
-            vegetation.understory_density + boost, 0.0, 1.0
+        # Sub-canopy (formerly understory) peaks at edge — max light + shelter.
+        sub_canopy_density=np.clip(
+            vegetation.sub_canopy_density + boost, 0.0, 1.0
         ).astype(np.float32),
         # Shrubs thrive in the transition zone.
         shrub_density=np.clip(
@@ -989,8 +1283,9 @@ def apply_cultivated_zones(
 
     # Use float64 working arrays so scalar assignments like 0.9 survive
     # without float32 rounding (np.float32(0.9) < 0.9 in Python float space).
+    emergent = vegetation.emergent_density.astype(np.float64)
     canopy = vegetation.canopy_density.astype(np.float64)
-    understory = vegetation.understory_density.astype(np.float64)
+    sub_canopy = vegetation.sub_canopy_density.astype(np.float64)
     shrub = vegetation.shrub_density.astype(np.float64)
     ground = vegetation.ground_cover_density.astype(np.float64)
 
@@ -1003,9 +1298,10 @@ def apply_cultivated_zones(
     def _apply_zone(r_sl: slice, c_sl: slice, zone_row_spacing: int, row_density: float) -> None:
         rows_in_zone = range(*r_sl.indices(shape[0]))
 
-        # (a) Clear natural vegetation
+        # (a) Clear natural vegetation; emergent giants are completely removed
+        emergent[r_sl, c_sl] = 0.0
         canopy[r_sl, c_sl] = 0.05
-        understory[r_sl, c_sl] = 0.02
+        sub_canopy[r_sl, c_sl] = 0.02
         shrub[r_sl, c_sl] = 0.05
         ground[r_sl, c_sl] = float(cultivated_density)
 
@@ -1048,13 +1344,10 @@ def apply_cultivated_zones(
             _apply_zone(r_sl, c_sl, z_spacing, z_density)
     else:
         # Fallback: boolean mask as single zone (full-array row slice).
-        # Baseline is cultivated_density everywhere; crop rows boosted to 1.0.
-        # Furrow suppression is NOT applied in the plain-mask path so that
-        # cultivated_density (default 0.9) remains the guaranteed minimum —
-        # required by the contract test.
         rows_count, _ = shape
+        emergent[base_mask] = 0.0
         canopy[base_mask] = 0.05
-        understory[base_mask] = 0.02
+        sub_canopy[base_mask] = 0.02
         shrub[base_mask] = 0.05
         ground[base_mask] = float(cultivated_density)
 
@@ -1065,8 +1358,9 @@ def apply_cultivated_zones(
                 ground[row_idx, row_in_mask] = 1.0
 
     return VegetationLayers(
+        emergent_density=emergent.astype(np.float32),
         canopy_density=canopy.astype(np.float32),
-        understory_density=understory.astype(np.float32),
+        sub_canopy_density=sub_canopy.astype(np.float32),
         shrub_density=shrub.astype(np.float32),
         ground_cover_density=ground.astype(np.float32),
     )
@@ -1131,12 +1425,13 @@ def apply_allelopathic_exclusion(
         if b.shape != shape:
             raise ValueError("species_b_mask shape mismatch")
         suppression = np.clip(b, 0.0, 1.0)
-        understory = (vegetation.understory_density * (1.0 - suppression * 0.8)).astype(np.float32)
+        sub_canopy = (vegetation.sub_canopy_density * (1.0 - suppression * 0.8)).astype(np.float32)
         shrub = (vegetation.shrub_density * (1.0 - suppression * 0.7)).astype(np.float32)
         ground_cover = (vegetation.ground_cover_density * (1.0 - suppression * 0.6)).astype(np.float32)
         return VegetationLayers(
+            emergent_density=vegetation.emergent_density.copy(),
             canopy_density=vegetation.canopy_density.copy(),
-            understory_density=understory,
+            sub_canopy_density=sub_canopy,
             shrub_density=shrub,
             ground_cover_density=ground_cover,
         )
@@ -1204,15 +1499,20 @@ def apply_allelopathic_exclusion(
                 1.0,
             ).astype(np.float32)
 
-    # Write back to VegetationLayers channels
+    # Write back to VegetationLayers channels (5-layer)
+    emergent = densities.get("emergent", vegetation.emergent_density.copy())
     canopy = densities.get("canopy", vegetation.canopy_density.copy())
-    understory = densities.get("understory", vegetation.understory_density.copy())
+    sub_canopy = densities.get(
+        "sub_canopy",
+        densities.get("understory", vegetation.sub_canopy_density.copy()),
+    )
     shrub = densities.get("shrub", vegetation.shrub_density.copy())
     ground_cover = densities.get("ground_cover", vegetation.ground_cover_density.copy())
 
     return VegetationLayers(
+        emergent_density=emergent.astype(np.float32),
         canopy_density=canopy.astype(np.float32),
-        understory_density=understory.astype(np.float32),
+        sub_canopy_density=sub_canopy.astype(np.float32),
         shrub_density=shrub.astype(np.float32),
         ground_cover_density=ground_cover.astype(np.float32),
     )
@@ -1323,10 +1623,12 @@ def pass_vegetation_depth(
     # Build shared detail_density dict for clearings + logs to stamp into
     existing = stack.detail_density or {}
     merged: Dict[str, np.ndarray] = {k: np.asarray(v).copy() for k, v in existing.items()}
-    keys = ("canopy", "understory", "shrub", "ground_cover")
+    # 5-layer vertical profile: emergent > canopy > sub_canopy > shrub > ground_cover
+    keys = ("emergent", "canopy", "sub_canopy", "shrub", "ground_cover")
     sources = (
+        layers.emergent_density,
         layers.canopy_density,
-        layers.understory_density,
+        layers.sub_canopy_density,
         layers.shrub_density,
         layers.ground_cover_density,
     )

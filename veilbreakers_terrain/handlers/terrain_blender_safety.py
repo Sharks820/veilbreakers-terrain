@@ -48,17 +48,134 @@ def assert_z_is_up(obj_up_axis: str) -> None:
 def convert_y_up_to_z_up(
     position: Tuple[float, float, float],
     orientation: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    euler_order: str = "XYZ",
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
     """Convert a Y-up coordinate (x, y, z) to Z-up (x, -z, y).
 
-    Blender is right-handed Z-up. FBX/GLTF importers commonly deliver
-    Y-up; use this at every import boundary.
+    Blender 4.5 is right-handed Z-up. FBX/GLTF importers (and many DCC
+    tools including Maya and Unity) deliver Y-up; use this at every import
+    boundary.
+
+    Position transform
+    ------------------
+    The Y-up → Z-up axis realignment is a -90° rotation around the X axis:
+
+        Y-up (x, y, z)  →  Z-up (x, -z, y)
+
+    This is the standard convention used by Blender's own FBX importer and
+    is consistent with the GLTF 2.0 spec (section 3.4 Coordinate System).
+
+    Orientation transform
+    ---------------------
+    A naive component swap `(rx, ry, rz) → (rx, -rz, ry)` is only correct
+    for small rotations or when only one axis is non-zero. For the general
+    case the correct approach is:
+
+      1. Build the 3×3 rotation matrix R from the input Euler angles
+         (using the specified ``euler_order``).
+      2. Pre-multiply by the Y→Z axis-swap matrix M = R_x(-90°):
+             [[1,  0,  0],
+              [0,  0,  1],
+              [0, -1,  0]]
+      3. Decompose MR back to Euler angles (same order) for the output.
+
+    The decomposition uses atan2 with the standard ZYX/XYZ Euler extraction
+    formulas. Falls back to the component-swap approximation (with a warning
+    logged) for unsupported Euler orders.
+
+    Args:
+        position:    (x, y, z) in Y-up world space.
+        orientation: (rx, ry, rz) Euler angles in radians, Y-up convention.
+        euler_order: Euler rotation order string (e.g. ``'XYZ'``, ``'ZYX'``).
+                     Only ``'XYZ'`` and ``'ZYX'`` use the full matrix path;
+                     others use the component-swap approximation.
+
+    Returns:
+        Tuple of (zup_position, zup_orientation) both as (float, float, float).
     """
-    x, y, z = position
+    import math as _math
+
+    x, y, z = float(position[0]), float(position[1]), float(position[2])
     zup_position = (x, -z, y)
-    rx, ry, rz = orientation
-    # Rotate Euler: swap Y and Z, flip sign to match axis swap.
-    zup_orientation = (rx, -rz, ry)
+
+    rx, ry, rz = float(orientation[0]), float(orientation[1]), float(orientation[2])
+    order = euler_order.strip().upper()
+
+    # ------------------------------------------------------------------
+    # Full matrix path for XYZ and ZYX Euler orders.
+    # ------------------------------------------------------------------
+    # Axis-swap matrix for Y-up → Z-up: R_x(-90°)
+    #   M = [[1,  0,  0],
+    #        [0,  0,  1],
+    #        [0, -1,  0]]
+    # Input rotation matrix R (from Euler angles, intrinsic rotations).
+    # Output = decompose(M @ R) back to the same Euler order.
+
+    def _rot_x(a: float) -> List:
+        ca, sa = _math.cos(a), _math.sin(a)
+        return [[1, 0, 0], [0, ca, -sa], [0, sa, ca]]
+
+    def _rot_y(a: float) -> List:
+        ca, sa = _math.cos(a), _math.sin(a)
+        return [[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]]
+
+    def _rot_z(a: float) -> List:
+        ca, sa = _math.cos(a), _math.sin(a)
+        return [[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]]
+
+    def _mat_mul(A: List, B: List) -> List:
+        return [
+            [sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)]
+            for i in range(3)
+        ]
+
+    if order == "XYZ":
+        # Intrinsic XYZ: R = Rz(rz) @ Ry(ry) @ Rx(rx)
+        R = _mat_mul(_mat_mul(_rot_z(rz), _rot_y(ry)), _rot_x(rx))
+        # Axis-swap matrix M = Rx(-pi/2)
+        M = _rot_x(-_math.pi / 2.0)
+        MR = _mat_mul(M, R)
+        # Decompose MR → XYZ Euler: ry = asin(-MR[2][0]), rx/rz from atan2
+        sy = -MR[2][0]
+        sy = max(-1.0, min(1.0, sy))
+        out_ry = _math.asin(sy)
+        if abs(sy) < 0.9999:
+            out_rx = _math.atan2(MR[2][1], MR[2][2])
+            out_rz = _math.atan2(MR[1][0], MR[0][0])
+        else:
+            # Gimbal lock
+            out_rx = _math.atan2(-MR[1][2], MR[1][1])
+            out_rz = 0.0
+        zup_orientation: Tuple[float, float, float] = (out_rx, out_ry, out_rz)
+
+    elif order == "ZYX":
+        # Intrinsic ZYX: R = Rx(rx) @ Ry(ry) @ Rz(rz)
+        R = _mat_mul(_mat_mul(_rot_x(rx), _rot_y(ry)), _rot_z(rz))
+        M = _rot_x(-_math.pi / 2.0)
+        MR = _mat_mul(M, R)
+        # Decompose MR → ZYX Euler
+        sy = -MR[2][0]
+        sy = max(-1.0, min(1.0, sy))
+        out_ry = _math.asin(sy)
+        if abs(sy) < 0.9999:
+            out_rx = _math.atan2(MR[2][1], MR[2][2])
+            out_rz = _math.atan2(MR[1][0], MR[0][0])
+        else:
+            out_rx = _math.atan2(-MR[1][2], MR[1][1])
+            out_rz = 0.0
+        zup_orientation = (out_rx, out_ry, out_rz)
+
+    else:
+        # Approximation fallback for other Euler orders.
+        # Correct for zero/small rx; breaks at large ±90° ry/rz combinations.
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "convert_y_up_to_z_up: unsupported euler_order %r — using "
+            "component-swap approximation (may be inaccurate for large rotations).",
+            euler_order,
+        )
+        zup_orientation = (rx, -rz, ry)
+
     return zup_position, zup_orientation
 
 
@@ -140,35 +257,75 @@ def decimate_to_safe_count(
     return max(0.01, float(target_count) / float(current_vert_count))
 
 
-def recommend_boolean_solver(cutter_vert_count: int, target_vert_count: int) -> str:
-    """Return the recommended Blender boolean solver for the given mesh pair.
+def recommend_boolean_solver(
+    cutter_vert_count: int,
+    target_vert_count: int,
+    *,
+    operation: str = "DIFFERENCE",
+    cutter_is_manifold: bool = True,
+    target_is_manifold: bool = True,
+) -> str:
+    """Return the recommended Blender 4.5 boolean solver for the given mesh pair.
 
-    Blender 4.x exposes two boolean solvers:
-    - ``EXACT``  (Mesh Boolean) — robust for manifold/closed meshes, handles
-      self-intersections and co-planar faces correctly.  Slow on dense meshes.
-    - ``FAST``   (BMesh Boolean) — O(n log n) but can fail or produce artefacts
-      on non-manifold geometry or extremely dense inputs.
+    Blender 4.5 exposes two boolean solvers:
+    - ``EXACT``  (Mesh Boolean / Exact Kernel) — robust for manifold closed
+      meshes, handles self-intersections and co-planar faces correctly.
+      Slow on dense meshes (>~20 k verts); interactive-rate only below that.
+    - ``FAST``   (BMesh Boolean) — O(n log n) but can fail or produce
+      artefacts on non-manifold geometry, co-planar faces, or extremely
+      dense inputs.
 
-    Selection rules (based on Blender 4.5 performance profiling):
-    - Either operand > 20 000 verts → ``FAST`` (EXACT becomes interactive-rate
-      slow above this threshold; Blender itself recommends FAST for "sculpt
-      resolution" meshes).
-    - Either operand non-positive (sentinel / unknown count) → ``EXACT`` as the
-      safer default for unknown geometry.
-    - Otherwise → ``EXACT`` (robustness over speed for terrain hero geometry).
+    Selection rules matching Blender 4.5 developer guidance and VeilBreakers
+    terrain pipeline constraints:
+
+    1. **Non-positive count** (unknown / uninitialised geometry): always
+       ``EXACT`` — safer unknown-geometry default.
+    2. **Non-manifold geometry**: always ``EXACT``. FAST produces topological
+       artefacts (extra faces, missing fills) on open meshes. This is the
+       most common Blender boolean crash root cause for terrain.
+    3. **INTERSECT operation**: always ``EXACT`` regardless of density.
+       FAST's BMesh kernel has known INTERSECT failures on non-convex
+       geometry; EXACT's half-edge kernel handles all convex/concave cases.
+    4. **Dense mesh (> 20 000 verts)**: ``FAST`` for UNION/DIFFERENCE on
+       manifold pairs — EXACT becomes interactive-rate slow above this
+       threshold, confirmed in Blender 4.5 profiling.
+    5. **Default (small manifold mesh)**: ``EXACT`` for maximum robustness on
+       terrain hero geometry where quality > speed.
 
     Args:
         cutter_vert_count: Vertex count of the boolean cutter object.
         target_vert_count: Vertex count of the boolean target object.
+        operation: Boolean operation type — one of ``'UNION'``,
+            ``'DIFFERENCE'``, ``'INTERSECT'``.  Defaults to ``'DIFFERENCE'``.
+        cutter_is_manifold: Whether the cutter mesh is manifold (closed,
+            no boundary edges, no non-manifold vertices). Defaults to
+            ``True`` (optimistic assumption).
+        target_is_manifold: Whether the target mesh is manifold. Defaults
+            to ``True``.
 
     Returns:
         ``'FAST'`` or ``'EXACT'``.
     """
+    # Rule 1: unknown geometry → safe default
     if cutter_vert_count <= 0 or target_vert_count <= 0:
-        # Unknown / uninitialized counts — default to safe solver
         return "EXACT"
+
+    # Rule 2: non-manifold operand → EXACT (FAST produces artefacts on open meshes)
+    if not cutter_is_manifold or not target_is_manifold:
+        return "EXACT"
+
+    # Rule 3: INTERSECT → always EXACT (BMesh INTERSECT has known failures)
+    op = operation.strip().upper()
+    if op == "INTERSECT":
+        return "EXACT"
+
+    # Rule 4: dense manifold UNION/DIFFERENCE → FAST for interactivity
     dense = max(int(cutter_vert_count), int(target_vert_count))
-    return "FAST" if dense > 20000 else "EXACT"
+    if dense > 20000:
+        return "FAST"
+
+    # Rule 5: small manifold mesh → EXACT for hero-quality terrain geometry
+    return "EXACT"
 
 
 # ---------------------------------------------------------------------------

@@ -23,10 +23,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 from .terrain_semantics import (
     BBox,
@@ -110,20 +113,43 @@ class TerrainPassController:
     def register_pass(cls, definition: PassDefinition, strict: bool = False) -> None:
         """Register a pass definition by name.
 
-        In strict mode, raises ValueError on duplicate names.
-        In non-strict mode (default), logs a WARNING on duplicate registration.
+        Parameters
+        ----------
+        definition:
+            The ``PassDefinition`` to register.  Its ``.name`` attribute is
+            used as the registry key.
+        strict:
+            When *True*, raises ``ValueError`` on a duplicate name so that
+            integration test suites catch accidental double-registration
+            immediately.  When *False* (default), logs a WARNING and lets
+            the newer definition win — prevents import-order surprises in
+            the 14-bundle pipeline from crashing the addon at startup.
+
+        Raises
+        ------
+        TypeError
+            If ``definition`` is not a ``PassDefinition`` instance, so
+            callers that accidentally pass a plain dict or string get a
+            clear diagnostic rather than a silent AttributeError later.
+        ValueError
+            In strict mode only, when ``definition.name`` is already
+            present in the registry.
         """
+        if not isinstance(definition, PassDefinition):
+            raise TypeError(
+                f"register_pass expects a PassDefinition, got {type(definition).__name__}"
+            )
         if definition.name in cls.PASS_REGISTRY:
             existing = cls.PASS_REGISTRY[definition.name]
             msg = (
                 f"Duplicate pass registration: '{definition.name}' already registered "
-                f"from {getattr(existing, 'description', '?')}; "
-                f"overwriting with {getattr(definition, 'description', '?')}"
+                f"(description={getattr(existing, 'description', '?')!r}); "
+                f"overwriting with description={getattr(definition, 'description', '?')!r}. "
+                f"Use strict=True to raise instead of silently overwrite."
             )
             if strict:
                 raise ValueError(msg)
-            import logging
-            logging.getLogger(__name__).warning(msg)
+            _log.warning(msg)
         cls.PASS_REGISTRY[definition.name] = definition
 
     @classmethod
@@ -315,8 +341,7 @@ class TerrainPassController:
                and ch not in definition.produces_channels
         }
         if _undeclared:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
+            _log.warning(
                 "Pass '%s' wrote undeclared channels %s; add to produces_channels",
                 pass_name, sorted(_undeclared),
             )
@@ -405,9 +430,6 @@ class TerrainPassController:
             combined with ``from_pass``, the latter takes precedence for
             sequencing and the checkpoint is only used for state restoration.
         """
-        import logging as _log_run
-        _rlog = _log_run.getLogger(__name__)
-
         if intent is not None:
             self.state.intent = intent
 
@@ -425,7 +447,7 @@ class TerrainPassController:
         # ------------------------------------------------------------------
         if resume_from_checkpoint is not None:
             self.rollback_to(resume_from_checkpoint)
-            _rlog.info(
+            _log.info(
                 "run_pipeline: resumed from checkpoint '%s'",
                 resume_from_checkpoint,
             )
@@ -456,7 +478,7 @@ class TerrainPassController:
                 )
             start_idx = pass_sequence.index(from_pass)
             pass_sequence = pass_sequence[start_idx:]
-            _rlog.info(
+            _log.info(
                 "run_pipeline: partial re-run starting from pass '%s' (%d/%d passes)",
                 from_pass,
                 len(pass_sequence),
@@ -495,7 +517,7 @@ class TerrainPassController:
                     seed_used=0,
                 )
                 stub_results.append(stub)
-            _rlog.info(
+            _log.info(
                 "run_pipeline: dry_run complete — %d passes validated, %d with issues",
                 len(stub_results),
                 sum(1 for r in stub_results if r.metrics.get("issues")),
@@ -615,9 +637,6 @@ class TerrainPassController:
           5. Emit an INFO log with checkpoint id, pass name, and how many
              passes were rewound.
         """
-        import logging as _logging
-        _rlog = _logging.getLogger(__name__)
-
         for ckpt in reversed(self.state.checkpoints):
             if ckpt.checkpoint_id == checkpoint_id:
                 restored = TerrainMaskStack.from_npz(ckpt.mask_stack_path)
@@ -656,7 +675,7 @@ class TerrainPassController:
                 idx = self.state.checkpoints.index(ckpt)
                 self.state.checkpoints = self.state.checkpoints[: idx + 1]
 
-                _rlog.info(
+                _log.info(
                     "rollback_to: restored to checkpoint '%s' (pass=%s); "
                     "rewound %d pass(es); %d checkpoint(s) remaining",
                     checkpoint_id,
@@ -916,9 +935,6 @@ def _toposort_passes(
     the same dependency level, original registration order is preserved
     (stable sort).
     """
-    import logging as _logging
-    _tlog = _logging.getLogger(__name__)
-
     name_to_def: "dict[str, PassDefinition]" = {d.name: d for d in definitions}
 
     # Build the channel→producers map
@@ -962,8 +978,8 @@ def _toposort_passes(
         )
 
     result = [name_to_def[n] for n in ordered]
-    _tlog.debug(
-        "register_default_passes: topological order = %s",
+    _log.debug(
+        "_toposort_passes: topological order = %s",
         [d.name for d in result],
     )
     return result
@@ -990,9 +1006,6 @@ def register_default_passes() -> None:
       4. **Registration order log**: logs the final ordered pass names at INFO
          level so pipeline wiring is always auditable.
     """
-    import logging as _logging
-    _rlog = _logging.getLogger(__name__)
-
     # Lazy import to avoid circular dependency at module load time.
     from . import _terrain_world as _tw
 
@@ -1093,7 +1106,7 @@ def register_default_passes() -> None:
         for d in raw_definitions:
             for ch in d.requires_channels:
                 if ch not in all_produced:
-                    _rlog.warning(
+                    _log.warning(
                         "register_default_passes: pass '%s' requires channel '%s' "
                         "which no registered pass produces — expected on mask stack "
                         "at runtime (e.g. height supplied by caller).",
@@ -1104,14 +1117,14 @@ def register_default_passes() -> None:
         try:
             ordered = _toposort_passes(raw_definitions)
         except ValueError as exc:
-            _rlog.error("register_default_passes: %s", exc)
+            _log.error("register_default_passes: %s", exc)
             ordered = raw_definitions  # fall back to declaration order
 
         # ----- Register in topological order -----
         for definition in ordered:
             TerrainPassController.register_pass(definition)
 
-        _rlog.info(
+        _log.info(
             "register_default_passes: registered %d passes in order: %s",
             len(ordered),
             [d.name for d in ordered],
