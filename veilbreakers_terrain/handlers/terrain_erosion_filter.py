@@ -190,7 +190,10 @@ def phacelle_noise(
             dz = cz - pivot_z
 
             dist_sq = dx * dx + dz * dz
-            weight = np.exp(-dist_sq * 2.0)
+            # Phacelle 2026 bell kernel (Fix 11.6): subtract exp(-2)≈0.01111 so bell
+            # truncates to zero at d=1.0, giving compact support (10-25× cheaper than
+            # Phasor noise at equivalent quality). Formula: max(0, exp(-2*d²) - 0.01111)
+            weight = np.maximum(0.0, np.exp(-dist_sq * 2.0) - 0.01111)
 
             proj = dx * slope_x + dz * slope_z
             phase = proj * (2.0 * np.pi)

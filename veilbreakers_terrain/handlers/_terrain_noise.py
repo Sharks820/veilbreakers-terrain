@@ -305,6 +305,154 @@ def opensimplex2s_noise2_array(
 
 
 # ---------------------------------------------------------------------------
+# Fix 11.2 / REQ-P11-004 — IQ fBm gradient accumulation helpers
+# ---------------------------------------------------------------------------
+
+
+def _noise_with_gradient(
+    p_x: float,
+    p_y: float,
+    gen: Any,
+    eps: float = 1e-4,
+) -> tuple[float, np.ndarray]:
+    """Return (value, [dx, dy]) using finite-difference gradient.
+
+    Used by fbm_iq to accumulate gradient dampening per octave.
+    eps is the finite-difference step in coordinate-space units.
+    """
+    n = gen.noise2(p_x, p_y)
+    dx = (gen.noise2(p_x + eps, p_y) - gen.noise2(p_x - eps, p_y)) / (2.0 * eps)
+    dy = (gen.noise2(p_x, p_y + eps) - gen.noise2(p_x, p_y - eps)) / (2.0 * eps)
+    return n, np.array([dx, dy], dtype=np.float64)
+
+
+def fbm_iq(
+    p_x: float,
+    p_y: float,
+    octaves: int = 6,
+    seed: int = 0,
+) -> float:
+    """IQ gradient-accumulated fBm (Fix 11.2 / REQ-P11-004).
+
+    Accumulates gradient vectors across octaves and uses their magnitude
+    to dampen high-frequency contributions in steep regions, producing
+    naturalistic ridges and valleys consistent with IQ's reference:
+      n, o = noise_with_gradient(p_x, p_y)
+      d += o
+      v += a * n / (1 + dot(d, d))   <- gradient dampens amplitude
+
+    Parameters
+    ----------
+    p_x, p_y : float
+        World-space coordinates.
+    octaves : int
+        Number of fBm octaves (default 6).
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    float
+        fBm value; amplitude grows with octaves but gradient dampening
+        keeps steep areas from over-saturating.
+    """
+    gen = _make_noise_generator(seed)
+    v = 0.0
+    a = 0.5
+    d = np.zeros(2, dtype=np.float64)
+    for _i in range(octaves):
+        n, grad = _noise_with_gradient(p_x, p_y, gen)
+        d += grad
+        damp = 1.0 + float(np.dot(d, d))
+        v += a * n / damp
+        # Rotate by ~30° to prevent axis alignment (IQ pattern)
+        cos30, sin30 = 0.8660254, 0.5
+        p_x, p_y = (cos30 * p_x - sin30 * p_y), (sin30 * p_x + cos30 * p_y)
+        a *= 0.5
+        p_x *= 2.0
+        p_y *= 2.0
+    return float(v)
+
+
+# ---------------------------------------------------------------------------
+# Fix 11.6 (simple variant) / REQ-P11-002 — Phacelle noise in _terrain_noise
+# ---------------------------------------------------------------------------
+
+
+def phacelle_noise_simple(
+    p_x: float,
+    p_y: float,
+    octaves: int = 4,
+    seed: int = 0,
+) -> float:
+    """Single-point Phacelle 2026 bell-kernel noise (Fix 11.6 / REQ-P11-002).
+
+    Implements the Phacelle 2026 bell weight formula for a single query point
+    summed over a 3x3 cell neighbourhood. This is the lightweight variant for
+    use in blending and masking — the vectorized version lives in
+    terrain_erosion_filter.phacelle_noise.
+
+    Bell weight per cell: max(0, exp(-2*d²) - 0.01111)
+    where d = normalized distance from cell pivot in cell-space.
+
+    Parameters
+    ----------
+    p_x, p_y : float
+        World-space coordinates.
+    octaves : int
+        Number of octaves (each doubles frequency, halves amplitude).
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    float
+        Noise value normalized to approximately [-1, 1].
+    """
+    import math as _math
+
+    def _hash_float(ix: int, iy: int, s: int) -> float:
+        """Simple integer hash -> float in [-1, 1]."""
+        h = (ix * 374761393 ^ iy * 668265263 ^ (s & 0x7FFFFFFF)) & 0xFFFFFFFF
+        h ^= h >> 16
+        h = (h * 0x45D9F3B) & 0xFFFFFFFF
+        h ^= h >> 16
+        return (h / 2147483648.0) - 1.0
+
+    total = 0.0
+    amplitude = 0.5
+    freq = 1.0
+    for i in range(octaves):
+        cx = p_x * freq
+        cy = p_y * freq
+        ix0 = int(_math.floor(cx))
+        iy0 = int(_math.floor(cy))
+        cell_val = 0.0
+        cell_wt = 0.0
+        for di in range(-1, 2):
+            for dj in range(-1, 2):
+                ci, cj = ix0 + di, iy0 + dj
+                px_h = _hash_float(ci, cj, seed + i * 7)
+                py_h = _hash_float(ci, cj, seed + i * 7 + 13)
+                pivot_x = ci + 0.5 + px_h * 0.4
+                pivot_y = cj + 0.5 + py_h * 0.4
+                dx = cx - pivot_x
+                dy = cy - pivot_y
+                d_sq = dx * dx + dy * dy
+                # Phacelle 2026 bell: max(0, exp(-2*d²) - 0.01111)
+                w = max(0.0, _math.exp(-2.0 * d_sq) - 0.01111)
+                feature = _hash_float(ci, cj, seed + i * 7 + 31)
+                cell_val += feature * w
+                cell_wt += w
+        if cell_wt > 1e-12:
+            total += amplitude * (cell_val / cell_wt)
+        freq *= 2.0
+        amplitude *= 0.5
+
+    return float(max(-1.0, min(1.0, total * 2.0)))
+
+
+# ---------------------------------------------------------------------------
 # Terrain type presets
 # ---------------------------------------------------------------------------
 
