@@ -42,11 +42,7 @@ def compute_roughness_from_wetness_wear(stack: TerrainMaskStack) -> np.ndarray:
     h = np.asarray(stack.height)
     rows, cols = h.shape
 
-    existing = stack.get("roughness_variation")
-    if existing is None:
-        base = np.full((rows, cols), 0.55, dtype=np.float64)
-    else:
-        base = np.asarray(existing, dtype=np.float64).copy()
+    base = np.full((rows, cols), 0.55, dtype=np.float64)
 
     wet = stack.get("wetness")
     if wet is not None:

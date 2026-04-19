@@ -101,11 +101,17 @@ def apply_wind_erosion(
     dx = math.cos(prevailing_dir_rad)
     dy = math.sin(prevailing_dir_rad)
 
-    # Upwind / downwind shifts (1 cell)
-    row_shift = int(round(dy))
-    col_shift = int(round(dx))
-    up = _shift_with_edge_repeat(h, row_shift=-row_shift, col_shift=-col_shift)
-    down = _shift_with_edge_repeat(h, row_shift=row_shift, col_shift=col_shift)
+    # Upwind / downwind continuous shifts — BUG-94: use fractional pixel offsets
+    # via scipy.ndimage.shift (bilinear) instead of integer-rounded snap.
+    try:
+        from scipy.ndimage import shift as _ndimage_shift
+        up = _ndimage_shift(h, shift=(-dy, -dx), order=1, mode="nearest")
+        down = _ndimage_shift(h, shift=(dy, dx), order=1, mode="nearest")
+    except ImportError:
+        row_shift = int(round(dy))
+        col_shift = int(round(dx))
+        up = _shift_with_edge_repeat(h, row_shift=-row_shift, col_shift=-col_shift)
+        down = _shift_with_edge_repeat(h, row_shift=row_shift, col_shift=col_shift)
 
     # Asymmetric blend: downwind side gets more of the upwind's mass
     blended = 0.5 * h + 0.3 * up + 0.2 * down

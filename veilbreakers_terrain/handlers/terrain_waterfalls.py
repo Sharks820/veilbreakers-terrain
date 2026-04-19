@@ -491,7 +491,7 @@ def solve_waterfall_from_river(
         outflow_direction_rad=float(outflow_angle),
     )
 
-    mist_radius = max(pool_radius * 2.0, total_drop * 1.2)
+    mist_radius = 3.0 * math.sqrt(max(total_drop, 0.0))
     foam_intensity = min(1.0, total_drop / 30.0 + 0.3)
 
     chain_id = f"wf_{int(lip.world_position[0] * 100)}_{int(lip.world_position[1] * 100)}"
