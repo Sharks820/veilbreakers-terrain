@@ -236,6 +236,75 @@ class _OpenSimplexWrapper(_PermTableNoise):
 OpenSimplex = _PermTableNoise  # type: ignore[misc]
 
 # ---------------------------------------------------------------------------
+# Fix 11.1 / REQ-P11-001 — OpenSimplex2S public wrapper
+# ---------------------------------------------------------------------------
+
+
+def opensimplex2s_noise2(x: float, y: float, seed: int = 0) -> float:
+    """Evaluate OpenSimplex2S at a single (x, y) coordinate.
+
+    Uses the S-variant (smooth 3rd-order kernel) which eliminates the
+    45-degree axis-aligned banding artefact present in classic Perlin noise.
+    Falls back to permutation-table gradient noise when ``opensimplex`` is
+    not installed.
+
+    Parameters
+    ----------
+    x, y : float
+        World-space coordinates.
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    float
+        Noise value in [-1, 1].
+    """
+    gen = _make_noise_generator(seed)
+    return gen.noise2(x, y)
+
+
+def opensimplex2s_noise2_array(
+    coords_xy: np.ndarray,
+    seed: int = 0,
+) -> np.ndarray:
+    """Vectorized OpenSimplex2S evaluation over a coordinate array.
+
+    Fix 11.7: array wrapper for terrain_erosion_filter batch evaluation.
+
+    Parameters
+    ----------
+    coords_xy : np.ndarray, shape (N, 2) or (H, W, 2)
+        Float64 array of (x, y) pairs.
+    seed : int
+        Deterministic seed.
+
+    Returns
+    -------
+    np.ndarray, float32
+        Noise values in [-1, 1], shape (N,) when input is (N, 2),
+        or (H, W) when input is (H, W, 2).
+    """
+    coords_xy = np.asarray(coords_xy, dtype=np.float64)
+    gen = _make_noise_generator(seed)
+
+    if coords_xy.ndim == 3 and coords_xy.shape[2] == 2:
+        # (H, W, 2) → evaluate as flat, reshape back
+        h, w, _ = coords_xy.shape
+        flat = coords_xy.reshape(-1, 2)
+        result = gen.noise2_array(flat[:, 0], flat[:, 1])
+        return result.reshape(h, w).astype(np.float32)
+    elif coords_xy.ndim == 2 and coords_xy.shape[1] == 2:
+        # (N, 2) → flat evaluation
+        result = gen.noise2_array(coords_xy[:, 0], coords_xy[:, 1])
+        return result.astype(np.float32)
+    else:
+        raise ValueError(
+            f"coords_xy must be shape (N, 2) or (H, W, 2); got {coords_xy.shape}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Terrain type presets
 # ---------------------------------------------------------------------------
 
@@ -798,19 +867,25 @@ def compute_biome_assignments(
 # A* pathfinding utilities
 # ---------------------------------------------------------------------------
 
-_OFFSETS_16 = (
+_OFFSETS_24 = (
+    # 8 cardinal + diagonal
     (-1, -1), (-1, 0), (-1, 1),
     ( 0, -1),          ( 0, 1),
     ( 1, -1), ( 1, 0), ( 1, 1),
+    # 8 knight moves
     (-2, -1), (-2, 1), (-1, -2), (-1, 2),
     ( 1, -2), ( 1, 2), ( 2, -1), ( 2,  1),
+    # 8 extended knight
+    (-3, -1), (-3, 1), (-1, -3), (-1, 3),
+    ( 1, -3), ( 1, 3), ( 3, -1), ( 3,  1),
 )
+_OFFSETS_16 = _OFFSETS_24  # deprecated alias, use _OFFSETS_24
 
 
 def _neighbors(row: int, col: int, rows: int, cols: int) -> list[tuple[int, int]]:
-    """Return valid 16-connected neighbors (8 standard + 8 knight-moves)."""
+    """Return valid 24-connected neighbors (8 cardinal/diagonal + 8 knight + 8 extended knight)."""
     result = []
-    for dr, dc in _OFFSETS_16:
+    for dr, dc in _OFFSETS_24:
         nr, nc = row + dr, col + dc
         if 0 <= nr < rows and 0 <= nc < cols:
             result.append((nr, nc))
@@ -820,21 +895,20 @@ def _neighbors(row: int, col: int, rows: int, cols: int) -> list[tuple[int, int]
 def _fill_8connected_gaps(path: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """Insert bridging cells so consecutive steps are at most 8-connected.
 
-    Knight-move steps (e.g. (0,0)->(2,1)) are split by inserting one cell
-    so rasterisation-based callers (river carving, road grading) get a fully
-    connected pixel path.
+    Handles jumps up to 3 cells (extended knight moves from _OFFSETS_24) by
+    stepping one cell at a time until 8-connected. Rasterisation-based callers
+    (river carving, road grading) require a fully connected pixel path.
     """
     if len(path) < 2:
         return path
     filled: list[tuple[int, int]] = [path[0]]
     for r1, c1 in path[1:]:
-        r0, c0 = filled[-1]
-        dr, dc = r1 - r0, c1 - c0
-        if abs(dr) > 1 or abs(dc) > 1:
-            if abs(dr) >= abs(dc):
-                filled.append((r0 + (1 if dr > 0 else -1), c0))
-            else:
-                filled.append((r0, c0 + (1 if dc > 0 else -1)))
+        while abs(r1 - filled[-1][0]) > 1 or abs(c1 - filled[-1][1]) > 1:
+            r0, c0 = filled[-1]
+            dr2, dc2 = r1 - r0, c1 - c0
+            step_r = 0 if dr2 == 0 else (1 if dr2 > 0 else -1)
+            step_c = 0 if dc2 == 0 else (1 if dc2 > 0 else -1)
+            filled.append((r0 + step_r, c0 + step_c))
         filled.append((r1, c1))
     return filled
 
@@ -843,13 +917,19 @@ def _astar(
     heightmap: np.ndarray,
     source: tuple[int, int],
     dest: tuple[int, int],
-    slope_weight: float = 5.0,
-    height_weight: float = 1.0,
+    slope_weight: float = 5.0,   # kept for backward compat; ignored in Rune formula
+    height_weight: float = 1.0,  # kept for backward compat; ignored in Rune formula
+    cost_map: np.ndarray | None = None,
 ) -> list[tuple[int, int]]:
-    """A* pathfinding on a heightmap.
+    """A* pathfinding on a heightmap using Rune Skovbo Johansen's exact cost formula.
 
-    Cost = height difference * slope_weight + destination height * height_weight.
-    Prefers downhill paths and low-height cells.
+    move_cost = flat_dist * (1 + (6 * slope)^2) + 12 * 0.5 * (cost_map[r0] + cost_map[nr])
+
+    slope_weight and height_weight are kept for backward compatibility but are
+    ignored — Rune's formula uses fixed coefficients 6.0 and 12.0.
+
+    cost_map: optional float32[H,W] terrain cost array (rock hardness, water, etc.).
+              High values discourage routing through difficult terrain.
     """
     rows, cols = heightmap.shape
     sr, sc = source
@@ -889,14 +969,12 @@ def _astar(
             return _fill_8connected_gaps(path)
 
         for nr, nc in _neighbors(cr, cc, rows, cols):
-            h_diff = abs(float(heightmap[nr, nc]) - float(heightmap[cr, cc]))
-            step_dist = math.sqrt((nr - cr) ** 2 + (nc - cc) ** 2)
-            slope = h_diff / max(step_dist, 1e-6)
-            move_cost = (
-                step_dist
-                + slope ** 2 * slope_weight
-                + float(heightmap[nr, nc]) * height_weight
-            )
+            flat_dist = math.sqrt(float((nr - cr) ** 2 + (nc - cc) ** 2))
+            slope = abs(float(heightmap[nr, nc]) - float(heightmap[cr, cc])) / max(flat_dist, 1e-6)
+            terrain_cost = 0.0
+            if cost_map is not None:
+                terrain_cost = 12.0 * 0.5 * (float(cost_map[cr, cc]) + float(cost_map[nr, nc]))
+            move_cost = flat_dist * (1.0 + (6.0 * slope) ** 2) + terrain_cost
             tentative_g = g + move_cost
 
             if tentative_g < g_score.get((nr, nc), float("inf")):
@@ -1048,6 +1126,97 @@ def generate_road_path(
 
     result = np.clip(result, 0.0, 1.0)
     return full_path, result
+
+
+# ---------------------------------------------------------------------------
+# Catmull-Rom smoothing with corner duplication (Phase 8)
+# ---------------------------------------------------------------------------
+
+
+def _catmull_rom_segment(
+    p0: tuple[int, int],
+    p1: tuple[int, int],
+    p2: tuple[int, int],
+    p3: tuple[int, int],
+    samples: int = 10,
+) -> list[tuple[int, int]]:
+    """Sample one Catmull-Rom segment from p1 to p2."""
+    pts = []
+    for i in range(samples):
+        t = i / samples
+        t2 = t * t
+        t3 = t2 * t
+        r = int(round(0.5 * (
+            (2 * p1[0])
+            + (-p0[0] + p2[0]) * t
+            + (2*p0[0] - 5*p1[0] + 4*p2[0] - p3[0]) * t2
+            + (-p0[0] + 3*p1[0] - 3*p2[0] + p3[0]) * t3
+        )))
+        c = int(round(0.5 * (
+            (2 * p1[1])
+            + (-p0[1] + p2[1]) * t
+            + (2*p0[1] - 5*p1[1] + 4*p2[1] - p3[1]) * t2
+            + (-p0[1] + 3*p1[1] - 3*p2[1] + p3[1]) * t3
+        )))
+        pts.append((r, c))
+    return pts
+
+
+def _duplicate_sharp_corners(
+    waypoints: list[tuple[int, int]],
+    corner_threshold: float = -0.5,
+) -> list[tuple[int, int]]:
+    """Duplicate waypoints where consecutive vectors turn > 120 degrees.
+
+    corner_threshold: dot(v1_norm, v2_norm) < threshold triggers duplication.
+    cos(120 deg) = -0.5, so default catches all turns sharper than 120 deg.
+    """
+    if len(waypoints) < 3:
+        return waypoints
+    result: list[tuple[int, int]] = [waypoints[0]]
+    for i in range(1, len(waypoints) - 1):
+        p_prev = waypoints[i - 1]
+        p_cur = waypoints[i]
+        p_next = waypoints[i + 1]
+        v1r = p_cur[0] - p_prev[0]
+        v1c = p_cur[1] - p_prev[1]
+        v2r = p_next[0] - p_cur[0]
+        v2c = p_next[1] - p_cur[1]
+        len1 = math.sqrt(v1r * v1r + v1c * v1c)
+        len2 = math.sqrt(v2r * v2r + v2c * v2c)
+        if len1 > 0 and len2 > 0:
+            dot = (v1r * v2r + v1c * v2c) / (len1 * len2)
+            if dot < corner_threshold:
+                result.append(p_cur)  # duplicate the corner
+        result.append(p_cur)
+    result.append(waypoints[-1])
+    return result
+
+
+def smooth_road_path(
+    waypoints: list[tuple[int, int]],
+    samples_per_segment: int = 10,
+) -> list[tuple[int, int]]:
+    """Smooth A* waypoints: corner-duplicate then Catmull-Rom pass.
+
+    Step 1: Duplicate corners with angle > 120 deg (preserves hairpins).
+    Step 2: Catmull-Rom spline through the duplicated waypoints.
+    Returns a densely sampled smooth path as (row, col) tuples.
+    """
+    if len(waypoints) < 2:
+        return list(waypoints)
+    pts = _duplicate_sharp_corners(waypoints)
+    # Pad ends with phantom points for Catmull-Rom boundary conditions
+    padded = [pts[0]] + pts + [pts[-1]]
+    result: list[tuple[int, int]] = []
+    for i in range(1, len(padded) - 2):
+        seg = _catmull_rom_segment(
+            padded[i - 1], padded[i], padded[i + 1], padded[i + 2],
+            samples=samples_per_segment,
+        )
+        result.extend(seg)
+    result.append(pts[-1])
+    return result
 
 
 # ---------------------------------------------------------------------------
