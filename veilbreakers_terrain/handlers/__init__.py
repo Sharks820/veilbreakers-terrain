@@ -542,9 +542,38 @@ def _build_command_handlers() -> Dict[str, Callable]:
             _LP_STATE["session"] = None
             return {"status": "ok", "reset": True}
 
+        def _handle_terrain_preview_diff(params: dict) -> dict:
+            sess = _get_or_build_session(params)
+            if sess is None:
+                return {"status": "error", "error": "no_active_controller"}
+            hash_before = (params or {}).get("hash_before")
+            hash_after = (params or {}).get("hash_after", sess.current_hash())
+            if hash_before is None:
+                history = getattr(sess, "history", [])
+                if len(history) >= 2:
+                    hash_before = history[-2].get("hash_after") or history[-2].get("hash")
+                else:
+                    return {"status": "error", "error": "missing_hash_before"}
+            return {"status": "ok", **sess.diff_preview(str(hash_before), str(hash_after))}
+
+        def _handle_terrain_preview_render_thumbnail(params: dict) -> dict:
+            sess = _get_or_build_session(params)
+            if sess is None:
+                return {"status": "error", "error": "no_active_controller"}
+            path = (params or {}).get("path")
+            if not path:
+                return {"status": "error", "error": "missing_path"}
+            view = str((params or {}).get("view", "top"))
+            rendered = sess.render_thumbnail_png(str(path), view=view)
+            if isinstance(rendered, str) and rendered.startswith("ERROR:"):
+                return {"status": "error", "error": "render_failed", "message": rendered}
+            return {"status": "ok", "path": str(rendered), "view": view}
+
         handlers["terrain_preview_apply"] = _handle_terrain_preview_apply
         handlers["terrain_preview_state"] = _handle_terrain_preview_state
         handlers["terrain_preview_reset"] = _handle_terrain_preview_reset
+        handlers["terrain_preview_diff"] = _handle_terrain_preview_diff
+        handlers["terrain_preview_render_thumbnail"] = _handle_terrain_preview_render_thumbnail
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "COMMAND_HANDLERS: failed to register terrain_live_preview handlers: %r",
@@ -587,6 +616,217 @@ def _build_command_handlers() -> Dict[str, Callable]:
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "COMMAND_HANDLERS: failed to register terrain_hot_reload handlers: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # Bundle R observation surfaces: scene read + viewport sync
+    # ------------------------------------------------------------------
+    try:
+        _sr = _il.import_module(f"{_pkg}.terrain_scene_read")
+        handlers["terrain_capture_scene_read"] = _sr.handle_capture_scene_read
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_scene_read handler: %r",
+            exc,
+        )
+
+    try:
+        _vs = _il.import_module(f"{_pkg}.terrain_viewport_sync")
+        from .terrain_semantics import BBox as _BBox
+
+        def _coerce_bbox(raw):
+            if isinstance(raw, _BBox):
+                return raw
+            if isinstance(raw, dict):
+                return _BBox(
+                    min_x=float(raw.get("min_x", 0.0)),
+                    min_y=float(raw.get("min_y", 0.0)),
+                    max_x=float(raw.get("max_x", 0.0)),
+                    max_y=float(raw.get("max_y", 0.0)),
+                )
+            if isinstance(raw, (list, tuple)) and len(raw) == 4:
+                return _BBox(
+                    min_x=float(raw[0]),
+                    min_y=float(raw[1]),
+                    max_x=float(raw[2]),
+                    max_y=float(raw[3]),
+                )
+            return None
+
+        def _serialize_vantage(vantage) -> dict:
+            return {
+                "camera_position": list(vantage.camera_position),
+                "camera_direction": list(vantage.camera_direction),
+                "camera_up": list(vantage.camera_up),
+                "focal_point": list(vantage.focal_point),
+                "fov": float(vantage.fov),
+                "visible_bounds": list(vantage.visible_bounds.to_tuple()),
+                "captured_timestamp": float(vantage.captured_timestamp),
+                "view_matrix_hash": str(vantage.view_matrix_hash),
+            }
+
+        def _coerce_vantage(raw):
+            if isinstance(raw, _vs.ViewportVantage):
+                return raw
+            if not isinstance(raw, dict):
+                return None
+            bounds = _coerce_bbox(raw.get("visible_bounds"))
+            if bounds is None:
+                return None
+            return _vs.ViewportVantage(
+                camera_position=tuple(float(x) for x in raw.get("camera_position", (0.0, -20.0, 12.0))),
+                camera_direction=tuple(float(x) for x in raw.get("camera_direction", (0.0, 1.0, 0.0))),
+                camera_up=tuple(float(x) for x in raw.get("camera_up", (0.0, 0.0, 1.0))),
+                focal_point=tuple(float(x) for x in raw.get("focal_point", (0.0, 0.0, 0.0))),
+                fov=float(raw.get("fov", 0.9)),
+                visible_bounds=bounds,
+                captured_timestamp=float(raw.get("captured_timestamp", 0.0)),
+                view_matrix_hash=str(raw.get("view_matrix_hash", "")),
+            )
+
+        def _handle_read_viewport_vantage(params: dict) -> dict:
+            bounds = _coerce_bbox((params or {}).get("visible_bounds"))
+            vantage = _vs.read_user_vantage(
+                camera_position=tuple((params or {}).get("camera_position", (0.0, -20.0, 12.0))),
+                focal_point=tuple((params or {}).get("focal_point", (0.0, 0.0, 0.0))),
+                up=tuple((params or {}).get("up", (0.0, 0.0, 1.0))),
+                fov=float((params or {}).get("fov", 0.9)),
+                visible_bounds=bounds,
+            )
+            return {"status": "ok", "vantage": _serialize_vantage(vantage)}
+
+        def _handle_assert_vantage_fresh(params: dict) -> dict:
+            vantage = _coerce_vantage((params or {}).get("vantage"))
+            if vantage is None:
+                return {"status": "error", "error": "missing_vantage"}
+            try:
+                _vs.assert_vantage_fresh(
+                    vantage,
+                    max_age_seconds=float((params or {}).get("max_age_seconds", 300.0)),
+                )
+            except _vs.ViewportStale as exc:
+                return {"status": "error", "error": "viewport_stale", "message": str(exc)}
+            return {"status": "ok", "fresh": True}
+
+        def _handle_is_in_frustum(params: dict) -> dict:
+            vantage = _coerce_vantage((params or {}).get("vantage"))
+            if vantage is None:
+                return {"status": "error", "error": "missing_vantage"}
+            world_position = tuple(float(x) for x in (params or {}).get("world_position", (0.0, 0.0, 0.0)))
+            return {
+                "status": "ok",
+                "world_position": list(world_position),
+                "in_frustum": bool(_vs.is_in_frustum(world_position, vantage)),
+            }
+
+        handlers["terrain_read_viewport_vantage"] = _handle_read_viewport_vantage
+        handlers["terrain_assert_vantage_fresh"] = _handle_assert_vantage_fresh
+        handlers["terrain_is_in_frustum"] = _handle_is_in_frustum
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_viewport_sync handlers: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # Bundle R addon health + Blender safety wrappers
+    # ------------------------------------------------------------------
+    try:
+        _ah = _il.import_module(f"{_pkg}.terrain_addon_health")
+
+        def _handle_addon_health(params: dict) -> dict:
+            min_version = tuple((params or {}).get("min_version", _ah.TERRAIN_ADDON_MIN_VERSION))
+            allow_missing = bool((params or {}).get("allow_missing", False))
+            try:
+                _ah.assert_addon_loaded()
+                _ah.assert_addon_version_matches(min_version, allow_missing=allow_missing)
+            except Exception as exc:
+                return {
+                    "status": "error",
+                    "error": type(exc).__name__,
+                    "message": str(exc),
+                    "min_version": list(min_version),
+                }
+            return {
+                "status": "ok",
+                "loaded": True,
+                "stale": bool(_ah.detect_stale_addon()),
+                "min_version": list(min_version),
+            }
+
+        def _handle_detect_stale_addon(params: dict) -> dict:
+            return {"status": "ok", "stale": bool(_ah.detect_stale_addon())}
+
+        def _handle_force_addon_reload(params: dict) -> dict:
+            return {"status": "ok", "reloaded": bool(_ah.force_addon_reload())}
+
+        handlers["terrain_check_addon_health"] = _handle_addon_health
+        handlers["terrain_detect_stale_addon"] = _handle_detect_stale_addon
+        handlers["terrain_force_addon_reload"] = _handle_force_addon_reload
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_addon_health handlers: %r",
+            exc,
+        )
+
+    try:
+        _bs = _il.import_module(f"{_pkg}.terrain_blender_safety")
+
+        def _handle_boolean_safety_check(params: dict) -> dict:
+            cutter_vert_count = int((params or {}).get("cutter_vert_count", 0))
+            target_vert_count = int((params or {}).get("target_vert_count", 0))
+            operation = str((params or {}).get("operation", "DIFFERENCE"))
+            result = {
+                "recommended_solver": _bs.recommend_boolean_solver(
+                    cutter_vert_count,
+                    target_vert_count,
+                    operation=operation,
+                    cutter_is_manifold=bool((params or {}).get("cutter_is_manifold", True)),
+                    target_is_manifold=bool((params or {}).get("target_is_manifold", True)),
+                ),
+                "decimate_ratio": float(
+                    _bs.decimate_to_safe_count(max(cutter_vert_count, target_vert_count))
+                ),
+            }
+            try:
+                _bs.assert_boolean_safe(
+                    cutter_vert_count,
+                    target_vert_count,
+                    limit=int((params or {}).get("limit", _bs.BOOLEAN_DENSE_MESH_VERT_LIMIT)),
+                )
+            except _bs.BlenderBooleanUnsafe as exc:
+                return {"status": "error", "safe": False, "message": str(exc), **result}
+            return {"status": "ok", "safe": True, **result}
+
+        def _handle_convert_yup_to_zup(params: dict) -> dict:
+            position = tuple(float(x) for x in (params or {}).get("position", (0.0, 0.0, 0.0)))
+            orientation = tuple(float(x) for x in (params or {}).get("orientation", (0.0, 0.0, 0.0)))
+            converted_pos, converted_ori = _bs.convert_y_up_to_z_up(
+                position,
+                orientation,
+                str((params or {}).get("euler_order", "XYZ")),
+            )
+            return {
+                "status": "ok",
+                "position": list(converted_pos),
+                "orientation": list(converted_ori),
+            }
+
+        def _handle_clamp_screenshot_size(params: dict) -> dict:
+            requested = int((params or {}).get("requested", (params or {}).get("size", _bs.BLENDER_SCREENSHOT_MAX_SIZE)))
+            return {
+                "status": "ok",
+                "requested": requested,
+                "clamped": int(_bs.clamp_screenshot_size(requested)),
+            }
+
+        handlers["terrain_boolean_safety_check"] = _handle_boolean_safety_check
+        handlers["terrain_convert_yup_to_zup"] = _handle_convert_yup_to_zup
+        handlers["terrain_clamp_screenshot_size"] = _handle_clamp_screenshot_size
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_blender_safety handlers: %r",
             exc,
         )
 

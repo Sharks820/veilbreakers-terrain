@@ -47,6 +47,14 @@ _LOC_HANDLERS: Dict[str, str] = {
     "snap_to_terrain": "terrain_snap_to_terrain",
     "flatten_zone": "terrain_flatten_zone",
     "run_terrain_pass": "env_run_terrain_pass",
+    "scene_read": "terrain_capture_scene_read",
+    "viewport_read": "terrain_read_viewport_vantage",
+    "viewport_fresh": "terrain_assert_vantage_fresh",
+    "frustum_check": "terrain_is_in_frustum",
+    "terrain_sculpt": "terrain_sculpt",
+    "terrain_lods": "terrain_generate_lods",
+    "terrain_biome_setup": "terrain_setup_biome",
+    "material_procedural": "material_create_procedural",
     # ------------------------------------------------------------------
     # Mesh operations
     # ------------------------------------------------------------------
@@ -66,6 +74,23 @@ _LOC_HANDLERS: Dict[str, str] = {
     # ------------------------------------------------------------------
     "quality_evaluate": "autonomous_evaluate_mesh_quality",
     "quality_fix_action": "autonomous_select_fix_action",
+    "preview_apply": "terrain_preview_apply",
+    "preview_state": "terrain_preview_state",
+    "preview_reset": "terrain_preview_reset",
+    "preview_diff": "terrain_preview_diff",
+    "preview_render": "terrain_preview_render_thumbnail",
+    "hot_reload_start": "terrain_hot_reload_start",
+    "hot_reload_stop": "terrain_hot_reload_stop",
+    "hot_reload_check": "terrain_hot_reload_check",
+    "validation": "terrain_validation",
+    "perf_report": "terrain_performance_report",
+    "navmesh_export": "terrain_navmesh_export",
+    "addon_health": "terrain_check_addon_health",
+    "addon_stale": "terrain_detect_stale_addon",
+    "addon_reload": "terrain_force_addon_reload",
+    "safety_boolean": "terrain_boolean_safety_check",
+    "safety_convert_yup": "terrain_convert_yup_to_zup",
+    "safety_screenshot_size": "terrain_clamp_screenshot_size",
     # ------------------------------------------------------------------
     # Weathering
     # ------------------------------------------------------------------

@@ -227,3 +227,69 @@ class TestExpandedCommandHandlers:
         assert callable(COMMAND_HANDLERS[command_name]), (
             f"COMMAND_HANDLERS[{command_name!r}] is not callable"
         )
+
+
+class TestObservationAndSafetyDispatch:
+    @pytest.mark.parametrize(
+        ("location_key", "command_name"),
+        [
+            ("scene_read", "terrain_capture_scene_read"),
+            ("viewport_read", "terrain_read_viewport_vantage"),
+            ("viewport_fresh", "terrain_assert_vantage_fresh"),
+            ("frustum_check", "terrain_is_in_frustum"),
+            ("preview_diff", "terrain_preview_diff"),
+            ("preview_render", "terrain_preview_render_thumbnail"),
+            ("hot_reload_start", "terrain_hot_reload_start"),
+            ("hot_reload_check", "terrain_hot_reload_check"),
+            ("hot_reload_stop", "terrain_hot_reload_stop"),
+            ("validation", "terrain_validation"),
+            ("perf_report", "terrain_performance_report"),
+            ("navmesh_export", "terrain_navmesh_export"),
+            ("addon_health", "terrain_check_addon_health"),
+            ("addon_stale", "terrain_detect_stale_addon"),
+            ("addon_reload", "terrain_force_addon_reload"),
+            ("safety_boolean", "terrain_boolean_safety_check"),
+            ("safety_convert_yup", "terrain_convert_yup_to_zup"),
+            ("safety_screenshot_size", "terrain_clamp_screenshot_size"),
+            ("terrain_sculpt", "terrain_sculpt"),
+            ("terrain_lods", "terrain_generate_lods"),
+            ("terrain_biome_setup", "terrain_setup_biome"),
+            ("material_procedural", "material_create_procedural"),
+        ],
+    )
+    def test_loc_handler_maps_to_registered_command(self, location_key: str, command_name: str) -> None:
+        assert resolve_command(location_key) == command_name
+        assert command_name in COMMAND_HANDLERS
+
+    def test_dispatch_scene_read_happy_path(self) -> None:
+        r = dispatch("scene_read", {"reviewer": "pytest"})
+        assert r["status"] == "ok"
+        assert r["command"] == "terrain_capture_scene_read"
+        assert r["result"]["ok"] is True
+
+    def test_dispatch_viewport_read_happy_path(self) -> None:
+        r = dispatch("viewport_read", {})
+        assert r["status"] == "ok"
+        assert r["command"] == "terrain_read_viewport_vantage"
+        vantage = r["result"]["vantage"]
+        assert "camera_position" in vantage
+        assert "visible_bounds" in vantage
+
+    def test_dispatch_viewport_fresh_happy_path(self) -> None:
+        vantage = dispatch("viewport_read", {})["result"]["vantage"]
+        r = dispatch("viewport_fresh", {"vantage": vantage, "max_age_seconds": 300.0})
+        assert r["status"] == "ok"
+        assert r["result"]["fresh"] is True
+
+    def test_dispatch_safety_convert_yup_happy_path(self) -> None:
+        r = dispatch(
+            "safety_convert_yup",
+            {"position": [1.0, 2.0, 3.0], "orientation": [0.0, 0.0, 0.0]},
+        )
+        assert r["status"] == "ok"
+        assert r["result"]["position"] == [1.0, -3.0, 2.0]
+
+    def test_dispatch_safety_screenshot_size_happy_path(self) -> None:
+        r = dispatch("safety_screenshot_size", {"requested": 999})
+        assert r["status"] == "ok"
+        assert r["result"]["clamped"] == 507
