@@ -259,8 +259,9 @@ def test_talus_field_disjoint_from_face_mask():
     # Non-overlap with face mask
     overlap = int((talus.mask & cliff.face_mask).sum())
     assert overlap == 0
-    # Angle of repose must be ~34 degrees
-    assert abs(talus.angle_of_repose_radians - math.radians(34.0)) < 1e-6
+    # Default material now uses a deterministic value within the upgraded
+    # 32-36 degree default repose band.
+    assert math.radians(32.0) <= talus.angle_of_repose_radians <= math.radians(36.0)
 
 
 # ---------------------------------------------------------------------------

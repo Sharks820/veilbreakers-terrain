@@ -1248,9 +1248,10 @@ def generate_mist_zone(
     rr_grid = np.arange(rows, dtype=np.float64)[:, None]
     cc_grid = np.arange(cols, dtype=np.float64)[None, :]
 
-    # Wind-biased distance: upwind offset of pool centroid
-    # Mist centre is offset upwind by 0.3 * mist_radius
-    upwind_offset_cells = 0.3 * mist_radius / cs
+    # Wind-biased distance: only offset the plume when wind extends it beyond
+    # the neutral radius. With the default wind_factor=1.0 the peak should
+    # remain centered on the plunge pool.
+    upwind_offset_cells = max(0.0, wind_factor - 1.0) * 0.3 * mist_radius / cs
     # Wind direction vector (into wind = opposite bearing)
     wind_vec_r = -math.cos(wind_direction_rad) * upwind_offset_cells  # row offset (N = row--)
     wind_vec_c =  math.sin(wind_direction_rad) * upwind_offset_cells  # col offset (E = col++)

@@ -260,8 +260,12 @@ class TerrainMaskStack:
 
     # Hero candidate masks (Pass 3)
     cliff_candidate: Optional[np.ndarray] = None
+    cliff_contour_spline: Optional[np.ndarray] = None
     cave_candidate: Optional[np.ndarray] = None
     cave_height_delta: Optional[np.ndarray] = None
+    cave_wall_texture: Optional[np.ndarray] = None
+    cave_stalactite_length: Optional[np.ndarray] = None
+    cave_stalagmite_length: Optional[np.ndarray] = None
     waterfall_lip_candidate: Optional[np.ndarray] = None
     waterfall_pool_delta: Optional[np.ndarray] = None
     hero_exclusion: Optional[np.ndarray] = None
@@ -282,6 +286,7 @@ class TerrainMaskStack:
     mist: Optional[np.ndarray] = None
     wet_rock: Optional[np.ndarray] = None
     tidal: Optional[np.ndarray] = None
+    waterfall_velocity: Optional[np.ndarray] = None
 
     # Material-zoning masks (Pass 7)
     biome_id: Optional[np.ndarray] = None
@@ -337,6 +342,8 @@ class TerrainMaskStack:
     lightmap_uv_chart_id: Optional[np.ndarray] = None
     # LOD bias + streaming priority per cell (Unity Addressables).
     lod_bias: Optional[np.ndarray] = None
+    # Horizon skybox profile stored as 360 elevation-angle samples.
+    horizon_elevation_angles: Optional[np.ndarray] = None
     # Grass/foliage/detail density per type. dict[type] -> (H, W) float32.
     detail_density: Optional[Dict[str, np.ndarray]] = None
     # Tree instance spawn list. Stored as ndarray of shape (N, 5):

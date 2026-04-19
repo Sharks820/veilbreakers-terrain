@@ -738,7 +738,7 @@ def register_bundle_k_stochastic_shader_pass() -> None:
             name="stochastic_shader",
             func=pass_stochastic_shader,
             requires_channels=("height",),
-            produces_channels=("stochastic_uv_mask", "stochastic_offset_mask"),
+            produces_channels=("stochastic_uv_mask",),
             seed_namespace="stochastic_shader",
             requires_scene_read=False,
             description="Bundle K: Heitz 2019 stochastic tile-sampling (hash offsets, histogram-preserving, UV rotation; roughness_variation owned by roughness_driver)",

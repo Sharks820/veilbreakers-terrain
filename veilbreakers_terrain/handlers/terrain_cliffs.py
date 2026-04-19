@@ -1185,7 +1185,7 @@ def build_talus_field(
     h = np.asarray(stack.height, dtype=np.float64)
 
     # Resolve angle of repose
-    cliff_seed = hash(cliff.cliff_id) & 0x7FFFFFFF
+    cliff_seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(cliff.cliff_id)) & 0x7FFFFFFF
     if angle_of_repose_deg is not None:
         repose_rad = math.radians(float(angle_of_repose_deg))
     else:

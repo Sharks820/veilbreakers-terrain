@@ -808,10 +808,10 @@ def pick_cave_archetype(
             return float(default)
         return float(arr_np[row, col])
 
-    slope_rad = _sample("slope", 0.0)
-    wetness = _sample("wetness", 0.0)
-    basin = _sample("basin", 0.0)
-    concavity = _sample("concavity", 0.0)
+    slope_rad = max(0.0, _sample("slope", 0.0))
+    wetness = float(np.clip(_sample("wetness", 0.0), 0.0, 1.0))
+    basin = float(np.clip(_sample("basin", 0.0), 0.0, 1.0))
+    concavity = float(np.clip(_sample("concavity", 0.0), 0.0, 1.0))
 
     rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
     jitter = float(rng.uniform(-0.05, 0.05))
@@ -847,6 +847,12 @@ def pick_cave_archetype(
             - basin * 0.4
         ),
     }
+
+    # High, wet plateaus should bias toward glacial melt rather than karst.
+    # Karst still wins when basin/concavity is the dominant terrain signal.
+    if wetness > 0.75 and altitude_norm > 0.55:
+        scores[CaveArchetype.GLACIAL_MELT] += 0.5 + 0.6 * wetness
+        scores[CaveArchetype.KARST_SINKHOLE] -= 0.3
 
     # ------------------------------------------------------------------
     # Biome context from stack — sampled at the candidate cell.
@@ -1139,6 +1145,11 @@ def generate_cave_path(
         wx, wy = _cell_to_world(stack, pr, pc)
         wz = z0 - t * total_descent_m
         points.append((wx, wy, wz))
+
+    # Preserve the authored entrance anchor exactly so vertical-drop
+    # archetypes do not immediately drift to the cell center.
+    if points:
+        points[0] = (float(x0), float(y0), float(z0))
 
     return points
 

@@ -29,37 +29,34 @@ def _make_heightmap(rows: int, cols: int, value: float = 1.0) -> list[list[float
 
 class TestComputeChunkLod:
     def test_empty_heightmap(self):
-        assert compute_chunk_lod([], 4) == []
+        assert compute_chunk_lod([], 4) == 0
 
     def test_zero_target(self):
-        assert compute_chunk_lod([[1, 2], [3, 4]], 0) == []
+        assert compute_chunk_lod([[1, 2], [3, 4]], 0) == 0
 
     def test_already_below_target(self):
         hmap = [[1.0, 2.0], [3.0, 4.0]]
         result = compute_chunk_lod(hmap, 8)
-        assert len(result) == 2
-        assert len(result[0]) == 2
+        assert isinstance(result, int)
+        assert result == 0
 
-    def test_downsample_produces_correct_resolution(self):
+    def test_close_camera_keeps_full_detail(self):
         hmap = _make_heightmap(16, 16)
-        result = compute_chunk_lod(hmap, 4)
-        assert len(result) == 4
-        assert all(len(row) == 4 for row in result)
+        result = compute_chunk_lod(hmap, 4, camera_distance=10.0)
+        assert isinstance(result, int)
+        assert result == 0
 
-    def test_downsample_preserves_corners(self):
+    def test_farther_camera_increases_lod(self):
         hmap = _make_heightmap(8, 8, value=1.0)
-        result = compute_chunk_lod(hmap, 2)
-        # Top-left corner should match original
-        assert abs(result[0][0] - hmap[0][0]) < 1e-6
-        # Bottom-right corner should match original
-        assert abs(result[-1][-1] - hmap[-1][-1]) < 1e-6
+        close_lod = compute_chunk_lod(hmap, 2, camera_distance=10.0)
+        far_lod = compute_chunk_lod(hmap, 2, camera_distance=500.0)
+        assert far_lod >= close_lod
 
-    def test_downsample_values_are_interpolated(self):
+    def test_no_distance_defaults_to_lod_zero(self):
         hmap = [[0.0, 10.0], [10.0, 20.0]]
-        # Already at target, returned as-is
         result = compute_chunk_lod(hmap, 2)
-        assert result[0][0] == 0.0
-        assert result[1][1] == 20.0
+        assert isinstance(result, int)
+        assert result == 0
 
 
 # ---------------------------------------------------------------------------

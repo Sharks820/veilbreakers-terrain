@@ -68,7 +68,9 @@ def _atomic_npz_write(stack: "TerrainMaskStack", final_path: Path) -> str:
     A SHA-256 checksum sidecar (``<final_path>.sha256``) is written after the
     rename so readers can verify integrity without re-hashing the .npz.
     """
-    tmp_path = final_path.with_suffix(".npz.tmp")
+    # Keep the temporary path on a real ".npz" suffix so numpy does not append
+    # an extra extension on Windows and break the later hash/rename step.
+    tmp_path = final_path.with_name(f"{final_path.stem}.{uuid.uuid4().hex}.tmp.npz")
     stack.to_npz(tmp_path)
 
     # Compute SHA-256 over the written bytes
