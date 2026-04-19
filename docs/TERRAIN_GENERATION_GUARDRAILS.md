@@ -866,6 +866,34 @@ heightmap_raw_u16 = (normalized * 65535).astype(np.uint16)
 
 Unity terrain requires power-of-2+1 heightmap dimensions: 129, 257, 513, 1025, 2049. The tile extraction produces `(tile_size + 1, tile_size + 1)` shape, so `tile_size` must be a power of 2 (128, 256, 512, 1024, 2048). This is not enforced in code today — it is an authoring responsibility. `TerrainIntentState.tile_size` should always be power-of-2.
 
+### 9.5 Unity Scale Factor
+
+**Contract:** 1 terrain metre = 0.85 Unity units.
+
+```python
+UNITY_SCALE_FACTOR = 0.85  # terrain_unity_export.py
+```
+
+The constant is applied as the LAST step before serialization — all internal terrain
+computations (heightmap generation, erosion, scatter placement) operate in raw terrain
+metres. Only the final export values written to manifest.json and sub-JSON files are
+scaled.
+
+Scaled at export:
+- `world_origin_x_m`, `world_origin_y_m` in manifest.json
+- `unity_world_origin` XYZ components in manifest.json
+- `height_min_m`, `height_max_m` in manifest.json
+- `cell_size` in manifest.json
+- Decal placement positions in decals.json
+- Tree instance positions in tree_instances.json
+
+NOT scaled (indices, normalised values, or Unity-space vectors):
+- `tile_x`, `tile_y`, `tile_size` (grid indices / pixel counts)
+- `heightmap_raw_u16` RAW bytes (normalised to [0,65535], decoded using scaled height range)
+- `terrain_normals` (unit vectors — scale-invariant)
+
+Camera reference: clavicle height = 1.4 terrain m = **1.19 Unity units**.
+
 ---
 
 ## 10. File and Function Reference

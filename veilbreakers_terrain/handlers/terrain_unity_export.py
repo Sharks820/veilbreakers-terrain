@@ -22,6 +22,19 @@ _DETAIL_DENSITY_MAX_PER_CELL = 16
 _EXPORT_COORDINATE_SYSTEM = "y-up"
 _PRODUCTION_PLUS_PROFILES = frozenset({"hero_shot", "aaa_open_world"})
 
+UNITY_SCALE_FACTOR: float = 0.85
+"""Conversion factor: 1 terrain metre = 0.85 Unity units (Fix 13.3).
+Camera clavicle height 1.4 terrain m = 1.19 Unity units.
+Applied as the LAST step before serialization — internal computation is unchanged.
+"""
+
+
+def _apply_unity_scale(v: "float | list[float]") -> "float | list[float]":
+    """Multiply v by UNITY_SCALE_FACTOR.  Supports scalar or list-of-float."""
+    if isinstance(v, list):
+        return [x * UNITY_SCALE_FACTOR for x in v]
+    return float(v) * UNITY_SCALE_FACTOR
+
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -515,12 +528,12 @@ def export_unity_manifest(
         "tile_x": int(stack.tile_x),
         "tile_y": int(stack.tile_y),
         "tile_size": int(stack.tile_size),
-        "cell_size": float(stack.cell_size),
-        "world_origin_x_m": float(stack.world_origin_x),
-        "world_origin_y_m": float(stack.world_origin_y),
-        "unity_world_origin": [float(stack.world_origin_x), 0.0, float(stack.world_origin_y)],
-        "height_min_m": float(stack.height_min_m) if stack.height_min_m is not None else None,
-        "height_max_m": float(stack.height_max_m) if stack.height_max_m is not None else None,
+        "cell_size": _apply_unity_scale(float(stack.cell_size)),
+        "world_origin_x_m": _apply_unity_scale(float(stack.world_origin_x)),
+        "world_origin_y_m": _apply_unity_scale(float(stack.world_origin_y)),
+        "unity_world_origin": _apply_unity_scale([float(stack.world_origin_x), 0.0, float(stack.world_origin_y)]),
+        "height_min_m": _apply_unity_scale(float(stack.height_min_m)) if stack.height_min_m is not None else None,
+        "height_max_m": _apply_unity_scale(float(stack.height_max_m)) if stack.height_max_m is not None else None,
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
         "source_coordinate_system": stack.coordinate_system,
         "generation_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -660,9 +673,9 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         placements: List[Dict[str, Any]] = []
         for r, c in coords[:512]:
             position_zup = [
-                float(stack.world_origin_x + c * stack.cell_size),
-                float(stack.world_origin_y + r * stack.cell_size),
-                float(stack.height[r, c]) if stack.height is not None else 0.0,
+                _apply_unity_scale(float(stack.world_origin_x + c * stack.cell_size)),
+                _apply_unity_scale(float(stack.world_origin_y + r * stack.cell_size)),
+                _apply_unity_scale(float(stack.height[r, c]) if stack.height is not None else 0.0),
             ]
             placements.append(
                 {
@@ -777,7 +790,11 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         ]
         trees.append(
             {
-                "position": _zup_to_unity_vector([float(row[0]), float(row[1]), float(row[2])]),
+                "position": _zup_to_unity_vector([
+                    _apply_unity_scale(float(row[0])),
+                    _apply_unity_scale(float(row[1])),
+                    _apply_unity_scale(float(row[2])),
+                ]),
                 "yaw_degrees": float(row[3]),
                 "prototype_id": int(row[4]),
                 "vertex_color": vertex_color_list,  # NEW — Fix 13.2
@@ -793,4 +810,6 @@ __all__ = [
     "_export_heightmap",
     "_bit_depth_for_profile",
     "compute_wind_bend_vertex_color",
+    "UNITY_SCALE_FACTOR",
+    "_apply_unity_scale",
 ]
