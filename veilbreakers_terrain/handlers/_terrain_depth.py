@@ -18,6 +18,15 @@ from typing import Any
 
 import numpy as np
 
+try:
+    from scipy.ndimage import binary_erosion as _binary_erosion
+    from scipy.ndimage import label as _ndimage_label
+    _SCIPY_DEPTH_AVAILABLE = True
+except ImportError:
+    _binary_erosion = None  # type: ignore[assignment]
+    _ndimage_label = None   # type: ignore[assignment]
+    _SCIPY_DEPTH_AVAILABLE = False
+
 from ..procedural_meshes import (
     _make_result,
     _merge_meshes,
@@ -637,40 +646,27 @@ def detect_cliff_edges(
     # Binary mask of steep cells
     cliff_mask = slope_map > slope_threshold_deg
 
-    # Connected component labeling using simple flood-fill
-    labels = np.full((rows, cols), -1, dtype=np.int32)
-    label_id = 0
+    # Vectorized cliff edge detection + connected-component labeling (Fix 4.8 ext / REQ-P7-005)
+    structure = np.ones((3, 3), dtype=bool)  # 8-connected
 
-    for r in range(rows):
-        for c in range(cols):
-            if cliff_mask[r, c] and labels[r, c] < 0:
-                # Flood-fill from this cell
-                stack = [(r, c)]
-                cluster: list[tuple[int, int]] = []
-                while stack:
-                    cr, cc = stack.pop()
-                    if (
-                        0 <= cr < rows
-                        and 0 <= cc < cols
-                        and cliff_mask[cr, cc]
-                        and labels[cr, cc] < 0
-                    ):
-                        labels[cr, cc] = label_id
-                        cluster.append((cr, cc))
-                        # 4-connected neighbors
-                        stack.append((cr - 1, cc))
-                        stack.append((cr + 1, cc))
-                        stack.append((cr, cc - 1))
-                        stack.append((cr, cc + 1))
-                label_id += 1
+    # Edge ring: binary_erosion shrinks cliff_mask by one cell; XOR gives a 1-cell-wide
+    # boundary ring of cliff EDGE pixels (the actual edge, not the whole cliff body).
+    eroded = _binary_erosion(cliff_mask, structure=structure)
+    cliff_edges = np.logical_xor(cliff_mask, eroded)  # 1-px-wide boundary ring
+
+    # Connected-component labeling on the FULL cliff mask so cluster bounding-boxes
+    # span the whole cliff region and mean-position is the cliff centroid.
+    labels, num_labels = _ndimage_label(cliff_mask, structure=structure)
+    label_id = num_labels  # for naming consistency with downstream code
 
     # Extract placement info for each qualifying cluster
     placements: list[dict[str, Any]] = []
     # TERR-001: Compute gradient once before loop (not per-cluster)
     dy, dx = np.gradient(heightmap, row_spacing, col_spacing)
 
-    for lid in range(label_id):
-        cells = np.argwhere(labels == lid)
+    for lid in range(1, label_id + 1):
+        # Only edge pixels for placement positions
+        cells = np.argwhere(cliff_edges & (labels == lid))
         if len(cells) < min_cluster_size:
             continue
 

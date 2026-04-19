@@ -14,6 +14,7 @@ All compute functions are pure logic (no bpy). Only handle_generate_lods uses bp
 
 from __future__ import annotations
 
+import heapq
 import math
 from typing import Any
 
@@ -458,29 +459,34 @@ def decimate_preserving_silhouette(
         return v
 
     # ------------------------------------------------------------------
-    # Build collapse priority list (skip protected edges)
+    # Build heap-based collapse priority queue (Fix 7.13/7.14 — stale-skip)
     # ------------------------------------------------------------------
-    edge_costs: list[tuple[float, int, int]] = []
+    _edge_heap: list[tuple[float, int, int]] = []
     for ek in edge_faces:
         if ek in protected_edges:
             continue
         v_a, v_b = ek
         cost = _edge_collapse_cost(verts, v_a, v_b, weights, quadrics=q_work)
-        edge_costs.append((cost, v_a, v_b))
-
-    edge_costs.sort()
+        heapq.heappush(_edge_heap, (cost, v_a, v_b))
 
     active_verts = set(range(num_verts))
     collapses_needed = num_verts - target_verts
 
-    for _cost, v_a, v_b in edge_costs:
-        if collapses_needed <= 0:
-            break
+    while _edge_heap and collapses_needed > 0:
+        cost_est, v_a, v_b = heapq.heappop(_edge_heap)
 
         root_a = find_root(v_a)
         root_b = find_root(v_b)
 
         if root_a == root_b:
+            continue  # already merged — stale entry
+
+        # Recompute cost with current positions to handle stale priorities
+        actual_cost = _edge_collapse_cost(verts, root_a, root_b, weights, quadrics=q_work)
+        if actual_cost > cost_est * 4.0:
+            # Cost inflated significantly since this edge was queued —
+            # re-push with fresh cost and skip this stale entry
+            heapq.heappush(_edge_heap, (actual_cost, root_a, root_b))
             continue
 
         # Re-check: if either root is part of a protected edge, skip
