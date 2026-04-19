@@ -30,6 +30,61 @@ Bundle inventory (complete A–O):
     M — iteration velocity (extension modules, no new passes)
     N — deep validation & QA (terrain_bundle_n)
     O — water + vegetation depth (terrain_bundle_o)
+
+Registration order rationale (critical for non-DAG execution)
+-------------------------------------------------------------
+When ``TerrainPassController`` runs passes in registration order (i.e.
+callers that don't go through ``PassDAG``), the order below must place
+height-modifying passes BEFORE any downstream scatter / materials /
+validation work. The order enforces:
+
+    A                       →  baseline height + slope + erosion
+    B-cliffs                →  cliff_candidate (reads slope/height only)
+    G (banded_macro)        →  refines height BEFORE scatter sees it
+    H-framing               →  cuts sightlines BEFORE scatter sees height
+    F (caves)               →  carves cave_height_delta BEFORE materials
+    I (geology)             →  wind/glacial/coastline/karst deltas
+    C (waterfalls)          →  waterfall_pool_delta + lip masks
+    B-materials             →  splatmap after all height mutators done
+    E (scatter_intelligent) →  assets placed on FINAL height + materials
+    D (validation_full)     →  validates the finished tile
+    H-saliency (refine)     →  post-hoc saliency refinement
+    J, K, L, N, O           →  secondary channels (atmosphere, water)
+
+Prior to the 2026-04-18 audit, E registered before G/H/F/I, so scatter
+placed trees on a pre-erosion, pre-carve heightmap — the tree-root-in-
+mid-air bug. See docs/aaa-audit for the regression record.
+
+AAA terrain generator comparison
+--------------------------------
+World Machine (Quadspinner's predecessor) builds terrain via macro →
+thermal erosion → hydraulic erosion → flow analysis → texturing →
+scatter. Our pipeline matches this flow after the registration-order
+fix: A (macro + erosion) → I (thermal/wind/glacial) → C (hydrology) →
+B-materials (texturing) → E (scatter).
+
+Houdini HeightField SOPs layer noise → geological features → erosion
+SOP (hydraulic/thermal) → hydrology (river solve) → material assign →
+scatter. Our bundles B-cliffs + G + H + F + I collectively mirror the
+"geological features" band; C mirrors hydrology; B-materials mirrors
+the "material assign" and E mirrors scatter.
+
+Gaea (QuadSpinner) exposes a node graph with explicit channel edges —
+identical to our PassDAG's ``requires_channels`` / ``produces_channels``
+pairs. Gaea's production-tier erosion runs 48+ iterations, which is
+exactly the aaa_open_world quality profile.
+
+SpeedTree ecosystem integration respects slope/height/material inputs
+when placing vegetation — our ``scatter_intelligent`` pass reads those
+channels (hard-required via ``requires_channels``) plus optional
+``cliff_candidate`` / ``cave_candidate`` / ``waterfall_lip_candidate``
+masks via ``stack.get(...)``. Parity after the bundle-order fix.
+
+Unreal Engine 5 Landscape + Virtual Texture streaming requires a
+minimum 16-bit splatmap and 32-bit height for production tiles. Our
+aaa_open_world and hero_shot profiles match UE5's production settings;
+the production profile (post-audit) is also 16-bit splatmap / 32-bit
+height so shipped terrain never regresses below UE5's VT minimum.
 """
 
 from __future__ import annotations
@@ -128,17 +183,27 @@ def _register_all_terrain_passes_impl(
     package_root = __package__ or __name__.rpartition(".")[0]
     assert package_root.startswith("veilbreakers_terrain")
 
+    # ------------------------------------------------------------------
+    # Registration order (critical): see the docstring "Registration order
+    # rationale" section. Height-modifying passes register BEFORE scatter,
+    # materials, and validation.
+    # ------------------------------------------------------------------
     registrars: list[tuple[str, str, str]] = [
+        # Geology candidate analysis (reads slope only; doesn't modify height)
         ("B-cliffs", f"{package_root}.terrain_cliffs", "register_bundle_b_passes"),
-        ("B-materials", f"{package_root}.terrain_materials_v2", "register_bundle_b_material_passes"),
-        ("C", f"{package_root}.terrain_waterfalls", "register_bundle_c_passes"),
-        ("D", f"{package_root}.terrain_validation", "register_bundle_d_passes"),
-        ("E", f"{package_root}.terrain_assets", "register_bundle_e_passes"),
-        ("F", f"{package_root}.terrain_caves", "register_bundle_f_passes"),
+        # Height mutators — MUST run before scatter/materials
         ("G", f"{package_root}.terrain_banded", "register_bundle_g_passes"),
-        ("H-saliency", f"{package_root}.terrain_saliency", "register_saliency_pass"),
         ("H-framing", f"{package_root}.terrain_framing", "register_framing_pass"),
+        ("F", f"{package_root}.terrain_caves", "register_bundle_f_passes"),
         ("I", f"{package_root}.terrain_geology_validator", "register_bundle_i_passes"),
+        ("C", f"{package_root}.terrain_waterfalls", "register_bundle_c_passes"),
+        # Material + scatter (consume final height + all candidate masks)
+        ("B-materials", f"{package_root}.terrain_materials_v2", "register_bundle_b_material_passes"),
+        ("E", f"{package_root}.terrain_assets", "register_bundle_e_passes"),
+        # Post-geometry validation + refinement
+        ("D", f"{package_root}.terrain_validation", "register_bundle_d_passes"),
+        ("H-saliency", f"{package_root}.terrain_saliency", "register_saliency_pass"),
+        # Secondary channels (atmosphere, water, ecology, LOD)
         ("J", f"{package_root}.terrain_bundle_j", "register_bundle_j_passes"),
         ("K", f"{package_root}.terrain_bundle_k", "register_bundle_k_passes"),
         ("L", f"{package_root}.terrain_bundle_l", "register_bundle_l_passes"),

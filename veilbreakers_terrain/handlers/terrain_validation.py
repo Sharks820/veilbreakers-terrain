@@ -1260,7 +1260,15 @@ def register_bundle_d_passes() -> None:
         PassDefinition(
             name="validation_full",
             func=pass_validation_full,
-            requires_channels=("height",),
+            # Full validation inspects slope distribution + splatmap coverage
+            # + tree placement, so slope is a hard requirement. The other
+            # downstream channels (cliff_candidate, waterfall_lip_candidate,
+            # splatmap_weights_layer, tree_instance_points, etc.) are read
+            # via stack.get(...) and validators degrade gracefully when
+            # absent — that is the contract for "full" in the run-ordering
+            # sense (must run after core channels exist, tolerates missing
+            # optional ones).
+            requires_channels=("height", "slope"),
             produces_channels=(),
             seed_namespace="validation_full",
             may_modify_geometry=False,

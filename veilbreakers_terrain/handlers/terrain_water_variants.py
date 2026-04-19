@@ -743,7 +743,12 @@ def register_water_variants_pass() -> None:
         PassDefinition(
             name="water_variants",
             func=pass_water_variants,
-            requires_channels=("height",),
+            # Water variants need height + slope for hydrology solving;
+            # wetness / tidal / water_surface are refined iteratively,
+            # and produces_channels=("water_surface", "wetness") means
+            # downstream passes (wildlife_zones, scatter_intelligent)
+            # see fresh values after this pass runs.
+            requires_channels=("height", "slope"),
             produces_channels=("water_surface", "wetness"),
             seed_namespace="water_variants",
             requires_scene_read=True,

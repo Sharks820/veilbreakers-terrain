@@ -1,11 +1,11 @@
 {
   "name": "production",
   "extends": "preview",
-  "erosion_iterations": 8,
-  "erosion_strategy": "hydraulic",
+  "erosion_iterations": 16,
+  "erosion_strategy": "hydraulic_thermal",
   "checkpoint_retention": 4,
   "erosion_margin_cells": 8,
-  "splatmap_bit_depth": 8,
-  "heightmap_bit_depth": 16,
-  "shadow_clipmap_bit_depth": 8
+  "splatmap_bit_depth": 16,
+  "heightmap_bit_depth": 32,
+  "shadow_clipmap_bit_depth": 16
 }

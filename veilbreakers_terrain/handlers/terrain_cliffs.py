@@ -923,7 +923,11 @@ def register_bundle_b_passes() -> None:
         PassDefinition(
             name="cliffs",
             func=pass_cliffs,
-            requires_channels=("slope",),
+            # Cliff anatomy needs height (for lip detection) and slope
+            # (candidate threshold). Optional reads of saliency_macro,
+            # ridge, rock_hardness, strata_orientation are consumed via
+            # stack.get(...) when structural_masks / stratigraphy have run.
+            requires_channels=("slope", "height"),
             produces_channels=("cliff_candidate",),
             seed_namespace="cliffs",
             requires_scene_read=False,

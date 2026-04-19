@@ -424,6 +424,227 @@ def _build_command_handlers() -> Dict[str, Callable]:
     except Exception as exc:  # noqa: BLE001
         _log.warning("COMMAND_HANDLERS: failed to register animation_environment handlers: %r", exc)
 
+    # ------------------------------------------------------------------
+    # terrain_live_preview.py — LivePreviewSession for interactive editing
+    # (Bundle M). Exposes apply/snapshot/current-state via the MCP bridge.
+    # We hold a single module-level session, lazily built on first call.
+    # ------------------------------------------------------------------
+    try:
+        _lp = _il.import_module(f"{_pkg}.terrain_live_preview")
+
+        _LP_STATE: Dict[str, Any] = {"session": None}
+
+        def _get_or_build_session(params: dict):
+            """Return the live-preview session, building it lazily."""
+            sess = _LP_STATE.get("session")
+            if sess is None:
+                # Caller must pass a ``controller`` object in params; this
+                # handler is a no-op for environments lacking an active
+                # controller (Blender-side wires one in).
+                controller = (params or {}).get("controller")
+                if controller is None:
+                    return None
+                sess = _lp.LivePreviewSession(controller=controller)
+                _LP_STATE["session"] = sess
+            return sess
+
+        def _handle_terrain_preview_apply(params: dict) -> dict:
+            sess = _get_or_build_session(params)
+            if sess is None:
+                return {"status": "error", "error": "no_active_controller"}
+            edit = (params or {}).get("edit") or {}
+            hash_after = sess.apply_edit(edit)
+            return {"status": "ok", "hash_after": hash_after,
+                    "history_length": len(sess.history)}
+
+        def _handle_terrain_preview_state(params: dict) -> dict:
+            sess = _get_or_build_session(params)
+            if sess is None:
+                return {"status": "error", "error": "no_active_controller"}
+            return {
+                "status": "ok",
+                "current_hash": sess.current_hash(),
+                "history_length": len(sess.history),
+            }
+
+        def _handle_terrain_preview_reset(params: dict) -> dict:
+            _LP_STATE["session"] = None
+            return {"status": "ok", "reset": True}
+
+        handlers["terrain_preview_apply"] = _handle_terrain_preview_apply
+        handlers["terrain_preview_state"] = _handle_terrain_preview_state
+        handlers["terrain_preview_reset"] = _handle_terrain_preview_reset
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_live_preview handlers: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # terrain_hot_reload.py — rule-module hot reload for Bundle M
+    # ------------------------------------------------------------------
+    try:
+        _hr = _il.import_module(f"{_pkg}.terrain_hot_reload")
+
+        _HR_STATE: Dict[str, Any] = {"watcher": None}
+
+        def _get_watcher():
+            w = _HR_STATE.get("watcher")
+            if w is None:
+                w = _hr.HotReloadWatcher()
+                w.watch_biome_rules()
+                w.watch_material_rules()
+                _HR_STATE["watcher"] = w
+            return w
+
+        def _handle_hot_reload_start(params: dict) -> dict:
+            w = _get_watcher()
+            return {"status": "ok", "watched": list(w.watched_modules)}
+
+        def _handle_hot_reload_stop(params: dict) -> dict:
+            _HR_STATE["watcher"] = None
+            return {"status": "ok", "stopped": True}
+
+        def _handle_hot_reload_check(params: dict) -> dict:
+            w = _get_watcher()
+            reloaded = w.check_and_reload()
+            return {"status": "ok", "reloaded": reloaded}
+
+        handlers["terrain_hot_reload_start"] = _handle_hot_reload_start
+        handlers["terrain_hot_reload_stop"] = _handle_hot_reload_stop
+        handlers["terrain_hot_reload_check"] = _handle_hot_reload_check
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_hot_reload handlers: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # terrain_performance_report.py — scene-wide perf rollup (Addendum 3.B.4)
+    # Prevents Blender crashes by capping triangle/instance/draw-call budgets.
+    # ------------------------------------------------------------------
+    try:
+        _pr = _il.import_module(f"{_pkg}.terrain_performance_report")
+
+        def _handle_performance_report(params: dict) -> dict:
+            stack = (params or {}).get("mask_stack")
+            budgets = (params or {}).get("budgets")
+            report = _pr.collect_performance_report(stack, budgets=budgets)
+            return _pr.serialize_performance_report(report)
+
+        handlers["terrain_performance_report"] = _handle_performance_report
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_performance_report handler: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # terrain_navmesh_export.py — navmesh JSON export for Unity consumption
+    # ------------------------------------------------------------------
+    try:
+        _nm = _il.import_module(f"{_pkg}.terrain_navmesh_export")
+
+        def _handle_navmesh_export(params: dict) -> dict:
+            from pathlib import Path as _Path
+            stack = (params or {}).get("mask_stack")
+            output_path = (params or {}).get("output_path")
+            if stack is None or output_path is None:
+                return {
+                    "status": "error",
+                    "error": "missing_params",
+                    "required": ["mask_stack", "output_path"],
+                }
+            descriptor = _nm.export_navmesh_json(stack, _Path(output_path))
+            return {"status": "ok", "descriptor": descriptor,
+                    "output_path": str(output_path)}
+
+        handlers["terrain_navmesh_export"] = _handle_navmesh_export
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_navmesh_export handler: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # terrain_validation.py — full 10-validator suite (Bundle D)
+    # ------------------------------------------------------------------
+    try:
+        _tv = _il.import_module(f"{_pkg}.terrain_validation")
+
+        def _handle_validation(params: dict) -> dict:
+            stack = (params or {}).get("mask_stack")
+            intent = (params or {}).get("intent")
+            if stack is None or intent is None:
+                return {
+                    "status": "error",
+                    "error": "missing_params",
+                    "required": ["mask_stack", "intent"],
+                }
+            report = _tv.run_validation_suite(stack, intent)
+            return {
+                "status": report.status,
+                "hard_count": len(report.hard_issues),
+                "soft_count": len(report.soft_issues),
+                "info_count": len(report.info_issues),
+                "metrics": dict(report.metrics),
+                "issues": [
+                    {"code": i.code, "severity": i.severity, "message": i.message}
+                    for i in report.all_issues
+                ],
+            }
+
+        handlers["terrain_validation"] = _handle_validation
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_validation handler: %r",
+            exc,
+        )
+
+    # ------------------------------------------------------------------
+    # terrain_quality_profiles.py — profile load/list/apply
+    # ------------------------------------------------------------------
+    try:
+        _qp = _il.import_module(f"{_pkg}.terrain_quality_profiles")
+
+        def _handle_load_quality_profile(params: dict) -> dict:
+            name = (params or {}).get("name", "production")
+            try:
+                profile = _qp.load_quality_profile(name)
+            except KeyError as err:
+                return {"status": "error", "error": "unknown_profile",
+                        "name": name, "message": str(err)}
+            except _qp.PresetLocked as err:
+                return {"status": "error", "error": "preset_locked",
+                        "name": name, "message": str(err)}
+            from dataclasses import asdict as _asdict
+            payload = _asdict(profile)
+            # ErosionStrategy enums don't JSON-serialise — coerce to value.
+            strat = payload.get("erosion_strategy")
+            if hasattr(strat, "value"):
+                payload["erosion_strategy"] = strat.value
+            return {"status": "ok", "profile": payload}
+
+        def _handle_list_quality_profiles(params: dict) -> dict:
+            return {"status": "ok", "profiles": _qp.list_quality_profiles()}
+
+        def _handle_apply_quality_profile(params: dict) -> dict:
+            """Apply a named profile to a target intent/state.
+
+            Returns the resolved profile so the caller (Blender) can wire
+            the values into the active ``TerrainIntentState``.
+            """
+            return _handle_load_quality_profile(params)
+
+        handlers["terrain_load_quality_profile"] = _handle_load_quality_profile
+        handlers["terrain_list_quality_profiles"] = _handle_list_quality_profiles
+        handlers["terrain_apply_quality_profile"] = _handle_apply_quality_profile
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_quality_profiles handlers: %r",
+            exc,
+        )
+
     return handlers
 
 
