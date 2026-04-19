@@ -34,29 +34,34 @@ from ._terrain_erosion import AnalyticalErosionResult, ErosionConfig
 
 
 # ---------------------------------------------------------------------------
-# Utility: seed-based hash (deterministic, no global state)
+# Utility: seed-based hash (integer mixing, no trig — precision-safe)
 # ---------------------------------------------------------------------------
 
 
 def _hash2(ix: np.ndarray, iz: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray]:
     """Deterministic 2D hash returning two float arrays in [-1, 1].
 
-    Uses the irrational-number hash from the reference C# implementation.
-    Vectorized over all grid cells simultaneously.
+    Uses uint32 integer mixing (splitmix32 style) instead of sin/fract
+    to avoid precision loss at large world coordinates.
     """
-    # Use large primes + irrationals for mixing (same approach as reference)
-    s = np.float64(seed)
-    a = ix.astype(np.float64) * 127.1 + iz.astype(np.float64) * 311.7 + s * 53.0
-    b = ix.astype(np.float64) * 269.5 + iz.astype(np.float64) * 183.3 + s * 97.0
+    sx = np.uint32(seed & 0xFFFFFFFF)
+    h = (ix.astype(np.uint32) * np.uint32(374761393)
+         ^ iz.astype(np.uint32) * np.uint32(668265263)
+         ^ sx)
+    h ^= h >> np.uint32(16)
+    h = (h * np.uint32(0x45D9F3B)).astype(np.uint32)
+    h ^= h >> np.uint32(16)
 
-    # fract(sin(x) * 43758.5453) style hash
-    ha = np.sin(a) * 43758.5453123
-    hb = np.sin(b) * 43758.5453123
-    ha = ha - np.floor(ha)
-    hb = hb - np.floor(hb)
+    k = (iz.astype(np.uint32) * np.uint32(374761393)
+         ^ ix.astype(np.uint32) * np.uint32(668265263)
+         ^ np.uint32((seed + 1337) & 0xFFFFFFFF))
+    k ^= k >> np.uint32(16)
+    k = (k * np.uint32(0x45D9F3B)).astype(np.uint32)
+    k ^= k >> np.uint32(16)
 
-    # Map from [0,1] to [-1,1]
-    return ha * 2.0 - 1.0, hb * 2.0 - 1.0
+    # Map [0, 2^32) → [-1, 1]
+    scale = np.float64(2.0 / 4294967296.0)
+    return h.astype(np.float64) * scale - 1.0, k.astype(np.float64) * scale - 1.0
 
 
 def _pow_inv(x: np.ndarray, p: float) -> np.ndarray:
@@ -96,15 +101,12 @@ def finite_difference_gradient(
     rows, cols = h.shape
     inv_2dx = 1.0 / (2.0 * cell_size)
 
-    # Central differences for interior
     gx = np.empty_like(h)
     gz = np.empty_like(h)
 
-    # Interior: central differences
     gx[:, 1:-1] = (h[:, 2:] - h[:, :-2]) * inv_2dx
     gz[1:-1, :] = (h[2:, :] - h[:-2, :]) * inv_2dx
 
-    # Edges: forward/backward differences
     inv_dx = 1.0 / cell_size
     gx[:, 0] = (h[:, 1] - h[:, 0]) * inv_dx
     gx[:, -1] = (h[:, -1] - h[:, -2]) * inv_dx
@@ -133,6 +135,9 @@ def phacelle_noise(
     pivot; cosine/sine stripe pairs are oriented along the slope direction
     and blended with bell-curve weights exp(-dist^2 * 2).
 
+    Outputs are normalized (k=2, clamped) so gully_value reliably reaches
+    magnitude ≥ 0.5 at stripe centers.
+
     Parameters
     ----------
     px, pz : (H, W) world-space x/z coordinates
@@ -143,78 +148,58 @@ def phacelle_noise(
     Returns
     -------
     (gully_value, d_cos, d_sin) : tuple of (H, W) arrays
-        gully_value: combined cosine component (gully depth)
-        d_cos: cosine derivative contribution
-        d_sin: sine derivative contribution
+        gully_value: combined cosine component (gully depth), scaled k=2, clamped [-1,1]
+        d_cos: cosine derivative contribution (scaled k=2)
+        d_sin: sine derivative contribution (scaled k=2)
     """
     shape = px.shape
     inv_cs = 1.0 / max(cell_scale, 1e-12)
 
-    # Scale to cell space
     cx = px * inv_cs
     cz = pz * inv_cs
 
-    # Integer cell of the query point
     ix0 = np.floor(cx).astype(np.int64)
     iz0 = np.floor(cz).astype(np.int64)
 
-    # Fractional position within the cell
-    _fx = cx - ix0.astype(np.float64)
-    _fz = cz - iz0.astype(np.float64)
-
-    # Accumulators
     total_cos = np.zeros(shape, dtype=np.float64)
     total_sin = np.zeros(shape, dtype=np.float64)
     total_d_cos = np.zeros(shape, dtype=np.float64)
     total_d_sin = np.zeros(shape, dtype=np.float64)
     total_weight = np.zeros(shape, dtype=np.float64)
 
-    # Iterate over 4x4 cell neighborhood
     for di in range(-1, 3):
         for dj in range(-1, 3):
-            # Cell index
             ci = ix0 + di
             cj = iz0 + dj
 
-            # Random pivot within cell via hash
             hx, hz = _hash2(ci, cj, seed)
-            # Pivot position in cell space: cell center + random offset * 0.4
             pivot_x = ci.astype(np.float64) + 0.5 + hx * 0.4
             pivot_z = cj.astype(np.float64) + 0.5 + hz * 0.4
 
-            # Vector from pivot to query point
             dx = cx - pivot_x
             dz = cz - pivot_z
 
-            # Distance squared
             dist_sq = dx * dx + dz * dz
-
-            # Bell-curve weight: exp(-dist^2 * 2)
             weight = np.exp(-dist_sq * 2.0)
 
-            # Project displacement onto slope direction
-            # dot(displacement, slope_direction)
             proj = dx * slope_x + dz * slope_z
-
-            # Cosine/sine stripe pair
             phase = proj * (2.0 * np.pi)
             cos_val = np.cos(phase)
             sin_val = np.sin(phase)
 
-            # Accumulate with bell-curve weight
             total_cos += cos_val * weight
             total_sin += sin_val * weight
-            # Derivatives: d/d(pos) cos(phase) = -sin(phase) * 2π,
-            #              d/d(pos) sin(phase) =  cos(phase) * 2π
             total_d_cos += -sin_val * (2.0 * np.pi) * weight
             total_d_sin += cos_val * (2.0 * np.pi) * weight
             total_weight += weight
 
-    # Normalize by total weight
     inv_weight = np.where(total_weight > 1e-12, 1.0 / total_weight, 0.0)
-    gully_value = total_cos * inv_weight
-    d_cos = total_d_cos * inv_weight
-    d_sin = total_d_sin * inv_weight
+
+    # k=2 normalization per Rune's spec — ensures stripe centers reach magnitude ≥ 0.5
+    raw = total_cos * inv_weight
+    gully_value = np.clip(raw * 2.0, -1.0, 1.0)
+    d_cos = total_d_cos * inv_weight * 2.0
+    d_sin = total_d_sin * inv_weight * 2.0
 
     return gully_value, d_cos, d_sin
 
@@ -236,23 +221,26 @@ def erosion_filter(
     cell_size: float = 1.0,
     height_min: Optional[float] = None,
     height_max: Optional[float] = None,
+    ridge_range: Optional[float] = None,
 ) -> AnalyticalErosionResult:
     """Apply multi-octave analytical erosion filter.
 
     Implements the core loop from the reference:
     - For each octave, call PhacelleNoise at increasing frequency
-    - Triangle-wave trick: sign(sine) * derivatives for straight gullies
+    - Triangle-wave trick: sign(sine) * d_cos along slope direction for straight gullies
     - Combi-mask gating: each octave's contribution faded by previous ridges
-    - Ridge map accumulation via parallel pass without gully-weight
+    - Ridge map accumulation via parallel pass with symmetric new_mask
 
     Parameters
     ----------
     height_grid : (H, W) base heights
     grad_x, grad_z : (H, W) analytical gradient of base heights
-    config : ErosionConfig with 12 parameters
+    config : ErosionConfig
     seed : deterministic seed
     world_origin_x, world_origin_z : world-space origin for chunk-parallelism
     cell_size : world-space distance between grid cells
+    ridge_range : optional global normalization factor for ridge_map; when
+        provided the same factor is used across all chunks (prevents seams)
 
     Returns
     -------
@@ -261,89 +249,89 @@ def erosion_filter(
     h = np.asarray(height_grid, dtype=np.float64)
     rows, cols = h.shape
 
-    # Build world-space coordinate grids
     xs = world_origin_x + np.arange(cols, dtype=np.float64) * cell_size
     zs = world_origin_z + np.arange(rows, dtype=np.float64) * cell_size
     px, pz = np.meshgrid(xs, zs)
 
-    # Working gradient (updated each octave)
     gx = np.array(grad_x, dtype=np.float64)
     gz = np.array(grad_z, dtype=np.float64)
 
-    # Add assumed_slope contribution (enables erosion on flat terrain)
+    # assumed_slope: replace gradient with normalized random vector when terrain is too flat
     if config.assumed_slope > 0.0:
-        # Hash-based random slope direction per-point for variety
         hx, hz = _hash2(
             np.floor(px).astype(np.int64),
             np.floor(pz).astype(np.int64),
             seed + 9999,
         )
+        hn = np.sqrt(hx * hx + hz * hz) + 1e-12
+        ux = hx / hn
+        uz = hz / hn
         slope_mag = np.sqrt(gx * gx + gz * gz)
         assumed_mask = slope_mag < config.assumed_slope
-        gx = np.where(assumed_mask, gx + hx * config.assumed_slope, gx)
-        gz = np.where(assumed_mask, gz + hz * config.assumed_slope, gz)
+        gx = np.where(assumed_mask, ux * config.assumed_slope, gx)
+        gz = np.where(assumed_mask, uz * config.assumed_slope, gz)
 
-    # Compute fade target from height range
-    # When height_min/height_max are provided (chunk-parallel mode),
-    # use them for consistent fade_target across tiles.
+    # fade_target maps altitude to [-1, +1]: valley=-1 (crisp V), peak=+1 (muted)
     h_min = float(height_min) if height_min is not None else float(h.min())
     h_max = float(height_max) if height_max is not None else float(h.max())
     h_range = max(h_max - h_min, 1e-12)
-    fade_target = np.clip((h - h_min) / h_range * config.fade_amplitude, -1.0, 1.0)
+    t = (h - h_min) / h_range                    # [0, 1]
+    fade_target = np.clip((t * 2.0 - 1.0) * config.fade_amplitude, -1.0, 1.0)
 
-    # Initialize accumulators
     height_delta = np.zeros_like(h)
     combi_mask = np.ones_like(h)
     ridge_map = np.zeros_like(h)
     ridge_combi_mask = np.ones_like(h)
 
-    # Slope magnitude for exit-slope gating
-    slope_mag = np.sqrt(gx * gx + gz * gz)
-
-    # Exit-slope mask: suppress erosion where slope is below threshold
-    exit_mask = np.where(
-        slope_mag > config.exit_slope_threshold, 1.0,
-        slope_mag / max(config.exit_slope_threshold, 1e-12)
-    )
-
     freq = config.frequency
+    cell_scale = config.cell_scale
     for octave in range(config.octave_count):
         octave_seed = seed + octave * 1337
 
-        # Normalize slope direction
         slope_len = np.sqrt(gx * gx + gz * gz)
         with np.errstate(divide="ignore", invalid="ignore"):
             inv_len = np.where(slope_len > 1e-12, 1.0 / slope_len, 0.0)
         slope_dir_x = gx * inv_len
         slope_dir_z = gz * inv_len
 
-        # PhacelleNoise at current frequency
+        # exit_mask recomputed per-octave from current working gradient
+        exit_mask = np.where(
+            slope_len > config.exit_slope_threshold, 1.0,
+            slope_len / max(config.exit_slope_threshold, 1e-12),
+        )
+
         gully, d_cos, d_sin = phacelle_noise(
             px * freq, pz * freq,
             slope_dir_x, slope_dir_z,
-            config.cell_scale,
+            cell_scale,
             octave_seed,
         )
 
-        # Triangle-wave trick: use sign(sine) for straight-slope gullies
-        # that branch cleanly
+        # Triangle-wave trick: sign(d_sin) * d_cos along the slope direction
+        # d_cos is the along-proj derivative; projected onto world x/z via slope_dir.
         sign_sin = np.sign(d_sin)
-        gx += sign_sin * d_cos * config.strength * config.gully_weight * 0.1
-        gz += sign_sin * d_sin * config.strength * config.gully_weight * 0.1
+        k = sign_sin * d_cos * config.strength * config.gully_weight * 0.1
+        gx += k * slope_dir_x
+        gz += k * slope_dir_z
 
-        # Faded gullies: lerp(fade_target, gullies * gully_weight, combi_mask)
         weighted_gully = gully * config.gully_weight
         faded_gullies = fade_target * (1.0 - combi_mask) + weighted_gully * combi_mask
 
-        # Rounding: soften gully bottoms
+        # crease rounding: lifts valley bottoms (lerp toward |value|)
         if config.rounding > 0.0:
-            faded_gullies = faded_gullies * (1.0 - config.rounding) + \
-                np.abs(faded_gullies) * config.rounding
+            faded_gullies = (faded_gullies * (1.0 - config.rounding)
+                             + np.abs(faded_gullies) * config.rounding)
 
-        # Apply strength and exit-slope gating
+        # ridge rounding: attenuates sharp peak tops
+        if config.ridge_rounding > 0.0:
+            faded_gullies = np.where(
+                faded_gullies > 0,
+                faded_gullies * (1.0 - config.ridge_rounding),
+                faded_gullies,
+            )
+
         octave_delta = faded_gullies * config.strength * exit_mask
 
-        # Onset: suppress small values
         if config.onset > 0.0:
             octave_delta = np.where(
                 np.abs(octave_delta) > config.onset,
@@ -351,27 +339,26 @@ def erosion_filter(
                 octave_delta * 0.1,
             )
 
-        # Accumulate
         height_delta += octave_delta * config.normalization
 
-        # Update combi-mask: PowInv(combi_mask, detail) * new_mask
+        # main path: asymmetric mask — ridges=1 (detail through), creases=0 (fade to fade_target)
         new_mask = np.clip(0.5 + 0.5 * gully, 0.0, 1.0)
         combi_mask = _pow_inv(combi_mask, config.detail) * new_mask
 
-        # Ridge map: parallel pass with no gully-weight for pure ridge detection
-        ridge_gully = gully  # unweighted for ridge detection
-        ridge_map_fade = ridge_map * (1.0 - ridge_combi_mask) + ridge_gully * ridge_combi_mask
-        ridge_map = ridge_map_fade
-        ridge_combi_mask = _pow_inv(ridge_combi_mask, config.detail) * new_mask
+        # ridge path: symmetric mask — both ridges AND creases are features; flats are masked out
+        ridge_new_mask = np.clip(1.0 - np.abs(gully), 0.0, 1.0)
+        # Update ridge_combi_mask before lerp so large octaves drive the accumulation
+        ridge_combi_mask_next = _pow_inv(ridge_combi_mask, config.detail) * ridge_new_mask
+        ridge_map = ridge_map * (1.0 - ridge_combi_mask_next) + gully * ridge_combi_mask_next
+        ridge_combi_mask = ridge_combi_mask_next
 
-        # Increase frequency for next octave
         freq *= 2.0
 
-    # Normalize ridge_map to [-1, 1]
-    ridge_range = max(float(np.abs(ridge_map).max()), 1e-12)
+    # Normalize ridge_map to [-1, 1]; use global ridge_range when provided to prevent seams
+    if ridge_range is None:
+        ridge_range = max(float(np.abs(ridge_map).max()), 1e-12)
     ridge_map = np.clip(ridge_map / ridge_range, -1.0, 1.0)
 
-    # Final gradient (updated by octave loop)
     return AnalyticalErosionResult(
         height_delta=height_delta,
         ridge_map=ridge_map,
@@ -406,6 +393,7 @@ def apply_analytical_erosion(
     grad_z: Optional[np.ndarray] = None,
     height_min: Optional[float] = None,
     height_max: Optional[float] = None,
+    ridge_range: Optional[float] = None,
 ) -> AnalyticalErosionResult:
     """Apply analytical erosion filter to a heightmap.
 
@@ -416,12 +404,13 @@ def apply_analytical_erosion(
     Parameters
     ----------
     height_grid : (H, W) base height values
-    config : ErosionConfig with 12 fields
+    config : ErosionConfig
     seed : deterministic seed
     cell_size : world-space cell spacing (default 1.0)
     world_origin_x, world_origin_z : world-space origin for chunk-parallelism
     grad_x, grad_z : optional pre-computed gradients (for chunk-parallel mode)
     height_min, height_max : optional global height range (for chunk-parallel mode)
+    ridge_range : optional global ridge normalization factor (prevents seams)
 
     Returns
     -------
@@ -429,7 +418,6 @@ def apply_analytical_erosion(
     """
     h = np.asarray(height_grid, dtype=np.float64)
 
-    # Compute gradient via finite differences (fallback for imported heightmaps)
     if grad_x is None or grad_z is None:
         grad_x, grad_z = finite_difference_gradient(h, cell_size)
 
@@ -442,6 +430,7 @@ def apply_analytical_erosion(
         cell_size=cell_size,
         height_min=height_min,
         height_max=height_max,
+        ridge_range=ridge_range,
     )
 
 

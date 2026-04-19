@@ -76,7 +76,8 @@ class ErosionConfig:
     strength: float = 0.5
     gully_weight: float = 1.0
     detail: float = 0.5
-    rounding: float = 0.0
+    rounding: float = 0.0        # crease rounding: lifts valley bottoms toward zero
+    ridge_rounding: float = 0.0  # ridge rounding: attenuates sharp peak tops
     onset: float = 0.0
     assumed_slope: float = 0.0
     normalization: float = 0.4
