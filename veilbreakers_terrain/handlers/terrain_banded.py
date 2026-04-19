@@ -38,6 +38,9 @@ from ._terrain_noise import (
     domain_warp_array,
     ridged_multifractal_array,
     _make_noise_generator,
+    _FBM_GAIN,           # H=0.85 Hurst-exponent gain (≈0.5545)
+    _FBM_LACUNARITY,     # canonical lacunarity = 2.0
+    _FBM_OCTAVES_MIN,    # minimum 8 octaves
     generate_heightmap,  # re-exported for back-compat / tests
 )
 
@@ -140,11 +143,18 @@ def _fbm_array(
     ys: np.ndarray,
     *,
     octaves: int,
-    persistence: float,
-    lacunarity: float,
+    persistence: float = _FBM_GAIN,
+    lacunarity: float = _FBM_LACUNARITY,
     seed: int,
 ) -> np.ndarray:
-    """Vectorized fBm using the shared noise backend. Returns array in ~[-1, 1]."""
+    """Vectorized fBm using AAA-spec spectral synthesis (H=0.85 Hurst exponent).
+
+    Default persistence = lacunarity^(-H) = 2.0^(-0.85) ≈ 0.5545, not 0.5.
+    Using 0.5 (H=1.0) produces overly smooth, non-fractal bands; H=0.85
+    matches natural terrain spectral slope β ≈ 3.7 (Mandelbrot/Musgrave).
+
+    Returns array in ~[-1, 1].
+    """
     gen = _make_noise_generator(seed)
     result = np.zeros_like(xs, dtype=np.float64)
     amplitude = 1.0
@@ -160,17 +170,63 @@ def _fbm_array(
     return result
 
 
-def _normalize_band(arr: np.ndarray) -> np.ndarray:
-    """Center a band to zero-mean and divide by its std to give ~unit variance.
+def _band_sdf_normalize(arr: np.ndarray) -> np.ndarray:
+    """Normalize a band using signed distance from its median contour line.
 
-    This gives the band weights a stable meaning across seeds. Constant
-    inputs are returned untouched.
+    Replaces simple std-normalization with SDF-based contour extraction:
+    the zero crossing is the median contour; each cell's value is replaced
+    by its approximate signed distance to that iso-contour, normalized to
+    unit std.  This preserves the spatial topology of ridges and valleys
+    (the sign tells you which side of the contour you're on) while
+    eliminating the mean shift that causes marble-cake banding when bands
+    are composited.
+
+    Algorithm:
+      1. Compute the median iso-value of the band.
+      2. Build a binary mask: True where band >= median.
+      3. Compute per-cell distance to the nearest False cell (distance to
+         contour from above) and nearest True cell (distance from below),
+         using numpy distance-transform approximation via cumulative sums.
+      4. Signed distance = +dist_above on True side, -dist_below on False side.
+      5. Normalize so std ≈ 1 for stable weight semantics.
+
+    Falls back to mean/std normalization if scipy is unavailable.
+    Constant inputs (std < ε) are zero-centered and returned.
     """
+    if arr.size == 0:
+        return arr
+
     mean = float(arr.mean())
     std = float(arr.std())
     if std < 1e-12:
         return arr - mean
-    return (arr - mean) / std
+
+    median_val = float(np.median(arr))
+    above = arr >= median_val    # True = above contour
+
+    try:
+        from scipy.ndimage import distance_transform_edt
+
+        # Distance from above-mask cells to nearest below-mask cell
+        dist_to_below = distance_transform_edt(above)
+        # Distance from below-mask cells to nearest above-mask cell
+        dist_to_above = distance_transform_edt(~above)
+
+        # Signed distance: positive inside (above), negative outside (below)
+        sdf = np.where(above, dist_to_below, -dist_to_above).astype(np.float64)
+    except ImportError:
+        # Pure-numpy fallback: use the raw value offset by median (less
+        # accurate geometry but still eliminates mean drift)
+        sdf = (arr - median_val).astype(np.float64)
+
+    sdf_std = float(sdf.std())
+    if sdf_std < 1e-12:
+        return sdf
+    return sdf / sdf_std
+
+
+# Keep the old name as an alias; internal callers now use _band_sdf_normalize.
+_normalize_band = _band_sdf_normalize
 
 
 # ---------------------------------------------------------------------------
@@ -275,23 +331,34 @@ def _generate_macro_band(
     scale: float,
     seed: int,
 ) -> np.ndarray:
-    """Continental macro band: fBm + ridged multifractal, 8 octaves, ~1km period."""
+    """Continental macro band: fBm + ridged multifractal, 8 octaves, ~1km period.
+
+    Uses H=0.85 Hurst exponent: persistence = lacunarity^(-H) ≈ 0.5545.
+    Ridged multifractal component uses the same H-based gain so both
+    components have consistent spectral slope β ≈ 3.7.
+    """
     period = _BAND_PERIOD_M["macro"] * max(scale, 1e-6) / 100.0
     xs, ys = _coord_grids(width, height, world_origin_x, world_origin_y, cell_size, period)
 
     macro_seed = (seed + _BAND_SEED_OFFSETS["macro"]) & 0xFFFFFFFF
-    fbm = _fbm_array(xs, ys, octaves=8, persistence=0.5, lacunarity=2.0, seed=macro_seed)
+    fbm = _fbm_array(
+        xs, ys,
+        octaves=_FBM_OCTAVES_MIN,
+        persistence=_FBM_GAIN,        # H=0.85 ≈ 0.5545
+        lacunarity=_FBM_LACUNARITY,
+        seed=macro_seed,
+    )
     ridged = ridged_multifractal_array(
         xs, ys,
-        octaves=8,
-        lacunarity=2.0,
-        gain=0.5,
+        octaves=_FBM_OCTAVES_MIN,
+        lacunarity=_FBM_LACUNARITY,
+        gain=_FBM_GAIN,               # H=0.85 for spectral consistency
         offset=1.0,
         seed=(macro_seed ^ 0xA5A5A5A5) & 0xFFFFFFFF,
     )
     # Blend fBm continental with ridged mountain ranges.
     combined = 0.6 * fbm + 0.4 * (ridged * 2.0 - 1.0)
-    return _normalize_band(combined)
+    return _band_sdf_normalize(combined)
 
 
 def _generate_meso_band(
@@ -304,7 +371,12 @@ def _generate_meso_band(
     scale: float,
     seed: int,
 ) -> np.ndarray:
-    """Domain-warped fBm, 4 octaves, ~150m period."""
+    """Domain-warped fBm, 8 octaves (AAA minimum), ~150m period.
+
+    Uses H=0.85 persistence and domain warp (Quilez 2002) for organic
+    mid-frequency detail.  Octave count raised from 4 to 8 minimum per
+    the AAA spectral-synthesis spec.
+    """
     period = _BAND_PERIOD_M["meso"] * max(scale, 1e-6) / 100.0
     xs, ys = _coord_grids(width, height, world_origin_x, world_origin_y, cell_size, period)
 
@@ -316,8 +388,14 @@ def _generate_meso_band(
         warp_scale=1.2,
         seed=warp_seed,
     )
-    fbm = _fbm_array(wxs, wys, octaves=4, persistence=0.5, lacunarity=2.0, seed=meso_seed)
-    return _normalize_band(fbm)
+    fbm = _fbm_array(
+        wxs, wys,
+        octaves=_FBM_OCTAVES_MIN,
+        persistence=_FBM_GAIN,        # H=0.85 ≈ 0.5545
+        lacunarity=_FBM_LACUNARITY,
+        seed=meso_seed,
+    )
+    return _band_sdf_normalize(fbm)
 
 
 def _generate_micro_band(
@@ -330,21 +408,25 @@ def _generate_micro_band(
     scale: float,
     seed: int,
 ) -> np.ndarray:
-    """Ridged multifractal, 2 octaves, ~30m period."""
+    """Ridged multifractal, 4 octaves, ~30m period.
+
+    Raised from 2 to 4 octaves for finer micro-detail.  Uses H=0.85 gain
+    for spectral consistency with macro/meso bands.
+    """
     period = _BAND_PERIOD_M["micro"] * max(scale, 1e-6) / 100.0
     xs, ys = _coord_grids(width, height, world_origin_x, world_origin_y, cell_size, period)
 
     micro_seed = (seed + _BAND_SEED_OFFSETS["micro"]) & 0xFFFFFFFF
     ridged = ridged_multifractal_array(
         xs, ys,
-        octaves=2,
-        lacunarity=2.0,
-        gain=0.5,
+        octaves=4,                    # finer than meso, fewer than macro
+        lacunarity=_FBM_LACUNARITY,
+        gain=_FBM_GAIN,               # H=0.85
         offset=1.0,
         seed=micro_seed,
     )
-    # Map ridged [0,1] into [-1,1] before normalization so signs behave.
-    return _normalize_band(ridged * 2.0 - 1.0)
+    # Map ridged [0,1] into [-1,1] before SDF normalization so signs behave.
+    return _band_sdf_normalize(ridged * 2.0 - 1.0)
 
 
 def _generate_strata_band(
@@ -426,7 +508,7 @@ def _generate_strata_band(
     wobble = _fbm_array(mxs, mys, octaves=3, persistence=0.5, lacunarity=2.0, seed=strata_seed)
     layered = sharp_layers + wobble_str * wobble
 
-    return _normalize_band(layered)
+    return _band_sdf_normalize(layered)
 
 
 def _generate_warp_field(
@@ -450,7 +532,7 @@ def _generate_warp_field(
     warp_seed = (seed + _BAND_SEED_OFFSETS["warp"]) & 0xFFFFFFFF
     wxs, wys = domain_warp_array(xs, ys, warp_strength=0.4, warp_scale=1.2, seed=warp_seed)
     mag = np.sqrt((wxs - xs) ** 2 + (wys - ys) ** 2)
-    return _normalize_band(mag)
+    return _band_sdf_normalize(mag)
 
 
 # ---------------------------------------------------------------------------
@@ -582,23 +664,64 @@ def generate_banded_heightmap(
 def compose_banded_heightmap(
     bands: BandedHeightmap,
     weights: Tuple[float, float, float, float],
+    *,
+    apply_geological_constraints: bool = True,
+    river_valley_sink: float = 0.08,
+    ridge_rise: float = 0.06,
+    cell_size: float = 1.0,
 ) -> np.ndarray:
     """Re-composite a heightmap from bands with new weights (macro, meso, micro, strata).
 
-    This does not touch ``bands.composite`` — callers are expected to
-    decide whether to re-assign it. Returns a dimensionless array; the
-    vertical-scale multiplier lives in ``metadata['vertical_scale_m']``
-    and is the caller's responsibility.
+    Applies geological plausibility constraints after blending to eliminate
+    marble-cake artifacts: river valleys sink, ridges rise.  These constraints
+    are derived from the Laplacian of the composite (same approach as
+    ``_apply_geological_constraints`` in _terrain_noise.py) and operate on
+    the dimensionless composite before the vertical-scale multiplier is applied.
+
+    Parameters
+    ----------
+    bands : BandedHeightmap
+        Source bands to composite.
+    weights : tuple of 4 floats
+        (macro, meso, micro, strata) blend weights.
+    apply_geological_constraints : bool
+        If True (default), apply Laplacian-based ridge-rise / valley-sink
+        to eliminate marble-cake banding.  Set False to get the raw weighted
+        sum for debugging or when constraints are applied externally.
+    river_valley_sink : float
+        Fraction of height range by which valley cells are deepened (default 0.08).
+    ridge_rise : float
+        Fraction of height range by which ridge cells are raised (default 0.06).
+    cell_size : float
+        World meters per cell for Laplacian normalization (default 1.0).
+
+    Returns
+    -------
+    np.ndarray
+        Dimensionless composite array.  The vertical-scale multiplier lives
+        in ``metadata['vertical_scale_m']`` and is the caller's responsibility.
     """
     if len(weights) != 4:
         raise ValueError("weights must have 4 entries (macro, meso, micro, strata)")
     w_macro, w_meso, w_micro, w_strata = weights
-    return (
+    composite = (
         w_macro * bands.macro_band
         + w_meso * bands.meso_band
         + w_micro * bands.micro_band
         + w_strata * bands.strata_band
     )
+
+    if apply_geological_constraints and composite.ndim == 2 and composite.size > 0:
+        # Import here to avoid circular import at module load time.
+        from ._terrain_noise import _apply_geological_constraints
+        composite = _apply_geological_constraints(
+            composite,
+            river_valley_sink=river_valley_sink,
+            ridge_rise=ridge_rise,
+            cell_size=cell_size,
+        )
+
+    return composite
 
 
 # ---------------------------------------------------------------------------

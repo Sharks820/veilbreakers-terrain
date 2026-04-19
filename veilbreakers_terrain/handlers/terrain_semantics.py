@@ -346,6 +346,18 @@ class TerrainMaskStack:
     # to highlight the affected region in the editor viewport.
     hero_feature_preview: Optional[np.ndarray] = None
 
+    # Bundle I AAA geology channels (terrain_stratigraphy upgrade)
+    # Angular unconformity mask — float32 (H, W) in [0, 1].  1 = bed truncated.
+    unconformity_mask: Optional[np.ndarray] = None
+    # Igneous intrusion / dike presence weight — float32 (H, W) in [0, 1].
+    intrusion_mask: Optional[np.ndarray] = None
+    # Per-cell additive albedo shift from iron-stained dike halos.
+    # float32 (H, W, 3) RGB, values in [-1, 1].
+    albedo_shift_rgb: Optional[np.ndarray] = None
+    # Strata cross-section for Unity material LUT.
+    # Stored as object ndarray shape (1,) wrapping a JSON-serialisable dict.
+    strata_cross_section: Optional[np.ndarray] = None
+
     # -- World-unit scalar metadata (required for Unity .raw round-trip) --
     height_min_m: Optional[float] = None
     height_max_m: Optional[float] = None
@@ -450,6 +462,11 @@ class TerrainMaskStack:
             "strata_height",
             # Hero feature live-preview influence overlay (Bundle M edit_hero_feature)
             "hero_feature_preview",
+            # Bundle I AAA geology channels (terrain_stratigraphy upgrade)
+            "unconformity_mask",
+            "intrusion_mask",
+            "albedo_shift_rgb",
+            "strata_cross_section",
         ),
     )
 

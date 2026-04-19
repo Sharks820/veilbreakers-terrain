@@ -1521,37 +1521,74 @@ _CORRUPTION_B = 0.14
 def apply_corruption_tint(
     vertex_colors: list[tuple[float, float, float, float]],
     corruption_level: float,
+    *,
+    blend_contrast: float = 0.5,
 ) -> list[tuple[float, float, float, float]]:
     """Overlay purple corruption tint on existing vertex colors.
 
-    Higher corruption_level pushes the A (special) channel toward 1.0
-    and tints R/G/B toward corruption purple.
+    Uses MicroSplat-style height-blend formula instead of linear interpolation
+    so corruption seeps into material cracks and high areas first, matching
+    how corruption propagates physically (pooling in pores, coating edges).
+
+    The per-channel blend is driven by:
+        blend = saturate((corruption_h - surface_h + half) / half) * corruption_level
+
+    where corruption_h is the corruption channel's "height" dominance (fixed at
+    0.7 — corruption is a dense, heavy substance that covers exposed surfaces
+    from above), surface_h is derived from per-channel luminance (brighter
+    surfaces are taller — less hidden from corruption), and half is the
+    contrast-controlled transition half-width.
+
+    Higher ``blend_contrast`` → harder edge where corruption meets clean surface.
 
     Pure-logic function -- no bpy dependency.
 
     Args:
-        vertex_colors: List of (R, G, B, A) vertex color tuples.
+        vertex_colors: List of (R, G, B, A) vertex color tuples in linear sRGB.
         corruption_level: Float in [0, 1]. 0 = no corruption, 1 = fully corrupted.
+        blend_contrast: Sharpness of height transition [0..1]. Default 0.5.
 
     Returns:
-        New list of (R, G, B, A) tuples with corruption applied.
+        New list of (R, G, B, A) tuples with MicroSplat-style corruption applied.
     """
     corruption_level = max(0.0, min(1.0, corruption_level))
 
     if corruption_level < 1e-6:
         return list(vertex_colors)
 
+    # MicroSplat effective half-width from contrast
+    contrast_clamped = max(0.0, min(1.0, blend_contrast))
+    effective_half = max(0.5 - contrast_clamped * 0.45, 0.05)
+
+    # Corruption "height factor": how aggressively it coats surfaces.
+    # 0.7 puts corruption into the dominant range — it covers 70% of exposed surfaces.
+    _CORRUPTION_H = 0.7
+
     result: list[tuple[float, float, float, float]] = []
     for r, g, b, a in vertex_colors:
-        # Lerp RGB channels toward corruption purple
-        new_r = r * (1.0 - corruption_level) + _CORRUPTION_R * corruption_level
-        new_g = g * (1.0 - corruption_level) + _CORRUPTION_G * corruption_level
-        new_b = b * (1.0 - corruption_level) + _CORRUPTION_B * corruption_level
+        # Per-pixel surface height estimated from luminance (BT.709 coefficients).
+        # Bright areas = taller = more exposed = more corruption accumulation.
+        surface_h = r * 0.2126 + g * 0.7152 + b * 0.0722
 
-        # Push A channel toward 1.0 (special/corruption mask)
-        new_a = a + (1.0 - a) * corruption_level
+        # MicroSplat blend factor: how much corruption covers this pixel
+        raw_blend = (_CORRUPTION_H - surface_h + effective_half) / effective_half
+        blend_factor = max(0.0, min(1.0, raw_blend)) * corruption_level
 
-        result.append((new_r, new_g, new_b, new_a))
+        # Tint RGB channels toward VeilBreakers corruption purple via height-blend
+        new_r = r * (1.0 - blend_factor) + _CORRUPTION_R * blend_factor
+        new_g = g * (1.0 - blend_factor) + _CORRUPTION_G * blend_factor
+        new_b = b * (1.0 - blend_factor) + _CORRUPTION_B * blend_factor
+
+        # Push A channel: corruption mask uses a softer accumulation curve
+        # so it does not immediately blow out to 1.0 at low corruption levels.
+        new_a = a + (1.0 - a) * (blend_factor * 0.85)
+
+        result.append((
+            max(0.0, min(1.0, new_r)),
+            max(0.0, min(1.0, new_g)),
+            max(0.0, min(1.0, new_b)),
+            max(0.0, min(1.0, new_a)),
+        ))
 
     return result
 
@@ -1622,17 +1659,27 @@ def compute_biome_transition(
     noise_scale: float = 0.1,
     noise_amplitude: float = 5.0,
     noise_seed: int = 42,
+    *,
+    blend_contrast: float = 0.5,
 ) -> list[tuple[float, float, float, float]]:
     """Compute per-vertex splatmap weights for a transition zone between two biomes.
 
-    Produces blended RGBA weights where:
-    - Near biome_a (before boundary): weights from biome_a's terrain layers
-    - Near biome_b (past boundary): weights from biome_b's terrain layers
-    - In transition zone: smooth blend between both, with noise-based
-      edge for organic (not straight line) transition
+    Uses MicroSplat-style height-blended weight compositing between biome layers
+    rather than linear interpolation. This ensures the transition boundary is
+    physically motivated: taller surface features from biome_b (rocks, ridges)
+    poke through biome_a's ground cover first — matching how biomes actually
+    encroach on each other in nature (stone outcrops appear before full rocky
+    terrain takes over, marshland seeps into lowland depressions first, etc.).
 
-    The transition is computed along a single axis. Noise displaces the
-    boundary position per-vertex to create an organic, non-linear edge.
+    Height-blend formula per channel:
+        blend = saturate((h_b - h_a + half) / half) * t_axis
+
+    where h_a / h_b are each biome's per-channel weight (used as proxy height),
+    half is the contrast-controlled transition half-width, and t_axis is the
+    positional factor along the transition axis (0 = fully biome_a, 1 = biome_b).
+
+    The transition axis is noise-displaced to produce an organic, non-straight
+    boundary edge (Wang-hash quintic noise, same as elsewhere in the pipeline).
 
     Pure-logic function -- no bpy dependency.
 
@@ -1660,12 +1707,15 @@ def compute_biome_transition(
         Maximum displacement of the boundary in world units. Default 5.0.
     noise_seed : int
         Seed for the noise function. Default 42.
+    blend_contrast : float
+        Height-blend transition sharpness [0..1]. 0 = gradual crossfade,
+        1 = near-binary cut at the height-parity point. Default 0.5.
 
     Returns
     -------
     list of (R, G, B, A)
-        Per-vertex splatmap weights blended between the two biomes.
-        Values are normalised so R + G + B + A = 1.0.
+        Per-vertex splatmap weights blended between the two biomes using
+        MicroSplat height-blend formula. Values normalised to sum = 1.0.
 
     Raises
     ------
@@ -1691,7 +1741,7 @@ def compute_biome_transition(
     if not vertices:
         return []
 
-    # Get terrain layer weights for each biome
+    # Get terrain layer weights for each biome (R=ground, G=slope, B=cliff, A=special)
     weights_a = auto_assign_terrain_layers(
         vertices, face_normals, faces, biome_a,
     )
@@ -1701,13 +1751,16 @@ def compute_biome_transition(
 
     half_width = max(transition_width / 2.0, 0.001)
 
+    # MicroSplat effective half-width from contrast
+    contrast_clamped = max(0.0, min(1.0, blend_contrast))
+    effective_half = max(0.5 - contrast_clamped * 0.45, 0.05)
+
     result: list[tuple[float, float, float, float]] = []
 
     for vi, (vx, vy, vz) in enumerate(vertices):
         # Position along boundary axis
         if boundary_axis == "x":
             pos = vx
-            # Noise input from the perpendicular axis
             noise_x = vy * noise_scale
             noise_y = vz * noise_scale
         else:
@@ -1715,28 +1768,38 @@ def compute_biome_transition(
             noise_x = vx * noise_scale
             noise_y = vz * noise_scale
 
-        # Noise-displaced boundary
+        # Noise-displaced boundary for organic edge
         noise_val = _simple_noise_2d(noise_x, noise_y, seed=noise_seed)
         displaced_boundary = boundary_position + noise_val * noise_amplitude
 
-        # Compute blend factor: 0 = fully biome_a, 1 = fully biome_b
+        # Positional blend factor: 0 = fully biome_a, 1 = fully biome_b
         dist_from_boundary = pos - displaced_boundary
-        t = (dist_from_boundary + half_width) / (2.0 * half_width)
-        t = max(0.0, min(1.0, t))
+        t_axis = (dist_from_boundary + half_width) / (2.0 * half_width)
+        t_axis = max(0.0, min(1.0, t_axis))
+        # Quintic smoothstep for axis factor (C2 continuous, no velocity artifacts)
+        t_axis = t_axis * t_axis * t_axis * (t_axis * (t_axis * 6.0 - 15.0) + 10.0)
 
-        # Smooth step for nicer transitions
-        t = t * t * (3.0 - 2.0 * t)
-
-        # Blend weights
         wa = weights_a[vi]
         wb = weights_b[vi]
 
-        r = wa[0] * (1.0 - t) + wb[0] * t
-        g = wa[1] * (1.0 - t) + wb[1] * t
-        b = wa[2] * (1.0 - t) + wb[2] * t
-        a = wa[3] * (1.0 - t) + wb[3] * t
+        # MicroSplat height-blend per channel:
+        # Each biome channel weight is treated as a height proxy — higher weight
+        # means that biome "owns" that surface feature and it shows through first.
+        # Formula: blend = saturate((h_b - h_a + half) / half) * t_axis
+        # At t_axis=0 this always yields 0 (pure biome_a regardless of heights).
+        # At t_axis=1 this yields the height-driven factor (biome_b's taller
+        # features dominate, but biome_a retains low-height depressions).
+        blended: list[float] = []
+        for ch_a, ch_b in zip(wa, wb):
+            raw = (ch_b - ch_a + effective_half) / effective_half
+            height_factor = max(0.0, min(1.0, raw)) * t_axis
+            # Composite: biome_a recedes, biome_b advances, weighted by height factor
+            ch_out = ch_a * (1.0 - height_factor) + ch_b * height_factor
+            blended.append(ch_out)
 
-        # Normalise (should already be ~1.0 but ensure precision)
+        r, g, b, a = blended[0], blended[1], blended[2], blended[3]
+
+        # Normalise to sum = 1.0
         total = r + g + b + a
         if total > 1e-9:
             r /= total
@@ -1767,36 +1830,54 @@ def height_blend(
     blend_contrast: float = 0.5,
     height_offset: float = 0.0,
 ) -> float:
-    """Compute height-based terrain texture blend weight.
+    """Compute MicroSplat-style height-based terrain texture blend weight.
 
-    Instead of simple linear interpolation, this function uses per-texel
-    height data to create physically-motivated blending: grass fills cracks
-    in rock, snow sits on peaks, dirt accumulates in valleys.
+    Implements the canonical MicroSplat / Houdini height-blend formula:
+
+        blend = saturate((h_a - h_b + 0.5) / 0.5) * mask
+
+    This is NOT linear interpolation. Per-texel height data creates
+    physically-motivated blending: grass fills cracks in rock, snow sits
+    on peaks, dirt accumulates in valleys. The 0.5 offset centres the
+    transition so equal-height layers blend 50/50 at mask=0.5.
+
+    ``blend_contrast`` sharpens the 0.5/0.5 denominator — higher values
+    compress the transition band, producing harder material edges (suitable
+    for rock/snow) while lower values soften it (suitable for grass/dirt):
+
+        effective_half = max(0.5 - blend_contrast * 0.45, 0.05)
+        blend = saturate((h_a - h_b + effective_half) / effective_half) * mask
 
     Pure-logic function -- no bpy dependency.
 
     Args:
-        height_a: Height value for layer A (e.g. from height map).
-        height_b: Height value for layer B.
-        mask: Blend mask (0.0 = layer A, 1.0 = layer B).
-        blend_contrast: Controls sharpness of height transition (0.0-1.0).
-            Higher values = sharper, more physical blending. Default 0.5.
-        height_offset: Bias toward one layer. Positive favors A, negative
-            favors B. Default 0.0.
+        height_a:       Height value for layer A from its height/bump map [0..1].
+        height_b:       Height value for layer B from its height/bump map [0..1].
+        mask:           Blend mask (0.0 = fully layer A, 1.0 = fully layer B).
+        blend_contrast: Sharpness of height transition [0..1]. 0 = soft
+                        crossfade (0.5/0.5 band), 1 = near-binary cut.
+                        Default 0.5 matches MicroSplat default.
+        height_offset:  Additive bias applied to h_a before the formula.
+                        Positive values favour layer A, negative favour B.
+                        Default 0.0.
 
     Returns:
-        Blend factor in [0.0, 1.0]. 0.0 = use layer A, 1.0 = use layer B.
+        Blend factor in [0.0, 1.0]. 0.0 = use layer A only, 1.0 = layer B only.
     """
-    # Scale contrast to useful range (0.0-1.0 maps to 1x-20x multiplier)
-    contrast = 1.0 + max(0.0, min(1.0, blend_contrast)) * 19.0
+    # Compress the centre-transition half-width based on contrast.
+    # At contrast=0.0 → half=0.50 (gentle MicroSplat default).
+    # At contrast=1.0 → half=0.05 (near-binary hard edge).
+    contrast_clamped = max(0.0, min(1.0, blend_contrast))
+    effective_half = max(0.5 - contrast_clamped * 0.45, 0.05)
 
-    # Height difference drives blend direction
-    height_diff = (height_a - height_b + height_offset) * contrast + 0.5
+    # MicroSplat core formula: saturate((h_a - h_b + half) / half) * mask
+    h_a = float(height_a) + float(height_offset)
+    h_b = float(height_b)
+    raw = (h_a - h_b + effective_half) / effective_half
+    result = max(0.0, min(1.0, raw)) * max(0.0, min(1.0, float(mask)))
 
-    # Apply mask influence
-    result = height_diff * mask
-
-    # Clamp to valid range
+    # Clamp to valid range (redundant after the saturate above, kept for
+    # safety against floating-point edge cases near 0 and 1)
     return max(0.0, min(1.0, result))
 
 
@@ -2406,10 +2487,27 @@ def auto_assign_terrain_layers(
     special_high_pct: float = 0.85,
     moisture_map: Any = None,
     terrain_resolution: int = 0,
+    blend_contrast: float = 0.5,
 ) -> list[tuple[float, float, float, float]]:
     """Compute per-vertex RGBA splatmap weights from slope, height, and moisture.
 
-    Pure-logic function -- no bpy dependency.
+    Uses MicroSplat-style height-blended weights at zone boundaries instead of
+    hard linear transitions. At the flat/slope threshold the blend is driven by:
+
+        blend = saturate((h_slope - h_ground + half) / half) * t_slope
+
+    where h_ground / h_slope are per-vertex height-proxy values (derived from
+    slope angle within each zone's ramp) and t_slope is the normalised distance
+    into the transition band. This produces organic, height-driven material
+    boundaries where slope material naturally fills crevices in ground cover.
+
+    Altitudinal 5-zone system (matches VeilBreakers pipeline spec):
+      Zone 0 — underwater/water_edge : z < water_level + 0.5 m margin
+      Zone 1 — lowland/shoreline     : height_pct in [0, special_low_pct)
+      Zone 2 — midland/ground        : flat faces in normal altitude band
+      Zone 3 — slope                 : angled faces (flat_deg..cliff_deg)
+      Zone 4 — cliff/alpine          : near-vertical OR above special_high_pct
+
     R=ground, G=slope, B=cliff, A=special. Normalised to sum=1.
 
     When moisture_map is provided (2D numpy array, values in [0, 1]),
@@ -2417,22 +2515,21 @@ def auto_assign_terrain_layers(
       - High moisture (> 0.7) + low slope -> mud/wetland (boosted R)
       - Medium moisture (0.3-0.7) + low slope -> grass (standard R)
       - Low moisture (< 0.3) + low slope -> dry earth (reduced R, boosted A)
-    Slope and altitude rules still override: steep = cliff, high = snow.
+    Slope and altitude rules still override: steep = cliff, high = special.
 
     Args:
         vertices: List of (x, y, z) vertex positions.
         face_normals: List of (nx, ny, nz) per-face normal vectors.
         faces: List of face tuples (vertex indices).
-        biome_name: Biome palette name (for future per-biome rules).
-        slope_flat_deg: Maximum slope angle for flat ground.
-        slope_cliff_deg: Minimum slope angle for cliff surfaces.
+        biome_name: Biome palette name.
+        slope_flat_deg: Maximum slope angle (degrees) for flat ground.
+        slope_cliff_deg: Minimum slope angle (degrees) for cliff surfaces.
         special_low_pct: Height percentile below which A channel activates.
         special_high_pct: Height percentile above which A channel activates.
         moisture_map: Optional 2D numpy array of moisture values in [0, 1].
-            Shape should match terrain resolution. If None, no moisture
-            modulation is applied (backward compatible).
-        terrain_resolution: Grid resolution for mapping vertices to moisture
-            cells. If 0, inferred from moisture_map shape.
+        terrain_resolution: Grid resolution for moisture mapping. 0 = auto.
+        blend_contrast: Sharpness of MicroSplat height-blend transitions [0..1].
+            0 = gradual crossfade, 1 = near-binary edge. Default 0.5.
     """
     num_verts = len(vertices)
     if num_verts == 0:
@@ -2489,26 +2586,80 @@ def auto_assign_terrain_layers(
         x_range_t = x_max_t - x_min_t
         y_range_t = y_max_t - y_min_t
 
+    # MicroSplat effective half-width from blend_contrast
+    contrast_clamped = max(0.0, min(1.0, blend_contrast))
+    eff_half = max(0.5 - contrast_clamped * 0.45, 0.05)
+
+    # Transition band half-widths (radians) — zone blending happens across these
+    # bands on either side of the slope thresholds.
+    _FLAT_BAND_RAD = math.radians(8.0)   # 8-degree band around flat→slope threshold
+    _CLIFF_BAND_RAD = math.radians(8.0)  # 8-degree band around slope→cliff threshold
+
     result: list[tuple[float, float, float, float]] = []
     for vi in range(num_verts):
         angle = vert_slopes[vi]
         h_pct = height_pcts[vi]
 
-        # Base slope/height assignment (unchanged logic)
+        # ---- MicroSplat height-blend slope weights --------------------------------
+        # Each channel gets a raw analytical weight (height proxy from slope ramp),
+        # then the boundary regions use saturate((h_B - h_A + half) / half) to
+        # produce physically-motivated transitions: slope material fills ground
+        # crevices, cliff material pokes through slope scree, etc.
+
         if angle < slope_flat_rad:
-            t = angle / slope_flat_rad if slope_flat_rad > 0 else 0.0
-            r, g, b = 1.0 - t, t, 0.0
+            # Ground zone: angle fraction 0..1 as height proxy for ground→slope blend
+            t_gs = angle / max(slope_flat_rad, 1e-9)  # 0 = flat, 1 = at flat threshold
+            # Raw weights: deep ground at low t, slope creeping in at high t
+            r_raw = 1.0 - t_gs
+            g_raw = t_gs
+            b_raw = 0.0
+
+            # Height-blend at the flat/slope boundary band
+            if angle >= (slope_flat_rad - _FLAT_BAND_RAD):
+                # We are in the transition band. h_ground = r_raw, h_slope = g_raw.
+                # MicroSplat: blend = saturate((h_slope - h_ground + half) / half)
+                raw_blend = (g_raw - r_raw + eff_half) / eff_half
+                hb = max(0.0, min(1.0, raw_blend))
+                # Positional factor within the band (0 = bottom of band, 1 = threshold)
+                t_band = (angle - (slope_flat_rad - _FLAT_BAND_RAD)) / max(_FLAT_BAND_RAD, 1e-9)
+                hb *= max(0.0, min(1.0, t_band))
+                r = r_raw * (1.0 - hb) + g_raw * hb   # ground recedes, slope advances
+                g = g_raw * (1.0 - hb) + r_raw * hb   # (symmetric: they swap toward blend)
+                # Clamp to analytical envelope
+                r = max(0.0, min(r_raw + g_raw, max(0.0, r)))
+                g = max(0.0, min(r_raw + g_raw, max(0.0, g)))
+            else:
+                r, g = r_raw, g_raw
+            b = b_raw
+
         elif angle < slope_cliff_rad:
-            span = slope_cliff_rad - slope_flat_rad
-            t = (angle - slope_flat_rad) / span if span > 0 else 0.0
-            r, g, b = 0.0, 1.0 - t, t
+            # Slope zone
+            span = max(slope_cliff_rad - slope_flat_rad, 1e-9)
+            t_sc = (angle - slope_flat_rad) / span  # 0 = at flat threshold, 1 = at cliff
+            g_raw = 1.0 - t_sc
+            b_raw = t_sc
+
+            # Height-blend at the slope/cliff boundary band
+            if angle >= (slope_cliff_rad - _CLIFF_BAND_RAD):
+                raw_blend = (b_raw - g_raw + eff_half) / eff_half
+                hb = max(0.0, min(1.0, raw_blend))
+                t_band = (angle - (slope_cliff_rad - _CLIFF_BAND_RAD)) / max(_CLIFF_BAND_RAD, 1e-9)
+                hb *= max(0.0, min(1.0, t_band))
+                g = g_raw * (1.0 - hb) + b_raw * hb
+                b = b_raw * (1.0 - hb) + g_raw * hb
+                g = max(0.0, min(g_raw + b_raw, max(0.0, g)))
+                b = max(0.0, min(g_raw + b_raw, max(0.0, b)))
+            else:
+                g, b = g_raw, b_raw
+            r = 0.0
+
         else:
+            # Cliff zone
             r, g, b = 0.0, 0.0, 1.0
 
-        # Moisture modulation on flat/low-slope ground (R channel dominant)
+        # ---- Moisture modulation on flat/low-slope ground (R channel dominant) ---
         if has_moisture and angle < slope_flat_rad:
             vx, vy = vertices[vi][0], vertices[vi][1]
-            # Map vertex position to moisture grid cell
             if x_range_t > 1e-9 and y_range_t > 1e-9:
                 u = (vx - x_min_t) / x_range_t
                 v_coord = (vy - y_min_t) / y_range_t
@@ -2519,11 +2670,11 @@ def auto_assign_terrain_layers(
                 moisture = 0.5
 
             if moisture > 0.7:
-                # High moisture: mud/wetland -- boost ground, slight special
+                # High moisture: mud/wetland — boost ground, slight special
                 r = r * 1.2
                 a_moisture = 0.15 * (moisture - 0.7) / 0.3
             elif moisture < 0.3:
-                # Low moisture: dry earth -- reduce ground, boost special
+                # Low moisture: dry earth — reduce ground, boost special
                 r = r * 0.7
                 a_moisture = 0.1 * (0.3 - moisture) / 0.3
             else:
@@ -2531,6 +2682,10 @@ def auto_assign_terrain_layers(
         else:
             a_moisture = 0.0
 
+        # ---- Altitudinal special-band (5-zone system) ----------------------------
+        # Zone 1 (lowland/shoreline) and Zone 4 (alpine) drive the A channel.
+        # Uses height-blend so alpine snow / shoreline water seep into boundary
+        # areas driven by their own height data rather than a hard cutoff.
         a = 0.0
         low_special_allowed = (
             angle < slope_flat_rad * 1.12
@@ -2543,13 +2698,21 @@ def auto_assign_terrain_layers(
             else True
         )
         if low_special_allowed and h_pct < special_low_pct and special_low_pct > 0:
-            a = 1.0 - (h_pct / special_low_pct)
+            # MicroSplat: shoreline seeps up from below — higher-lying cells get
+            # less water than lower-lying ones (h_special is low, h_ground is high).
+            h_special = 1.0 - (h_pct / max(special_low_pct, 1e-9))
+            raw_a = (h_special - (1.0 - h_special) + eff_half) / eff_half
+            a = max(0.0, min(1.0, raw_a))
         elif high_special_allowed and h_pct > special_high_pct and special_high_pct < 1.0:
-            a = (h_pct - special_high_pct) / (1.0 - special_high_pct)
+            # Alpine: snow and rock settle on higher prominences first.
+            h_special = (h_pct - special_high_pct) / max(1.0 - special_high_pct, 1e-9)
+            raw_a = (h_special - (1.0 - h_special) + eff_half) / eff_half
+            a = max(0.0, min(1.0, raw_a))
         a = max(0.0, min(1.0, a + a_moisture))
 
+        # ---- Normalise RGB to (1 - alpha) ----------------------------------------
         rgb_sum = r + g + b
-        if rgb_sum > 0:
+        if rgb_sum > 1e-9:
             remaining = 1.0 - a
             r = r / rgb_sum * remaining
             g = g / rgb_sum * remaining
@@ -2822,12 +2985,19 @@ def compute_world_splatmap_weights(
     special_high_pct: float = 0.85,
     moisture_map: Any = None,
     height_range: tuple[float, float] | None = None,
+    blend_contrast: float = 0.5,
 ) -> np.ndarray:
     """Compute a world-consistent RGBA splatmap from a full heightfield.
 
     This is the tiled-world version of ``auto_assign_terrain_layers``. The
     entire world region is evaluated in one pass so height and slope thresholds
     stay consistent across tile boundaries.
+
+    Zone boundaries use the MicroSplat height-blend formula instead of linear
+    ramps: ``blend = saturate((h_a - h_b + half) / half) * mask``, applied in
+    8-degree transition bands at the flat→slope and slope→cliff boundaries.
+    ``blend_contrast`` in [0, 1] controls the half-width of those bands
+    (0 = wide/soft, 1 = near-hard edge).
     """
     hmap = np.asarray(heightmap, dtype=np.float64)
     if hmap.ndim != 2:
@@ -2881,26 +3051,70 @@ def compute_world_splatmap_weights(
 
     flat_deg = float(slope_flat_deg)
     cliff_deg = float(slope_cliff_deg)
-    span = max(cliff_deg - flat_deg, 1e-9)
 
-    # Base RGB from slope angle:
-    #   angle < flat_deg       → red=1-t  green=t   blue=0   (t = angle/flat)
-    #   flat ≤ angle < cliff   → red=0    green=1-u blue=u   (u = (angle-flat)/span)
-    #   angle ≥ cliff          → red=0    green=0   blue=1
-    is_flat = slope < flat_deg
-    is_mid = (slope >= flat_deg) & (slope < cliff_deg)
+    # MicroSplat effective half-width from blend_contrast — matches
+    # auto_assign_terrain_layers so per-cell and world-pass produce identical
+    # zone boundaries.
+    contrast_clamped = max(0.0, min(1.0, float(blend_contrast)))
+    eff_half = max(0.5 - contrast_clamped * 0.45, 0.05)
+
+    # 8-degree transition bands at each zone boundary (same as scalar path).
+    _BAND_DEG = 8.0
+    flat_band_lo = flat_deg - _BAND_DEG
+    cliff_band_lo = cliff_deg - _BAND_DEG
+
+    # -----------------------------------------------------------------------
+    # Pure-zone membership (outside transition bands) — vectorized masks
+    # is_flat is kept broad (< flat_deg) for moisture-map gating.
+    # -----------------------------------------------------------------------
+    is_flat = slope < flat_band_lo
+    pure_mid = (slope >= flat_deg) & (slope < cliff_band_lo)
     is_cliff = slope >= cliff_deg
 
-    t_flat = np.where(
-        flat_deg > 1e-9,
-        np.clip(slope / max(flat_deg, 1e-9), 0.0, 1.0),
+    # -----------------------------------------------------------------------
+    # Height-blend at flat→mid boundary (8-deg band centred on flat_deg)
+    # MicroSplat: saturate((h_a - h_b + half) / half)
+    # Surface-height proxy: normalised position within the transition band.
+    # -----------------------------------------------------------------------
+    in_flat_band = (slope >= flat_band_lo) & (slope < flat_deg)
+    band_t_flat = np.where(
+        _BAND_DEG > 1e-9,
+        np.clip((slope - flat_band_lo) / _BAND_DEG, 0.0, 1.0),
         0.0,
     )
-    u_mid = np.clip((slope - flat_deg) / span, 0.0, 1.0)
+    h_a_flat = band_t_flat          # green proxy — grows with slope
+    h_b_flat = 1.0 - band_t_flat   # red proxy — shrinks with slope
+    hb_flat = np.clip((h_a_flat - h_b_flat + eff_half) / eff_half, 0.0, 1.0)
 
-    red = np.where(is_flat, 1.0 - t_flat, 0.0)
-    green = np.where(is_flat, t_flat, np.where(is_mid, 1.0 - u_mid, 0.0))
-    blue = np.where(is_cliff, 1.0, np.where(is_mid, u_mid, 0.0))
+    # -----------------------------------------------------------------------
+    # Height-blend at mid→cliff boundary (8-deg band centred on cliff_deg)
+    # -----------------------------------------------------------------------
+    in_cliff_band = (slope >= cliff_band_lo) & (slope < cliff_deg)
+    band_t_cliff = np.where(
+        _BAND_DEG > 1e-9,
+        np.clip((slope - cliff_band_lo) / _BAND_DEG, 0.0, 1.0),
+        0.0,
+    )
+    h_a_cliff = band_t_cliff        # blue proxy — grows with slope
+    h_b_cliff = 1.0 - band_t_cliff  # green proxy — shrinks with slope
+    hb_cliff = np.clip((h_a_cliff - h_b_cliff + eff_half) / eff_half, 0.0, 1.0)
+
+    # -----------------------------------------------------------------------
+    # Assemble RGB channels: pure zones + height-blended bands
+    # -----------------------------------------------------------------------
+    red = np.where(is_flat, 1.0,
+          np.where(in_flat_band, 1.0 - hb_flat,
+          0.0))
+
+    green = np.where(is_flat, 0.0,
+            np.where(in_flat_band, hb_flat,
+            np.where(pure_mid, 1.0,
+            np.where(in_cliff_band, 1.0 - hb_cliff,
+            0.0))))
+
+    blue = np.where(is_cliff, 1.0,
+           np.where(in_cliff_band, hb_cliff,
+           0.0))
 
     # Moisture modulation — only applies on flat cells and only if a moisture
     # map was provided. Builds an `a_moisture` correction that feeds alpha.

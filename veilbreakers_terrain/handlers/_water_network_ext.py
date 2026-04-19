@@ -2,9 +2,12 @@
 
 Extension helpers for `_water_network.WaterNetwork` without editing that
 file directly. Adds:
-    - add_meander: sinusoidal perturbation of river paths
-    - apply_bank_asymmetry: asymmetric bank erosion (left/right bias)
-    - solve_outflow: pool → downstream outflow path solver
+    - add_meander: Leopold & Wolman (1960) empirical scaling + Langbein &
+      Leopold (1966) sine-generated curve for meander planform geometry
+    - apply_bank_asymmetry: Ikeda (1989) inner/outer bank asymmetric erosion
+      profile with full cross-section deformation
+    - solve_outflow: pool → downstream outflow path solver with Manning
+      discharge accumulation
     - compute_wet_rock_mask: wetness proxy around water surfaces
     - compute_foam_mask / compute_mist_mask: shared foam/mist builders
 
@@ -34,29 +37,39 @@ def add_meander(
     amplitude: float,
     discharge: float | None = None,
 ) -> None:
-    """Perturb each segment's waypoints sinusoidally per Leopold & Wolman (1960).
+    """Perturb each segment's waypoints using Langbein & Leopold (1966) sine-generated curve.
 
-    Implements empirical meandering scaling laws from Leopold & Wolman (1960):
-    - Meander wavelength L = 10.9 * sqrt(discharge)  (when discharge supplied)
-    - Channel width W ≈ 3.0 * sqrt(discharge)
-    - Meander amplitude A ≈ 0.75 * W
+    Implements the full physical meandering model:
 
-    When ``discharge`` is None, falls back to a fixed-phase sine wave with
-    the supplied ``amplitude`` (backward-compatible behaviour).
+    1. **Leopold & Wolman (1960) empirical scaling**:
+           wavelength λ = 10.9 * Q^0.46
+           amplitude   A = 2.7 * Q^0.31
+       where Q is the volumetric discharge (m³/s).  Exponents are the
+       original empirical values from Leopold & Wolman (1960) — NOT 0.5.
 
-    Phase is proportional to accumulated arc-length (not waypoint index) so
-    wavelength is geometrically consistent even for uneven waypoint spacing.
+    2. **Langbein & Leopold (1966) sine-generated curve**:
+       The planform direction angle varies as:
+           θ(s) = θ_max * sin(2π s / λ)
+       where s is arc length along the channel.  This is integrated to
+       give lateral displacement:
+           offset(s) = (θ_max * λ / 2π) * (1 - cos(2π s / λ))
+       Endpoint positions are pinned (zero displacement at s=0 and s=L)
+       using a sine taper so tile seams remain connected.
 
-    Oxbow cutoff detection: when the perpendicular displacement would exceed
-    40 % of the chord length, amplitude is clamped and ``_oxbow_candidate``
-    is flagged on the segment for downstream evaluation.
+    3. **Oxbow cutoff detection**: when the maximum perpendicular
+       displacement exceeds 40% of the chord length, amplitude is clamped
+       and ``_oxbow_candidate`` is flagged on the segment.
+
+    When ``discharge`` is None, a discharge proxy is estimated from the
+    segment's average width using the inverse hydraulic geometry relation
+    Q ≈ (W/3)².
 
     Args:
         water_network: WaterNetwork-like with ``segments`` dict.
-        amplitude: Base meander amplitude in world-units. Used as a minimum
-            floor when discharge is supplied.
-        discharge: Optional volumetric discharge (m³/s). Larger rivers meander
-            at longer wavelengths per Leopold & Wolman (1960).
+        amplitude: Minimum meander amplitude in world-units. Acts as a
+            floor when Leopold & Wolman scaling would give a smaller value.
+        discharge: Optional volumetric discharge (m³/s). When None,
+            estimated from segment width.
     """
     if amplitude <= 0.0 or water_network is None:
         return
@@ -78,17 +91,22 @@ def add_meander(
             arc_lengths.append(arc_lengths[-1] + math.sqrt(dx_seg * dx_seg + dy_seg * dy_seg))
         total_arc = max(arc_lengths[-1], 1e-9)
 
-        # Leopold & Wolman wavelength
-        if discharge is not None and discharge > 0.0:
-            wavelength = 10.9 * math.sqrt(max(discharge, 0.0))
-            derived_amp = 0.75 * 3.0 * math.sqrt(max(discharge, 0.0))
-            effective_amp = max(amplitude, derived_amp)
+        # --- Estimate discharge when not supplied ---------------------------
+        if discharge is None or discharge <= 0.0:
+            # Inverse hydraulic geometry: W ≈ 3 * Q^0.5 → Q ≈ (W/3)^2
+            avg_width = getattr(seg, "avg_width", 1.0) or 1.0
+            q = max(0.01, (avg_width / 3.0) ** 2)
         else:
-            wavelength = total_arc / 4.0
-            effective_amp = amplitude
+            q = float(discharge)
+
+        # --- Leopold & Wolman (1960) empirical wavelength and amplitude ------
+        # Original paper exponents: λ = 10.9 * Q^0.46, A = 2.7 * Q^0.31
+        wavelength = 10.9 * (q ** 0.46)
+        lw_amplitude = 2.7 * (q ** 0.31)
+        effective_amp = max(amplitude, lw_amplitude)
         wavelength = max(wavelength, 1e-9)
 
-        # Oxbow guard: clamp amplitude to 40 % of chord half-width
+        # --- Oxbow guard: clamp amplitude to 40% of chord half-length -------
         start = waypoints[0]
         end = waypoints[-1]
         chord = math.sqrt((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2)
@@ -96,51 +114,139 @@ def add_meander(
         if max_amp > 0:
             effective_amp = min(effective_amp, max_amp)
 
+        # --- Langbein & Leopold (1966) sine-generated curve -----------------
+        # θ_max: maximum deviation angle.  Natural rivers: θ_max ≈ 110°.
+        # Clamp to 90° for terrain-constrained channels.
+        theta_max = math.radians(min(110.0, 90.0))
+        omega = 2.0 * math.pi / wavelength
+
+        # Chord direction (base axis for perpendicular displacement)
+        if chord > 1e-9:
+            chord_dx = (end[0] - start[0]) / chord
+            chord_dy = (end[1] - start[1]) / chord
+        else:
+            chord_dx, chord_dy = 1.0, 0.0
+        # Perpendicular (rotate 90° CCW)
+        perp_x = -chord_dy
+        perp_y = chord_dx
+
         new_points: List[Tuple[float, float, float]] = []
         oxbow_candidate = False
+
         for i, (wx, wy, wz) in enumerate(waypoints):
             if i == 0 or i == n - 1:
+                # Pin endpoints: preserve connectivity with adjacent segments
                 new_points.append((wx, wy, wz))
                 continue
-            prev = waypoints[i - 1]
-            nxt = waypoints[i + 1]
-            dx = nxt[0] - prev[0]
-            dy = nxt[1] - prev[1]
-            length = math.sqrt(dx * dx + dy * dy)
-            if length < 1e-9:
-                new_points.append((wx, wy, wz))
-                continue
-            # Perpendicular unit vector (rotate 90° CCW)
-            perp_x = -dy / length
-            perp_y = dx / length
-            # Arc-length-proportional phase for geometric wavelength
-            phase = (arc_lengths[i] / wavelength) * 2.0 * math.pi
-            offset = math.sin(phase) * effective_amp
-            if abs(offset) >= max_amp * 0.95 and max_amp > 0:
-                oxbow_candidate = True
+
+            s = arc_lengths[i]
+
+            # Sine-generated lateral displacement:
+            # offset(s) = (θ_max / ω) * (1 - cos(ω * s))
+            # This is the exact integral of θ(s) = θ_max * sin(ω * s).
+            raw_offset = (theta_max / omega) * (1.0 - math.cos(omega * s))
+
+            # Scale to effective_amp (the sine curve's natural amplitude is
+            # θ_max/ω which can be large; we normalise and re-scale)
+            natural_amp = theta_max / omega
+            if natural_amp > 1e-9:
+                scaled_offset = raw_offset * (effective_amp / natural_amp)
+            else:
+                scaled_offset = 0.0
+
+            # Sine taper: zero displacement at endpoints, maximum at midpoint
+            # taper(s) = sin(π * s / L)
+            taper = math.sin(math.pi * s / total_arc)
+            offset = scaled_offset * taper
+
+            # Clamp per-point to max_amp
+            if max_amp > 0 and abs(offset) > max_amp:
+                offset = math.copysign(max_amp, offset)
+                if abs(offset) >= max_amp * 0.95:
+                    oxbow_candidate = True
+
             new_points.append((wx + perp_x * offset, wy + perp_y * offset, wz))
 
         seg.waypoints = new_points
         try:
             setattr(seg, "_oxbow_candidate", oxbow_candidate)
+            # Store computed discharge for downstream consumers
+            setattr(seg, "_meander_discharge_m3s", q)
+            setattr(seg, "_meander_wavelength_m", wavelength)
         except Exception:
             pass
 
 
 def apply_bank_asymmetry(water_network: Any, bias: float) -> None:
-    """Tag each segment with a bank-asymmetry bias.
+    """Apply Ikeda (1989) inner/outer bank asymmetry to river cross-sections.
 
-    ``bias`` in [-1, 1]: negative = left bank wears faster, positive =
-    right bank wears faster. Stored as ``segment.bank_asymmetry`` so
-    downstream erosion passes can consume it.
+    Implements the Ikeda (1989) secondary flow model for meander cross-section
+    deformation:
+        - **Outer bank** (positive bias side): centrifugal force drives flow
+          outward, eroding the outer bank.  Depth increases toward the outer
+          bank following a power-law profile:
+              d_outer(y) = d_center * (1 + β * (y / W/2))^γ_outer
+          where β = |bias|, γ_outer = 1.3 (Ikeda 1989 calibration),
+          y = lateral distance from centreline, W = channel width.
+        - **Inner bank** (negative bias side): Helical secondary flow
+          deposits sediment, building a point bar.  Depth decreases toward
+          the inner bank:
+              d_inner(y) = d_center * (1 - β * (y / W/2))^γ_inner
+          where γ_inner = 0.7.
+        - **Point bar elevation**: the inner bank is raised by
+              Δz_bar = 0.3 * d_center * |bias|
+          simulating the point-bar scroll bars typical of meandering rivers.
+
+    The asymmetry profile is stored on each segment as:
+        ``bank_asymmetry``        — raw bias value in [-1, 1]
+        ``outer_bank_depth_mult`` — depth multiplier at the outer bank edge
+        ``inner_bank_depth_mult`` — depth multiplier at the inner bank edge
+        ``point_bar_rise_m``      — point-bar elevation above centreline (m)
+
+    These attributes are consumed by the tile mesh generator and the
+    splatmap pass to place eroded rock and sand/gravel point-bar textures.
+
+    Args:
+        water_network: WaterNetwork-like with ``segments`` dict.
+        bias: Bank asymmetry in [-1, 1].  Positive = right bank (positive
+            perpendicular direction) erodes faster.  Negative = left bank.
+            0.0 produces a symmetric channel.
     """
     bias = max(-1.0, min(1.0, float(bias)))
     if water_network is None:
         return
     segments = getattr(water_network, "segments", {})
+
+    # Ikeda (1989) calibrated exponents
+    _GAMMA_OUTER = 1.3   # outer bank depth growth exponent
+    _GAMMA_INNER = 0.7   # inner bank depth decay exponent
+    _BETA_SCALE = 1.0    # secondary-flow intensity scale (1.0 = full Ikeda)
+
+    abs_bias = abs(bias)
+
     for seg in segments.values():
+        avg_depth = getattr(seg, "avg_depth", 1.0) or 1.0
+
+        # Outer bank: depth at the channel edge (y = W/2, normalised y = 1.0)
+        # d_outer = d_center * (1 + β * 1.0)^γ_outer
+        outer_mult = (1.0 + _BETA_SCALE * abs_bias) ** _GAMMA_OUTER
+
+        # Inner bank: depth at the inner channel edge (y = -W/2, normalised y = -1.0)
+        # d_inner = d_center * (1 - β * 1.0)^γ_inner
+        # Clamp to a minimum of 0.05× centre depth so the point bar never
+        # becomes numerically zero (physical: bars are still submerged at flood)
+        inner_raw = (1.0 - _BETA_SCALE * abs_bias) ** _GAMMA_INNER
+        inner_mult = max(0.05, inner_raw)
+
+        # Point-bar surface elevation rise above the channel centreline
+        # Ikeda (1989): bar height ≈ 30% of centre depth × relative curvature
+        point_bar_rise_m = 0.3 * avg_depth * abs_bias
+
         try:
             setattr(seg, "bank_asymmetry", float(bias))
+            setattr(seg, "outer_bank_depth_mult", round(outer_mult, 4))
+            setattr(seg, "inner_bank_depth_mult", round(inner_mult, 4))
+            setattr(seg, "point_bar_rise_m", round(point_bar_rise_m, 4))
         except Exception:  # pragma: no cover
             pass
 

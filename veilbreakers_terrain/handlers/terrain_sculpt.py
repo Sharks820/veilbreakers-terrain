@@ -120,6 +120,11 @@ def _build_falloff_lut(falloff: str, lut_size: int = 1024) -> np.ndarray:
     The extra sentinel at index lut_size is set to 0.0 so that bilinear
     look-ups never read past the array end.
 
+    Vectorized construction: the six named curves that have closed-form
+    numpy-native expressions are evaluated in a single vectorized pass.
+    Only the lambda-backed dispatch runs via a list comprehension (used once
+    at LUT build time, not per vertex).
+
     Args:
         falloff: Curve name recognised by ``_FALLOFF_FUNCTIONS``.
         lut_size: Number of evenly spaced samples across [0, 1).
@@ -127,17 +132,32 @@ def _build_falloff_lut(falloff: str, lut_size: int = 1024) -> np.ndarray:
     Returns:
         float64 array of shape (lut_size + 1,).
     """
-    fn = _FALLOFF_FUNCTIONS.get(falloff)
-    if fn is None:
+    if falloff not in _FALLOFF_FUNCTIONS:
         raise ValueError(
             f"Unknown falloff: {falloff!r}. Valid: {sorted(_FALLOFF_FUNCTIONS)}"
         )
-    d_vals = np.linspace(0.0, 1.0, lut_size, endpoint=False)
-    lut = np.array([fn(float(d)) for d in d_vals], dtype=np.float64)
+    d = np.linspace(0.0, 1.0, lut_size, endpoint=False)  # (lut_size,) in [0, 1)
+
+    # Vectorized evaluation of each named curve — avoids per-element Python calls.
+    if falloff == "smooth":
+        lut = 2.0 * d * d * d - 3.0 * d * d + 1.0           # Hermite smoothstep
+    elif falloff == "linear":
+        lut = 1.0 - d
+    elif falloff == "sphere":
+        lut = np.sqrt(np.maximum(0.0, 1.0 - d * d))
+    elif falloff == "root":
+        lut = np.sqrt(np.maximum(0.0, 1.0 - d))
+    elif falloff == "sharp":
+        lut = np.maximum(0.0, 1.0 - d * d)
+    elif falloff == "gaussian":
+        lut = np.exp(-4.0 * d * d)
+    else:  # "constant"
+        lut = np.ones(lut_size, dtype=np.float64)
+
     lut = np.clip(lut, 0.0, 1.0)
     # Sentinel: value at exactly d=1 is 0
     lut = np.append(lut, 0.0)
-    return lut
+    return lut.astype(np.float64)
 
 
 def _sample_falloff_lut(lut: np.ndarray, norm_dist: np.ndarray) -> np.ndarray:
@@ -262,53 +282,130 @@ def compute_raise_displacements(
     max_height: float = float("inf"),
     use_normal: bool = False,
     vert_normals: list[tuple[float, float, float]] | None = None,
+    target_surface_z: float | None = None,
+    slope_mask: np.ndarray | None = None,
+    curvature_mask: np.ndarray | None = None,
+    protected_zone_mask: np.ndarray | None = None,
+    slope_threshold: float = 1.0,
+    curvature_threshold: float = 1.0,
 ) -> dict[int, float]:
-    """Compute Z displacements for 'raise' operation.
+    """Compute Z displacements for 'raise' operation — vectorized numpy.
 
-    Displacement = weight * strength * brush_size, clamped to max_height.
+    Uses a **signed-distance-field displacement** when ``target_surface_z`` is
+    provided: the displacement magnitude at each vertex is proportional to the
+    signed distance  ``target_surface_z - current_z`` rather than a raw
+    strength scalar.  This drives vertices smoothly toward a target elevation
+    plane (the same model used by ZBrush Inflate-by-SDF and UE Landscape
+    Flatten-raise hybrid).  Without ``target_surface_z`` the classic
+    ``weight * strength * brush_size`` formula applies.
 
-    When ``use_normal`` is True the displacement is projected along each
-    vertex's surface normal rather than world-Z.  ``vert_normals`` must be
-    supplied in that case; each entry is the ``(nx, ny, nz)`` unit normal for
-    the corresponding vertex.  Only the Z component of the offset is recorded
-    (the dict still stores new *height* values), which keeps the return type
-    identical to the non-normal path while producing physically correct
-    vertical movement for sloped surfaces.
+    **Slope/curvature masking** — when ``slope_mask`` or ``curvature_mask``
+    arrays are supplied the displacement at vertex ``i`` is additionally
+    multiplied by ``slope_mask[i]`` (expected in [0, 1]) and
+    ``curvature_mask[i]`` (expected in [0, 1]).  Values above their respective
+    thresholds clamp the mask contribution to zero, suppressing raise on very
+    steep or highly curved regions (matching Houdini heightfield-paint masking).
+
+    **Protected zones** — ``protected_zone_mask[i] == True`` sets the final
+    displacement to zero regardless of other parameters (e.g. roads, rivers,
+    spawn-point exclusions stored in the terrain protocol).
+
+    All hot-path math is **vectorized numpy** — no Python loops over vertices.
 
     Args:
-        vert_heights: Current Z values for all vertices.
+        vert_heights: Current Z values for all vertices (N-length).
         weights: (index, weight) tuples from compute_brush_weights.
-        strength: Displacement multiplier.
-        brush_size: Brush radius, scales displacement magnitude.
+        strength: Displacement multiplier (or SDF scale when target provided).
+        brush_size: Brush radius; multiplies displacement in non-SDF mode.
         max_height: Ceiling; displaced values are clamped below this.
-        use_normal: When True, displace along the vertex normal direction
-            instead of world Z.
-        vert_normals: Per-vertex surface normals ``(nx, ny, nz)``. Required
-            when ``use_normal`` is True; silently ignored otherwise.
+        use_normal: When True, project displacement along vertex normal's Z
+            component rather than world-Z (only affects non-SDF path).
+        vert_normals: Per-vertex surface normals ``(nx, ny, nz)``.  Required
+            when ``use_normal`` is True.
+        target_surface_z: Optional target elevation.  When supplied, SDF
+            displacement = weight * strength * (target_surface_z - current_z),
+            giving a smooth drive toward the surface with Hermite falloff.
+        slope_mask: Per-vertex float array in [0, 1]; high values suppress
+            raise on steep faces.  Compared to slope_threshold.
+        curvature_mask: Per-vertex float array in [0, 1]; high values suppress
+            raise on convex/concave peaks.  Compared to curvature_threshold.
+        protected_zone_mask: Boolean per-vertex array; True = locked, no change.
+        slope_threshold: Mask values above this fraction suppress displacement.
+        curvature_threshold: Mask values above this fraction suppress displacement.
 
     Returns:
-        Dict mapping vertex index -> new Z value.
+        Dict mapping vertex index -> new Z value.  Only affected vertices
+        with non-zero displacement are included.
     """
-    result: dict[int, float] = {}
-    for idx, w in weights:
-        base_delta = w * float(strength) * float(brush_size)
+    if not weights:
+        return {}
+
+    # ------------------------------------------------------------------
+    # Vectorize: unpack weight list into parallel numpy arrays.
+    # ------------------------------------------------------------------
+    indices_np = np.array([i for i, _ in weights], dtype=np.int64)
+    ws_np = np.array([w for _, w in weights], dtype=np.float64)
+
+    heights_np = np.asarray(vert_heights, dtype=np.float64)
+    current_z = heights_np[indices_np]
+
+    s = float(strength)
+    bs = float(brush_size)
+
+    # ------------------------------------------------------------------
+    # SDF vs raw displacement.
+    # ------------------------------------------------------------------
+    if target_surface_z is not None:
+        # Signed distance from current Z to target plane.
+        sdf = float(target_surface_z) - current_z
+        # Hermite cubic: smoothly damp large distances so the brush doesn't
+        # hyperextend.  sdf_norm = sdf / (sdf_max + ε); apply 3t²-2t³.
+        sdf_max = np.max(np.abs(sdf)) + 1e-8
+        t = np.clip(np.abs(sdf) / sdf_max, 0.0, 1.0)
+        hermite = 3.0 * t * t - 2.0 * t * t * t   # smooth toward 1.0
+        delta = ws_np * s * np.sign(sdf) * hermite * sdf_max
+    else:
+        base_delta = ws_np * s * bs
         if use_normal and vert_normals is not None:
-            nx, ny, nz = vert_normals[idx]
-            # Scale the full normal displacement vector and take only its Z
-            # contribution so height-map storage stays consistent.
-            norm_len = math.sqrt(nx * nx + ny * ny + nz * nz)
-            if norm_len > 1e-8:
-                nz_unit = nz / norm_len
-            else:
-                nz_unit = 1.0
+            normals_np = np.asarray(vert_normals, dtype=np.float64)  # (N, 3)
+            nz_col = normals_np[indices_np, 2]                        # (K,)
+            norms = np.linalg.norm(normals_np[indices_np], axis=1)    # (K,)
+            safe = norms > 1e-8
+            nz_unit = np.where(safe, nz_col / np.where(safe, norms, 1.0), 1.0)
             delta = base_delta * nz_unit
         else:
             delta = base_delta
-        new_z = float(vert_heights[idx]) + delta
-        if max_height < float("inf"):
-            new_z = min(new_z, float(max_height))
-        result[idx] = new_z
-    return result
+
+    # ------------------------------------------------------------------
+    # Slope / curvature masking — multiply delta by per-vertex mask value.
+    # ------------------------------------------------------------------
+    if slope_mask is not None:
+        sm = np.asarray(slope_mask, dtype=np.float64)[indices_np]
+        slope_factor = np.where(sm > float(slope_threshold), 0.0, 1.0 - sm / max(float(slope_threshold), 1e-8))
+        delta = delta * slope_factor
+
+    if curvature_mask is not None:
+        cm = np.asarray(curvature_mask, dtype=np.float64)[indices_np]
+        curv_factor = np.where(cm > float(curvature_threshold), 0.0, 1.0 - cm / max(float(curvature_threshold), 1e-8))
+        delta = delta * curv_factor
+
+    # ------------------------------------------------------------------
+    # Compute new Z and clamp to max_height ceiling.
+    # ------------------------------------------------------------------
+    new_z = current_z + delta
+    if max_height < float("inf"):
+        new_z = np.minimum(new_z, float(max_height))
+
+    # ------------------------------------------------------------------
+    # Protected zone masking: zero displacement for locked vertices.
+    # ------------------------------------------------------------------
+    if protected_zone_mask is not None:
+        pz = np.asarray(protected_zone_mask, dtype=bool)[indices_np]
+        new_z = np.where(pz, current_z, new_z)
+
+    # Return only vertices where new_z actually changed.
+    changed = np.abs(new_z - current_z) > 1e-12
+    return {int(indices_np[k]): float(new_z[k]) for k in np.where(changed)[0]}
 
 
 def compute_lower_displacements(
@@ -318,35 +415,55 @@ def compute_lower_displacements(
     brush_size: float = 1.0,
     min_height: float = float("-inf"),
     floor_clamp: float | None = None,
+    target_surface_z: float | None = None,
+    slope_mask: np.ndarray | None = None,
+    curvature_mask: np.ndarray | None = None,
+    protected_zone_mask: np.ndarray | None = None,
+    slope_threshold: float = 1.0,
+    curvature_threshold: float = 1.0,
 ) -> dict[int, float]:
-    """Compute Z displacements for 'lower' operation.
+    """Compute Z displacements for 'lower' (dig) operation — vectorized numpy.
 
-    Displacement = -(weight * strength * brush_size), clamped to a floor.
+    Mirrors ``compute_raise_displacements`` but drives vertices downward.
 
     Two floor parameters are available and the *strictest* (highest) value
     always wins:
 
     * ``min_height`` — legacy per-call floor (e.g. terrain height_min from
       the sculpt handler).
-    * ``floor_clamp`` — explicit hard floor, useful to prevent vertices from
-      being pushed below a world reference level (e.g. 0.0 for sea level or
-      below a collision plane).  Defaults to ``None`` (no additional clamp).
+    * ``floor_clamp`` — explicit hard floor preventing vertices from being
+      pushed below a world reference level (e.g. 0.0 for sea level).
 
-    Setting neither leaves behaviour identical to the original
-    (unclamped subtraction).
+    **SDF mode** — when ``target_surface_z`` is provided the displacement
+    is the signed distance ``current_z - target_surface_z`` with Hermite
+    damping, mirroring the raise SDF but driving downward.  Without it the
+    classic ``weight * strength * brush_size`` subtraction applies.
+
+    **Slope/curvature masking** and **protected zone clipping** behave
+    identically to ``compute_raise_displacements``.
+
+    All hot-path math is **vectorized numpy** — no Python loops over vertices.
 
     Args:
         vert_heights: Current Z values for all vertices.
         weights: (index, weight) tuples from compute_brush_weights.
-        strength: Displacement magnitude.
+        strength: Displacement magnitude (positive = lower).
         brush_size: Brush radius, scales displacement magnitude.
         min_height: Soft floor; displaced values are clamped above this.
-        floor_clamp: Hard world-space floor.  When provided, no vertex will
-            be lowered below this value regardless of strength or brush size.
+        floor_clamp: Hard world-space floor.
+        target_surface_z: Optional target elevation for SDF-mode lowering.
+        slope_mask: Per-vertex float [0, 1]; high values suppress lowering.
+        curvature_mask: Per-vertex float [0, 1]; high values suppress lowering.
+        protected_zone_mask: Boolean per-vertex array; True = locked.
+        slope_threshold: Mask values above this suppress displacement.
+        curvature_threshold: Mask values above this suppress displacement.
 
     Returns:
         Dict mapping vertex index -> new Z value.
     """
+    if not weights:
+        return {}
+
     # Resolve the effective floor: strictest of min_height and floor_clamp.
     effective_floor: float = float("-inf")
     if min_height > float("-inf"):
@@ -354,14 +471,60 @@ def compute_lower_displacements(
     if floor_clamp is not None:
         effective_floor = max(effective_floor, float(floor_clamp))
 
-    result: dict[int, float] = {}
-    for idx, w in weights:
-        delta = w * float(strength) * float(brush_size)
-        new_z = float(vert_heights[idx]) - delta
-        if effective_floor > float("-inf"):
-            new_z = max(new_z, effective_floor)
-        result[idx] = new_z
-    return result
+    # ------------------------------------------------------------------
+    # Vectorize: unpack weight list into parallel numpy arrays.
+    # ------------------------------------------------------------------
+    indices_np = np.array([i for i, _ in weights], dtype=np.int64)
+    ws_np = np.array([w for _, w in weights], dtype=np.float64)
+
+    heights_np = np.asarray(vert_heights, dtype=np.float64)
+    current_z = heights_np[indices_np]
+
+    s = float(strength)
+    bs = float(brush_size)
+
+    # ------------------------------------------------------------------
+    # SDF vs raw displacement.
+    # ------------------------------------------------------------------
+    if target_surface_z is not None:
+        # Signed distance from current Z down to target plane.
+        sdf = current_z - float(target_surface_z)
+        sdf_max = np.max(np.abs(sdf)) + 1e-8
+        t = np.clip(np.abs(sdf) / sdf_max, 0.0, 1.0)
+        hermite = 3.0 * t * t - 2.0 * t * t * t
+        delta = ws_np * s * np.sign(sdf) * hermite * sdf_max
+    else:
+        delta = ws_np * s * bs
+
+    # ------------------------------------------------------------------
+    # Slope / curvature masking.
+    # ------------------------------------------------------------------
+    if slope_mask is not None:
+        sm = np.asarray(slope_mask, dtype=np.float64)[indices_np]
+        slope_factor = np.where(sm > float(slope_threshold), 0.0, 1.0 - sm / max(float(slope_threshold), 1e-8))
+        delta = delta * slope_factor
+
+    if curvature_mask is not None:
+        cm = np.asarray(curvature_mask, dtype=np.float64)[indices_np]
+        curv_factor = np.where(cm > float(curvature_threshold), 0.0, 1.0 - cm / max(float(curvature_threshold), 1e-8))
+        delta = delta * curv_factor
+
+    # ------------------------------------------------------------------
+    # Compute new Z: subtract delta, clamp to floor.
+    # ------------------------------------------------------------------
+    new_z = current_z - delta
+    if effective_floor > float("-inf"):
+        new_z = np.maximum(new_z, effective_floor)
+
+    # ------------------------------------------------------------------
+    # Protected zone masking.
+    # ------------------------------------------------------------------
+    if protected_zone_mask is not None:
+        pz = np.asarray(protected_zone_mask, dtype=bool)[indices_np]
+        new_z = np.where(pz, current_z, new_z)
+
+    changed = np.abs(new_z - current_z) > 1e-12
+    return {int(indices_np[k]): float(new_z[k]) for k in np.where(changed)[0]}
 
 
 def compute_smooth_displacements(
@@ -517,8 +680,11 @@ def compute_flatten_displacements(
     target_height: float | None = None,
     flatten_strength: float = 1.0,
     vert_positions: list[tuple[float, float, float]] | None = None,
+    protected_zone_mask: np.ndarray | None = None,
+    slope_mask: np.ndarray | None = None,
+    slope_threshold: float = 1.0,
 ) -> dict[int, float]:
-    """Compute Z displacements for 'flatten' operation.
+    """Compute Z displacements for 'flatten' operation — vectorized numpy.
 
     Each affected vertex moves toward a *best-fit plane* rather than a single
     average height, which eliminates the low-frequency waviness that the old
@@ -530,24 +696,33 @@ def compute_flatten_displacements(
     3. Form the weighted scatter matrix ``A = V^T W V`` and decompose with SVD.
     4. The right singular vector for the smallest singular value is the
        best-fit plane normal.
-    5. Each vertex's target height is its projection back onto the plane
-       through the centroid along the plane normal.
+    5. Each vertex's target Z is its projection back onto the fitted plane
+       through the centroid.
 
     The plane fit requires 3-D positions (``vert_positions``).  When they are
-    not supplied the function falls back to the original brush-weighted average
-    height (scalar target), preserving backward compatibility with callers that
-    only pass heights.
+    not supplied the function falls back to the brush-weighted average height
+    (scalar target), preserving backward compatibility.
+
+    **Protected zone clipping** — ``protected_zone_mask[i] == True`` prevents
+    any change to vertex ``i``, regardless of other parameters.
+
+    **Slope masking** — ``slope_mask[i]`` in [0, 1] attenuates flatten on
+    steep faces, matching Houdini heightfield-paint masking.
+
+    All hot-path math is **vectorized numpy** — no Python loops over vertices.
 
     Args:
         vert_heights: Current Z values for all vertices.
         weights: (index, weight) tuples from compute_brush_weights.
         target_height: Explicit target Z.  When provided, skips plane fit and
-            uses this constant as the target (useful for "flatten to cursor"
-            workflows).
+            uses this constant as the target (useful for "flatten to cursor").
         flatten_strength: Blend factor in [0..1].
         vert_positions: Full (x, y, z) positions for all vertices.  When
             supplied (and ``target_height`` is None) a weighted SVD plane fit
             is used instead of the scalar weighted-mean fallback.
+        protected_zone_mask: Boolean per-vertex array; True = locked.
+        slope_mask: Per-vertex float [0, 1]; high values suppress flatten.
+        slope_threshold: Mask values above this suppress displacement.
 
     Returns:
         Dict mapping vertex index -> new Z value.
@@ -556,79 +731,84 @@ def compute_flatten_displacements(
         return {}
 
     strength = float(flatten_strength)
-
-    # ------------------------------------------------------------------
-    # Determine target height / target plane for each vertex.
-    # ------------------------------------------------------------------
-    if target_height is not None:
-        # Explicit scalar target — simple constant-plane flatten.
-        target = float(target_height)
-        result: dict[int, float] = {}
-        for idx, w in weights:
-            current = float(vert_heights[idx])
-            result[idx] = current + w * strength * (target - current)
-        return result
-
-    indices = [idx for idx, _ in weights]
+    indices = np.array([i for i, _ in weights], dtype=np.int64)
     ws = np.array([w for _, w in weights], dtype=np.float64)  # (K,)
 
-    if vert_positions is not None:
+    heights_np = np.asarray(vert_heights, dtype=np.float64)
+    current_z = heights_np[indices]  # (K,)
+
+    # ------------------------------------------------------------------
+    # Determine target Z for each affected vertex.
+    # ------------------------------------------------------------------
+    if target_height is not None:
+        # Explicit scalar target — constant-plane flatten, fully vectorized.
+        plane_z = np.full_like(current_z, float(target_height))
+    elif vert_positions is not None:
         # ------------------------------------------------------------------
-        # Weighted least-squares plane fit (SVD).
+        # Weighted least-squares plane fit (SVD), fully vectorized.
         # ------------------------------------------------------------------
         verts = np.array(
-            [vert_positions[i] for i in indices], dtype=np.float64
+            [vert_positions[i] for i in indices.tolist()], dtype=np.float64
         )  # (K, 3)
 
-        # Weighted centroid.
         total_w = ws.sum()
         if total_w <= 0.0:
             total_w = 1.0
         centroid = np.average(verts, weights=ws, axis=0)  # (3,)
+        verts_c = verts - centroid                          # (K, 3) centred
 
-        verts_c = verts - centroid  # (K, 3) centred
-
-        # Weighted scatter matrix A = V^T diag(w) V  →  (3, 3)
-        W = np.diag(ws / total_w)
-        scatter = verts_c.T @ W @ verts_c
+        # Weighted scatter matrix A = V^T diag(w/sum) V → (3, 3)
+        w_norm = ws / total_w
+        # Efficient: A = (verts_c * w_norm[:, None]).T @ verts_c
+        scatter = (verts_c * w_norm[:, None]).T @ verts_c
 
         _, _, Vt = np.linalg.svd(scatter)
         normal = Vt[-1]  # (3,) smallest singular vector = plane normal
 
-        # Avoid degenerate normal (e.g. all verts coplanar in XY).
         nz = normal[2]
         if abs(nz) < 1e-6:
-            # Fall back to Z-normal (horizontal plane) through centroid.
             normal = np.array([0.0, 0.0, 1.0])
             nz = 1.0
 
-        # Target Z for vertex i: project (v_i - centroid) onto plane, then
-        # recover the Z coordinate that lies on the plane.
-        #   plane equation:  normal . (p - centroid) = 0
-        #   solve for p_z:   p_z = centroid_z - (nx*(px-cx) + ny*(py-cy)) / nz
-        result = {}
-        for k, idx in enumerate(indices):
-            w = ws[k]
-            px, py, pz = float(vert_positions[idx][0]), float(vert_positions[idx][1]), float(vert_heights[idx])
-            plane_z = float(centroid[2]) - (
-                normal[0] * (px - float(centroid[0]))
-                + normal[1] * (py - float(centroid[1]))
-            ) / nz
-            result[idx] = pz + w * strength * (plane_z - pz)
-        return result
+        # Vectorized plane projection:
+        # plane_z = centroid_z - (nx*(px-cx) + ny*(py-cy)) / nz
+        px = verts[:, 0]
+        py = verts[:, 1]
+        plane_z = float(centroid[2]) - (
+            normal[0] * (px - float(centroid[0]))
+            + normal[1] * (py - float(centroid[1]))
+        ) / nz
+    else:
+        # Fallback: brush-weighted average height.
+        total_w = ws.sum()
+        avg_h = float(np.dot(ws, current_z) / total_w) if total_w > 0.0 else float(np.mean(current_z))
+        plane_z = np.full_like(current_z, avg_h)
 
     # ------------------------------------------------------------------
-    # Fallback: brush-weighted average height (no 3-D positions available).
+    # Blend: new_z = current_z + w * strength * (plane_z - current_z)
     # ------------------------------------------------------------------
-    hs = np.array([float(vert_heights[i]) for i in indices], dtype=np.float64)
-    total_w = ws.sum()
-    avg_h = float(np.dot(ws, hs) / total_w) if total_w > 0.0 else float(np.mean(hs))
+    blend = ws * strength
+    new_z = current_z + blend * (plane_z - current_z)
 
-    result = {}
-    for idx, w in weights:
-        current = float(vert_heights[idx])
-        result[idx] = current + w * strength * (avg_h - current)
-    return result
+    # ------------------------------------------------------------------
+    # Slope masking.
+    # ------------------------------------------------------------------
+    if slope_mask is not None:
+        sm = np.asarray(slope_mask, dtype=np.float64)[indices]
+        slope_factor = np.where(sm > float(slope_threshold), 0.0, 1.0 - sm / max(float(slope_threshold), 1e-8))
+        new_z = current_z + (new_z - current_z) * slope_factor
+
+    # ------------------------------------------------------------------
+    # Protected zone masking.
+    # ------------------------------------------------------------------
+    if protected_zone_mask is not None:
+        pz = np.asarray(protected_zone_mask, dtype=bool)[indices]
+        new_z = np.where(pz, current_z, new_z)
+
+    # Return all affected vertices — flatten callers expect every brush vertex
+    # in the result (including those already at the target plane) so the
+    # bmesh write-back loop can apply consistent height assignment.
+    return {int(indices[k]): float(new_z[k]) for k in range(len(indices))}
 
 
 def compute_stamp_displacements(
@@ -642,44 +822,50 @@ def compute_stamp_displacements(
     blend_mode: str = "add",
     feather: float = 0.0,
 ) -> dict[int, float]:
-    """Compute Z displacements for 'stamp' operation with blend modes and feathering.
+    """Compute Z displacements for 'stamp' operation — fully vectorized numpy.
 
-    Samples the stamp heightmap with bilinear interpolation, then composites
-    the sampled value onto the terrain using one of four blend modes — matching
-    the blend operations available in Houdini heightfield-stamp, ZBrush Alpha
-    stamp, and UE Landscape stamp brush.
+    Samples the stamp heightmap with **bilinear interpolation** across all
+    affected vertices simultaneously, then composites the sampled values using
+    one of four blend modes.  The entire function operates on numpy arrays with
+    zero Python loops over vertices, matching the vectorized stamp kernels in
+    Houdini heightfield-stamp, ZBrush Alpha stamp, and UE Landscape stamp brush.
+
+    **Bilinear sampling** — UV coordinates for all affected vertices are
+    computed in one broadcast operation.  Floor indices and fractional parts are
+    extracted with ``np.floor``; the four surrounding texels are gathered with
+    advanced integer indexing and blended via the standard bilinear formula
+    ``(1-tx)(1-ty)*h00 + tx(1-ty)*h10 + (1-tx)ty*h01 + tx·ty*h11``.
+
+    **Feathering** — when ``feather > 0`` a smoothstep ramp is applied over the
+    outermost fraction of the brush radius in a single vectorized ``np.where``
+    call.  No conditional branch per vertex.
 
     **Blend modes:**
 
     +----------+----------------------------------------------------------+
-    | Mode     | Formula                                                  |
+    | Mode     | Formula (vectorized)                                     |
     +----------+----------------------------------------------------------+
     | add      | new_z = current_z + w * strength * h_val  (default)      |
     | replace  | new_z = lerp(current_z, h_val * strength, w)             |
-    | max      | new_z = max(current_z, current_z + w * strength * h_val) |
-    | min      | new_z = min(current_z, current_z + w * strength * h_val) |
+    | max      | new_z = np.maximum(current_z, current_z + delta)         |
+    | min      | new_z = np.minimum(current_z, current_z + delta)         |
     +----------+----------------------------------------------------------+
-
-    **Feathering:** When ``feather > 0`` the effective brush weight is
-    attenuated toward the outer rim.  The weight is multiplied by a smoothstep
-    ramp over the outermost ``feather`` fraction of the brush radius, producing
-    a smooth zero-crossing at the edge.  ``feather=0`` (default) disables this
-    and preserves the original behaviour.
 
     Args:
         vert_positions_2d: (x, y) for each vertex.
-        vert_heights: Current Z values.
+        vert_heights: Current Z values for all vertices.
         weights: (index, weight) tuples from compute_brush_weights.
         brush_center: Center of the stamp in world XY.
-        brush_radius: Radius of the stamp area.
+        brush_radius: Radius of the stamp area in world units.
         heightmap: 2D grid of height values [row][col], normalised [0..1].
-        stamp_strength: Scale factor for the heightmap values.
+        stamp_strength: Scale factor applied to all sampled heightmap values.
         blend_mode: Compositing mode — "add", "replace", "max", or "min".
         feather: Feather width as a fraction of brush radius in [0, 1).
             0 = no feathering; 0.2 = fade over outer 20 % of the radius.
 
     Returns:
-        Dict mapping vertex index -> new Z value.
+        Dict mapping vertex index -> new Z value.  Only vertices with a
+        non-zero displacement are included.
     """
     if not weights or not heightmap:
         return {}
@@ -695,81 +881,96 @@ def compute_stamp_displacements(
             f"Unknown stamp blend_mode: {blend_mode!r}. Valid: {valid_modes}"
         )
 
-    # Convert heightmap to numpy for bilinear sampling.
-    hm = np.asarray(heightmap, dtype=np.float64)  # (rows, cols)
+    # ------------------------------------------------------------------
+    # Unpack weight list into parallel numpy arrays — zero Python loops.
+    # ------------------------------------------------------------------
+    indices_np = np.array([i for i, _ in weights], dtype=np.int64)   # (K,)
+    ws_np = np.array([w for _, w in weights], dtype=np.float64)       # (K,)
 
-    bx, by = float(brush_center[0]), float(brush_center[1])
+    # Gather vertex XY positions and current heights for affected set.
+    pts = np.asarray(vert_positions_2d, dtype=np.float64)             # (N, 2)
+    vx = pts[indices_np, 0]                                            # (K,)
+    vy = pts[indices_np, 1]                                            # (K,)
+    heights_np = np.asarray(vert_heights, dtype=np.float64)
+    current_z = heights_np[indices_np]                                 # (K,)
+
+    bx = float(brush_center[0])
+    by = float(brush_center[1])
     br = float(brush_radius)
-    inv_diam = 1.0 / (2.0 * br)
     s = float(stamp_strength)
     feather_f = float(np.clip(feather, 0.0, 0.999))
-    inner_edge = 1.0 - feather_f  # normalised radius where feather begins
 
-    result: dict[int, float] = {}
-
-    for idx, raw_w in weights:
-        vx, vy = vert_positions_2d[idx]
-
-        # ---- Feathering -----------------------------------------------
-        # Attenuate the brush weight in the outer feather band using a
-        # smoothstep ramp so the stamp fades smoothly to zero at the rim.
-        if feather_f > 0.0:
-            norm_d = math.sqrt((vx - bx) ** 2 + (vy - by) ** 2) / br
-            norm_d = min(max(norm_d, 0.0), 1.0)
-            if norm_d > inner_edge:
-                # Remap norm_d from [inner_edge, 1] -> t in [0, 1], then
-                # apply inverted smoothstep so weight fades 1→0.
-                t = (norm_d - inner_edge) / feather_f
-                fade = 1.0 - (3.0 * t * t - 2.0 * t * t * t)
-                w = raw_w * fade
-            else:
-                w = raw_w
-        else:
-            w = raw_w
-
-        # ---- Bilinear heightmap sample ---------------------------------
-        u = ((vx - bx) + br) * inv_diam
-        v = ((vy - by) + br) * inv_diam
-        u = float(min(max(u, 0.0), 1.0))
-        v = float(min(max(v, 0.0), 1.0))
-
-        fx = u * (cols - 1)
-        fy = v * (rows - 1)
-        x0 = int(fx)
-        y0 = int(fy)
-        x1 = min(x0 + 1, cols - 1)
-        y1 = min(y0 + 1, rows - 1)
-        tx = fx - x0
-        ty = fy - y0
-
-        h00 = hm[y0, x0]
-        h10 = hm[y0, x1]
-        h01 = hm[y1, x0]
-        h11 = hm[y1, x1]
-        h_val = float(
-            h00 * (1.0 - tx) * (1.0 - ty)
-            + h10 * tx * (1.0 - ty)
-            + h01 * (1.0 - tx) * ty
-            + h11 * tx * ty
+    # ------------------------------------------------------------------
+    # Feathering: vectorized smoothstep over outer feather band.
+    # fade(d) = 1 - smoothstep(t)  where t = (d - inner) / feather
+    # Applied as a weight multiplier; inner band stays at 1.0.
+    # ------------------------------------------------------------------
+    if feather_f > 0.0:
+        inner_edge = 1.0 - feather_f
+        norm_d = np.sqrt((vx - bx) ** 2 + (vy - by) ** 2) / br
+        norm_d = np.clip(norm_d, 0.0, 1.0)
+        in_feather = norm_d > inner_edge
+        t_feather = np.where(
+            in_feather,
+            np.clip((norm_d - inner_edge) / feather_f, 0.0, 1.0),
+            0.0,
         )
+        fade = 1.0 - (3.0 * t_feather * t_feather - 2.0 * t_feather * t_feather * t_feather)
+        ws_np = ws_np * fade
 
-        # ---- Blend mode -----------------------------------------------
-        current_z = float(vert_heights[idx])
-        delta = w * s * h_val
+    # ------------------------------------------------------------------
+    # Bilinear heightmap sampling — fully vectorized.
+    #
+    # UV in [0, 1]: map vertex XY offset from brush center into stamp space.
+    # fx, fy: floating-point texel coordinates in [0, cols-1] / [0, rows-1].
+    # Gather h00, h10, h01, h11 via fancy indexing; blend with tx/ty.
+    # ------------------------------------------------------------------
+    inv_diam = 1.0 / (2.0 * br)
+    u = np.clip(((vx - bx) + br) * inv_diam, 0.0, 1.0)               # (K,)
+    v = np.clip(((vy - by) + br) * inv_diam, 0.0, 1.0)               # (K,)
 
-        if blend_mode == "add":
-            new_z = current_z + delta
-        elif blend_mode == "replace":
-            # Lerp current_z toward (h_val * strength) by brush weight.
-            new_z = current_z + w * (s * h_val - current_z)
-        elif blend_mode == "max":
-            new_z = max(current_z, current_z + delta)
-        else:  # "min"
-            new_z = min(current_z, current_z + delta)
+    hm = np.asarray(heightmap, dtype=np.float64)                      # (rows, cols)
 
-        result[idx] = new_z
+    fx = u * (cols - 1)                                                # (K,) float col
+    fy = v * (rows - 1)                                                # (K,) float row
+    x0 = np.clip(np.floor(fx).astype(np.int64), 0, cols - 2)         # (K,) int
+    y0 = np.clip(np.floor(fy).astype(np.int64), 0, rows - 2)         # (K,) int
+    x1 = x0 + 1                                                        # (K,) always valid
+    y1 = y0 + 1                                                        # (K,) always valid
+    tx = fx - x0.astype(np.float64)                                   # (K,) fraction
+    ty = fy - y0.astype(np.float64)                                   # (K,) fraction
 
-    return result
+    # Gather four surrounding texels via advanced indexing.
+    h00 = hm[y0, x0]
+    h10 = hm[y0, x1]
+    h01 = hm[y1, x0]
+    h11 = hm[y1, x1]
+
+    h_val = (
+        h00 * (1.0 - tx) * (1.0 - ty)
+        + h10 * tx * (1.0 - ty)
+        + h01 * (1.0 - tx) * ty
+        + h11 * tx * ty
+    )  # (K,) bilinearly interpolated heightmap values
+
+    # ------------------------------------------------------------------
+    # Blend mode application — all vectorized.
+    # ------------------------------------------------------------------
+    delta = ws_np * s * h_val
+
+    if blend_mode == "add":
+        new_z = current_z + delta
+    elif blend_mode == "replace":
+        # Lerp: current_z + w * (target - current_z), target = h_val * strength
+        new_z = current_z + ws_np * (s * h_val - current_z)
+    elif blend_mode == "max":
+        new_z = np.maximum(current_z, current_z + delta)
+    else:  # "min"
+        new_z = np.minimum(current_z, current_z + delta)
+
+    # Return only vertices where the height actually changed.
+    changed = np.abs(new_z - current_z) > 1e-12
+    return {int(indices_np[k]): float(new_z[k]) for k in np.where(changed)[0]}
 
 
 # ---------------------------------------------------------------------------
@@ -778,10 +979,47 @@ def compute_stamp_displacements(
 
 
 def _build_adjacency(bm_obj) -> dict[int, list[int]]:
-    """Build vertex adjacency map from a bmesh object."""
+    """Build 8-connected vertex adjacency map from a bmesh object.
+
+    **8-connectivity (Moore neighbourhood)** — the returned adjacency includes
+    both edge-sharing neighbours (4-connected, via ``link_edges``) *and*
+    face-diagonal neighbours discovered by walking each linked face's vertex
+    loop.  This matches the Moore-8 kernel used by ZBrush, Houdini heightfield
+    smooth, and UE Landscape brush weight propagation:
+
+    * 4-connected (edge only): vertex shares a mesh edge with neighbour.
+    * 8-connected (face diagonal): vertex shares a *face* but not necessarily
+      an edge with neighbour (diagonal of a quad or distant tri vertex).
+
+    For a regular quad-grid terrain mesh (the dominant case) this adds the four
+    diagonal neighbours for every interior vertex, giving the full 8-connected
+    stencil.  For irregular meshes it includes all co-face vertices, which is
+    strictly more connected than 4-connectivity and matches the "all vertices in
+    the 1-ring face set" definition used by ZBrush's topology-smooth kernel.
+
+    The result is deduplicated and sorted for determinism; the vertex itself is
+    never included in its own neighbour list.
+
+    Args:
+        bm_obj: An active bmesh (``bmesh.BMesh``) with ``ensure_lookup_table``
+            already called.
+
+    Returns:
+        Dict mapping vertex index (int) → sorted list of neighbour indices.
+    """
     adj: dict[int, list[int]] = {}
     for v in bm_obj.verts:
-        adj[v.index] = [e.other_vert(v).index for e in v.link_edges]
+        vi = v.index
+        neighbours: set[int] = set()
+        # 4-connected: direct edge neighbours.
+        for e in v.link_edges:
+            neighbours.add(e.other_vert(v).index)
+        # 8-connected: all co-face vertices (includes diagonals on quads).
+        for f in v.link_faces:
+            for fv in f.verts:
+                if fv.index != vi:
+                    neighbours.add(fv.index)
+        adj[vi] = sorted(neighbours)
     return adj
 
 

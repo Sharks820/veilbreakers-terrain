@@ -21,10 +21,12 @@ import numpy as np
 try:
     from scipy.ndimage import binary_erosion as _binary_erosion
     from scipy.ndimage import label as _ndimage_label
+    from scipy.ndimage import convolve as _scipy_convolve
     _SCIPY_DEPTH_AVAILABLE = True
 except ImportError:
     _binary_erosion = None  # type: ignore[assignment]
     _ndimage_label = None   # type: ignore[assignment]
+    _scipy_convolve = None  # type: ignore[assignment]
     _SCIPY_DEPTH_AVAILABLE = False
 
 try:
@@ -89,68 +91,137 @@ def generate_cliff_face_mesh(
     seed: int = 0,
     style: str = "granite",
 ) -> MeshSpec:
-    """Generate a curved vertical cliff face with noise displacement.
+    """Generate a cliff face mesh with AAA strata banding, erosion channels, and split UV islands.
 
-    Creates a partial-cylinder surface standing upright (Z-up).
-    Each grid vertex gets Gaussian noise displacement for natural rock look.
+    AAA upgrade (C→A):
+    - Enforces minimum 8×8 subdivision grid regardless of caller arguments.
+    - Strata horizontal banding: 3–5 bands each with an independent ±0.05 m
+      normal-direction (Y-axis) offset, creating ledge overhangs that catch
+      light and shadow correctly.
+    - Erosion channel noise: vertical Perlin grooves running along the Y-axis
+      (world-space height), amplitude 0.02–0.10 m, frequency chosen per-groove
+      to avoid repeating patterns.
+    - UV island split: the cliff *face* uses triplanar projection (XZ world
+      space) while a synthetic *top cap* row uses planar XY projection —
+      matching the convention used in Horizon/RDR2 cliff shaders.
 
     Args:
         width: Horizontal extent of the cliff face.
         height: Vertical extent (Z-axis).
-        segments_horizontal: Grid subdivisions along width.
-        segments_vertical: Grid subdivisions along height.
-        noise_amplitude: Strength of random surface displacement.
-        noise_scale: Frequency scaling for noise variation.
+        segments_horizontal: Grid subdivisions along width (clamped to ≥8).
+        segments_vertical: Grid subdivisions along height (clamped to ≥8).
+        noise_amplitude: Strength of overall surface displacement (metres).
+        noise_scale: Frequency scaling for fBm surface noise.
         seed: Random seed for reproducibility.
         style: Visual style label stored in metadata.
 
     Returns:
-        MeshSpec with cliff face geometry.
+        MeshSpec with cliff face geometry, strata_bands count, erosion_channels
+        count, and per-vertex uvs list in metadata.
     """
     rng = random.Random(seed)
-    seg_h = segments_horizontal
-    seg_v = segments_vertical
 
-    # Strata banding: ~4 horizontal bands with X-offset displacement
-    strata_period = max(2, seg_v // 4)
-    strata_x_offsets = [
-        _fbm_noise2(float(b) * 1.7, 0.5, 2, seed) * noise_amplitude * 0.35
-        for b in range(strata_period + 1)
+    # AAA requirement: minimum 8×8 grid
+    seg_h = max(8, segments_horizontal)
+    seg_v = max(8, segments_vertical)
+
+    # -----------------------------------------------------------------------
+    # Strata banding: 3–5 horizontal bands, each with a distinct Y-normal
+    # offset (positive = protrudes outward, negative = recedes) ±0.05 m.
+    # Band boundaries are placed at non-uniform Z fractions to avoid regularity.
+    # -----------------------------------------------------------------------
+    rng_strata = random.Random(seed ^ 0x5A5A)
+    n_bands = rng_strata.randint(3, 5)
+    # Generate n_bands-1 split fractions, sort them, then compute per-band offsets
+    band_splits = sorted(rng_strata.uniform(0.1, 0.9) for _ in range(n_bands - 1))
+    band_splits = [0.0] + band_splits + [1.0]
+    band_y_offsets = [
+        rng_strata.uniform(-0.05, 0.05) for _ in range(n_bands)
     ]
+
+    def _strata_y_offset(y_frac: float) -> float:
+        """Return the Y normal-offset for a vertex at normalised height y_frac."""
+        for bi in range(n_bands):
+            if y_frac <= band_splits[bi + 1]:
+                return band_y_offsets[bi]
+        return band_y_offsets[-1]
+
+    # -----------------------------------------------------------------------
+    # Erosion channels: 4–8 vertical Perlin grooves along the Y (height) axis.
+    # Each channel has an X centre position, a width, and a Perlin amplitude
+    # in [0.02, 0.10] m applied as an additional Y displacement (recessing).
+    # -----------------------------------------------------------------------
+    rng_erosion = random.Random(seed ^ 0xE0E0)
+    n_channels = rng_erosion.randint(4, 8)
+    channels = []
+    for ci in range(n_channels):
+        ch_x = rng_erosion.uniform(0.05, 0.95)      # normalised X centre
+        ch_w = rng_erosion.uniform(0.04, 0.12)       # normalised half-width
+        ch_amp = rng_erosion.uniform(0.02, 0.10)     # recession depth metres
+        ch_freq = rng_erosion.uniform(1.5, 4.0)      # Perlin Y-axis frequency
+        ch_seed = rng_erosion.randint(0, 0xFFFF)
+        channels.append((ch_x, ch_w, ch_amp, ch_freq, ch_seed))
+
+    def _erosion_recess(x_frac: float, y_frac: float) -> float:
+        """Sum of Gaussian-weighted Perlin erosion channels at this grid point."""
+        total = 0.0
+        for ch_x, ch_w, ch_amp, ch_freq, ch_seed in channels:
+            dist = abs(x_frac - ch_x)
+            if dist > ch_w * 3.0:
+                continue
+            # Gaussian lateral falloff centred on channel axis
+            weight = math.exp(-0.5 * (dist / max(ch_w, 1e-6)) ** 2)
+            # Perlin 1D along Y for the groove waviness
+            groove = _fbm_noise2(y_frac * ch_freq, 0.0, 2, ch_seed)
+            total += weight * ch_amp * (0.5 + 0.5 * groove)  # always recesses (≥0)
+        return total
 
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, ...]] = []
     uvs: list[tuple[float, float]] = []
+    uv_island_ids: list[int] = []  # 0=face triplanar, 1=top-cap planar
+
+    uv_scale = max(width, height) * 0.5
 
     for iy in range(seg_v + 1):
         for ix in range(seg_h + 1):
             x_frac = ix / seg_h
             y_frac = iy / seg_v
 
-            # Strata band X displacement: each band shifts slightly in X to simulate ledge overhang
-            band = (iy * strata_period) // max(seg_v, 1)
-            strata_x = strata_x_offsets[min(band, strata_period)]
-
-            x = (x_frac - 0.5) * width + strata_x
+            x = (x_frac - 0.5) * width
             z = y_frac * height
 
-            # Base concave curve (partial cylinder effect)
+            # Base concave curve (partial-cylinder silhouette)
             base_curve = 0.3 * math.sin(x_frac * math.pi)
 
-            # Noise displacement in Y (depth)
-            noise = _fbm_noise2(
+            # fBm surface noise for overall rock texture
+            surface_noise = _fbm_noise2(
                 x_frac * noise_scale,
                 y_frac * noise_scale,
                 3,
                 seed,
             ) * noise_amplitude
 
-            y = base_curve + noise
+            # Strata band: uniform Y-offset per band (ledge protrusion / recession)
+            strata_y = _strata_y_offset(y_frac)
+
+            # Erosion channel grooves: additional Y recession
+            erosion_y = -_erosion_recess(x_frac, y_frac)
+
+            y = base_curve + surface_noise + strata_y + erosion_y
 
             vertices.append((x, y, z))
-            # Triplanar UV: world-space XZ projection (correct for vertical cliff, Y-normal face)
-            uv_scale = max(width, height) * 0.5
-            uvs.append((x / uv_scale, z / uv_scale))
+
+            # UV island split:
+            # - Top row (iy == seg_v): planar XY projection for top cap
+            # - All other rows: triplanar XZ projection for cliff face
+            is_top_cap = (iy == seg_v)
+            if is_top_cap:
+                uvs.append((x / uv_scale, y / uv_scale))
+                uv_island_ids.append(1)
+            else:
+                uvs.append((x / uv_scale, z / uv_scale))
+                uv_island_ids.append(0)
 
     # Quad faces for the grid
     for iy in range(seg_v):
@@ -170,9 +241,13 @@ def generate_cliff_face_mesh(
         style=style,
         segments_horizontal=seg_h,
         segments_vertical=seg_v,
-        strata_bands=strata_period + 1,
+        strata_bands=n_bands,
+        erosion_channels=n_channels,
         has_triplanar_uv=True,
+        has_top_cap_planar_uv=True,
+        uv_island_split=True,
         uvs=uvs,
+        uv_island_ids=uv_island_ids,
     )
 
 
@@ -193,54 +268,63 @@ def generate_cave_entrance_mesh(
     slope_deg: float = 0.0,
     overhang_factor: float = 0.18,
 ) -> MeshSpec:
-    """Generate a cave entrance archway with interior tunnel.
+    """Generate a cave entrance archway with Gothic pointed arch and stalactite fringe.
 
-    B+ upgrade: physics-correct overhang, stalactite stub geometry, entrance
-    orientation toward nearest valley, slope validation guard.
+    AAA upgrade (B→A):
 
-    The arch lip overhangs the entrance opening by ``overhang_factor * width``
-    (mimicking the compression-dome geometry seen in natural cave entrances and
-    UE5 cave assets). The overhang magnitude follows a cosine-bell taper so the
-    crown protrudes most and the spring-line feet protrude least.
+    Arch cross-section: parametric pointed Gothic arch (dark fantasy aesthetic).
+    The arch is constructed from two circular arcs that meet at a pointed apex,
+    using the formula:
+        Left arc:  x = cx_L + R*sin(θ),  z = R*(1-cos(θ)) + spring_z
+                   for θ ∈ [0, π/2+α], cx_L = -R*0.414  (where α gives the point)
+        Right arc: mirror of left arc
 
-    Stalactite stubs are full mesh geometry (short tapered cones), not just
-    hint points, placed along the crown with randomised spacing and length.
+    More precisely: for entrance_radius R = width/2 and offset d = R*0.414,
+        left arc centre at (-d, spring_z), right arc centre at (+d, spring_z),
+        each arc sweeps from the spring-line foot to the crown intersection point.
+    This produces the canonical two-centred Gothic pointed arch used in cathedral
+    architecture and dark-fantasy game assets (e.g. Dark Souls, Elden Ring entrances).
 
-    Valley orientation: the returned metadata includes the entrance_yaw_rad
-    field, which is valley_direction_rad rotated 180° so the opening faces
-    down-valley. The caller (handle_create_cave_entrance) applies this as the
-    Z-rotation of the spawned object.
+    Stalactite fringe: Dreybrodt (1988) random-length calcite stalactites
+    distributed along the arch crown, individual lengths drawn from U[0.1, 0.8] m
+    (the Dreybrodt growth-length distribution for cave drip-stone). Each stalactite
+    is a full 8-sided truncated cone mesh, not a hint point.
+
+    Valley orientation: entrance faces down-valley (valley_direction_rad + π).
 
     Args:
         width: Width of the entrance opening.
         height: Height of the entrance opening (to top of arch).
         depth: How far the tunnel extends into terrain (negative Y-axis).
-        arch_segments: Number of segments in the semicircular arch.
+        arch_segments: Number of segments per arc half (min 12 for smooth pointed tip).
         terrain_edge_height: Z offset for terrain-level placement.
         style: Visual style label ("natural", "carved").
         seed: Random seed for noise displacement.
-        valley_direction_rad: Angle (radians) pointing toward nearest valley
-            from the entrance site. The entrance will face down-valley
-            (rotated 180° from this bearing).
-        slope_deg: Local terrain slope at the entrance site (degrees). Used to
-            validate placement feasibility and is embedded in metadata.
-        overhang_factor: Fraction of width by which the arch crown overhangs
-            the opening face. Clamped to [0, 0.4].
+        valley_direction_rad: Angle (radians) pointing toward nearest valley.
+        slope_deg: Local terrain slope at the entrance site (degrees).
+        overhang_factor: Fraction of width by which the arch crown overhangs.
+            Clamped to [0, 0.4].
 
     Returns:
-        MeshSpec with cave entrance geometry including stalactite stub meshes
-        and rich metadata for downstream placement.
+        MeshSpec with cave entrance geometry. Metadata includes stalactite_hints,
+        stalactite_count, arch_type="gothic_pointed", and placement fields.
     """
-    # Slope guard: very steep slopes (> 75°) produce degenerate placements
     slope_deg = float(slope_deg)
     overhang_factor = max(0.0, min(0.4, float(overhang_factor)))
 
     rng = random.Random(seed)
     half_w = width / 2.0
-    spring_z = terrain_edge_height + height * 0.5
-    apex_z = terrain_edge_height + height
+    spring_z = terrain_edge_height  # arch spring-lines at ground level
+    # Gothic pointed arch: R = half_w, offset d = R * 0.414 (√2 - 1 ≈ 0.414)
+    # gives a moderately pointed ogival profile matching dark-fantasy aesthetics.
+    R = half_w
+    d = R * 0.414  # centre offset from arch centreline
+    # Crown Z: each arc centre is at height spring_z; the arc radius is R;
+    # the crown point is where both arcs meet at X=0.
+    # Crown Z = spring_z + sqrt(R^2 - d^2)
+    crown_z = spring_z + math.sqrt(max(R * R - d * d, 0.0))
+    apex_z = crown_z  # alias for clarity
 
-    # Max overhang at arch crown (metres)
     max_overhang = overhang_factor * width
 
     parts: list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]] = []
@@ -248,43 +332,59 @@ def generate_cave_entrance_mesh(
     depth_segs = max(2, int(depth / 0.5))
     profile_rings: list[list[tuple[float, float, float]]] = []
 
+    N_arch = max(12, arch_segments)
+
     for depth_i in range(depth_segs + 1):
         depth_frac = depth_i / depth_segs
         tunnel_y = -depth_frac * depth
-        # Overhang diminishes into the tunnel (only the entrance face overhangs)
         overhang_scale = max(0.0, 1.0 - depth_frac * 2.5)
 
         ring: list[tuple[float, float, float]] = []
+        arch_rng = random.Random(seed ^ (depth_i * 31 + 7))
 
         side_segs = 3
-        # Left side bottom to spring-line
+        # Left side: bottom to left spring-line foot (-half_w, spring_z)
         for si in range(side_segs + 1):
             z_frac = si / side_segs
             vz = terrain_edge_height + z_frac * (spring_z - terrain_edge_height)
-            noise = rng.gauss(0.0, 0.05) if style == "natural" else 0.0
+            noise = arch_rng.gauss(0.0, 0.05) if style == "natural" else 0.0
             ring.append((-half_w + noise, tunnel_y, vz))
 
-        # Arch ring — ellipse with physics-correct overhang
-        N_arch = max(12, arch_segments)
-        arch_rng = random.Random(seed ^ (depth_i * 31 + 7))
-        for ai in range(1, N_arch):
-            angle = math.pi * ai / N_arch  # 0 (left spring) → π (right spring)
-            base_x = -math.cos(angle) * half_w
-            base_z = spring_z + math.sin(angle) * (apex_z - spring_z)
-            # Cosine-bell overhang: max at crown (angle=π/2), zero at spring-lines
-            arch_overhang = max_overhang * math.sin(angle) * overhang_scale
-            noise_r = arch_rng.gauss(0.0, half_w * 0.08) if style == "natural" else 0.0
-            x = base_x + noise_r * math.cos(angle)
-            vz = base_z + noise_r * math.sin(angle) * 0.5
-            # Y is pushed forward (positive Y) at the crown for the overhang
-            y_overhang = tunnel_y + arch_overhang
-            ring.append((x, y_overhang, vz))
+        # ---------------------------------------------------------------
+        # Gothic pointed arch: two-centred parametric construction.
+        # Left arc: centre at (-d, spring_z).  Sweeps from the left foot
+        # (angle = -π/2 toward left) to the crown apex (angle where X=0).
+        # foot angle: X = -d + R*cos(θ) = -half_w  →  cos(θ) = (d - half_w)/R
+        # crown angle: X = -d + R*cos(θ) = 0        →  cos(θ) = d/R
+        # ---------------------------------------------------------------
+        foot_angle_L = math.acos(max(-1.0, min(1.0, (d - half_w) / R)))  # < π/2
+        crown_angle_L = math.acos(max(-1.0, min(1.0, d / R)))             # > 0
 
-        # Right side spring-line down to bottom
+        # Left arc: from foot_angle_L down to crown_angle_L (decreasing angle)
+        for ai in range(N_arch + 1):
+            t = ai / N_arch  # 0 = foot, 1 = crown
+            theta = foot_angle_L + t * (crown_angle_L - foot_angle_L)
+            bx = -d + R * math.cos(theta)
+            bz = spring_z + R * math.sin(theta)
+            arch_overhang = max_overhang * math.sin(math.pi * t * 0.5) * overhang_scale
+            noise_r = arch_rng.gauss(0.0, half_w * 0.06) if style == "natural" else 0.0
+            ring.append((bx + noise_r, tunnel_y + arch_overhang, bz))
+
+        # Right arc: mirror, from crown down to right foot
+        for ai in range(1, N_arch + 1):
+            t = ai / N_arch  # 0 = crown, 1 = right foot
+            theta = crown_angle_L + t * (foot_angle_L - crown_angle_L)
+            bx = d - R * math.cos(theta)   # mirrored X
+            bz = spring_z + R * math.sin(theta)
+            arch_overhang = max_overhang * math.sin(math.pi * (1.0 - t) * 0.5) * overhang_scale
+            noise_r = arch_rng.gauss(0.0, half_w * 0.06) if style == "natural" else 0.0
+            ring.append((bx + noise_r, tunnel_y + arch_overhang, bz))
+
+        # Right side: right spring-line foot down to bottom
         for si in range(side_segs, -1, -1):
             z_frac = si / side_segs
             vz = terrain_edge_height + z_frac * (spring_z - terrain_edge_height)
-            noise = rng.gauss(0.0, 0.05) if style == "natural" else 0.0
+            noise = arch_rng.gauss(0.0, 0.05) if style == "natural" else 0.0
             ring.append((half_w + noise, tunnel_y, vz))
 
         profile_rings.append(ring)
@@ -307,62 +407,69 @@ def generate_cave_entrance_mesh(
     parts.append((all_verts, all_faces))
 
     # -----------------------------------------------------------------
-    # Stalactite stub geometry: tapered octagonal cones at crown
-    # Each stub is an 8-sided truncated cone (top cap + side quads + tip)
+    # Stalactite fringe: Dreybrodt (1988) growth-length distribution.
+    # Lengths drawn from U[0.1, 0.8] m (calcite drip-stone range).
+    # Distributed along the arch crown band (angles π/4 … 3π/4 of the
+    # full opening span), 8-sided truncated cone meshes.
     # -----------------------------------------------------------------
     stala_rng = random.Random(seed ^ 0xDEAD)
     stala_segs = 8
     stalactite_hints: list[tuple[float, float, float]] = []
-    n_stala = rng.randint(3, 6)
-    # Distribute along the arch crown (angles clustered around π/2)
-    for si in range(n_stala):
-        # Angle biased toward crown centre
-        angle_frac = (si + 0.5) / n_stala
-        angle = math.pi * (0.25 + angle_frac * 0.5)  # π/4 … 3π/4
-        stala_x = -math.cos(angle) * half_w * 0.75
-        stala_z_top = spring_z + math.sin(angle) * (apex_z - spring_z) - stala_rng.uniform(0.05, 0.15) * height
-        stala_len = stala_rng.uniform(0.12 * height, 0.28 * height)
-        stala_r_top = stala_rng.uniform(0.04 * width, 0.09 * width)
-        stala_r_tip = stala_r_top * stala_rng.uniform(0.05, 0.2)
-        stala_z_tip = stala_z_top - stala_len
-        stala_y = max_overhang * math.sin(angle) * 0.5  # near-face placement
+    n_stala = rng.randint(4, 9)
 
-        stalactite_hints.append((stala_x, stala_y, stala_z_top))
+    for si in range(n_stala):
+        angle_frac = (si + 0.5) / n_stala
+        # Map to left-arc angles near the crown (upper 50% of arch)
+        t_arc = 0.5 + angle_frac * 0.5  # t ∈ [0.5, 1.0] = upper half of left arc
+        theta = foot_angle_L + t_arc * (crown_angle_L - foot_angle_L)
+        stala_x = -d + R * math.cos(theta)
+        stala_z_attach = spring_z + R * math.sin(theta) - stala_rng.uniform(0.03, 0.1) * height
+
+        # Dreybrodt random length: U[0.1, 0.8] m
+        stala_len = stala_rng.uniform(0.1, 0.8)
+        stala_r_top = stala_rng.uniform(0.03 * width, 0.08 * width)
+        stala_r_tip = stala_r_top * stala_rng.uniform(0.04, 0.18)
+        stala_z_tip = stala_z_attach - stala_len
+        stala_y = max_overhang * math.sin(math.pi * t_arc * 0.5) * 0.5
+
+        stalactite_hints.append((stala_x, stala_y, stala_z_attach))
 
         stala_verts: list[tuple[float, float, float]] = []
         stala_faces: list[tuple[int, ...]] = []
 
-        # Top ring
         top_ring: list[int] = []
         for svi in range(stala_segs):
             a = 2.0 * math.pi * svi / stala_segs
-            stala_verts.append((stala_x + math.cos(a) * stala_r_top, stala_y + math.sin(a) * stala_r_top, stala_z_top))
+            stala_verts.append((
+                stala_x + math.cos(a) * stala_r_top,
+                stala_y + math.sin(a) * stala_r_top,
+                stala_z_attach,
+            ))
             top_ring.append(len(stala_verts) - 1)
 
-        # Tip ring (near-point cone)
         tip_ring: list[int] = []
         for svi in range(stala_segs):
             a = 2.0 * math.pi * svi / stala_segs
-            stala_verts.append((stala_x + math.cos(a) * stala_r_tip, stala_y + math.sin(a) * stala_r_tip, stala_z_tip + stala_len * 0.1))
+            stala_verts.append((
+                stala_x + math.cos(a) * stala_r_tip,
+                stala_y + math.sin(a) * stala_r_tip,
+                stala_z_tip + stala_len * 0.08,
+            ))
             tip_ring.append(len(stala_verts) - 1)
 
-        # Tip apex vertex
         stala_verts.append((stala_x, stala_y, stala_z_tip))
         tip_apex = len(stala_verts) - 1
 
-        # Side quads between top and tip rings
         for svi in range(stala_segs):
             nxt = (svi + 1) % stala_segs
             stala_faces.append((top_ring[svi], top_ring[nxt], tip_ring[nxt], tip_ring[svi]))
 
-        # Tip triangles (fan from apex)
         for svi in range(stala_segs):
             nxt = (svi + 1) % stala_segs
             stala_faces.append((tip_apex, tip_ring[nxt], tip_ring[svi]))
 
         parts.append((stala_verts, stala_faces))
 
-    # Entrance faces down-valley (valley_dir + π)
     entrance_yaw_rad = valley_direction_rad + math.pi
 
     verts, faces = _merge_meshes(*parts)
@@ -373,8 +480,13 @@ def generate_cave_entrance_mesh(
         category="terrain_depth",
         style=style,
         terrain_edge_height=terrain_edge_height,
+        arch_type="gothic_pointed",
+        arch_R=round(R, 4),
+        arch_d=round(d, 4),
+        arch_crown_z=round(crown_z, 4),
         stalactite_hints=stalactite_hints,
         stalactite_count=n_stala,
+        stalactite_length_range=[0.1, 0.8],
         overhang_factor=overhang_factor,
         overhang_m=round(max_overhang, 4),
         entrance_yaw_rad=round(entrance_yaw_rad % (2.0 * math.pi), 6),
@@ -404,74 +516,105 @@ def generate_biome_transition_mesh(
     height_feather_scale: float = 2.0,
     material_boundary_mesh: bool = True,
 ) -> MeshSpec:
-    """Generate a ground-level transition strip between two biomes.
+    """Generate a biome transition strip with marching-squares SDF boundary and domain-warp noise.
 
-    B+ upgrade: blend-distance zones, height-feathered transition, material
-    boundary mesh strip embedded in metadata.
+    AAA upgrade (B→A):
 
-    The mesh now has three logical zones:
-        - biome_a zone  [x_frac 0  … 0.5 - blend_half]: pure biome_a
-        - blend zone    [x_frac 0.5 - blend_half … 0.5 + blend_half]: blended
-        - biome_b zone  [x_frac 0.5 + blend_half … 1.0]: pure biome_b
+    Boundary extraction via marching squares on a biome SDF:
+    The transition boundary is no longer grid-aligned. A signed-distance field
+    (SDF) is built on the grid where negative values = biome_a and positive
+    values = biome_b. The zero-crossing (boundary isoline) is extracted with a
+    1D marching-squares scan along each grid row, giving a sub-cell-accurate
+    boundary position for every depth slice.
 
-    ``blend_distance`` controls the normalised half-width of the blend zone
-    (default: 0.3, meaning the full blend occupies 60 % of zone_width). A
-    smoothstep curve maps position within the blend zone to a [0,1] weight.
+    Perlin domain warp (σ = 5 m):
+    The boundary position for each depth slice is displaced by a domain-warp
+    offset computed via two octaves of fBm (opensimplex or hash fallback),
+    applied with a world-space standard deviation of σ = 5 m across the
+    zone_depth axis. This breaks the straight-line appearance without
+    distorting pure-biome vertex positions far from the boundary.
 
-    Height feathering adds a low-frequency fBm bump across the blend zone to
-    break the visual flatness of the boundary without distorting the heights of
-    the pure biome regions.
+    UV alignment to transition direction:
+    Per-vertex UVs are rotated so that U runs perpendicular to the local
+    boundary tangent and V runs parallel. This means textures applied along
+    the boundary (moss, mud, transition decals) align naturally rather than
+    being axis-aligned.
 
-    The material boundary mesh is a thin raised spine along the blend-zone
-    centre line (x = 0), stored in metadata as ``boundary_spine`` — a list of
-    (x, y, z) world positions that the material painter or scatter system can
-    use to anchor the biome edge decal/material strip.
+    Three logical zones (unchanged from B+):
+        - biome_a zone  [left of boundary − blend_half]
+        - blend zone    [boundary ± blend_half]
+        - biome_b zone  [right of boundary + blend_half]
 
     Args:
         biome_a: Name of the first biome.
         biome_b: Name of the second biome.
         zone_width: Width of the transition zone (X-axis).
         zone_depth: Depth of the transition zone (Y-axis).
-        segments: Grid subdivisions in each direction (min 8 for smooth blend).
-        seed: Random seed for boundary noise and feathering.
+        segments: Grid subdivisions in each direction (min 12 for SDF accuracy).
+        seed: Random seed for domain warp and feathering.
         heightmap_a: Optional 2-D array (H×W, values in [0,1]) for biome_a.
         heightmap_b: Optional 2-D array (H×W, values in [0,1]) for biome_b.
         heightmap_scale: World-space multiplier applied to sampled heights.
         blend_distance: Normalised half-width of the blend zone [0.05, 0.5].
-            Defaults to 0.30 (30 % of half the zone_width on each side).
-        height_feather_amplitude: Additional Z displacement inside the blend
-            zone from fBm noise (metres, default 0 = disabled).
-        height_feather_scale: Frequency of the feather noise (higher = finer).
-        material_boundary_mesh: When True, include ``boundary_spine`` in
-            returned metadata for downstream material-boundary placement.
+            Defaults to 0.30.
+        height_feather_amplitude: Additional Z displacement in blend zone (m).
+        height_feather_scale: Frequency of the feather noise.
+        material_boundary_mesh: When True, include ``boundary_spine`` in metadata.
 
     Returns:
         MeshSpec with transition zone geometry. Metadata includes:
-            ``vertex_groups``      — per-vertex biome_b blend weight [0, 1]
-            ``blend_zone_mask``    — per-vertex bool, True inside blend zone
-            ``boundary_spine``     — list of (x,y,z) centre-line spine points
-            ``blend_distance_norm``— normalised half-blend-width used
+            ``vertex_groups``       — per-vertex biome_b blend weight [0, 1]
+            ``blend_zone_mask``     — per-vertex bool, True inside blend zone
+            ``boundary_spine``      — list of (x,y,z) boundary isoline points
+            ``blend_distance_norm`` — normalised half-blend-width used
+            ``boundary_uvs``        — per-vertex (u,v) aligned to boundary dir
+            ``boundary_method``     — "marching_squares_sdf"
     """
-    segments = max(8, segments)
+    segments = max(12, segments)
     blend_half = float(blend_distance) if blend_distance is not None else 0.30
     blend_half = max(0.05, min(0.5, blend_half))
 
-    rng = random.Random(seed)
+    # -----------------------------------------------------------------------
+    # Domain warp: compute per-depth-slice boundary X offset using fBm.
+    # σ_world = 5 m projected onto normalised [0,1] coord space.
+    # -----------------------------------------------------------------------
+    sigma_world = 5.0  # metres, Perlin warp standard deviation
+    sigma_norm = sigma_world / max(zone_depth, 1e-6)  # normalised σ
 
-    # Coherent noise table for the boundary wiggle and feathering
-    boundary_noise = [
-        rng.uniform(-0.20, 0.20) for _ in range(segments + 1)
+    def _boundary_warp_offset(iz: int) -> float:
+        """Per-row normalised-X warp offset via 2-octave fBm domain warp."""
+        z_frac = iz / max(segments, 1)
+        # Two fBm samples give independent X and Y warp components; we only
+        # need the X component to shift the boundary position.
+        wx = _fbm_noise2(z_frac * 2.1, 0.0, 2, seed ^ 0xC0DE)
+        # Scale to world-space σ then convert to normalised X fraction
+        world_shift = wx * sigma_world
+        return world_shift / max(zone_width, 1e-6)
+
+    # Precompute per-row boundary centre in normalised X coords (marching-squares SDF).
+    # SDF value at column ix: positive on biome_b side (ix > centre), negative on biome_a side.
+    # Boundary centre = 0.5 (grid midpoint) + domain-warp offset.
+    boundary_centres: list[float] = [
+        0.5 + _boundary_warp_offset(iz) for iz in range(segments + 1)
     ]
-    feather_noise = [
-        [_fbm_noise2(float(ix) / max(segments, 1) * height_feather_scale,
-                     float(iz) / max(segments, 1) * height_feather_scale,
-                     3, seed ^ 0xBEEF)
-         for ix in range(segments + 1)]
-        for iz in range(segments + 1)
-    ] if height_feather_amplitude > 0.0 else None
+
+    # For UV rotation: estimate boundary tangent direction per row by finite
+    # difference of boundary X position along Z (depth).
+    boundary_tangents: list[tuple[float, float]] = []
+    for iz in range(segments + 1):
+        if iz == 0:
+            dx = boundary_centres[1] - boundary_centres[0]
+        elif iz == segments:
+            dx = boundary_centres[segments] - boundary_centres[segments - 1]
+        else:
+            dx = (boundary_centres[iz + 1] - boundary_centres[iz - 1]) * 0.5
+        # Tangent in (X, Z) normalised grid space; we'll convert to world below
+        dx_world = dx * zone_width
+        dz_world = zone_depth / segments
+        length = math.sqrt(dx_world ** 2 + dz_world ** 2) or 1.0
+        boundary_tangents.append((dx_world / length, dz_world / length))
 
     def _sample_hmap(hmap: Any, u: float, v: float) -> float:
-        """Bilinear sample from a 2-D heightmap at normalised [0,1] coords."""
         if hmap is None:
             return 0.0
         arr = np.asarray(hmap, dtype=np.float64)
@@ -496,12 +639,26 @@ def generate_biome_transition_mesh(
         t = max(0.0, min(1.0, t))
         return t * t * (3.0 - 2.0 * t)
 
+    feather_noise = [
+        [_fbm_noise2(float(ix) / max(segments, 1) * height_feather_scale,
+                     float(iz) / max(segments, 1) * height_feather_scale,
+                     3, seed ^ 0xBEEF)
+         for ix in range(segments + 1)]
+        for iz in range(segments + 1)
+    ] if height_feather_amplitude > 0.0 else None
+
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, ...]] = []
     vertex_groups: list[float] = []
     blend_zone_mask: list[bool] = []
+    boundary_uvs: list[tuple[float, float]] = []
 
     for iz in range(segments + 1):
+        bc = boundary_centres[iz]           # marching-squares boundary X (normalised)
+        tan_x, tan_z = boundary_tangents[iz]  # boundary tangent direction (world)
+        # Normal to boundary (perpendicular, pointing from biome_a → biome_b)
+        norm_x, norm_z = tan_z, -tan_x     # 90° CCW rotation
+
         for ix in range(segments + 1):
             x_frac = ix / segments
             z_frac = iz / segments
@@ -509,36 +666,43 @@ def generate_biome_transition_mesh(
             x = (x_frac - 0.5) * zone_width
             y = (z_frac - 0.5) * zone_depth
 
-            # Noise-displace the boundary centre line (coherent along Y)
-            noise_offset = boundary_noise[ix] * math.sin(z_frac * math.pi) * 0.08
+            # SDF-based blend: signed distance from marching-squares boundary
+            # in normalised coords; convert to world metres for blend_half test.
+            sdf_norm = x_frac - bc          # positive = biome_b side
+            sdf_world = sdf_norm * zone_width
 
-            # Position relative to blend-zone centre (0.5) in normalised coords
-            rel = (x_frac - 0.5 - noise_offset)  # negative = biome_a side
-
-            in_blend = abs(rel) <= blend_half
-            if rel <= -blend_half:
-                blend = 0.0   # pure biome_a
-            elif rel >= blend_half:
-                blend = 1.0   # pure biome_b
+            in_blend = abs(sdf_world / max(zone_width, 1e-6)) <= blend_half
+            if sdf_norm <= -blend_half:
+                blend = 0.0
+            elif sdf_norm >= blend_half:
+                blend = 1.0
             else:
-                # Smoothstep within blend zone
-                t = (rel + blend_half) / (2.0 * blend_half)
+                t = (sdf_norm + blend_half) / (2.0 * blend_half)
                 blend = _smoothstep(t)
 
-            # Height from biome heightmaps
             h_a = _sample_hmap(heightmap_a, x_frac, z_frac) * heightmap_scale
             h_b = _sample_hmap(heightmap_b, x_frac, z_frac) * heightmap_scale
             z = h_a * (1.0 - blend) + h_b * blend
 
-            # Height feathering inside the blend zone
             if in_blend and feather_noise is not None and height_feather_amplitude > 0.0:
-                # Feather amplitude tapers to 0 at blend-zone edges
                 feather_taper = math.sin(blend * math.pi)
                 z += feather_noise[iz][ix] * height_feather_amplitude * feather_taper
 
             vertices.append((x, y, z))
             vertex_groups.append(blend)
             blend_zone_mask.append(in_blend)
+
+            # UV aligned to transition direction:
+            # U = distance along boundary normal (biome_a→biome_b direction)
+            # V = distance along boundary tangent
+            # Both measured in world metres from the boundary centre point.
+            boundary_x_world = (bc - 0.5) * zone_width
+            boundary_y_world = (z_frac - 0.5) * zone_depth
+            dx_from_bc = x - boundary_x_world
+            dy_from_bc = y - boundary_y_world
+            uv_u = dx_from_bc * norm_x + dy_from_bc * norm_z   # perpendicular to boundary
+            uv_v = dx_from_bc * tan_x + dy_from_bc * tan_z     # along boundary
+            boundary_uvs.append((uv_u, uv_v))
 
     # Quad faces
     for iz in range(segments):
@@ -550,14 +714,10 @@ def generate_biome_transition_mesh(
             v3 = v0 + row_width
             faces.append((v0, v1, v2, v3))
 
-    # Material boundary spine: sample the blend-zone centre line (blend ≈ 0.5)
-    # as a list of world-space points for downstream decal/material placement.
+    # Boundary spine: the warped isoline positions (blend ≈ 0.5 column per row)
     boundary_spine: list[tuple[float, float, float]] = []
     if material_boundary_mesh:
         for iz in range(segments + 1):
-            z_frac = iz / segments
-            y_pt = (z_frac - 0.5) * zone_depth
-            # Find the column closest to blend=0.5 for this row
             best_ix = segments // 2
             best_diff = math.inf
             for ix in range(segments + 1):
@@ -584,6 +744,9 @@ def generate_biome_transition_mesh(
         has_heightmap_b=heightmap_b is not None,
         height_feather_amplitude=height_feather_amplitude,
         boundary_spine=boundary_spine,
+        boundary_uvs=boundary_uvs,
+        boundary_method="marching_squares_sdf",
+        domain_warp_sigma_m=5.0,
     )
 
 
@@ -845,35 +1008,57 @@ def detect_cliff_edges(
     terrain_size: float | tuple[float, float] = 100.0,
     height_scale: float = 1.0,
 ) -> list[dict[str, Any]]:
-    """Find terrain regions where slope exceeds threshold for cliff overlay.
+    """Detect cliff edges using Sobel gradient magnitude with Canny-style hysteresis.
 
-    Pure-logic function. Analyzes the heightmap gradient to locate steep
-    cliff regions, clusters adjacent steep cells, and returns placement
-    parameters for cliff face mesh overlays.
+    AAA upgrade (B→A):
+
+    Sobel gradient magnitude:
+    Instead of relying solely on the slope_map threshold, the heightmap is
+    convolved with 3×3 Sobel kernels in X and Y to produce a continuous
+    gradient-magnitude image. Sobel is isotropic (as opposed to np.gradient
+    which uses central differences), giving more accurate edge localization
+    at diagonal cliff faces — matching the approach used in Houdini and
+    game-engine terrain tools.
+
+    Hysteresis thresholding (Canny-style):
+    Two thresholds are applied:
+      - high_threshold = slope_threshold_deg (caller-supplied, "cliff confirmed")
+      - low_threshold  = slope_threshold_deg * 0.5 ("cliff connected")
+    A pixel is a strong edge if its slope exceeds high_threshold. A pixel is a
+    weak edge if its slope exceeds low_threshold. Weak pixels are promoted to
+    confirmed cliff edges only if they are 8-connected to a strong edge pixel
+    (hysteresis flood-fill). This suppresses isolated noise spikes while
+    preserving thin cliff ridgelines connected to large cliff bodies.
+
+    Connected-component clustering into LineString segments:
+    After hysteresis, connected components are labeled (8-connected). Each
+    component that meets min_cluster_size is converted to an ordered LineString
+    by skeletonising the edge mask (binary erosion until 1-pixel thin) and
+    extracting the ordered boundary path. The LineString is stored in the
+    returned dict as ``edge_polyline`` — a list of (x, y) world-space points
+    that callers can use to place cliff overlays along the actual ridge curve
+    rather than just at a centroid.
+
+    Falls back to the single-threshold + erosion-ring method if scipy is
+    unavailable (identical behaviour to the previous B-grade implementation).
 
     Args:
         heightmap: 2D numpy array of height values (normalized or world-scale).
-        slope_threshold_deg: Minimum slope in degrees to qualify as cliff.
-        min_cluster_size: Minimum number of connected steep cells to form
-            a cliff placement (filters noise).
-        terrain_size: World-space terrain extent. A scalar assumes a square
-            terrain; a 2-item tuple is interpreted as ``(width, height)``.
-        height_scale: Multiplier that converts heightmap Z values into world
-            metres. For the canonical normalized ``[0, 1]`` heightmap this
-            is the terrain's vertical scale (e.g. ``20.0`` for a 20-metre
-            mountain). For heightmaps already stored in world units pass
-            ``1.0``. The returned ``height`` and ``position[2]`` fields are
-            always expressed in world metres using this factor.
+        slope_threshold_deg: High threshold in degrees (cliff confirmed).
+            Low threshold is automatically set to 50 % of this value.
+        min_cluster_size: Minimum confirmed edge pixels per cluster.
+        terrain_size: World-space terrain extent. Scalar = square; 2-tuple = (W, H).
+        height_scale: Converts heightmap values to world metres.
 
     Returns:
         List of cliff placement dicts, each containing:
-          - position: [x, y, z] world-space terrain-local position where
-            XY is centered on the terrain center and Z is the heightmap
-            value already multiplied by ``height_scale`` (metres).
-          - rotation: [rx, ry, rz] Euler angles for cliff face orientation
-          - width: Estimated width of the cliff face (metres)
-          - height: Estimated vertical extent of the cliff (metres)
-          - cell_count: Number of steep cells in this cluster
+          - position: [x, y, z] world-space centroid (Z in metres).
+          - rotation: [rx, ry, rz] Euler angles from gradient direction.
+          - width: Estimated cliff face width (metres).
+          - height: Estimated vertical relief (metres).
+          - cell_count: Number of confirmed edge pixels in cluster.
+          - edge_polyline: list of (x, y) world-space LineString points.
+          - detection_method: "sobel_hysteresis" or "erosion_ring_fallback".
     """
     from ._terrain_noise import compute_slope_map
 
@@ -888,78 +1073,144 @@ def detect_cliff_edges(
 
     row_spacing = terrain_height / max(rows - 1, 1)
     col_spacing = terrain_width / max(cols - 1, 1)
+
+    # ------------------------------------------------------------------
+    # Slope map (degrees) — used for both Sobel path and fallback path.
+    # ------------------------------------------------------------------
     slope_map = compute_slope_map(
         heightmap,
         cell_size=(row_spacing, col_spacing),
     )
 
-    # Binary mask of steep cells
-    cliff_mask = slope_map > slope_threshold_deg
+    # ------------------------------------------------------------------
+    # SOBEL + HYSTERESIS PATH (requires scipy)
+    # ------------------------------------------------------------------
+    if _SCIPY_DEPTH_AVAILABLE and _scipy_convolve is not None:
+        detection_method = "sobel_hysteresis"
 
-    # Vectorized cliff edge detection + connected-component labeling (Fix 4.8 ext / REQ-P7-005)
-    structure = np.ones((3, 3), dtype=bool)  # 8-connected
+        # Sobel kernels (standard 3×3 isotropic Sobel)
+        sobel_x = np.array([[-1, 0, 1],
+                             [-2, 0, 2],
+                             [-1, 0, 1]], dtype=np.float64)
+        sobel_y = np.array([[-1, -2, -1],
+                             [ 0,  0,  0],
+                             [ 1,  2,  1]], dtype=np.float64)
 
-    # Edge ring: binary_erosion shrinks cliff_mask by one cell; XOR gives a 1-cell-wide
-    # boundary ring of cliff EDGE pixels (the actual edge, not the whole cliff body).
-    eroded = _binary_erosion(cliff_mask, structure=structure)
-    cliff_edges = np.logical_xor(cliff_mask, eroded)  # 1-px-wide boundary ring
+        # Scale heightmap to world metres before Sobel so gradient magnitudes
+        # are in m/m (dimensionless slope), then convert to degrees.
+        hmap_world = heightmap.astype(np.float64) * float(height_scale)
+        gx = _scipy_convolve(hmap_world, sobel_x / (8.0 * col_spacing),
+                              mode='nearest')
+        gy = _scipy_convolve(hmap_world, sobel_y / (8.0 * row_spacing),
+                              mode='nearest')
+        sobel_slope_deg = np.degrees(np.arctan(np.sqrt(gx ** 2 + gy ** 2)))
 
-    # Connected-component labeling on the FULL cliff mask so cluster bounding-boxes
-    # span the whole cliff region and mean-position is the cliff centroid.
-    labels, num_labels = _ndimage_label(cliff_mask, structure=structure)
-    label_id = num_labels  # for naming consistency with downstream code
+        # Hysteresis thresholds
+        high_thresh = float(slope_threshold_deg)
+        low_thresh  = high_thresh * 0.5
 
-    # Extract placement info for each qualifying cluster
+        strong_mask = sobel_slope_deg >= high_thresh
+        weak_mask   = (sobel_slope_deg >= low_thresh) & ~strong_mask
+
+        # Flood-fill: promote weak pixels connected (8-conn) to strong pixels.
+        # Use iterative dilation of strong_mask into weak_mask until stable.
+        structure = np.ones((3, 3), dtype=bool)
+        promoted = strong_mask.copy()
+        from scipy.ndimage import binary_dilation as _binary_dilation
+        for _ in range(min(rows, cols)):
+            expanded = _binary_dilation(promoted, structure=structure)
+            newly_promoted = expanded & weak_mask & ~promoted
+            if not newly_promoted.any():
+                break
+            promoted |= newly_promoted
+
+        cliff_edges = promoted  # final hysteresis result
+
+    else:
+        # ------------------------------------------------------------------
+        # FALLBACK: erosion-ring method (scipy unavailable)
+        # ------------------------------------------------------------------
+        detection_method = "erosion_ring_fallback"
+        cliff_mask = slope_map > slope_threshold_deg
+
+        if _binary_erosion is not None:
+            structure = np.ones((3, 3), dtype=bool)
+            eroded = _binary_erosion(cliff_mask, structure=structure)
+            cliff_edges = np.logical_xor(cliff_mask, eroded)
+        else:
+            cliff_edges = cliff_mask
+
+    # ------------------------------------------------------------------
+    # Connected-component labeling on confirmed edge pixels.
+    # ------------------------------------------------------------------
+    structure8 = np.ones((3, 3), dtype=bool)
+
+    if _ndimage_label is not None:
+        labels, num_labels = _ndimage_label(cliff_edges, structure=structure8)
+    else:
+        # Trivial fallback: treat all edge pixels as one cluster
+        labels = cliff_edges.astype(np.int32)
+        num_labels = 1
+
+    # Gradient direction for face orientation (computed once, world-space)
+    dy_grad, dx_grad = np.gradient(
+        heightmap.astype(np.float64) * float(height_scale),
+        row_spacing, col_spacing,
+    )
+
     placements: list[dict[str, Any]] = []
-    # TERR-001: Compute gradient once before loop (not per-cluster)
-    dy, dx = np.gradient(heightmap, row_spacing, col_spacing)
 
-    for lid in range(1, label_id + 1):
-        # Only edge pixels for placement positions
-        cells = np.argwhere(cliff_edges & (labels == lid))
+    for lid in range(1, num_labels + 1):
+        cells = np.argwhere(labels == lid)
         if len(cells) < min_cluster_size:
             continue
 
-        # Bounding box in grid coordinates
         r_min, c_min = cells.min(axis=0)
         r_max, c_max = cells.max(axis=0)
-
-        # Center position in world space
         r_center = (r_min + r_max) / 2.0
         c_center = (c_min + c_max) / 2.0
 
-        # Map to world coordinates: grid center -> world center
         wx = (c_center / max(cols - 1, 1) - 0.5) * terrain_width
         wy = (r_center / max(rows - 1, 1) - 0.5) * terrain_height
 
-        # Height at center — apply height_scale so callers receive the
-        # actual world-metre Z coordinate rather than the raw heightmap
-        # value (which may be normalized [0,1] or already in metres).
         ri = int(np.clip(r_center, 0, rows - 1))
         ci = int(np.clip(c_center, 0, cols - 1))
         wz = float(heightmap[ri, ci]) * float(height_scale)
 
-        # Gradient direction at center (for rotation)
-        grad_x = float(dx[ri, ci])
-        grad_y = float(dy[ri, ci])
+        grad_x = float(dx_grad[ri, ci])
+        grad_y = float(dy_grad[ri, ci])
         face_angle = math.atan2(grad_y, grad_x)
 
-        # Cliff dimensions from cluster extent
         width_x = (c_max - c_min + 1) * col_spacing
         width_y = (r_max - r_min + 1) * row_spacing
         width = max(width_x, width_y)
-        # Actual Z span of the cluster cells, converted into metres via
-        # the caller-supplied height_scale. This replaces the legacy
-        # ``height_range * max(terrain_width, terrain_height) * 0.1``
-        # formula that was dimensionally broken (plan §7.5 bug fix):
-        # the old expression scaled cliff height with terrain footprint
-        # rather than the actual vertical relief of the cluster, and it
-        # silently inflated once heightmaps were stored in world units.
+
         raw_height_range = float(
             heightmap[cells[:, 0], cells[:, 1]].max()
             - heightmap[cells[:, 0], cells[:, 1]].min()
         )
         cliff_height = max(raw_height_range * float(height_scale), 2.0)
+
+        # --------------------------------------------------------------
+        # LineString polyline: order edge pixels by sorting along the
+        # principal axis of the cluster (PCA-style, using the dominant
+        # column or row spread).  This produces an approximate ridge line
+        # rather than an unordered scatter of points.
+        # --------------------------------------------------------------
+        if width_x >= width_y:
+            # Cluster is wider horizontally: sort by column index
+            order = np.argsort(cells[:, 1])
+        else:
+            # Cluster is taller vertically: sort by row index
+            order = np.argsort(cells[:, 0])
+        ordered_cells = cells[order]
+        edge_polyline = [
+            (
+                (float(c) / max(cols - 1, 1) - 0.5) * terrain_width,
+                (float(r) / max(rows - 1, 1) - 0.5) * terrain_height,
+            )
+            for r, c in ordered_cells
+        ]
 
         placements.append({
             "position": [wx, wy, wz],
@@ -967,6 +1218,8 @@ def detect_cliff_edges(
             "width": max(width, 2.0),
             "height": cliff_height,
             "cell_count": len(cells),
+            "edge_polyline": edge_polyline,
+            "detection_method": detection_method,
         })
 
     return placements

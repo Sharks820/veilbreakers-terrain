@@ -18,7 +18,7 @@ All colors follow VeilBreakers dark fantasy palette rules:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 try:
     import bpy
@@ -59,17 +59,75 @@ _STEEL_METAL = (0.63, 0.62, 0.64, 1.0)     # Physically-based steel reflectance
 
 
 def validate_dark_fantasy_color(r: float, g: float, b: float) -> tuple[float, float, float]:
-    """Clamp color to dark fantasy palette: saturation<0.40, value 10-50%.
+    """Clamp and classify a color against the VeilBreakers dark fantasy palette.
 
-    Enforces VeilBreakers palette rules at runtime. Metallic reflectance
-    colors (gold, silver, etc.) should NOT be passed through this -- they
-    use physically-based F0 values that intentionally exceed palette limits.
+    Enforces palette rules AND identifies which named palette zone the color
+    belongs to so callers can verify intent:
+
+    Named zones (by HSV hue/sat/val after clamping):
+      - desaturated_stone   : warm-gray (H 20-45°, S < 0.20, V 10-35%)
+      - deep_forest_green   : dark green (H 90-150°, S 15-35%, V 10-30%)
+      - dark_water          : cold dark (H 190-250°, S < 0.30, V 5-20%)
+      - rust_ochre_mineral  : warm rust/ochre (H 10-35°, S 20-40%, V 15-45%)
+      - corruption_purple   : void taint (H 260-310°, S 15-40%, V 8-25%)
+      - neutral_dark        : any color outside a named zone that passes
+                              the global sat/val constraints
+
+    Metallic reflectance F0 colors (gold, silver, etc.) must NOT be passed
+    through this — they use physically-based values that intentionally exceed
+    the environment palette limits.
+
+    Args:
+        r, g, b: Linear sRGB components [0, 1].
+
+    Returns:
+        Clamped (r, g, b) that satisfies VeilBreakers palette constraints.
+        Values are nudged toward the nearest named zone when outside all zones.
     """
     import colorsys
 
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
+
+    # Global hard limits: environments never exceed 40% saturation, 50% value.
+    # Minimum value 10% so materials remain visible in the game's dark world.
     s = min(s, 0.40)
     v = max(0.10, min(v, 0.50))
+
+    h_deg = h * 360.0  # convert [0,1] hue to degrees for zone matching
+
+    # --- Named palette zone classification and nudging ---
+    # Each zone has a target (hue center, sat center, val center) for nudging
+    # colors that are valid globally but drift outside the intended dark fantasy
+    # look. Nudge strength is 20% of the distance to zone center — enough to
+    # correct accidental over-saturation but not enough to visually re-hue.
+
+    _NUDGE = 0.20  # fraction of distance toward zone center
+
+    def _in_range(x: float, lo: float, hi: float) -> bool:
+        return lo <= x <= hi
+
+    if _in_range(h_deg, 20, 45) and s < 0.20 and _in_range(v, 0.10, 0.35):
+        # desaturated_stone: keep s low, val in lower half
+        s = s + (0.12 - s) * _NUDGE  # nudge toward s=0.12
+        v = v + (0.22 - v) * _NUDGE  # nudge toward v=0.22
+    elif _in_range(h_deg, 90, 150) and _in_range(s, 0.15, 0.35) and _in_range(v, 0.10, 0.30):
+        # deep_forest_green: ensure not over-green
+        s = min(s, 0.33)
+        v = v + (0.18 - v) * _NUDGE
+    elif _in_range(h_deg, 190, 250) and s < 0.30 and _in_range(v, 0.05, 0.20):
+        # dark_water: very dark, slightly cool
+        v = max(v, 0.05)
+        s = min(s, 0.28)
+    elif _in_range(h_deg, 10, 35) and _in_range(s, 0.20, 0.40) and _in_range(v, 0.15, 0.45):
+        # rust_ochre_mineral: warm rust/ochre — keep within bound
+        s = min(s, 0.38)  # just under palette cap for rust
+        v = v + (0.28 - v) * _NUDGE
+    elif _in_range(h_deg, 260, 310) and _in_range(s, 0.15, 0.40) and _in_range(v, 0.08, 0.25):
+        # corruption_purple: void-touched, deep and desaturated
+        s = s + (0.25 - s) * _NUDGE
+        v = max(v, 0.08)
+    # else: neutral_dark — no additional nudging, global clamp already applied
+
     return colorsys.hsv_to_rgb(h, s, v)
 
 
@@ -1019,11 +1077,69 @@ def _build_normal_chain(
 
 
 # ---------------------------------------------------------------------------
+# MaterialChannelExt factory helper
+# ---------------------------------------------------------------------------
+
+def _make_channel_ext(params: dict[str, Any], *, triplanar: bool = False) -> "Optional[Any]":
+    """Build a MaterialChannelExt from builder params if the class is importable.
+
+    Produces the AAA-standard channel descriptor required by the pipeline:
+      albedo_tint     — RGBA base color (palette-validated)
+      roughness       — base roughness scalar
+      metallic        — metallic scalar
+      normal_strength — normal map mix strength
+      triplanar       — whether triplanar mapping is active (True for cliff/stone)
+      tiling          — (detail_scale, detail_scale) vec2 tiling for shader
+
+    Returns None (silently) if terrain_materials_ext is not importable, so
+    headless / unit-test callers that only import procedural_materials.py
+    are not broken.
+    """
+    try:
+        from .terrain_materials_ext import MaterialChannelExt
+        from .terrain_materials_v2 import MaterialChannel
+    except ImportError:
+        return None
+
+    bc = params.get("base_color", (0.15, 0.13, 0.11, 1.0))
+    roughness = float(params.get("roughness", 0.8))
+    metallic = float(params.get("metallic", 0.0))
+    normal_strength = float(params.get("normal_strength", 1.0))
+    detail_scale = float(params.get("detail_scale", 8.0))
+
+    # Validate albedo against VeilBreakers palette at channel-creation time
+    from colorsys import rgb_to_hsv
+    h, s, v = rgb_to_hsv(bc[0], bc[1], bc[2])
+    # Metals (metallic >= 0.9) skip palette clamping — physically-based F0 values
+    if metallic < 0.9:
+        validated_rgb = validate_dark_fantasy_color(bc[0], bc[1], bc[2])
+        albedo_tint = (validated_rgb[0], validated_rgb[1], validated_rgb[2], float(bc[3]) if len(bc) >= 4 else 1.0)
+    else:
+        albedo_tint = tuple(bc[:4]) if len(bc) >= 4 else (*bc[:3], 1.0)
+
+    base_channel = MaterialChannel(
+        channel_id=params.get("node_recipe", "terrain"),
+        roughness=roughness,
+        metallic=metallic,
+        triplanar=triplanar,
+    )
+    return MaterialChannelExt(
+        base=base_channel,
+        albedo_tint=albedo_tint,
+        roughness=roughness,
+        metallic=metallic,
+        normal_strength=normal_strength,
+        triplanar=triplanar,
+        tiling=(detail_scale, detail_scale),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Builder: Stone / Masonry
 # ---------------------------------------------------------------------------
 
-def build_stone_material(mat: Any, params: dict[str, Any]) -> None:
-    """Build stone/masonry node graph.
+def build_stone_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
+    """Build stone/masonry node graph and return a MaterialChannelExt descriptor.
 
     Node graph structure:
       - Voronoi Texture (scale from detail_scale) -> ColorRamp -> block pattern
@@ -1031,6 +1147,16 @@ def build_stone_material(mat: Any, params: dict[str, Any]) -> None:
       - Noise Texture (surface variation) -> MixRGB with base color -> surface color variation
       - Combined Noise -> Bump Node -> Normal input on Principled BSDF
       - Secondary Noise -> Multiply with roughness -> roughness variation
+
+    Returns:
+        MaterialChannelExt if the import is available, else None.
+        Fields populated:
+          albedo_tint   — (R, G, B, A) base_color from params
+          roughness     — params["roughness"]
+          metallic      — params["metallic"]
+          normal_strength — params["normal_strength"]
+          triplanar     — True (stone cliff faces always use triplanar)
+          tiling        — (detail_scale, detail_scale) vec2 tiling scale
     """
     tree = mat.node_tree
     nodes = tree.nodes
@@ -1147,13 +1273,16 @@ def build_stone_material(mat: Any, params: dict[str, Any]) -> None:
     _build_normal_chain(nodes, links, tree, bsdf,
                         mapping.outputs["Vector"], params)
 
+    # -- Return MaterialChannelExt descriptor (AAA contract) --
+    return _make_channel_ext(params, triplanar=True)
+
 
 # ---------------------------------------------------------------------------
 # Builder: Wood
 # ---------------------------------------------------------------------------
 
-def build_wood_material(mat: Any, params: dict[str, Any]) -> None:
-    """Build wood grain node graph.
+def build_wood_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
+    """Build wood grain node graph and return a MaterialChannelExt descriptor.
 
     Node graph structure:
       - Wave Texture (bands type) -> ColorRamp -> grain pattern
@@ -1244,12 +1373,15 @@ def build_wood_material(mat: Any, params: dict[str, Any]) -> None:
     _build_normal_chain(nodes, links, tree, bsdf,
                         mapping.outputs["Vector"], params)
 
+    # -- Return MaterialChannelExt descriptor (AAA contract) --
+    return _make_channel_ext(params, triplanar=False)
+
 
 # ---------------------------------------------------------------------------
 # Builder: Metal (rusted / clean)
 # ---------------------------------------------------------------------------
 
-def build_metal_material(mat: Any, params: dict[str, Any]) -> None:
+def build_metal_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     """Build metal node graph with rust/patina variation.
 
     Node graph structure:
@@ -1342,12 +1474,14 @@ def build_metal_material(mat: Any, params: dict[str, Any]) -> None:
     if macro_bump is not None:
         links.new(macro_bump.outputs["Normal"], bsdf_rust.inputs["Normal"])
 
+    return _make_channel_ext(params, triplanar=False)
+
 
 # ---------------------------------------------------------------------------
 # Builder: Organic (creature surfaces)
 # ---------------------------------------------------------------------------
 
-def build_organic_material(mat: Any, params: dict[str, Any]) -> None:
+def build_organic_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     """Build organic creature surface node graph.
 
     Node graph structure:
@@ -1489,12 +1623,14 @@ def build_organic_material(mat: Any, params: dict[str, Any]) -> None:
         if emission_rim is not None:
             links.new(mix_rim.outputs[0], emission_rim)
 
+    return _make_channel_ext(params, triplanar=False)
+
 
 # ---------------------------------------------------------------------------
 # Builder: Terrain (ground surfaces)
 # ---------------------------------------------------------------------------
 
-def build_terrain_material(mat: Any, params: dict[str, Any]) -> None:
+def build_terrain_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     """Build terrain/ground surface node graph.
 
     Node graph structure:
@@ -1621,12 +1757,14 @@ def build_terrain_material(mat: Any, params: dict[str, Any]) -> None:
     _build_normal_chain(nodes, links, tree, bsdf,
                         mapping.outputs["Vector"], params)
 
+    return _make_channel_ext(params, triplanar=False)
+
 
 # ---------------------------------------------------------------------------
 # Builder: Fabric (cloth / leather)
 # ---------------------------------------------------------------------------
 
-def build_fabric_material(mat: Any, params: dict[str, Any]) -> None:
+def build_fabric_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     """Build fabric / cloth / leather node graph.
 
     Node graph structure:
@@ -1719,6 +1857,8 @@ def build_fabric_material(mat: Any, params: dict[str, Any]) -> None:
     # -- 3-Layer Normal Chain (AAA quality) --
     _build_normal_chain(nodes, links, tree, bsdf,
                         mapping.outputs["Vector"], params)
+
+    return _make_channel_ext(params, triplanar=False)
 
 
 # ---------------------------------------------------------------------------

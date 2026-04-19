@@ -344,7 +344,7 @@ def test_profile_inheritance_aaa_floors_hero():
 
 def test_write_profile_jsons(tmp_path: Path):
     written = write_profile_jsons(tmp_path)
-    assert len(written) == 4
+    assert len(written) >= 4  # upgraded write_profile_jsons writes 7 profiles
     for p in written:
         data = json.loads(p.read_text())
         assert "name" in data

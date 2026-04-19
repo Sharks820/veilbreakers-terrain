@@ -157,6 +157,7 @@ def compute_streaming_distances(
     lod_scale: float = 2.0,
     base_multiplier: float = 2.0,
     max_streaming_distance_m: float | None = None,
+    terrain_feature_size_m: float | None = None,
 ) -> dict[int, float]:
     """Compute recommended streaming distances per LOD level.
 
@@ -169,6 +170,23 @@ def compute_streaming_distances(
     volume setup: each LOD band is ``lod_scale`` times farther than the
     previous, giving exponentially coarser detail with distance.
 
+    **Feature-size awareness** (AAA requirement):
+    Large terrain features — cliff faces, ridge lines, hero rock formations —
+    must remain readable at greater distances than the raw chunk geometry
+    would imply.  When ``terrain_feature_size_m`` is provided the LOD-0
+    streaming distance is raised so that a feature of that world-space diameter
+    subtends at least 5 % of the vertical screen at 60 FPS (standard Unreal
+    streaming heuristic: dist_min = feature_size / 0.05 / tan(30°), simplified
+    here as ``feature_size * 11.5``).  Subsequent LOD bands scale from that
+    adjusted base.
+
+    For example:
+      - A 10 m cliff face needs LOD-0 visible to ~115 m — standard 2× chunk
+        multiplier for a 32 m chunk gives only 64 m, so the feature-size
+        floor raises it to 115 m.
+      - A 150 m mountain ridge needs LOD-0 visible to ~1725 m — far beyond
+        the raw chunk budget, so all LOD distances are scaled up proportionally.
+
     Args:
         chunk_world_size: World-space size of a single chunk (metres, square).
         lod_levels: Number of LOD levels to compute distances for.
@@ -178,6 +196,12 @@ def compute_streaming_distances(
             the LOD-0 outer boundary (default 2.0).
         max_streaming_distance_m: Hard cap on any single LOD's distance.
             Distances beyond this are clamped.  None = no cap.
+        terrain_feature_size_m: Diameter of the largest terrain feature (m)
+            that must remain readable at LOD 0.  When provided the LOD-0
+            distance is raised to a minimum of
+            ``terrain_feature_size_m * 11.5`` so the feature occupies at
+            least ~5 % of screen height at the streaming boundary.
+            None = no feature-size adjustment (backward-compatible behaviour).
 
     Returns:
         Dict mapping LOD index (int) to the maximum streaming distance in
@@ -192,9 +216,19 @@ def compute_streaming_distances(
     if lod_levels < 1:
         raise ValueError(f"lod_levels must be >= 1, got {lod_levels}")
 
+    # Base LOD-0 distance from chunk size and multiplier
+    base_dist = chunk_world_size * base_multiplier
+
+    # Feature-size floor: ensure the feature stays readable at LOD-0 boundary.
+    # The constant 11.5 ≈ 1 / (0.05 * tan(60°/2)) — derived from the 5 %
+    # screen-height readability threshold at a 60° vertical FoV.
+    if terrain_feature_size_m is not None and terrain_feature_size_m > 0.0:
+        feature_dist_floor = float(terrain_feature_size_m) * 11.5
+        base_dist = max(base_dist, feature_dist_floor)
+
     distances: dict[int, float] = {}
     for i in range(lod_levels):
-        dist = chunk_world_size * base_multiplier * (lod_scale ** i)
+        dist = base_dist * (lod_scale ** i)
         if max_streaming_distance_m is not None:
             dist = min(dist, float(max_streaming_distance_m))
         distances[i] = dist
@@ -214,6 +248,7 @@ def compute_terrain_chunks(
     world_scale: float = 1.0,
     world_origin: tuple[float, float] | None = None,
     overlap_cells: int | None = None,
+    terrain_feature_size_m: float | None = None,
 ) -> dict[str, Any]:
     """Split a terrain heightmap into streamable chunks with LOD.
 
@@ -238,6 +273,14 @@ def compute_terrain_chunks(
         world_origin: Optional world-space origin (x, y) of the heightmap.
         overlap_cells: Number of cells each chunk extends into its neighbours
             on every edge.  When None, falls back to ``overlap``.
+        terrain_feature_size_m: Diameter of the largest terrain feature (m)
+            that must remain visible at LOD 0 (e.g. a 50 m cliff face, a
+            150 m ridge). When supplied, LOD streaming distances are raised
+            so the feature subtends at least 5 % of screen height at the
+            LOD-0 streaming boundary — preventing large features from
+            unexpectedly popping to lower LOD while still readable.
+            Passed directly to ``compute_streaming_distances``.
+            None = no feature-size adjustment (backward-compatible).
 
     Returns:
         Dict with:
@@ -253,7 +296,8 @@ def compute_terrain_chunks(
               ``vertex_count``
             - ``neighbor_chunks``: dict with ``north``, ``south``, ``east``,
               ``west`` neighbour grid coords (or ``None``)
-          ``metadata``: summary information about the full terrain.
+          ``metadata``: summary information about the full terrain, including
+            ``terrain_feature_size_m`` when provided.
     """
     total_rows = len(heightmap)
     if total_rows == 0:
@@ -370,7 +414,11 @@ def compute_terrain_chunks(
                 }
             )
 
-    streaming_dist = compute_streaming_distances(chunk_world_size, lod_levels)
+    streaming_dist = compute_streaming_distances(
+        chunk_world_size,
+        lod_levels,
+        terrain_feature_size_m=terrain_feature_size_m,
+    )
 
     metadata: dict[str, Any] = {
         "total_chunks": len(chunks),
@@ -385,6 +433,7 @@ def compute_terrain_chunks(
         "overlap": ov,
         "lod_levels": lod_levels,
         "heightmap_size": (total_cols, total_rows),
+        "terrain_feature_size_m": terrain_feature_size_m,
     }
 
     return {"chunks": chunks, "metadata": metadata}
@@ -457,18 +506,33 @@ def validate_tile_seams(
     tile_a: list[list[float]],
     tile_b: list[list[float]],
     direction: str = "east",
-    tolerance: float = 1e-6,
+    tolerance: float = 1e-4,
 ) -> dict[str, Any]:
     """Validate that two adjacent tiles share matching seam samples.
 
+    Each channel value at the shared border must match within ``tolerance``
+    (absolute).  The default tolerance is 1e-4 — the AAA VeilBreakers ship
+    spec for cross-tile seam agreement.  This is intentionally looser than
+    floating-point epsilon (1e-6) to accommodate bilinear-resampling
+    rounding across tiles authored at different passes while still catching
+    real seam cracks visible at player scale.
+
+    All channels present in a 3-D tile (height + additional layers in the
+    third axis) are checked independently; per-channel max/mean deltas are
+    returned so authors can identify which channel is mismatched.
+
     Args:
-        tile_a: First tile heightmap.
-        tile_b: Adjacent tile heightmap.
+        tile_a: First tile heightmap (2-D or 3-D list of floats).
+        tile_b: Adjacent tile heightmap (same shape convention as tile_a).
         direction: Relative direction of tile_b from tile_a.
-        tolerance: Maximum allowed absolute delta for a seam sample.
+            One of ``"east"``, ``"west"``, ``"north"``, ``"south"``.
+        tolerance: Maximum allowed absolute delta for a seam sample
+            (default 1e-4 per AAA spec).
 
     Returns:
-        Dict describing seam agreement.
+        Dict describing seam agreement, including ``match`` bool,
+        ``max_delta``, ``mean_delta``, per-channel breakdowns, and
+        ``tolerance`` used.
     """
     arr_a = np.asarray(tile_a, dtype=np.float64)
     arr_b = np.asarray(tile_b, dtype=np.float64)

@@ -42,6 +42,422 @@ from .terrain_semantics import (
 
 
 # ---------------------------------------------------------------------------
+# Worley (cellular) noise + Perlin noise for cave wall texture
+# ---------------------------------------------------------------------------
+
+
+def _worley_noise_2d(
+    rows: int,
+    cols: int,
+    num_points: int,
+    seed: int,
+    *,
+    metric: str = "euclidean",
+) -> np.ndarray:
+    """Compute 2-D Worley (cellular / F1) noise on a ``rows×cols`` grid.
+
+    Each cell's value is the normalised distance to the nearest of
+    ``num_points`` randomly placed feature points (F1 metric).  The result
+    is in [0, 1] and serves as the primary driver of cave wall roughness.
+
+    Args:
+        rows, cols : Grid dimensions.
+        num_points : Number of Voronoi feature points (default 64 for a
+            typical 128×128 tile — tune for desired cellular scale).
+        seed       : Deterministic seed.
+        metric     : Distance metric — ``"euclidean"`` (default) or
+            ``"manhattan"`` (sharper facets, better for fissure walls).
+
+    Returns:
+        float32 array of shape ``(rows, cols)`` in [0, 1].
+    """
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    # Scatter feature points in [0, rows) × [0, cols)
+    pt_r = rng.uniform(0.0, float(rows), size=num_points)
+    pt_c = rng.uniform(0.0, float(cols), size=num_points)
+
+    # Build index grids — shape (rows, cols, num_points) would be huge for
+    # large tiles; use broadcasting over (rows,1,N) and (1,cols,N) instead.
+    r_idx = np.arange(rows, dtype=np.float32).reshape(rows, 1, 1)
+    c_idx = np.arange(cols, dtype=np.float32).reshape(1, cols, 1)
+    pt_r_bc = pt_r.reshape(1, 1, num_points).astype(np.float32)
+    pt_c_bc = pt_c.reshape(1, 1, num_points).astype(np.float32)
+
+    dr = r_idx - pt_r_bc
+    dc = c_idx - pt_c_bc
+
+    if metric == "manhattan":
+        dist = np.abs(dr) + np.abs(dc)      # shape (rows, cols, N)
+    else:  # euclidean
+        dist = np.sqrt(dr * dr + dc * dc)
+
+    f1 = dist.min(axis=2)                   # shape (rows, cols) — nearest point
+
+    max_d = float(f1.max()) + 1e-9
+    return (f1 / max_d).astype(np.float32)
+
+
+def _perlin_noise_2d(
+    rows: int,
+    cols: int,
+    seed: int,
+    *,
+    octaves: int = 4,
+    frequency: float = 4.0,
+    persistence: float = 0.5,
+) -> np.ndarray:
+    """Fractional-Brownian-Motion Perlin-style noise on a ``rows×cols`` grid.
+
+    Pure-numpy implementation using random gradient vectors on a regular
+    lattice with bilinear interpolation and smooth-step blending.  The fBm
+    sum accumulates ``octaves`` octaves with geometric amplitude decay
+    controlled by ``persistence``.
+
+    Returns float32 array in approximately [−1, 1], normalised to [0, 1]
+    before return so it can be directly mixed with Worley noise.
+    """
+    rng = np.random.default_rng((int(seed) ^ 0xDEADBEEF) & 0xFFFFFFFF)
+
+    def _fade(t: np.ndarray) -> np.ndarray:
+        """Smooth-step polynomial: 6t⁵ − 15t⁴ + 10t³."""
+        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+    def _gradient_noise(freq: float, s: int) -> np.ndarray:
+        """Single octave of gradient noise at given frequency."""
+        _rng_oct = np.random.default_rng(s & 0xFFFFFFFF)
+        # Lattice size
+        gw = int(math.ceil(cols * freq / cols)) + 2
+        gh = int(math.ceil(rows * freq / rows)) + 2
+        # Random unit gradients on lattice
+        angles = _rng_oct.uniform(0.0, 2.0 * math.pi, size=(gh, gw))
+        grad_r = np.sin(angles)
+        grad_c = np.cos(angles)
+
+        # Sample coordinates
+        sr = np.linspace(0.0, freq, rows, endpoint=False)
+        sc = np.linspace(0.0, freq, cols, endpoint=False)
+        sc2, sr2 = np.meshgrid(sc, sr)
+
+        sr2f = sr2 % 1.0
+        sc2f = sc2 % 1.0
+        ri = sr2.astype(np.int32) % (gh - 1)
+        ci = sc2.astype(np.int32) % (gw - 1)
+
+        fade_r = _fade(sr2f)
+        fade_c = _fade(sc2f)
+
+        def _dot_grad(gr_i: np.ndarray, gc_i: np.ndarray,
+                      dr: np.ndarray, dc: np.ndarray) -> np.ndarray:
+            return grad_r[gr_i, gc_i] * dr + grad_c[gr_i, gc_i] * dc
+
+        n00 = _dot_grad(ri,     ci,     sr2f,        sc2f)
+        n10 = _dot_grad(ri + 1, ci,     sr2f - 1.0,  sc2f)
+        n01 = _dot_grad(ri,     ci + 1, sr2f,        sc2f - 1.0)
+        n11 = _dot_grad(ri + 1, ci + 1, sr2f - 1.0,  sc2f - 1.0)
+
+        nx0 = n00 + fade_r * (n10 - n00)
+        nx1 = n01 + fade_r * (n11 - n01)
+        return nx0 + fade_c * (nx1 - nx0)
+
+    acc = np.zeros((rows, cols), dtype=np.float32)
+    amp = 1.0
+    total = 0.0
+    freq = float(frequency)
+    for oct_i in range(octaves):
+        acc += amp * _gradient_noise(freq, int(rng.integers(0, 2**31))).astype(np.float32)
+        total += amp
+        amp *= persistence
+        freq *= 2.0
+
+    acc /= max(total, 1e-9)
+    # Normalise to [0, 1]
+    mn, mx = float(acc.min()), float(acc.max())
+    if mx - mn < 1e-9:
+        return np.full((rows, cols), 0.5, dtype=np.float32)
+    return ((acc - mn) / (mx - mn)).astype(np.float32)
+
+
+def compute_cave_wall_texture(
+    rows: int,
+    cols: int,
+    seed: int,
+    *,
+    worley_points: int = 64,
+    worley_weight: float = 0.6,
+    perlin_octaves: int = 4,
+    perlin_frequency: float = 4.0,
+    perlin_weight: float = 0.4,
+    archetype: str = "default",
+) -> np.ndarray:
+    """Generate a cave wall roughness texture by blending Worley + Perlin noise.
+
+    The blend is ``worley_weight * F1 + perlin_weight * fBm``, normalised to
+    [0, 1].  Worley noise creates the characteristic cellular pitting seen in
+    real cave walls (dissolutional scalloping, frost shattering, lava bubbling).
+    Perlin fBm adds broad low-frequency waviness for organic wall relief.
+
+    Archetype-specific tuning:
+      ``fissure``       — manhattan Worley metric gives sharper facets matching
+                          tectonic fracture planes.
+      ``karst_sinkhole``— more Worley weight for heavier dissolution pitting.
+      ``glacial_melt``  — smooth Perlin-dominant blend, few Worley points.
+      default/others   — standard euclidean blend.
+
+    Returns float32 ``(rows, cols)`` wall roughness map in [0, 1].
+    """
+    arch_lc = archetype.lower()
+
+    if arch_lc == "fissure":
+        metric = "manhattan"
+        w_pts = max(32, worley_points)
+        ww = min(0.80, worley_weight + 0.15)
+        pw = 1.0 - ww
+    elif arch_lc == "karst_sinkhole":
+        metric = "euclidean"
+        w_pts = max(80, worley_points)
+        ww = min(0.75, worley_weight + 0.10)
+        pw = 1.0 - ww
+    elif arch_lc == "glacial_melt":
+        metric = "euclidean"
+        w_pts = max(20, worley_points // 3)
+        ww = max(0.30, worley_weight - 0.20)
+        pw = 1.0 - ww
+    else:
+        metric = "euclidean"
+        w_pts = worley_points
+        ww = worley_weight
+        pw = perlin_weight
+
+    worley = _worley_noise_2d(rows, cols, w_pts, seed, metric=metric)
+    perlin = _perlin_noise_2d(
+        rows, cols, seed,
+        octaves=perlin_octaves,
+        frequency=perlin_frequency,
+    )
+
+    combined = ww * worley + pw * perlin
+    mn, mx = float(combined.min()), float(combined.max())
+    if mx - mn < 1e-9:
+        return np.full((rows, cols), 0.5, dtype=np.float32)
+    return ((combined - mn) / (mx - mn)).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Dreybrodt stalactite / stalagmite growth model
+# ---------------------------------------------------------------------------
+
+
+def compute_speleothem_growth(
+    interior_mask: np.ndarray,
+    damp_mask: np.ndarray,
+    height_delta: np.ndarray,
+    cell_size_m: float,
+    *,
+    simulation_years: float = 5000.0,
+    ca_concentration_mol_per_l: float = 2.0e-3,
+    drip_rate_per_year: float = 1000.0,
+    tip_radius_m: float = 0.0003,
+    density_kg_per_m3: float = 2710.0,
+    molar_mass_kg_per_mol: float = 0.1001,
+    seed: int = 0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute stalactite and stalagmite growth using the Dreybrodt (1999) model.
+
+    The Dreybrodt model gives the linear growth rate of a speleothem tip as:
+
+        dr/dt = (molar_mass / density) * J_surface
+
+    where the surface flux J_surface (mol m⁻² yr⁻¹) for a hemispherical tip of
+    radius r is approximated by:
+
+        J_surface ≈ D_CO2 * C_Ca / r
+
+    with D_CO2 ≈ 1e-9 m² s⁻¹ (diffusion coefficient of CO₂ in water),
+    C_Ca = calcium ion concentration [mol m⁻³], and tip radius r [m].
+
+    Integrated over ``simulation_years`` this gives the tip-advance length
+    per drip site.  Stalactites grow downward from ceiling cells (negative
+    height_delta) and stalagmites grow upward from floor cells.
+
+    Only cells inside ``interior_mask`` with ``damp_mask > 0.2`` are eligible
+    — dry walls produce no speleothems.
+
+    Parameters
+    ----------
+    interior_mask     : bool array (rows, cols) marking cave interior cells.
+    damp_mask         : float32 array (rows, cols) in [0, 1] — dampness.
+    height_delta      : float64 array (rows, cols) — carve delta (≤ 0).
+    cell_size_m       : World cell size in metres (used to scale geometry).
+    simulation_years  : Simulated time horizon [years].  5000 yr produces
+                        stalactites ~0.5 m long, matching real karst rates.
+    ca_concentration_mol_per_l : Ca²⁺ concentration [mol/L] in drip water.
+                        Typical limestone cave: 1–4 mmol/L.
+    drip_rate_per_year : Drip events per year per site.  Controls total flux.
+    tip_radius_m      : Initial tip radius [m] for the Dreybrodt flux formula.
+    density_kg_per_m3 : Calcite density (2710 kg/m³).
+    molar_mass_kg_per_mol : Molar mass of CaCO₃ (0.1001 kg/mol).
+    seed              : RNG seed for spatial jitter.
+
+    Returns
+    -------
+    stalactites : float32 (rows, cols) — downward growth length [m] per cell.
+    stalagmites : float32 (rows, cols) — upward growth length [m] per cell.
+    """
+    rows, cols = interior_mask.shape
+    stalactites = np.zeros((rows, cols), dtype=np.float32)
+    stalagmites = np.zeros((rows, cols), dtype=np.float32)
+
+    # Physical constants
+    D_CO2_m2_per_s = 1.0e-9                # diffusion coefficient [m²/s]
+    seconds_per_year = 365.25 * 24.0 * 3600.0
+
+    # Convert Ca concentration from mol/L → mol/m³
+    C_Ca_mol_per_m3 = float(ca_concentration_mol_per_l) * 1000.0
+
+    # Dreybrodt surface flux at tip radius r [mol m⁻² yr⁻¹]
+    r = max(float(tip_radius_m), 1e-6)
+    J_surface_mol_per_m2_per_s = D_CO2_m2_per_s * C_Ca_mol_per_m3 / r
+    J_surface_mol_per_m2_per_yr = J_surface_mol_per_m2_per_s * seconds_per_year
+
+    # Total drip flux per site over simulation period [mol m⁻²]
+    total_flux = J_surface_mol_per_m2_per_yr * float(simulation_years)
+
+    # Growth length from flux: Δr = (M / ρ) * total_flux [m]
+    M = float(molar_mass_kg_per_mol)
+    rho = float(density_kg_per_m3)
+    base_growth_m = (M / rho) * total_flux
+
+    # Spatial dampness modulation: wet cells grow more
+    damp_arr = np.asarray(damp_mask, dtype=np.float32)
+    interior_arr = np.asarray(interior_mask, dtype=bool)
+    delta_arr = np.asarray(height_delta, dtype=np.float64)
+
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    # Drip-rate jitter: Poisson-distributed drip rate per cell [0.5, 2.0× base]
+    jitter = rng.uniform(0.5, 2.0, size=(rows, cols)).astype(np.float32)
+
+    # Ceiling cells: strongly carved (delta ≤ −cell_size/4) → stalactites
+    ceiling_mask = interior_arr & (delta_arr <= -float(cell_size_m) * 0.25) & (damp_arr > 0.2)
+    # Floor cells: weakly carved or zero (near entrance / bottom) → stalagmites
+    floor_mask = interior_arr & (delta_arr > -float(cell_size_m) * 0.25) & (damp_arr > 0.2)
+
+    stalactites = np.where(
+        ceiling_mask,
+        (base_growth_m * damp_arr * jitter * float(drip_rate_per_year / 1000.0)).astype(np.float32),
+        0.0,
+    ).astype(np.float32)
+
+    # Stalagmites grow at ~60% the rate of stalactites (splash effect)
+    stalagmites = np.where(
+        floor_mask,
+        (base_growth_m * 0.6 * damp_arr * jitter * float(drip_rate_per_year / 1000.0)).astype(np.float32),
+        0.0,
+    ).astype(np.float32)
+
+    # Clamp to physically plausible range: 0..20 m  (Lechuguilla = ~18 m)
+    stalactites = np.clip(stalactites, 0.0, 20.0).astype(np.float32)
+    stalagmites = np.clip(stalagmites, 0.0, 20.0).astype(np.float32)
+
+    return stalactites, stalagmites
+
+
+# ---------------------------------------------------------------------------
+# CliffStructure-compatible entrance arch validator
+# ---------------------------------------------------------------------------
+
+
+def validate_entrance_cliff_compatible(
+    entrance_frame: Dict,
+    spec: "CaveArchetypeSpec",
+) -> List[ValidationIssue]:
+    """Validate that an entrance frame is CliffStructure-compatible.
+
+    CliffStructure compatibility requires:
+      1. No rectangular cutouts — the entrance opening must be described by
+         an arch (framing_rocks with left_jamb + right_jamb + optional lintel)
+         rather than a flat-edged rectangular aperture.
+      2. The lip_width_m / lip_height_m aspect ratio must be within the range
+         [0.4, 4.0] — ratios outside this indicate a slab cutout rather than
+         an organic arch opening.
+      3. framing_rocks must have distinct roles (not duplicate "left_jamb"
+         entries), confirming proper arch geometry is registered.
+      4. occlusion_shelf depth > 0: a cliff face always casts an overhead
+         shadow; an entrance without one is implausibly sharp-edged
+         (rectangular cutout indicator).
+
+    These checks replicate the CliffStructure entrance contract from Bundle B
+    so caves and cliffs share the same geometry interface.
+    """
+    issues: List[ValidationIssue] = []
+    arch_id = entrance_frame.get("archetype", "unknown")
+
+    lip_w = float(entrance_frame.get("lip_width_m", 0.0))
+    lip_h = float(entrance_frame.get("lip_height_m", 0.0))
+
+    # 1. Aspect ratio must be organic (not rectangular slab)
+    if lip_h > 1e-6:
+        aspect = lip_w / lip_h
+        if not (0.4 <= aspect <= 4.0):
+            issues.append(ValidationIssue(
+                code="CAVE_ENTRANCE_RECTANGULAR_CUTOUT",
+                severity="hard",
+                affected_feature=arch_id,
+                message=(
+                    f"entrance aspect ratio {aspect:.2f} (w={lip_w:.1f}m / h={lip_h:.1f}m) "
+                    f"is outside [0.4, 4.0] — indicates a slab rectangular cutout, "
+                    f"not a CliffStructure-compatible arch"
+                ),
+                remediation=(
+                    "Adjust entrance_width_m / entrance_height_m in CaveArchetypeSpec "
+                    "to produce an arch aspect ratio in [0.4, 4.0]."
+                ),
+            ))
+
+    # 2. Framing rocks must have distinct roles (arch geometry, not cutout)
+    framing = entrance_frame.get("framing_rocks", [])
+    roles = [r.get("role", "") for r in framing]
+    if len(roles) != len(set(roles)):
+        issues.append(ValidationIssue(
+            code="CAVE_ENTRANCE_DUPLICATE_FRAMING_ROLE",
+            severity="hard",
+            affected_feature=arch_id,
+            message=(
+                f"framing_rocks has duplicate roles {roles} — "
+                f"CliffStructure arch requires distinct left_jamb, right_jamb, "
+                f"and optional lintel"
+            ),
+        ))
+
+    if len(framing) < 2:
+        issues.append(ValidationIssue(
+            code="CAVE_ENTRANCE_NO_ARCH",
+            severity="hard",
+            affected_feature=arch_id,
+            message=(
+                "entrance has fewer than 2 framing elements — no arch geometry present; "
+                "CliffStructure compatibility requires at minimum left_jamb + right_jamb"
+            ),
+        ))
+
+    # 3. Occlusion shelf must be present (cliff overhangs cast shadow)
+    shelf = entrance_frame.get("occlusion_shelf", {})
+    shelf_depth = float(shelf.get("depth_m", 0.0))
+    if shelf_depth <= 0.0:
+        issues.append(ValidationIssue(
+            code="CAVE_ENTRANCE_MISSING_OVERHANG",
+            severity="soft",
+            affected_feature=arch_id,
+            message=(
+                "CliffStructure-compatible entrance must have an occlusion shelf "
+                "(overhead overhang depth_m > 0) to prevent a cut-flat look"
+            ),
+            remediation="Set occlusion_shelf_depth > 0 in the CaveArchetypeSpec.",
+        ))
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Archetype enum + spec
 # ---------------------------------------------------------------------------
 
@@ -675,6 +1091,23 @@ def carve_cave_volume(
         delta = np.where(footprint & (local_delta < delta), local_delta, delta)
 
     stack.set("cave_candidate", interior_mask.astype(bool), "caves")
+
+    # Compute wall texture (Worley + Perlin) and store on the stack so
+    # the material pass can use it for procedural surface detail.
+    if interior_mask.any():
+        wall_tex = compute_cave_wall_texture(
+            rows, cols,
+            seed=abs(hash(str(spec.archetype))),
+            archetype=spec.archetype.value if hasattr(spec.archetype, "value") else str(spec.archetype),
+        )
+        existing_tex = stack.get("cave_wall_texture")
+        if existing_tex is not None:
+            existing_np = np.asarray(existing_tex, dtype=np.float32)
+            if existing_np.shape == wall_tex.shape:
+                # Overlay: take max so overlapping caves blend darkest (roughest) walls
+                wall_tex = np.maximum(wall_tex, existing_np)
+        stack.set("cave_wall_texture", wall_tex, "caves")
+
     return delta
 
 
@@ -1176,8 +1609,11 @@ def pass_caves(
             f"tier={cave.tier}"
         )
 
-        # Validate this entrance
+        # Validate this entrance (standard checks)
         issues.extend(validate_cave_entrance(frame, stack))
+
+        # Validate CliffStructure compatibility (no rectangular cutouts)
+        issues.extend(validate_entrance_cliff_compatible(frame, spec))
 
     # Accumulate height deltas from all caves into a single channel.
     # Per the pass contract we do NOT mutate stack.height — we record intent.
@@ -1187,20 +1623,48 @@ def pass_caves(
             accumulated_delta += cave.height_delta
     stack.set("cave_height_delta", accumulated_delta, "caves")
 
+    # Compute speleothem growth (Dreybrodt model) across all cave interiors.
+    # Accumulate stalactite / stalagmite lengths into unified channels so the
+    # geometry pass can place speleothem meshes at cells above the threshold.
+    stalactite_acc = np.zeros_like(stack.height, dtype=np.float32)
+    stalagmite_acc = np.zeros_like(stack.height, dtype=np.float32)
+    damp_final = np.asarray(stack.get("wet_rock") or np.zeros_like(stack.height, dtype=np.float32),
+                            dtype=np.float32)
+    for cave in caves:
+        if cave.height_delta is not None and cave.damp_mask is not None:
+            interior_bool = np.asarray(stack.get("cave_candidate"), dtype=bool)
+            stals, stags = compute_speleothem_growth(
+                interior_mask=interior_bool,
+                damp_mask=cave.damp_mask,
+                height_delta=cave.height_delta,
+                cell_size_m=float(stack.cell_size),
+                seed=cave_seed,
+            )
+            stalactite_acc = np.maximum(stalactite_acc, stals)
+            stalagmite_acc = np.maximum(stalagmite_acc, stags)
+    stack.set("cave_stalactite_length", stalactite_acc, "caves")
+    stack.set("cave_stalagmite_length", stalagmite_acc, "caves")
+
     hard_issues = [i for i in issues if i.is_hard()]
     status = "ok" if not hard_issues else "warning"
+
+    speleothem_cells = int((stalactite_acc > 0.0).sum() + (stalagmite_acc > 0.0).sum())
 
     return PassResult(
         pass_name="caves",
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height", "slope", "basin", "wetness"),
-        produced_channels=("cave_candidate", "wet_rock", "cave_height_delta"),
+        produced_channels=(
+            "cave_candidate", "wet_rock", "cave_height_delta",
+            "cave_wall_texture", "cave_stalactite_length", "cave_stalagmite_length",
+        ),
         metrics={
             "cave_count": len(caves),
             "hero_cave_count": sum(1 for c in caves if c.tier == "hero"),
             "debris_points_total": debris_total,
             "seed_used": base_seed,
+            "speleothem_cells": speleothem_cells,
             "archetypes": {a.value: sum(1 for c in caves if c.archetype == a) for a in CaveArchetype},
         },
         issues=issues,
@@ -1670,15 +2134,41 @@ def _build_chamber_mesh_geometry(
         faces.append((floor_center_idx, b, a))  # reversed winding for floor-up normal
 
     # ------------------------------------------------------------------
-    # Stalactites — downward cones from random ceiling ring vertices
+    # Speleothems — Dreybrodt growth law (Dreybrodt 1988 / 1999,
+    # White 1976 parabolic cross-section).
+    #
+    # Classical model for steady-state speleothem elongation:
+    #   L(t)  = A  × t^(2/3)       growth length as function of age t∈[0,1]
+    #   r(L)  = k  × L^0.4         tip→base radius (parabolic cross-section)
+    #
+    # Constants tuned to the chamber's characteristic height h:
+    #   A = 0.35 × h   (max speleothem spans ≤35% of vault height)
+    #   k = 0.028 × min(rx, ry)    (radius proportional to chamber scale)
+    #
+    # "Age" is per-speleothem uniform-random ∈ [0.3, 1.0] for stalactites
+    # and ∈ [0.1, 0.6] for stalagmites (they form later from drip
+    # accumulation).  Stalactites near the vault apex are biased toward
+    # greater age (closer to the moisture source).
     # ------------------------------------------------------------------
     rng_speleothem = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    _A = 0.35 * h                  # length coefficient (metres)
+    _k = 0.028 * min(rx, ry)       # radius coefficient (metres)
+    _alpha = 2.0 / 3.0             # Dreybrodt exponent
+
+    def _dreybrodt_dims(t_age: float) -> Tuple[float, float]:
+        """Return (length, base_radius) via Dreybrodt growth law."""
+        t_age = max(0.01, min(1.0, float(t_age)))
+        length = _A * (t_age ** _alpha)
+        radius = _k * (length ** 0.4)
+        length = max(length, h * 0.04)           # minimum visibility
+        radius = max(radius, min(rx, ry) * 0.015)
+        return length, radius
+
     n_stals = int(max(0, stalactite_count))
     if n_stals > 0 and len(ring_start_indices) > 0:
-        # Candidate ceiling vertices: all verts in the upper half of vault rings
+        # Candidate ceiling vertices: upper half of vault rings
         ceiling_pool: List[int] = []
         for ri, rs in enumerate(ring_start_indices):
-            # Only upper half rings (closer to apex) look natural for stalactites
             if ri < max(1, len(ring_start_indices) // 2):
                 for seg in range(ns):
                     ceiling_pool.append(rs + seg)
@@ -1691,11 +2181,18 @@ def _build_chamber_mesh_geometry(
             for ci in chosen_ceiling:
                 cv_idx = ceiling_pool[int(ci)]
                 base_vx, base_vy, base_vz = verts[cv_idx]
-                stal_len = float(rng_speleothem.uniform(0.3, 1.2)) * h * 0.25
-                stal_r = float(rng_speleothem.uniform(0.05, 0.15)) * min(rx, ry)
-                tip = (base_vx, base_vy, base_vz - stal_len)  # tip points DOWN
+                # Bias age toward older near apex: ring index 0 = oldest
+                ring_idx = next(
+                    (ri for ri, rs in enumerate(ring_start_indices)
+                     if cv_idx >= rs and cv_idx < rs + ns),
+                    0,
+                )
+                ring_frac = float(ring_idx) / max(1.0, float(len(ring_start_indices) - 1))
+                age = float(rng_speleothem.uniform(0.3, 1.0)) * (1.0 - ring_frac * 0.5)
+                stal_len, stal_r = _dreybrodt_dims(age)
+                tip = (base_vx, base_vy, base_vz - stal_len)
                 base_c = (base_vx, base_vy, base_vz)
-                sv, sf = _cone_verts_faces(tip, base_c, stal_r, segments=5, taper=1.0)
+                sv, sf = _cone_verts_faces(tip, base_c, stal_r, segments=6, taper=1.0)
                 offset = len(verts)
                 for svx, svy, svz in sv:
                     _add_vert(svx, svy, svz)
@@ -1703,7 +2200,8 @@ def _build_chamber_mesh_geometry(
                     faces.append(tuple(i + offset for i in tri))
 
     # ------------------------------------------------------------------
-    # Stalagmites — upward cones from random floor ring vertices, with taper
+    # Stalagmites — Dreybrodt growth, upward cones with tapered base
+    # (younger than stalactites: age ∈ [0.1, 0.6])
     # ------------------------------------------------------------------
     n_stags = int(max(0, stalagmite_count))
     if n_stags > 0:
@@ -1718,13 +2216,13 @@ def _build_chamber_mesh_geometry(
             for fi in chosen_floor:
                 fv_idx = floor_pool[int(fi)]
                 fvx, fvy, fvz = verts[fv_idx]
-                stag_len = float(rng_speleothem.uniform(0.2, 0.8)) * h * 0.2
-                stag_r = float(rng_speleothem.uniform(0.04, 0.12)) * min(rx, ry)
-                tip = (fvx, fvy, fvz + stag_len)  # tip points UP
+                age = float(rng_speleothem.uniform(0.1, 0.6))
+                stag_len, stag_r = _dreybrodt_dims(age)
+                stag_len *= 0.65   # stalagmites shorter than stalactites
+                tip = (fvx, fvy, fvz + stag_len)
                 base_c = (fvx, fvy, fvz)
-                # taper < 1.0 makes the base narrower → upward spike looks different
                 taper = float(rng_speleothem.uniform(0.55, 0.75))
-                sv, sf = _cone_verts_faces(tip, base_c, stag_r, segments=5, taper=taper)
+                sv, sf = _cone_verts_faces(tip, base_c, stag_r, segments=6, taper=taper)
                 offset = len(verts)
                 for svx, svy, svz in sv:
                     _add_vert(svx, svy, svz)

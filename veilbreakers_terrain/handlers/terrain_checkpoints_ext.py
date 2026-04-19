@@ -93,7 +93,21 @@ def save_every_n_operations(
     counter: Dict[str, int] = {"i": 0}
 
     def _atomic_npz_save(pass_name: str) -> None:
-        """Direct atomic npz write when _save_checkpoint is unavailable."""
+        """Direct atomic npz write with SHA-256 integrity verification.
+
+        Write sequence (matches Houdini PDG atomic-write contract):
+          1. Write npz to ``<fname>.tmp``
+          2. Compute SHA-256 of the tmp file
+          3. Rename tmp → final (atomic on POSIX; atomic-replace on Windows Vista+)
+          4. Write SHA-256 sidecar ``<fname>.npz.sha256`` for later verification
+          5. Re-read the final file and verify its digest matches the pre-rename
+             digest — catches filesystem-level corruption or rename aliasing.
+
+        On any failure the tmp file is cleaned up and a WARNING is logged;
+        the pipeline is never aborted by autosave I/O errors.
+        """
+        import hashlib as _hashlib
+
         cp_dir = getattr(controller, "checkpoint_dir", None)
         state = getattr(controller, "state", None)
         stack = getattr(state, "mask_stack", None) if state else None
@@ -110,12 +124,55 @@ def save_every_n_operations(
         fname = f"autosave_{counter['i']:06d}_{safe}.npz"
         tmp_path = cp_dir / (fname + ".tmp")
         final_path = cp_dir / fname
+        sidecar_path = final_path.with_suffix(".npz.sha256")
         try:
             stack.to_npz(tmp_path)
-            tmp_path.rename(final_path)
-            _log.debug(
-                "save_every_n_operations: atomic checkpoint written → %s", final_path
-            )
+
+            # Hash the tmp file before rename
+            pre_hash = _hashlib.sha256()
+            with open(tmp_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    pre_hash.update(chunk)
+            pre_digest = pre_hash.hexdigest()
+
+            # Atomic rename
+            try:
+                tmp_path.rename(final_path)
+            except OSError:
+                import shutil as _shutil
+                _shutil.copy2(str(tmp_path), str(final_path))
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+            # Post-rename integrity verification
+            post_hash = _hashlib.sha256()
+            with open(final_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    post_hash.update(chunk)
+            post_digest = post_hash.hexdigest()
+            if post_digest != pre_digest:
+                _log.warning(
+                    "save_every_n_operations: post-rename integrity check FAILED "
+                    "for %r (pre=%s, post=%s) — file may be corrupted.",
+                    fname, pre_digest[:16], post_digest[:16],
+                )
+            else:
+                # Write sidecar only when digest is confirmed good
+                try:
+                    sidecar_path.write_text(
+                        f"{post_digest}  {final_path.name}\n", encoding="utf-8"
+                    )
+                except OSError as sidecar_exc:
+                    _log.warning(
+                        "save_every_n_operations: could not write sidecar for %r: %s",
+                        fname, sidecar_exc,
+                    )
+                _log.debug(
+                    "save_every_n_operations: atomic checkpoint written → %s (sha256=%s…)",
+                    final_path, post_digest[:16],
+                )
         except Exception as exc:
             _log.warning(
                 "save_every_n_operations: atomic write failed for %r: %r",

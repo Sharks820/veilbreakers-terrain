@@ -222,6 +222,37 @@ class TerrainQualityProfile:
         """
         errors: List[str] = []
 
+        if self.erosion_iterations < 0:
+            errors.append(
+                f"erosion_iterations must be >= 0, got {self.erosion_iterations}"
+            )
+        if self.hydraulic_erosion_iterations < 0:
+            errors.append(
+                f"hydraulic_erosion_iterations must be >= 0, "
+                f"got {self.hydraulic_erosion_iterations}"
+            )
+        if self.thermal_erosion_iterations < 0:
+            errors.append(
+                f"thermal_erosion_iterations must be >= 0, "
+                f"got {self.thermal_erosion_iterations}"
+            )
+        if not (0.0 < self.erosion_rain_amount <= 1.0):
+            errors.append(
+                f"erosion_rain_amount must be in (0, 1], got {self.erosion_rain_amount}"
+            )
+        if not (0.0 < self.erosion_evaporation_rate <= 1.0):
+            errors.append(
+                f"erosion_evaporation_rate must be in (0, 1], "
+                f"got {self.erosion_evaporation_rate}"
+            )
+        if not (0.0 <= self.talus_angle_degrees <= 90.0):
+            errors.append(
+                f"talus_angle_degrees must be in [0, 90], got {self.talus_angle_degrees}"
+            )
+        if self.cell_size_m <= 0.0:
+            errors.append(
+                f"cell_size_m must be > 0, got {self.cell_size_m}"
+            )
         if not (1 <= self.lod_count <= 8):
             errors.append(
                 f"lod_count must be in [1, 8], got {self.lod_count}"
@@ -730,23 +761,59 @@ def _merge_with_parent(
     )
 
 
-def load_quality_profile(name: str) -> TerrainQualityProfile:
-    """Return the resolved (parent-merged) profile for ``name``.
+def load_quality_profile(
+    name: str,
+    _chain: Optional[List[str]] = None,
+) -> TerrainQualityProfile:
+    """Return the fully deep-merged profile for ``name``.
 
-    BUG-R8-A9-032: raises PresetLocked when profile.lock_preset is True
-    so the previously-defined exception is actually used.
+    Deep inheritance semantics (Addendum 1.B.4 / AAA standard)
+    -----------------------------------------------------------
+    Profiles form a chain: aaa_open_world → high_fidelity → standard → mobile.
+    Each ``extends`` link is resolved recursively so the final profile
+    reflects the accumulated quality ceiling across the *entire* ancestor
+    chain, not just the immediate parent.
+
+    Example: ``load_quality_profile("aaa_open_world")`` performs three
+    merge steps:
+      1. standard   = merge(standard,    mobile)
+      2. hifi       = merge(high_fidelity, standard_merged)
+      3. aaa        = merge(aaa_open_world, hifi_merged)
+
+    This means a field set only on ``mobile`` is visible all the way up to
+    ``aaa_open_world`` without being silently dropped by a single-step merge.
+
+    Cycle guard
+    -----------
+    ``_chain`` tracks the names visited in this recursion to detect and
+    raise on circular ``extends`` references (which would cause infinite
+    recursion in a naive implementation).
+
+    BUG-R8-A9-032: raises PresetLocked when profile.lock_preset is True.
 
     Accepts both canonical names (mobile, standard, high_fidelity,
     aaa_open_world) and legacy aliases (preview, production, hero_shot).
     """
+    if _chain is None:
+        _chain = []
+
     if name not in _BUILTIN_PROFILES:
         raise KeyError(f"Unknown quality profile: {name!r}")
+
+    if name in _chain:
+        raise ProfileValidationError(
+            f"Circular profile inheritance detected: {_chain + [name]}"
+        )
+
     profile = _BUILTIN_PROFILES[name]
+
     if profile.extends:
-        parent = load_quality_profile(profile.extends)
+        # Recurse down the full chain before merging upward
+        parent = load_quality_profile(profile.extends, _chain=_chain + [name])
         resolved = _merge_with_parent(profile, parent)
     else:
         resolved = replace(profile)
+
     # BUG-R8-A9-032: enforce lock before returning
     if resolved.lock_preset:
         raise PresetLocked(

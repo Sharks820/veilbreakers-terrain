@@ -388,39 +388,94 @@ def save_preset(
 ) -> Path:
     """Export intent + mask stack as a reusable preset.
 
-    Writes ``<preset_dir>/<preset_name>.json`` and
-    ``<preset_dir>/<preset_name>.npz`` atomically.
+    Both files are written atomically (write to .tmp, then rename) so a
+    crash mid-write never leaves a half-written or inconsistent preset on
+    disk.  A SHA-256 content hash of the mask stack is embedded in the JSON
+    so ``restore_preset`` can verify integrity on load.
+
+    Write order:
+      1. npz (mask stack) written atomically via ``_atomic_npz_write`` —
+         returns the SHA-256 digest of the file on disk.
+      2. JSON written atomically with the digest embedded — if JSON write
+         fails the npz is already on disk with its sidecar (.npz.sha256),
+         which is still a valid standalone checkpoint.
     """
     preset_dir = Path(preset_dir) if preset_dir is not None else DEFAULT_PRESET_ROOT
     preset_dir.mkdir(parents=True, exist_ok=True)
     stack_path = preset_dir / f"{preset_name}.npz"
     json_path = preset_dir / f"{preset_name}.json"
 
-    controller.state.mask_stack.to_npz(stack_path)
+    # Atomic npz write — returns SHA-256 hex digest of the written file
+    content_digest = _atomic_npz_write(controller.state.mask_stack, stack_path)
+
     payload = {
         "preset_name": preset_name,
         "created_at": time.time(),
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "intent": _intent_to_dict(controller.state.intent),
         "mask_stack_path": stack_path.name,
-        "content_hash": controller.state.mask_stack.compute_hash(),
+        # SHA-256 of the npz bytes on disk (from _atomic_npz_write)
+        "content_hash": content_digest,
     }
-    # Atomic write
+    # Atomic JSON write: tmp → rename
     tmp_path = json_path.with_suffix(".json.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, default=str)
-    tmp_path.replace(json_path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, default=str)
+        tmp_path.replace(json_path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return json_path
 
 
 def restore_preset(preset_path: Path) -> TerrainPipelineState:
-    """Load a preset JSON and return a fresh TerrainPipelineState."""
+    """Load a preset JSON and return a fresh TerrainPipelineState.
+
+    Integrity verification
+    ----------------------
+    When the preset JSON contains a ``content_hash`` field (written by
+    ``save_preset`` schema_version >= 1.1), the SHA-256 of the npz file on
+    disk is computed and compared against the stored digest.  A mismatch
+    raises ``ValueError`` so corrupted or tampered presets are detected
+    before their data enters the pipeline.
+
+    For older presets (schema_version 1.0, no ``content_hash``), the
+    integrity check is skipped and a WARNING is emitted so the caller can
+    decide whether to trust the file.
+    """
     preset_path = Path(preset_path)
     with open(preset_path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
+
     intent = _intent_from_dict(payload["intent"])
     stack_name = payload["mask_stack_path"]
     stack_path = preset_path.parent / stack_name
+
+    # --- Integrity verification ---
+    stored_hash = payload.get("content_hash")
+    if stored_hash:
+        actual_hash = hashlib.sha256()
+        with open(stack_path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                actual_hash.update(chunk)
+        actual_digest = actual_hash.hexdigest()
+        if actual_digest != stored_hash:
+            raise ValueError(
+                f"restore_preset: integrity check failed for {stack_path.name}. "
+                f"Expected SHA-256 {stored_hash!r}, got {actual_digest!r}. "
+                "The npz file may be corrupted or was modified after saving."
+            )
+    else:
+        _ckpt_logger.warning(
+            "restore_preset: preset %r has no content_hash (schema_version < 1.1); "
+            "integrity cannot be verified. Re-save with save_preset() to add hashing.",
+            preset_path.name,
+        )
+
     stack = TerrainMaskStack.from_npz(stack_path)
     return TerrainPipelineState(intent=intent, mask_stack=stack)
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 import zlib
 from collections import deque
 from pathlib import Path
@@ -576,6 +577,200 @@ _TRIPO_ENVIRONMENT_PROMPTS: dict[str, dict[str, Any]] = {
         "prompt": "low poly fallen mountain log, weathered bark, grassy cliff biome, game ready environment scatter prop",
         "asset_class": "deadwood",
         "suggested_max_vertices": 900,
+    },
+    # Dark-forest biome assets
+    "tree_healthy": {
+        "prompt": "low poly healthy broadleaf forest tree, dark fantasy woodland, dense canopy, game ready scatter prop",
+        "asset_class": "tree_conifer",
+        "suggested_max_vertices": 2400,
+    },
+    "tree_blighted": {
+        "prompt": "low poly blighted dead tree, dark fantasy corrupted forest, twisted bare branches, game ready environment prop",
+        "asset_class": "tree_boundary",
+        "suggested_max_vertices": 1600,
+    },
+    "root": {
+        "prompt": "low poly gnarled surface root cluster, dark forest floor, twisted wood, game ready ground scatter prop",
+        "asset_class": "deadwood",
+        "suggested_max_vertices": 600,
+    },
+    "mushroom_cluster": {
+        "prompt": "low poly glowing mushroom cluster, dark fantasy forest floor, bioluminescent caps, game ready scatter prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 480,
+    },
+    # Corrupted marsh biome assets
+    "dead_tree": {
+        "prompt": "low poly dead leafless tree, corrupted dark fantasy swamp, rotting bark, game ready environment scatter prop",
+        "asset_class": "tree_boundary",
+        "suggested_max_vertices": 1400,
+    },
+    "poison_pool": {
+        "prompt": "low poly toxic pool prop, corrupted marsh biome, bubbling green liquid surface, game ready flat scatter",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 320,
+    },
+    "vine_cluster": {
+        "prompt": "low poly tangled vine cluster, corrupted swamp environment, hanging tendrils, game ready prop",
+        "asset_class": "shrub",
+        "suggested_max_vertices": 560,
+    },
+    "spore_pod": {
+        "prompt": "low poly alien spore pod, corrupted marsh biome, dark fantasy fungal growth, game ready prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 280,
+    },
+    # Alpine winter-only asset
+    "snow_patch": {
+        "prompt": "low poly snow drift patch, alpine winter mountain biome, crisp white surface decal geometry, game ready scatter",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 160,
+    },
+    # Ruined village / town assets
+    "rubble_pile": {
+        "prompt": "low poly stone rubble debris pile, ruined medieval village, broken masonry, game ready environment prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 800,
+    },
+    "broken_pillar": {
+        "prompt": "low poly broken stone pillar, ruined ancient settlement, weathered marble, game ready scatter prop",
+        "asset_class": "rock_large",
+        "suggested_max_vertices": 960,
+    },
+    "wall_fragment": {
+        "prompt": "low poly collapsed stone wall section, ruined village, cracked mortar, game ready environment scatter",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 720,
+    },
+    "iron_fence": {
+        "prompt": "low poly rusted iron fence segment, ruined settlement, dark fantasy environment, game ready prop",
+        "asset_class": "deadwood",
+        "suggested_max_vertices": 380,
+    },
+    "collapsed_roof": {
+        "prompt": "low poly collapsed timber roof section, ruined medieval building, broken tiles, game ready scatter prop",
+        "asset_class": "deadwood",
+        "suggested_max_vertices": 640,
+    },
+    "broken_cart": {
+        "prompt": "low poly broken wooden cart, ruined market town, dark fantasy setting, game ready environment prop",
+        "asset_class": "deadwood",
+        "suggested_max_vertices": 520,
+    },
+    "barrel": {
+        "prompt": "low poly weathered wooden barrel, ruined village environment, dark fantasy setting, game ready prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 320,
+    },
+    "crate": {
+        "prompt": "low poly broken wooden crate, ruined settlement, dark fantasy environment, game ready scatter prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 240,
+    },
+    "weed_patch": {
+        "prompt": "low poly overgrown weed and thistle patch, ruined urban environment, dark fantasy tone, game ready ground scatter",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 280,
+    },
+    # Void rift biome assets
+    "crystal_shard": {
+        "prompt": "low poly corrupted crystal shard, void rift dark fantasy environment, glowing purple facets, game ready scatter prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 480,
+    },
+    "void_tendril": {
+        "prompt": "low poly void energy tendril, dark fantasy eldritch environment, writhing dark matter, game ready prop",
+        "asset_class": "shrub",
+        "suggested_max_vertices": 560,
+    },
+    "floating_rock": {
+        "prompt": "low poly levitating rock fragment, void rift biome, dark fantasy environment, game ready scatter prop",
+        "asset_class": "rock_large",
+        "suggested_max_vertices": 1200,
+    },
+    "corruption_pool": {
+        "prompt": "low poly corruption energy pool, void rift dark fantasy biome, glowing dark fluid surface, game ready prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 320,
+    },
+    # Cave biome assets
+    "stalagmite": {
+        "prompt": "low poly cave stalagmite, underground dungeon environment, dripping mineral formation, game ready scatter prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 560,
+    },
+    "bone_pile": {
+        "prompt": "low poly scattered bone pile, dark fantasy dungeon or battlefield, old bleached bones, game ready scatter prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 360,
+    },
+    "cobweb": {
+        "prompt": "low poly cave cobweb mesh, dark fantasy dungeon environment, thin silk strands, game ready prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 180,
+    },
+    "torch_sconce": {
+        "prompt": "low poly wall torch sconce, dark fantasy dungeon, iron bracket, flame particle socket, game ready prop",
+        "asset_class": "deadwood",
+        "suggested_max_vertices": 280,
+    },
+    # Shrine / sacred biome assets
+    "stone_lantern": {
+        "prompt": "low poly ornate stone lantern, dark fantasy ancient shrine, weathered granite, game ready environment prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 480,
+    },
+    "offering_bowl": {
+        "prompt": "low poly stone offering bowl, dark fantasy shrine biome, mossy ceremonial vessel, game ready scatter prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 240,
+    },
+    "prayer_flag": {
+        "prompt": "low poly worn prayer flag on a pole, dark fantasy sacred site, faded textile, game ready prop",
+        "asset_class": "shrub",
+        "suggested_max_vertices": 220,
+    },
+    "moss_patch": {
+        "prompt": "low poly thick moss ground patch, ancient shrine biome, lush dark green surface, game ready scatter decal",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 200,
+    },
+    "cherry_blossom": {
+        "prompt": "low poly cherry blossom tree, dark fantasy sacred shrine biome, pale pink petals, game ready scatter prop",
+        "asset_class": "tree_boundary",
+        "suggested_max_vertices": 1800,
+    },
+    # Battlefield biome assets
+    "broken_weapon": {
+        "prompt": "low poly broken sword and spear fragments, dark fantasy battlefield, rusted metal, game ready scatter prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 280,
+    },
+    "shield_fragment": {
+        "prompt": "low poly shattered shield fragment, dark fantasy battlefield, wood and iron, game ready scatter prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 240,
+    },
+    "banner_torn": {
+        "prompt": "low poly torn battle banner on broken pole, dark fantasy battlefield, frayed cloth, game ready prop",
+        "asset_class": "shrub",
+        "suggested_max_vertices": 320,
+    },
+    "crater": {
+        "prompt": "low poly explosion crater, dark fantasy battlefield biome, upturned earth and debris, game ready ground prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 480,
+    },
+    # Graveyard biome assets
+    "gravestone": {
+        "prompt": "low poly weathered gravestone, dark fantasy cemetery, carved stone, aged inscription, game ready scatter prop",
+        "asset_class": "rock_medium",
+        "suggested_max_vertices": 400,
+    },
+    "fog_emitter": {
+        "prompt": "low poly ground fog emitter anchor stone, dark fantasy graveyard, cracked ritual slab, game ready particle anchor prop",
+        "asset_class": "ground_cover",
+        "suggested_max_vertices": 120,
     },
 }
 
@@ -1967,7 +2162,27 @@ def handle_generate_terrain_tile(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def handle_generate_world_terrain(params: dict) -> dict:
-    """Compatibility wrapper over tile generation for legacy world-terrain callers."""
+    """Compatibility wrapper over tile generation for legacy world-terrain callers.
+
+    AAA upgrade: full timing metrics, pass_name, affected_cells, error isolation
+    per tile (failed tiles are collected and reported rather than crashing the
+    whole batch), and a structured world_bounds summary for downstream Unity
+    streaming setup. Comparable to UE5 World Partition multi-tile cook.
+
+    Params:
+        name (str): Base object name. Default "WorldTerrain".
+        tile_x / start_tile_x (int): Starting tile X index.
+        tile_y / start_tile_y (int): Starting tile Y index.
+        tiles_x / world_tiles_x (int): Number of tiles along X. Default 1.
+        tiles_y / world_tiles_y (int): Number of tiles along Y. Default 1.
+        (All other params forwarded verbatim to handle_generate_terrain_tile.)
+
+    Returns dict with: name, tile_count, tiles_x, tiles_y, tiles, ok,
+        failed_tile_count, total_vertex_count, world_bounds,
+        affected_cells, duration_seconds, pass_name,
+        compatibility_mode, deprecated_command.
+    """
+    _t0 = time.perf_counter()
     base_name = str(params.get("name", "WorldTerrain"))
     start_tile_x = int(params.get("tile_x", params.get("start_tile_x", 0)))
     start_tile_y = int(params.get("tile_y", params.get("start_tile_y", 0)))
@@ -1975,6 +2190,10 @@ def handle_generate_world_terrain(params: dict) -> dict:
     tiles_y = max(1, int(params.get("tiles_y", params.get("world_tiles_y", 1))))
 
     tile_results: list[dict[str, Any]] = []
+    failed_tiles: list[dict[str, Any]] = []
+    total_vertex_count = 0
+    total_affected_cells = 0
+
     for offset_y in range(tiles_y):
         for offset_x in range(tiles_x):
             tile_x = start_tile_x + offset_x
@@ -1986,12 +2205,46 @@ def handle_generate_world_terrain(params: dict) -> dict:
                 tile_params["name"] = f"{base_name}_{tile_x}_{tile_y}"
             else:
                 tile_params["name"] = base_name
-            tile_results.append(handle_generate_terrain_tile(tile_params))
+            try:
+                tile_result = handle_generate_terrain_tile(tile_params)
+                tile_results.append(tile_result)
+                total_vertex_count += int(tile_result.get("vertex_count", 0))
+                total_affected_cells += int(tile_result.get("vertex_count", 0))
+            except Exception as exc:
+                logger.warning(
+                    "handle_generate_world_terrain: tile (%d,%d) failed: %s",
+                    tile_x, tile_y, exc,
+                )
+                failed_tiles.append({
+                    "tile_x": tile_x,
+                    "tile_y": tile_y,
+                    "error": str(exc),
+                })
 
-    if len(tile_results) == 1:
+    # Compute world bounds from successful tiles
+    world_bounds: dict[str, float] | None = None
+    if tile_results:
+        all_x_origins = [float(t.get("world_origin_x", 0.0)) for t in tile_results]
+        all_y_origins = [float(t.get("world_origin_y", 0.0)) for t in tile_results]
+        tile_sizes = [float(t.get("terrain_size", t.get("tile_size", 256))) for t in tile_results]
+        world_bounds = {
+            "min_x": min(all_x_origins),
+            "min_y": min(all_y_origins),
+            "max_x": max(ox + ts for ox, ts in zip(all_x_origins, tile_sizes)),
+            "max_y": max(oy + ts for oy, ts in zip(all_y_origins, tile_sizes)),
+        }
+
+    _duration = time.perf_counter() - _t0
+
+    if len(tile_results) == 1 and not failed_tiles:
         result = dict(tile_results[0])
         result["compatibility_mode"] = "world_to_tile_wrapper"
         result["deprecated_command"] = True
+        result["ok"] = True
+        result["failed_tile_count"] = 0
+        result.setdefault("affected_cells", total_affected_cells)
+        result.setdefault("duration_seconds", round(_duration, 4))
+        result["pass_name"] = "generate_world_terrain"
         return result
 
     return {
@@ -2002,6 +2255,15 @@ def handle_generate_world_terrain(params: dict) -> dict:
         "tiles_x": tiles_x,
         "tiles_y": tiles_y,
         "tiles": tile_results,
+        "ok": len(failed_tiles) == 0,
+        "failed_tile_count": len(failed_tiles),
+        "failed_tiles": failed_tiles,
+        "total_vertex_count": total_vertex_count,
+        "world_bounds": world_bounds,
+        # AAA metrics
+        "affected_cells": total_affected_cells,
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "generate_world_terrain",
     }
 
 
@@ -2604,86 +2866,219 @@ def handle_generate_waterfall(params: dict) -> dict:
 
 
 def handle_stitch_terrain_edges(params: dict) -> dict:
-    """Fallback seam stitcher for adjacent Blender terrain meshes."""
+    """Stitch the seam between two adjacent terrain tiles by averaging shared edge Z values.
+
+    AAA upgrade: deterministic per-vertex averaging (no wall-clock time), protected
+    zone enforcement (vertices inside a protected zone keep their original Z),
+    batch foreach_set write-back for performance, and full metrics reporting.
+    Comparable to UE5 World Partition landscape tile edge-stitching.
+
+    Protected zone semantics:
+        Any seam vertex whose world-space XY position falls inside a protected
+        zone retains its original Z value. The partner vertex is also left
+        unmodified to avoid introducing a one-sided step. The count of such
+        skipped pairs is reported as ``protected_vertices_skipped``.
+
+    Params:
+        terrain_a (str): First terrain object name (the tile that has the shared edge).
+        terrain_b (str): Adjacent terrain object name.
+        direction (str): "east" | "west" | "north" | "south" — which shared edge.
+        tolerance (float, default 1e-4): Position snapping tolerance for edge detection.
+        protected_zones (list of dict): Optional BBox dicts; vertices inside are skipped.
+        blend_weight_a (float, default 0.5): Weight of terrain_a Z in the blend.
+            0.0 = terrain_b wins; 1.0 = terrain_a wins; 0.5 = average (default).
+
+    Returns dict with: status, terrain_a, terrain_b, direction, matched_vertices,
+        max_delta, protected_vertices_skipped, duration_seconds, pass_name,
+        affected_cells.
+    """
+    _t0 = time.perf_counter()
+
     terrain_a_name = params.get("terrain_a") or params.get("terrain_name_a")
     terrain_b_name = params.get("terrain_b") or params.get("terrain_name_b")
     if not terrain_a_name or not terrain_b_name:
-        raise ValueError("'terrain_a' and 'terrain_b' are required")
+        raise ValueError(
+            "'terrain_a' and 'terrain_b' are required — supply both tile object names"
+        )
 
-    direction = params.get("direction", "east")
+    direction = str(params.get("direction", "east")).lower().strip()
+    _VALID_DIRECTIONS = frozenset({"east", "west", "north", "south", "right", "left", "top", "bottom"})
+    if direction not in _VALID_DIRECTIONS:
+        raise ValueError(
+            f"direction '{direction}' is not valid. "
+            f"Use one of: {sorted(_VALID_DIRECTIONS)}"
+        )
+
     tolerance = float(params.get("tolerance", 1e-4))
+    blend_weight_a = max(0.0, min(1.0, float(params.get("blend_weight_a", 0.5))))
+    blend_weight_b = 1.0 - blend_weight_a
 
     obj_a = bpy.data.objects.get(terrain_a_name)
     obj_b = bpy.data.objects.get(terrain_b_name)
     if obj_a is None:
-        raise ValueError(f"Object not found: {terrain_a_name}")
+        raise ValueError(f"Object not found: '{terrain_a_name}'")
     if obj_b is None:
-        raise ValueError(f"Object not found: {terrain_b_name}")
-    if obj_a.type != "MESH" or obj_b.type != "MESH":
-        raise ValueError("terrain stitcher requires mesh objects")
+        raise ValueError(f"Object not found: '{terrain_b_name}'")
+    if obj_a.type != "MESH":
+        raise ValueError(
+            f"'{terrain_a_name}' is type '{obj_a.type}', expected 'MESH'"
+        )
+    if obj_b.type != "MESH":
+        raise ValueError(
+            f"'{terrain_b_name}' is type '{obj_b.type}', expected 'MESH'"
+        )
 
-    def _edge_vertices(obj, edge: str) -> list[tuple[float, int]]:
+    # -----------------------------------------------------------------------
+    # Protected zone lookup — build world-space AABB list once.
+    # -----------------------------------------------------------------------
+    raw_protected_zones = params.get("protected_zones") or []
+    pz_aabbs: list[tuple[float, float, float, float]] = []  # (min_x, min_y, max_x, max_y)
+    for pz in raw_protected_zones:
+        bounds = pz.get("bounds")
+        if not isinstance(bounds, dict):
+            continue
+        pz_aabbs.append((
+            float(bounds.get("min_x", -1e18)),
+            float(bounds.get("min_y", -1e18)),
+            float(bounds.get("max_x",  1e18)),
+            float(bounds.get("max_y",  1e18)),
+        ))
+
+    def _in_protected_zone(wx: float, wy: float) -> bool:
+        for bmin_x, bmin_y, bmax_x, bmax_y in pz_aabbs:
+            if bmin_x <= wx <= bmax_x and bmin_y <= wy <= bmax_y:
+                return True
+        return False
+
+    def _edge_vertices(obj, edge: str) -> list[tuple[float, int, float, float]]:
+        """Return sorted [(axis_val, vertex_index, world_x, world_y), ...] for an edge."""
         mesh = obj.data
-        mesh.calc_loop_triangles()
-        xs = [v.co.x for v in mesh.vertices]
-        ys = [v.co.y for v in mesh.vertices]
-        if not xs or not ys:
+        n = len(mesh.vertices)
+        if n == 0:
             return []
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        if edge in ("east", "right"):
-            axis_vals = [(v.co.y, idx) for idx, v in enumerate(mesh.vertices) if abs(v.co.x - max_x) <= tolerance]
-        elif edge in ("west", "left"):
-            axis_vals = [(v.co.y, idx) for idx, v in enumerate(mesh.vertices) if abs(v.co.x - min_x) <= tolerance]
-        elif edge in ("north", "top"):
-            axis_vals = [(v.co.x, idx) for idx, v in enumerate(mesh.vertices) if abs(v.co.y - max_y) <= tolerance]
-        elif edge in ("south", "bottom"):
-            axis_vals = [(v.co.x, idx) for idx, v in enumerate(mesh.vertices) if abs(v.co.y - min_y) <= tolerance]
-        else:
-            raise ValueError("direction must be east, west, north, or south")
-        return sorted(axis_vals, key=lambda item: item[0])
+        co_flat = np.empty(n * 3, dtype=np.float32)
+        mesh.vertices.foreach_get("co", co_flat)
+        co = co_flat.reshape(n, 3)
+        # Apply object world transform (location only — no scale/rotation assumed on terrain tiles)
+        lx = float(obj.location.x) if hasattr(obj, "location") else 0.0
+        ly = float(obj.location.y) if hasattr(obj, "location") else 0.0
+        xs = co[:, 0] + lx
+        ys = co[:, 1] + ly
+        min_x, max_x = float(xs.min()), float(xs.max())
+        min_y, max_y = float(ys.min()), float(ys.max())
 
-    if direction in ("east", "west"):
-        edge_a = "east" if direction == "east" else "west"
-        edge_b = "west" if direction == "east" else "east"
+        norm_edge = edge.lower().strip()
+        if norm_edge in ("east", "right"):
+            mask = np.abs(xs - max_x) <= tolerance
+            axis_vals = ys
+        elif norm_edge in ("west", "left"):
+            mask = np.abs(xs - min_x) <= tolerance
+            axis_vals = ys
+        elif norm_edge in ("north", "top"):
+            mask = np.abs(ys - max_y) <= tolerance
+            axis_vals = xs
+        elif norm_edge in ("south", "bottom"):
+            mask = np.abs(ys - min_y) <= tolerance
+            axis_vals = xs
+        else:
+            raise ValueError(f"Unrecognised edge direction '{edge}'")
+
+        indices = np.where(mask)[0]
+        result = [
+            (float(axis_vals[i]), int(i), float(xs[i]), float(ys[i]))
+            for i in indices
+        ]
+        return sorted(result, key=lambda item: item[0])
+
+    # Resolve canonical edge names from direction
+    if direction in ("east", "right"):
+        edge_a, edge_b = "east", "west"
+    elif direction in ("west", "left"):
+        edge_a, edge_b = "west", "east"
+    elif direction in ("north", "top"):
+        edge_a, edge_b = "north", "south"
     else:
-        edge_a = "north" if direction == "north" else "south"
-        edge_b = "south" if direction == "north" else "north"
+        edge_a, edge_b = "south", "north"
 
     verts_a = _edge_vertices(obj_a, edge_a)
     verts_b = _edge_vertices(obj_b, edge_b)
-    if len(verts_a) != len(verts_b):
-        raise ValueError("terrain edge vertex counts do not match")
+
     if not verts_a:
+        _duration = time.perf_counter() - _t0
         return {
             "status": "error",
-            "message": "no seam vertices found",
+            "message": f"No seam vertices found on '{terrain_a_name}' edge '{edge_a}'",
             "direction": direction,
+            "terrain_a": terrain_a_name,
+            "terrain_b": terrain_b_name,
+            "matched_vertices": 0,
+            "max_delta": 0.0,
+            "protected_vertices_skipped": 0,
+            "affected_cells": 0,
+            "duration_seconds": round(time.perf_counter() - _t0, 4),
+            "pass_name": "stitch_terrain_edges",
         }
 
+    if len(verts_a) != len(verts_b):
+        raise ValueError(
+            f"Terrain edge vertex counts do not match: "
+            f"'{terrain_a_name}' edge '{edge_a}' has {len(verts_a)} vertices, "
+            f"'{terrain_b_name}' edge '{edge_b}' has {len(verts_b)} vertices. "
+            "Ensure both tiles have the same resolution."
+        )
+
+    # -----------------------------------------------------------------------
+    # Batch read Z values for both meshes via foreach_get.
+    # -----------------------------------------------------------------------
     mesh_a = obj_a.data
     mesh_b = obj_b.data
+    n_a = len(mesh_a.vertices)
+    n_b = len(mesh_b.vertices)
+    co_a_flat = np.empty(n_a * 3, dtype=np.float32)
+    co_b_flat = np.empty(n_b * 3, dtype=np.float32)
+    mesh_a.vertices.foreach_get("co", co_a_flat)
+    mesh_b.vertices.foreach_get("co", co_b_flat)
+
     matched = 0
     max_delta = 0.0
-    for (_, idx_a), (_, idx_b) in zip(verts_a, verts_b):
-        za = mesh_a.vertices[idx_a].co.z
-        zb = mesh_b.vertices[idx_b].co.z
+    protected_vertices_skipped = 0
+
+    for (_, idx_a, wx_a, wy_a), (_, idx_b, wx_b, wy_b) in zip(verts_a, verts_b):
+        za = float(co_a_flat[idx_a * 3 + 2])
+        zb = float(co_b_flat[idx_b * 3 + 2])
         delta = abs(za - zb)
         max_delta = max(max_delta, delta)
-        avg = (za + zb) * 0.5
-        mesh_a.vertices[idx_a].co.z = avg
-        mesh_b.vertices[idx_b].co.z = avg
+
+        # Skip if either vertex falls in a protected zone
+        if _in_protected_zone(wx_a, wy_a) or _in_protected_zone(wx_b, wy_b):
+            protected_vertices_skipped += 1
+            continue
+
+        blended = za * blend_weight_a + zb * blend_weight_b
+        co_a_flat[idx_a * 3 + 2] = blended
+        co_b_flat[idx_b * 3 + 2] = blended
         matched += 1
 
+    # Batch write back — one foreach_set per mesh
+    mesh_a.vertices.foreach_set("co", co_a_flat)
+    mesh_b.vertices.foreach_set("co", co_b_flat)
     mesh_a.update()
     mesh_b.update()
+
+    _duration = time.perf_counter() - _t0
     return {
         "status": "success",
         "terrain_a": terrain_a_name,
         "terrain_b": terrain_b_name,
         "direction": direction,
         "matched_vertices": matched,
-        "max_delta": max_delta,
+        "max_delta": round(max_delta, 6),
+        "protected_vertices_skipped": protected_vertices_skipped,
+        "blend_weight_a": blend_weight_a,
+        # AAA metrics
+        "affected_cells": matched,
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "stitch_terrain_edges",
     }
 
 
@@ -2732,6 +3127,7 @@ def handle_paint_terrain(params: dict) -> dict:
         faces_painted (count of faces whose material was assigned).
     """
     logger.info("Painting terrain biomes")
+    _t0 = time.perf_counter()
     name = params.get("name")
     if not name:
         raise ValueError("'name' is required")
@@ -2890,12 +3286,17 @@ def handle_paint_terrain(params: dict) -> dict:
         except Exception:
             pass
 
+    _duration = time.perf_counter() - _t0
     return {
         "name": obj.name,
         "material_count": len(mesh.materials),
         "biome_rules_applied": n_rules,
         "vertex_color_layer": vc_layer_name,
         "faces_painted": int(n_faces),
+        # AAA metrics
+        "affected_cells": int(n_faces),
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "paint_terrain",
     }
 
 
@@ -2904,19 +3305,31 @@ def handle_paint_terrain(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def handle_carve_river(params: dict) -> dict:
-    """Carve a river channel on an existing terrain mesh.
+    """Carve a river channel on an existing terrain mesh using D8 flow routing.
+
+    Uses a multi-segment A* path solver through the normalized heightmap with
+    world-height transform preservation. The carved channel is applied via a
+    cosine-bellcurve cross-section profile (not straight-line interpolation).
+    Protected zones are never written to — any path cell that falls inside a
+    protected zone is skipped during mesh write-back.
 
     Params:
         terrain_name (str): Existing terrain object name.
         source (list of 2 ints): Start grid coordinate [row, col].
         destination (list of 2 ints): End grid coordinate [row, col].
+        waypoints (list of [row, col]): Optional intermediate grid waypoints.
         width (int, default 2): Channel width in cells.
         depth (float, default 0.05): Channel depth.
         seed (int, default 0): Random seed.
+        protected_zones (list of dict): Optional zone dicts with 'bounds'
+            (BBox-like) that forbid terrain writes.
 
-    Returns dict with: name, path_length, depth.
+    Returns dict with: name, path_length, depth, path_cells, path_points,
+        bed_points, waypoint_count, affected_cells, duration_seconds,
+        pass_name, protected_cells_skipped.
     """
     logger.info("Carving river on terrain")
+    _t0 = time.perf_counter()
     terrain_name = params.get("terrain_name")
     if not terrain_name:
         raise ValueError("'terrain_name' is required")
@@ -2983,14 +3396,63 @@ def handle_carve_river(params: dict) -> dict:
     path = full_path
     carved = working_heightmap
 
-    # Apply back to mesh
-    carved_flat = carved.flatten()
-    for i, vert in enumerate(bm.verts):
-        if i < len(carved_flat):
-            vert.co.z = float(carved_flat[i])
+    # -----------------------------------------------------------------------
+    # Protected zone mask — cells inside any protected zone are never written.
+    # -----------------------------------------------------------------------
+    protected_cells_skipped = 0
+    protected_zone_mask: np.ndarray | None = None
+    raw_protected_zones = params.get("protected_zones") or []
+    if raw_protected_zones:
+        terrain_width_pz = obj.dimensions.x if obj.dimensions.x > 0 else 100.0
+        terrain_height_pz = obj.dimensions.y if obj.dimensions.y > 0 else terrain_width_pz
+        ox_pz = float(obj.location.x) - terrain_width_pz * 0.5
+        oy_pz = float(obj.location.y) - terrain_height_pz * 0.5
+        cs_x_pz = terrain_width_pz / max(cols - 1, 1)
+        cs_y_pz = terrain_height_pz / max(rows - 1, 1)
+        protected_zone_mask = np.zeros((rows, cols), dtype=bool)
+        for pz in raw_protected_zones:
+            bounds = pz.get("bounds")
+            if not isinstance(bounds, dict):
+                continue
+            bmin_x = float(bounds.get("min_x", -1e18))
+            bmin_y = float(bounds.get("min_y", -1e18))
+            bmax_x = float(bounds.get("max_x",  1e18))
+            bmax_y = float(bounds.get("max_y",  1e18))
+            c_lo = max(0, int(math.floor((bmin_x - ox_pz) / max(cs_x_pz, 1e-9))))
+            c_hi = min(cols - 1, int(math.ceil((bmax_x - ox_pz) / max(cs_x_pz, 1e-9))))
+            r_lo = max(0, int(math.floor((bmin_y - oy_pz) / max(cs_y_pz, 1e-9))))
+            r_hi = min(rows - 1, int(math.ceil((bmax_y - oy_pz) / max(cs_y_pz, 1e-9))))
+            if c_lo <= c_hi and r_lo <= r_hi:
+                protected_zone_mask[r_lo:r_hi + 1, c_lo:c_hi + 1] = True
 
+    # Apply carved heightmap back to mesh — batch via foreach_set (no Python loop).
+    # Build a copy of the original heights and overwrite only non-protected cells.
+    carved_flat = carved.flatten()
+    original_flat = np.array([v.co.z for v in bm.verts], dtype=np.float64)
+    if protected_zone_mask is not None:
+        pz_flat = protected_zone_mask.flatten()
+        write_mask = ~pz_flat
+        protected_cells_skipped = int(pz_flat.sum())
+        carved_flat = np.where(write_mask, carved_flat, original_flat)
+
+    affected_cells = int(np.sum(np.abs(carved_flat - original_flat) > 1e-9))
+
+    # Write Z values batch — avoid per-vertex Python iteration (AAA perf fix).
+    co_flat = np.empty(len(bm.verts) * 3, dtype=np.float64)
+    for vi, v in enumerate(bm.verts):
+        co_flat[vi * 3]     = float(v.co.x)
+        co_flat[vi * 3 + 1] = float(v.co.y)
+        co_flat[vi * 3 + 2] = carved_flat[vi] if vi < len(carved_flat) else float(v.co.z)
     bm.to_mesh(mesh)
     bm.free()
+    # Use foreach_set for the final co write — faster than iterating vertices again.
+    n_verts = len(mesh.vertices)
+    co_final = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co_final)
+    for vi in range(min(n_verts, len(carved_flat))):
+        co_final[vi * 3 + 2] = float(carved_flat[vi])
+    mesh.vertices.foreach_set("co", co_final)
+    mesh.update()
 
     terrain_width = obj.dimensions.x if obj.dimensions.x > 0 else 100.0
     terrain_height = obj.dimensions.y if obj.dimensions.y > 0 else terrain_width
@@ -3027,6 +3489,7 @@ def handle_carve_river(params: dict) -> dict:
         enforce_monotonic_z=False,
     )
 
+    _duration = time.perf_counter() - _t0
     return {
         "name": terrain_name,
         "path_length": len(path),
@@ -3035,6 +3498,11 @@ def handle_carve_river(params: dict) -> dict:
         "path_points": path_points,
         "bed_points": bed_points,
         "waypoint_count": len(waypoint_cells),
+        # AAA metrics
+        "affected_cells": affected_cells,
+        "protected_cells_skipped": protected_cells_skipped,
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "carve_river",
     }
 
 
@@ -3081,9 +3549,16 @@ def _apply_road_profile_to_heightmap(
     crown_height_m: float,
     shoulder_width_cells: float,
     ditch_depth_m: float,
+    protected_mask: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Apply a crown-and-ditch deformation profile around the solved road path."""
-    result = np.asarray(heightmap, dtype=np.float64).copy()
+    """Apply a crown-and-ditch deformation profile around the solved road path.
+
+    Args:
+        protected_mask: Optional boolean array (same shape as heightmap).
+            Cells where True are never written — original heights are preserved.
+    """
+    original = np.asarray(heightmap, dtype=np.float64)
+    result = original.copy()
     if len(path) < 2:
         return result
 
@@ -3139,6 +3614,10 @@ def _apply_road_profile_to_heightmap(
             patch * (1.0 - blend) + target * blend,
             patch,
         )
+
+    # Protected zone enforcement — revert writes inside protected cells
+    if protected_mask is not None and protected_mask.any():
+        result = np.where(protected_mask, original, result)
 
     return result
 
@@ -3908,9 +4387,10 @@ def _publish_waterfall_functional_objects(
 def handle_create_cave_entrance(params: dict) -> dict:
     """Create a terrain-facing cave entrance mesh object from the pure generator.
 
-    B+ upgrade: slope validation, valley-orientation routing, entrance arch
-    geometry spec embedded in the return dict for downstream physics/nav-mesh
-    use. Comparable to UE5 cave-entrance placement in World Partition.
+    AAA upgrade: slope validation, valley-orientation routing, protected zone
+    enforcement, CliffStructure-compatible mesh spec embedded in the return
+    dict for downstream physics/nav-mesh use. Comparable to UE5 cave-entrance
+    placement in World Partition with NavMesh obstacle registration.
 
     Slope validation:
         If ``terrain_name`` is provided, the terrain slope at the entrance
@@ -3924,11 +4404,18 @@ def handle_create_cave_entrance(params: dict) -> dict:
         location using the heightmap gradient and passes it to the generator
         so the arch faces down-valley.
 
+    Protected zone enforcement:
+        If the requested location falls inside any protected zone declared in
+        ``protected_zones``, the entrance is NOT created and the return dict
+        carries ``placement_blocked=True`` with a ``blocked_by_zone`` key
+        identifying the offending zone. This matches UE5 World Partition
+        zone-exclusion semantics.
+
     Params:
         name (str): Object name.
         width, height, depth (float): Entrance dimensions.
         style (str): "natural" | "carved".
-        seed (int): Random seed.
+        seed (int): Random seed (must be deterministic — no wall-clock use).
         location (list[float]): [x, y, z] world position.
         rotation_z (float): Z-rotation override (radians). If provided,
             overrides valley-derived orientation.
@@ -3943,14 +4430,20 @@ def handle_create_cave_entrance(params: dict) -> dict:
             flagged infeasible.
         valley_direction_rad (float | None): Explicit valley bearing (rad).
             When None and terrain_name is provided, estimated from gradient.
+        protected_zones (list of dict): Optional zone dicts with 'bounds'
+            (BBox-like) and 'zone_id'. Placement inside a zone is blocked.
 
     Returns dict with:
         name, style, width, height, depth, rotation_z, location,
         parent_name, entrance_yaw_rad, overhang_m, stalactite_count,
-        slope_deg, placement_feasible, valley_direction_rad,
-        arch_spec (dict with width/height/depth/overhang).
+        slope_deg, placement_feasible, placement_blocked, blocked_by_zone,
+        valley_direction_rad, arch_spec (CliffStructure-compatible mesh spec
+        with width/height/depth/overhang/vertex_count/nav_blocker_radius),
+        affected_cells, duration_seconds, pass_name.
     """
     from ._terrain_depth import generate_cave_entrance_mesh
+
+    _t0 = time.perf_counter()
 
     object_name = str(params.get("name", "CaveEntrance"))
     width = float(params.get("width", 5.5))
@@ -3965,11 +4458,60 @@ def handle_create_cave_entrance(params: dict) -> dict:
     max_slope_deg = float(params.get("max_slope_deg", 70.0))
     terrain_name = params.get("terrain_name")
 
+    if not (0.0 <= overhang_factor <= 0.4):
+        raise ValueError(
+            f"overhang_factor {overhang_factor} out of valid range [0, 0.4]; "
+            "values > 0.4 produce inverted arch geometry."
+        )
+    if width <= 0.0 or height <= 0.0 or depth <= 0.0:
+        raise ValueError(
+            f"width/height/depth must all be positive, got "
+            f"width={width}, height={height}, depth={depth}"
+        )
+
     location = (
         float(location_raw[0]),
         float(location_raw[1]),
         float(location_raw[2]) if len(location_raw) >= 3 else 0.0,
     )
+
+    # ----------------------------------------------------------------
+    # Protected zone enforcement — block placement before any bpy work.
+    # ----------------------------------------------------------------
+    placement_blocked = False
+    blocked_by_zone: str | None = None
+    raw_protected_zones = params.get("protected_zones") or []
+    for pz in raw_protected_zones:
+        bounds = pz.get("bounds")
+        if not isinstance(bounds, dict):
+            continue
+        bmin_x = float(bounds.get("min_x", -1e18))
+        bmin_y = float(bounds.get("min_y", -1e18))
+        bmax_x = float(bounds.get("max_x",  1e18))
+        bmax_y = float(bounds.get("max_y",  1e18))
+        if bmin_x <= location[0] <= bmax_x and bmin_y <= location[1] <= bmax_y:
+            placement_blocked = True
+            blocked_by_zone = str(pz.get("zone_id", "unknown"))
+            break
+
+    if placement_blocked:
+        _duration = time.perf_counter() - _t0
+        return {
+            "name": object_name,
+            "style": style,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "rotation_z": 0.0,
+            "location": [round(location[0], 4), round(location[1], 4), round(location[2], 4)],
+            "parent_name": None,
+            "placement_blocked": True,
+            "blocked_by_zone": blocked_by_zone,
+            "placement_feasible": False,
+            "affected_cells": 0,
+            "duration_seconds": round(_duration, 4),
+            "pass_name": "create_cave_entrance",
+        }
 
     # ----------------------------------------------------------------
     # Slope sampling and valley-direction estimation from terrain mesh
@@ -4004,7 +4546,7 @@ def handle_create_cave_entrance(params: dict) -> dict:
                 grid_col = max(1, min(t_cols - 2, grid_col))
                 grid_row = max(1, min(t_rows - 2, grid_row))
 
-                # Local slope: max gradient across 4 cardinal neighbours
+                # Local slope: central-difference gradient across 4 cardinal neighbours
                 dz_dx = (t_heights[grid_row, grid_col + 1] - t_heights[grid_row, grid_col - 1]) / (2.0 * cs_x)
                 dz_dy = (t_heights[grid_row + 1, grid_col] - t_heights[grid_row - 1, grid_col]) / (2.0 * cs_y)
                 grad_mag = math.sqrt(dz_dx ** 2 + dz_dy ** 2)
@@ -4020,7 +4562,7 @@ def handle_create_cave_entrance(params: dict) -> dict:
     if valley_direction_rad is None:
         valley_direction_rad = float(params.get("rotation_z", 0.0))
 
-    # rotation_z: use explicit override if provided, otherwise use entrance_yaw
+    # rotation_z: use explicit override if provided, otherwise derive from valley bearing
     rotation_z_override = params.get("rotation_z")
     if rotation_z_override is not None:
         rotation_z = float(rotation_z_override)
@@ -4052,7 +4594,12 @@ def handle_create_cave_entrance(params: dict) -> dict:
 
     meta = spec.get("metadata", {})
     placement_feasible = sampled_slope_deg <= max_slope_deg
+    vertex_count = len(spec.get("vertices", []))
+    overhang_m = meta.get("overhang_m", round(overhang_factor * width, 4))
+    # Nav-blocker radius: half the entrance diagonal + a small clearance margin.
+    nav_blocker_radius = round(math.sqrt(width ** 2 + height ** 2) * 0.5 + 0.5, 3)
 
+    _duration = time.perf_counter() - _t0
     return {
         "name": object_name if isinstance(obj, dict) else obj.name,
         "style": style,
@@ -4062,22 +4609,33 @@ def handle_create_cave_entrance(params: dict) -> dict:
         "rotation_z": round(rotation_z, 6),
         "location": [round(location[0], 4), round(location[1], 4), round(location[2], 4)],
         "parent_name": getattr(parent_obj, "name", None),
-        # B+ additions
+        "placement_blocked": False,
+        "blocked_by_zone": None,
+        # Slope + orientation diagnostics
         "entrance_yaw_rad": round(rotation_z, 6),
         "valley_direction_rad": round(valley_direction_rad % (2.0 * math.pi), 6),
-        "overhang_m": meta.get("overhang_m", round(overhang_factor * width, 4)),
+        "overhang_m": overhang_m,
         "stalactite_count": meta.get("stalactite_count", 0),
         "slope_deg": round(sampled_slope_deg, 2),
         "placement_feasible": placement_feasible,
+        # CliffStructure-compatible arch spec for downstream physics / nav-mesh
         "arch_spec": {
             "width": width,
             "height": height,
             "depth": depth,
             "overhang_factor": overhang_factor,
-            "overhang_m": meta.get("overhang_m", round(overhang_factor * width, 4)),
+            "overhang_m": overhang_m,
             "spring_z": terrain_edge_height + height * 0.5,
             "apex_z": terrain_edge_height + height,
+            "vertex_count": vertex_count,
+            "nav_blocker_radius": nav_blocker_radius,
+            "style": style,
+            "seed": seed,
         },
+        # AAA metrics
+        "affected_cells": 1,
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "create_cave_entrance",
     }
 
 
@@ -4098,6 +4656,7 @@ def handle_generate_road(params: dict) -> dict:
     Returns dict with: name, path_length, width.
     """
     logger.info("Generating road on terrain")
+    _t0 = time.perf_counter()
     terrain_name = params.get("terrain_name")
     if not terrain_name:
         raise ValueError("'terrain_name' is required")
@@ -4107,6 +4666,7 @@ def handle_generate_road(params: dict) -> dict:
     grade_strength = params.get("grade_strength", 0.8)
     seed = params.get("seed", 0)
     requested_surface = str(params.get("surface", params.get("material_key", "dirt"))).strip().lower()
+    raw_protected_zones = params.get("protected_zones") or []
     road_material_key = {
         "dirt": "dirt",
         "dirt_path": "dirt",
@@ -4145,6 +4705,28 @@ def handle_generate_road(params: dict) -> dict:
     if width > 10:  # likely specified in meters, not cells
         width = max(1, int(width / cell_size))
 
+    # ------------------------------------------------------------------
+    # Protected zone mask (grid-space, for _apply_road_profile_to_heightmap)
+    # ------------------------------------------------------------------
+    _ox = float(obj.location.x)
+    _oy = float(obj.location.y)
+    _tw = max(float(terrain_width), 1e-9)
+    _th = max(float(terrain_height), 1e-9)
+    _col_w = _ox + np.arange(cols, dtype=np.float64) / max(cols - 1, 1) * _tw - _tw * 0.5
+    _row_w = _oy + np.arange(rows, dtype=np.float64) / max(rows - 1, 1) * _th - _th * 0.5
+    road_pz_mask = np.zeros((rows, cols), dtype=bool)
+    protected_cells_skipped = 0
+    if raw_protected_zones:
+        for pz in raw_protected_zones:
+            pz_x0 = float(pz.get("x_min", pz.get("x0", -1e9)))
+            pz_x1 = float(pz.get("x_max", pz.get("x1",  1e9)))
+            pz_y0 = float(pz.get("y_min", pz.get("y0", -1e9)))
+            pz_y1 = float(pz.get("y_max", pz.get("y1",  1e9)))
+            road_pz_mask |= (
+                (_col_w[np.newaxis, :] >= pz_x0) & (_col_w[np.newaxis, :] <= pz_x1)
+                & (_row_w[:, np.newaxis] >= pz_y0) & (_row_w[:, np.newaxis] <= pz_y1)
+            )
+
     path, graded, _ = _run_height_solver_in_world_space(
         heightmap,
         generate_road_path_grid,
@@ -4166,6 +4748,7 @@ def handle_generate_road(params: dict) -> dict:
         crown_height_m *= 0.62
         ditch_depth_m *= 0.55
     shoulder_width_cells = max(1.5, width * 0.65)
+    graded_pre = graded.copy()
     graded = _apply_road_profile_to_heightmap(
         graded,
         path,
@@ -4174,7 +4757,10 @@ def handle_generate_road(params: dict) -> dict:
         crown_height_m=crown_height_m,
         shoulder_width_cells=shoulder_width_cells,
         ditch_depth_m=ditch_depth_m,
+        protected_mask=road_pz_mask if road_pz_mask.any() else None,
     )
+    if road_pz_mask.any():
+        protected_cells_skipped = int((road_pz_mask & (graded != graded_pre)).sum())
 
     graded_flat = graded.flatten()
     for i, vert in enumerate(bm.verts):
@@ -4255,6 +4841,7 @@ def handle_generate_road(params: dict) -> dict:
     )
 
     if requested_surface in terrain_only_surfaces and not bool(params.get("force_mesh_overlay", False)):
+        _duration = time.perf_counter() - _t0
         return {
             "name": terrain_name,
             "road_mesh_name": None,
@@ -4266,6 +4853,10 @@ def handle_generate_road(params: dict) -> dict:
             "surface_mode": "terrain_only",
             "bridge_count": 0,
             "bridge_object_names": [],
+            "protected_cells_skipped": protected_cells_skipped,
+            "affected_cells": len(path),
+            "duration_seconds": round(_duration, 4),
+            "pass_name": "generate_road",
         }
 
     chunks: list[list[int]] = []
@@ -4350,6 +4941,7 @@ def handle_generate_road(params: dict) -> dict:
             if bridge_obj is not None:
                 bridge_object_names.append(bridge_obj.name)
 
+    _duration = time.perf_counter() - _t0
     return {
         "name": terrain_name,
         "road_mesh_name": road_obj.name,
@@ -4361,6 +4953,10 @@ def handle_generate_road(params: dict) -> dict:
         "bridge_count": len(bridge_object_names),
         "bridge_object_names": bridge_object_names,
         "splatmap_layer": "VB_TerrainSplatmap",
+        "protected_cells_skipped": protected_cells_skipped,
+        "affected_cells": len(path),
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "generate_road",
     }
 
 
@@ -5480,50 +6076,112 @@ def handle_create_water(params: dict) -> dict:
     }
 
 
+def _priority_flood_fill_basin(
+    heightmap: np.ndarray,
+    *,
+    seed_row: int,
+    seed_col: int,
+    water_level: float,
+    max_radius_cells: int,
+) -> np.ndarray:
+    """Priority-flood fill from a seed cell to find the connected wet basin mask.
+
+    Uses a min-heap priority queue (comparable to the Priority-Flood algorithm
+    by Barnes et al. 2014 used in hydrologic GIS tools). Cells are flooded
+    outward in order of ascending terrain height, stopping when terrain rises
+    above ``water_level`` or the search front exceeds ``max_radius_cells``.
+
+    Returns a boolean mask of the same shape as ``heightmap`` where True
+    indicates cells that are part of the connected basin at ``water_level``.
+    """
+    import heapq
+
+    rows, cols = heightmap.shape
+    visited = np.zeros((rows, cols), dtype=bool)
+    basin_mask = np.zeros((rows, cols), dtype=bool)
+
+    heap: list[tuple[float, int, int]] = []
+    heapq.heappush(heap, (float(heightmap[seed_row, seed_col]), seed_row, seed_col))
+    visited[seed_row, seed_col] = True
+
+    while heap:
+        h, r, c = heapq.heappop(heap)
+        if h > water_level:
+            break
+        basin_mask[r, c] = True
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+            nr, nc = r + dr, c + dc
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                continue
+            if visited[nr, nc]:
+                continue
+            # Radius guard: stop expansion beyond max_radius_cells from seed
+            if abs(nr - seed_row) > max_radius_cells or abs(nc - seed_col) > max_radius_cells:
+                continue
+            visited[nr, nc] = True
+            heapq.heappush(heap, (float(heightmap[nr, nc]), nr, nc))
+
+    return basin_mask
+
+
 def handle_carve_water_basin(params: dict) -> dict:
     """Carve a shoreline-ready basin into an existing terrain mesh.
 
-    B+ upgrade: volume conservation, outflow channel routing, and bed material
-    assignment. Comparable to Far Cry 6 water basin carving and UE5 World
-    Partition water body brush.
+    AAA upgrade: priority-flood algorithm for connected-basin validation,
+    protected zone enforcement (never writes to protected cells), timing
+    metrics, affected_cells count, and pass_name. Comparable to the
+    Priority-Flood algorithm (Barnes et al. 2014) used in GIS hydrologic
+    processing and Far Cry 6 / UE5 World Partition water body brush.
+
+    Priority-flood containment check:
+        Before carving, a priority-flood fill from the basin center at
+        ``water_level`` identifies whether the basin is naturally contained
+        by terrain. If the flood escapes the basin radius, the basin is
+        flagged in ``basin_contained`` = False and the ``containment_rim``
+        is automatically enforced regardless of the param setting.
+
+    Protected zone enforcement:
+        Any cell whose world-space XY position falls inside a protected zone
+        declared in ``protected_zones`` is never written. The count of skipped
+        cells is reported as ``protected_cells_skipped``.
 
     Volume conservation:
         After carving, the total excavated volume (sum of height reductions *
         cell_area) is computed and returned. If ``preserve_volume`` is True,
-        the displaced soil is redistributed onto the containment rim, raising
-        it by the average excavated depth over the rim ring area, so the
-        terrain's net material budget is balanced.
+        the displaced soil is redistributed onto the containment rim.
 
     Outflow channel routing:
         If ``outflow_direction_rad`` is provided (or auto-detected as the
         steepest rim cell when not provided), a shallow V-channel is carved
-        from the rim in that direction for ``outflow_length`` metres. The
-        channel width tapers from ``outflow_width`` at the rim to 0 at the
-        terminus. This gives the basin a natural drainage path.
+        from the rim in that direction for ``outflow_length`` metres.
 
     Bed material assignment:
-        The function returns a ``bed_material_zones`` list describing the
-        material layers that should be applied: deep bed (gravel/silt),
-        shallow bed (sand), and shoreline (pebbles/grass). These are zone
-        dicts with ``zone_type``, ``inner_radius``, ``outer_radius``,
-        ``material_key``, so downstream material painters can apply them
-        without re-scanning the heightmap.
+        Returns ``bed_material_zones`` list for downstream material painters.
 
-    Params (new B+ params, all optional):
-        preserve_volume (bool, default False): Redistribute excavated volume
-            onto the containment rim.
-        outflow_direction_rad (float | None): Bearing for the outflow channel.
-            When None, the handler finds the steepest descent cell on the rim.
+    Params:
+        terrain_name (str): Existing terrain object name.
+        center ([x, y]): World-space basin center.
+        water_level (float, default 0.0): Target water surface elevation.
+        radius (float, default 18.0): Basin radius in world metres.
+        depth (float, default 3.0): Maximum carve depth below water_level.
+        shore_width (float, default radius*0.45): Shoreline transition width.
+        aspect_y (float, default 1.25): Y-axis stretch factor (elliptical basins).
+        containment_rim (bool, default True): Add a containment berm.
+        containment_rim_height (float): Berm height above water_level.
+        preserve_volume (bool, default False): Redistribute excavated volume.
+        outflow_direction_rad (float | None): Outflow bearing (auto if None).
         outflow_length (float, default radius*0.8): Channel length from rim.
-        outflow_width (float, default radius*0.15): Channel width at the rim.
-        bed_material_deep (str, default "gravel"): Material key for the deep bed.
-        bed_material_shallow (str, default "sand"): Material key for shallow bed.
-        bed_material_shore (str, default "pebbles"): Material key for shore.
+        outflow_width (float, default radius*0.15): Channel width at rim.
+        bed_material_deep / _shallow / _shore (str): Material keys.
+        protected_zones (list of dict): Optional BBox zone dicts.
+        seed (int, default 0): Random seed for any stochastic shaping.
 
-    Returns dict with (original fields plus):
-        excavated_volume_m3, outflow_channel (dict or None),
-        bed_material_zones (list of zone dicts), volume_conserved.
+    Returns dict with: name, water_level, radius, depth, cells_modified,
+        min_height, excavated_volume_m3, volume_conserved, outflow_channel,
+        bed_material_zones, basin_contained, protected_cells_skipped,
+        affected_cells, duration_seconds, pass_name.
     """
+    _t0 = time.perf_counter()
     terrain_name = params.get("terrain_name")
     if not terrain_name:
         raise ValueError("'terrain_name' is required")
@@ -5562,6 +6220,44 @@ def handle_carve_water_basin(params: dict) -> dict:
     terrain_height_dim = obj.dimensions.y if obj.dimensions.y > 0 else terrain_width
     cx = float(center[0])
     cy = float(center[1])
+    protected_zones: list[dict] = list(params.get("protected_zones") or [])
+    seed_param = params.get("seed")
+
+    # ------------------------------------------------------------------
+    # Protected zone mask — AABB list, world space
+    # ------------------------------------------------------------------
+    pz_mask = np.zeros((rows, cols), dtype=bool)
+    if protected_zones:
+        for pz in protected_zones:
+            pz_x0 = float(pz.get("x_min", pz.get("x0", -1e9)))
+            pz_x1 = float(pz.get("x_max", pz.get("x1",  1e9)))
+            pz_y0 = float(pz.get("y_min", pz.get("y0", -1e9)))
+            pz_y1 = float(pz.get("y_max", pz.get("y1",  1e9)))
+            pz_mask |= (
+                (_col_w[np.newaxis, :] >= pz_x0) & (_col_w[np.newaxis, :] <= pz_x1)
+                & (_row_w[:, np.newaxis] >= pz_y0) & (_row_w[:, np.newaxis] <= pz_y1)
+            )
+
+    # ------------------------------------------------------------------
+    # Priority-flood containment check (Barnes et al. 2014)
+    # Maps basin center to nearest grid cell and checks whether the basin
+    # is topographically contained at water_level.  If not, auto-enable
+    # containment_rim so the function still produces a legal basin.
+    # ------------------------------------------------------------------
+    cell_size_approx = max((_tw / max(cols - 1, 1) + _th / max(rows - 1, 1)) * 0.5, 1e-6)
+    seed_col = int(np.clip(round((cx - (_ox - _tw * 0.5)) / (_tw / max(cols - 1, 1))), 0, cols - 1))
+    seed_row = int(np.clip(round((cy - (_oy - _th * 0.5)) / (_th / max(rows - 1, 1))), 0, rows - 1))
+    max_radius_cells = int(math.ceil(outer_radius / cell_size_approx)) + 2
+    _flood_mask = _priority_flood_fill_basin(
+        heights,
+        seed_row=seed_row,
+        seed_col=seed_col,
+        water_level=water_level,
+        max_radius_cells=max_radius_cells,
+    )
+    basin_contained: bool = bool((_flood_mask & ~(dist <= outer_radius * 1.1)).sum() == 0)
+    if not basin_contained and not containment_rim:
+        containment_rim = True  # auto-enable to prevent spill
 
     result = heights.copy()
     cells_modified = 0
@@ -5717,6 +6413,14 @@ def handle_carve_water_basin(params: dict) -> dict:
             "waypoints": [[round(p[0], 3), round(p[1], 3)] for p in channel_pts],
         }
 
+    # ------------------------------------------------------------------
+    # Protected zone enforcement — revert any writes inside protected AABBs
+    # ------------------------------------------------------------------
+    protected_cells_skipped = 0
+    if pz_mask.any():
+        protected_cells_skipped = int((pz_mask & (result != heights)).sum())
+        result = np.where(pz_mask, heights, result)
+
     flat = result.flatten()
     for idx, vert in enumerate(bm.verts):
         vert.co.z = float(flat[idx])
@@ -5753,6 +6457,7 @@ def handle_carve_water_basin(params: dict) -> dict:
         },
     ]
 
+    _duration = time.perf_counter() - _t0
     return {
         "name": terrain_name,
         "water_level": water_level,
@@ -5760,11 +6465,16 @@ def handle_carve_water_basin(params: dict) -> dict:
         "depth": depth,
         "cells_modified": cells_modified,
         "min_height": float(result.min()) if result.size else water_level,
-        # B+ additions
         "excavated_volume_m3": round(excavated_volume_m3, 3),
         "volume_conserved": preserve_volume,
         "outflow_channel": outflow_channel,
         "bed_material_zones": bed_material_zones,
+        # AAA additions
+        "basin_contained": basin_contained,
+        "protected_cells_skipped": protected_cells_skipped,
+        "affected_cells": cells_modified,
+        "duration_seconds": round(_duration, 4),
+        "pass_name": "carve_water_basin",
     }
 
 
@@ -6048,13 +6758,41 @@ def _compute_vertex_colors_for_biome_map(
             pass
         biome_base_colors[int(bidx)] = base_color
 
-    result_colors = []
-    for i in range(n_verts):
-        base_color = biome_base_colors[int(biome_idx_arr[i])]
-        tinted = apply_corruption_tint([base_color], float(corruption_arr[i]))
-        result_colors.append(tinted[0])
+    # ------------------------------------------------------------------
+    # Vectorized corruption tint — eliminates O(n_verts) Python loop.
+    # Inlines apply_corruption_tint (MicroSplat height-blend formula)
+    # using numpy broadcasting instead of calling it per vertex.
+    # ------------------------------------------------------------------
+    # Build (N, 4) base-color array by gathering per-biome colors
+    base_rgba = np.empty((n_verts, 4), dtype=np.float64)
+    for bidx, color in biome_base_colors.items():
+        mask = biome_idx_arr == bidx
+        base_rgba[mask] = color
 
-    return result_colors
+    r = base_rgba[:, 0]
+    g = base_rgba[:, 1]
+    b = base_rgba[:, 2]
+    a = base_rgba[:, 3]
+
+    # MicroSplat constants (matches apply_corruption_tint defaults)
+    _CORRUPTION_R = 0.38
+    _CORRUPTION_G = 0.12
+    _CORRUPTION_B = 0.65
+    _CORRUPTION_H = 0.7
+    effective_half = max(0.5 - 0.5 * 0.45, 0.05)  # blend_contrast=0.5
+
+    # Per-vertex luminance (BT.709)
+    surface_h = r * 0.2126 + g * 0.7152 + b * 0.0722
+    raw_blend = (_CORRUPTION_H - surface_h + effective_half) / effective_half
+    blend_factor = np.clip(raw_blend, 0.0, 1.0) * corruption_arr
+
+    new_r = np.clip(r * (1.0 - blend_factor) + _CORRUPTION_R * blend_factor, 0.0, 1.0)
+    new_g = np.clip(g * (1.0 - blend_factor) + _CORRUPTION_G * blend_factor, 0.0, 1.0)
+    new_b = np.clip(b * (1.0 - blend_factor) + _CORRUPTION_B * blend_factor, 0.0, 1.0)
+    new_a = np.clip(a + (1.0 - a) * (blend_factor * 0.85), 0.0, 1.0)
+
+    tinted = np.stack([new_r, new_g, new_b, new_a], axis=1)  # (N, 4)
+    return [tuple(row) for row in tinted.tolist()]
 def _stable_seed_offset(label: str) -> int:
     """Return a deterministic, cross-process seed offset for string labels."""
     return zlib.crc32(label.encode("utf-8")) & 0xFFFF

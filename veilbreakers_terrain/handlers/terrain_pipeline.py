@@ -369,10 +369,46 @@ class TerrainPassController:
         *,
         region: Optional[BBox] = None,
         checkpoint: bool = True,
+        from_pass: Optional[str] = None,
+        dry_run: bool = False,
+        resume_from_checkpoint: Optional[str] = None,
     ) -> List[PassResult]:
-        """Run a sequence of passes in order. Stops on the first failure."""
+        """Run a sequence of passes in order. Stops on the first failure.
+
+        Parameters
+        ----------
+        intent:
+            Optional new intent to replace the current state intent.
+        pass_sequence:
+            Ordered list of pass names to execute.  Defaults to the standard
+            Bundle A sequence when omitted.
+        region:
+            Optional spatial region to scope all passes to.
+        checkpoint:
+            When True (default) a checkpoint is emitted after each successful pass.
+        from_pass:
+            When set, skip all passes in ``pass_sequence`` that appear *before*
+            this name (inclusive start).  Allows partial re-runs from a known
+            good pass without re-executing expensive earlier passes.
+            Raises ``ValueError`` when ``from_pass`` is not in ``pass_sequence``.
+        dry_run:
+            When True, resolve and validate the pass sequence (checking for
+            unknown pass names, protected-zone violations, and missing channel
+            inputs) but do NOT execute any pass functions.  Returns a list of
+            ``PassResult`` stubs with ``status="dry_run"`` and zero duration.
+            Useful for CI pre-flight checks.
+        resume_from_checkpoint:
+            Checkpoint id to restore before starting the sequence.  The
+            controller will call ``rollback_to(resume_from_checkpoint)`` so the
+            mask stack matches the named checkpoint, then execute any passes
+            that come *after* that checkpoint's pass in the sequence.  When
+            combined with ``from_pass``, the latter takes precedence for
+            sequencing and the checkpoint is only used for state restoration.
+        """
+        import logging as _log_run
+        _rlog = _log_run.getLogger(__name__)
+
         if intent is not None:
-            # Replace intent — caller is re-homing state
             self.state.intent = intent
 
         if pass_sequence is None:
@@ -384,6 +420,91 @@ class TerrainPassController:
                 "validation_minimal",
             ]
 
+        # ------------------------------------------------------------------
+        # resume_from_checkpoint: restore state before sequencing
+        # ------------------------------------------------------------------
+        if resume_from_checkpoint is not None:
+            self.rollback_to(resume_from_checkpoint)
+            _rlog.info(
+                "run_pipeline: resumed from checkpoint '%s'",
+                resume_from_checkpoint,
+            )
+            # When no from_pass given, automatically advance past the
+            # checkpoint's pass so we don't re-run completed work.
+            if from_pass is None:
+                restored_ckpt = next(
+                    (c for c in self.state.checkpoints
+                     if c.checkpoint_id == resume_from_checkpoint),
+                    None,
+                )
+                if restored_ckpt is not None:
+                    ckpt_pass = restored_ckpt.pass_name
+                    if ckpt_pass in pass_sequence:
+                        idx = pass_sequence.index(ckpt_pass)
+                        # Start from the pass AFTER the checkpoint's pass
+                        if idx + 1 < len(pass_sequence):
+                            from_pass = pass_sequence[idx + 1]
+
+        # ------------------------------------------------------------------
+        # from_pass: slice the sequence to start at the named pass
+        # ------------------------------------------------------------------
+        if from_pass is not None:
+            if from_pass not in pass_sequence:
+                raise ValueError(
+                    f"run_pipeline: from_pass={from_pass!r} is not in pass_sequence "
+                    f"{pass_sequence}. Valid pass names: {pass_sequence}"
+                )
+            start_idx = pass_sequence.index(from_pass)
+            pass_sequence = pass_sequence[start_idx:]
+            _rlog.info(
+                "run_pipeline: partial re-run starting from pass '%s' (%d/%d passes)",
+                from_pass,
+                len(pass_sequence),
+                len(pass_sequence),
+            )
+
+        # ------------------------------------------------------------------
+        # dry_run: validate without executing
+        # ------------------------------------------------------------------
+        if dry_run:
+            stub_results: List[PassResult] = []
+            for pass_name in pass_sequence:
+                definition = self.get_pass(pass_name)
+                target_bounds = region if region is not None else self.state.intent.region_bounds
+                issues: list = []
+                # Validate protected zones
+                if definition.respects_protected_zones:
+                    try:
+                        self.enforce_protected_zones(pass_name, target_bounds)
+                    except Exception as exc:  # noqa: BLE001
+                        issues.append(str(exc))
+                # Validate channel prerequisites
+                missing_inputs = [
+                    ch for ch in definition.requires_channels
+                    if self.state.mask_stack.get(ch) is None
+                ]
+                if missing_inputs:
+                    issues.append(
+                        f"Missing required channels: {missing_inputs}"
+                    )
+                stub = PassResult(
+                    pass_name=pass_name,
+                    status="dry_run",
+                    duration_seconds=0.0,
+                    metrics={"dry_run": True, "issues": issues},
+                    seed_used=0,
+                )
+                stub_results.append(stub)
+            _rlog.info(
+                "run_pipeline: dry_run complete — %d passes validated, %d with issues",
+                len(stub_results),
+                sum(1 for r in stub_results if r.metrics.get("issues")),
+            )
+            return stub_results
+
+        # ------------------------------------------------------------------
+        # Normal execution
+        # ------------------------------------------------------------------
         results: List[PassResult] = []
         for pass_name in pass_sequence:
             res = self.run_pass(pass_name, region=region, checkpoint=checkpoint)

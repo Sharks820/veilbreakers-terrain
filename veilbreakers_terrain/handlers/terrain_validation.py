@@ -945,6 +945,438 @@ def check_cave_framing_presence(
     return issues
 
 
+def validate_strata_consistency(
+    stack: TerrainMaskStack,
+    intent: TerrainIntentState,
+) -> List[ValidationIssue]:
+    """Validate geological strata layer ordering: oldest (deepest) stratum at bottom.
+
+    In a physically consistent terrain stack, stratum layers must be ordered so
+    that formation age increases with depth.  The ``strata_layers`` channel is
+    expected to be a 3-D array of shape ``(rows, cols, num_layers)`` where layer
+    index 0 is the *surface* (youngest) and index N-1 is the *deepest* (oldest).
+    For each cell the algorithm checks two invariants:
+
+    1. **Monotonic depth increase** — the depth value (if supplied via
+       ``strata_depths`` channel of the same shape) must increase with layer
+       index at every cell.  A reversal indicates a layer was authored
+       upside-down or a deformation pass corrupted the stack order.
+
+    2. **No zero-thickness sandwich** — a layer should not have zero weight
+       (presence = 0) while the layers on both sides of it have non-zero weight.
+       Such a gap creates an artificial stratigraphic unconformity that would
+       produce visible z-fighting seams in the material system.
+
+    When no ``strata_layers`` channel is present the validator returns an info
+    notice so the suite does not fail on stacks that predate the strata pass.
+    """
+    issues: List[ValidationIssue] = []
+
+    strata = _safe_asarray(stack.get("strata_layers"))
+    if strata is None:
+        issues.append(
+            ValidationIssue(
+                code="STRATA_CHANNEL_ABSENT",
+                severity="info",
+                message=(
+                    "strata_layers channel not populated — skipping strata "
+                    "consistency check (run strata pass before validation)"
+                ),
+            )
+        )
+        return issues
+
+    if strata.ndim != 3 or strata.shape[2] < 2:
+        issues.append(
+            ValidationIssue(
+                code="STRATA_BAD_SHAPE",
+                severity="hard",
+                message=(
+                    f"strata_layers must be 3-D (rows, cols, num_layers>=2); "
+                    f"got shape {strata.shape}"
+                ),
+            )
+        )
+        return issues
+
+    num_layers = strata.shape[2]
+
+    # -----------------------------------------------------------------------
+    # Check 1: depth ordering — strata_depths must increase with layer index.
+    # -----------------------------------------------------------------------
+    strata_depths = _safe_asarray(stack.get("strata_depths"))
+    if strata_depths is not None:
+        if strata_depths.shape != strata.shape:
+            issues.append(
+                ValidationIssue(
+                    code="STRATA_DEPTHS_SHAPE_MISMATCH",
+                    severity="hard",
+                    message=(
+                        f"strata_depths shape {strata_depths.shape} does not match "
+                        f"strata_layers shape {strata.shape}"
+                    ),
+                )
+            )
+        else:
+            # For each cell, check that depth[..., i+1] >= depth[..., i]
+            # (deepest = largest depth value = oldest = highest layer index)
+            bad_inversions = 0
+            for i in range(num_layers - 1):
+                inverted = strata_depths[..., i + 1] < strata_depths[..., i] - 1e-6
+                bad_inversions += int(inverted.sum())
+
+            if bad_inversions > 0:
+                total_cells = int(strata_depths.shape[0] * strata_depths.shape[1])
+                pct = bad_inversions / max(total_cells * (num_layers - 1), 1) * 100.0
+                issues.append(
+                    ValidationIssue(
+                        code="STRATA_DEPTH_ORDER_INVERTED",
+                        severity="hard",
+                        message=(
+                            f"strata_depths has {bad_inversions} depth-order inversions "
+                            f"({pct:.1f}% of cell-layer pairs) — deepest layer must have "
+                            f"the largest depth value (oldest = deepest)"
+                        ),
+                        remediation=(
+                            "Reverse the layer index ordering so strata_layers[..., 0] "
+                            "is the youngest (surface) and strata_layers[..., -1] is "
+                            "the oldest (deepest)."
+                        ),
+                    )
+                )
+
+    # -----------------------------------------------------------------------
+    # Check 2: no zero-thickness sandwich (absent layer surrounded by present).
+    # -----------------------------------------------------------------------
+    # A layer is "present" at a cell if its weight > 0.01.
+    present = strata > 0.01  # (rows, cols, num_layers) bool
+
+    sandwich_count = 0
+    for i in range(1, num_layers - 1):
+        # Layer i absent, but layers i-1 and i+1 both present
+        sandwiched = (~present[..., i]) & present[..., i - 1] & present[..., i + 1]
+        sandwich_count += int(sandwiched.sum())
+
+    if sandwich_count > 0:
+        issues.append(
+            ValidationIssue(
+                code="STRATA_ZERO_THICKNESS_SANDWICH",
+                severity="soft",
+                message=(
+                    f"{sandwich_count} cells have a zero-weight (absent) layer "
+                    f"sandwiched between two present layers — indicates a "
+                    f"stratigraphic unconformity gap that may cause z-fighting"
+                ),
+                remediation=(
+                    "Fill thin strata layers with a small minimum weight (>0.01) "
+                    "or merge the flanking layers."
+                ),
+            )
+        )
+
+    return issues
+
+
+def validate_glacial_plausibility(
+    stack: TerrainMaskStack,
+    intent: TerrainIntentState,
+    *,
+    glacial_min_altitude_m: float = 1500.0,
+    glacial_max_latitude_deg: float = 70.0,
+    polar_latitude_threshold_deg: float = 50.0,
+    sea_level_altitude_m: float = 0.0,
+) -> List[ValidationIssue]:
+    """Validate that glacial terrain features are plausible given latitude and altitude.
+
+    Glaciers and ice formations require either high altitude (above the glacial
+    equilibrium line — typically ~1500 m in temperate zones) or high latitude
+    (above ~50–70°N/S where glacial conditions persist at lower elevation).
+    The validator checks two constraints:
+
+    1. **Altitude constraint** — if a ``glacial_extent`` or ``glacier_mask``
+       channel is present with non-zero values, and the median elevation of
+       those cells is below ``glacial_min_altitude_m``, AND the tile latitude
+       (from ``intent.composition_hints['latitude_deg']``) is below
+       ``polar_latitude_threshold_deg``, then the glacial feature is implausible
+       (tropical or temperate lowland glacier).
+
+    2. **Latitude constraint** — glacial_extent cells must not appear in
+       equatorial zones (|latitude| < 10°) at any altitude below 4000 m.
+       Equatorial glaciers exist only above 4000 m (e.g. Rwenzori, Kilimanjaro).
+
+    When neither channel is present the validator returns an info notice and
+    exits cleanly — this validator is opt-in for tiles that include glacial passes.
+    """
+    issues: List[ValidationIssue] = []
+
+    # Find the glacial mask channel (accept either name)
+    glacial = None
+    for _ch in ("glacial_extent", "glacier_mask", "glacial_mask"):
+        glacial = _safe_asarray(stack.get(_ch))
+        if glacial is not None:
+            break
+
+    if glacial is None:
+        issues.append(
+            ValidationIssue(
+                code="GLACIAL_CHANNEL_ABSENT",
+                severity="info",
+                message=(
+                    "no glacial_extent / glacier_mask channel found — "
+                    "skipping glacial plausibility check"
+                ),
+            )
+        )
+        return issues
+
+    if not np.any(glacial > 0):
+        return issues  # channel present but empty — nothing to check
+
+    h = _safe_asarray(stack.height)
+    if h is None or h.ndim != 2:
+        return issues
+
+    # Latitude from intent composition_hints (degrees, signed: +N / -S)
+    latitude_deg = float(
+        intent.composition_hints.get("latitude_deg", float("nan"))
+    )
+    has_latitude = math.isfinite(latitude_deg)
+
+    # Cells with glacial extent > 0
+    glacial_cells = glacial > 0
+    if h.shape == glacial.shape:
+        glacial_heights = h[glacial_cells]
+    else:
+        glacial_heights = h.flatten()  # shape mismatch fallback
+
+    if glacial_heights.size == 0:
+        return issues
+
+    median_glacial_alt = float(np.median(glacial_heights))
+
+    # ------------------------------------------------------------------
+    # Constraint 1: temperate / tropical altitude check
+    # ------------------------------------------------------------------
+    if has_latitude:
+        abs_lat = abs(latitude_deg)
+        if abs_lat < polar_latitude_threshold_deg:
+            # Temperate / tropical zone: glaciers need high altitude
+            if median_glacial_alt < glacial_min_altitude_m:
+                issues.append(
+                    ValidationIssue(
+                        code="GLACIAL_TOO_LOW_FOR_LATITUDE",
+                        severity="hard",
+                        message=(
+                            f"glacial features at median altitude {median_glacial_alt:.0f} m "
+                            f"with latitude {latitude_deg:.1f}° — implausible; glaciers "
+                            f"in temperate/tropical zones require altitude "
+                            f">= {glacial_min_altitude_m:.0f} m "
+                            f"(or latitude >= {polar_latitude_threshold_deg:.0f}°)"
+                        ),
+                        remediation=(
+                            "Move glacial extent to high-altitude cells, set a higher "
+                            "latitude in composition_hints['latitude_deg'], or remove "
+                            "the glacial_extent mask from lowland tiles."
+                        ),
+                    )
+                )
+
+        # ------------------------------------------------------------------
+        # Constraint 2: equatorial check — very strict altitude floor
+        # ------------------------------------------------------------------
+        EQUATORIAL_LAT_THRESHOLD = 10.0
+        EQUATORIAL_GLACIER_ALT_M = 4000.0
+        if abs_lat < EQUATORIAL_LAT_THRESHOLD:
+            low_equatorial = glacial_cells & (h < EQUATORIAL_GLACIER_ALT_M)
+            if h.shape == glacial.shape:
+                bad_count = int(low_equatorial.sum())
+            else:
+                bad_count = 0
+            if bad_count > 0:
+                issues.append(
+                    ValidationIssue(
+                        code="GLACIAL_EQUATORIAL_TOO_LOW",
+                        severity="hard",
+                        message=(
+                            f"{bad_count} glacial cells in equatorial zone "
+                            f"(latitude={latitude_deg:.1f}°) are below "
+                            f"{EQUATORIAL_GLACIER_ALT_M:.0f} m — equatorial glaciers "
+                            f"only exist above ~4000 m (Rwenzori / Kilimanjaro type)"
+                        ),
+                        remediation=(
+                            "Raise equatorial glacial features above 4000 m or "
+                            "remove the glacial mask from this equatorial tile."
+                        ),
+                    )
+                )
+    else:
+        # No latitude available: check only that altitude is not obviously wrong
+        # (glaciers below 500 m with no latitude context is always suspicious)
+        SUSPICIOUS_LOW_ALT = 500.0
+        if median_glacial_alt < SUSPICIOUS_LOW_ALT:
+            issues.append(
+                ValidationIssue(
+                    code="GLACIAL_SUSPICIOUS_LOW_ALTITUDE",
+                    severity="soft",
+                    message=(
+                        f"glacial features at median altitude {median_glacial_alt:.0f} m "
+                        f"(below {SUSPICIOUS_LOW_ALT:.0f} m) without latitude context — "
+                        f"may be implausible; set composition_hints['latitude_deg'] "
+                        f"for a full plausibility check"
+                    ),
+                )
+            )
+
+    return issues
+
+
+def validate_karst_plausibility(
+    stack: TerrainMaskStack,
+    intent: TerrainIntentState,
+    *,
+    limestone_proxy_min: float = 0.3,
+) -> List[ValidationIssue]:
+    """Validate karst terrain features against a limestone / soluble rock proxy.
+
+    Karst topography (sinkholes, caves, dolines, dry valleys) can only form in
+    soluble rock — overwhelmingly limestone or dolomite, occasionally evaporites
+    (gypsum / halite) or basalt where CO₂-rich water acts as weak acid.
+
+    The validator looks for a ``limestone_proxy`` channel (float [0, 1] where 1
+    = pure limestone, 0 = siliceous / igneous bedrock), a ``lithology`` label
+    channel, or a material-hint from ``intent.composition_hints``.  It then
+    checks:
+
+    1. **Karst features require soluble substrate** — cells carrying a
+       ``cave_candidate``, ``karst_doline``, or ``sinkhole_mask`` must have
+       ``limestone_proxy >= limestone_proxy_min`` (default 0.3 = at least 30%
+       soluble fraction).  Pure granite / basalt karst is scientifically invalid.
+
+    2. **Limestone proxy completeness** — if karst features exist but no proxy
+       channel is present, emit a soft warning asking the author to provide one.
+       Do not hard-fail so early pipeline stages (where the proxy pass hasn't
+       run yet) are not blocked.
+
+    3. **Material hint consistency** — if ``intent.composition_hints['lithology']``
+       is ``"granite"`` or ``"basalt"`` but cave/sinkhole features exist, flag
+       the contradiction as a hard error regardless of whether a numeric proxy
+       is present.
+    """
+    issues: List[ValidationIssue] = []
+
+    # Collect karst feature masks (accept any of these names)
+    karst_masks: Dict[str, Optional[np.ndarray]] = {}
+    for _ch in ("cave_candidate", "karst_doline", "sinkhole_mask"):
+        _arr = _safe_asarray(stack.get(_ch))
+        if _arr is not None and np.any(_arr > 0):
+            karst_masks[_ch] = _arr
+
+    if not karst_masks:
+        # No karst features present — nothing to validate
+        return issues
+
+    # ------------------------------------------------------------------
+    # Check 3: material hint contradiction (hard fail, no numeric proxy needed)
+    # ------------------------------------------------------------------
+    lithology_hint = str(
+        intent.composition_hints.get("lithology", "")
+    ).lower().strip()
+    NON_KARST_ROCK = {"granite", "basalt", "sandstone", "quartzite", "schist"}
+    if lithology_hint in NON_KARST_ROCK:
+        for ch_name in karst_masks:
+            issues.append(
+                ValidationIssue(
+                    code="KARST_INCOMPATIBLE_LITHOLOGY",
+                    severity="hard",
+                    affected_feature=ch_name,
+                    message=(
+                        f"karst feature '{ch_name}' exists but lithology hint is "
+                        f"'{lithology_hint}' — karst cannot form in non-soluble rock; "
+                        f"limestone, dolomite, or evaporite substrate is required"
+                    ),
+                    remediation=(
+                        "Change lithology to 'limestone' / 'dolomite' / 'evaporite', "
+                        "or remove the karst feature masks from this tile."
+                    ),
+                )
+            )
+        # Return early: lithology contradiction is definitive, no need for proxy check
+        return issues
+
+    # ------------------------------------------------------------------
+    # Check 1 + 2: limestone proxy presence and per-cell threshold
+    # ------------------------------------------------------------------
+    proxy = _safe_asarray(stack.get("limestone_proxy"))
+
+    if proxy is None:
+        # Soft warning only — proxy pass may not have run yet
+        issues.append(
+            ValidationIssue(
+                code="KARST_NO_LIMESTONE_PROXY",
+                severity="soft",
+                message=(
+                    f"karst features ({', '.join(karst_masks)}) present but "
+                    f"no limestone_proxy channel found — cannot verify soluble "
+                    f"substrate; run the lithology pass before validation for a "
+                    f"full plausibility check"
+                ),
+                remediation=(
+                    "Populate the 'limestone_proxy' channel (float [0,1]) with "
+                    "the fractional soluble-rock coverage per cell."
+                ),
+            )
+        )
+        return issues
+
+    if proxy.ndim != 2:
+        issues.append(
+            ValidationIssue(
+                code="KARST_PROXY_BAD_SHAPE",
+                severity="hard",
+                message=(
+                    f"limestone_proxy must be 2-D (rows, cols); got shape {proxy.shape}"
+                ),
+            )
+        )
+        return issues
+
+    # Check each karst mask for cells below the proxy threshold
+    for ch_name, karst_arr in karst_masks.items():
+        if karst_arr is None or proxy.shape != karst_arr.shape:
+            continue
+
+        karst_bool = karst_arr > 0
+        proxy_at_karst = proxy[karst_bool]
+        if proxy_at_karst.size == 0:
+            continue
+
+        # Cells where karst exists but proxy is below minimum solubility
+        insufficient = proxy_at_karst < limestone_proxy_min
+        bad_count = int(insufficient.sum())
+        if bad_count > 0:
+            total_karst = int(karst_bool.sum())
+            pct = bad_count / max(total_karst, 1) * 100.0
+            issues.append(
+                ValidationIssue(
+                    code="KARST_INSUFFICIENT_LIMESTONE_PROXY",
+                    severity="hard",
+                    affected_feature=ch_name,
+                    message=(
+                        f"karst feature '{ch_name}' has {bad_count}/{total_karst} cells "
+                        f"({pct:.1f}%) with limestone_proxy < {limestone_proxy_min:.2f} "
+                        f"— insufficient soluble-rock fraction for karst formation"
+                    ),
+                    remediation=(
+                        f"Raise limestone_proxy to >= {limestone_proxy_min:.2f} in "
+                        f"karst-feature cells, or remove the karst mask from "
+                        f"igneous/metamorphic substrate areas."
+                    ),
+                )
+            )
+
+    return issues
+
+
 def check_focal_composition(
     stack: TerrainMaskStack,
     intent: Optional["TerrainIntentState"] = None,
@@ -1119,6 +1551,10 @@ DEFAULT_VALIDATORS: Tuple[
     ("validate_channel_dtypes", validate_channel_dtypes),
     ("validate_unity_export_ready", validate_unity_export_ready),
     ("readability_audit", _readability_audit_validator),
+    # Geological plausibility validators (R9 additions)
+    ("validate_strata_consistency", validate_strata_consistency),
+    ("validate_glacial_plausibility", validate_glacial_plausibility),
+    ("validate_karst_plausibility", validate_karst_plausibility),
 )
 
 
@@ -1292,6 +1728,10 @@ __all__ = [
     "validate_material_coverage",
     "validate_channel_dtypes",
     "validate_unity_export_ready",
+    # Geological plausibility validators (R9 additions)
+    "validate_strata_consistency",
+    "validate_glacial_plausibility",
+    "validate_karst_plausibility",
     "run_validation_suite",
     "pass_validation_full",
     "register_bundle_d_passes",

@@ -145,12 +145,30 @@ def compute_silhouette_importance(
     faces: list[tuple[int, ...]],
     view_directions: list[tuple[float, float, float]] | None = None,
 ) -> list[float]:
-    """Compute per-vertex silhouette importance weights.
+    """Compute per-vertex silhouette importance weights using view-dependent
+    normal deviation scoring.
 
-    Vertices on the outline (shared by front-facing and back-facing triangles)
-    receive HIGH importance. Interior vertices receive LOW importance.
+    Each vertex accumulates importance from two complementary signals:
 
-    Multiple view directions are sampled to produce a robust importance score.
+    1. **Silhouette edge detection** — edges shared by one front-facing and one
+       back-facing triangle are silhouette edges for that view direction.
+       Vertices on these edges receive a binary +1 hit per view.
+
+    2. **View-dependent normal deviation** (primary AAA signal) — for each
+       edge, the absolute dot product of the two adjacent face normals with the
+       view direction difference is computed.  Edges where the two normals
+       deviate strongly *relative to the view direction* (i.e. one faces toward
+       the camera and one faces away by a large angular difference) get a
+       continuous deviation score in [0, 1] added on top of the binary hit.
+       This preserves subtle silhouette ridges that binary front/back
+       classification would miss at grazing view angles.
+
+    The combined score per vertex is:
+
+        score[v] += (binary_silhouette_hit + normal_deviation_score) / num_views
+
+    normalised to [0, 1] at the end.  Boundary edges (single incident face)
+    always receive full weight regardless of view direction.
 
     Args:
         vertices: List of vertex positions (x, y, z).
@@ -194,25 +212,50 @@ def compute_silhouette_importance(
                 edge_faces[edge_key] = []
             edge_faces[edge_key].append(fi)
 
-    # Accumulate silhouette score per vertex across all view directions
+    # Accumulate importance score per vertex across all view directions
     silhouette_scores = [0.0] * num_verts
+    num_views = max(len(view_directions), 1)
 
     for view_dir in view_directions:
-        # Classify faces as front or back for this view direction
-        face_front = [_dot(fn, view_dir) > 0.0 for fn in face_normals]
+        # Project each face normal onto the view direction
+        face_ndotv = [_dot(fn, view_dir) for fn in face_normals]
+        # Binary front/back classification
+        face_front = [d > 0.0 for d in face_ndotv]
 
-        # An edge is a silhouette edge if its two adjacent faces disagree
         for (v_a, v_b), adj_faces in edge_faces.items():
             if len(adj_faces) == 1:
-                # Boundary edge: always a silhouette edge
+                # Boundary edge: full weight regardless of view
                 silhouette_scores[v_a] += 1.0
                 silhouette_scores[v_b] += 1.0
-            elif len(adj_faces) >= 2:
-                has_front = any(face_front[fi] for fi in adj_faces)
-                has_back = any(not face_front[fi] for fi in adj_faces)
-                if has_front and has_back:
-                    silhouette_scores[v_a] += 1.0
-                    silhouette_scores[v_b] += 1.0
+                continue
+
+            if len(adj_faces) < 2:
+                continue
+
+            fi0, fi1 = adj_faces[0], adj_faces[1]
+            d0 = face_ndotv[fi0]
+            d1 = face_ndotv[fi1]
+            is_front0 = face_front[fi0]
+            is_front1 = face_front[fi1]
+
+            # Binary silhouette hit: one face front, one back
+            binary_hit = 1.0 if (is_front0 != is_front1) else 0.0
+
+            # View-dependent normal deviation score: measures how differently
+            # the two normals project onto the view direction.  A large
+            # signed-dot difference means the edge straddles the silhouette
+            # contour even when neither face is perfectly back-facing.
+            #   deviation = |d0 - d1| / 2   maps to [0, 1]
+            # This catches near-silhouette ridges at grazing angles that
+            # binary classification would rate as "both front-facing" and
+            # wrongly allow to collapse.
+            normal_deviation = abs(d0 - d1) * 0.5  # [0, 1]
+
+            edge_score = binary_hit + normal_deviation  # [0, 2]
+
+            if edge_score > 0.0:
+                silhouette_scores[v_a] += edge_score / num_views
+                silhouette_scores[v_b] += edge_score / num_views
 
     # Normalize to [0, 1]
     max_score = max(silhouette_scores) if silhouette_scores else 1.0
@@ -231,18 +274,44 @@ def compute_region_importance(
     vertices: list[tuple[float, float, float]],
     faces: list[tuple[int, ...]],
     regions: dict[str, set[int]],
+    spawn_points: list[tuple[float, float, float]] | None = None,
+    spawn_radius: float = 5.0,
+    spawn_importance: float = 1.0,
 ) -> list[float]:
-    """Compute per-vertex importance boost from named preserve regions.
+    """Compute per-vertex importance boost from named preserve regions and
+    player spawn points.
+
+    Vertices receive importance from two sources that are max-merged:
+
+    1. **Named regions** — vertices in any region set get full importance
+       (1.0). Region names map to pre-computed vertex index sets supplied by
+       the caller (e.g. from ``_auto_detect_regions``).
+
+    2. **Player spawn points** — vertices within ``spawn_radius`` world-units
+       of any spawn point receive ``spawn_importance`` weight. Spawn proximity
+       is critical for LOD: geometry near a spawn must stay at high detail
+       because the player sees it from close range immediately on load, before
+       any streaming LOD transition can occur.  A flat falloff from
+       ``spawn_importance`` at distance 0 to 0 at ``spawn_radius`` is used
+       so vertices right at the spawn are fully preserved.
 
     Args:
-        vertices: List of vertex positions.
+        vertices: List of vertex positions (x, y, z).
         faces: List of face tuples (unused but kept for API consistency).
         regions: Maps region names to sets of vertex indices.
             e.g., {"face": {0, 1, 2, ...}, "hands": {50, 51, ...}}
+        spawn_points: Optional list of player spawn positions (x, y, z) in the
+            same coordinate space as ``vertices``. When provided, vertices near
+            any spawn point receive elevated importance to prevent LOD popping
+            on player entry.  None = no spawn-based boost.
+        spawn_radius: World-unit radius around each spawn point within which
+            vertices receive importance boost. Default 5.0 units.
+        spawn_importance: Maximum importance weight assigned to vertices at
+            spawn distance 0. Linearly falls off to 0 at ``spawn_radius``.
+            Default 1.0 (same as named-region importance).
 
     Returns:
         List of importance weights, one per vertex, in range [0.0, 1.0].
-        Vertices in named regions get 1.0; others get 0.0.
     """
     num_verts = len(vertices)
     if not vertices:
@@ -250,10 +319,27 @@ def compute_region_importance(
 
     importance = [0.0] * num_verts
 
+    # Named-region importance (binary: in region → 1.0)
     for _region_name, vertex_indices in regions.items():
         for vi in vertex_indices:
             if 0 <= vi < num_verts:
                 importance[vi] = 1.0
+
+    # Player spawn-point proximity importance
+    if spawn_points:
+        r = max(spawn_radius, 1e-6)
+        imp_max = float(spawn_importance)
+        for vi, vpos in enumerate(vertices):
+            vx, vy, vz = vpos
+            for sp in spawn_points:
+                sx, sy, sz = float(sp[0]), float(sp[1]), float(sp[2])
+                dist = math.sqrt(
+                    (vx - sx) ** 2 + (vy - sy) ** 2 + (vz - sz) ** 2
+                )
+                if dist < r:
+                    # Linear falloff: 1.0 at dist=0, 0.0 at dist=r
+                    spawn_w = imp_max * max(0.0, 1.0 - dist / r)
+                    importance[vi] = max(importance[vi], spawn_w)
 
     return importance
 

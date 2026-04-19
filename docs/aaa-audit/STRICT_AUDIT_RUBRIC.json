@@ -1,0 +1,181 @@
+{
+  "schema_version": "2026-04-19.v1",
+  "name": "strict_grade_audit_rubric",
+  "target_artifact": "docs/aaa-audit/GRADES_VERIFIED.csv",
+  "claim_precedence": [
+    "R9 Phase7-14 Consensus",
+    "R8 Deep Dive Verdict",
+    "R7 MCP Verdict",
+    "FINAL GRADE",
+    "R6 Opus 4.7 wave-2 Grade",
+    "R5 Opus 4.7 Grade",
+    "R4 Grade",
+    "R3 Grade",
+    "R2 Verified Grade",
+    "R1 Consensus"
+  ],
+  "non_gradable_values": [
+    "",
+    "N/A",
+    "N/A (SCOPE)",
+    "SCOPE_EXEMPT"
+  ],
+  "grade_scale": {
+    "A": 4.0,
+    "A-": 3.7,
+    "B+": 3.3,
+    "B": 3.0,
+    "B-": 2.7,
+    "C+": 2.3,
+    "C": 2.0,
+    "C-": 1.7,
+    "D+": 1.3,
+    "D": 1.0,
+    "F": 0.0
+  },
+  "grade_cutoffs": [
+    { "grade": "A", "min_score": 3.85 },
+    { "grade": "A-", "min_score": 3.5 },
+    { "grade": "B+", "min_score": 3.15 },
+    { "grade": "B", "min_score": 2.85 },
+    { "grade": "B-", "min_score": 2.5 },
+    { "grade": "C+", "min_score": 2.15 },
+    { "grade": "C", "min_score": 1.85 },
+    { "grade": "C-", "min_score": 1.5 },
+    { "grade": "D+", "min_score": 1.15 },
+    { "grade": "D", "min_score": 0.5 },
+    { "grade": "F", "min_score": 0.0 }
+  ],
+  "adjustments": {
+    "claim_recency": {
+      "CLAIM_R9": 0.0,
+      "CLAIM_R8": -0.05,
+      "CLAIM_R7": -0.1,
+      "CLAIM_FINAL_ONLY": -0.15,
+      "CLAIM_R6_OR_OLDER": -0.25
+    },
+    "test_strength": {
+      "TEST_STRONG": 0.0,
+      "TEST_MEDIUM": -0.15,
+      "TEST_WEAK": -0.45,
+      "TEST_NONE": -0.75
+    },
+    "pipeline_wiring": {
+      "PIPE_ACTIVE": 0.0,
+      "PIPE_OPTIONAL": -0.2,
+      "PIPE_PARTIAL": -0.45,
+      "PIPE_DEAD_OR_SHADOWED": -0.85,
+      "PIPE_CONTRACT_MISMATCH": -0.4
+    },
+    "public_exposure": {
+      "PUBLIC_PRIMARY": 0.0,
+      "PUBLIC_HELPER_ONLY": -0.05,
+      "PUBLIC_INTERNAL_ONLY": -0.1,
+      "PUBLIC_LEGACY_ONLY": -0.25
+    },
+    "failure_evidence": {
+      "FAIL_NONE": 0.0,
+      "FAIL_TRANSITIVE_MODULE": -0.25,
+      "FAIL_NUMERIC_STABILITY": -0.6,
+      "FAIL_PERF_MODERATE": -0.35,
+      "FAIL_PERF_SEVERE": -0.7,
+      "FAIL_API_DRIFT": -0.7,
+      "FAIL_OUTPUT_IO": -0.7,
+      "FAIL_DIRECT_BEHAVIOR": -0.85,
+      "FAIL_CONTRACT_CHANNEL": -0.85,
+      "FAIL_IMPORT_BOOTSTRAP": -1.0
+    }
+  },
+  "failure_penalty_cap": -1.5,
+  "grade_caps": [
+    {
+      "if_any": ["FAIL_IMPORT_BOOTSTRAP", "FAIL_CONTRACT_CHANNEL"],
+      "max_grade": "C"
+    },
+    {
+      "if_any": ["FAIL_DIRECT_BEHAVIOR", "FAIL_API_DRIFT", "FAIL_OUTPUT_IO"],
+      "max_grade": "C+"
+    },
+    {
+      "if_any": ["FAIL_PERF_SEVERE"],
+      "max_grade": "B-"
+    },
+    {
+      "if_any": ["PIPE_DEAD_OR_SHADOWED"],
+      "max_grade": "B"
+    },
+    {
+      "if_all": ["TEST_NONE", "PUBLIC_INTERNAL_ONLY"],
+      "max_grade": "C+"
+    },
+    {
+      "if_all": ["TEST_WEAK", "PIPE_PARTIAL"],
+      "max_grade": "B-"
+    }
+  ],
+  "evidence_flags": {
+    "CLAIM_R9": "Latest claim comes from R9.",
+    "CLAIM_R8": "Latest claim comes from R8.",
+    "CLAIM_R7": "Latest claim comes from R7.",
+    "CLAIM_FINAL_ONLY": "Latest claim comes from FINAL GRADE with no newer R7-R9 override.",
+    "CLAIM_R6_OR_OLDER": "No post-FINAL claim exists; score is based on older rounds only.",
+    "TEST_STRONG": "Direct behavioral or integration evidence tied to the shipped path.",
+    "TEST_MEDIUM": "Reasonable direct tests, but narrow or incomplete.",
+    "TEST_WEAK": "Smoke, shape-only, source-grep, or MagicMock-heavy evidence.",
+    "TEST_NONE": "No meaningful direct or transitive test evidence located.",
+    "PIPE_ACTIVE": "Reachable in the active runtime path.",
+    "PIPE_OPTIONAL": "Reachable only with feature flags or optional dependencies.",
+    "PIPE_PARTIAL": "Implemented and referenced, but not on the default or primary path.",
+    "PIPE_DEAD_OR_SHADOWED": "Not meaningfully reachable on current HEAD, or shadowed by another implementation.",
+    "PIPE_CONTRACT_MISMATCH": "Current code violates mask-stack, registrar, or pass contract expectations.",
+    "PUBLIC_PRIMARY": "Public command handler, stable API, or runtime-facing handle function.",
+    "PUBLIC_HELPER_ONLY": "Private helper called by a public entrypoint.",
+    "PUBLIC_INTERNAL_ONLY": "Internal helper with no public reachability.",
+    "PUBLIC_LEGACY_ONLY": "Deprecated or compatibility-only public surface.",
+    "FAIL_NONE": "No current failing-test evidence mapped to the row.",
+    "FAIL_TRANSITIVE_MODULE": "Module is failing, but evidence is not directly attributed to this function.",
+    "FAIL_NUMERIC_STABILITY": "Current HEAD shows NaN, invalid math, or broken numeric invariants.",
+    "FAIL_PERF_MODERATE": "Current HEAD misses a declared performance budget by 2x-10x.",
+    "FAIL_PERF_SEVERE": "Current HEAD misses a declared performance budget by >10x.",
+    "FAIL_API_DRIFT": "Current HEAD breaks an expected return shape, type, or public contract.",
+    "FAIL_OUTPUT_IO": "Current HEAD fails to write or read a promised artifact.",
+    "FAIL_DIRECT_BEHAVIOR": "Current HEAD fails a behavior test directly tied to this function or its immediate module path.",
+    "FAIL_CONTRACT_CHANNEL": "Current HEAD fails due to channel production/consumption mismatch.",
+    "FAIL_IMPORT_BOOTSTRAP": "Current HEAD cannot import or collect the module cleanly on the supported environment.",
+    "CSV_STALE_ROW": "CSV row references code that no longer exists or no longer matches the live function.",
+    "CSV_MISSING_ROW": "Callable exists in code but is missing from the CSV ledger.",
+    "SCOPE_EXEMPT": "Row is outside the active terrain audit scope."
+  },
+  "artifact_fields": [
+    "row_id",
+    "file",
+    "function",
+    "claim_grade",
+    "claim_source",
+    "claim_score",
+    "claim_recency_flag",
+    "test_strength",
+    "pipeline_wiring",
+    "public_exposure",
+    "failure_flags",
+    "adjustment_total",
+    "verified_score_pre_cap",
+    "grade_cap",
+    "verified_ship_score",
+    "verified_ship_grade",
+    "confidence_band",
+    "evidence_flags",
+    "notes"
+  ],
+  "formula": {
+    "base_score": "score(claim_grade)",
+    "failure_adjustment": "max(sum(failure_flag_adjustments), failure_penalty_cap)",
+    "verified_score_pre_cap": "clamp(base_score + claim_recency_adjustment + test_adjustment + pipeline_adjustment + public_adjustment + failure_adjustment, 0.0, 4.0)",
+    "verified_ship_grade": "score_to_grade(min(verified_score_pre_cap, grade_cap_if_any))"
+  },
+  "confidence_bands": {
+    "high": "Strong tests, active wiring, and no live failure flags.",
+    "medium": "Mixed evidence, partial wiring, or only medium tests.",
+    "low": "Weak/no tests, partial/dead wiring, or any live failure flag."
+  }
+}

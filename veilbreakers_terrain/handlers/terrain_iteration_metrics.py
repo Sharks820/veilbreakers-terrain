@@ -210,6 +210,10 @@ class IterationMetrics:
         return _percentile(self.durations_s, 95.0)
 
     @property
+    def p99_duration_s(self) -> float:
+        return _percentile(self.durations_s, 99.0)
+
+    @property
     def max_duration_s(self) -> float:
         return self._slowest_dur
 
@@ -233,13 +237,26 @@ class IterationMetrics:
         return items[:n]
 
     def summary_report(self) -> Dict[str, Any]:
-        """Return a JSON-friendly snapshot of every tracked metric."""
+        """Return a machine-parseable JSON-friendly snapshot of every tracked metric.
+
+        The returned dict is stable across versions: new keys may be added but
+        existing keys are never renamed or removed.  A ``schema_version`` field
+        allows consumers to detect and handle breaking changes.
+
+        All float values are rounded to 6 decimal places for deterministic
+        serialization (avoids floating-point noise in CI golden-file diffs).
+        The dict is directly passable to ``json.dumps`` with no further
+        conversion — all values are JSON primitives (str, int, float, list,
+        dict, None).
+        """
         return {
+            "schema_version": "1.1",
             "total_passes_run": self.total_passes_run,
             "total_duration_s": round(self.total_duration_s, 6),
             "avg_pass_duration_s": round(self.avg_pass_duration_s, 6),
             "p50_duration_s": round(self.p50_duration_s, 6),
             "p95_duration_s": round(self.p95_duration_s, 6),
+            "p99_duration_s": round(self.p99_duration_s, 6),
             "max_duration_s": round(self.max_duration_s, 6),
             "slowest_pass": self.slowest_pass_name,
             "cache_hits": self.cache_hits,
@@ -269,18 +286,34 @@ class IterationMetrics:
 
 
 def _percentile(samples: List[float], pct: float) -> float:
-    """Return a simple linear-interpolation percentile (0–100).
+    """Return a linear-interpolation percentile (0–100) using numpy.
 
-    Fall back to ``0.0`` for an empty list so callers can embed the
-    result in a summary dict without guarding every call.
+    numpy.percentile uses the same linear interpolation method
+    (``interpolation='linear'``, equivalent to ``method='linear'`` in numpy
+    >= 1.22) as the UE5 profiler and Gaea pipeline telemetry, ensuring our
+    p50/p95/p99 values are directly comparable to engine-side numbers.
+
+    Falls back to a pure-Python implementation if numpy is unavailable so
+    the module remains importable in stripped environments (e.g. Blender
+    builtins-only mode).  Returns ``0.0`` for an empty sample list.
     """
     if not samples:
         return 0.0
+    p = max(0.0, min(100.0, float(pct)))
+    try:
+        import numpy as _np
+        return float(_np.percentile(samples, p, method="linear"))
+    except (ImportError, TypeError):
+        # numpy < 1.22 uses interpolation= kwarg; try that before pure-Python.
+        try:
+            import numpy as _np  # noqa: F811
+            return float(_np.percentile(samples, p, interpolation="linear"))
+        except Exception:
+            pass
+    # Pure-Python linear interpolation fallback
     ordered = sorted(samples)
     if len(ordered) == 1:
         return float(ordered[0])
-    # Clamp pct to the inclusive 0..100 range.
-    p = max(0.0, min(100.0, float(pct)))
     k = (len(ordered) - 1) * p / 100.0
     lo = int(k)
     hi = min(lo + 1, len(ordered) - 1)
@@ -363,4 +396,5 @@ __all__ = [
     "speedup_factor",
     "meets_speedup_target",
     "stdev_duration_s",
+    "_percentile",
 ]

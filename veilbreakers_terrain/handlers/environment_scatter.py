@@ -49,6 +49,7 @@ def _require_bpy() -> None:
 
 from ._scatter_engine import (
     poisson_disk_sample,
+    lloyd_relax_points,
     biome_filter_points,
     context_scatter,
     generate_breakable_variants,
@@ -1020,9 +1021,11 @@ def _add_leaf_card_canopy(
     Each plane is sized to canopy_radius and given a small random offset
     (0-0.3m) for organic variety.
 
-    Wind vertex colors follow canonical WIND_COLOR_LAYOUT (vegetation_system.py):
-      R=sway_strength (1.0 at tips), G=sway_frequency (height proportion),
-      B=phase_offset (random per-cluster), A=trunk_sway (0 for leaf tips)
+    Wind vertex colors follow SpeedTree packing convention:
+      R=phase_offset (random per-cluster, constant across blade)
+      G=amplitude    (0.0 at card base, 1.0 at tip)
+      B=frequency    (0.5 at base, 1.0 at tip — faster flutter near tips)
+      A=0.0          (trunk_sway not applicable to leaf cards)
     """
     cx, cy, cz = canopy_center
     r = canopy_radius
@@ -1058,15 +1061,16 @@ def _add_leaf_card_canopy(
         verts = [bm.verts.new(c) for c in corners]
         phase = rng.random()
         for vi, v in enumerate(verts):
-            # Bottom verts: lower sway; top verts: full sway
-            # Canonical WIND_COLOR_LAYOUT: R=sway_strength, G=sway_frequency,
-            # B=phase_offset, A=trunk_sway (vegetation_system.py)
-            height_t = vi // 2  # 0 for bottom row, 1 for top row
+            # SpeedTree wind packing: R=phase, G=amplitude, B=frequency, A=0
+            # vi 0,1 = bottom row (low amplitude); vi 2,3 = top row (full amplitude)
+            height_t = float(vi // 2)  # 0.0 for bottom, 1.0 for top
+            amplitude = height_t                       # G: 0 at base, 1 at tip
+            frequency = 0.5 + height_t * 0.5          # B: 0.5 at base, 1.0 at tip
             v[wind_layer] = (
-                float(height_t),   # R = sway_strength (1.0 at tips)
-                float(height_t),   # G = sway_frequency (height proportion)
-                phase,             # B = phase_offset (random per-cluster)
-                0.0,               # A = trunk_sway (0 for leaf tips)
+                phase,      # R = phase_offset (constant per card cluster)
+                amplitude,  # G = amplitude (height-driven)
+                frequency,  # B = frequency (tip flutter is faster)
+                0.0,        # A = unused
             )
         try:
             bm.faces.new(verts)
@@ -1100,14 +1104,15 @@ def _add_leaf_card_canopy(
         verts = [bm.verts.new(c) for c in corners]
         phase = rng.random()
         for vi, v in enumerate(verts):
-            # Canonical WIND_COLOR_LAYOUT: R=sway_strength, G=sway_frequency,
-            # B=phase_offset, A=trunk_sway (vegetation_system.py)
-            height_t = vi // 2
+            # SpeedTree wind packing: R=phase, G=amplitude, B=frequency, A=0
+            height_t = float(vi // 2)
+            amplitude = height_t
+            frequency = 0.5 + height_t * 0.5
             v[wind_layer] = (
-                float(height_t),   # R = sway_strength
-                float(height_t),   # G = sway_frequency (height proportion)
-                phase,             # B = phase_offset (random per-cluster)
-                0.0,               # A = trunk_sway
+                phase,      # R = phase_offset
+                amplitude,  # G = amplitude
+                frequency,  # B = frequency
+                0.0,        # A = unused
             )
         try:
             bm.faces.new(verts)
@@ -1151,16 +1156,18 @@ def create_leaf_card_tree(
             position[2] + height * 0.55,
         )))
 
-    # Trunk wind vertex colors — canonical WIND_COLOR_LAYOUT (vegetation_system.py):
-    # R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
+    # Trunk wind vertex colors — SpeedTree packing: R=phase, G=amplitude, B=frequency, A=0
+    # Trunk base: no movement (amplitude=0, frequency=0.5 neutral).
+    # Trunk top: low trunk sway amplitude (0.2), moderate frequency (0.6).
     # WORLD-006: guard against duplicate layer creation
     wind_layer = bm.verts.layers.float_color.get("wind_vc")
     if wind_layer is None:
         wind_layer = bm.verts.layers.float_color.new("wind_vc")
+    trunk_phase = 0.0  # trunk phase = 0; canopy cards get their own random phase
     for v in trunk_verts_bottom:
-        v[wind_layer] = (0.0, 0.0, 0.0, 0.0)  # base: no sway, no trunk_sway
+        v[wind_layer] = (trunk_phase, 0.0, 0.5, 0.0)  # base: stationary
     for v in trunk_verts_top:
-        v[wind_layer] = (0.0, 0.55, 0.0, 0.6)  # top of trunk: sway_freq=0.55, trunk_sway=0.6
+        v[wind_layer] = (trunk_phase, 0.2, 0.6, 0.0)  # top: gentle trunk sway
 
     # Create trunk faces
     for i in range(trunk_segments):
@@ -1204,10 +1211,19 @@ def _create_grass_card(
     seed: int = 0,
     collection: "bpy.types.Collection | None" = None,
 ) -> "bpy.types.Object":
-    """Create a single grass card mesh for the given biome.
+    """Create a 3-quad billboard grass card for the given biome.
 
-    Geometry: 1-3 quads with a V-bend for depth illusion (3-6 tris per tuft).
-    Wind vertex colors: R=1.0 at tips, G=random phase, B=0.5-1.0 gradient, A=0.
+    Geometry: 3 crossing blades (each 2 quads with a V-bend), totalling 6 quads
+    / 12 tris per tuft. Three blades at 0°, 60°, 120° provide 360° silhouette
+    coverage — the SpeedTree grass card standard for AAA real-time grass (used in
+    Ghost of Tsushima, RDR2, and Horizon). A single blade looks flat when the
+    camera aligns with it; three crossing blades are always volumetric.
+
+    Wind vertex colors follow SpeedTree packing convention:
+      R = phase_offset  (random per-blade, constant along blade length)
+      G = amplitude     (0.0 at root, 1.0 at tip — height-driven sway)
+      B = frequency     (0.5 at base, 1.0 at tip — tips flutter faster)
+      A = 0.0           (unused; trunk_sway not applicable to grass cards)
 
     Returns the created Blender object.
     """
@@ -1224,80 +1240,58 @@ def _create_grass_card(
     wind_layer = bm.verts.layers.float_color.get("wind_vc")
     if wind_layer is None:
         wind_layer = bm.verts.layers.float_color.new("wind_vc")
-    phase = rng.random()
 
-    # Main blade: 2 quads (V-bend at midpoint)
-    # Bottom quad
     mid_z = height * 0.5
-    bend_offset = height * 0.08  # slight forward bend at midpoint
-    w = height * 0.18  # blade width proportional to height
+    bend_offset = height * 0.08  # slight forward bend at mid-point for arc silhouette
+    w = height * 0.18            # blade width proportional to height
 
-    v0 = bm.verts.new((-w, 0.0, 0.0))
-    v1 = bm.verts.new((w, 0.0, 0.0))
-    v2 = bm.verts.new((w * 0.6, bend_offset, mid_z))
-    v3 = bm.verts.new((-w * 0.6, bend_offset, mid_z))
+    def _add_blade(angle_deg: float, width_scale: float) -> None:
+        """Add one V-bent 2-quad blade rotated by angle_deg around Z."""
+        cos_a = math.cos(math.radians(angle_deg))
+        sin_a = math.sin(math.radians(angle_deg))
 
-    # Top quad (tapers to a point-ish tip)
-    v4 = bm.verts.new((w * 0.15, bend_offset * 2, height))
-    v5 = bm.verts.new((-w * 0.15, bend_offset * 2, height))
+        def _rot(x: float, y: float) -> tuple[float, float]:
+            return x * cos_a - y * sin_a, x * sin_a + y * cos_a
 
-    # Wind colors — canonical WIND_COLOR_LAYOUT (vegetation_system.py):
-    # R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
-    v0[wind_layer] = (0.0, 0.0,  phase, 0.0)  # base:  no sway
-    v1[wind_layer] = (0.0, 0.0,  phase, 0.0)
-    v2[wind_layer] = (0.5, 0.5,  phase, 0.0)  # mid:   half sway
-    v3[wind_layer] = (0.5, 0.5,  phase, 0.0)
-    v4[wind_layer] = (1.0, 1.0,  phase, 0.0)  # tip:   full sway
-    v5[wind_layer] = (1.0, 1.0,  phase, 0.0)
+        bw = w * width_scale
 
-    try:
-        bm.faces.new([v0, v1, v2, v3])
-    except ValueError:
-        pass
-    try:
-        bm.faces.new([v3, v2, v4, v5])
-    except ValueError:
-        pass
+        # 6 verts: 2 at root, 2 at mid-bend, 2 at tip
+        rx0, ry0 = _rot(-bw, 0.0)
+        rx1, ry1 = _rot( bw, 0.0)
+        rx2, ry2 = _rot( bw * 0.6, bend_offset)
+        rx3, ry3 = _rot(-bw * 0.6, bend_offset)
+        rx4, ry4 = _rot( bw * 0.15, bend_offset * 2)
+        rx5, ry5 = _rot(-bw * 0.15, bend_offset * 2)
 
-    # Optional: second crossing blade rotated 60 degrees for volume
-    angle2 = math.radians(60.0)
-    cos_a, sin_a = math.cos(angle2), math.sin(angle2)
-    w2 = w * 0.85
+        phase = rng.random()
+        # SpeedTree wind packing: R=phase, G=amplitude, B=frequency, A=0
+        amp_base, amp_mid, amp_tip = 0.0, 0.5, 1.0
+        freq_base, freq_mid, freq_tip = 0.5, 0.75, 1.0
 
-    def rot(x: float, y: float) -> tuple[float, float]:
-        return x * cos_a - y * sin_a, x * sin_a + y * cos_a
+        vv0 = bm.verts.new((rx0, ry0, 0.0));    vv0[wind_layer] = (phase, amp_base, freq_base, 0.0)
+        vv1 = bm.verts.new((rx1, ry1, 0.0));    vv1[wind_layer] = (phase, amp_base, freq_base, 0.0)
+        vv2 = bm.verts.new((rx2, ry2, mid_z));  vv2[wind_layer] = (phase, amp_mid,  freq_mid,  0.0)
+        vv3 = bm.verts.new((rx3, ry3, mid_z));  vv3[wind_layer] = (phase, amp_mid,  freq_mid,  0.0)
+        vv4 = bm.verts.new((rx4, ry4, height)); vv4[wind_layer] = (phase, amp_tip,  freq_tip,  0.0)
+        vv5 = bm.verts.new((rx5, ry5, height)); vv5[wind_layer] = (phase, amp_tip,  freq_tip,  0.0)
 
-    rx0, ry0 = rot(-w2, 0.0)
-    rx1, ry1 = rot(w2, 0.0)
-    rx2, ry2 = rot(w2 * 0.6, bend_offset)
-    rx3, ry3 = rot(-w2 * 0.6, bend_offset)
-    rx4, ry4 = rot(w2 * 0.15, bend_offset * 2)
-    rx5, ry5 = rot(-w2 * 0.15, bend_offset * 2)
+        # Lower quad (root → mid)
+        try:
+            bm.faces.new([vv0, vv1, vv2, vv3])
+        except ValueError:
+            pass
+        # Upper quad (mid → tip)
+        try:
+            bm.faces.new([vv3, vv2, vv4, vv5])
+        except ValueError:
+            pass
 
-    phase2 = rng.random()
-    b0 = bm.verts.new((rx0, ry0, 0.0))
-    b1 = bm.verts.new((rx1, ry1, 0.0))
-    b2 = bm.verts.new((rx2, ry2, mid_z))
-    b3 = bm.verts.new((rx3, ry3, mid_z))
-    b4 = bm.verts.new((rx4, ry4, height))
-    b5 = bm.verts.new((rx5, ry5, height))
-
-    # Canonical WIND_COLOR_LAYOUT: R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway
-    b0[wind_layer] = (0.0, 0.0,  phase2, 0.0)  # base:  no sway
-    b1[wind_layer] = (0.0, 0.0,  phase2, 0.0)
-    b2[wind_layer] = (0.5, 0.5,  phase2, 0.0)  # mid:   half sway
-    b3[wind_layer] = (0.5, 0.5,  phase2, 0.0)
-    b4[wind_layer] = (1.0, 1.0,  phase2, 0.0)  # tip:   full sway
-    b5[wind_layer] = (1.0, 1.0,  phase2, 0.0)
-
-    try:
-        bm.faces.new([b0, b1, b2, b3])
-    except ValueError:
-        pass
-    try:
-        bm.faces.new([b3, b2, b4, b5])
-    except ValueError:
-        pass
+    # Three crossing blades at 0°, 60°, 120° — SpeedTree 3-quad grass card standard.
+    # Width scales vary slightly (1.0, 0.9, 0.8) for organic size asymmetry while
+    # keeping all three blades visible at any viewing angle.
+    _add_blade(0.0,   1.00)
+    _add_blade(60.0,  0.90)
+    _add_blade(120.0, 0.82)
 
     bm.to_mesh(mesh)
     bm.free()
@@ -1639,7 +1633,14 @@ def _scatter_pass(
     placements: list[dict[str, Any]] = []
 
     if pass_type == "structure":
-        tree_candidates = poisson_disk_sample(terrain_size, terrain_size, 5.0, seed=seed)
+        # Tree pass: Poisson disk + 2-iteration Lloyd relaxation to break residual
+        # clustering. Ghost of Tsushima and Horizon use 2-3 relaxation passes on
+        # tree placement; fewer passes on bush/grass (performance vs quality tradeoff).
+        _raw_tree_candidates = poisson_disk_sample(terrain_size, terrain_size, 5.0, seed=seed)
+        tree_candidates = lloyd_relax_points(
+            _raw_tree_candidates, terrain_size, terrain_size,
+            iterations=2, min_distance=4.5,
+        )
         bush_candidates = poisson_disk_sample(terrain_size, terrain_size, 2.5, seed=seed + 1)
 
         for pos in tree_candidates:
@@ -1756,6 +1757,28 @@ def _scatter_pass(
                 "lod": _lod_for_distance(dist, "rock"),
                 "gpu_instance": True,
             })
+
+    # Annotate each placement with LOD cluster counts (LOD0/LOD1/LOD2 instance
+    # counts for the cluster it belongs to). Matches UE5 Instanced Static Mesh
+    # LOD streaming: each cluster reports how many of its N instances are at
+    # each LOD level so the streaming budget manager can prioritise draw calls.
+    # Cluster = all placements of the same vegetation_type in this pass.
+    _lod_counts: dict[str, dict[int, int]] = {}
+    for p in placements:
+        vt = p.get("vegetation_type", "unknown")
+        lod = p.get("lod", 0)
+        if vt not in _lod_counts:
+            _lod_counts[vt] = {0: 0, 1: 0, 2: 0, 3: 0}
+        _lod_counts[vt][lod] = _lod_counts[vt].get(lod, 0) + 1
+
+    for p in placements:
+        vt = p.get("vegetation_type", "unknown")
+        counts = _lod_counts.get(vt, {0: 0, 1: 0, 2: 0})
+        p["lod_cluster_counts"] = {
+            "lod0": counts.get(0, 0),
+            "lod1": counts.get(1, 0),
+            "lod2": counts.get(2, 0),
+        }
 
     return placements
 
@@ -2097,10 +2120,23 @@ def handle_scatter_vegetation(params: dict) -> dict:
         )
         _write_tree_instance_points(_tree_arr, _stack)
 
+    # Accumulate LOD0/LOD1/LOD2 instance counts per vegetation type from placements.
+    # Downstream exporters (Unity HDRP, UE5 ISM) use these to pre-allocate
+    # draw-call budgets per LOD tier without iterating all instances at load time.
+    lod_counts_by_type: dict[str, dict[str, int]] = {}
+    for p in placements:
+        vt = p.get("vegetation_type", "unknown")
+        lod = p.get("lod", 0)
+        if vt not in lod_counts_by_type:
+            lod_counts_by_type[vt] = {"lod0": 0, "lod1": 0, "lod2": 0}
+        key = f"lod{min(lod, 2)}"
+        lod_counts_by_type[vt][key] = lod_counts_by_type[vt].get(key, 0) + 1
+
     return {
         "name": scatter_coll_name,
         "instance_count": total_instances,
         "vegetation_types": veg_counts,
+        "lod_instance_counts": lod_counts_by_type,
         "bounds": {
             "width": terrain_width,
             "depth": terrain_height,
@@ -2165,11 +2201,27 @@ def handle_scatter_props(params: dict) -> dict:
     meshes instead of placeholder cubes. Falls back to cubes with a warning
     for any prop type without a generator mapping.
 
+    All AAA terrain-filter parameters (altitude, slope, water proximity,
+    canopy closure, protected zones) are forwarded to ``context_scatter`` when
+    a terrain object is present in the scene. This matches the Horizon Zero
+    Dawn prop scatter pipeline where props respect the same terrain rule-set
+    as vegetation — no props on cliff faces, no props in water, no props
+    inside sacred/protected zones.
+
     Params:
         area_name (str, default "PropScatter"): Name for the scatter collection.
         buildings (list of dict): Each has type, position, footprint (optional).
         prop_density (float, default 0.3): Scatter density.
         seed (int, default 0): Random seed.
+        max_slope_angle (float, default 45.0): Hard global slope cap in degrees.
+            Props are never placed on terrain steeper than this.
+        altitude_range (list of 2 floats or None): Normalised [0, 1] band.
+            Requires a terrain object named area_name to be in the scene.
+        slope_range (list of 2 floats or None): Slope degrees band to accept.
+        water_exclusion_radius (float, default 0.0): Reject props near water.
+        max_canopy_closure (float, default 1.0): Reject under dense canopy.
+        protected_zones (list of dict or None): Hard-exclusion zone dicts
+            {"type": str, "position": (x, y), "radius": float}.
 
     Returns dict with: name, prop_count, prop_types.
     """
@@ -2177,6 +2229,16 @@ def handle_scatter_props(params: dict) -> dict:
     buildings = params.get("buildings", [])
     prop_density = params.get("prop_density", 0.3)
     seed = params.get("seed", 0)
+    max_slope_angle = float(params.get("max_slope_angle", 45.0))
+    altitude_range = params.get("altitude_range", None)
+    if altitude_range is not None:
+        altitude_range = tuple(altitude_range)
+    slope_range = params.get("slope_range", None)
+    if slope_range is not None:
+        slope_range = tuple(slope_range)
+    water_exclusion_radius = float(params.get("water_exclusion_radius", 0.0))
+    max_canopy_closure = float(params.get("max_canopy_closure", 1.0))
+    protected_zones = params.get("protected_zones", None)
 
     if not buildings:
         raise ValueError("'buildings' list is required and must not be empty")
@@ -2187,9 +2249,50 @@ def handle_scatter_props(params: dict) -> dict:
     ys = [p[1] for p in positions]
     margin = 20.0
     area_size = max(max(xs) - min(xs) + margin * 2, max(ys) - min(ys) + margin * 2, 30.0)
-    terrain_sampler = _terrain_height_sampler(bpy.data.objects.get(area_name))
 
-    placements = context_scatter(buildings, area_size, prop_density, seed)
+    # Extract terrain maps from scene object when available
+    terrain_obj = bpy.data.objects.get(area_name)
+    terrain_sampler = _terrain_height_sampler(terrain_obj)
+
+    heightmap_np: "np.ndarray | None" = None
+    slope_map_np: "np.ndarray | None" = None
+    if terrain_obj is not None and terrain_obj.type == "MESH" and terrain_obj.data is not None:
+        _bm_prop = bmesh.new()
+        _bm_prop.from_mesh(terrain_obj.data)
+        _bm_prop.verts.ensure_lookup_table()
+        _vc = len(_bm_prop.verts)
+        _xs2 = set(round(v.co.x, 3) for v in _bm_prop.verts)
+        _ys2 = set(round(v.co.y, 3) for v in _bm_prop.verts)
+        _cols2, _rows2 = len(_xs2), len(_ys2)
+        if _cols2 * _rows2 == _vc and _cols2 >= 2 and _rows2 >= 2:
+            _hts = np.array([v.co.z for v in _bm_prop.verts], dtype=np.float32)
+            _bm_prop.free()
+            _hmin = float(_hts.min())
+            _hmax = float(_hts.max())
+            _hrange = max(_hmax - _hmin, 1e-6)
+            heightmap_np = ((_hts - _hmin) / _hrange).reshape(_rows2, _cols2)
+            _dims2 = terrain_obj.dimensions
+            _tw2 = max(float(_dims2.x), 1.0)
+            _th2 = max(float(_dims2.y), 1.0)
+            _rs2, _cs2 = _terrain_axis_spacing_from_extent(_tw2, _th2, _rows2, _cols2)
+            slope_map_np = compute_slope_map(heightmap_np, cell_size=(_rs2, _cs2))
+        else:
+            _bm_prop.free()
+
+    placements = context_scatter(
+        buildings,
+        area_size,
+        prop_density,
+        seed,
+        altitude_range=altitude_range if heightmap_np is not None else None,
+        slope_range=slope_range if slope_map_np is not None else None,
+        heightmap=heightmap_np,
+        slope_map=slope_map_np,
+        max_slope_angle=max_slope_angle,
+        water_exclusion_radius=water_exclusion_radius,
+        max_canopy_closure=max_canopy_closure,
+        protected_zones=protected_zones,
+    )
 
     # Create scatter collection
     scatter_coll = bpy.data.collections.new(area_name)

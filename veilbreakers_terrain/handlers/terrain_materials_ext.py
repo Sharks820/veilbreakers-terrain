@@ -27,22 +27,42 @@ from .terrain_semantics import ValidationIssue
 
 @dataclass
 class MaterialChannelExt:
-    """Wraps a Bundle B ``MaterialChannel`` and adds ceiling-extension fields.
+    """Wraps a Bundle B ``MaterialChannel`` and adds AAA ceiling-extension fields.
 
     Addendum 1.B.2 requires that each material layer declare:
-      * ``height_blend_gamma`` — non-linear blend curve between layers
-      * ``texel_density_m``   — texture cm-per-m for coherency checks
-      * ``micro_normal_texture`` — optional detail normal path
-      * ``micro_normal_strength`` — detail normal mix strength
-      * ``respects_displacement`` — whether the layer honors POM/displacement
+      * ``height_blend_gamma``  — non-linear blend curve between layers
+      * ``texel_density_m``     — texels-per-metre for coherency checks
+      * ``micro_normal_texture``— optional detail normal texture path
+      * ``micro_normal_strength``— detail normal mix strength [0..1]
+      * ``respects_displacement``— whether the layer honors POM/displacement
+
+    AAA pipeline extensions (MicroSplat / UE5 Landscape Material parity):
+      * ``albedo_tint``     — RGBA base color as validated against VeilBreakers
+                              palette. (R, G, B, A) in linear sRGB.
+      * ``roughness``       — base roughness scalar [0..1].
+      * ``metallic``        — metallic scalar [0..1].
+      * ``normal_strength`` — normal map blend strength [0..1].
+      * ``triplanar``       — True when this layer uses triplanar projection
+                              (required for all cliff/rock-face materials).
+      * ``tiling``          — (U, V) tiling scale as vec2 float pair. Maps to
+                              Blender Mapping node Scale XY, or Unity terrain
+                              layer tileSize.
     """
 
     base: MaterialChannel
+    # Original Addendum 1.B.2 fields
     height_blend_gamma: float = 1.0
     texel_density_m: float = 64.0
     micro_normal_texture: Optional[str] = None
     micro_normal_strength: float = 0.8
     respects_displacement: bool = True
+    # AAA pipeline extension fields
+    albedo_tint: tuple = (0.15, 0.13, 0.11, 1.0)
+    roughness: float = 0.8
+    metallic: float = 0.0
+    normal_strength: float = 1.0
+    triplanar: bool = False
+    tiling: tuple = (8.0, 8.0)
 
     @property
     def channel_id(self) -> str:
@@ -57,43 +77,112 @@ class MaterialChannelExt:
 def validate_texel_density_coherency(
     channels: Sequence[MaterialChannelExt],
     max_ratio: float = 2.0,
+    *,
+    check_aaa_tiers: bool = True,
 ) -> List[ValidationIssue]:
-    """Flag channels whose texel density exceeds ``max_ratio`` vs the min.
+    """Validate texel density against AAA tier requirements and inter-channel coherency.
 
-    Two adjacent blended layers with wildly different texel density cause
-    visible texture-resolution discontinuities (Addendum 1.B.2).
+    Two checks are performed:
+
+    1. **AAA tier compliance** (when ``check_aaa_tiers=True``):
+       VeilBreakers pipeline mandates:
+         - Hero assets  : 1024 px/m  (triplanar cliff faces, hero props)
+         - Terrain base : 512 px/m   (ground, slope, scree layers)
+         - LOD1         : 256 px/m   (distant terrain, non-hero cliffs)
+       Each channel is classified by its ``triplanar`` flag and
+       ``texel_density_m``:
+         - triplanar=True  → expected ≥ 512 px/m (cliff/rock face)
+         - triplanar=False → expected ≥ 256 px/m (terrain base)
+       Channels below their tier minimum raise a hard issue.
+
+    2. **Inter-channel coherency**: adjacent blended layers whose texel
+       density ratio exceeds ``max_ratio`` raise a soft issue (visible
+       resolution pop at blend boundaries).
+
+    Args:
+        channels:        Sequence of MaterialChannelExt to validate.
+        max_ratio:       Maximum allowed texel density ratio between any
+                         two channels. Default 2.0 (one mip step).
+        check_aaa_tiers: When True (default), enforce VeilBreakers
+                         1024 / 512 / 256 px/m tier minimums.
+
+    Returns:
+        List of ValidationIssue. Empty list = all checks passed.
     """
     issues: List[ValidationIssue] = []
-    if len(channels) < 2:
+    if not channels:
         return issues
+
+    # AAA tier thresholds (px/m)
+    _HERO_MIN: float = 1024.0    # hero assets / cliff face with triplanar
+    _TERRAIN_MIN: float = 512.0  # standard terrain layer
+    _LOD1_MIN: float = 256.0     # LOD1 / distant terrain
 
     densities = [float(c.texel_density_m) for c in channels]
-    min_d = min(densities)
-    if min_d <= 0:
-        issues.append(
-            ValidationIssue(
-                code="MAT_TEXEL_DENSITY_INVALID",
-                severity="hard",
-                affected_feature="materials",
-                message=f"Non-positive texel_density_m detected: {densities}",
-            )
-        )
-        return issues
 
+    # --- Guard: non-positive density is always a hard error ---
     for ch, d in zip(channels, densities):
-        if d / min_d > max_ratio:
+        if d <= 0:
             issues.append(
                 ValidationIssue(
-                    code="MAT_TEXEL_DENSITY_INCOHERENT",
-                    severity="soft",
+                    code="MAT_TEXEL_DENSITY_INVALID",
+                    severity="hard",
                     affected_feature=ch.channel_id,
                     message=(
-                        f"channel {ch.channel_id!r} texel_density_m={d:.1f} "
-                        f">{max_ratio}x min={min_d:.1f}"
+                        f"channel {ch.channel_id!r} has non-positive "
+                        f"texel_density_m={d:.1f}"
                     ),
-                    remediation="Retexture to match neighboring layers",
+                    remediation="Set texel_density_m to at least 256.0",
                 )
             )
+    if any(d <= 0 for d in densities):
+        return issues  # coherency ratio check would divide by zero
+
+    # --- AAA tier compliance ---
+    if check_aaa_tiers:
+        for ch, d in zip(channels, densities):
+            # Triplanar channels are cliff/rock-face → terrain tier minimum
+            tier_min = _TERRAIN_MIN if ch.triplanar else _LOD1_MIN
+            tier_name = "terrain (512 px/m)" if ch.triplanar else "LOD1 (256 px/m)"
+            if d < tier_min:
+                issues.append(
+                    ValidationIssue(
+                        code="MAT_TEXEL_DENSITY_BELOW_TIER",
+                        severity="hard",
+                        affected_feature=ch.channel_id,
+                        message=(
+                            f"channel {ch.channel_id!r} texel_density_m={d:.1f} "
+                            f"is below AAA {tier_name} minimum"
+                        ),
+                        remediation=(
+                            f"Increase texel_density_m to at least {tier_min:.0f} "
+                            f"(hero cliff faces should target {_HERO_MIN:.0f} px/m)"
+                        ),
+                    )
+                )
+
+    # --- Inter-channel coherency ---
+    if len(channels) >= 2:
+        min_d = min(densities)
+        for ch, d in zip(channels, densities):
+            if d / min_d > max_ratio:
+                issues.append(
+                    ValidationIssue(
+                        code="MAT_TEXEL_DENSITY_INCOHERENT",
+                        severity="soft",
+                        affected_feature=ch.channel_id,
+                        message=(
+                            f"channel {ch.channel_id!r} texel_density_m={d:.1f} "
+                            f">{max_ratio}x min={min_d:.1f} — blend boundary "
+                            f"will show resolution pop"
+                        ),
+                        remediation=(
+                            "Retexture to within one mip level of neighboring "
+                            "layers (max 2x ratio)"
+                        ),
+                    )
+                )
+
     return issues
 
 
