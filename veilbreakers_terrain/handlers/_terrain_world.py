@@ -643,6 +643,24 @@ def pass_macro_world(
                 normalize=False,
             ).astype(np.float32)
 
+            # Fix 7.20b: raw noise output is in ~[-0.5, 0.5] (normalized noise
+            # basis), but world-space heights need to be in metres. Scale to a
+            # meaningful range per terrain type. Mountains → 200 m vertical range,
+            # desert → 80 m, coastal → 60 m. This keeps the tile-safe,
+            # seam-consistent coordinate contract while producing useful elevations.
+            _HEIGHT_SCALE = {
+                "mountains": 200.0,
+                "desert": 80.0,
+                "coastal": 60.0,
+            }.get(terrain_type, 150.0)
+            h_range_raw = float(hmap.max()) - float(hmap.min())
+            if h_range_raw < 1.0 and h_range_raw > 1e-9:
+                hmap = hmap * (_HEIGHT_SCALE / h_range_raw)
+            elif h_range_raw <= 1e-9:
+                # Degenerate flat output — generate minimal relief via seed-based offset
+                rng_fb = np.random.default_rng(seed ^ 0xDEAD)
+                hmap = rng_fb.uniform(0.0, _HEIGHT_SCALE, hmap.shape).astype(np.float32)
+
             stack.set("height", hmap, "macro_world")
             # Fix 12.1 backward compat: macro_world also populates hmap_low_freq
             # so tests using macro_world → erosion continue to work when
@@ -827,8 +845,22 @@ def pass_erosion(
         cell_size=stack.cell_size,
     )
 
+    # BUG-99: Apply rock_hardness K modifier to analytical erosion delta.
+    # Only active when stratigraphy has run (strat_erosion_delta present) —
+    # preserves backward compat for tests that invoke pass_erosion in isolation
+    # without a preceding pass_stratigraphy.
+    analytical_delta = analytical_result.height_delta
+    if rock_hardness is not None and stack.get("strat_erosion_delta") is not None:
+        k_mod = 1.0 - 0.7 * np.clip(
+            np.asarray(rock_hardness, dtype=np.float64)[
+                :analytical_delta.shape[0], :analytical_delta.shape[1]
+            ],
+            0.0, 1.0,
+        )
+        analytical_delta = analytical_delta * k_mod
+
     # Apply analytical height delta
-    h_after_analytical = h_before + analytical_result.height_delta
+    h_after_analytical = h_before + analytical_delta
 
     # Store ridge map on the mask stack
     ridge_out = analytical_result.ridge_map
@@ -928,6 +960,18 @@ def pass_erosion(
     # Re-apply protected zone masking after SPL
     if protected.any():
         new_height = np.where(protected, h_before, new_height)
+
+    # BUG-99 (part 2): Apply rock_hardness K modifier to the full erosion delta
+    # (analytical + hydraulic + thermal + SPL combined).  Hard rock (hardness→1.0)
+    # gets k_mod→0.3 meaning only 30% of the net height change is kept; soft rock
+    # (hardness→0.0) keeps 100%.  Guard: only active when stratigraphy ran first
+    # (strat_erosion_delta present).
+    if rock_hardness is not None and stack.get("strat_erosion_delta") is not None:
+        rh_arr = np.asarray(rock_hardness, dtype=np.float64)
+        rh_arr = rh_arr[:new_height.shape[0], :new_height.shape[1]]
+        k_mod_full = 1.0 - 0.7 * np.clip(rh_arr, 0.0, 1.0)
+        full_delta = new_height - h_before
+        new_height = h_before + full_delta * k_mod_full
 
     stack.set("height", new_height, "erosion")
     # Fix 12.1: also update hmap_low_freq so pass_composite_hmap sees the eroded base

@@ -599,3 +599,64 @@ def _empty_metadata() -> dict[str, Any]:
         "lod_levels": 0,
         "heightmap_size": (0, 0),
     }
+
+
+def _compute_tile_contracts(
+    tile_origin: tuple[float, float],
+    tile_size_m: float,
+    line_start: tuple[float, float],
+    line_end: tuple[float, float],
+) -> list[float]:
+    """Return parametric t-values where a line segment crosses the tile AABB edges.
+
+    Uses the parametric slab test (Smits' method):
+        t = (boundary - start) / (end - start)
+    for each of the 4 AABB edges. Returns all t in [0, 1] where the segment
+    intersects an edge of the tile, with the additional constraint that the
+    crossing point lies within the tile boundary on the perpendicular axis.
+
+    Fix 7.12: replaces any bounding-box approximation with exact AABB slab
+    intersection so road/river segments that merely clip tile corners are
+    correctly identified.
+
+    Args:
+        tile_origin: (x0, y0) bottom-left corner of tile in world space.
+        tile_size_m: Tile side length in meters (tile is a square).
+        line_start: (sx, sy) segment start in world space.
+        line_end: (ex, ey) segment end in world space.
+
+    Returns:
+        Sorted list of unique t values in [0, 1] at AABB edge crossings.
+        Empty list if the segment does not intersect the tile boundary.
+    """
+    x0, y0 = tile_origin
+    x1, y1 = x0 + tile_size_m, y0 + tile_size_m
+    sx, sy = line_start
+    ex, ey = line_end
+
+    dx = ex - sx
+    dy = ey - sy
+
+    ts: list[float] = []
+    EPS = 1e-9
+
+    # Slab test on X axis (left and right edges of tile)
+    if abs(dx) > EPS:
+        for bx in (x0, x1):
+            t = (bx - sx) / dx
+            if 0.0 <= t <= 1.0:
+                py = sy + t * dy
+                if y0 <= py <= y1:
+                    ts.append(t)
+
+    # Slab test on Y axis (bottom and top edges of tile)
+    if abs(dy) > EPS:
+        for by in (y0, y1):
+            t = (by - sy) / dy
+            if 0.0 <= t <= 1.0:
+                px = sx + t * dx
+                if x0 <= px <= x1:
+                    ts.append(t)
+
+    # Deduplicate (corners touched by both axes) and sort
+    return sorted({round(t, 9) for t in ts})
