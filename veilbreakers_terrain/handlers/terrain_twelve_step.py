@@ -11,6 +11,7 @@ filled in when road/water-body mesh bundles land.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -388,18 +389,25 @@ def _generate_road_mesh_specs(
     tile_grid_y: int,
     cell_size: float,
     seed: int,
-) -> Tuple[List[Dict[str, Any]], np.ndarray]:
-    """Generate road mesh specifications and return the carved heightmap.
+) -> Tuple[List[Dict[str, Any]], np.ndarray, np.ndarray, np.ndarray]:
+    """Generate road mesh specifications and return the carved heightmap + channels.
 
-    Returns ``(road_specs, carved_hmap)`` where ``carved_hmap`` is a copy of
-    ``world_hmap`` with all road grades applied.  The caller should replace
-    ``world_eroded`` with ``carved_hmap`` *before* per-tile extraction so that
-    road cuts propagate into every tile's height channel.
+    Returns ``(road_specs, carved_hmap, road_mask, road_sdf_dist)`` where:
+      - ``carved_hmap`` is a copy of ``world_hmap`` with all road grades applied.
+      - ``road_mask`` is uint8[H,W] — 1 inside Zone 1 (road surface), 0 elsewhere.
+      - ``road_sdf_dist`` is float32[H,W] — scipy EDT distance from road boundary.
+
+    The caller should replace ``world_eroded`` with ``carved_hmap`` *before*
+    per-tile extraction so road cuts propagate into every tile's height channel.
 
     If no waypoints are configured on the intent the function returns an empty
-    list and the original heightmap unchanged.
+    list, the original heightmap, and zero-filled mask/sdf arrays.
     """
     from ._terrain_noise import generate_road_path
+
+    rows, cols = world_hmap.shape
+    _empty_mask = np.zeros((rows, cols), dtype=np.uint8)
+    _empty_sdf = np.zeros((rows, cols), dtype=np.float32)
 
     waypoints: List[Tuple[int, int]] = getattr(intent, "road_waypoints", None) or []
     if len(waypoints) < 2:
@@ -407,10 +415,12 @@ def _generate_road_mesh_specs(
             "Road carve skipped: fewer than 2 road waypoints on intent (got %d)",
             len(waypoints),
         )
-        return [], world_hmap
+        return [], world_hmap, _empty_mask, _empty_sdf
 
     road_specs: List[Dict[str, Any]] = []
     carved = world_hmap
+    road_mask = _empty_mask
+    road_sdf_dist = _empty_sdf
     try:
         path, carved = generate_road_path(
             carved,
@@ -419,17 +429,100 @@ def _generate_road_mesh_specs(
             grade_strength=0.8,
             seed=seed,
         )
+        # Apply 3-zone road profile and compute road_mask + road_sdf_dist
+        carved, road_mask, road_sdf_dist = _apply_road_profile_to_heightmap(
+            carved, path,
+        )
         road_specs.append({
             "path": path,
             "width_cells": max(3, int(3.0 / cell_size)),
             "vertex_count": len(path),
+            "road_mask_shape": road_mask.shape,
             "seed": seed,
         })
         _log.info("Road carve: generated road with %d vertices", len(path))
     except Exception as exc:  # noqa: BLE001
         _log.warning("Road carve failed: %s", exc)
 
-    return road_specs, carved
+    return road_specs, carved, road_mask, road_sdf_dist
+
+
+def _apply_road_profile_to_heightmap(
+    hmap: np.ndarray,
+    path: "list[tuple[int, int]]",
+    road_width: float = 2.0,
+    shoulder_width: float = 3.0,
+    influence_width: float = 5.0,
+) -> "tuple[np.ndarray, np.ndarray, np.ndarray]":
+    """Apply Rune 3-zone road profile and produce road_mask + road_sdf_dist.
+
+    Zone 1 (dist <= road_width): Flatten to segment road elevation; cosine blend.
+    Zone 2 (road_width < dist <= road_width+shoulder_width): Linear height blend
+        from road elevation to original terrain.
+    Zone 3 (road_width+shoulder_width < dist <= road_width+shoulder_width+influence_width):
+        Soft cosine feathering; primarily affects drainage, minimal height change.
+
+    Returns (carved_hmap, road_mask uint8, road_sdf_dist float32).
+    road_mask: 1 inside Zone 1, 0 elsewhere.
+    road_sdf_dist: scipy EDT distance in cells from road_mask boundary.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    result = hmap.copy()
+    rows, cols = result.shape
+    road_mask = np.zeros((rows, cols), dtype=np.uint8)
+
+    total_outer = road_width + shoulder_width + influence_width
+
+    # Build distance-to-path and nearest-path-elevation maps
+    dist_map = np.full((rows, cols), fill_value=float(total_outer + 1.0), dtype=np.float64)
+    nearest_road_elev = np.zeros((rows, cols), dtype=np.float64)
+
+    for r, c in path:
+        if not (0 <= r < rows and 0 <= c < cols):
+            continue
+        road_elev = float(result[r, c])
+        r_lo = max(0, int(r - total_outer - 1))
+        r_hi = min(rows, int(r + total_outer + 2))
+        c_lo = max(0, int(c - total_outer - 1))
+        c_hi = min(cols, int(c + total_outer + 2))
+        for nr in range(r_lo, r_hi):
+            for nc in range(c_lo, c_hi):
+                d = math.sqrt((nr - r) ** 2 + (nc - c) ** 2)
+                if d < dist_map[nr, nc]:
+                    dist_map[nr, nc] = d
+                    nearest_road_elev[nr, nc] = road_elev
+
+    # Apply three zones
+    for r in range(rows):
+        for c in range(cols):
+            d = dist_map[r, c]
+            if d > total_outer:
+                continue
+            road_elev = nearest_road_elev[r, c]
+            orig = float(result[r, c])
+            if d <= road_width:
+                # Zone 1: full flatten with cosine smooth at edge
+                blend = 0.5 * (1.0 + math.cos(math.pi * d / max(road_width, 1e-6)))
+                result[r, c] = orig * (1.0 - blend) + road_elev * blend
+                road_mask[r, c] = 1
+            elif d <= road_width + shoulder_width:
+                # Zone 2: linear blend from road to terrain
+                t = (d - road_width) / max(shoulder_width, 1e-6)
+                result[r, c] = road_elev * (1.0 - t) + orig * t
+            else:
+                # Zone 3: soft cosine feather (5% max modification)
+                t = (d - road_width - shoulder_width) / max(influence_width, 1e-6)
+                feather = 0.5 * (1.0 + math.cos(math.pi * t))
+                result[r, c] = orig + (road_elev - orig) * 0.05 * feather
+
+    result = np.clip(result, 0.0, 1.0)
+
+    # Compute road_sdf_dist via scipy EDT
+    not_road = (1 - road_mask).astype(np.uint8)
+    road_sdf_dist = distance_transform_edt(not_road).astype(np.float32)
+
+    return result, road_mask, road_sdf_dist
 
 
 def _generate_water_body_specs(
@@ -593,7 +686,7 @@ def run_twelve_step_world_terrain(
     # Step 9 — apply road carve to world heightmap before tile extraction
     # Road carving must precede tile extraction so graded heights reach every tile.
     sequence.append("9_apply_road_carve")
-    road_specs, world_eroded = _generate_road_mesh_specs(
+    road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(
         world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed
     )
 
@@ -621,6 +714,13 @@ def run_twelve_step_world_terrain(
                 tile_y=ty,
                 height=tile_height,
             )
+
+            # Write road_mask and road_sdf_dist tile slices onto each stack
+            tile_mask = extract_tile(world_road_mask, tx, ty, tile_size)
+            tile_sdf = extract_tile(world_road_sdf, tx, ty, tile_size)
+            stack.set("road_mask", tile_mask.astype(np.uint8), "9_apply_road_carve")
+            stack.set("road_sdf_dist", tile_sdf.astype(np.float32), "9_apply_road_carve")
+
             tile_stacks[(tx, ty)] = stack
 
             tmin_z = float(tile_height.min())
@@ -668,6 +768,8 @@ def run_twelve_step_world_terrain(
             "elapsed_s": t_elapsed,
             "erosion_params": erosion_params,
             "world_shape": list(world_eroded.shape),
+            "road_mask_shape": list(world_road_mask.shape) if world_road_mask is not None else None,
+            "road_sdf_computed": world_road_sdf is not None,
         },
     }
 

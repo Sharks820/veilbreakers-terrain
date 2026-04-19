@@ -316,6 +316,10 @@ class TerrainMaskStack:
     # Baked ambient occlusion (not computed from curvature).
     ambient_occlusion_bake: Optional[np.ndarray] = None
 
+    # Road network channels (Phase 8)
+    road_mask: Optional[np.ndarray] = None
+    road_sdf_dist: Optional[np.ndarray] = None
+
     # -- World-unit scalar metadata (required for Unity .raw round-trip) --
     height_min_m: Optional[float] = None
     height_max_m: Optional[float] = None
@@ -403,6 +407,9 @@ class TerrainMaskStack:
             "lod_bias",
             "tree_instance_points",
             "ambient_occlusion_bake",
+            # Road network (Phase 8)
+            "road_mask",
+            "road_sdf_dist",
         ),
     )
 
