@@ -505,9 +505,10 @@ def test_unity_export_decals_convert_to_y_up(state):
         export_unity_manifest(state.mask_stack, Path(td))
         decals = json.loads((Path(td) / "decals.json").read_text())
         placement = decals["decals"]["wet_rock"][0]
-        expected_x = float(state.mask_stack.world_origin_x + 3 * state.mask_stack.cell_size)
-        expected_y = float(state.mask_stack.height[2, 3])
-        expected_z = float(state.mask_stack.world_origin_y + 2 * state.mask_stack.cell_size)
+        from veilbreakers_terrain.handlers.terrain_unity_export import UNITY_SCALE_FACTOR
+        expected_x = float(state.mask_stack.world_origin_x + 3 * state.mask_stack.cell_size) * UNITY_SCALE_FACTOR
+        expected_y = float(state.mask_stack.height[2, 3]) * UNITY_SCALE_FACTOR
+        expected_z = float(state.mask_stack.world_origin_y + 2 * state.mask_stack.cell_size) * UNITY_SCALE_FACTOR
         assert placement["position"] == pytest.approx([expected_x, expected_y, expected_z])
         assert placement["normal"][1] > 0.0
 
