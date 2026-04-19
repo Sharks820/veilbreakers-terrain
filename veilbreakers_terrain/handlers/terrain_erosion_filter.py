@@ -64,15 +64,25 @@ def _hash2(ix: np.ndarray, iz: np.ndarray, seed: int) -> tuple[np.ndarray, np.nd
     return h.astype(np.float64) * scale - 1.0, k.astype(np.float64) * scale - 1.0
 
 
-def _pow_inv(x: np.ndarray, p: float) -> np.ndarray:
-    """PowInv: 1 - (1-x)^(1/(1-p)) for p in [0,1).
+def _pow_inv(x: np.ndarray, e: float) -> np.ndarray:
+    """PowInv: 1 - (1-x)^e — Rune Skovbo Johansen canonical sharpening curve.
 
-    Sharpens the combi-mask so higher detail values let more octave
-    detail through. Handles edge cases for p near 1.
+    Maps input ``x`` in [0, 1] through a power curve that sharpens
+    higher-detail octave contributions.  ``e`` is the exponent directly
+    (not inverted); ``e=1`` is identity, ``e=2`` gives Rune's published
+    reference value: _pow_inv(0.5, 2) == 0.75.
+
+    Reference: BUG-S10-001 / Fix 7.19 — replaces the wrong `1/(1-p)` form.
+
+    Args:
+        x: Input array, values in [0, 1].
+        e: Exponent >= 0.  Clamped to [0, 1000] for numerical safety.
+
+    Returns:
+        Array of the same shape as ``x`` with values in [0, 1].
     """
-    p = np.clip(p, 0.0, 0.999)
-    exponent = 1.0 / (1.0 - p + 1e-12)
-    return 1.0 - np.power(np.clip(1.0 - x, 0.0, 1.0), exponent)
+    e = float(np.clip(e, 0.0, 1000.0))
+    return 1.0 - np.power(np.clip(1.0 - x, 0.0, 1.0), e)
 
 
 # ---------------------------------------------------------------------------
