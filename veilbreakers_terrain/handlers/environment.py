@@ -107,7 +107,7 @@ def _vector_xyz(vec: Any) -> tuple[float, float, float]:
 
 
 # Phase 50-02 G2: _detect_grid_dims / _detect_grid_dims_from_vertices
-# relocated to blender_addon.handlers.procedural_meshes (toolkit primitive).
+# relocated to veilbreakers_terrain.procedural_meshes (toolkit primitive).
 # Re-exported here for backward compatibility with intra-terrain callers
 # (lines 2667, 3681, 4149, 4317, 5047, 5211 of this file).
 from ..procedural_meshes import (  # noqa: E402, F401  -- intentional post-imports re-export

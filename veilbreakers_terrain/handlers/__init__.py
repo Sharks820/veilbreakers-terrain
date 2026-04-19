@@ -261,6 +261,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 params.get("verts", []),
                 tuple(params.get("plane_point", (0.0, 0.0, 0.0))),
                 tuple(params.get("plane_normal", (0.0, 0.0, 1.0))),
+                str(params.get("side", "above")),
             )
 
         def _handle_parse_selection_criteria(params: dict) -> dict:
