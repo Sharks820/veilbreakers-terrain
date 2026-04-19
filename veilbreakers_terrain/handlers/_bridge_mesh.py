@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .procedural_meshes import _make_result, generate_bridge_mesh
+from ..procedural_meshes import _make_result, generate_bridge_mesh
 
 # Type alias matching _terrain_depth.MeshSpec (pure dict).
 MeshSpec = dict[str, Any]

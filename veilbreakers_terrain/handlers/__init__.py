@@ -233,6 +233,196 @@ def _build_command_handlers() -> Dict[str, Callable]:
     except Exception as exc:  # noqa: BLE001
         _log.warning("COMMAND_HANDLERS: failed to register atmospheric_volumes handlers: %r", exc)
 
+    # ------------------------------------------------------------------
+    # mesh.py — precision mesh editing helpers (GAP-01..GAP-05)
+    # Public surface uses a leading-underscore naming convention (module
+    # convention, not visibility), so we reach into the module directly
+    # rather than relying on __all__.
+    # ------------------------------------------------------------------
+    try:
+        _mesh = _il.import_module(f"{_pkg}.mesh")
+
+        def _handle_select_by_box(params: dict) -> list:
+            return _mesh._select_by_box(
+                params.get("verts", []),
+                tuple(params.get("min_pt", (0.0, 0.0, 0.0))),
+                tuple(params.get("max_pt", (0.0, 0.0, 0.0))),
+            )
+
+        def _handle_select_by_sphere(params: dict) -> list:
+            return _mesh._select_by_sphere(
+                params.get("verts", []),
+                tuple(params.get("center", (0.0, 0.0, 0.0))),
+                float(params.get("radius", 0.0)),
+            )
+
+        def _handle_select_by_plane(params: dict) -> list:
+            return _mesh._select_by_plane(
+                params.get("verts", []),
+                tuple(params.get("plane_point", (0.0, 0.0, 0.0))),
+                tuple(params.get("plane_normal", (0.0, 0.0, 1.0))),
+            )
+
+        def _handle_parse_selection_criteria(params: dict) -> dict:
+            return _mesh._parse_selection_criteria(
+                params.get("criteria", {}),
+                strict=bool(params.get("strict", False)),
+            )
+
+        handlers["mesh_select_by_box"] = _handle_select_by_box
+        handlers["mesh_select_by_sphere"] = _handle_select_by_sphere
+        handlers["mesh_select_by_plane"] = _handle_select_by_plane
+        handlers["mesh_parse_selection_criteria"] = _handle_parse_selection_criteria
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("COMMAND_HANDLERS: failed to register mesh handlers: %r", exc)
+
+    # ------------------------------------------------------------------
+    # mesh_smoothing.py — Taubin smoothing (session-6)
+    # ------------------------------------------------------------------
+    try:
+        _ms = _il.import_module(f"{_pkg}.mesh_smoothing")
+
+        def _handle_smooth_assembled_mesh(params: dict) -> list:
+            return _ms.smooth_assembled_mesh(
+                params.get("verts", []),
+                params.get("faces", []),
+                smooth_iterations=int(params.get("smooth_iterations", 3)),
+                blend_factor=float(params.get("blend_factor", 0.5)),
+                taubin_mu=float(params.get("taubin_mu", -0.53)),
+            )
+
+        handlers["mesh_smooth_assembled"] = _handle_smooth_assembled_mesh
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("COMMAND_HANDLERS: failed to register mesh_smoothing handlers: %r", exc)
+
+    # ------------------------------------------------------------------
+    # vertex_paint_live.py — live vertex paint brush helpers (GAP-06/07/08)
+    # ------------------------------------------------------------------
+    try:
+        _vpl = _il.import_module(f"{_pkg}.vertex_paint_live")
+
+        def _handle_compute_paint_weights(params: dict) -> list:
+            return _vpl.compute_paint_weights(
+                params.get("verts", []),
+                tuple(params.get("brush_center", (0.0, 0.0, 0.0))),
+                float(params.get("radius", 0.0)),
+                str(params.get("falloff_mode", "SMOOTH")),
+            )
+
+        def _handle_compute_paint_weights_uv(params: dict) -> list:
+            return _vpl.compute_paint_weights_uv(
+                params.get("uvs", []),
+                tuple(params.get("brush_center_uv", (0.0, 0.0))),
+                float(params.get("radius", 0.0)),
+                str(params.get("falloff_mode", "SMOOTH")),
+            )
+
+        def _handle_blend_colors(params: dict) -> tuple:
+            return _vpl.blend_colors(
+                tuple(params.get("existing", (0.0, 0.0, 0.0, 1.0))),
+                tuple(params.get("new_color", (0.0, 0.0, 0.0, 1.0))),
+                float(params.get("strength", 1.0)),
+                str(params.get("mode", "MIX")),
+            )
+
+        handlers["vertex_paint_compute_weights"] = _handle_compute_paint_weights
+        handlers["vertex_paint_compute_weights_uv"] = _handle_compute_paint_weights_uv
+        handlers["vertex_paint_blend_colors"] = _handle_blend_colors
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("COMMAND_HANDLERS: failed to register vertex_paint_live handlers: %r", exc)
+
+    # ------------------------------------------------------------------
+    # autonomous_loop.py — mesh quality evaluation + fix-action dispatch
+    # (GAP-17). Public surface: evaluate_mesh_quality, select_fix_action.
+    # ------------------------------------------------------------------
+    try:
+        _al = _il.import_module(f"{_pkg}.autonomous_loop")
+
+        def _handle_evaluate_mesh_quality(params: dict) -> dict:
+            return _al.evaluate_mesh_quality(
+                params.get("verts", []),
+                params.get("faces", []),
+                uvs=params.get("uvs"),
+            )
+
+        def _handle_select_fix_action(params: dict):
+            return _al.select_fix_action(
+                params.get("quality", {}),
+                params.get("targets", {}),
+                params.get("actions", []),
+            )
+
+        handlers["autonomous_evaluate_mesh_quality"] = _handle_evaluate_mesh_quality
+        handlers["autonomous_select_fix_action"] = _handle_select_fix_action
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("COMMAND_HANDLERS: failed to register autonomous_loop handlers: %r", exc)
+
+    # ------------------------------------------------------------------
+    # weathering.py — surface weathering colors + structural settling
+    # ------------------------------------------------------------------
+    try:
+        _weath = _il.import_module(f"{_pkg}.weathering")
+
+        def _handle_compute_weathered_vertex_colors(params: dict) -> list:
+            return _weath.compute_weathered_vertex_colors(
+                params.get("mesh_data", {}),
+                tuple(params.get("base_color", (0.5, 0.5, 0.5, 1.0))),
+                preset_name=str(params.get("preset_name", "medium")),
+            )
+
+        def _handle_apply_structural_settling(params: dict) -> list:
+            return _weath.apply_structural_settling(
+                params.get("verts", []),
+                strength=float(params.get("strength", 0.01)),
+                seed=int(params.get("seed", 42)),
+            )
+
+        handlers["weathering_compute_vertex_colors"] = _handle_compute_weathered_vertex_colors
+        handlers["weathering_apply_structural_settling"] = _handle_apply_structural_settling
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("COMMAND_HANDLERS: failed to register weathering handlers: %r", exc)
+
+    # ------------------------------------------------------------------
+    # animation_environment.py — 27 environment keyframe generators.
+    # Wire the unified dispatcher (generate_env_keyframes) plus every
+    # individual generate_*_keyframes function, so callers can either
+    # dispatch by env_type string or invoke a specific generator directly.
+    # ------------------------------------------------------------------
+    try:
+        _ae = _il.import_module(f"{_pkg}.animation_environment")
+
+        def _handle_generate_env_keyframes(params: dict) -> list:
+            return _ae.generate_env_keyframes(params)
+
+        handlers["animation_generate_env_keyframes"] = _handle_generate_env_keyframes
+
+        # Wire every public generate_*_keyframes function listed in __all__.
+        import inspect as _inspect
+
+        def _make_generator_handler(fn):
+            sig = _inspect.signature(fn)
+
+            def _h(params: dict):
+                kwargs = {k: v for k, v in (params or {}).items() if k in sig.parameters}
+                return fn(**kwargs)
+            return _h
+
+        for _export_name in getattr(_ae, "__all__", ()):
+            if not (
+                _export_name.startswith("generate_")
+                and _export_name.endswith("_keyframes")
+                and _export_name != "generate_env_keyframes"
+            ):
+                continue
+            _fn = getattr(_ae, _export_name, None)
+            if _fn is None or not callable(_fn):
+                continue
+            # Command key: animation_door_open, animation_fire_flicker, etc.
+            _cmd_suffix = _export_name[len("generate_"):-len("_keyframes")]
+            handlers[f"animation_{_cmd_suffix}"] = _make_generator_handler(_fn)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("COMMAND_HANDLERS: failed to register animation_environment handlers: %r", exc)
+
     return handlers
 
 

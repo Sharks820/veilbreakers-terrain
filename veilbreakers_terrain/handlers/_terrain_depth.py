@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-from .procedural_meshes import (
+from ..procedural_meshes import (
     _make_result,
     _merge_meshes,
     generate_bridge_mesh,

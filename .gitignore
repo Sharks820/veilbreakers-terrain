@@ -25,3 +25,10 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Codex audit working directories
+.codex_tmp_head_audit_*/
+tmp_review/
+
+# Claude Code local state
+.claude/

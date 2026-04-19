@@ -23,7 +23,7 @@ from typing import Any, Callable
 # ---------------------------------------------------------------------------
 from .vegetation_lsystem import generate_lsystem_tree, generate_leaf_cards
 
-from .procedural_meshes import (
+from ..procedural_meshes import (
     # Furniture
     generate_bed_mesh,
     generate_table_mesh,
