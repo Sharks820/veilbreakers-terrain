@@ -83,31 +83,110 @@ def _zup_to_unity_vectors(arr: np.ndarray) -> np.ndarray:
     )
 
 
-def _export_heightmap(heightmap: np.ndarray, bit_depth: int = 16) -> np.ndarray:
-    """Backward-compatible helper returning the engine-ready RAW source array.
+def _export_heightmap(
+    heightmap: np.ndarray,
+    bit_depth: int = 16,
+    *,
+    flip_y: bool = True,
+    height_min_m: Optional[float] = None,
+    height_max_m: Optional[float] = None,
+) -> np.ndarray:
+    """Export a heightmap to a Unity-ready RAW array.
 
-    Unity Terrain RAW ingest is 16-bit, so production profiles preserve
-    precision via ``height_min_m`` / ``height_max_m`` metadata rather than
-    switching the RAW payload dtype.
+    Unity Terrain RAW format requirements
+    --------------------------------------
+    * **16-bit, little-endian** — Unity's RAW importer expects uint16 LE
+      values normalised [0..65535] where 0 = ``height_min_m`` and 65535 =
+      ``height_max_m``.  The real-world height range must be recorded in the
+      manifest so Unity can invert the normalisation on import.
+    * **Y-axis flip** — Unity uses a different row-major convention: row 0 is
+      the *bottom* of the terrain in world space, whereas our heightmap stores
+      row 0 at the *top* (north).  ``flip_y=True`` (default) inverts axis 0
+      so the exported RAW byte stream matches Unity's expectation.
+    * **8-bit path** — when ``bit_depth=8`` (mobile preview), the array is
+      quantised to uint8 [0..255] instead.  Precision loss is intentional for
+      mobile.
 
-    Uses ``np.round`` + ``astype(np.uint16)`` for correct nearest-integer
-    rounding (not truncation-after-bias). Returns a C-contiguous array via
-    ``np.ascontiguousarray`` so callers can call ``.tobytes()`` safely.
+    Height scale factor
+    -------------------
+    Unity derives real-world height from::
+
+        world_height = value_norm * (height_max_m - height_min_m) + height_min_m
+
+    where ``value_norm = raw_value / (2^bit_depth - 1)``.  The caller must
+    write ``height_min_m`` and ``height_max_m`` into the manifest JSON so
+    Unity can apply the inverse transform.  UNITY_SCALE_FACTOR (0.85) is
+    applied to those manifest values by ``export_unity_manifest``; this
+    function works in raw terrain metres and does not apply the scale itself.
+
+    Args:
+        heightmap:    2-D float array of world-space heights in metres.
+        bit_depth:    Target quantisation depth.  16 = uint16 (default,
+                      production); 8 = uint8 (mobile preview).
+        flip_y:       Flip row axis before export (True by default — required
+                      for Unity RAW import).
+        height_min_m: Minimum real-world height (metres).  Defaults to
+                      ``heightmap.min()``.
+        height_max_m: Maximum real-world height (metres).  Defaults to
+                      ``heightmap.max()``.
+
+    Returns:
+        C-contiguous array of dtype uint16 (bit_depth=16) or uint8
+        (bit_depth=8), ready for ``.tobytes()`` → RAW file write.
     """
-    _ = bit_depth
     h = np.asarray(heightmap, dtype=np.float64)
-    lo = float(h.min()) if h.size else 0.0
-    hi = float(h.max()) if h.size else 0.0
+
+    lo = float(h.min()) if height_min_m is None else float(height_min_m)
+    hi = float(h.max()) if height_max_m is None else float(height_max_m)
     span = max(hi - lo, 1e-9)
+
     norm = np.clip((h - lo) / span, 0.0, 1.0)
-    quantized = np.round(norm * 65535.0).astype(np.uint16)
+
+    if flip_y and norm.ndim >= 2:
+        norm = np.flip(norm, axis=0)
+
+    if bit_depth == 8:
+        quantized = np.round(norm * 255.0).astype(np.uint8)
+    else:
+        # 16-bit (default production path)
+        quantized = np.round(norm * 65535.0).astype(np.uint16)
+
     return np.ascontiguousarray(quantized)
 
 
 def _bit_depth_for_profile(profile: Optional[str]) -> int:
-    """Return the actual Unity RAW bit depth for the given export profile."""
-    _ = profile
-    return 16
+    """Return the Unity RAW heightmap bit depth for the given export profile.
+
+    Profile table (matches Unity Terrain importer presets):
+
+    +------------------+-------+------------------------------------------------+
+    | profile          | bits  | notes                                          |
+    +==================+=======+================================================+
+    | mobile           |   8   | uint8 RAW; lossy but fast to load on mobile    |
+    | standard         |  16   | uint16 RAW; default Unity Terrain import mode  |
+    | high_fidelity    |  16   | uint16 (Unity RAW is always int; float is EXR) |
+    | hero_shot        |  16   | same as high_fidelity; precision via metadata  |
+    | aaa_open_world   |  16   | same as high_fidelity                          |
+    | None / default   |  16   | fallback — always safe                         |
+    +------------------+-------+------------------------------------------------+
+
+    Note: Unity's own RAW importer only supports 8-bit and 16-bit.  Float
+    precision for ``high_fidelity`` is achieved by recording the real-world
+    ``height_min_m`` / ``height_max_m`` range in the manifest JSON so Unity
+    can reconstruct sub-centimetre heights from the 16-bit normalised value,
+    rather than relying on a floating-point RAW file (which Unity does not
+    natively support for Terrain heightmaps).
+    """
+    _PROFILE_TABLE: Dict[str, int] = {
+        "mobile":         8,
+        "standard":      16,
+        "high_fidelity": 16,
+        "hero_shot":     16,
+        "aaa_open_world": 16,
+    }
+    if profile is None:
+        return 16
+    return _PROFILE_TABLE.get(profile.lower(), 16)
 
 
 def pass_prepare_terrain_normals(
@@ -521,6 +600,82 @@ def export_unity_manifest(
     ):
         _write_json(files, output_dir, filename=name, payload=payload)
 
+    # ---------------------------------------------------------------------- #
+    # Tree prototype list — derived from tree_instance_points column 4.
+    # Unity Terrain requires a TerrainData.treePrototypes list; each unique
+    # prototype_id in the instance array maps to one entry.  We emit a
+    # placeholder list so the Unity importer knows how many prototype slots to
+    # reserve (actual mesh/prefab assignment happens in the Unity project).
+    # ---------------------------------------------------------------------- #
+    tree_prototype_list: List[Dict[str, Any]] = []
+    if stack.tree_instance_points is not None:
+        pts = np.asarray(stack.tree_instance_points, dtype=np.float64)
+        if pts.ndim == 2 and pts.shape[1] >= 5:
+            proto_ids = np.unique(pts[:, 4].astype(np.int32)).tolist()
+            tree_prototype_list = [
+                {
+                    "prototype_id": int(pid),
+                    "prefab_asset": f"Trees/Prototype_{int(pid):03d}",
+                    "bend_factor": 1.0,
+                    "width": _apply_unity_scale(_TREE_HEIGHT_DEFAULT * 0.5),
+                    "height": _apply_unity_scale(_TREE_HEIGHT_DEFAULT),
+                }
+                for pid in proto_ids
+            ]
+
+    # ---------------------------------------------------------------------- #
+    # Water level — derived from water_surface channel (if present).
+    # Unity's water system needs a world-space Y value for the base plane.
+    # We emit the 75th-percentile water surface height as the canonical level
+    # so brief splash-zones don't inflate the baseline.
+    # ---------------------------------------------------------------------- #
+    water_level_unity: Optional[float] = None
+    ws = stack.get("water_surface")
+    if ws is not None:
+        ws_arr = np.asarray(ws, dtype=np.float64)
+        nonzero = ws_arr[ws_arr > 0.0]
+        if nonzero.size > 0:
+            raw_level = float(np.percentile(nonzero, 75))
+            water_level_unity = _apply_unity_scale(raw_level)
+
+    # ---------------------------------------------------------------------- #
+    # Lightmap hints — baked AO + chart IDs for Unity Progressive lightmapper.
+    # chart_count: number of unique UV chart IDs (0 if not assigned).
+    # ao_channel_present: signals Unity to use our baked AO instead of
+    #   recomputing it from geometry (avoids double-darkening in caves).
+    # ---------------------------------------------------------------------- #
+    lm_chart_count = 0
+    lm_chart_id = stack.get("lightmap_uv_chart_id")
+    if lm_chart_id is not None:
+        lm_chart_count = int(np.unique(np.asarray(lm_chart_id)).size)
+    lightmap_hints: Dict[str, Any] = {
+        "uv_chart_count": lm_chart_count,
+        "ao_channel_present": stack.get("ambient_occlusion_bake") is not None,
+        "lightmap_scale": 1.0,
+        "lightmap_resolution_hint": 64 if (profile or "").lower() == "mobile" else 256,
+        "realtime_gi": profile not in _PRODUCTION_PLUS_PROFILES,
+        "baked_gi": profile in _PRODUCTION_PLUS_PROFILES or profile in {"standard", "high_fidelity"},
+    }
+
+    # ---------------------------------------------------------------------- #
+    # Splatmap layer metadata — names + per-layer roughness/normal hints used
+    # by the Unity MicroSplat terrain shader to drive per-layer material params
+    # without re-reading source textures at runtime.
+    # ---------------------------------------------------------------------- #
+    splatmap_layer_meta: List[Dict[str, Any]] = []
+    weights = stack.splatmap_weights_layer
+    if weights is not None:
+        n_layers = int(np.asarray(weights).shape[2]) if np.asarray(weights).ndim == 3 else 1
+        for li in range(n_layers):
+            splatmap_layer_meta.append({
+                "layer_index": li,
+                "layer_id": f"layer_{li:02d}",
+                "uv_scale_meters": float(stack.cell_size),
+                "normal_map_intensity": 1.0,
+                "roughness_multiplier": 1.0,
+                "height_blend_factor": 0.1,
+            })
+
     determinism_hash = stack.compute_hash()
     manifest: Dict[str, Any] = {
         "schema_version": stack.unity_export_schema_version,
@@ -534,14 +689,21 @@ def export_unity_manifest(
         "unity_world_origin": _apply_unity_scale([float(stack.world_origin_x), 0.0, float(stack.world_origin_y)]),
         "height_min_m": _apply_unity_scale(float(stack.height_min_m)) if stack.height_min_m is not None else None,
         "height_max_m": _apply_unity_scale(float(stack.height_max_m)) if stack.height_max_m is not None else None,
+        "height_scale_factor": UNITY_SCALE_FACTOR,
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
         "source_coordinate_system": stack.coordinate_system,
         "generation_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "generator_version": "bundle_j_v2.0",
+        "generator_version": "bundle_j_v2.1",
         "profile": profile or "default",
         "heightmap_bit_depth": hm_bit_depth,
+        "heightmap_flip_y": True,
         "splatmap_group_count": len(splatmap_files),
+        "splatmap_layer_count": len(splatmap_layer_meta),
+        "splatmap_layers": splatmap_layer_meta,
         "detail_density_max_per_cell": _DETAIL_DENSITY_MAX_PER_CELL,
+        "tree_prototype_list": tree_prototype_list,
+        "water_level_unity_units": water_level_unity,
+        "lightmap_hints": lightmap_hints,
         "files": files,
         "populated_channels": list(stack.populated_by_pass.keys()),
         "determinism_hash": determinism_hash,

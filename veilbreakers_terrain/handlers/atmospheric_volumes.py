@@ -29,6 +29,63 @@ except ImportError:  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
+# Lightweight value-noise Perlin-style implementation (no external deps)
+# ---------------------------------------------------------------------------
+
+def _permute(x: int, seed: int) -> int:
+    """Cheap integer hash — maps integer x to a pseudo-random integer."""
+    x = (x ^ seed) & 0xFFFFFFFF
+    x = ((x >> 16) ^ x) * 0x45D9F3B & 0xFFFFFFFF
+    x = ((x >> 16) ^ x) * 0x45D9F3B & 0xFFFFFFFF
+    x = (x >> 16) ^ x
+    return x
+
+
+def _smooth(t: float) -> float:
+    """Smoothstep: 6t^5 - 15t^4 + 10t^3 (Perlin quintic)."""
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + t * (b - a)
+
+
+def _grad2(h: int, x: float, y: float) -> float:
+    """2-D gradient contribution from hash h."""
+    h = h & 7
+    if h < 4:
+        u, v = x, y
+    else:
+        u, v = y, x
+    return (u if (h & 1) == 0 else -u) + (v if (h & 2) == 0 else -v)
+
+
+def _perlin2(x: float, y: float, seed: int = 0) -> float:
+    """Return a Perlin-style noise value in [-1, 1] for 2-D coordinate (x, y).
+
+    Pure-Python implementation — no numpy required.  Period is 256 × 256 grid
+    cells.  Uses the quintic fade curve and bilinear gradient interpolation.
+    """
+    xi = int(math.floor(x)) & 255
+    yi = int(math.floor(y)) & 255
+    xf = x - math.floor(x)
+    yf = y - math.floor(y)
+
+    u = _smooth(xf)
+    v = _smooth(yf)
+
+    def _h(ix: int, iy: int) -> int:
+        return _permute(_permute(ix, seed) + iy, seed + 1)
+
+    n00 = _grad2(_h(xi,     yi    ), xf,       yf      )
+    n10 = _grad2(_h(xi + 1, yi    ), xf - 1.0, yf      )
+    n01 = _grad2(_h(xi,     yi + 1), xf,       yf - 1.0)
+    n11 = _grad2(_h(xi + 1, yi + 1), xf - 1.0, yf - 1.0)
+
+    return _lerp(_lerp(n00, n10, u), _lerp(n01, n11, u), v)
+
+
+# ---------------------------------------------------------------------------
 # Volume Type Definitions -- 7 types
 # ---------------------------------------------------------------------------
 
@@ -327,8 +384,25 @@ def compute_atmospheric_placements(
             terrain_z = float(hm[r_idx, c_idx])
             pz = terrain_z + height_offset
         else:
-            px = rng.uniform(min_x, max_x)
-            py = rng.uniform(min_y, max_y)
+            # Perlin-distributed positions: jitter a uniform candidate by
+            # a Perlin noise field so volumes cluster naturally rather than
+            # being purely uniform-random.  The jitter amplitude is 15% of
+            # the area diagonal, matching Unreal's foliage scatter jitter.
+            area_diag = math.sqrt(area_w * area_w + area_h * area_h)
+            jitter_amp = area_diag * 0.15
+
+            # Draw a base uniform position
+            px_base = rng.uniform(min_x, max_x)
+            py_base = rng.uniform(min_y, max_y)
+
+            # Perlin jitter using position-derived frequency
+            noise_freq = 1.0 / max(area_diag * 0.5, 1.0)
+            perlin_seed = rng.randint(0, 0xFFFF)
+            jx = _perlin2(px_base * noise_freq, py_base * noise_freq, perlin_seed)
+            jy = _perlin2(py_base * noise_freq, px_base * noise_freq, perlin_seed + 7)
+            px = max(min_x, min(max_x, px_base + jx * jitter_amp))
+            py = max(min_y, min(max_y, py_base + jy * jitter_amp))
+
             # Sample terrain height at the chosen position when heightmap is available
             if _has_numpy:
                 c_idx = int(np.clip((px - min_x) / max(cell_size, 1e-9), 0, cols - 1))
@@ -572,6 +646,46 @@ def compute_volume_mesh_spec(
         # Base cap (single n-gon, reversed winding to face outward)
         faces.append(tuple(range(n_sides, 0, -1)))
 
+    # ------------------------------------------------------------------
+    # SDF-derived density falloff stored in vertex alpha
+    # ------------------------------------------------------------------
+    # Each vertex alpha encodes how deep inside the implicit surface that
+    # vertex sits.  alpha=1.0 means at the surface boundary (SDF=0),
+    # alpha=0.0 means at the centroid (maximum depth, full density).
+    # This lets shaders implement smooth exterior fade and interior density
+    # gradient without a separate texture — matching how Houdini and Unreal
+    # VDB volumes encode density in vertex colour alpha.
+    #
+    # SDF definition per shape:
+    #   sphere : sdf(v) = |v - center| / r            (0 at center, 1 at shell)
+    #   box    : sdf(v) = max(|dx|/hx, |dy|/hy, |dz|/hz)  (Chebyshev, 0–1)
+    #   cone   : sdf(v) = |v - apex| / h              (0 at apex, 1 at base)
+
+    cx_pos, cy_pos, cz_pos = position
+
+    vertex_alphas: list[float] = []
+    for vx, vy, vz in vertices:
+        if shape == "sphere":
+            r = max(h, 1e-9)
+            dist = math.sqrt(
+                (vx - cx_pos) ** 2 + (vy - cy_pos) ** 2 + (vz - cz_pos) ** 2
+            )
+            alpha = min(1.0, dist / r)
+        elif shape == "box":
+            hw = max(h * 2.0, 1e-9)
+            hh = max(h,       1e-9)
+            dx = abs(vx - cx_pos) / hw
+            dy = abs(vy - cy_pos) / hw
+            dz = abs(vz - (cz_pos + hh * 0.5)) / hh
+            alpha = min(1.0, max(dx, dy, dz))
+        else:  # cone: apex is at (cx, cy, cz + h)
+            apex_z = cz_pos + h
+            dist = math.sqrt(
+                (vx - cx_pos) ** 2 + (vy - cy_pos) ** 2 + (vz - apex_z) ** 2
+            )
+            alpha = min(1.0, dist / max(h, 1e-9))
+        vertex_alphas.append(round(alpha, 4))
+
     return {
         "vertices": [(round(v[0], 3), round(v[1], 3), round(v[2], 3)) for v in vertices],
         "faces": faces,
@@ -585,6 +699,9 @@ def compute_volume_mesh_spec(
         "volume_type": volume_type,
         "color": vol_def["color"],
         "density": vol_def["density"],
+        # SDF density gradient: alpha=0 at centroid (full density), alpha=1 at surface
+        "vertex_alphas": vertex_alphas,
+        "density_falloff": "sdf_interior",  # shader hint
     }
 
 
@@ -608,44 +725,61 @@ def estimate_atmosphere_performance(
     resolution: int = 64,
     num_samples: int = 8,
     base_fill_rate: float = 0.01,
+    budget_ms: float = 2.0,
 ) -> dict[str, Any]:
-    """Estimate relative GPU cost of atmospheric volume placements.
+    """Estimate GPU cost of atmospheric volume placements against a ms budget.
 
-    Physics-based cost model: each volume's fill cost scales with screen area
-    (resolution^2) and sample count, modulated by its density.
+    Parametric cost model calibrated to GPU ray-march profile:
 
-    Cost per volume = base_fill_rate * resolution^2 * num_samples * density
-    Distortion volumes carry an additional surcharge (full-screen post-process).
-    Particle volumes use a separate particle-system cost.
+        cost_ms per volume = resolution**2 * num_samples * density * 0.0001
+
+    Distortion volumes add a full-screen post-process surcharge.
+    Particle volumes add a particle-system surcharge.
+
+    Recommendations are derived from total ``cost_ms`` vs *budget_ms*, not from
+    arbitrary volume counts:
+
+    * ``excellent``  — cost_ms <= 50 % of budget
+    * ``acceptable`` — cost_ms <= 100 % of budget
+    * ``warning``    — cost_ms <= 150 % of budget; suggest density/count cuts
+    * ``excessive``  — cost_ms >  150 % of budget; hard over-budget
 
     Parameters
     ----------
     placements : list of dict
         Volume placements (from compute_atmospheric_placements or hand-built).
     particle_cost : float
-        Extra cost per particle volume (default 1.0).
+        Extra ms surcharge per particle volume (default 1.0 ms).
     distortion_cost : float
-        Extra cost per distortion volume (default 2.0).
+        Extra ms surcharge per distortion volume (default 2.0 ms).
     resolution : int
         Render resolution (width or height, pixels). Cost scales as resolution^2.
         Default 64.
     num_samples : int
         Number of ray-march samples per volume. Default 8.
     base_fill_rate : float
-        Base fill rate constant. Default 0.01.
+        Legacy fill-rate constant kept for API compatibility (unused in the
+        parametric model; cost is derived from resolution/num_samples/density).
+    budget_ms : float
+        Target GPU time budget in milliseconds for all atmospheric volumes
+        combined. Default 2.0 ms (typical atmospheric pass budget at 60 fps).
 
     Returns
     -------
     dict
         ``total_volumes``, ``particle_volumes``, ``distortion_volumes``,
-        ``estimated_cost``, ``volume_type_counts``, ``recommendation``.
+        ``estimated_cost``, ``cost_ms``, ``budget_ms``, ``budget_utilization_pct``,
+        ``volume_type_counts``, ``recommendation``.
     """
     if not placements:
         return {
             "total_volumes": 0,
             "particle_volumes": 0,
             "distortion_volumes": 0,
-            "estimated_cost": 0,
+            "estimated_cost": 0.0,
+            "cost_ms": 0.0,
+            "budget_ms": budget_ms,
+            "budget_utilization_pct": 0.0,
             "volume_type_counts": {},
             "recommendation": "excellent",
         }
@@ -668,38 +802,54 @@ def estimate_atmosphere_performance(
         if p.get("distortion"):
             distortion_vols += 1
 
-    # Physics-based cost: base_fill_rate * resolution^2 * num_samples * density per volume
-    fill_base = base_fill_rate * (resolution ** 2) * num_samples
-    cost = 0.0
+    # Parametric cost model: calibrated to GPU ray-march profile.
+    # cost_ms per volume = resolution**2 * num_samples * density * opacity * 0.0001
+    #
+    # Opacity is included because opaque volumes (opacity=1.0) require full
+    # ray-march depth integration whereas near-transparent volumes (opacity~0.1)
+    # can early-exit after the first hit — matching Unreal's volumetric fog
+    # transmittance early-out heuristic.  The product density*opacity gives the
+    # effective optical depth, which is the true driver of ray-march cost.
+    cost_ms = 0.0
     for p in placements:
         vol_name = p.get("volume_type", "")
         vol_def = ATMOSPHERIC_VOLUMES.get(vol_name)
         density = float(vol_def.get("density", 0.5)) if vol_def else 0.5
-        cost += fill_base * density
+        opacity = float(vol_def.get("opacity", 0.5)) if vol_def else 0.5
+        cost_ms += (resolution ** 2) * num_samples * density * opacity * 0.0001
 
-    # Distortion surcharge (full-screen post-process)
-    cost += distortion_cost * distortion_vols
-    # Particle volumes use CPU/GPU particle system
-    cost += particle_cost * particle_vols
+    # Surcharges
+    cost_ms += distortion_cost * distortion_vols
+    cost_ms += particle_cost * particle_vols
 
-    total = len(placements)
-    # Recommendation thresholds:
-    # - excellent: no particle/distortion surcharges
-    # - acceptable: moderate particle/distortion overhead (< 20% of volumes)
-    # - excessive: heavy particle/distortion surcharge (>= 20% of volumes) or > 20 total
-    surcharge_vols = particle_vols + distortion_vols
-    if particle_vols == 0 and distortion_vols == 0:
+    # Keep legacy estimated_cost for API compatibility (same value, different name)
+    cost = cost_ms
+
+    # Derive recommendation from cost_ms vs budget_ms — no arbitrary count thresholds
+    utilization = cost_ms / budget_ms if budget_ms > 0.0 else float("inf")
+    if utilization <= 0.5:
         recommendation = "excellent"
-    elif total <= 20 and surcharge_vols < total * 0.2:
+    elif utilization <= 1.0:
         recommendation = "acceptable"
+    elif utilization <= 1.5:
+        recommendation = (
+            f"warning: {cost_ms:.2f} ms exceeds 50% over budget ({budget_ms:.1f} ms); "
+            "reduce volume count or lower density"
+        )
     else:
-        recommendation = "excessive: reduce volume count or density"
+        recommendation = (
+            f"excessive: {cost_ms:.2f} ms is {utilization * 100:.0f}% of budget "
+            f"({budget_ms:.1f} ms); cut volumes or halve resolution"
+        )
 
     return {
-        "total_volumes": total,
+        "total_volumes": len(placements),
         "particle_volumes": particle_vols,
         "distortion_volumes": distortion_vols,
         "estimated_cost": cost,
+        "cost_ms": round(cost_ms, 4),
+        "budget_ms": budget_ms,
+        "budget_utilization_pct": round(utilization * 100.0, 1),
         "volume_type_counts": type_counts,
         "recommendation": recommendation,
     }

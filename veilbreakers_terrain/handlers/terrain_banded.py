@@ -186,25 +186,51 @@ def compute_anisotropic_breakup(
 ) -> np.ndarray:
     """Apply directional noise breakup to a height band.
 
-    Stretches noise along a dominant direction to simulate wind/water
-    erosion patterns. Strength 0 = no breakup, 1 = maximum distortion.
+    Uses a proper anisotropic Gaussian kernel (elongated along angle_deg)
+    to simulate wind/water erosion directionality — matching Houdini's
+    directional erosion and Gaea's wind-warp node. Strength 0 = no breakup.
+
+    Implementation: rotate base noise into the erosion direction frame,
+    apply a wide-along/narrow-perp Gaussian (sigma ratio ≈ 6:1), then
+    rotate back. Falls back to axis-aligned Gaussians without scipy.
     """
     if strength <= 0 or band.size == 0:
         return band
     rows, cols = band.shape
     rng = np.random.default_rng(seed)
     angle_rad = np.radians(angle_deg)
-    # Create directional noise field
+    cos_a = float(np.cos(angle_rad))
+    sin_a = float(np.sin(angle_rad))
+
     noise = rng.standard_normal((rows, cols)).astype(np.float64)
-    # Apply directional blur via rolling
-    shift_r = max(1, int(rows * 0.02 * strength))
-    shift_c = max(1, int(cols * 0.02 * strength))
-    cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
-    stretched = np.roll(noise, int(shift_r * cos_a), axis=0)
-    stretched = np.roll(stretched, int(shift_c * sin_a), axis=1)
-    # Blend with original
-    result = band + stretched * strength * float(np.std(band)) * 0.1
-    return result
+
+    # Sigma along the erosion direction; sigma_perp is tight to preserve detail.
+    sigma_along = max(1.0, strength * min(rows, cols) * 0.08)
+    sigma_perp = max(0.5, sigma_along / 6.0)
+
+    try:
+        from scipy.ndimage import affine_transform, gaussian_filter
+
+        center = np.array([rows / 2.0, cols / 2.0])
+        # Rotation matrix (row-major: [dr, dc] = R * [dr0, dc0])
+        rot = np.array([[cos_a, sin_a], [-sin_a, cos_a]])
+        rot_inv = rot.T
+
+        forward_offset = center - rot @ center
+        rotated = affine_transform(noise, rot, offset=forward_offset, mode="reflect")
+        blurred = gaussian_filter(rotated, sigma=[sigma_along, sigma_perp], mode="reflect")
+        back_offset = center - rot_inv @ center
+        directional_noise = affine_transform(blurred, rot_inv, offset=back_offset, mode="reflect")
+    except ImportError:
+        from scipy.ndimage import gaussian_filter  # type: ignore[no-redef]
+        sigma_r = abs(sin_a) * sigma_along + abs(cos_a) * sigma_perp
+        sigma_c = abs(cos_a) * sigma_along + abs(sin_a) * sigma_perp
+        directional_noise = gaussian_filter(noise, sigma=[max(0.5, sigma_r), max(0.5, sigma_c)], mode="reflect")
+
+    band_std = float(np.std(band))
+    if band_std < 1e-12:
+        band_std = 1.0
+    return band + directional_noise * strength * band_std
 
 
 def apply_anti_grain_smoothing(
@@ -332,35 +358,73 @@ def _generate_strata_band(
     seed: int,
     biome: str,
 ) -> np.ndarray:
-    """Horizontal sedimentary strata: sine layering modulated by biome noise.
+    """Sedimentary strata with variable layer thicknesses, geological dip, and
+    hardness-modulated sharpness — matching Gaea's strata node and UE5 Landscape
+    layer blending where each stratum has a physically distinct interface.
 
-    Produces near-horizontal bands (varying along world-Y) with a gentle
-    fBm modulation along X so the layers are not perfectly ruler-straight.
+    Layers have log-normal thickness distribution (some beds are thick, some thin)
+    and tilt at a biome-dependent dip angle. Interface sharpness mimics hard rock
+    (steep cosine^n) vs soft rock (smooth sine). An fBm wobble breaks ruler-linearity.
     """
-    period = _BAND_PERIOD_M["strata"]
-    y_coords = (np.arange(height, dtype=np.float64) * cell_size + world_origin_y)
-    x_coords = (np.arange(width, dtype=np.float64) * cell_size + world_origin_x)
-
-    # Base horizontal sine layering.
     strata_seed = (seed + _BAND_SEED_OFFSETS["strata"]) & 0xFFFFFFFF
-    # Biome-dependent layer frequency multiplier.
-    biome_mult = 1.0
-    if "canyon" in biome:
-        biome_mult = 1.6
-    elif "plain" in biome:
-        biome_mult = 0.7
+    rng = np.random.default_rng(strata_seed)
 
-    freq = (2.0 * np.pi / period) * biome_mult
-    base_sin = np.sin(freq * y_coords)                         # shape (H,)
-    layers = np.broadcast_to(base_sin[:, None], (height, width)).astype(np.float64)
+    # Biome-dependent strata parameters
+    _BIOME_STRATA: Dict[str, Tuple] = {
+        # (n_layers, dip_deg_base, sharpness_exp, period_mult, wobble_strength)
+        "canyon":              (10, 6.0, 4.0, 1.6, 0.08),
+        "mountains":           (8,  9.0, 3.0, 1.2, 0.12),
+        "plains":              (5,  1.0, 1.2, 0.7, 0.20),
+        "dark_fantasy_default":(7,  3.0, 2.5, 1.0, 0.14),
+    }
+    params = None
+    for k, v in _BIOME_STRATA.items():
+        if k in biome:
+            params = v
+            break
+    if params is None:
+        params = _BIOME_STRATA["dark_fantasy_default"]
+    n_layers, dip_deg_base, sharpness_exp, period_mult, wobble_str = params
 
-    # Gentle X-modulation so strata wobble slightly.
+    period = _BAND_PERIOD_M["strata"] * period_mult
+    y_coords = np.arange(height, dtype=np.float64) * cell_size + world_origin_y
+    x_coords = np.arange(width, dtype=np.float64) * cell_size + world_origin_x
+    xx, yy = np.meshgrid(x_coords, y_coords)
+
+    # Geological dip: rotate depth axis so layers tilt slightly.
+    # Dip jitter ±30% per seed keeps tiles varied but coherent at tile boundaries.
+    dip_deg = dip_deg_base * float(rng.uniform(0.7, 1.3))
+    dip_rad = np.radians(dip_deg)
+    dip_cos, dip_sin = float(np.cos(dip_rad)), float(np.sin(dip_rad))
+    depth_coord = yy * dip_cos + xx * dip_sin  # metres along dip-normal axis
+
+    # Variable layer thickness: log-normal so some beds are 2–3× thicker than others.
+    thicknesses = rng.lognormal(mean=0.0, sigma=0.45, size=n_layers).astype(np.float64)
+    thicknesses /= thicknesses.sum()
+
+    # Map depth_coord into [0, n_layers) phase space.
+    depth_range = float(height * cell_size * period_mult)
+    depth_norm = (depth_coord % depth_range) / max(depth_range, 1e-9) * n_layers
+
+    # Build non-uniform phase: each layer occupies its thickness fraction of 2π.
+    cumulative = np.concatenate([[0.0], np.cumsum(thicknesses * n_layers)])
+    phase = np.zeros_like(depth_norm, dtype=np.float64)
+    for i in range(n_layers):
+        lo, hi = cumulative[i], cumulative[i + 1]
+        span = max(hi - lo, 1e-9)
+        layer_mask = (depth_norm >= lo) & (depth_norm < hi)
+        # Remap this layer's range to [0, π] for one half-cycle
+        t = np.where(layer_mask, (depth_norm - lo) / span * np.pi, 0.0)
+        phase += t * layer_mask
+
+    # Hardness-modulated sharpness: cos(phase)^n — large n → hard cliff-like boundaries.
+    sharp_layers = np.cos(phase) ** sharpness_exp
+
+    # fBm wobble: breaks ruler-straight layer horizons.
     mod_period = period * 4.0
-    xs_mod = x_coords / mod_period
-    ys_mod = y_coords / mod_period
-    mxs, mys = np.meshgrid(xs_mod, ys_mod)
+    mxs, mys = np.meshgrid(x_coords / mod_period, y_coords / mod_period)
     wobble = _fbm_array(mxs, mys, octaves=3, persistence=0.5, lacunarity=2.0, seed=strata_seed)
-    layered = layers + 0.15 * wobble
+    layered = sharp_layers + wobble_str * wobble
 
     return _normalize_band(layered)
 

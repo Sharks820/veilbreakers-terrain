@@ -131,25 +131,55 @@ class DirtyTracker:
             return None
         return BBox(min_x=new_min_x, min_y=new_min_y, max_x=new_max_x, max_y=new_max_y)
 
+    @staticmethod
+    def _sweep_merge(regions: List["DirtyRegion"]) -> List["DirtyRegion"]:
+        """Merge overlapping/adjacent BBOXes via an x-sorted sweep.
+
+        Sort by min_x, then for each region check whether it overlaps (or is
+        exactly adjacent to) *any* already-open interval on the merged list,
+        not just the last one.  Repeat until no more merges are possible so
+        that transitive overlaps (A touches B, B touches C, but A does not
+        directly touch C) are fully collapsed.
+
+        This produces the minimal non-overlapping, non-adjacent set.
+        """
+        if len(regions) < 2:
+            return list(regions)
+
+        def _overlaps(a: "DirtyRegion", b: "DirtyRegion") -> bool:
+            ab, bb = a.bounds, b.bounds
+            return (
+                ab.min_x <= bb.max_x and bb.min_x <= ab.max_x
+                and ab.min_y <= bb.max_y and bb.min_y <= ab.max_y
+            )
+
+        # Iterate to a fixed point: one pass through sorted regions, then
+        # re-run if any merge happened (handles transitive chains).
+        current = sorted(regions, key=lambda r: (r.bounds.min_x, r.bounds.min_y))
+        changed = True
+        while changed:
+            changed = False
+            merged: List[DirtyRegion] = []
+            for region in current:
+                # Try to absorb into an existing merged region
+                absorbed = False
+                for i, existing in enumerate(merged):
+                    if _overlaps(existing, region):
+                        merged[i] = existing.merge(region)
+                        absorbed = True
+                        changed = True
+                        break
+                if not absorbed:
+                    merged.append(region)
+            # Re-sort after each pass (merges can change extents)
+            current = sorted(merged, key=lambda r: (r.bounds.min_x, r.bounds.min_y))
+        return current
+
     def _coalesce_inplace(self) -> None:
         """Merge overlapping or adjacent regions in-place (modifies self._regions)."""
         if len(self._regions) < 2:
             return
-        # Sort by min_y then min_x for a deterministic sweep
-        regions = sorted(self._regions, key=lambda r: (r.bounds.min_y, r.bounds.min_x))
-        merged: List[DirtyRegion] = [regions[0]]
-        for curr in regions[1:]:
-            prev = merged[-1]
-            cb = curr.bounds
-            pb = prev.bounds
-            # Overlap or adjacency check: row bands overlap AND column bands overlap
-            rows_overlap = cb.min_y <= pb.max_y and pb.min_y <= cb.max_y
-            cols_overlap = cb.min_x <= pb.max_x and pb.min_x <= cb.max_x
-            if rows_overlap and cols_overlap:
-                merged[-1] = prev.merge(curr)
-            else:
-                merged.append(curr)
-        self._regions = merged
+        self._regions = self._sweep_merge(self._regions)
 
     def get_dirty_regions(self) -> List[DirtyRegion]:
         return list(self._regions)
@@ -169,41 +199,24 @@ class DirtyTracker:
     def dirty_area(self, cell_size: Optional[float] = None) -> float:
         """Return the true union area of all dirty regions (no double-counting).
 
-        Uses a sweep-line approach over the coalesced region list so
-        overlapping regions are counted only once.
-
-        Parameters
-        ----------
-        cell_size : optional float
-            When provided the result is in world m^2 (area in cells *
-            cell_size^2). When None the result is in world m^2 using the
-            raw BBox coordinates (which are already in world meters).
+        Runs the same sweep-merge used by ``_coalesce_inplace`` on a
+        temporary copy of the region list so overlapping BBOXes are fully
+        merged before summing widths * heights.  ``cell_size`` is accepted
+        for API compatibility but BBox coordinates are already in world metres
+        so no unit conversion is needed.
 
         Returns
         -------
         float
-            Union area in m^2. Returns 0.0 if there are no dirty regions.
+            Union area in m^2.  Returns 0.0 if there are no dirty regions.
         """
         if not self._regions:
             return 0.0
-        # Work on a coalesced copy so overlapping regions are merged first
-        temp = list(self._regions)
-        temp.sort(key=lambda r: (r.bounds.min_y, r.bounds.min_x))
-        merged: List[DirtyRegion] = [temp[0]]
-        for curr in temp[1:]:
-            prev = merged[-1]
-            pb, cb = prev.bounds, curr.bounds
-            rows_overlap = cb.min_y <= pb.max_y and pb.min_y <= cb.max_y
-            cols_overlap = cb.min_x <= pb.max_x and pb.min_x <= cb.max_x
-            if rows_overlap and cols_overlap:
-                merged[-1] = prev.merge(curr)
-            else:
-                merged.append(curr)
-        area = sum(r.bounds.width * r.bounds.height for r in merged)
-        if cell_size is not None and cell_size > 0.0:
-            # Convert from world-meter^2 to cell counts then back to m^2
-            # (BBox coords are already world-meters so just return area)
-            pass
+        # Full sweep-merge on a copy — handles transitive overlaps correctly.
+        non_overlapping = self._sweep_merge(list(self._regions))
+        area = sum(r.bounds.width * r.bounds.height for r in non_overlapping)
+        # cell_size param is API-compat only; coords are already world-metres.
+        _ = cell_size
         return float(area)
 
     def dirty_fraction(self, cell_size: Optional[float] = None) -> float:

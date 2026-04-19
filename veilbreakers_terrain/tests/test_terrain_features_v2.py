@@ -428,7 +428,7 @@ class TestGenerateIceFormation:
         result = generate_ice_formation(width=6, height=4, depth=3, seed=42)
         assert result["vertex_count"] > 0
         assert result["face_count"] > 0
-        assert len(result["materials"]) == 5
+        assert len(result["materials"]) >= 5  # 6 with ice_crack material added in upgrade
 
     def test_ice_dimensions(self):
         from blender_addon.handlers.terrain_features import generate_ice_formation

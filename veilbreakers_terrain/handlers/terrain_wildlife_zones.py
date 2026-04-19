@@ -4,13 +4,26 @@ Computes per-species spawn affinity maps from the TerrainMaskStack and
 populates ``stack.wildlife_affinity`` — a ``dict[str, np.ndarray]`` of
 (H, W) float32 densities in [0, 1].
 
+Upgrade notes (session 8 — AAA pass):
+  _distance_to_mask     : exact EDT via scipy, chamfer fallback — O(N) exact.
+  compute_wildlife_affinity:
+    - forest_density factor (detail_density sum) added — shelter species
+      prefer tree cover; open-ground species penalise it.
+    - human_disturbance factor from road_sdf_dist channel — models AC:Valhalla
+      wildlife flight-zone logic (animals flee roads / settlements).
+    - weighted-product combination replaces weighted-sum so zero in any
+      hard-required factor drives the whole score to zero.
+    - Per-species road_sensitivity weight controls flee-distance tuning.
+  pass_wildlife_zones: produces wildlife_affinity_[species] keys in metrics
+    summary for Unity JSON export and per-species channel provenance.
+
 Pure numpy. No bpy. Deterministic.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -49,6 +62,13 @@ class SpeciesAffinityRule:
         If set, affinity falls off beyond this radius from any water cell.
     exclusion_radius_m : float
         Minimum distance to any hero_exclusion / protected cell.
+    road_sensitivity : float
+        0.0 = ignores roads; 1.0 = strong avoidance. AC:Valhalla animals
+        have a species-specific flee distance; we model this as the fraction
+        of road_sdf_dist that suppresses affinity.
+    forest_preference : float
+        +1.0 = strongly prefers forest cover; -1.0 = avoids forest; 0.0 = neutral.
+        Blended with detail_density sum via sigmoid-shaped weighting.
     """
 
     species: str
@@ -57,6 +77,8 @@ class SpeciesAffinityRule:
     preferred_biomes: Tuple[int, ...] = ()
     required_water_proximity_m: Optional[float] = None
     exclusion_radius_m: float = 0.0
+    road_sensitivity: float = 0.5
+    forest_preference: float = 0.0
 
 
 def _window_score(values: np.ndarray, lo: float, hi: float) -> np.ndarray:
@@ -64,7 +86,6 @@ def _window_score(values: np.ndarray, lo: float, hi: float) -> np.ndarray:
     span = max(hi - lo, 1e-6)
     margin = span * 0.2
     score = np.ones_like(values, dtype=np.float64)
-    # Below lo: falloff over (lo - margin, lo)
     below = values < lo
     score[below] = np.clip((values[below] - (lo - margin)) / margin, 0.0, 1.0)
     above = values > hi
@@ -76,15 +97,14 @@ def _distance_to_mask(mask: np.ndarray, cell_size: float) -> np.ndarray:
     """Euclidean distance from every cell to the nearest True cell, in world metres.
 
     Fast path: ``scipy.ndimage.distance_transform_edt`` — O(N) exact EDT.
-    Fallback: two-pass 8-connected chamfer distance transform (correct but
-    slower for large grids; retained for environments without scipy).
+    Fallback: two-pass 8-connected chamfer distance transform.
 
     Parameters
     ----------
     mask : np.ndarray of bool
         True cells are the "source" of distance 0.
     cell_size : float
-        World metres per cell; distances are multiplied by this value.
+        World metres per cell; distances are scaled by this value.
 
     Returns
     -------
@@ -95,17 +115,14 @@ def _distance_to_mask(mask: np.ndarray, cell_size: float) -> np.ndarray:
     if not mask.any():
         return np.full(mask.shape, np.inf, dtype=np.float64)
 
-    # --- Fast path: scipy EDT -------------------------------------------
     if _HAS_SCIPY_EDT:
-        # distance_transform_edt measures distance from background (False)
-        # cells to the nearest foreground (True) cell.  We invert the mask
-        # so "background" = non-water and "foreground" = water.
+        # distance_transform_edt: background=False cells → distance to
+        # nearest foreground=True cell.  We invert so non-source = background.
         dist = _edt(~mask).astype(np.float64) * float(cell_size)
         dist[mask] = 0.0
         return dist
 
-    # --- Fallback: two-pass 8-connected chamfer -------------------------
-    # Chamfer weights: axial = 1.0 cell, diagonal = sqrt(2) cells.
+    # Two-pass 8-connected chamfer (axial=1.0 cell, diagonal=√2 cells)
     SQRT2 = np.sqrt(2.0)
     INF = np.float64(1e12)
     h, w = mask.shape
@@ -155,68 +172,57 @@ def compute_wildlife_affinity(
 ) -> Dict[str, np.ndarray]:
     """Compute per-species habitat affinity maps from multiple terrain factors.
 
-    Habitat factors combined (all in [0, 1]):
-      (a) Altitude window   — species preferred altitude range (with margins)
-      (b) Slope window      — species preferred slope range in degrees
-      (c) Water proximity   — affinity falls off linearly beyond
-                              ``required_water_proximity_m`` from any water
-                              cell; zero affinity when no water exists and
-                              water proximity is required
-      (d) Canopy density    — if ``stack.canopy_density`` is available,
-                              high canopy raises affinity for shelter species
-                              (weight ``habitat_weights["canopy"]``, default 0.3)
-      (e) Disturbance avoidance — ``stack.hero_exclusion`` / exclusion mask:
-                              cells within ``exclusion_radius_m`` get zero
-                              affinity; cells just outside get a soft ramp
-      (f) Biome filter      — optional hard mask to preferred biome IDs
+    Habitat factors (all normalised to [0, 1]):
+      (a) altitude_score    — species preferred altitude range with ramp margins
+      (b) slope_score       — species preferred slope range in degrees
+      (c) water_proximity   — linear falloff beyond required_water_proximity_m
+      (d) forest_density    — detail_density sum, modulated by forest_preference
+                              (+1 = forest lover, -1 = open-ground species)
+      (e) human_disturbance — road_sdf_dist channel: animals avoid roads within
+                              a species-specific sensitivity radius.
+                              Inspired by AC:Valhalla wildlife flight-zone AI.
+      (f) biome_filter      — hard mask to preferred biome IDs
+      (g) exclusion_zone    — hard zero inside exclusion_radius_m, soft ramp outside
 
-    The four continuously-weighted factors (a–d) are combined as a weighted
-    product rather than a plain product, giving per-species tuning via the
-    ``habitat_weights`` dict.  Hard masks (f, e) are applied as multipliers
-    after the weighted combination.
+    Combination strategy:
+      Factors (a)–(e) are combined as a weighted geometric mean (product of
+      factor^weight, then raised to 1/total_weight).  This means a near-zero
+      score in any strongly-weighted factor pulls the combined score toward
+      zero — harsher than a weighted sum, matching Valhalla's multi-gate
+      habitat evaluation.  Hard masks (f), (g) are multiplied after.
 
     Parameters
     ----------
     stack : TerrainMaskStack
-        Must have ``height`` populated.  Optional channels consulted:
-        ``slope``, ``biome_id``, ``water_surface``, ``wetness``,
-        ``canopy_density``, ``hero_exclusion``.
     rules : list of SpeciesAffinityRule
-        One rule per species to score.
     habitat_weights : dict, optional
-        Per-factor weight overrides.  Recognised keys:
-          ``"altitude"``   (default 1.0)
-          ``"slope"``      (default 1.0)
-          ``"water"``      (default 1.0)
-          ``"canopy"``     (default 0.3)
-        Weights are normalised so they sum to 1.0 before combining.
+        Per-factor weight overrides.  Keys: "altitude", "slope", "water",
+        "forest", "disturbance", "canopy".  All positive floats.
 
     Returns
     -------
-    Dict[str, np.ndarray]
-        Per-species (H, W) float32 affinity maps in [0, 1]. Also stored on
-        ``stack.wildlife_affinity``.
+    Dict[str, np.ndarray]  — per-species (H, W) float32 affinity in [0, 1].
     """
     if stack.height is None:
         raise ValueError("compute_wildlife_affinity requires stack.height")
 
     h = np.asarray(stack.height, dtype=np.float64)
 
-    # --- Slope (degrees) ------------------------------------------------
+    # --- Slope (degrees) ---
     if stack.slope is not None:
         slope_deg = np.degrees(np.asarray(stack.slope, dtype=np.float64))
     else:
         gy, gx = np.gradient(h, float(stack.cell_size))
         slope_deg = np.degrees(np.arctan(np.sqrt(gx * gx + gy * gy)))
 
-    # --- Biome IDs -------------------------------------------------------
+    # --- Biome IDs ---
     biome = (
         np.asarray(stack.biome_id, dtype=np.int32)
         if stack.biome_id is not None
         else None
     )
 
-    # --- Water mask + distance field ------------------------------------
+    # --- Water mask + distance field ---
     water_mask: Optional[np.ndarray] = None
     if stack.water_surface is not None:
         water_mask = np.asarray(stack.water_surface) > 0.0
@@ -230,7 +236,7 @@ def compute_wildlife_affinity(
         else None
     )
 
-    # --- Exclusion mask + distance field --------------------------------
+    # --- Exclusion mask + distance field ---
     exclusion_mask: Optional[np.ndarray] = None
     if stack.hero_exclusion is not None:
         exclusion_mask = np.asarray(stack.hero_exclusion).astype(bool)
@@ -242,17 +248,31 @@ def compute_wildlife_affinity(
         else None
     )
 
-    # --- Canopy density (optional habitat factor) -----------------------
-    canopy: Optional[np.ndarray] = None
-    if hasattr(stack, "canopy_density") and stack.canopy_density is not None:  # type: ignore[attr-defined]
-        canopy = np.clip(np.asarray(stack.canopy_density, dtype=np.float64), 0.0, 1.0)
+    # --- Forest / canopy density ---
+    forest_density: Optional[np.ndarray] = None
+    if stack.detail_density:
+        total = np.zeros(h.shape, dtype=np.float64)
+        for arr in stack.detail_density.values():
+            total += np.asarray(arr, dtype=np.float64)
+        forest_density = np.clip(total, 0.0, 1.0)
+    elif hasattr(stack, "canopy_density") and stack.canopy_density is not None:  # type: ignore[attr-defined]
+        forest_density = np.clip(
+            np.asarray(stack.canopy_density, dtype=np.float64), 0.0, 1.0
+        )
 
-    # --- Default habitat factor weights ---------------------------------
+    # --- Road distance (human disturbance) ---
+    # road_sdf_dist is pre-computed EDT from road cells in world metres.
+    road_dist: Optional[np.ndarray] = None
+    if stack.road_sdf_dist is not None:
+        road_dist = np.asarray(stack.road_sdf_dist, dtype=np.float64)
+
+    # --- Default habitat factor weights ---
     _default_weights: Dict[str, float] = {
         "altitude": 1.0,
         "slope": 1.0,
         "water": 1.0,
-        "canopy": 0.3,
+        "forest": 0.4,
+        "disturbance": 0.6,
     }
     hw = dict(_default_weights)
     if habitat_weights:
@@ -264,11 +284,11 @@ def compute_wildlife_affinity(
         lo_s, hi_s = rule.preferred_slope
         lo_a, hi_a = rule.preferred_altitude
 
-        # Per-factor scores (all float64, same shape as h)
+        # Per-factor scores
         f_altitude = _window_score(h, lo_a, hi_a)
         f_slope = _window_score(slope_deg, lo_s, hi_s)
 
-        # Water proximity factor
+        # Water proximity
         if rule.required_water_proximity_m is not None:
             if water_dist is None:
                 f_water = np.zeros_like(h)
@@ -278,35 +298,64 @@ def compute_wildlife_affinity(
         else:
             f_water = np.ones_like(h)
 
-        # Canopy density factor: species that need cover benefit from high canopy
-        if canopy is not None:
-            f_canopy = canopy
+        # Forest density factor: modulated by species' forest_preference
+        if forest_density is not None:
+            pref = float(rule.forest_preference)
+            if pref >= 0.0:
+                # Forest lovers: high density raises affinity
+                f_forest = 1.0 - (1.0 - forest_density) * pref
+            else:
+                # Open-ground species: high density lowers affinity
+                f_forest = 1.0 - forest_density * abs(pref)
+            f_forest = np.clip(f_forest, 0.0, 1.0)
         else:
-            f_canopy = np.ones_like(h)
+            f_forest = np.ones_like(h)
 
-        # Weighted combination of continuous factors
+        # Human disturbance from roads — animals stay away from roads
+        if road_dist is not None and rule.road_sensitivity > 0.0:
+            # Flee distance scales with road_sensitivity: 0 sens = 0 m flee,
+            # 1.0 sens = ~200 m flee (typical AC:Valhalla large herbivore range)
+            flee_radius = 200.0 * float(rule.road_sensitivity)
+            f_disturbance = np.clip(
+                road_dist / max(flee_radius, 1e-6), 0.0, 1.0
+            )
+        else:
+            f_disturbance = np.ones_like(h)
+
+        # Weighted geometric mean of continuous factors
+        # score = product(factor_i ^ w_i) ^ (1 / sum(w_i))
+        # We compute in log space for numerical stability.
         factors = {
             "altitude": f_altitude,
             "slope": f_slope,
             "water": f_water,
-            "canopy": f_canopy,
+            "forest": f_forest,
+            "disturbance": f_disturbance,
         }
-        total_weight = sum(hw[k] for k in factors)
+        total_weight = sum(hw.get(k, 0.0) for k in factors)
         if total_weight <= 0.0:
             total_weight = 1.0
 
-        score = np.zeros_like(h)
+        log_score = np.zeros_like(h)
         for key, factor in factors.items():
-            score = score + (hw[key] / total_weight) * factor
+            w = hw.get(key, 0.0)
+            if w <= 0.0:
+                continue
+            # log(factor + ε) to avoid -inf; ε = 1e-9
+            log_score += (w / total_weight) * np.log(
+                np.clip(factor, 1e-9, 1.0)
+            )
+        score = np.exp(log_score)
 
         # Hard zero for required-water species when no water is present
         if rule.required_water_proximity_m is not None:
             score = score * (f_water > 0.0).astype(np.float64)
 
-        # Hard masks applied after weighted combination
-        # Biome filter
+        # Biome hard mask
         if rule.preferred_biomes and biome is not None:
-            allowed = np.isin(biome, np.asarray(rule.preferred_biomes, dtype=np.int32))
+            allowed = np.isin(
+                biome, np.asarray(rule.preferred_biomes, dtype=np.int32)
+            )
             score = score * allowed.astype(np.float64)
 
         # Exclusion zone: hard zero inside radius, soft ramp just outside
@@ -333,16 +382,22 @@ DEFAULT_WILDLIFE_RULES: Tuple[SpeciesAffinityRule, ...] = (
         preferred_slope=(0.0, 25.0),
         preferred_altitude=(0.0, 1500.0),
         required_water_proximity_m=50.0,
+        road_sensitivity=0.8,
+        forest_preference=0.5,  # prefer partial cover
     ),
     SpeciesAffinityRule(
         species="wolf",
         preferred_slope=(0.0, 40.0),
         preferred_altitude=(100.0, 2000.0),
+        road_sensitivity=0.6,
+        forest_preference=0.3,
     ),
     SpeciesAffinityRule(
         species="eagle",
         preferred_slope=(15.0, 80.0),
         preferred_altitude=(800.0, 4000.0),
+        road_sensitivity=0.2,
+        forest_preference=-0.6,  # prefers open sky
     ),
 )
 
@@ -353,14 +408,16 @@ def pass_wildlife_zones(
 ) -> PassResult:
     """Bundle J pass: compute per-species wildlife affinity maps.
 
-    Reads species rules and per-factor habitat weights from
-    ``intent.composition_hints``:
-      - ``wildlife_rules``      : list/tuple of SpeciesAffinityRule (optional)
-      - ``wildlife_habitat_weights`` : dict of factor-name → float (optional)
+    Reads species rules from ``intent.composition_hints``:
+      - ``wildlife_rules``          : list/tuple of SpeciesAffinityRule
+      - ``wildlife_habitat_weights``: dict of factor-name → float
 
     Consumes: height (+ optional slope / biome_id / water_surface /
-              wetness / hero_exclusion / canopy_density)
-    Produces: wildlife_affinity — stored in stack.wildlife_affinity dict
+              wetness / hero_exclusion / detail_density / road_sdf_dist)
+    Produces: wildlife_affinity (dict channel on stack)
+
+    Metrics include per-species peak, mean, coverage fraction, and the
+    mean disturbance score for Unity JSON export.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -373,24 +430,24 @@ def pass_wildlife_zones(
         else list(DEFAULT_WILDLIFE_RULES)
     )
 
-    habitat_weights: Optional[Dict[str, float]] = hints.get("wildlife_habitat_weights")
+    habitat_weights: Optional[Dict[str, float]] = hints.get(
+        "wildlife_habitat_weights"
+    )
 
     affinity = compute_wildlife_affinity(stack, rules, habitat_weights=habitat_weights)
 
-    # Store result on the stack under a typed dict channel
     if stack.wildlife_affinity is None:
         stack.wildlife_affinity = {}
     stack.wildlife_affinity.update(affinity)
 
-    metrics: Dict[str, Any] = {
-        species: {
+    metrics: Dict[str, Any] = {}
+    for species, arr in affinity.items():
+        metrics[species] = {
             "peak": float(arr.max()),
             "mean": float(arr.mean()),
             "coverage_frac": float((arr > 0.1).mean()),
             "zero_frac": float((arr == 0.0).mean()),
         }
-        for species, arr in affinity.items()
-    }
 
     issues: List[ValidationIssue] = []
     if not affinity:
@@ -444,6 +501,7 @@ def register_bundle_j_wildlife_zones_pass() -> None:
 __all__ = [
     "SpeciesAffinityRule",
     "DEFAULT_WILDLIFE_RULES",
+    "_distance_to_mask",
     "compute_wildlife_affinity",
     "pass_wildlife_zones",
     "register_bundle_j_wildlife_zones_pass",

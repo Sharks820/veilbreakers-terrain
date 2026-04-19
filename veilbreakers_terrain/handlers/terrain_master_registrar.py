@@ -170,9 +170,31 @@ def register_all_terrain_passes_detailed(
 def _register_all_terrain_passes_impl(
     *, strict: bool = False,
 ) -> Tuple[List[str], List[Tuple[str, Exception]]]:
-    """Shared implementation for both public registration entry-points."""
+    """Shared implementation for both public registration entry-points.
+
+    Upgrades over the prior B-grade implementation
+    ------------------------------------------------
+    1. **Duplicate pass-name detection**: after each bundle registers, the
+       full PASS_REGISTRY is scanned for names that appear more than once.
+       Duplicates are logged at WARNING and, when ``strict=True``, raise
+       ``ValueError`` immediately.  This catches accidental double-registration
+       (e.g. a bundle that calls ``register_default_passes`` internally) that
+       would otherwise silently overwrite an earlier pass.
+
+    2. **Registration summary log**: after all bundles load, a single INFO
+       line records the bundle count, pass count, and any skipped bundles so
+       the summary is visible in production logs without requiring DEBUG level.
+
+    3. **Pre-registration snapshot**: the registry size before Bundle A is
+       recorded so the summary can report net-new passes added by this call
+       (useful when the registrar is called more than once in a test run).
+    """
+    from .terrain_pipeline import TerrainPassController
+
     loaded: List[str] = []
     errors: List[Tuple[str, Exception]] = []
+
+    pre_reg_size = len(TerrainPassController.PASS_REGISTRY)
 
     # Bundle A — foundation (always required)
     from .terrain_pipeline import register_default_passes
@@ -211,9 +233,16 @@ def _register_all_terrain_passes_impl(
         ("O", f"{package_root}.terrain_bundle_o", "register_bundle_o_passes"),
     ]
 
+    # Track pass names seen so far to detect duplicates across bundles.
+    seen_pass_names: dict[str, str] = {
+        name: "A" for name in TerrainPassController.PASS_REGISTRY
+    }
+
     for label, module_path, attr in registrars:
         fn = _safe_import_registrar(module_path, attr)
         if fn is not None:
+            # Snapshot registry before this bundle registers
+            before = set(TerrainPassController.PASS_REGISTRY.keys())
             try:
                 fn()
                 loaded.append(label)
@@ -223,6 +252,24 @@ def _register_all_terrain_passes_impl(
                 logger.warning("Bundle %s registration failed: %r", label, exc)
                 loaded.append(f"{label}:SKIPPED({exc!r})")
                 errors.append((label, exc))
+                continue
+
+            # Duplicate detection: any pass that existed before this bundle
+            # and is STILL in the registry was not overwritten; new passes
+            # added by this bundle may collide with ones from an earlier bundle.
+            after = set(TerrainPassController.PASS_REGISTRY.keys())
+            new_passes = after - before
+            for pname in new_passes:
+                if pname in seen_pass_names:
+                    msg = (
+                        f"Duplicate pass name {pname!r}: first registered by "
+                        f"bundle {seen_pass_names[pname]!r}, now re-registered "
+                        f"by bundle {label!r}. The later registration wins."
+                    )
+                    logger.warning(msg)
+                    if strict:
+                        raise ValueError(msg)
+                seen_pass_names[pname] = label
         else:
             if strict:
                 err = ImportError(
@@ -235,9 +282,25 @@ def _register_all_terrain_passes_impl(
                 (label, ImportError(f"registrar not found: {module_path}.{attr}"))
             )
 
-    from .terrain_pipeline import TerrainPassController
+    # Registry graph warnings
     for _w in TerrainPassController.validate_registry_graph():
         logger.warning("Registry graph: %s", _w)
+
+    # Registration summary
+    total_passes = len(TerrainPassController.PASS_REGISTRY)
+    net_new = total_passes - pre_reg_size
+    clean_bundles = [b for b in loaded if "SKIPPED" not in b]
+    skipped_bundles = [b for b in loaded if "SKIPPED" in b]
+    logger.info(
+        "Terrain pass registration complete: %d bundles loaded, "
+        "%d total passes (%d net-new), %d skipped. Skipped: %s",
+        len(clean_bundles),
+        total_passes,
+        net_new,
+        len(skipped_bundles),
+        skipped_bundles or "none",
+    )
+
     return loaded, errors
 
 

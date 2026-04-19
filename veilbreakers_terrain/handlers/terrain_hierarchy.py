@@ -119,14 +119,21 @@ def classify_feature_tier(
 def enforce_feature_budget(
     features: Iterable[Any],
     budget: FeatureBudget,
+    tile_area_km2: float = 1.0,
 ) -> List[Any]:
     """Prune ``features`` down to the limits declared in ``budget``.
 
-    ``features`` may be a list of HeroFeatureSpec or generic dicts. Pruning
-    strategy: keep all entries with the highest authored priority until
-    ``max_features_per_km2`` is exceeded on a notional 1 km² baseline, and
-    cap the total count at ``max_total_tris // 10_000`` as a simple proxy.
-    Features exceeding ``max_footprint_m`` are dropped regardless.
+    ``features`` may be HeroFeatureSpec or generic dicts. Pruning is
+    priority-aware: features are sorted by authored tier first (PRIMARY
+    kept longest), then by saliency score, then by feature_id for
+    determinism. Per-tier triangle estimate gates the tri budget.
+
+    ``tile_area_km2``: actual tile area in km². The density cap scales as
+    ``floor(max_features_per_km2 × tile_area_km2)`` so a 4 km² tile can
+    host 4× as many features as a 1 km² tile at the same density. Defaults
+    to 1.0 for backwards compatibility with callers that don't know the area.
+
+    Features exceeding ``max_footprint_m`` are dropped unconditionally.
     """
     features_list = list(features)
     if not features_list:
@@ -137,29 +144,52 @@ def enforce_feature_budget(
             if f.bounds is not None:
                 return max(f.bounds.width, f.bounds.height)
             return 0.0
-        if isinstance(f, dict):
-            return float(f.get("footprint_m", 0.0))
-        return 0.0
+        return float(f.get("footprint_m", 0.0)) if isinstance(f, dict) else 0.0
 
-    # Drop oversized features
-    filtered = [f for f in features_list if _footprint(f) <= budget.max_footprint_m]
+    def _tier_rank(f: Any) -> int:
+        if isinstance(f, HeroFeatureSpec):
+            return _TIER_PRIORITY.get(FeatureTier.from_str(f.tier), 3)
+        return _TIER_PRIORITY.get(FeatureTier.from_str(str(f.get("tier", ""))), 3)
 
-    # Cap raw count at max_features_per_km2 (treat as hard cap)
-    max_count = max(1, int(round(budget.max_features_per_km2)))
-    # Also cap by notional tri budget (10k tris per feature)
-    tri_cap = max(1, budget.max_total_tris // 10_000)
-    hard_cap = min(max_count, tri_cap)
+    def _saliency(f: Any) -> float:
+        if isinstance(f, HeroFeatureSpec):
+            return float(f.saliency) if hasattr(f, "saliency") and f.saliency is not None else 0.0
+        return float(f.get("saliency", 0.0)) if isinstance(f, dict) else 0.0
 
-    # Deterministic keep order: by feature_id if available
-    def _sort_key(f: Any) -> str:
+    def _feature_id(f: Any) -> str:
         if isinstance(f, HeroFeatureSpec):
             return f.feature_id
-        if isinstance(f, dict):
-            return str(f.get("feature_id", ""))
-        return repr(f)
+        return str(f.get("feature_id", "")) if isinstance(f, dict) else repr(f)
 
-    filtered.sort(key=_sort_key)
-    return filtered[:hard_cap]
+    def _tri_estimate(f: Any) -> int:
+        if isinstance(f, HeroFeatureSpec):
+            return int(f.tri_count) if hasattr(f, "tri_count") and f.tri_count else 10_000
+        return int(f.get("tri_count", 10_000)) if isinstance(f, dict) else 10_000
+
+    # Drop features whose footprint exceeds budget
+    filtered = [f for f in features_list if _footprint(f) <= budget.max_footprint_m]
+
+    # Sort: lower tier_rank first (PRIMARY=0 beats AMBIENT=3), then descending
+    # saliency, then feature_id for stable determinism across Python versions.
+    filtered.sort(key=lambda f: (_tier_rank(f), -_saliency(f), _feature_id(f)))
+
+    # Density cap scaled to actual tile area
+    area = max(tile_area_km2, 1e-6)
+    density_cap = max(1, int(budget.max_features_per_km2 * area))
+
+    # Triangle budget: stop accumulating once we'd exceed max_total_tris
+    kept: List[Any] = []
+    tris_used = 0
+    for f in filtered:
+        if len(kept) >= density_cap:
+            break
+        t = _tri_estimate(f)
+        if tris_used + t > budget.max_total_tris:
+            break
+        kept.append(f)
+        tris_used += t
+
+    return kept
 
 
 __all__ = [

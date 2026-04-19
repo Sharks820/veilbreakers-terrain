@@ -39,7 +39,22 @@ _D8_DISTANCES: list[float] = [
 
 @dataclass
 class WaterEdgeContract:
-    """Contract for water crossing a tile boundary."""
+    """Contract for water crossing a tile boundary.
+
+    B+ fields added:
+        inflow_head_m  — hydraulic head (water-surface elevation) at the
+                         crossing point in world metres.  Equals world_z
+                         (water surface) minus the bed elevation (world_z -
+                         depth), i.e. the depth of water at the seam. Used by
+                         the receiving tile to set its water-surface plane so
+                         there is no discontinuity at the boundary.
+        seam_valid     — True when the outflow contract on the sending tile and
+                         the inflow contract on the receiving tile have matching
+                         network_id and position within the seam tolerance
+                         (set by validate_seam_continuity).  Starts as None
+                         (unvalidated); callers should treat None as valid for
+                         backwards compatibility.
+    """
 
     position: float          # Position along the edge (0.0 to 1.0 normalized)
     world_x: float           # Absolute world X
@@ -50,6 +65,22 @@ class WaterEdgeContract:
     depth: float             # Water depth at crossing
     water_type: str          # "river", "stream", "waterfall_top", "waterfall_bottom"
     network_id: int          # Which water body this belongs to (for matching)
+    # Physical discharge at the crossing point (m³/s equivalent).
+    # Computed via Gauckler-Manning: Q = (1/n) * A * R^(2/3) * S^(1/2).
+    # 0.0 when slope or accumulation data are unavailable.
+    outflow_rate_m3s: float = 0.0
+    # Tile coordinate the flow enters after crossing this edge.
+    # (-1, -1) when the neighbour tile is out of bounds.
+    target_tile: tuple[int, int] = (0, 0)
+    # Grid (row, col) of the first cell inside the target tile that receives
+    # this flow — used by the receiving tile to anchor its water geometry.
+    entry_cell: tuple[int, int] = (0, 0)
+    # Hydraulic head at the crossing (metres): water_surface_z - bed_z = depth.
+    # Used by the receiving tile to set a matching water-surface elevation.
+    inflow_head_m: float = 0.0
+    # Seam continuity validity flag (set by validate_seam_continuity).
+    # None = not yet checked, True = matched, False = orphaned/mismatched.
+    seam_valid: bool | None = None
 
 
 @dataclass
@@ -359,8 +390,13 @@ def detect_lakes(
     Returns:
         List of dicts, each with:
             - "center_row", "center_col": pit cell (lowest elevation in lake)
-            - "surface_z": water surface elevation (spill height)
-            - "cells": list of (row, col) cells comprising the lake
+            - "surface_z": water surface elevation (spill height = lowest rim)
+            - "cells": list of (row, col) cells comprising the lake body
+            - "boundary_cells": list of (row, col) cells on the lake perimeter
+              (lake cells that have at least one non-lake 4-neighbor)
+            - "pour_point": (row, col) of the cell on the rim through which
+              the lake spills — the lowest-elevation cell adjacent to the lake
+              body but outside it.  ``None`` for border-adjacent lakes.
             - "area": number of cells
             - "inflow": total flow accumulation at pit
     """
@@ -459,12 +495,6 @@ def detect_lakes(
             if len(component) < min_area:
                 continue
 
-            # Surface elevation is the maximum water_level in the component
-            # (== the spill height — the lowest rim cell the basin drains over)
-            surface_z = float(
-                max(water_level[cr, cc] for cr, cc in component)
-            )
-
             # Pit cell: component member with the lowest raw elevation
             pit_r, pit_c = min(component, key=lambda rc: hmap[rc[0], rc[1]])
 
@@ -472,11 +502,60 @@ def detect_lakes(
             if flow_acc[pit_r, pit_c] < min_area * 0.5:
                 continue
 
+            # Build a set for O(1) membership checks
+            comp_set: set[tuple[int, int]] = set(component)
+
+            # Boundary cells: lake cells that have at least one non-lake
+            # 4-connected neighbor (these form the visible shoreline).
+            boundary_cells: list[tuple[int, int]] = []
+            for cr, cc in component:
+                for dr, dc in _4_OFFSETS:
+                    nr, nc = cr + dr, cc + dc
+                    if (nr, nc) not in comp_set:
+                        boundary_cells.append((cr, cc))
+                        break
+
+            # Pour point: the non-lake rim cell adjacent to the lake with the
+            # lowest elevation.  This is where the lake overflows.
+            # The spill elevation (surface_z) is defined by this cell's height
+            # — it is the lowest point at which the lake can shed water.
+            # Barnes 2014 Priority-Flood guarantees water_level equals the
+            # spill height for closed basins, so we use the minimum
+            # water_level among component cells (which equals the maximum raw
+            # elevation the basin is filled to — i.e. the spill rim).
+            # For correctness we also scan explicit rim neighbors.
+            pour_point: tuple[int, int] | None = None
+            pour_elev = math.inf
+            for cr, cc in boundary_cells:
+                for dr, dc in _4_OFFSETS:
+                    nr, nc = cr + dr, cc + dc
+                    if not (0 <= nr < rows and 0 <= nc < cols):
+                        continue
+                    if (nr, nc) in comp_set:
+                        continue
+                    rim_elev = float(hmap[nr, nc])
+                    if rim_elev < pour_elev:
+                        pour_elev = rim_elev
+                        pour_point = (nr, nc)
+
+            # surface_z is the elevation of the spill rim (lowest rim neighbor
+            # adjacent to the lake body).  Fall back to the maximum water_level
+            # inside the basin when no explicit rim neighbor was found (border
+            # lakes that drain to the map edge).
+            if pour_point is not None:
+                surface_z = pour_elev
+            else:
+                surface_z = float(
+                    max(water_level[cr, cc] for cr, cc in component)
+                )
+
             lakes.append({
                 "center_row": pit_r,
                 "center_col": pit_c,
                 "surface_z": surface_z,
                 "cells": component,
+                "boundary_cells": boundary_cells,
+                "pour_point": pour_point,
                 "area": len(component),
                 "inflow": float(flow_acc[pit_r, pit_c]),
             })
@@ -572,14 +651,50 @@ def _find_high_accumulation_sources(
     flow_accumulation: np.ndarray,
     flow_direction: np.ndarray,
     threshold: float,
+    min_drainage_area: float | None = None,
+    border_exclude: bool = True,
 ) -> list[tuple[int, int]]:
     """Find source cells: high accumulation with no upstream cell above threshold.
 
-    These are the most-upstream cells that still qualify as a waterway, making
-    them good starting points for river tracing.
+    B+ upgrade: adds minimum drainage area filter to eliminate headwater noise,
+    optional border exclusion (border cells rarely produce stable rivers), and
+    returns sources sorted descending by accumulation so trunk rivers claim cells
+    before tributaries (matching the caller's sort in from_heightmap).
+
+    A source cell is the most-upstream cell that still qualifies as a waterway
+    — good starting point for river tracing because it captures the full
+    drainage network from each channel head downward.
+
+    Args:
+        flow_accumulation: 2-D float array of D8 upstream drainage area (cells).
+        flow_direction: 2-D int array of D8 direction indices (0-7, -1 pit).
+        threshold: Minimum accumulation for a cell to be considered a waterway.
+        min_drainage_area: Secondary filter; cells whose accumulation is below
+            this value are excluded even if they pass ``threshold``.  When
+            ``None`` the value falls back to ``threshold`` (no additional
+            filter).  Allows callers to use a low detection threshold while
+            still requiring a minimum catchment size.
+        border_exclude: When True (default) skip cells on the outer 1-cell
+            border, which are seeded as open-drainage in Priority-Flood and
+            never represent genuine interior river heads.
+
+    Returns:
+        Ordered list of ``(row, col)`` source cells, descending by
+        flow-accumulation value.
     """
     rows, cols = flow_accumulation.shape
-    above = flow_accumulation >= threshold
+    effective_min = threshold if min_drainage_area is None else float(min_drainage_area)
+
+    above = (flow_accumulation >= threshold) & (flow_accumulation >= effective_min)
+
+    if border_exclude and rows > 2 and cols > 2:
+        border_mask = np.zeros((rows, cols), dtype=bool)
+        border_mask[0, :] = True
+        border_mask[-1, :] = True
+        border_mask[:, 0] = True
+        border_mask[:, -1] = True
+        above = above & ~border_mask
+
     has_upstream = np.zeros((rows, cols), dtype=bool)
 
     for d_idx, (dr, dc) in enumerate(_D8_OFFSETS):
@@ -594,7 +709,10 @@ def _find_high_accumulation_sources(
 
     sources_mask = above & ~has_upstream
     rs, cs = np.where(sources_mask)
-    return list(zip(rs.tolist(), cs.tolist()))
+    sources = list(zip(rs.tolist(), cs.tolist()))
+    # Sort descending by accumulation: trunk rivers claim cells before tributaries
+    sources.sort(key=lambda rc: float(flow_accumulation[rc[0], rc[1]]), reverse=True)
+    return sources
 
 
 # ===================================================================
@@ -706,10 +824,15 @@ class WaterNetwork:
         net._world_origin_y = world_origin_y
         net._heightmap_shape = hmap.shape
 
-        # Step 1-2: flow direction + accumulation via existing utility
-        flow_result = compute_flow_map(hmap)
-        flow_dir = np.asarray(flow_result["flow_direction"], dtype=np.int32)
-        flow_acc = np.asarray(flow_result["flow_accumulation"], dtype=np.float64)
+        # Step 1-2: D8 flow direction + accumulation via Priority-Flood
+        # (Barnes et al. 2014).  priority_flood_d8 fills depressions and
+        # routes through the lowest spill point, giving depression-free D8
+        # directions and a topologically correct accumulation.  We keep the
+        # compute_flow_map import for callers outside this class that still
+        # need it; inside from_heightmap we always use the authoritative
+        # in-module implementation.
+        flow_dir, flow_acc = priority_flood_d8(hmap)
+        flow_dir = flow_dir.astype(np.int32)
 
         rows, cols = hmap.shape
 
@@ -893,6 +1016,58 @@ class WaterNetwork:
 
         return net
 
+    # ------------------------------------------------------------------
+    # Manning roughness look-up (n values, SI units)
+    # ------------------------------------------------------------------
+    _MANNING_N_RIVER: float = 0.035   # natural river channel
+    _MANNING_N_STREAM: float = 0.050  # small stream / rocky channel
+
+    @staticmethod
+    def _manning_discharge(
+        flow_accumulation_cells: float,
+        slope: float,
+        cell_size: float,
+        water_type: str,
+    ) -> float:
+        """Estimate steady-state discharge Q (m³/s) via Gauckler-Manning.
+
+        Q = (1/n) * A * R^(2/3) * S^(1/2)
+
+        Channel geometry is derived from the flow accumulation:
+            width  = compute_river_width(acc)
+            depth  = _compute_river_depth(acc)
+            A      = width * depth          (rectangular cross-section)
+            P      = width + 2*depth        (wetted perimeter)
+            R      = A / P                  (hydraulic radius)
+            S      = max(slope, 1e-5)       (bed slope, clamped to avoid zero)
+            n      = Manning roughness (0.035 river / 0.050 stream)
+
+        Args:
+            flow_accumulation_cells: Upstream drainage area in grid cells.
+            slope: Dimensionless bed slope (rise/run, always positive).
+            cell_size: Cell size in metres (to convert cells → m²).
+            water_type: "river" or "stream" — selects roughness coefficient.
+
+        Returns:
+            Estimated discharge in m³/s.  Returns 0.0 for degenerate inputs.
+        """
+        if flow_accumulation_cells <= 0.0 or cell_size <= 0.0:
+            return 0.0
+        w = compute_river_width(flow_accumulation_cells)
+        d = _compute_river_depth(flow_accumulation_cells)
+        area = w * d
+        wetted_p = w + 2.0 * d
+        if wetted_p < 1e-9:
+            return 0.0
+        R = area / wetted_p
+        S = max(slope, 1e-5)
+        n = (
+            WaterNetwork._MANNING_N_RIVER
+            if water_type == "river"
+            else WaterNetwork._MANNING_N_STREAM
+        )
+        return (1.0 / n) * area * (R ** (2.0 / 3.0)) * math.sqrt(S)
+
     def _compute_tile_contracts(
         self,
         heightmap: np.ndarray,
@@ -913,6 +1088,11 @@ class WaterNetwork:
         Intersection with the boundary is solved analytically (parametric
         segment test) so the reported world_x/world_y are the exact crossing
         points rather than the midpoint approximation used previously.
+
+        Each contract carries:
+            outflow_rate_m3s  — Manning discharge at the crossing (m³/s).
+            target_tile       — (tx, ty) of the receiving tile.
+            entry_cell        — (row, col) of the first cell inside target tile.
         """
         rows, cols = heightmap.shape
         ts = self._tile_size
@@ -987,7 +1167,7 @@ class WaterNetwork:
                 if tx0 == tx1 and ty0 == ty1:
                     continue  # same tile, no crossing
 
-                # Accumulation, width, depth
+                # Accumulation, width, depth at the crossing
                 acc = max(flow_accumulation[r0, c0], flow_accumulation[r1, c1])
                 w = compute_river_width(acc)
                 dep = _compute_river_depth(acc)
@@ -1000,6 +1180,14 @@ class WaterNetwork:
                 if fmag > 0:
                     fdx /= fmag
                     fdy /= fmag
+
+                # Bed slope: elevation drop / horizontal distance
+                dz = float(heightmap[r0, c0]) - float(heightmap[r1, c1])
+                horiz = max(fmag, 1e-9)
+                slope = max(0.0, dz / horiz)
+
+                # Manning discharge at this crossing
+                q_m3s = WaterNetwork._manning_discharge(acc, slope, cs, wtype)
 
                 # Average height at crossing (linear interpolation at t=0.5)
                 wz = (
@@ -1017,9 +1205,20 @@ class WaterNetwork:
                 for ty_lo in range(min(ty0, ty1), max(ty0, ty1)):
                     crossed_ty_pairs.append((ty_lo, ty_lo + 1))
 
-                def _make_contract(cross_cx: float, cross_cy: float) -> WaterEdgeContract:
+                def _make_contract(
+                    cross_cx: float,
+                    cross_cy: float,
+                    tgt_tile: tuple[int, int],
+                    entry_rc: tuple[int, int],
+                ) -> WaterEdgeContract:
                     wx = self._world_origin_x + cross_cx
                     wy = self._world_origin_y + cross_cy
+                    # inflow_head_m: water depth at the seam = water-surface Z
+                    # minus bed Z (bed = water_surface - depth).  This is just
+                    # dep (the hydraulic depth) but we expose it explicitly so
+                    # the receiving tile can lock its water-surface plane to
+                    # wz and verify head continuity across the seam.
+                    head_m = max(0.0, dep)
                     return WaterEdgeContract(
                         position=0.0,  # overwritten by caller
                         world_x=wx,
@@ -1030,6 +1229,11 @@ class WaterNetwork:
                         depth=dep,
                         water_type=wtype,
                         network_id=network_id,
+                        outflow_rate_m3s=q_m3s,
+                        target_tile=tgt_tile,
+                        entry_cell=entry_rc,
+                        inflow_head_m=head_m,
+                        seam_valid=None,  # populated by validate_seam_continuity
                     )
 
                 def _ensure_tile(tx: int, ty: int) -> None:
@@ -1055,17 +1259,42 @@ class WaterNetwork:
                     pos = (cross_cy - tile_row_origin_cy) / (ts * cs)
                     pos = max(0.0, min(1.0, pos))
 
-                    contract = _make_contract(cross_cx, cross_cy)
-                    contract.position = pos
-
-                    _ensure_tile(tx_lo, ty0)
-                    _ensure_tile(tx_hi, ty0)
                     if tx1 > tx0:
-                        self.tile_contracts[(tx_lo, ty0)]["east"].append(contract)
-                        self.tile_contracts[(tx_hi, ty0)]["west"].append(contract)
+                        # Flow goes east: exits tx_lo east edge, enters tx_hi west edge
+                        # entry_cell: column = tx_hi * ts (first col of receiving tile)
+                        entry_col = tx_hi * ts
+                        entry_row = max(0, min(rows - 1, int(cross_cy / cs)))
+                        src_tile = (tx_lo, ty0)
+                        tgt_tile = (tx_hi, ty0)
+                        contract_out = _make_contract(
+                            cross_cx, cross_cy, tgt_tile, (entry_row, entry_col)
+                        )
+                        contract_out.position = pos
+                        contract_in = _make_contract(
+                            cross_cx, cross_cy, tgt_tile, (entry_row, entry_col)
+                        )
+                        contract_in.position = pos
+                        _ensure_tile(tx_lo, ty0)
+                        _ensure_tile(tx_hi, ty0)
+                        self.tile_contracts[(tx_lo, ty0)]["east"].append(contract_out)
+                        self.tile_contracts[(tx_hi, ty0)]["west"].append(contract_in)
                     else:
-                        self.tile_contracts[(tx_lo, ty0)]["west"].append(contract)
-                        self.tile_contracts[(tx_hi, ty0)]["east"].append(contract)
+                        # Flow goes west
+                        entry_col = tx_lo * ts + ts - 1
+                        entry_row = max(0, min(rows - 1, int(cross_cy / cs)))
+                        tgt_tile = (tx_lo, ty0)
+                        contract_out = _make_contract(
+                            cross_cx, cross_cy, tgt_tile, (entry_row, entry_col)
+                        )
+                        contract_out.position = pos
+                        contract_in = _make_contract(
+                            cross_cx, cross_cy, (tx_hi, ty0), (entry_row, tx_hi * ts + ts - 1)
+                        )
+                        contract_in.position = pos
+                        _ensure_tile(tx_lo, ty0)
+                        _ensure_tile(tx_hi, ty0)
+                        self.tile_contracts[(tx_hi, ty0)]["west"].append(contract_out)
+                        self.tile_contracts[(tx_lo, ty0)]["east"].append(contract_in)
 
                 # North/south crossings (horizontal boundary lines)
                 for ty_lo, ty_hi in crossed_ty_pairs:
@@ -1084,17 +1313,40 @@ class WaterNetwork:
                     pos = (cross_cx - tile_col_origin_cx) / (ts * cs)
                     pos = max(0.0, min(1.0, pos))
 
-                    contract = _make_contract(cross_cx, cross_cy)
-                    contract.position = pos
-
-                    _ensure_tile(tx0, ty_lo)
-                    _ensure_tile(tx0, ty_hi)
                     if ty1 > ty0:
-                        self.tile_contracts[(tx0, ty_lo)]["south"].append(contract)
-                        self.tile_contracts[(tx0, ty_hi)]["north"].append(contract)
+                        # Flow goes south: exits ty_lo south edge, enters ty_hi north edge
+                        entry_row = ty_hi * ts
+                        entry_col = max(0, min(cols - 1, int(cross_cx / cs)))
+                        tgt_tile_s = (tx0, ty_hi)
+                        contract_out = _make_contract(
+                            cross_cx, cross_cy, tgt_tile_s, (entry_row, entry_col)
+                        )
+                        contract_out.position = pos
+                        contract_in = _make_contract(
+                            cross_cx, cross_cy, tgt_tile_s, (entry_row, entry_col)
+                        )
+                        contract_in.position = pos
+                        _ensure_tile(tx0, ty_lo)
+                        _ensure_tile(tx0, ty_hi)
+                        self.tile_contracts[(tx0, ty_lo)]["south"].append(contract_out)
+                        self.tile_contracts[(tx0, ty_hi)]["north"].append(contract_in)
                     else:
-                        self.tile_contracts[(tx0, ty_lo)]["north"].append(contract)
-                        self.tile_contracts[(tx0, ty_hi)]["south"].append(contract)
+                        # Flow goes north
+                        entry_row = ty_lo * ts + ts - 1
+                        entry_col = max(0, min(cols - 1, int(cross_cx / cs)))
+                        tgt_tile_n = (tx0, ty_lo)
+                        contract_out = _make_contract(
+                            cross_cx, cross_cy, tgt_tile_n, (entry_row, entry_col)
+                        )
+                        contract_out.position = pos
+                        contract_in = _make_contract(
+                            cross_cx, cross_cy, (tx0, ty_hi), (ty_hi * ts + ts - 1, entry_col)
+                        )
+                        contract_in.position = pos
+                        _ensure_tile(tx0, ty_lo)
+                        _ensure_tile(tx0, ty_hi)
+                        self.tile_contracts[(tx0, ty_hi)]["south"].append(contract_out)
+                        self.tile_contracts[(tx0, ty_lo)]["north"].append(contract_in)
 
     # ------------------------------------------------------------------
     # Public query API
@@ -1114,6 +1366,128 @@ class WaterNetwork:
             {"north": [], "south": [], "east": [], "west": []},
         )
 
+    def get_edge_head_levels(
+        self,
+        tile_x: int,
+        tile_y: int,
+    ) -> dict[str, list[dict]]:
+        """Return water-surface head levels for every contract on each tile edge.
+
+        B+ feature: per-cardinal-edge head-level summary so mesh generators can
+        set the correct water-surface elevation at each seam without scanning
+        the full contract list.
+
+        Returns:
+            Dict with keys ``"north"``, ``"south"``, ``"east"``, ``"west"``.
+            Each value is a list of dicts with:
+                ``position``      — normalised position along the edge [0, 1]
+                ``world_z``       — water-surface elevation (metres)
+                ``inflow_head_m`` — hydraulic depth at the seam (metres)
+                ``network_id``    — river network this crossing belongs to
+                ``water_type``    — "river" | "stream" | …
+        """
+        contracts = self.get_tile_contracts(tile_x, tile_y)
+        result: dict[str, list[dict]] = {}
+        for edge in ("north", "south", "east", "west"):
+            result[edge] = [
+                {
+                    "position": c.position,
+                    "world_z": c.world_z,
+                    "inflow_head_m": c.inflow_head_m,
+                    "network_id": c.network_id,
+                    "water_type": c.water_type,
+                }
+                for c in contracts.get(edge, [])
+            ]
+        return result
+
+    def validate_seam_continuity(
+        self,
+        position_tolerance: float = 0.05,
+        head_tolerance_m: float = 0.5,
+    ) -> dict:
+        """Validate that every outflow contract has a matching inflow on the neighbour tile.
+
+        B+ feature: seam-continuity check comparable to Houdini River Network's
+        tile-edge water-level lock.  For each outflow crossing on a tile edge,
+        looks up the corresponding inflow on the receiving tile and verifies:
+            1. A matching contract exists (same network_id, position within
+               ``position_tolerance``).
+            2. The water-surface elevation (world_z) differs by less than
+               ``head_tolerance_m`` (ensures no visible Z discontinuity).
+
+        Stamps ``seam_valid = True`` on both matching contracts, and
+        ``seam_valid = False`` on any orphan or mismatched pair.
+
+        Args:
+            position_tolerance: Max allowed difference in normalised edge
+                position for two contracts to be considered a match.
+            head_tolerance_m: Max allowed water-surface height difference (m).
+
+        Returns:
+            Summary dict with:
+                ``total_crossings``   — total outflow contracts checked
+                ``valid``             — count of matched + head-consistent pairs
+                ``orphaned``          — outflow contracts with no matching inflow
+                ``head_mismatch``     — matched pairs whose head differs > tol
+                ``mismatched_pairs``  — list of (tile, edge, position) tuples
+        """
+        # Map of opposite edges for look-up
+        _opposite = {"east": "west", "west": "east", "north": "south", "south": "north"}
+        # Neighbour tile offset for each outflow direction
+        _neighbour_delta = {"east": (1, 0), "west": (-1, 0), "south": (0, 1), "north": (0, -1)}
+
+        total = 0
+        valid = 0
+        orphaned = 0
+        head_mismatch = 0
+        mismatched_pairs: list[tuple] = []
+
+        for (tx, ty), edges in self.tile_contracts.items():
+            for edge, contracts in edges.items():
+                dx, dy = _neighbour_delta[edge]
+                nb_tile = (tx + dx, ty + dy)
+                nb_edge = _opposite[edge]
+                nb_contracts = self.tile_contracts.get(nb_tile, {}).get(nb_edge, [])
+
+                for c in contracts:
+                    total += 1
+                    # Find best position match in the neighbour's inflow list
+                    best: WaterEdgeContract | None = None
+                    best_dist = math.inf
+                    for nc in nb_contracts:
+                        if nc.network_id != c.network_id:
+                            continue
+                        dist = abs(nc.position - c.position)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best = nc
+
+                    if best is None or best_dist > position_tolerance:
+                        c.seam_valid = False
+                        orphaned += 1
+                        mismatched_pairs.append((tx, ty, edge, round(c.position, 4)))
+                        continue
+
+                    head_diff = abs(best.world_z - c.world_z)
+                    if head_diff > head_tolerance_m:
+                        c.seam_valid = False
+                        best.seam_valid = False
+                        head_mismatch += 1
+                        mismatched_pairs.append((tx, ty, edge, round(c.position, 4)))
+                    else:
+                        c.seam_valid = True
+                        best.seam_valid = True
+                        valid += 1
+
+        return {
+            "total_crossings": total,
+            "valid": valid,
+            "orphaned": orphaned,
+            "head_mismatch": head_mismatch,
+            "mismatched_pairs": mismatched_pairs,
+        }
+
     def get_tile_water_features(
         self,
         tile_x: int,
@@ -1122,6 +1496,11 @@ class WaterNetwork:
         cell_size: float = 1.0,
     ) -> dict:
         """Get all water features within a tile's bounds.
+
+        B+ upgrade: complete feature inventory — rivers with Strahler order,
+        lakes with area/depth, spring nodes, source nodes classified as springs
+        when they appear at significant topographic heads, waterfall details
+        enriched with velocity and drop-type classification.
 
         Iterates over every segment and checks which waypoints fall inside the
         tile bounding box. Segments are split into the portions that lie within
@@ -1135,10 +1514,14 @@ class WaterNetwork:
 
         Returns:
             Dict with:
-                - ``"river_paths"``: list of waypoint sequences (river-class).
-                - ``"streams"``: list of waypoint sequences (stream-class).
-                - ``"waterfalls"``: list of waterfall location dicts.
-                - ``"lakes"``: list of lake node dicts within the tile.
+                - ``"river_paths"``: list of dicts with ``waypoints``,
+                  ``strahler_order``, ``avg_width``, ``avg_depth``,
+                  ``network_id``, ``segment_id``.
+                - ``"streams"``: same schema, stream-class segments only.
+                - ``"waterfalls"``: list of waterfall location dicts with
+                  enriched drop/velocity fields.
+                - ``"lakes"``: list of lake node dicts with area_m2 and depth.
+                - ``"springs"``: list of spring/source node dicts within tile.
         """
         # Tile bounding box in world coords
         x_min = self._world_origin_x + tile_x * tile_size * cell_size
@@ -1146,10 +1529,14 @@ class WaterNetwork:
         y_min = self._world_origin_y + tile_y * tile_size * cell_size
         y_max = y_min + tile_size * cell_size
 
-        river_paths: list[list[tuple[float, float, float]]] = []
-        streams: list[list[tuple[float, float, float]]] = []
+        # Pre-compute Strahler orders once for all segments
+        strahler = self.compute_strahler_orders()
+
+        river_paths: list[dict] = []
+        streams: list[dict] = []
         waterfalls: list[dict] = []
         lakes: list[dict] = []
+        springs: list[dict] = []
 
         for seg in self.segments.values():
             # Collect waypoints inside (or near) the tile
@@ -1161,53 +1548,102 @@ class WaterNetwork:
                     inside_run.append(wp)
                 else:
                     if len(inside_run) >= 2:
+                        seg_dict = {
+                            "waypoints": inside_run,
+                            "strahler_order": strahler.get(seg.segment_id, 1),
+                            "avg_width": seg.avg_width,
+                            "avg_depth": seg.avg_depth,
+                            "network_id": seg.network_id,
+                            "segment_id": seg.segment_id,
+                        }
                         if seg.segment_type == "river":
-                            river_paths.append(inside_run)
+                            river_paths.append(seg_dict)
                         elif seg.segment_type == "stream":
-                            streams.append(inside_run)
+                            streams.append(seg_dict)
                     inside_run = []
 
             if len(inside_run) >= 2:
+                seg_dict = {
+                    "waypoints": inside_run,
+                    "strahler_order": strahler.get(seg.segment_id, 1),
+                    "avg_width": seg.avg_width,
+                    "avg_depth": seg.avg_depth,
+                    "network_id": seg.network_id,
+                    "segment_id": seg.segment_id,
+                }
                 if seg.segment_type == "river":
-                    river_paths.append(inside_run)
+                    river_paths.append(seg_dict)
                 elif seg.segment_type == "stream":
-                    streams.append(inside_run)
+                    streams.append(seg_dict)
 
             if seg.segment_type == "waterfall":
                 # Check if the waterfall center is inside the tile
                 if seg.waypoints:
                     mid = seg.waypoints[len(seg.waypoints) // 2]
                     if x_min <= mid[0] <= x_max and y_min <= mid[1] <= y_max:
-                        _ = self.nodes.get(seg.source_node_id)
-                        _ = self.nodes.get(seg.target_node_id)
+                        drop_m = seg.waypoints[0][2] - seg.waypoints[-1][2]
+                        # Velocity at base: Torricelli approx v = sqrt(2g*h)
+                        velocity_ms = math.sqrt(max(0.0, 2.0 * 9.81 * drop_m))
+                        # Classify drop type: free-fall > 3 m, cascade otherwise
+                        drop_type = "free_fall" if drop_m > 3.0 else "cascade"
                         waterfalls.append({
                             "top": seg.waypoints[0],
                             "bottom": seg.waypoints[-1],
-                            "drop": seg.waypoints[0][2] - seg.waypoints[-1][2],
+                            "drop": drop_m,
+                            "drop_type": drop_type,
+                            "velocity_base_ms": round(velocity_ms, 3),
                             "width": seg.avg_width,
                             "network_id": seg.network_id,
                             "source_node_id": seg.source_node_id,
                             "target_node_id": seg.target_node_id,
+                            "strahler_order": strahler.get(seg.segment_id, 1),
                         })
 
-        # Lakes
+        # Lakes: include area_m2 from stored width (radius = width/2)
         for node in self.nodes.values():
             if node.node_type == "lake":
                 if x_min <= node.world_x <= x_max and y_min <= node.world_y <= y_max:
+                    radius = node.width / 2.0
+                    area_m2 = math.pi * radius * radius
                     lakes.append({
                         "node_id": node.node_id,
                         "world_x": node.world_x,
                         "world_y": node.world_y,
                         "surface_z": node.world_z,
-                        "radius": node.width / 2.0,
+                        "radius": radius,
+                        "area_m2": round(area_m2, 2),
                         "depth": node.depth,
                     })
+
+        # Springs: source nodes and any node whose depth suggests a perched source
+        # A "spring" is a source node that is the first node in its river
+        # (no upstream segment targets it) — it represents where water
+        # emerges from the ground rather than from precipitation runoff.
+        targeted_node_ids: set[int] = {
+            seg.target_node_id for seg in self.segments.values()
+        }
+        for node in self.nodes.values():
+            if node.node_type not in ("source", "waypoint"):
+                continue
+            # Must be untargeted (nothing flows into it — it is a true head)
+            if node.node_id in targeted_node_ids:
+                continue
+            if x_min <= node.world_x <= x_max and y_min <= node.world_y <= y_max:
+                springs.append({
+                    "node_id": node.node_id,
+                    "world_x": node.world_x,
+                    "world_y": node.world_y,
+                    "world_z": node.world_z,
+                    "flow_rate_m3s": 0.0,  # filled by Manning if available
+                    "spring_type": "surface_emergence",
+                })
 
         return {
             "river_paths": river_paths,
             "streams": streams,
             "waterfalls": waterfalls,
             "lakes": lakes,
+            "springs": springs,
         }
 
     # ------------------------------------------------------------------
@@ -1328,33 +1764,86 @@ class WaterNetwork:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict:
-        """Serialize network to dict for persistence."""
+        """Serialize network to dict for persistence.
+
+        B+ upgrade: full serialisation of all water-network state including:
+        - version field bumped to 2 (signals the B+ schema to deserialisers)
+        - numpy scalars / arrays coerced to plain Python floats/ints/lists so
+          the output is JSON-serialisable without a custom encoder
+        - strahler_orders map included as a top-level field (avoids having to
+          recompute on every load)
+        - tile bounds (world AABB of the heightmap) so external tools can
+          place the network without knowing the origin separately
+        - segment waypoints stored as plain nested lists (not tuples) so they
+          round-trip through JSON without a custom decoder
+        """
+        def _to_py(v: Any) -> Any:
+            """Recursively coerce numpy scalars/arrays to plain Python types."""
+            if isinstance(v, np.ndarray):
+                return v.tolist()
+            if isinstance(v, (np.integer,)):
+                return int(v)
+            if isinstance(v, (np.floating,)):
+                return float(v)
+            if isinstance(v, (list, tuple)):
+                return [_to_py(x) for x in v]
+            return v
+
         nodes_list = []
         for n in self.nodes.values():
-            nodes_list.append(asdict(n))
+            nd = asdict(n)
+            nodes_list.append({k: _to_py(v) for k, v in nd.items()})
 
         segments_list = []
         for s in self.segments.values():
-            segments_list.append(asdict(s))
+            sd = asdict(s)
+            # Waypoints stored as lists-of-lists for JSON compat
+            sd["waypoints"] = [list(wp) for wp in sd["waypoints"]]
+            segments_list.append({k: _to_py(v) for k, v in sd.items()})
 
         contracts_list = []
         for (tx, ty), edges in self.tile_contracts.items():
-            entry: dict[str, Any] = {"tile_x": tx, "tile_y": ty}
+            entry: dict[str, Any] = {"tile_x": int(tx), "tile_y": int(ty)}
             for direction, clist in edges.items():
-                entry[direction] = [asdict(c) for c in clist]
+                serialised = []
+                for c in clist:
+                    cd = asdict(c)
+                    cd["flow_direction"] = list(cd["flow_direction"])
+                    cd["target_tile"] = list(cd["target_tile"])
+                    cd["entry_cell"] = list(cd["entry_cell"])
+                    serialised.append({k: _to_py(v) for k, v in cd.items()})
+                entry[direction] = serialised
             contracts_list.append(entry)
 
+        # Pre-compute Strahler orders so they are embedded in the snapshot
+        strahler = {}
+        try:
+            strahler = {str(k): int(v) for k, v in self.compute_strahler_orders().items()}
+        except Exception:
+            pass
+
+        # World AABB for the full heightmap extent
+        rows, cols = self._heightmap_shape
+        world_bounds = {
+            "x_min": float(self._world_origin_x),
+            "y_min": float(self._world_origin_y),
+            "x_max": float(self._world_origin_x + cols * self._cell_size),
+            "y_max": float(self._world_origin_y + rows * self._cell_size),
+        }
+
         return {
-            "version": 1,
-            "tile_size": self._tile_size,
-            "cell_size": self._cell_size,
-            "world_origin_x": self._world_origin_x,
-            "world_origin_y": self._world_origin_y,
-            "heightmap_rows": self._heightmap_shape[0],
-            "heightmap_cols": self._heightmap_shape[1],
-            "next_node_id": self._next_node_id,
-            "next_segment_id": self._next_segment_id,
-            "next_network_id": self._next_network_id,
+            "version": 2,
+            "tile_size": int(self._tile_size),
+            "cell_size": float(self._cell_size),
+            "world_origin_x": float(self._world_origin_x),
+            "world_origin_y": float(self._world_origin_y),
+            "heightmap_rows": int(self._heightmap_shape[0]),
+            "heightmap_cols": int(self._heightmap_shape[1]),
+            "world_bounds": world_bounds,
+            "next_node_id": int(self._next_node_id),
+            "next_segment_id": int(self._next_segment_id),
+            "next_network_id": int(self._next_network_id),
+            "strahler_orders": strahler,
             "nodes": nodes_list,
             "segments": segments_list,
             "tile_contracts": contracts_list,
@@ -1396,6 +1885,11 @@ class WaterNetwork:
                 for cd in tc.get(direction, []):
                     cd = dict(cd)
                     cd["flow_direction"] = tuple(cd["flow_direction"])
+                    # New fields added in B+ upgrade: convert list→tuple if present
+                    if "target_tile" in cd and not isinstance(cd["target_tile"], tuple):
+                        cd["target_tile"] = tuple(cd["target_tile"])
+                    if "entry_cell" in cd and not isinstance(cd["entry_cell"], tuple):
+                        cd["entry_cell"] = tuple(cd["entry_cell"])
                     clist.append(WaterEdgeContract(**cd))
                 edges[direction] = clist
             net.tile_contracts[(tx, ty)] = edges

@@ -2,6 +2,24 @@
 
 Pure numpy k-means on RGB pixels. No sklearn. Deterministic given a
 seeded RNG (default seed=0).
+
+Biome classification
+--------------------
+Palette clusters are mapped to biome types using perceptually-uniform
+CIE L*a*b* colour space (not RGB Euclidean distance).  Lab distance
+correctly distinguishes colours that look different to a human but sit
+close together in raw RGB (e.g. olive green vs warm brown).
+
+``_label_for_rgb`` converts an RGB triplet to Lab and finds the nearest
+centroid from ``_BIOME_LAB_CENTROIDS``, which covers the canonical
+VeilBreakers dark-fantasy biomes plus the three Megascans reference biomes
+specified in the AAA upgrade brief (arctic, tropical, desert).
+
+``palette_to_biome_mapping`` maps all entries of a ``PaletteEntry`` list to
+biome names and attaches a per-entry confidence score derived from the
+normalised inverse-distance-to-centroid.  Confidence decays with a squared
+falloff so scores near 1.0 indicate a very clean centroid hit while
+0.0 indicates the colour is equidistant from all centroids.
 """
 
 from __future__ import annotations
@@ -19,7 +37,7 @@ class PaletteEntry:
 
     ``color_rgb`` is in [0, 1] float. ``weight`` is the fraction of
     image pixels assigned to this cluster. ``label`` is a human-readable
-    tag ("dark", "earth", "foliage", ...).
+    biome tag.
     """
 
     color_rgb: Tuple[float, float, float]
@@ -164,25 +182,69 @@ def _rgb_to_lab(r: float, g: float, b: float) -> Tuple[float, float, float]:
     return L, a, b_val
 
 
-# Biome centroids defined in Lab space (L, a, b) for nearest-centroid matching.
-# Each centroid represents the *canonical* Lab colour for that biome label.
-# Values derived from representative Megascans palette samples.
+# ---------------------------------------------------------------------------
+# Biome Lab centroids
+# ---------------------------------------------------------------------------
+# Each centroid is the canonical Lab colour for that biome label, derived
+# from representative Megascans palette samples.
+#
+# The three AAA-brief biomes (arctic, tropical, desert) are added alongside
+# the existing VeilBreakers-specific labels.  All are defined in Lab space
+# via _rgb_to_lab so they are perceptually grounded.
+#
+# Arctic:   desaturated cold blue-white (fresh snow / glacial ice)
+# Tropical: saturated warm greens (dense canopy / jungle floor)
+# Desert:   warm tans and burnt oranges (sand / baked earth)
+
 _BIOME_LAB_CENTROIDS: Dict[str, Tuple[float, float, float]] = {
-    "dark":    _rgb_to_lab(0.05, 0.05, 0.06),   # near-black corrupted shadow
-    "earth":   _rgb_to_lab(0.40, 0.28, 0.18),   # warm brown rock/dirt
-    "foliage": _rgb_to_lab(0.20, 0.30, 0.10),   # mid-green canopy
-    "water":   _rgb_to_lab(0.10, 0.18, 0.45),   # deep blue-teal water
-    "light":   _rgb_to_lab(0.85, 0.85, 0.90),   # snow/alpine pale
-    "neutral": _rgb_to_lab(0.50, 0.50, 0.50),   # mid-grey plateau
+    # --- VeilBreakers dark-fantasy labels ---
+    "dark":     _rgb_to_lab(0.05, 0.05, 0.06),   # near-black corrupted shadow
+    "earth":    _rgb_to_lab(0.40, 0.28, 0.18),   # warm brown rock / dirt
+    "foliage":  _rgb_to_lab(0.20, 0.30, 0.10),   # mid-green canopy
+    "water":    _rgb_to_lab(0.10, 0.18, 0.45),   # deep blue-teal water
+    "light":    _rgb_to_lab(0.85, 0.85, 0.90),   # snow / alpine pale
+    "neutral":  _rgb_to_lab(0.50, 0.50, 0.50),   # mid-grey plateau
+    # --- AAA brief biome reference colours ---
+    "arctic":   _rgb_to_lab(0.88, 0.92, 0.98),   # desaturated blue-white glacier
+    "tropical": _rgb_to_lab(0.15, 0.42, 0.12),   # saturated deep jungle green
+    "desert":   _rgb_to_lab(0.72, 0.56, 0.30),   # warm tan / baked ochre sand
 }
 
+# Rule table: maps palette label -> canonical biome name used in
+# VeilBreakers' biome_type system.
+_BIOME_RULES: Dict[str, str] = {
+    "dark":     "shadow",
+    "earth":    "cliff",
+    "foliage":  "forest",
+    "water":    "wetland",
+    "light":    "alpine",
+    "neutral":  "plateau",
+    "arctic":   "arctic",
+    "tropical": "tropical",
+    "desert":   "desert",
+}
+
+# Confidence decay sigma (Lab units).  At distance == 0 confidence is 1.0;
+# at distance == _LAB_SIGMA it drops to ~0.61; at 2x sigma ~0.14.
+# Lab distances are roughly perceptual JND units, so sigma=25 means the
+# classifier is confident within ~25 perceptual steps of a centroid.
+_LAB_SIGMA: float = 25.0
+
+
+# ---------------------------------------------------------------------------
+# Single-colour biome labelling
+# ---------------------------------------------------------------------------
 
 def _label_for_rgb(r: float, g: float, b: float) -> str:
     """Assign a biome label to an RGB colour using nearest-centroid in Lab space.
 
     Lab distance is perceptually uniform, so this correctly distinguishes
     similar-luminance colours (e.g. olive green vs warm brown) that naive
-    RGB Euclidean distance conflates.
+    RGB Euclidean distance conflates.  Uses the full ``_BIOME_LAB_CENTROIDS``
+    dict including the arctic / tropical / desert reference biomes.
+
+    Returns the label key whose centroid is closest to the input colour
+    in L*a*b* space.  Ties are broken by dict insertion order (Python 3.7+).
     """
     L, a, b_val = _rgb_to_lab(r, g, b)
     best_label = "neutral"
@@ -196,29 +258,37 @@ def _label_for_rgb(r: float, g: float, b: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Rule table used as fallback / confidence reference
+# Palette-level biome mapping with confidence
 # ---------------------------------------------------------------------------
 
-_BIOME_RULES: Dict[str, str] = {
-    "dark": "shadow",
-    "earth": "cliff",
-    "foliage": "forest",
-    "water": "wetland",
-    "light": "alpine",
-    "neutral": "plateau",
-}
-
-
 def palette_to_biome_mapping(palette: List[PaletteEntry]) -> BiomeMappingResult:
-    """Map palette labels to biome names with per-mapping confidence scores.
+    """Map palette labels to biome names with per-entry confidence scores.
 
-    When the palette has >= 4 entries a simple k-means pass over the Lab
-    centroids is used to assign confidence: confidence = 1 - (dist / max_dist).
-    With fewer entries the rule table is used directly with confidence 1.0
-    for exact matches and 0.5 for fallback assignments.
+    Algorithm
+    ---------
+    1. Convert each palette entry's RGB to Lab.
+    2. Compute the Lab distance from each entry to its assigned centroid
+       in ``_BIOME_LAB_CENTROIDS``.
+    3. Derive confidence via a squared-exponential (Gaussian) decay::
 
-    Returns a ``BiomeMappingResult`` rather than a plain dict so callers can
-    filter low-confidence assignments or display uncertainty in the UI.
+           confidence = exp( -(dist / sigma)^2 )
+
+       where ``sigma = _LAB_SIGMA`` (25 Lab units by default).  This gives
+       confidence close to 1.0 for near-centroid hits and decays smoothly
+       to 0.0 for outliers, rather than the linear 1 - dist/max_dist
+       formula that previously collapsed all confidences toward zero when
+       one outlier dominated the denominator.
+
+    4. Map the assigned label to a canonical VeilBreakers biome name via
+       ``_BIOME_RULES``.  Unknown labels fall back to "plateau".
+
+    When the palette has >= 4 entries ``method="kmeans_lab"`` is reported;
+    with fewer entries ``method="rule_table"`` is used and confidence is
+    set to 1.0 for exact matches or 0.5 for fallback assignments (the rule
+    table is authoritative for small palettes).
+
+    Returns a ``BiomeMappingResult`` so callers can filter low-confidence
+    assignments or display uncertainty in the editor UI.
     """
     if not palette:
         return BiomeMappingResult(mapping={}, confidence={}, method="rule_table")
@@ -226,35 +296,36 @@ def palette_to_biome_mapping(palette: List[PaletteEntry]) -> BiomeMappingResult:
     mapping: Dict[str, str] = {}
     confidence: Dict[str, float] = {}
 
-    # Compute Lab coords and nearest-centroid distances for all palette entries
-    lab_entries = [
-        _rgb_to_lab(e.color_rgb[0], e.color_rgb[1], e.color_rgb[2])
-        for e in palette
-    ]
-
-    # Distances from each palette entry to its assigned centroid
-    entry_dists: List[float] = []
-    for (L, a, b_val), entry in zip(lab_entries, palette):
-        cL, ca, cb = _BIOME_LAB_CENTROIDS.get(entry.label, _BIOME_LAB_CENTROIDS["neutral"])
-        dist = math.sqrt((L - cL) ** 2 + (a - ca) ** 2 + (b_val - cb) ** 2)
-        entry_dists.append(dist)
-
-    max_dist = max(entry_dists) if entry_dists else 1.0
-    # Avoid div-by-zero when all entries are exactly at their centroids
-    if max_dist < 1e-6:
-        max_dist = 1.0
-
     use_kmeans = len(palette) >= 4
     method = "kmeans_lab" if use_kmeans else "rule_table"
 
-    for entry, dist in zip(palette, entry_dists):
-        biome = _BIOME_RULES.get(entry.label, "plateau")
-        mapping[entry.label] = biome
+    for entry in palette:
+        r, g, b = entry.color_rgb
+        L, a, b_val = _rgb_to_lab(r, g, b)
+
         if use_kmeans:
-            # Confidence: 1 at centroid, decays to 0 at max observed distance
-            confidence[entry.label] = max(0.0, 1.0 - dist / max_dist)
+            # Find the nearest centroid independently (re-classify in Lab rather
+            # than trusting the RGB-derived label from extract_palette_from_image,
+            # which may have been assigned with an older centroid set).
+            best_label = "neutral"
+            best_dist = float("inf")
+            for lbl, (cL, ca, cb) in _BIOME_LAB_CENTROIDS.items():
+                d = math.sqrt((L - cL) ** 2 + (a - ca) ** 2 + (b_val - cb) ** 2)
+                if d < best_dist:
+                    best_dist = d
+                    best_label = lbl
+
+            biome = _BIOME_RULES.get(best_label, "plateau")
+            mapping[entry.label] = biome
+
+            # Gaussian confidence: 1.0 at centroid, decays to ~0 at ~3*sigma.
+            conf = math.exp(-((best_dist / _LAB_SIGMA) ** 2))
+            confidence[entry.label] = round(max(0.0, min(1.0, conf)), 4)
+
         else:
-            # Rule table: exact match = 1.0, fallback "plateau" = 0.5
+            # Rule table path: use the label already assigned by _label_for_rgb.
+            biome = _BIOME_RULES.get(entry.label, "plateau")
+            mapping[entry.label] = biome
             confidence[entry.label] = 1.0 if entry.label in _BIOME_RULES else 0.5
 
     return BiomeMappingResult(mapping=mapping, confidence=confidence, method=method)

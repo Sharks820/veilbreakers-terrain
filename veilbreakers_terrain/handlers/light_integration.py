@@ -135,51 +135,141 @@ LIGHT_PROP_MAP: dict[str, dict[str, Any]] = {
 # Placement computation
 # ---------------------------------------------------------------------------
 
-def compute_light_placements(props: list) -> list:
+def compute_light_placements(
+    props: list,
+    sun_direction: tuple = (0.5, -0.5, -0.7),
+) -> list:
     """Generate light descriptors from a list of world prop dicts.
+
+    Extends basic prop lookup with terrain-contextual light types:
+
+    - **portal** ("cave_entrance", "tunnel_opening"): directed area light aimed
+      inward along -normal, low angle to mimic exterior daylight bleeding in.
+    - **sky_bounce** ("cliff_base", "rock_overhang"): area light at cliff bases
+      pointed upward to simulate sky bounce (real-world ambient occlusion fill).
+    - **torch_junction** ("path_junction", "crossroads"): point light at waist
+      height to guide navigation, warm colour temp.
+    - **god_ray** ("forest_edge", "canopy_gap"): spot light oriented along
+      sun_direction to create volumetric crepuscular shafts.
 
     Parameters
     ----------
     props : list of dict
         Each dict must have at minimum "type" and "position" keys.
-        Optional: "scale" (energy multiplier), "on" (False to skip).
+        Optional: "scale" (energy multiplier), "on" (False to skip),
+        "normal" (3-tuple facing direction for portals/sky_bounce).
+    sun_direction : tuple
+        Normalised world-space sun direction (used for god_ray spots).
 
     Returns
     -------
     list of dict
         Keys: light_type, source_prop, position (3-tuple),
-              energy, color, radius, shadow, flicker.
+              energy, color, radius, shadow, flicker,
+              direction (optional 3-tuple for directed lights).
     """
+    # Terrain-contextual prop types that bypass LIGHT_PROP_MAP
+    _PORTAL_TYPES = {"cave_entrance", "tunnel_opening"}
+    _SKY_BOUNCE_TYPES = {"cliff_base", "rock_overhang"}
+    _TORCH_JUNCTION_TYPES = {"path_junction", "crossroads"}
+    _GOD_RAY_TYPES = {"forest_edge", "canopy_gap"}
+
+    # Normalise sun_direction
+    sx, sy, sz = sun_direction
+    slen = math.sqrt(sx * sx + sy * sy + sz * sz) or 1.0
+    sx, sy, sz = sx / slen, sy / slen, sz / slen
+
     lights = []
     for prop in props:
         prop_type = prop.get("type", "")
-        if prop_type not in LIGHT_PROP_MAP:
-            continue
         if prop.get("on") is False:
             continue
 
-        ldef = LIGHT_PROP_MAP[prop_type]
-        pos = prop["position"]
+        pos = prop.get("position", (0.0, 0.0, 0.0))
         if len(pos) == 2:
-            z = float(ldef["offset_z"])
+            px, py, pz = float(pos[0]), float(pos[1]), 0.0
         else:
-            z = float(pos[2]) + float(ldef["offset_z"])
+            px, py, pz = float(pos[0]), float(pos[1]), float(pos[2])
 
-        energy = ldef["energy"]
-        scale = prop.get("scale")
-        if scale is not None:
-            energy = energy * scale
+        normal = prop.get("normal", (0.0, 0.0, 1.0))
+        scale = prop.get("scale", 1.0)
 
-        lights.append({
-            "light_type": ldef["type"],
-            "source_prop": prop_type,
-            "position": (float(pos[0]), float(pos[1]), z),
-            "energy": energy,
-            "color": tuple(ldef["color"]),
-            "radius": ldef["radius"],
-            "shadow": ldef["shadow"],
-            "flicker": dict(ldef["flicker"]) if ldef.get("flicker") else None,
-        })
+        if prop_type in _PORTAL_TYPES:
+            # Portal light: area light directed inward (along -normal)
+            # Low energy (daylight leaking in through entrance aperture)
+            nx, ny, nz = float(normal[0]), float(normal[1]), float(normal[2])
+            lights.append({
+                "light_type": "area",
+                "source_prop": prop_type,
+                "position": (px, py, pz + 2.0),
+                "energy": 80.0 * scale,
+                "color": (0.9, 0.92, 1.0),  # daylight blueish
+                "radius": 3.0,
+                "shadow": True,
+                "flicker": None,
+                "direction": (-nx, -ny, -nz),  # pointed inward
+            })
+
+        elif prop_type in _SKY_BOUNCE_TYPES:
+            # Sky bounce: area light at cliff base pointed upward (fill light)
+            lights.append({
+                "light_type": "area",
+                "source_prop": prop_type,
+                "position": (px, py, pz + 0.5),
+                "energy": 30.0 * scale,
+                "color": (0.7, 0.8, 1.0),  # sky blue bounce
+                "radius": 8.0,
+                "shadow": False,
+                "flicker": None,
+                "direction": (0.0, 0.0, 1.0),  # upward bounce
+            })
+
+        elif prop_type in _TORCH_JUNCTION_TYPES:
+            # Path junction torch: warm point light at waist height
+            lights.append({
+                "light_type": "point",
+                "source_prop": prop_type,
+                "position": (px, py, pz + 1.2),
+                "energy": 60.0 * scale,
+                "color": (1.0, 0.75, 0.4),  # warm torch
+                "radius": 7.0,
+                "shadow": True,
+                "flicker": dict(FLICKER_PRESETS["torch"]),
+                "direction": None,
+            })
+
+        elif prop_type in _GOD_RAY_TYPES:
+            # God-ray volume: spot along sun_direction at forest edge
+            lights.append({
+                "light_type": "spot",
+                "source_prop": prop_type,
+                "position": (px, py, pz + 8.0),
+                "energy": 200.0 * scale,
+                "color": (1.0, 0.95, 0.8),  # warm sunlight
+                "radius": 12.0,
+                "shadow": False,
+                "flicker": None,
+                "direction": (sx, sy, sz),
+                "spot_angle": math.radians(15.0),
+            })
+
+        elif prop_type in LIGHT_PROP_MAP:
+            ldef = LIGHT_PROP_MAP[prop_type]
+            energy = ldef["energy"]
+            if scale is not None:
+                energy = energy * scale
+            z = pz + float(ldef["offset_z"])
+            lights.append({
+                "light_type": ldef["type"],
+                "source_prop": prop_type,
+                "position": (px, py, z),
+                "energy": energy,
+                "color": tuple(ldef["color"]),
+                "radius": ldef["radius"],
+                "shadow": ldef["shadow"],
+                "flicker": dict(ldef["flicker"]) if ldef.get("flicker") else None,
+            })
+
     return lights
 
 

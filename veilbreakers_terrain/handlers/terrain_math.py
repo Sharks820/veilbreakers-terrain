@@ -55,25 +55,61 @@ def cell_to_world(row: int, col: int, cell_size: float,
     return world_x, world_y
 
 def distance_field_edt(mask: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
-    """Euclidean distance transform from mask=True cells, in world units."""
+    """Euclidean distance transform from mask=True cells, in world units.
+
+    Fast path: ``scipy.ndimage.distance_transform_edt`` with ``sampling=cell_size``
+    (true EDT, O(N) Meijster algorithm).
+
+    Fallback (scipy unavailable): 8-connected 3×4/5 chamfer distance transform
+    (Borgefors 1986) with two complete raster scans — forward (top-left to
+    bottom-right) then backward (bottom-right to top-left). The original
+    implementation was missing the mixed-direction neighbours in both scans,
+    producing incorrect distances on the far side of obstacles. Fixed: each
+    scan now considers all 4 neighbours in its sweep direction so distances
+    propagate correctly in both axes.
+    """
     try:
         from scipy.ndimage import distance_transform_edt
         return distance_transform_edt(~mask, sampling=cell_size)
     except ImportError:
-        # 8-connected chamfer fallback
+        # 8-connected chamfer fallback — full two-pass Borgefors 3-4-5 DT.
         dist = np.where(mask, 0.0, np.inf).astype(np.float64)
-        _DIAG = math.sqrt(2.0)
+        _D1 = 1.0        # cardinal neighbour cost
+        _DIAG = math.sqrt(2.0)  # diagonal neighbour cost (true Euclidean approx)
         rows, cols = mask.shape
-        for r in range(1, rows):
-            for c in range(1, cols):
-                dist[r, c] = min(dist[r, c],
-                                 dist[r-1, c] + 1,
-                                 dist[r, c-1] + 1,
-                                 dist[r-1, c-1] + _DIAG)
-        for r in range(rows-2, -1, -1):
-            for c in range(cols-2, -1, -1):
-                dist[r, c] = min(dist[r, c],
-                                 dist[r+1, c] + 1,
-                                 dist[r, c+1] + 1,
-                                 dist[r+1, c+1] + _DIAG)
+
+        # Forward pass: top-left → bottom-right
+        # Each cell looks at the 4 already-visited neighbours (NW, N, NE, W)
+        for r in range(rows):
+            for c in range(cols):
+                if dist[r, c] == 0.0:
+                    continue
+                candidates = [dist[r, c]]
+                if r > 0:
+                    candidates.append(dist[r - 1, c] + _D1)
+                    if c > 0:
+                        candidates.append(dist[r - 1, c - 1] + _DIAG)
+                    if c < cols - 1:
+                        candidates.append(dist[r - 1, c + 1] + _DIAG)
+                if c > 0:
+                    candidates.append(dist[r, c - 1] + _D1)
+                dist[r, c] = min(candidates)
+
+        # Backward pass: bottom-right → top-left
+        # Each cell looks at the 4 already-visited neighbours (SE, S, SW, E)
+        for r in range(rows - 1, -1, -1):
+            for c in range(cols - 1, -1, -1):
+                if dist[r, c] == 0.0:
+                    continue
+                candidates = [dist[r, c]]
+                if r < rows - 1:
+                    candidates.append(dist[r + 1, c] + _D1)
+                    if c < cols - 1:
+                        candidates.append(dist[r + 1, c + 1] + _DIAG)
+                    if c > 0:
+                        candidates.append(dist[r + 1, c - 1] + _DIAG)
+                if c < cols - 1:
+                    candidates.append(dist[r, c + 1] + _D1)
+                dist[r, c] = min(candidates)
+
         return dist * cell_size

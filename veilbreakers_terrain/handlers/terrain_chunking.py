@@ -45,45 +45,20 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 
-def compute_chunk_lod(
+def _downsample_heightmap(
     heightmap_chunk: list[list[float]],
     target_resolution: int,
-    *,
-    camera_distance: float | None = None,
-    chunk_world_size: float = 64.0,
-    fov_degrees: float = 60.0,
-    target_px: float = 1.0,
-    screen_height_px: float = 1080.0,
 ) -> list[list[float]]:
-    """Compute the LOD level for a chunk and return its downsampled heightmap.
-
-    LOD level is derived from the standard screen-space formula used in
-    Houdini/Unreal:
-
-        screen_size_px = chunk_world_size / (dist * tan(fov_half)) * screen_height_px
-        lod_level       = floor(log2(screen_size_px / target_px))
-
-    The computed lod_level then selects the downsampling factor
-    (chunk_size >> lod_level, minimum 2 samples).  When ``camera_distance``
-    is None the function defaults to LOD 0 (full resolution), matching the
-    "always load highest detail when distance is unknown" convention.
+    """Bilinear downsample a 2-D heightmap to ``target_resolution × target_resolution``.
 
     Args:
-        heightmap_chunk: 2D array of height values (rows x cols).
-        target_resolution: Maximum output resolution (used as LOD-0 size).
-            The actual output size may be smaller depending on the computed
-            LOD level.
-        camera_distance: Distance from camera to chunk centre in world metres.
-            None → LOD 0 (no downsampling beyond target_resolution).
-        chunk_world_size: World-space side length of the chunk in metres.
-        fov_degrees: Vertical field of view in degrees.
-        target_px: Target number of pixels per terrain sample at LOD 0.
-            Larger values → more aggressive LOD transitions.
-        screen_height_px: Vertical screen resolution used to convert
-            world-space to screen-space pixels.
+        heightmap_chunk: 2D list of height values (rows × cols).
+        target_resolution: Output resolution (square).
 
     Returns:
-        Downsampled 2D height array.
+        Downsampled 2D height list of shape (target_resolution, target_resolution).
+        Returns the original copy if the input is already <= target_resolution.
+        Returns [] for empty input or target_resolution <= 0.
     """
     src_rows = len(heightmap_chunk)
     if src_rows == 0:
@@ -93,24 +68,10 @@ def compute_chunk_lod(
     if target_resolution <= 0:
         return []
 
-    # --- Determine LOD level -------------------------------------------
-    lod_level = 0
-    if camera_distance is not None and camera_distance > 0.0:
-        fov_half_rad = math.radians(fov_degrees * 0.5)
-        tan_fov_half = math.tan(fov_half_rad)
-        if tan_fov_half > 0.0:
-            screen_size_px = (
-                chunk_world_size / (camera_distance * tan_fov_half)
-            ) * screen_height_px
-            if screen_size_px > 0.0 and target_px > 0.0:
-                lod_level = max(0, int(math.floor(math.log2(target_px / max(screen_size_px, 1e-12)))))
-
-    # Apply LOD: each level halves the resolution (minimum 2)
-    effective_res = max(2, target_resolution >> lod_level)
-
-    if src_rows <= effective_res and src_cols <= effective_res:
+    if src_rows <= target_resolution and src_cols <= target_resolution:
         return [list(row) for row in heightmap_chunk]
 
+    effective_res = target_resolution
     result: list[list[float]] = []
     for tr in range(effective_res):
         row_out: list[float] = []
@@ -128,6 +89,61 @@ def compute_chunk_lod(
             row_out.append(top * (1.0 - fr) + bot * fr)
         result.append(row_out)
     return result
+
+
+def compute_chunk_lod(
+    heightmap_chunk: list[list[float]],
+    target_resolution: int,
+    *,
+    camera_distance: float | None = None,
+    chunk_world_size: float = 64.0,
+    fov_degrees: float = 60.0,
+    target_px: float = 1.0,
+    screen_height_px: float = 1080.0,
+) -> int:
+    """Return the integer LOD level appropriate for a chunk at a given distance.
+
+    LOD level is derived from the standard screen-space formula:
+
+        screen_size_px = chunk_world_size / (dist * tan(fov_half)) * screen_height_px
+        lod_level       = floor(log2(target_px / screen_size_px))
+
+    When ``camera_distance`` is None the function returns 0 (full detail),
+    matching the "always load highest detail when distance is unknown"
+    convention.
+
+    To obtain the downsampled heightmap for a given LOD level, use
+    ``_downsample_heightmap(chunk, target_resolution >> lod_level)`` or
+    call ``_downsample_heightmap`` directly.
+
+    Args:
+        heightmap_chunk: 2D array of height values (rows x cols).
+        target_resolution: LOD-0 target resolution (used for computing
+            the effective resolution at the returned LOD level).
+        camera_distance: Distance from camera to chunk centre in world metres.
+            None → LOD 0.
+        chunk_world_size: World-space side length of the chunk in metres.
+        fov_degrees: Vertical field of view in degrees.
+        target_px: Target pixels per terrain sample at LOD 0.
+        screen_height_px: Vertical screen resolution in pixels.
+
+    Returns:
+        Integer LOD level (0 = full detail, higher = coarser).
+    """
+    lod_level = 0
+    if camera_distance is not None and camera_distance > 0.0:
+        fov_half_rad = math.radians(fov_degrees * 0.5)
+        tan_fov_half = math.tan(fov_half_rad)
+        if tan_fov_half > 0.0:
+            screen_size_px = (
+                chunk_world_size / (camera_distance * tan_fov_half)
+            ) * screen_height_px
+            if screen_size_px > 0.0 and target_px > 0.0:
+                lod_level = max(
+                    0,
+                    int(math.floor(math.log2(target_px / max(screen_size_px, 1e-12)))),
+                )
+    return lod_level
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +329,7 @@ def compute_terrain_chunks(
                     lod_res_cols = len(sub_heightmap[0]) if lod_res > 0 else 0
                     vert_count = lod_res * lod_res_cols
                 else:
-                    lod_hmap = compute_chunk_lod(sub_heightmap, target_res)
+                    lod_hmap = _downsample_heightmap(sub_heightmap, target_res)
                     lod_res = len(lod_hmap)
                     lod_res_cols = len(lod_hmap[0]) if lod_res > 0 else 0
                     vert_count = lod_res * lod_res_cols

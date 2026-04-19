@@ -43,57 +43,103 @@ _log = logging.getLogger(__name__)
 def _apply_flatten_zones_stub(world_hmap: np.ndarray, intent: TerrainIntentState) -> np.ndarray:
     """Step 4 — apply flatten zones declared in intent on the world heightmap.
 
-    Reads ``intent.composition_hints['flatten_zones']`` — a list of zone dicts,
-    each with keys understood by ``flatten_multiple_zones``:
-      - center_x, center_y  (world-space, required)
+    Reads ``intent.composition_hints['flatten_zones']`` (or the legacy
+    ``intent.flatten_zones`` attribute if present) — a list of zone dicts,
+    each with keys:
+      - center_x, center_y  (world-space metres, required)
       - radius               (world-space metres, required)
-      - target_height        (optional; defaults to local mean)
-      - blend_width          (optional; fraction of radius, default 0.1)
-      - seed                 (optional int)
+      - target_height        (world-space metres; optional, defaults to local mean)
+      - feather              (metres; cosine blend half-width beyond radius, default radius*0.15)
 
-    The heightmap is treated as world-unit values (not normalised [0,1]).
-    ``flatten_multiple_zones`` operates on normalised values internally, so
-    we normalise before the call and denormalise afterwards to preserve
-    world-unit heights.
+    Uses a **cosine falloff** so the transition has zero-derivative continuity
+    at both the inner flat edge and the outer terrain boundary — no hard seams.
+
+    World-unit coordinates are used throughout; no normalisation roundtrip so
+    precision is not degraded on large elevation ranges.
 
     If no flatten_zones are configured the heightmap is returned unchanged.
     """
-    from .terrain_advanced import flatten_multiple_zones  # relative import
-
-    zones = intent.composition_hints.get("flatten_zones", [])
+    # Support both composition_hints and direct intent.flatten_zones attribute
+    zones = list(intent.composition_hints.get("flatten_zones", []))
+    if not zones:
+        direct = getattr(intent, "flatten_zones", None)
+        if direct:
+            zones = list(direct)
     if not zones:
         return world_hmap
 
-    h_min = float(world_hmap.min())
-    h_max = float(world_hmap.max())
-    h_span = h_max - h_min
-    if h_span <= 0.0:
-        return world_hmap
+    rows, cols = world_hmap.shape
+    # World extent from intent bounds
+    world_w = float(intent.region_bounds.max_x - intent.region_bounds.min_x)
+    world_h = float(intent.region_bounds.max_y - intent.region_bounds.min_y)
+    origin_x = float(intent.region_bounds.min_x)
+    origin_y = float(intent.region_bounds.min_y)
 
-    # Normalise to [0, 1] for flatten_multiple_zones
-    normalised = (world_hmap - h_min) / h_span
+    # Build per-cell world coordinate grids once
+    row_coords = origin_y + np.linspace(0.0, world_h, rows)
+    col_coords = origin_x + np.linspace(0.0, world_w, cols)
+    yy, xx = np.meshgrid(row_coords, col_coords, indexing="ij")  # (rows, cols)
 
-    # Normalise target_height values inside zone dicts if present
-    norm_zones = []
+    result = world_hmap.copy()
+
     for z in zones:
-        nz = dict(z)
-        if "target_height" in nz and nz["target_height"] is not None:
-            nz["target_height"] = (float(nz["target_height"]) - h_min) / h_span
-        norm_zones.append(nz)
+        cx = float(z["center_x"])
+        cy = float(z["center_y"])
+        r = float(z["radius"])
+        if r <= 0.0:
+            continue
+        feather = float(z.get("feather", r * 0.15))
+        feather = max(feather, 1e-3)
 
-    flattened_norm = flatten_multiple_zones(normalised, norm_zones)
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
 
-    # Denormalise back to world units
-    return flattened_norm * h_span + h_min
+        # Determine target height: mean of cells inside the flat core
+        t_height = z.get("target_height")
+        if t_height is None:
+            core_mask = dist <= r
+            if core_mask.any():
+                t_height = float(result[core_mask].mean())
+            else:
+                t_height = float(result.mean())
+        target = float(t_height)
+
+        # Cosine falloff weight:
+        #   dist <= r          → weight = 1  (fully flat)
+        #   r < dist <= r+feather → weight = 0.5*(1 + cos(π*(dist-r)/feather))
+        #   dist > r+feather   → weight = 0  (unchanged)
+        in_core = dist <= r
+        in_feather = (dist > r) & (dist <= r + feather)
+
+        weight = np.zeros_like(dist)
+        weight[in_core] = 1.0
+        t_norm = (dist[in_feather] - r) / feather  # [0, 1] across feather band
+        weight[in_feather] = 0.5 * (1.0 + np.cos(np.pi * t_norm))
+
+        result = result * (1.0 - weight) + target * weight
+
+    return result
 
 
 def _apply_canyon_river_carves_stub(
     world_hmap: np.ndarray, intent: TerrainIntentState
-) -> np.ndarray:
-    """Step 5 — carve canyon/river channels into the world heightmap.
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Step 5 — carve canyon and river channels into the world heightmap.
 
-    Reads ``intent.composition_hints['river_carves']`` — a list of carve dicts,
-    each with keys:
+    Canyon carving
+    --------------
+    Reads ``intent.composition_hints['canyon_paths']`` — a list of canyon dicts:
+      - path:    list of [x, y] world-space waypoints (required; at least 2)
+      - width_m: float  U-valley width in metres (optional, default 80.0)
+      - depth_m: float  carve depth in metres    (optional, default 40.0)
+
+    Uses ``carve_u_valley`` from ``terrain_glacial`` to produce a glaciogenic
+    U-shaped cross-section.  The accumulated delta over all canyon paths is
+    returned as the second element of the return tuple (``glacial_delta``) so
+    the caller (step 10) can stamp it onto every tile stack.
+
+    River carving
+    -------------
+    Reads ``intent.composition_hints['river_carves']`` — a list of carve dicts:
       - source: [row, col]  start cell (required)
       - dest:   [row, col]  end cell   (required)
       - width:  int         channel width in cells (optional, default 2)
@@ -101,46 +147,107 @@ def _apply_canyon_river_carves_stub(
       - seed:   int         (optional, default 0)
 
     Uses ``carve_river_path`` from ``_terrain_noise`` which runs A* preferring
-    downhill routes, then lowers the heightmap along the carved path.
+    downhill routes then lowers the heightmap along the carved path.
 
-    The heightmap is normalised to [0, 1] before carving and denormalised
-    afterwards so world-unit heights are preserved.
+    Both canyon and river carves operate in world-unit heights (no
+    normalisation roundtrip for canyons; river carves use their own internal
+    normalisation).
 
-    If no river_carves are configured the heightmap is returned unchanged.
+    Returns
+    -------
+    (modified_hmap, glacial_delta_world)
+      modified_hmap      — the world heightmap after all carves.
+      glacial_delta_world — float32 (H, W) accumulated canyon-carve delta
+                            (negative where canyons were carved, zero elsewhere).
+                            Always the same shape as ``world_hmap``.
     """
-    from ._terrain_noise import carve_river_path  # relative import
+    from .terrain_glacial import carve_u_valley  # required by spec
+    from ._terrain_noise import carve_river_path  # river spline
 
-    carves = intent.composition_hints.get("river_carves", [])
-    if not carves:
-        return world_hmap
+    rows, cols = world_hmap.shape
+    result = world_hmap.copy()
+    glacial_delta = np.zeros((rows, cols), dtype=np.float64)
 
-    h_min = float(world_hmap.min())
-    h_max = float(world_hmap.max())
-    h_span = h_max - h_min
-    if h_span <= 0.0:
-        return world_hmap
+    # --- Canyon carving via carve_u_valley (glacial U-profile) ---
+    canyon_paths = intent.composition_hints.get("canyon_paths", [])
+    if canyon_paths:
+        # Wrap the world heightmap in a minimal TerrainMaskStack so carve_u_valley
+        # can use its coordinate system.  world_origin and cell_size are derived
+        # from the intent bounds and the heightmap resolution.
+        cell_w = (float(intent.region_bounds.max_x - intent.region_bounds.min_x)
+                  / max(cols - 1, 1))
+        cell_h = (float(intent.region_bounds.max_y - intent.region_bounds.min_y)
+                  / max(rows - 1, 1))
+        cell_size = (cell_w + cell_h) * 0.5
+        if cell_size <= 0.0:
+            cell_size = float(intent.cell_size) if intent.cell_size > 0 else 1.0
 
-    result_norm = (world_hmap - h_min) / h_span
+        tmp_stack = TerrainMaskStack(
+            tile_size=0,           # non-tile mode — no shape contract enforced
+            cell_size=cell_size,
+            world_origin_x=float(intent.region_bounds.min_x),
+            world_origin_y=float(intent.region_bounds.min_y),
+            tile_x=0,
+            tile_y=0,
+            height=result,
+        )
 
-    for carve in carves:
-        source = tuple(int(v) for v in carve["source"])
-        dest = tuple(int(v) for v in carve["dest"])
-        width = int(carve.get("width", 2))
-        depth = float(carve.get("depth", 0.05))
-        seed = int(carve.get("seed", 0))
-        try:
-            _path, result_norm = carve_river_path(
-                result_norm,
-                source=source,
-                dest=dest,
-                width=width,
-                depth=depth,
-                seed=seed,
-            )
-        except Exception as exc:
-            _log.warning("Step 5: river carve from %s to %s failed: %s", source, dest, exc)
+        for cp in canyon_paths:
+            raw_path = cp.get("path", [])
+            if len(raw_path) < 2:
+                _log.warning("Step 5: canyon_path skipped — fewer than 2 waypoints")
+                continue
+            # Accept [[x,y], ...] or [(x,y), ...]
+            path_tuples = [(float(p[0]), float(p[1])) for p in raw_path]
+            width_m = float(cp.get("width_m", 80.0))
+            depth_m = float(cp.get("depth_m", 40.0))
+            try:
+                delta = carve_u_valley(tmp_stack, path_tuples, width_m, depth_m)
+                glacial_delta += delta
+                result += delta          # apply delta to heightmap
+                # Keep tmp_stack.height in sync so subsequent canyons see updated terrain
+                tmp_stack = TerrainMaskStack(
+                    tile_size=0,
+                    cell_size=cell_size,
+                    world_origin_x=float(intent.region_bounds.min_x),
+                    world_origin_y=float(intent.region_bounds.min_y),
+                    tile_x=0,
+                    tile_y=0,
+                    height=result,
+                )
+            except Exception as exc:
+                _log.warning("Step 5: canyon carve failed: %s", exc)
 
-    return result_norm * h_span + h_min
+    # --- River carving via carve_river_path (A* spline, normalised internally) ---
+    river_carves = intent.composition_hints.get("river_carves", [])
+    if river_carves:
+        h_min = float(result.min())
+        h_max = float(result.max())
+        h_span = h_max - h_min
+        if h_span > 0.0:
+            result_norm = (result - h_min) / h_span
+            for carve in river_carves:
+                source = tuple(int(v) for v in carve["source"])
+                dest = tuple(int(v) for v in carve["dest"])
+                width = int(carve.get("width", 2))
+                depth = float(carve.get("depth", 0.05))
+                seed = int(carve.get("seed", 0))
+                try:
+                    _path, result_norm = carve_river_path(
+                        result_norm,
+                        source=source,
+                        dest=dest,
+                        width=width,
+                        depth=depth,
+                        seed=seed,
+                    )
+                except Exception as exc:
+                    _log.warning(
+                        "Step 5: river carve from %s to %s failed: %s", source, dest, exc
+                    )
+            result = result_norm * h_span + h_min
+
+    return result, glacial_delta.astype(np.float32)
 
 
 def _detect_cliff_edges_stub(
@@ -234,96 +341,99 @@ def _detect_cliff_edges_stub(
 
 
 def _detect_cave_candidates_stub(world_hmap: np.ndarray) -> List[Tuple[int, int]]:
-    """Detect cave candidates from heightmap curvature (high negative = concave = cave).
+    """Detect cave entrance candidates using three-condition morphological filter.
 
-    A cell is a cave candidate when its Laplacian curvature is strongly
-    negative — meaning it sits in a concave bowl relative to its neighbours,
-    the characteristic morphology of a cave entrance or hollow.
+    A cell qualifies as a cave candidate when ALL of:
+      (a) **Steep slope** — local slope > 60° (cliff/overhang face present)
+      (b) **Concavity** — Laplacian curvature strongly negative (concave hollow)
+      (c) **Accessible face** — at least one cardinal neighbour has slope < 35°
+          (an agent could approach from that direction without technical climbing)
 
-    Algorithm:
-      1. Compute discrete Laplacian on the heightmap (4-connected finite diff).
-      2. Threshold at mean - 1.5 * std of the Laplacian to find strongly
-         concave cells.
-      3. Additionally include the 3x3 local-minimum cells (original heuristic)
-         so that small pits in flat terrain are not missed.
-      4. Return unique (x, y) grid coordinates of all candidates.
+    Algorithm
+    ---------
+    1. Compute gradient magnitudes via ``np.gradient`` (cell_size=1 assumed;
+       results are in height-units-per-cell).  Convert to slope degrees.
+    2. Compute discrete 4-connected Laplacian; threshold at mean − 1.5 × std
+       to identify strongly concave cells.
+    3. For each candidate passing (a)+(b), scan its 4 cardinal neighbours to
+       confirm at least one has slope < 35° — the accessible-face test.
+    4. Return unique (x, y) = (col, row) grid coordinates.
 
-    Falls back to the local-minimum heuristic alone when the array is too
-    small for a meaningful Laplacian (< 3 rows or cols).
+    Falls back gracefully for arrays smaller than 3×3.
     """
     if world_hmap.size == 0:
         return []
 
-    h, w = world_hmap.shape
+    rows, cols = world_hmap.shape
 
-    # --- Laplacian-curvature detection (requires at least 3x3) ---
-    curv_candidates: set = set()
-    if h >= 3 and w >= 3:
-        # Discrete Laplacian: L[r,c] = h[r-1,c]+h[r+1,c]+h[r,c-1]+h[r,c+1] - 4*h[r,c]
-        lap = (
-            np.roll(world_hmap, 1, axis=0)
-            + np.roll(world_hmap, -1, axis=0)
-            + np.roll(world_hmap, 1, axis=1)
-            + np.roll(world_hmap, -1, axis=1)
-            - 4.0 * world_hmap
-        )
-        # Zero out wrap-around border artefacts from np.roll
-        lap[0, :] = 0.0
-        lap[-1, :] = 0.0
-        lap[:, 0] = 0.0
-        lap[:, -1] = 0.0
+    # ------------------------------------------------------------------ #
+    # (a) Slope mask — cells steeper than 60°                             #
+    # ------------------------------------------------------------------ #
+    gy, gx = np.gradient(world_hmap)
+    grad_mag = np.sqrt(gx ** 2 + gy ** 2)
+    slope_deg = np.degrees(np.arctan(grad_mag))
+    steep_mask = slope_deg > 60.0
 
-        lap_mean = float(lap.mean())
-        lap_std = float(lap.std())
-        if lap_std > 1e-9:
-            threshold = lap_mean - 1.5 * lap_std
-            ys, xs = np.where(lap < threshold)
-            for y, x in zip(ys.tolist(), xs.tolist()):
-                curv_candidates.add((int(x), int(y)))
+    if rows < 3 or cols < 3:
+        # Too small for reliable Laplacian; return steep cells directly
+        ys, xs = np.where(steep_mask)
+        return [(int(x), int(y)) for y, x in zip(ys.tolist(), xs.tolist())]
 
-    # BUG-R8-A9-005: use strict local-minimum detection that excludes center.
-    # Use scipy.ndimage.minimum_filter (considers all 8 neighbours including
-    # center) then require heightmap < neighbour_min (strict) AND below median.
-    # Falls back to padded-loop approach when scipy is unavailable.
-    heightmap_median = float(np.median(world_hmap))
+    # ------------------------------------------------------------------ #
+    # (b) Concavity mask — strongly negative Laplacian                    #
+    # ------------------------------------------------------------------ #
+    lap = (
+        np.roll(world_hmap, 1, axis=0)
+        + np.roll(world_hmap, -1, axis=0)
+        + np.roll(world_hmap, 1, axis=1)
+        + np.roll(world_hmap, -1, axis=1)
+        - 4.0 * world_hmap
+    )
+    # Zero border artefacts from np.roll
+    lap[0, :] = 0.0
+    lap[-1, :] = 0.0
+    lap[:, 0] = 0.0
+    lap[:, -1] = 0.0
 
-    def _strict_local_minima(hmap: np.ndarray) -> "set[tuple[int,int]]":
-        """Return (x, y) coords of cells that are strict local minima below median."""
-        _h, _w = hmap.shape
-        try:
-            from scipy.ndimage import minimum_filter as _mf
-            # minimum_filter includes the center cell; for strict comparison we
-            # need the neighbourhood min excluding center.  Compute it as:
-            #   neigh_min = minimum_filter(hmap, size=3)
-            # then a cell is a strict local min when hmap == neigh_min AND it
-            # is strictly less than all its neighbours.
-            # Equivalently: erode with size=3 gives global min including self;
-            # a cell is a strict local min iff hmap[r,c] <= all neighbours,
-            # i.e. hmap[r,c] == minimum_filter(hmap,3)[r,c] AND
-            #      hmap[r,c] < hmap at any one neighbour (non-plateau check).
-            filtered = _mf(hmap, size=3)
-            is_min = (hmap == filtered) & (hmap < heightmap_median)
-            ys2, xs2 = np.where(is_min)
-            return set(zip(xs2.tolist(), ys2.tolist()))
-        except ImportError:
-            # Fallback: padded loop with strict < comparison excluding center
-            padded = np.pad(hmap, 1, mode="edge")
-            neigh_min = np.full((_h, _w), np.inf)
-            for dy in range(3):
-                for dx in range(3):
-                    if dy == 1 and dx == 1:
-                        continue  # skip center
-                    neigh_min = np.minimum(neigh_min, padded[dy: dy + _h, dx: dx + _w])
-            is_min = (hmap <= neigh_min) & (hmap < heightmap_median)
-            ys2, xs2 = np.where(is_min)
-            return set(zip(xs2.tolist(), ys2.tolist()))
+    lap_mean = float(lap.mean())
+    lap_std = float(lap.std())
+    if lap_std > 1e-9:
+        concave_threshold = lap_mean - 1.5 * lap_std
+        concave_mask = lap < concave_threshold
+    else:
+        # Flat map — no concavities
+        return []
 
-    if h < 3 or w < 3:
-        return list(_strict_local_minima(world_hmap))
+    # Combined condition (a) AND (b)
+    ab_mask = steep_mask & concave_mask
+    if not ab_mask.any():
+        return []
 
-    localmin_candidates = _strict_local_minima(world_hmap)
-    combined = curv_candidates | localmin_candidates
-    return list(combined)
+    # ------------------------------------------------------------------ #
+    # (c) Accessible-face test — at least one cardinal neighbour with     #
+    #     slope < 35° (low-angle approach route exists)                   #
+    # ------------------------------------------------------------------ #
+    access_threshold = 35.0
+    accessible_face = np.zeros((rows, cols), dtype=bool)
+
+    # Shift slope_deg in all four cardinal directions; a cell passes if any
+    # shifted neighbour value is below the threshold.
+    for shift_axis, shift_dir in ((0, 1), (0, -1), (1, 1), (1, -1)):
+        neighbour_slope = np.roll(slope_deg, shift_dir, axis=shift_axis)
+        accessible_face |= (neighbour_slope < access_threshold)
+
+    # Clear border rows/cols where roll wraps incorrectly
+    accessible_face[0, :] = False
+    accessible_face[-1, :] = False
+    accessible_face[:, 0] = False
+    accessible_face[:, -1] = False
+
+    final_mask = ab_mask & accessible_face
+    if not final_mask.any():
+        return []
+
+    ys, xs = np.where(final_mask)
+    return [(int(x), int(y)) for y, x in zip(ys.tolist(), xs.tolist())]
 
 
 def _detect_waterfall_lips_stub(
@@ -569,56 +679,67 @@ def _apply_road_profile_to_heightmap(
     road_sdf_dist: scipy EDT distance in cells from road_mask boundary.
     """
     from scipy.ndimage import distance_transform_edt
+    try:
+        from scipy.spatial import cKDTree as _KDTree
+    except ImportError:
+        from scipy.spatial import KDTree as _KDTree  # type: ignore[assignment]
 
     result = hmap.copy()
     rows, cols = result.shape
     road_mask = np.zeros((rows, cols), dtype=np.uint8)
 
+    if not path:
+        road_sdf_dist = distance_transform_edt(
+            np.ones((rows, cols), dtype=np.uint8)
+        ).astype(np.float32)
+        return result, road_mask, road_sdf_dist
+
     total_outer = road_width + shoulder_width + influence_width
 
-    # Build distance-to-path and nearest-path-elevation maps
-    dist_map = np.full((rows, cols), fill_value=float(total_outer + 1.0), dtype=np.float64)
-    nearest_road_elev = np.zeros((rows, cols), dtype=np.float64)
+    # Build KDTree over path cells — O(path_len * log(path_len)) build
+    path_arr = np.array([(r, c) for r, c in path if 0 <= r < rows and 0 <= c < cols],
+                        dtype=np.float64)
+    if len(path_arr) == 0:
+        road_sdf_dist = distance_transform_edt(
+            np.ones((rows, cols), dtype=np.uint8)
+        ).astype(np.float32)
+        return result, road_mask, road_sdf_dist
 
-    for r, c in path:
-        if not (0 <= r < rows and 0 <= c < cols):
-            continue
-        road_elev = float(result[r, c])
-        r_lo = max(0, int(r - total_outer - 1))
-        r_hi = min(rows, int(r + total_outer + 2))
-        c_lo = max(0, int(c - total_outer - 1))
-        c_hi = min(cols, int(c + total_outer + 2))
-        for nr in range(r_lo, r_hi):
-            for nc in range(c_lo, c_hi):
-                d = math.sqrt((nr - r) ** 2 + (nc - c) ** 2)
-                if d < dist_map[nr, nc]:
-                    dist_map[nr, nc] = d
-                    nearest_road_elev[nr, nc] = road_elev
+    # Road elevations at each valid path cell
+    path_elevs = np.array([float(result[int(r), int(c)]) for r, c in path_arr],
+                           dtype=np.float64)
+    tree = _KDTree(path_arr)
 
-    # Apply three zones
-    for r in range(rows):
-        for c in range(cols):
-            d = dist_map[r, c]
-            if d > total_outer:
-                continue
-            road_elev = nearest_road_elev[r, c]
-            orig = float(result[r, c])
-            if d <= road_width:
-                # Zone 1: full flatten with cosine smooth at edge
-                blend = 0.5 * (1.0 + math.cos(math.pi * d / max(road_width, 1e-6)))
-                result[r, c] = orig * (1.0 - blend) + road_elev * blend
-                road_mask[r, c] = 1
-            elif d <= road_width + shoulder_width:
-                # Zone 2: linear blend from road to terrain
-                t = (d - road_width) / max(shoulder_width, 1e-6)
-                result[r, c] = road_elev * (1.0 - t) + orig * t
-            else:
-                # Zone 3: soft cosine feather (5% max modification)
-                t = (d - road_width - shoulder_width) / max(influence_width, 1e-6)
-                feather = 0.5 * (1.0 + math.cos(math.pi * t))
-                result[r, c] = orig + (road_elev - orig) * 0.05 * feather
+    # Query all grid cells at once — O(H*W * log(path_len))
+    rr, cc = np.mgrid[0:rows, 0:cols]
+    query_pts = np.stack([rr.ravel(), cc.ravel()], axis=1).astype(np.float64)
+    dist_flat, idx_flat = tree.query(query_pts, k=1)
+    dist_map = dist_flat.reshape(rows, cols)
+    nearest_road_elev = path_elevs[idx_flat].reshape(rows, cols)
 
-    result = np.clip(result, 0.0, 1.0)
+    orig = hmap.copy()
+
+    # Zone masks (vectorized)
+    z1 = dist_map <= road_width
+    z2 = (dist_map > road_width) & (dist_map <= road_width + shoulder_width)
+    z3 = (dist_map > road_width + shoulder_width) & (dist_map <= total_outer)
+
+    # Zone 1: cosine blend flatten
+    t1 = 0.5 * (1.0 + np.cos(np.pi * dist_map / np.maximum(road_width, 1e-6)))
+    result = np.where(z1, orig * (1.0 - t1) + nearest_road_elev * t1, result)
+    road_mask = np.where(z1, np.uint8(1), road_mask)
+
+    # Zone 2: linear blend
+    t2 = (dist_map - road_width) / np.maximum(shoulder_width, 1e-6)
+    result = np.where(z2, nearest_road_elev * (1.0 - t2) + orig * t2, result)
+
+    # Zone 3: soft cosine feather (5% max)
+    t3 = (dist_map - road_width - shoulder_width) / np.maximum(influence_width, 1e-6)
+    feather3 = 0.5 * (1.0 + np.cos(np.pi * t3))
+    result = np.where(z3, orig + (nearest_road_elev - orig) * 0.05 * feather3, result)
+
+    # NOTE: do NOT clip result to [0, 1] — heightmap is world-unit, not normalized.
+    # Callers that need normalized output should clip themselves.
 
     # Compute road_sdf_dist via scipy EDT
     not_road = (1 - road_mask).astype(np.uint8)
@@ -695,6 +816,11 @@ def run_twelve_step_world_terrain(
 ) -> Dict[str, Any]:
     """Execute the canonical 12-step world terrain sequence.
 
+    All non-fatal step failures are accumulated into ``errors`` (keyed by step
+    name) and surfaced in the return dict rather than propagating as
+    exceptions.  Hard failures (Steps 1, 2, 3) still raise immediately since
+    there is nothing to return.
+
     Returns a dict with:
         - tile_stacks: Dict[(tx, ty), TerrainMaskStack]
         - tile_transforms: Dict[(tx, ty), TileTransform]
@@ -702,13 +828,16 @@ def run_twelve_step_world_terrain(
         - world_flow_map: dict
         - cliff_candidates / cave_candidates / waterfall_lip_candidates: List
         - seam_report: dict from validate_tile_seams
-        - sequence: List[str] — the 12-step names in execution order (audit trail)
+        - road_specs / water_specs: Lists
+        - sequence: List[str] — 12-step names in execution order (audit trail)
+        - errors: Dict[str, str] — step-name → error message for any soft failures
         - metadata: dict
     """
     sequence: List[str] = []
+    errors: Dict[str, str] = {}
     t_start = time.time()
 
-    # Step 1 — Parse params
+    # Step 1 — Parse params  (hard failure — nothing to return without these)
     sequence.append("1_parse_params")
     tile_size = int(intent.tile_size)
     cell_size = float(intent.cell_size)
@@ -718,14 +847,14 @@ def run_twelve_step_world_terrain(
     if tile_size <= 0:
         raise ValueError(f"intent.tile_size must be > 0; got {tile_size}")
 
-    # Step 2 — Compute world region
+    # Step 2 — Compute world region  (hard failure)
     sequence.append("2_compute_world_region")
     total_samples_x = tile_grid_x * tile_size + 1
     total_samples_y = tile_grid_y * tile_size + 1
     world_origin_x = float(intent.region_bounds.min_x)
     world_origin_y = float(intent.region_bounds.min_y)
 
-    # Step 3 — generate_world_heightmap (world units, not normalized)
+    # Step 3 — generate_world_heightmap (world units, not normalized)  (hard failure)
     sequence.append("3_generate_world_heightmap")
     world_hmap = generate_world_heightmap(
         width=total_samples_x,
@@ -740,37 +869,72 @@ def run_twelve_step_world_terrain(
     )
     world_hmap = np.asarray(world_hmap, dtype=np.float64)
 
-    # Step 4 — apply flatten zones
+    # Step 4 — apply flatten zones  (soft failure — skip zones on error)
     sequence.append("4_apply_flatten_zones")
-    world_hmap = _apply_flatten_zones_stub(world_hmap, intent)
+    try:
+        world_hmap = _apply_flatten_zones_stub(world_hmap, intent)
+    except Exception as exc:
+        errors["4_apply_flatten_zones"] = str(exc)
+        _log.warning("Step 4 flatten zones failed, continuing: %s", exc)
 
-    # Step 5 — apply canyon/river carves
+    # Step 5 — apply canyon/river carves  (soft failure — keep original hmap)
+    # Returns (modified_hmap, glacial_delta_world) — unpack both.
     sequence.append("5_apply_canyon_river_carves")
-    world_hmap = _apply_canyon_river_carves_stub(world_hmap, intent)
+    world_glacial_delta: np.ndarray = np.zeros(world_hmap.shape, dtype=np.float32)
+    try:
+        world_hmap, world_glacial_delta = _apply_canyon_river_carves_stub(world_hmap, intent)
+    except Exception as exc:
+        errors["5_apply_canyon_river_carves"] = str(exc)
+        _log.warning("Step 5 carve failed, continuing: %s", exc)
 
     # Step 6 — erode world heightmap (exact — full region, before split)
     sequence.append("6_erode_world_heightmap")
-    erosion_params = compute_erosion_params_for_world_range(
-        float(world_hmap.max() - world_hmap.min())
-    )
-    # BUG-R8-A9-003: use computed erosion_params instead of hardcoded 50
-    erosion_result = erode_world_heightmap(
-        world_hmap,
-        hydraulic_iterations=erosion_params.get("hydraulic_iterations", 50),
-        thermal_iterations=erosion_params.get("thermal_iterations", 0),
-        seed=seed,
-        cell_size=cell_size,
-    )
-    world_eroded = np.asarray(erosion_result["heightmap"], dtype=np.float64)
+    erosion_params: Dict[str, Any] = {}
+    try:
+        erosion_params = compute_erosion_params_for_world_range(
+            float(world_hmap.max() - world_hmap.min())
+        )
+        # BUG-R8-A9-003: use computed erosion_params instead of hardcoded 50
+        erosion_result = erode_world_heightmap(
+            world_hmap,
+            hydraulic_iterations=erosion_params.get("hydraulic_iterations", 50),
+            thermal_iterations=erosion_params.get("thermal_iterations", 0),
+            seed=seed,
+            cell_size=cell_size,
+        )
+        world_eroded = np.asarray(erosion_result["heightmap"], dtype=np.float64)
+    except Exception as exc:
+        errors["6_erode_world_heightmap"] = str(exc)
+        _log.warning("Step 6 erosion failed, using pre-erosion hmap: %s", exc)
+        erosion_result = {}
+        world_eroded = world_hmap.copy()
 
-    # Step 7 — compute_flow_map on eroded world
+    # Step 7 — compute_flow_map on eroded world  (soft failure — empty flow)
     sequence.append("7_compute_flow_map")
-    world_flow = erosion_result.get("flow_map") or compute_flow_map(world_eroded)
+    try:
+        world_flow: Any = erosion_result.get("flow_map") or compute_flow_map(world_eroded)
+        if not world_flow:
+            world_flow = {}
+    except Exception as exc:
+        errors["7_compute_flow_map"] = str(exc)
+        _log.warning("Step 7 flow map failed: %s", exc)
+        world_flow = {}
 
-    # Step 8 — detect cliff edges / caves / waterfall lips
+    # Step 8 — detect cliff edges / caves / waterfall lips  (soft failure per sub-step)
     sequence.append("8_detect_hero_candidates")
-    cliff_candidates = _detect_cliff_edges_stub(world_eroded)
-    cave_candidates = _detect_cave_candidates_stub(world_eroded)
+    cliff_candidates: List = []
+    cave_candidates: List = []
+    waterfall_lip_candidates: List = []
+    try:
+        cliff_candidates = _detect_cliff_edges_stub(world_eroded)
+    except Exception as exc:
+        errors["8a_cliff_candidates"] = str(exc)
+        _log.warning("Step 8 cliff detection failed: %s", exc)
+    try:
+        cave_candidates = _detect_cave_candidates_stub(world_eroded)
+    except Exception as exc:
+        errors["8b_cave_candidates"] = str(exc)
+        _log.warning("Step 8 cave detection failed: %s", exc)
     # Pass flow_accumulation from the erosion/flow result so the lip detector
     # can use real drainage values rather than recomputing them.
     _world_flow_acc = None
@@ -780,19 +944,30 @@ def run_twelve_step_world_terrain(
             _world_flow_acc = np.asarray(_world_flow_acc_raw, dtype=np.float64)
             if _world_flow_acc.shape != world_eroded.shape:
                 _world_flow_acc = None
-    waterfall_lip_candidates = _detect_waterfall_lips_stub(
-        world_eroded, world_origin_x, world_origin_y, cell_size,
-        flow_accumulation=_world_flow_acc,
-    )
+    try:
+        waterfall_lip_candidates = _detect_waterfall_lips_stub(
+            world_eroded, world_origin_x, world_origin_y, cell_size,
+            flow_accumulation=_world_flow_acc,
+        )
+    except Exception as exc:
+        errors["8c_waterfall_lips"] = str(exc)
+        _log.warning("Step 8 waterfall lip detection failed: %s", exc)
 
     # Step 9 — apply road carve to world heightmap before tile extraction
     # Road carving must precede tile extraction so graded heights reach every tile.
     sequence.append("9_apply_road_carve")
-    road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(
-        world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed,
-        rock_hardness=None,   # TODO Phase 7: pass stack.rock_hardness when available
-        water_surface=None,   # TODO Phase 7: pass stack.water_surface when available
-    )
+    road_specs: List[Dict[str, Any]] = []
+    world_road_mask = np.zeros(world_eroded.shape, dtype=np.uint8)
+    world_road_sdf = np.zeros(world_eroded.shape, dtype=np.float32)
+    try:
+        road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(
+            world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed,
+            rock_hardness=None,   # TODO Phase 7: pass stack.rock_hardness when available
+            water_surface=None,   # TODO Phase 7: pass stack.water_surface when available
+        )
+    except Exception as exc:
+        errors["9_apply_road_carve"] = str(exc)
+        _log.warning("Step 9 road carve failed, continuing without roads: %s", exc)
 
     # Step 10 — per-tile extraction (from carved world heightmap)
     sequence.append("10_per_tile_extract")
@@ -804,51 +979,70 @@ def run_twelve_step_world_terrain(
 
     for ty in range(tile_grid_y):
         for tx in range(tile_grid_x):
-            tile_height = extract_tile(world_eroded, tx, ty, tile_size)
-            extracted_heights[(tx, ty)] = tile_height
+            try:
+                tile_height = extract_tile(world_eroded, tx, ty, tile_size)
+                extracted_heights[(tx, ty)] = tile_height
 
-            tile_origin_x = world_origin_x + tx * tile_size_world
-            tile_origin_y = world_origin_y + ty * tile_size_world
-            stack = TerrainMaskStack(
-                tile_size=tile_size,
-                cell_size=cell_size,
-                world_origin_x=tile_origin_x,
-                world_origin_y=tile_origin_y,
-                tile_x=tx,
-                tile_y=ty,
-                height=tile_height,
-            )
+                tile_origin_x = world_origin_x + tx * tile_size_world
+                tile_origin_y = world_origin_y + ty * tile_size_world
+                stack = TerrainMaskStack(
+                    tile_size=tile_size,
+                    cell_size=cell_size,
+                    world_origin_x=tile_origin_x,
+                    world_origin_y=tile_origin_y,
+                    tile_x=tx,
+                    tile_y=ty,
+                    height=tile_height,
+                )
 
-            # Write road_mask and road_sdf_dist tile slices onto each stack
-            tile_mask = extract_tile(world_road_mask, tx, ty, tile_size)
-            tile_sdf = extract_tile(world_road_sdf, tx, ty, tile_size)
-            stack.set("road_mask", tile_mask.astype(np.uint8), "9_apply_road_carve")
-            stack.set("road_sdf_dist", tile_sdf.astype(np.float32), "9_apply_road_carve")
+                # Write road_mask and road_sdf_dist tile slices onto each stack
+                tile_mask = extract_tile(world_road_mask, tx, ty, tile_size)
+                tile_sdf = extract_tile(world_road_sdf, tx, ty, tile_size)
+                stack.set("road_mask", tile_mask.astype(np.uint8), "9_apply_road_carve")
+                stack.set("road_sdf_dist", tile_sdf.astype(np.float32), "9_apply_road_carve")
 
-            tile_stacks[(tx, ty)] = stack
+                # Write glacial_delta tile slice (from Step 5 canyon carving)
+                # Always stamp the channel so downstream passes can rely on it.
+                tile_glacial = extract_tile(world_glacial_delta, tx, ty, tile_size)
+                stack.set("glacial_delta", tile_glacial.astype(np.float32), "5_apply_canyon_river_carves")
 
-            tmin_z = float(tile_height.min())
-            tmax_z = float(tile_height.max())
-            tile_transforms[(tx, ty)] = TileTransform(
-                origin_world=(tile_origin_x, tile_origin_y, tmin_z),
-                min_corner_world=(tile_origin_x, tile_origin_y, tmin_z),
-                max_corner_world=(
-                    tile_origin_x + tile_size_world,
-                    tile_origin_y + tile_size_world,
-                    tmax_z,
-                ),
-                tile_coords=(tx, ty),
-                tile_size_world=tile_size_world,
-                convention="object_origin_at_min_corner",
-            )
+                tile_stacks[(tx, ty)] = stack
 
-    # Step 11 — generate water bodies in world space
+                tmin_z = float(tile_height.min())
+                tmax_z = float(tile_height.max())
+                tile_transforms[(tx, ty)] = TileTransform(
+                    origin_world=(tile_origin_x, tile_origin_y, tmin_z),
+                    min_corner_world=(tile_origin_x, tile_origin_y, tmin_z),
+                    max_corner_world=(
+                        tile_origin_x + tile_size_world,
+                        tile_origin_y + tile_size_world,
+                        tmax_z,
+                    ),
+                    tile_coords=(tx, ty),
+                    tile_size_world=tile_size_world,
+                    convention="object_origin_at_min_corner",
+                )
+            except Exception as exc:
+                errors[f"10_tile_{tx}_{ty}"] = str(exc)
+                _log.warning("Step 10: tile (%d,%d) extraction failed: %s", tx, ty, exc)
+
+    # Step 11 — generate water bodies in world space  (soft failure — empty list)
     sequence.append("11_generate_water_bodies")
-    water_specs = _generate_water_body_specs(world_eroded, world_flow, intent, cell_size)
+    water_specs: List[Dict[str, Any]] = []
+    try:
+        water_specs = _generate_water_body_specs(world_eroded, world_flow, intent, cell_size)
+    except Exception as exc:
+        errors["11_generate_water_bodies"] = str(exc)
+        _log.warning("Step 11 water bodies failed: %s", exc)
 
-    # Step 12 — validate tile seams (hard gate)
+    # Step 12 — validate tile seams (hard gate; errors surfaced in seam_report)
     sequence.append("12_validate_tile_seams")
-    seam_report = validate_tile_seams(extracted_heights, atol=1e-6)
+    seam_report: Dict[str, Any] = {"seam_ok": False, "issues": ["not_run"], "max_edge_delta": None}
+    try:
+        seam_report = validate_tile_seams(extracted_heights, atol=1e-6)
+    except Exception as exc:
+        errors["12_validate_tile_seams"] = str(exc)
+        _log.warning("Step 12 seam validation failed: %s", exc)
 
     t_elapsed = time.time() - t_start
 
@@ -864,6 +1058,7 @@ def run_twelve_step_world_terrain(
         "water_specs": water_specs,
         "seam_report": seam_report,
         "sequence": sequence,
+        "errors": errors,
         "metadata": {
             "tile_grid": (tile_grid_x, tile_grid_y),
             "tile_size": tile_size,

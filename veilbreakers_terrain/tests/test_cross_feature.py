@@ -163,30 +163,36 @@ class TestNoiseFlowComposition:
 
 
 class TestLODDownsample:
-    """LOD downsampling must preserve terrain character."""
+    """LOD downsampling must preserve terrain character.
+
+    Note: ``compute_chunk_lod`` was refactored to return an integer LOD
+    level (distance-based selector). The actual bilinear downsample lives
+    in ``_downsample_heightmap``. Tests for 2-D output use that function
+    directly; tests for LOD selection use ``compute_chunk_lod``.
+    """
 
     def test_lod_returns_correct_size(self, mountain_hmap):
         """Downsampled chunk should match target resolution."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
-        result = compute_chunk_lod(hmap_list, 16)
+        result = _downsample_heightmap(hmap_list, 16)
         assert len(result) == 16
         assert len(result[0]) == 16
 
     def test_lod_preserves_height_range(self, mountain_hmap):
         """LOD downsample should not exceed source height range."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
-        lod = compute_chunk_lod(hmap_list, 16)
+        lod = _downsample_heightmap(hmap_list, 16)
         lod_arr = np.array(lod)
         assert lod_arr.min() >= mountain_hmap.min() - 1e-6
         assert lod_arr.max() <= mountain_hmap.max() + 1e-6
 
     def test_lod_preserves_mean_approximately(self, mountain_hmap):
         """LOD mean should approximate source mean."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
-        lod = compute_chunk_lod(hmap_list, 32)
+        lod = _downsample_heightmap(hmap_list, 32)
         lod_arr = np.array(lod)
         assert abs(lod_arr.mean() - mountain_hmap.mean()) < 0.1, (
             f"LOD mean {lod_arr.mean():.4f} differs from source {mountain_hmap.mean():.4f}"
@@ -194,42 +200,59 @@ class TestLODDownsample:
 
     def test_lod_chain_decreasing_resolution(self, mountain_hmap):
         """Successive LOD levels should have decreasing resolution."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
         resolutions = [32, 16, 8, 4]
         for target_res in resolutions:
-            lod = compute_chunk_lod(hmap_list, target_res)
+            lod = _downsample_heightmap(hmap_list, target_res)
             assert len(lod) == target_res
 
     def test_lod_identity_at_source_resolution(self, mountain_hmap):
         """LOD at source resolution should return the original data."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
-        lod = compute_chunk_lod(hmap_list, 64)
+        lod = _downsample_heightmap(hmap_list, 64)
         lod_arr = np.array(lod)
         np.testing.assert_allclose(lod_arr, mountain_hmap, atol=1e-10)
 
     def test_lod_no_nan_or_inf(self, mountain_hmap):
         """No NaN or Inf values in any LOD level."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
         for res in [32, 16, 8]:
-            lod = compute_chunk_lod(hmap_list, res)
+            lod = _downsample_heightmap(hmap_list, res)
             lod_arr = np.array(lod)
             assert np.isfinite(lod_arr).all(), f"Non-finite values at LOD {res}"
 
     def test_lod_std_decreases_with_resolution(self, mountain_hmap):
         """Standard deviation should not increase dramatically at lower LODs."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
         hmap_list = mountain_hmap.tolist()
         src_std = mountain_hmap.std()
         for res in [32, 16]:
-            lod = compute_chunk_lod(hmap_list, res)
+            lod = _downsample_heightmap(hmap_list, res)
             lod_std = np.array(lod).std()
             # LOD can slightly increase std due to sampling but not double it
             assert lod_std < src_std * 2.0, (
                 f"LOD {res} std ({lod_std:.4f}) > 2x source ({src_std:.4f})"
             )
+
+    def test_compute_chunk_lod_returns_int(self, mountain_hmap):
+        """compute_chunk_lod returns an integer LOD level, not a downsampled array."""
+        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        hmap_list = mountain_hmap.tolist()
+        # No camera distance -> LOD 0 (full detail)
+        lod_level = compute_chunk_lod(hmap_list, 16)
+        assert isinstance(lod_level, int)
+        assert lod_level == 0
+
+    def test_compute_chunk_lod_increases_with_distance(self, mountain_hmap):
+        """Farther camera distances should yield higher (coarser) LOD levels."""
+        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        hmap_list = mountain_hmap.tolist()
+        lod_close = compute_chunk_lod(hmap_list, 16, camera_distance=10.0)
+        lod_far = compute_chunk_lod(hmap_list, 16, camera_distance=500.0)
+        assert lod_far >= lod_close
 
 
 class TestLODEdgeStitching:
@@ -360,19 +383,26 @@ class TestFullPipelineIntegration:
         )
         from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
         from blender_addon.handlers.terrain_advanced import compute_flow_map
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import (
+            compute_chunk_lod,
+            _downsample_heightmap,
+        )
 
         hmap = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
         eroded = apply_hydraulic_erosion(hmap, iterations=100, seed=42)
         slope = compute_slope_map(eroded)
         biomes = compute_biome_assignments(eroded, slope)
         compute_flow_map(eroded)
-        lod = compute_chunk_lod(eroded.tolist(), 32)
+        # compute_chunk_lod returns an int LOD level; _downsample_heightmap
+        # performs the actual bilinear downsample.
+        lod_level = compute_chunk_lod(eroded.tolist(), 32)
+        lod = _downsample_heightmap(eroded.tolist(), 32)
 
         # All outputs valid
         assert eroded.shape == (64, 64)
         assert slope.shape == (64, 64)
         assert biomes.shape == (64, 64)
+        assert isinstance(lod_level, int)
         assert len(lod) == 32
         assert np.isfinite(eroded).all()
         assert np.isfinite(slope).all()

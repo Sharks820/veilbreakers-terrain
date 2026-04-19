@@ -71,7 +71,27 @@ def _count_scatter_instances(stack: TerrainMaskStack) -> int:
 
 
 def _estimate_tri_count(stack: TerrainMaskStack) -> int:
-    """Heuristic: two triangles per heightmap cell."""
+    """Estimate the triangle count for the current heightmap tile.
+
+    Base count
+    ----------
+    A regular quad heightmap of (rows × cols) cells produces
+    ``2 × (rows-1) × (cols-1)`` triangles — two right triangles per quad.
+    This matches UE5 Landscape's triangle count before any LOD reduction.
+
+    Cliff-face surcharge
+    --------------------
+    If a ``cliff_candidate`` mask is present, the cliff cells are assumed to
+    require vertical wall geometry at roughly the same density as the base
+    mesh (one quad strip per cliff-face cell, 2 tris per strip).  This
+    accounts for the hero-mesh insertion that Bundle B schedules: actual
+    triangle count may be lower (billboard LOD) or higher (hero geometry),
+    but this estimate errs slightly on the side of over-counting, which
+    is the safe direction for a budget gate.
+
+    Returns 0 when no heightmap is available (e.g. before the first pass
+    populates ``stack.height``).
+    """
     h = stack.get("height")
     if h is None:
         return 0
@@ -81,7 +101,18 @@ def _estimate_tri_count(stack: TerrainMaskStack) -> int:
     rows, cols = arr.shape
     if rows < 2 or cols < 2:
         return 0
-    return int(2 * (rows - 1) * (cols - 1))
+
+    base_tris = int(2 * (rows - 1) * (cols - 1))
+
+    # Cliff-face surcharge: vertical wall strips for each cliff-face cell
+    cliff_surcharge = 0
+    cliff_mask = stack.get("cliff_candidate")
+    if cliff_mask is not None:
+        cm = np.asarray(cliff_mask)
+        if cm.shape == arr.shape:
+            cliff_surcharge = int(cm.sum()) * 2  # 2 tris per vertical quad strip
+
+    return base_tris + cliff_surcharge
 
 
 def _estimate_npz_mb(stack: TerrainMaskStack) -> float:

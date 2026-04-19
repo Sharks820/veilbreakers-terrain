@@ -116,36 +116,105 @@ def assert_handlers_registered(required: Sequence[str]) -> None:
 
 
 def detect_stale_addon() -> bool:
-    """Return True if the disk version of __init__.py differs from the
-    imported module's version.
+    """Return True if the on-disk ``__init__.py`` differs from the running module.
 
-    Headless stub — compares parsed ``bl_info['version']`` against the
-    in-memory module's ``bl_info`` dict if importable.
+    Detection runs three checks in priority order:
+    1. SHA-256 content hash comparison (``__file__`` vs disk path).
+    2. .pyc cache-file mtime: disk source newer than compiled cache → stale.
+    3. ``bl_info['version']`` string comparison (legacy fallback).
+
+    Returns ``False`` in fully headless mode where the addon module is not
+    importable (nothing to be stale against).
     """
-    on_disk = _read_bl_info_version()
+    import hashlib
+
+    disk_path = _addon_init_path()
+    if not disk_path.exists():
+        return False
+
     try:
         from .. import __init__ as _live  # type: ignore
     except Exception:
         return False
-    live_version = None
+
+    # 1. Content hash
+    live_file = getattr(_live, "__file__", None)
+    if live_file:
+        from pathlib import Path as _P
+
+        live_p = _P(live_file)
+        if live_p.exists():
+            disk_hash = hashlib.sha256(disk_path.read_bytes()).hexdigest()
+            live_hash = hashlib.sha256(live_p.read_bytes()).hexdigest()
+            if disk_hash != live_hash:
+                return True
+
+    # 2. .pyc mtime
+    try:
+        import importlib.util as _ilu
+
+        cached = getattr(_ilu.find_spec(_live.__name__), "cached", None)
+        if cached:
+            from pathlib import Path as _P
+
+            cached_p = _P(cached)
+            if cached_p.exists():
+                if disk_path.stat().st_mtime > cached_p.stat().st_mtime:
+                    return True
+    except Exception:
+        pass
+
+    # 3. Version fallback
+    on_disk_ver = _read_bl_info_version()
     live_bl = getattr(_live, "bl_info", None)
-    if isinstance(live_bl, dict):
-        live_version = live_bl.get("version")
-    if on_disk is None or live_version is None:
-        return False
-    return tuple(on_disk) != tuple(live_version)
+    if isinstance(live_bl, dict) and on_disk_ver is not None:
+        live_ver = live_bl.get("version")
+        if live_ver is not None:
+            return tuple(on_disk_ver) != tuple(live_ver)
+
+    return False
 
 
-def force_addon_reload() -> None:
-    """Re-import the addon package. No-op in headless mode (no bpy)."""
+def force_addon_reload() -> bool:
+    """Reload the addon package in dependency order and re-register handlers.
+
+    Sub-modules are reloaded in reverse import order (leaves first) to avoid
+    forward-reference errors. The package root is reloaded last. If the
+    package exposes ``register()`` it is called after reload to re-bind any
+    Blender operators.
+
+    Returns:
+        ``True`` on success, ``False`` in headless mode or if an error occurs.
+    """
     import importlib
+    import sys
 
     try:
         from .. import __init__ as _live  # type: ignore
+
+        pkg_prefix = (_live.__package__ or _live.__name__) + "."
+        sub_mods = [
+            m
+            for name, m in list(sys.modules.items())
+            if name.startswith(pkg_prefix) and m is not None
+        ]
+        # Reload sub-modules leaves-first (reverse discovery order approximates
+        # dependency depth without a full topo-sort).
+        for mod in reversed(sub_mods):
+            try:
+                importlib.reload(mod)
+            except Exception:
+                pass
 
         importlib.reload(_live)
+
+        register_fn = getattr(_live, "register", None)
+        if callable(register_fn):
+            register_fn()
+
+        return True
     except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+        return False
 
 
 __all__ = [

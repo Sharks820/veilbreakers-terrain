@@ -339,6 +339,13 @@ class TerrainMaskStack:
     # Waterfall mist zone mask — float32 mist intensity per cell (Bundle C supplementary)
     mist_zone_mask: Optional[np.ndarray] = None
 
+    # Hero feature preview channel — float32 influence/weight overlay stamped
+    # by edit_hero_feature whenever a hero feature is edited interactively.
+    # Shape (H, W): each cell holds the blended influence radius weight (0–1)
+    # for the most-recently-edited feature.  Used by the live-preview pipeline
+    # to highlight the affected region in the editor viewport.
+    hero_feature_preview: Optional[np.ndarray] = None
+
     # -- World-unit scalar metadata (required for Unity .raw round-trip) --
     height_min_m: Optional[float] = None
     height_max_m: Optional[float] = None
@@ -441,6 +448,8 @@ class TerrainMaskStack:
             "water_label",
             "cliff_label",
             "strata_height",
+            # Hero feature live-preview influence overlay (Bundle M edit_hero_feature)
+            "hero_feature_preview",
         ),
     )
 

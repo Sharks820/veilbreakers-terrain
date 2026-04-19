@@ -27,6 +27,12 @@ except ImportError:
     _ndimage_label = None   # type: ignore[assignment]
     _SCIPY_DEPTH_AVAILABLE = False
 
+try:
+    import opensimplex as _opensimplex
+    _HAS_OPENSIMPLEX = True
+except ImportError:
+    _HAS_OPENSIMPLEX = False
+
 from ..procedural_meshes import (
     _make_result,
     _merge_meshes,
@@ -42,6 +48,35 @@ MeshSpec = dict[str, Any]
 # ---------------------------------------------------------------------------
 # Generator 1: Cliff Face
 # ---------------------------------------------------------------------------
+
+
+def _fbm_noise2(x: float, y: float, octaves: int, seed: int) -> float:
+    """2-octave fBm via opensimplex or deterministic sin/cos hash fallback."""
+    if _HAS_OPENSIMPLEX:
+        _opensimplex.seed(seed)
+        v, amp, freq = 0.0, 0.5, 1.0
+        for _ in range(octaves):
+            v += _opensimplex.noise2(x * freq, y * freq) * amp
+            amp *= 0.5
+            freq *= 2.0
+        return v
+    # Hash fallback: smooth pseudo-random via two overlapping sin products
+    def _h(a: float, b: float) -> float:
+        n = int(a * 127.1 + b * 311.7 + seed * 74.3) & 0x7FFFFFFF
+        n = (n ^ (n >> 13)) * 1540483477
+        return (((n ^ (n >> 15)) & 0x7FFFFFFF) / 1073741823.5) - 1.0
+    v, amp, freq = 0.0, 0.5, 1.0
+    for _ in range(octaves):
+        xi, yi = int(x * freq), int(y * freq)
+        tx, ty = x * freq - xi, y * freq - yi
+        tx = tx * tx * (3.0 - 2.0 * tx)
+        ty = ty * ty * (3.0 - 2.0 * ty)
+        v += (_h(xi, yi) * (1-tx) + _h(xi+1, yi) * tx) * (1-ty) + \
+             (_h(xi, yi+1) * (1-tx) + _h(xi+1, yi+1) * tx) * ty
+        v *= amp
+        amp *= 0.5
+        freq *= 2.0
+    return v
 
 
 def generate_cliff_face_mesh(
@@ -78,7 +113,10 @@ def generate_cliff_face_mesh(
 
     # Strata banding: ~4 horizontal bands with X-offset displacement
     strata_period = max(2, seg_v // 4)
-    strata_x_offsets = [rng.gauss(0.0, noise_amplitude * 0.3) for _ in range(strata_period + 1)]
+    strata_x_offsets = [
+        _fbm_noise2(float(b) * 1.7, 0.5, 2, seed) * noise_amplitude * 0.35
+        for b in range(strata_period + 1)
+    ]
 
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, ...]] = []
@@ -100,17 +138,19 @@ def generate_cliff_face_mesh(
             base_curve = 0.3 * math.sin(x_frac * math.pi)
 
             # Noise displacement in Y (depth)
-            noise = rng.gauss(0.0, noise_amplitude) * (
-                math.sin(x_frac * noise_scale * math.pi)
-                * math.sin(y_frac * noise_scale * math.pi)
-                + 0.5
-            )
+            noise = _fbm_noise2(
+                x_frac * noise_scale,
+                y_frac * noise_scale,
+                3,
+                seed,
+            ) * noise_amplitude
 
             y = base_curve + noise
 
             vertices.append((x, y, z))
-            # Triplanar UV: XZ projection (dominant for vertical cliff)
-            uvs.append((float(x_frac), float(y_frac)))
+            # Triplanar UV: world-space XZ projection (correct for vertical cliff, Y-normal face)
+            uv_scale = max(width, height) * 0.5
+            uvs.append((x / uv_scale, z / uv_scale))
 
     # Quad faces for the grid
     for iy in range(seg_v):
@@ -149,11 +189,27 @@ def generate_cave_entrance_mesh(
     terrain_edge_height: float = 0.0,
     style: str = "natural",
     seed: int = 0,
+    valley_direction_rad: float = 0.0,
+    slope_deg: float = 0.0,
+    overhang_factor: float = 0.18,
 ) -> MeshSpec:
     """Generate a cave entrance archway with interior tunnel.
 
-    Creates a semicircular arch opening with rectangular sides,
-    extending into the terrain as a short tunnel segment.
+    B+ upgrade: physics-correct overhang, stalactite stub geometry, entrance
+    orientation toward nearest valley, slope validation guard.
+
+    The arch lip overhangs the entrance opening by ``overhang_factor * width``
+    (mimicking the compression-dome geometry seen in natural cave entrances and
+    UE5 cave assets). The overhang magnitude follows a cosine-bell taper so the
+    crown protrudes most and the spring-line feet protrude least.
+
+    Stalactite stubs are full mesh geometry (short tapered cones), not just
+    hint points, placed along the crown with randomised spacing and length.
+
+    Valley orientation: the returned metadata includes the entrance_yaw_rad
+    field, which is valley_direction_rad rotated 180° so the opening faces
+    down-valley. The caller (handle_create_cave_entrance) applies this as the
+    Z-rotation of the spawned object.
 
     Args:
         width: Width of the entrance opening.
@@ -161,56 +217,68 @@ def generate_cave_entrance_mesh(
         depth: How far the tunnel extends into terrain (negative Y-axis).
         arch_segments: Number of segments in the semicircular arch.
         terrain_edge_height: Z offset for terrain-level placement.
-        style: Visual style label.
+        style: Visual style label ("natural", "carved").
         seed: Random seed for noise displacement.
+        valley_direction_rad: Angle (radians) pointing toward nearest valley
+            from the entrance site. The entrance will face down-valley
+            (rotated 180° from this bearing).
+        slope_deg: Local terrain slope at the entrance site (degrees). Used to
+            validate placement feasibility and is embedded in metadata.
+        overhang_factor: Fraction of width by which the arch crown overhangs
+            the opening face. Clamped to [0, 0.4].
 
     Returns:
-        MeshSpec with cave entrance geometry.
+        MeshSpec with cave entrance geometry including stalactite stub meshes
+        and rich metadata for downstream placement.
     """
+    # Slope guard: very steep slopes (> 75°) produce degenerate placements
+    slope_deg = float(slope_deg)
+    overhang_factor = max(0.0, min(0.4, float(overhang_factor)))
+
     rng = random.Random(seed)
     half_w = width / 2.0
-    # The arch sits above rectangular sides. The straight sides go from
-    # terrain_edge_height to the arch spring-line. The arch semicircle
-    # then curves from spring-line up to the apex.
-    spring_z = terrain_edge_height + height * 0.5  # where the arch starts curving
-    apex_z = terrain_edge_height + height  # top of the arch
+    spring_z = terrain_edge_height + height * 0.5
+    apex_z = terrain_edge_height + height
+
+    # Max overhang at arch crown (metres)
+    max_overhang = overhang_factor * width
 
     parts: list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]] = []
 
-    # Number of depth segments for the tunnel
     depth_segs = max(2, int(depth / 0.5))
-
-    # Build the tunnel profile at multiple depth slices
-    # Each slice is the arch profile (semicircle + sides)
     profile_rings: list[list[tuple[float, float, float]]] = []
 
     for depth_i in range(depth_segs + 1):
         depth_frac = depth_i / depth_segs
         tunnel_y = -depth_frac * depth
+        # Overhang diminishes into the tunnel (only the entrance face overhangs)
+        overhang_scale = max(0.0, 1.0 - depth_frac * 2.5)
 
         ring: list[tuple[float, float, float]] = []
 
-        # Left side bottom to spring-line
         side_segs = 3
+        # Left side bottom to spring-line
         for si in range(side_segs + 1):
             z_frac = si / side_segs
             vz = terrain_edge_height + z_frac * (spring_z - terrain_edge_height)
             noise = rng.gauss(0.0, 0.05) if style == "natural" else 0.0
             ring.append((-half_w + noise, tunnel_y, vz))
 
-        # Noise-displaced ellipse arch (N=16 points, replaces plain semicircle)
-        N_arch = 16
+        # Arch ring — ellipse with physics-correct overhang
+        N_arch = max(12, arch_segments)
         arch_rng = random.Random(seed ^ (depth_i * 31 + 7))
         for ai in range(1, N_arch):
-            angle = math.pi * ai / N_arch  # 0 to pi
-            # Ellipse: rx = half_w, rz spans spring_z to apex_z
+            angle = math.pi * ai / N_arch  # 0 (left spring) → π (right spring)
             base_x = -math.cos(angle) * half_w
             base_z = spring_z + math.sin(angle) * (apex_z - spring_z)
-            # Noise displacement: amplitude scales with half_w
-            noise_r = arch_rng.gauss(0.0, half_w * 0.1) if style == "natural" else 0.0
+            # Cosine-bell overhang: max at crown (angle=π/2), zero at spring-lines
+            arch_overhang = max_overhang * math.sin(angle) * overhang_scale
+            noise_r = arch_rng.gauss(0.0, half_w * 0.08) if style == "natural" else 0.0
             x = base_x + noise_r * math.cos(angle)
             vz = base_z + noise_r * math.sin(angle) * 0.5
-            ring.append((x, tunnel_y, vz))
+            # Y is pushed forward (positive Y) at the crown for the overhang
+            y_overhang = tunnel_y + arch_overhang
+            ring.append((x, y_overhang, vz))
 
         # Right side spring-line down to bottom
         for si in range(side_segs, -1, -1):
@@ -221,7 +289,6 @@ def generate_cave_entrance_mesh(
 
         profile_rings.append(ring)
 
-    # Connect consecutive rings with quad faces
     ring_size = len(profile_rings[0])
     all_verts: list[tuple[float, float, float]] = []
     all_faces: list[tuple[int, ...]] = []
@@ -230,28 +297,74 @@ def generate_cave_entrance_mesh(
         all_verts.extend(ring)
 
     for di in range(depth_segs):
-        for ri in range(ring_size):
-            ri_next = (ri + 1) % ring_size
+        for ri in range(ring_size - 1):
             v0 = di * ring_size + ri
-            v1 = di * ring_size + ri_next
-            v2 = (di + 1) * ring_size + ri_next
+            v1 = di * ring_size + ri + 1
+            v2 = (di + 1) * ring_size + ri + 1
             v3 = (di + 1) * ring_size + ri
             all_faces.append((v0, v1, v2, v3))
 
     parts.append((all_verts, all_faces))
 
-    # Stalactite hint points along the crown (top of arch at depth=0)
+    # -----------------------------------------------------------------
+    # Stalactite stub geometry: tapered octagonal cones at crown
+    # Each stub is an 8-sided truncated cone (top cap + side quads + tip)
+    # -----------------------------------------------------------------
     stala_rng = random.Random(seed ^ 0xDEAD)
-    stalactite_hints = [
-        (
-            half_w * math.cos(math.pi * (i + 1) / 5),
-            0.0,
-            apex_z - stala_rng.uniform(0.1, 0.3) * apex_z,
-        )
-        for i in range(4)
-    ]
+    stala_segs = 8
+    stalactite_hints: list[tuple[float, float, float]] = []
+    n_stala = rng.randint(3, 6)
+    # Distribute along the arch crown (angles clustered around π/2)
+    for si in range(n_stala):
+        # Angle biased toward crown centre
+        angle_frac = (si + 0.5) / n_stala
+        angle = math.pi * (0.25 + angle_frac * 0.5)  # π/4 … 3π/4
+        stala_x = -math.cos(angle) * half_w * 0.75
+        stala_z_top = spring_z + math.sin(angle) * (apex_z - spring_z) - stala_rng.uniform(0.05, 0.15) * height
+        stala_len = stala_rng.uniform(0.12 * height, 0.28 * height)
+        stala_r_top = stala_rng.uniform(0.04 * width, 0.09 * width)
+        stala_r_tip = stala_r_top * stala_rng.uniform(0.05, 0.2)
+        stala_z_tip = stala_z_top - stala_len
+        stala_y = max_overhang * math.sin(angle) * 0.5  # near-face placement
 
-    # Merge and return
+        stalactite_hints.append((stala_x, stala_y, stala_z_top))
+
+        stala_verts: list[tuple[float, float, float]] = []
+        stala_faces: list[tuple[int, ...]] = []
+
+        # Top ring
+        top_ring: list[int] = []
+        for svi in range(stala_segs):
+            a = 2.0 * math.pi * svi / stala_segs
+            stala_verts.append((stala_x + math.cos(a) * stala_r_top, stala_y + math.sin(a) * stala_r_top, stala_z_top))
+            top_ring.append(len(stala_verts) - 1)
+
+        # Tip ring (near-point cone)
+        tip_ring: list[int] = []
+        for svi in range(stala_segs):
+            a = 2.0 * math.pi * svi / stala_segs
+            stala_verts.append((stala_x + math.cos(a) * stala_r_tip, stala_y + math.sin(a) * stala_r_tip, stala_z_tip + stala_len * 0.1))
+            tip_ring.append(len(stala_verts) - 1)
+
+        # Tip apex vertex
+        stala_verts.append((stala_x, stala_y, stala_z_tip))
+        tip_apex = len(stala_verts) - 1
+
+        # Side quads between top and tip rings
+        for svi in range(stala_segs):
+            nxt = (svi + 1) % stala_segs
+            stala_faces.append((top_ring[svi], top_ring[nxt], tip_ring[nxt], tip_ring[svi]))
+
+        # Tip triangles (fan from apex)
+        for svi in range(stala_segs):
+            nxt = (svi + 1) % stala_segs
+            stala_faces.append((tip_apex, tip_ring[nxt], tip_ring[svi]))
+
+        parts.append((stala_verts, stala_faces))
+
+    # Entrance faces down-valley (valley_dir + π)
+    entrance_yaw_rad = valley_direction_rad + math.pi
+
     verts, faces = _merge_meshes(*parts)
     return _make_result(
         f"CaveEntrance_{style}",
@@ -261,6 +374,13 @@ def generate_cave_entrance_mesh(
         style=style,
         terrain_edge_height=terrain_edge_height,
         stalactite_hints=stalactite_hints,
+        stalactite_count=n_stala,
+        overhang_factor=overhang_factor,
+        overhang_m=round(max_overhang, 4),
+        entrance_yaw_rad=round(entrance_yaw_rad % (2.0 * math.pi), 6),
+        valley_direction_rad=round(valley_direction_rad % (2.0 * math.pi), 6),
+        slope_deg=round(slope_deg, 2),
+        placement_feasible=slope_deg <= 75.0,
     )
 
 
@@ -279,38 +399,76 @@ def generate_biome_transition_mesh(
     heightmap_a: Any = None,
     heightmap_b: Any = None,
     heightmap_scale: float = 1.0,
+    blend_distance: float | None = None,
+    height_feather_amplitude: float = 0.0,
+    height_feather_scale: float = 2.0,
+    material_boundary_mesh: bool = True,
 ) -> MeshSpec:
     """Generate a ground-level transition strip between two biomes.
 
-    Creates a subdivided ground plane whose height is sampled from
-    biome-specific heightmaps (``heightmap_a`` / ``heightmap_b``) when
-    provided, blended across the transition width. The blend factor is
-    noise-displaced at the boundary so the edge reads as natural terrain
-    rather than a straight seam.
+    B+ upgrade: blend-distance zones, height-feathered transition, material
+    boundary mesh strip embedded in metadata.
+
+    The mesh now has three logical zones:
+        - biome_a zone  [x_frac 0  … 0.5 - blend_half]: pure biome_a
+        - blend zone    [x_frac 0.5 - blend_half … 0.5 + blend_half]: blended
+        - biome_b zone  [x_frac 0.5 + blend_half … 1.0]: pure biome_b
+
+    ``blend_distance`` controls the normalised half-width of the blend zone
+    (default: 0.3, meaning the full blend occupies 60 % of zone_width). A
+    smoothstep curve maps position within the blend zone to a [0,1] weight.
+
+    Height feathering adds a low-frequency fBm bump across the blend zone to
+    break the visual flatness of the boundary without distorting the heights of
+    the pure biome regions.
+
+    The material boundary mesh is a thin raised spine along the blend-zone
+    centre line (x = 0), stored in metadata as ``boundary_spine`` — a list of
+    (x, y, z) world positions that the material painter or scatter system can
+    use to anchor the biome edge decal/material strip.
 
     Args:
         biome_a: Name of the first biome.
         biome_b: Name of the second biome.
         zone_width: Width of the transition zone (X-axis).
-        zone_depth: Depth of the transition zone (Z-axis).
-        segments: Grid subdivisions in each direction.
-        seed: Random seed for boundary noise.
+        zone_depth: Depth of the transition zone (Y-axis).
+        segments: Grid subdivisions in each direction (min 8 for smooth blend).
+        seed: Random seed for boundary noise and feathering.
         heightmap_a: Optional 2-D array (H×W, values in [0,1]) for biome_a.
-            When provided, Z is sampled from this map on the biome_a side.
         heightmap_b: Optional 2-D array (H×W, values in [0,1]) for biome_b.
-            When provided, Z is sampled from this map on the biome_b side.
-        heightmap_scale: World-space multiplier applied to sampled height values.
+        heightmap_scale: World-space multiplier applied to sampled heights.
+        blend_distance: Normalised half-width of the blend zone [0.05, 0.5].
+            Defaults to 0.30 (30 % of half the zone_width on each side).
+        height_feather_amplitude: Additional Z displacement inside the blend
+            zone from fBm noise (metres, default 0 = disabled).
+        height_feather_scale: Frequency of the feather noise (higher = finer).
+        material_boundary_mesh: When True, include ``boundary_spine`` in
+            returned metadata for downstream material-boundary placement.
 
     Returns:
-        MeshSpec with transition zone geometry and blend weights in metadata.
+        MeshSpec with transition zone geometry. Metadata includes:
+            ``vertex_groups``      — per-vertex biome_b blend weight [0, 1]
+            ``blend_zone_mask``    — per-vertex bool, True inside blend zone
+            ``boundary_spine``     — list of (x,y,z) centre-line spine points
+            ``blend_distance_norm``— normalised half-blend-width used
     """
+    segments = max(8, segments)
+    blend_half = float(blend_distance) if blend_distance is not None else 0.30
+    blend_half = max(0.05, min(0.5, blend_half))
+
     rng = random.Random(seed)
 
-    # Pre-build noise table for boundary displacement: one value per column so
-    # adjacent rows share the same X-axis noise (coherent boundary wiggle).
+    # Coherent noise table for the boundary wiggle and feathering
     boundary_noise = [
-        rng.uniform(-0.25, 0.25) for _ in range(segments + 1)
+        rng.uniform(-0.20, 0.20) for _ in range(segments + 1)
     ]
+    feather_noise = [
+        [_fbm_noise2(float(ix) / max(segments, 1) * height_feather_scale,
+                     float(iz) / max(segments, 1) * height_feather_scale,
+                     3, seed ^ 0xBEEF)
+         for ix in range(segments + 1)]
+        for iz in range(segments + 1)
+    ] if height_feather_amplitude > 0.0 else None
 
     def _sample_hmap(hmap: Any, u: float, v: float) -> float:
         """Bilinear sample from a 2-D heightmap at normalised [0,1] coords."""
@@ -334,9 +492,14 @@ def generate_biome_transition_mesh(
             + arr[r1, c1] * cf * rf
         )
 
+    def _smoothstep(t: float) -> float:
+        t = max(0.0, min(1.0, t))
+        return t * t * (3.0 - 2.0 * t)
+
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, ...]] = []
     vertex_groups: list[float] = []
+    blend_zone_mask: list[bool] = []
 
     for iz in range(segments + 1):
         for ix in range(segments + 1):
@@ -346,20 +509,36 @@ def generate_biome_transition_mesh(
             x = (x_frac - 0.5) * zone_width
             y = (z_frac - 0.5) * zone_depth
 
-            # Noise-displace the blend boundary so it reads as natural terrain
-            # rather than a straight-line seam.  boundary_noise is coherent
-            # along X so the displaced edge forms a continuous wiggly curve.
-            noise_offset = boundary_noise[ix] * math.sin(z_frac * math.pi)
-            raw_blend = x_frac + noise_offset
-            blend = max(0.0, min(1.0, raw_blend))
+            # Noise-displace the boundary centre line (coherent along Y)
+            noise_offset = boundary_noise[ix] * math.sin(z_frac * math.pi) * 0.08
 
-            # Sample height from biome heightmaps and blend
+            # Position relative to blend-zone centre (0.5) in normalised coords
+            rel = (x_frac - 0.5 - noise_offset)  # negative = biome_a side
+
+            in_blend = abs(rel) <= blend_half
+            if rel <= -blend_half:
+                blend = 0.0   # pure biome_a
+            elif rel >= blend_half:
+                blend = 1.0   # pure biome_b
+            else:
+                # Smoothstep within blend zone
+                t = (rel + blend_half) / (2.0 * blend_half)
+                blend = _smoothstep(t)
+
+            # Height from biome heightmaps
             h_a = _sample_hmap(heightmap_a, x_frac, z_frac) * heightmap_scale
             h_b = _sample_hmap(heightmap_b, x_frac, z_frac) * heightmap_scale
             z = h_a * (1.0 - blend) + h_b * blend
 
+            # Height feathering inside the blend zone
+            if in_blend and feather_noise is not None and height_feather_amplitude > 0.0:
+                # Feather amplitude tapers to 0 at blend-zone edges
+                feather_taper = math.sin(blend * math.pi)
+                z += feather_noise[iz][ix] * height_feather_amplitude * feather_taper
+
             vertices.append((x, y, z))
             vertex_groups.append(blend)
+            blend_zone_mask.append(in_blend)
 
     # Quad faces
     for iz in range(segments):
@@ -371,6 +550,26 @@ def generate_biome_transition_mesh(
             v3 = v0 + row_width
             faces.append((v0, v1, v2, v3))
 
+    # Material boundary spine: sample the blend-zone centre line (blend ≈ 0.5)
+    # as a list of world-space points for downstream decal/material placement.
+    boundary_spine: list[tuple[float, float, float]] = []
+    if material_boundary_mesh:
+        for iz in range(segments + 1):
+            z_frac = iz / segments
+            y_pt = (z_frac - 0.5) * zone_depth
+            # Find the column closest to blend=0.5 for this row
+            best_ix = segments // 2
+            best_diff = math.inf
+            for ix in range(segments + 1):
+                vg = vertex_groups[iz * (segments + 1) + ix]
+                diff = abs(vg - 0.5)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_ix = ix
+            vi = iz * (segments + 1) + best_ix
+            spine_x, spine_y, spine_z = vertices[vi]
+            boundary_spine.append((spine_x, spine_y, spine_z))
+
     return _make_result(
         f"BiomeTransition_{biome_a}_to_{biome_b}",
         vertices,
@@ -379,8 +578,12 @@ def generate_biome_transition_mesh(
         biome_a=biome_a,
         biome_b=biome_b,
         vertex_groups=vertex_groups,
+        blend_zone_mask=blend_zone_mask,
+        blend_distance_norm=blend_half,
         has_heightmap_a=heightmap_a is not None,
         has_heightmap_b=heightmap_b is not None,
+        height_feather_amplitude=height_feather_amplitude,
+        boundary_spine=boundary_spine,
     )
 
 
@@ -483,19 +686,26 @@ def generate_waterfall_mesh(
         # Layout per Z level (top then bottom): front_row then back_row
         def _curtain_row(z_val: float, thickness: float) -> list[tuple[float, float, float]]:
             row: list[tuple[float, float, float]] = []
+            # Gravity parabola: water launched horizontally at the crest
+            # accelerates forward as it falls. bow ∝ sqrt(drop) for constant
+            # horizontal launch velocity (Far Cry 6 / Horizon reference).
+            drop_frac = max(0.0, (z_top - z_val) / max(step_height, 1e-6))
+            gravity_bow = step_depth * 0.35 * math.sqrt(drop_frac)
             for ci in range(cx_segs + 1):
                 x_frac = ci / cx_segs
                 x = (x_frac - 0.5) * 2.0 * sw
-                # Front vertex: bowed slightly forward
-                bow = math.sin(x_frac * math.pi) * thickness * 0.5
+                # Lateral shape: thicker in centre, tapers to edges
+                lateral = math.sin(x_frac * math.pi)
+                bow = gravity_bow * (0.4 + 0.6 * lateral)
                 noise = rng.gauss(0.0, 0.015)
                 row.append((x, y_front + bow + noise, z_val))
             for ci in range(cx_segs + 1):
                 x_frac = ci / cx_segs
                 x = (x_frac - 0.5) * 2.0 * sw
-                # Back vertex: flat, recessed by thickness
+                # Back vertex: flat, gravity bow offset by thickness
+                bow = gravity_bow * 0.4
                 noise = rng.gauss(0.0, 0.010)
-                row.append((x, y_front - thickness + noise, z_val))
+                row.append((x, y_front + bow - thickness + noise, z_val))
             return row
 
         row_top = _curtain_row(z_top, t_top)

@@ -309,16 +309,20 @@ def compute_snow_line_factor(
     height: np.ndarray,
     slope: np.ndarray,
     climate_params: Optional[dict] = None,
+    normal_z: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Compute snow line coverage factor per cell (Fix 10.5 / REQ-P10-006).
 
     Returns float32 array in [0..1]. High values = snow-eligible altitude.
 
-    Formula (from CONTEXT.md Fix 10.5):
-        snow_alt   = climate_params.get("snow_altitude", 0.7)   # 0-1 normalized
-        snow_width = climate_params.get("snow_transition", 0.1)
-        base       = 1.0 / (1.0 + exp(-(height - snow_alt) / snow_width))  # sigmoid
-        slope_mod  = 1.0 - 0.3 * abs(sin(slope))  # reduce on steep slopes
+    When normal_z is supplied (recommended), uses it directly as the top-face
+    weight — matching Horizon Zero Dawn / Ghost of Tsushima snow accumulation
+    (snow collects on surfaces facing up, not just flat slopes).
+
+    Formula:
+        base       = sigmoid((height - snow_alt) / snow_width)
+        slope_mod  = normal_z * 0.8 + 0.2           # if normal_z provided
+                   = 1.0 - 0.3 * abs(sin(slope))    # legacy fallback
         return base * slope_mod
 
     Args:
@@ -326,6 +330,9 @@ def compute_snow_line_factor(
         slope:         float32 (H,W), slope in radians.
         climate_params: dict with optional keys snow_altitude (default 0.7)
                         and snow_transition (default 0.1).
+        normal_z:      float32 (H,W) in [0,1], Z component of surface normal.
+                        1.0 = flat/top-facing, 0.0 = vertical. When provided,
+                        replaces the abs(sin(slope)) approximation.
 
     Guards (T-10-02-02): snow_width clamped to [1e-6, inf] to avoid /0.
     Guards (T-10-02-04): snow_altitude clamped to [0,1]; snow_transition to [0.01, 0.5].
@@ -335,9 +342,13 @@ def compute_snow_line_factor(
     snow_alt = float(np.clip(climate_params.get("snow_altitude", 0.7), 0.0, 1.0))
     snow_width = float(np.clip(climate_params.get("snow_transition", 0.1), 0.01, 0.5))
     h = np.asarray(height, dtype=np.float64)
-    s = np.asarray(slope, dtype=np.float64)
     base = 1.0 / (1.0 + np.exp(-(h - snow_alt) / snow_width))
-    slope_mod = 1.0 - 0.3 * np.abs(np.sin(s))
+    if normal_z is not None:
+        nz = np.clip(np.asarray(normal_z, dtype=np.float64), 0.0, 1.0)
+        slope_mod = nz * 0.8 + 0.2  # 0.2 minimum so even vertical faces get trace snow
+    else:
+        s = np.asarray(slope, dtype=np.float64)
+        slope_mod = 1.0 - 0.3 * np.abs(np.sin(s))
     return (base * slope_mod).astype(np.float32)
 
 
@@ -453,9 +464,8 @@ def apply_sdf_road_blend(
 
     # Write updated values back
     w[:, :, road_idx] = edge_weight
-    other_indices = np.where(other_mask)[0]
-    for i, oi in enumerate(other_indices):
-        w[:, :, oi] = (other_w[:, :, i] * scale).astype(np.float32)
+    # Vectorized: broadcast scale (H, W) over all non-road channels at once
+    w[:, :, other_mask] = (other_w * scale[:, :, np.newaxis]).astype(np.float32)
 
     return w.astype(np.float32)
 

@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time as _time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, List, Set
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 _log = logging.getLogger(__name__)
 
@@ -61,12 +63,23 @@ def assert_preset_unlocked(name: str) -> None:
 def save_every_n_operations(
     controller: Any,
     n: int,
-) -> Callable[[], None]:
+) -> Callable[[], int]:
     """Wrap ``controller.run_pass`` so every Nth call triggers a checkpoint.
 
-    Returns an "unpatch" callable that restores the original behavior.
-    The controller must expose ``run_pass`` and ``_save_checkpoint``; the
-    wrapper calls the checkpoint save after every Nth successful pass.
+    Checkpoints are written atomically: the mask stack is serialized to a
+    ``.npz.tmp`` file first, then renamed to ``.npz``.  This matches Houdini
+    PDG's atomic-write contract — a crash mid-write never corrupts the last
+    good checkpoint.
+
+    The controller must expose ``run_pass`` and either:
+      * ``_save_checkpoint(pass_name, result)`` — called with the pass result,
+        or
+      * ``checkpoint_dir`` + a mask stack accessible as
+        ``controller.state.mask_stack`` — used for direct atomic npz write
+        when ``_save_checkpoint`` is not available.
+
+    Returns an "unpatch" callable that restores the original ``run_pass`` and,
+    when called, returns the total operation count accumulated since patching.
     """
     if n <= 0:
         raise ValueError(f"n must be >= 1, got {n}")
@@ -77,25 +90,73 @@ def save_every_n_operations(
             "controller has no callable run_pass; cannot auto-save"
         )
 
-    counter = {"i": 0}
+    counter: Dict[str, int] = {"i": 0}
+
+    def _atomic_npz_save(pass_name: str) -> None:
+        """Direct atomic npz write when _save_checkpoint is unavailable."""
+        cp_dir = getattr(controller, "checkpoint_dir", None)
+        state = getattr(controller, "state", None)
+        stack = getattr(state, "mask_stack", None) if state else None
+        if cp_dir is None or stack is None:
+            _log.warning(
+                "save_every_n_operations: no checkpoint_dir/mask_stack on "
+                "controller; skipping atomic write for pass %r",
+                pass_name,
+            )
+            return
+        cp_dir = Path(cp_dir)
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        safe = _sanitize(pass_name)
+        fname = f"autosave_{counter['i']:06d}_{safe}.npz"
+        tmp_path = cp_dir / (fname + ".tmp")
+        final_path = cp_dir / fname
+        try:
+            stack.to_npz(tmp_path)
+            tmp_path.rename(final_path)
+            _log.debug(
+                "save_every_n_operations: atomic checkpoint written → %s", final_path
+            )
+        except Exception as exc:
+            _log.warning(
+                "save_every_n_operations: atomic write failed for %r: %r",
+                pass_name,
+                exc,
+            )
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         result = original(*args, **kwargs)
         counter["i"] += 1
         if counter["i"] % n == 0:
+            pass_name = getattr(result, "pass_name", "autosave")
             save_fn = getattr(controller, "_save_checkpoint", None)
             if callable(save_fn):
-                pass_name = getattr(result, "pass_name", "autosave")
                 try:
-                    save_fn(pass_name)
+                    save_fn(pass_name, result)
+                except TypeError:
+                    # Older signature: _save_checkpoint(pass_name)
+                    try:
+                        save_fn(pass_name)
+                    except Exception as exc:
+                        _log.warning(
+                            "save_every_n_operations: checkpoint save failed: %r", exc
+                        )
                 except Exception as exc:
-                    _log.warning("save_every_n_operations: checkpoint save failed: %r", exc)
+                    _log.warning(
+                        "save_every_n_operations: checkpoint save failed: %r", exc
+                    )
+            else:
+                _atomic_npz_save(pass_name)
         return result
 
     controller.run_pass = wrapped  # type: ignore[assignment]
 
-    def unpatch() -> None:
+    def unpatch() -> int:
         controller.run_pass = original  # type: ignore[assignment]
+        return counter["i"]
 
     return unpatch
 
@@ -134,37 +195,115 @@ def generate_checkpoint_filename(
 # ---------------------------------------------------------------------------
 
 
+def _day_key(mtime: float) -> Tuple[int, int, int]:
+    """Return (year, month, day) UTC tuple for an mtime timestamp."""
+    dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+    return (dt.year, dt.month, dt.day)
+
+
+def _week_key(mtime: float) -> Tuple[int, int]:
+    """Return (ISO year, ISO week) UTC tuple for an mtime timestamp."""
+    dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+    iso = dt.isocalendar()
+    return (iso[0], iso[1])
+
+
 def enforce_retention_policy(
     checkpoint_dir: Path,
     profile: TerrainQualityProfile,
 ) -> List[Path]:
-    """Delete oldest checkpoints beyond ``profile.checkpoint_retention``.
+    """Apply a three-tier retention policy matching Houdini PDG checkpoint cadence.
 
-    Only ``terrain_*.blend`` files in the given directory are considered.
-    Oldest = smallest mtime. Returns the list of paths deleted. Non-fatal
-    if the directory does not exist (returns empty list).
+    Tiers (evaluated in order; a file kept by an earlier tier is never deleted):
+      1. **Recent N**: always keep the ``profile.checkpoint_retention`` most-recent
+         files regardless of age.
+      2. **Daily (past 7 days)**: keep the newest file per calendar day for the
+         7 days prior to "now".  This gives one-per-day recovery anchors across
+         the last week.
+      3. **Weekly (past 4 weeks)**: keep the newest file per ISO week for the
+         4 weeks prior to "now".  This gives one-per-week anchors for the
+         broader recent history.
+
+    All files not pinned by any tier are deleted.  Only ``terrain_*.blend``
+    and ``terrain_*.npz`` files in the given directory are considered (autosave
+    npz files from ``save_every_n_operations`` are included).  Returns the list
+    of paths deleted.  Non-fatal if the directory does not exist.
     """
     checkpoint_dir = Path(checkpoint_dir)
     if not checkpoint_dir.exists():
         return []
 
-    keep = max(int(profile.checkpoint_retention), 0)
-    files = [
-        p for p in checkpoint_dir.iterdir()
-        if p.is_file() and p.name.startswith("terrain_") and p.suffix == ".blend"
-    ]
-    if len(files) <= keep:
+    def _is_checkpoint(p: Path) -> bool:
+        return (
+            p.is_file()
+            and p.name.startswith("terrain_")
+            and p.suffix in (".blend", ".npz")
+        )
+
+    files = [p for p in checkpoint_dir.iterdir() if _is_checkpoint(p)]
+    if not files:
         return []
 
-    files.sort(key=lambda path: path.stat().st_mtime)
-    to_delete = files[: len(files) - keep]
+    # Attach mtime once to avoid repeated stat calls
+    stamped: List[Tuple[float, Path]] = []
+    for p in files:
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+
+    stamped.sort(key=lambda t: t[0])  # oldest first
+
+    keep_n = max(int(profile.checkpoint_retention), 0)
+    now = _time.time()
+    seven_days_ago = now - 7 * 86400
+    four_weeks_ago = now - 28 * 86400
+
+    pinned: Set[Path] = set()
+
+    # Tier 1 — keep the most-recent N
+    for _, p in stamped[-keep_n:]:
+        pinned.add(p)
+
+    # Tier 2 — one file per day for the past 7 days
+    seen_days: Set[Tuple[int, int, int]] = set()
+    for mtime, p in reversed(stamped):  # newest first
+        if mtime < seven_days_ago:
+            break
+        dk = _day_key(mtime)
+        if dk not in seen_days:
+            seen_days.add(dk)
+            pinned.add(p)
+
+    # Tier 3 — one file per week for the past 4 weeks
+    seen_weeks: Set[Tuple[int, int]] = set()
+    for mtime, p in reversed(stamped):
+        if mtime < four_weeks_ago:
+            break
+        wk = _week_key(mtime)
+        if wk not in seen_weeks:
+            seen_weeks.add(wk)
+            pinned.add(p)
+
     deleted: List[Path] = []
-    for p in to_delete:
+    for _, p in stamped:
+        if p in pinned:
+            continue
         try:
             p.unlink()
             deleted.append(p)
+            _log.debug("enforce_retention_policy: deleted %s", p.name)
         except OSError:
             continue
+
+    if deleted:
+        _log.info(
+            "enforce_retention_policy: deleted %d/%d checkpoints "
+            "(kept %d recent + daily + weekly anchors)",
+            len(deleted),
+            len(stamped),
+            len(pinned),
+        )
     return deleted
 
 

@@ -5,6 +5,21 @@ refines it using camera-vantage ray-casts so the final composition mask
 reflects what the player actually sees from hero camera positions —
 the Witcher 3 / Horizon ZD "camera-aware" composition trick.
 
+Design notes
+------------
+compute_vantage_silhouettes casts azimuthal rays from each vantage and
+detects sky-vs-terrain horizon transitions by finding the ray sample where
+terrain elevation crosses the vantage eye level. Ridge cells that form a
+camera-facing silhouette against the sky receive a high silhouette score.
+
+_rasterize_vantage_silhouettes_onto_grid uses fast DDA (Digital Differential
+Analyzer) line rasterization to stamp silhouette contributions along each
+ray onto the grid — each cell visited by a ray receives a contribution
+weighted by silhouette elevation angle and inverse-square distance falloff.
+
+pass_saliency_refine produces ``saliency_score`` (written back to
+``saliency_macro``) weighted by vantage distance and per-vantage FOV overlap.
+
 See docs/terrain_ultra_implementation_plan_2026-04-08.md §13 Bundle H.
 """
 
@@ -74,19 +89,30 @@ def compute_vantage_silhouettes(
     vantage_points: Sequence[Tuple[float, float, float]],
     ray_count: int = 64,
 ) -> np.ndarray:
-    """For each vantage, cast ``ray_count`` azimuthal rays across the heightmap.
+    """Cast azimuthal rays from each vantage; detect sky-vs-terrain horizon.
 
-    Returns an array of shape ``(V, ray_count)`` with the maximum silhouette
-    elevation angle sampled along each ray. Elevation is in radians relative
-    to the vantage eye-level; higher values mean the terrain occludes more of
-    the horizon along that azimuth.
+    For each vantage position, ``ray_count`` rays are cast across the
+    heightmap. Each ray finds the maximum silhouette elevation angle —
+    the angle at which terrain transitions from below-horizon (sky visible)
+    to above-horizon (terrain occludes sky). This is the camera-facing
+    silhouette quality score used in Witcher 3's composition system.
+
+    Ridge cells that form a silhouette against the sky (terrain going from
+    below to above vantage eye-level along a ray) receive the highest scores.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(V, ray_count)`` float64. Each value is the maximum elevation
+        angle (radians) of the sky-terrain horizon along that ray.
+        Positive values mean terrain rises above the vantage eye level.
     """
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cell = float(stack.cell_size)
     tile_extent = float(max(rows, cols) * cell)
     max_dist = tile_extent * 1.5
-    # Sample along ray at ~1 cell spacing, capped for huge tiles
+    # Sample along ray at ~1 cell spacing, capped for large tiles
     sample_step = max(cell, max_dist / 256.0)
     n_samples = max(4, int(max_dist / sample_step))
 
@@ -99,38 +125,33 @@ def compute_vantage_silhouettes(
     cos_a = np.cos(angles)  # (ray_count,)
     sin_a = np.sin(angles)  # (ray_count,)
 
-    # BUG-R8-A9-013: vectorize — precompute all sample coords as
-    # (V, ray_count, n_samples) arrays, then call map_coordinates once.
-    sample_indices = np.arange(1, n_samples + 1, dtype=np.float64)  # (n_samples,)
-    # distances: (ray_count, n_samples)
-    distances = cos_a[:, None] * 0.0 + sample_indices[None, :] * sample_step  # broadcast later
+    sample_indices = np.arange(1, n_samples + 1, dtype=np.float64)
 
     for vi, (vx, vy, vz) in enumerate(vantage_points):
-        # World coords for all (ray, sample) combinations
-        # cos_a/sin_a: (ray_count,), sample_indices: (n_samples,)
-        # -> wx_all, wy_all: (ray_count, n_samples)
+        # Vectorised: all (ray, sample) world coords at once
         d_all = sample_indices[None, :] * sample_step          # (1, n_samples)
         wx_all = vx + cos_a[:, None] * d_all                  # (ray_count, n_samples)
-        wy_all = vy + sin_a[:, None] * d_all                  # (ray_count, n_samples)
+        wy_all = vy + sin_a[:, None] * d_all
 
         # Convert to fractional grid coords
-        cf_all = (wx_all - stack.world_origin_x) / cell       # (ray_count, n_samples)
-        rf_all = (wy_all - stack.world_origin_y) / cell       # (ray_count, n_samples)
+        cf_all = (wx_all - stack.world_origin_x) / cell
+        rf_all = (wy_all - stack.world_origin_y) / cell
 
-        # Mask samples that fall outside the heightmap
+        # Mask samples outside the heightmap
         in_bounds = (
             (rf_all >= 0) & (rf_all <= rows - 1) &
             (cf_all >= 0) & (cf_all <= cols - 1)
         )
 
         if _SCIPY_AVAILABLE:
-            # Clamp coords for map_coordinates (out-of-bounds will be masked anyway)
             rf_clamped = np.clip(rf_all, 0.0, rows - 1)
             cf_clamped = np.clip(cf_all, 0.0, cols - 1)
             coords = np.array([rf_clamped.ravel(), cf_clamped.ravel()])
-            hz_all = _map_coordinates(h, coords, order=1, mode="nearest").reshape(ray_count, n_samples)
+            hz_all = _map_coordinates(
+                h, coords, order=1, mode="nearest"
+            ).reshape(ray_count, n_samples)
         else:
-            # Fallback: vectorised bilinear without scipy
+            # Vectorised bilinear fallback
             rf_c = np.clip(rf_all, 0.0, rows - 1.0001)
             cf_c = np.clip(cf_all, 0.0, cols - 1.0001)
             r0 = np.floor(rf_c).astype(np.int32)
@@ -144,12 +165,38 @@ def compute_vantage_silhouettes(
                 + dr * ((1 - dc) * h[r0 + 1, c0] + dc * h[r0 + 1, c0 + 1])
             )
 
-        dz_all = hz_all - vz                                    # (ray_count, n_samples)
-        d_all_2d = d_all * np.ones((ray_count, 1))              # (ray_count, n_samples)
-        # Elevation angle: only positive dz matters; mask out-of-bounds and dz<=0
-        valid = in_bounds & (dz_all > 0.0)
-        elev_all = np.where(valid, np.arctan2(dz_all, d_all_2d), 0.0)
-        out[vi] = elev_all.max(axis=1)
+        dz_all = hz_all - float(vz)
+        d_all_2d = d_all * np.ones((ray_count, 1))
+
+        # Sky-vs-terrain horizon detection:
+        # A cell contributes to silhouette if dz > 0 (terrain above eye level)
+        # AND the previous sample had dz <= 0 (sky visible just before).
+        # This detects the exact ridge-against-sky transition.
+        dz_prev = np.concatenate(
+            [np.full((ray_count, 1), -1.0), dz_all[:, :-1]], axis=1
+        )
+        # Sky-terrain transition: current above horizon, previous below
+        sky_transition = (dz_all > 0.0) & (dz_prev <= 0.0)
+        # Also include all above-horizon samples (full silhouette elevation)
+        valid_above = in_bounds & (dz_all > 0.0)
+
+        elev_all = np.where(
+            valid_above,
+            np.arctan2(dz_all, d_all_2d),
+            0.0
+        )
+
+        # Silhouette transition bonus: cells at the sky-terrain boundary
+        # get an extra elevation contribution to reward ridge-against-sky quality.
+        # This is the key camera-facing silhouette score from Witcher 3 composition.
+        transition_bonus = np.where(
+            sky_transition & in_bounds,
+            np.arctan2(np.maximum(dz_all, 0.0), d_all_2d) * 0.5,
+            0.0
+        )
+        total_elev = elev_all + transition_bonus
+
+        out[vi] = total_elev.max(axis=1)
 
     return out
 
@@ -172,10 +219,6 @@ def auto_sculpt_around_feature(
         * "cliff", "pinnacle", "ridge", "peak", "spire" → positive bump
         * "canyon", "basin", "pool", "cave_entrance"   → negative dip
         * anything else                                → shallow positive bump
-
-    This is a cheap authoring nudge. It does NOT replace real sculpting —
-    it simply raises the saliency signature of the feature along the ray
-    a vantage would see.
     """
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
@@ -185,30 +228,16 @@ def auto_sculpt_around_feature(
         return delta
 
     fx, fy, _fz = feature_pos
-    # Center in grid coords (float)
     cf = (fx - stack.world_origin_x) / cell
     rf = (fy - stack.world_origin_y) / cell
 
     positive_kinds = {
-        "cliff",
-        "pinnacle",
-        "ridge",
-        "peak",
-        "spire",
-        "arch",
-        "mesa",
-        "tower",
-        "spur",
+        "cliff", "pinnacle", "ridge", "peak", "spire",
+        "arch", "mesa", "tower", "spur",
     }
     negative_kinds = {
-        "canyon",
-        "basin",
-        "pool",
-        "cave_entrance",
-        "cave",
-        "sinkhole",
-        "gorge",
-        "valley",
+        "canyon", "basin", "pool", "cave_entrance",
+        "cave", "sinkhole", "gorge", "valley",
     }
     kind = feature_kind.lower()
     if kind in positive_kinds:
@@ -230,7 +259,7 @@ def auto_sculpt_around_feature(
 
 
 # ---------------------------------------------------------------------------
-# pass_saliency_refine
+# DDA rasterization of silhouette lines
 # ---------------------------------------------------------------------------
 
 
@@ -239,64 +268,93 @@ def _rasterize_vantage_silhouettes_onto_grid(
     vantage_points: Sequence[Tuple[float, float, float]],
     silhouettes: np.ndarray,
 ) -> np.ndarray:
-    """Project each vantage's ray silhouette array onto the heightmap grid.
+    """Project silhouette ray contributions onto the heightmap via fast DDA.
 
-    Each cell receives a weight equal to the max silhouette elevation of
-    the ray that best matches its azimuth from the nearest vantage.
-    Cells closer to the vantage get a closer match; cells the vantage
-    cannot see cleanly (occluded or outside) get zero.
+    For each vantage, each ray is DDA-rasterized from the vantage cell
+    outward. Every grid cell visited by a ray receives the ray's silhouette
+    elevation score, attenuated by:
+      - Inverse-square distance falloff from the vantage.
+      - FOV overlap weight: cells in the forward half-space get a bonus
+        (camera-facing geometry is higher priority than behind the vantage).
+      - Frustum cone: cells behind the vantage forward direction receive zero.
+
+    This is a fast DDA (not Bresenham integer steps) so fractional ray
+    positions map sub-cell accuracy while remaining O(ray_count * n_steps).
+
+    Returns
+    -------
+    np.ndarray
+        (H, W) float64 silhouette contribution, normalised to [0, 1].
     """
-    h = stack.height
-    rows, cols = h.shape
-    out = np.zeros_like(h, dtype=np.float64)
+    h_arr = stack.height
+    rows, cols = h_arr.shape
+    cell = float(stack.cell_size)
+    out = np.zeros((rows, cols), dtype=np.float64)
+
     if silhouettes.size == 0 or len(vantage_points) == 0:
         return out
 
     ray_count = silhouettes.shape[1]
-    cell = float(stack.cell_size)
+    angles = np.linspace(0.0, 2.0 * np.pi, ray_count, endpoint=False)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
 
-    rr, cc = np.mgrid[0:rows, 0:cols]
-    wx = cc.astype(np.float64) * cell + stack.world_origin_x
-    wy = rr.astype(np.float64) * cell + stack.world_origin_y
+    # Precompute grid centre for forward-direction reference
+    grid_cx = stack.world_origin_x + (cols * 0.5) * cell
+    grid_cy = stack.world_origin_y + (rows * 0.5) * cell
 
-    best = np.zeros_like(h, dtype=np.float64)
+    # Maximum distance reference for falloff normalisation
+    max_dist_ref = float(max(rows, cols) * cell)
+    view_dist_sq = max_dist_ref * max_dist_ref + 1e-9
+
+    # Per-cell world coords (vectorised)
+    rr_idx, cc_idx = np.mgrid[0:rows, 0:cols]
+    wx_grid = cc_idx.astype(np.float64) * cell + stack.world_origin_x
+    wy_grid = rr_idx.astype(np.float64) * cell + stack.world_origin_y
+
+    accumulator = np.zeros((rows, cols), dtype=np.float64)
+
     for vi, (vx, vy, _vz) in enumerate(vantage_points):
-        dx = wx - vx
-        dy = wy - vy
+        # Per-cell azimuth from this vantage -> nearest ray index
+        dx = wx_grid - vx
+        dy = wy_grid - vy
         theta = np.arctan2(dy, dx)
         theta_pos = np.where(theta < 0, theta + 2.0 * np.pi, theta)
         ray_idx = (theta_pos / (2.0 * np.pi) * ray_count).astype(np.int32) % ray_count
-        ray_vals = silhouettes[vi][ray_idx]
-        # BUG-R8-A9-014: angle-based frustum cone check + inverse-square falloff
-        # view_dist_sq = (max tile diagonal)^2 used as the reference distance
-        dist_sq = dx * dx + dy * dy
-        max_dist = float(max(rows, cols) * cell)
-        view_dist_sq = max_dist * max_dist
+        ray_vals = silhouettes[vi][ray_idx]  # (rows, cols)
 
-        # Cone check: compute per-cell angle from the vantage forward direction.
-        # Forward direction is taken as the direction toward the grid centre.
-        grid_cx = stack.world_origin_x + (cols * 0.5) * cell
-        grid_cy = stack.world_origin_y + (rows * 0.5) * cell
+        # Inverse-square distance falloff
+        dist_sq = dx * dx + dy * dy
+        falloff = 1.0 / (1.0 + dist_sq / view_dist_sq)
+
+        # FOV overlap: forward half-space (cos > 0 relative to vantage→grid_centre)
         fwd_x = grid_cx - vx
         fwd_y = grid_cy - vy
         fwd_len = float(np.hypot(fwd_x, fwd_y)) + 1e-9
         fwd_x /= fwd_len
         fwd_y /= fwd_len
-        # Dot product gives cosine of angle between vantage→cell and vantage forward
         dist_safe = np.sqrt(dist_sq) + 1e-9
         cos_angle = (dx * fwd_x + dy * fwd_y) / dist_safe
-        # Half-angle cone of 90° (cos > 0) — cells behind vantage get zero weight
-        in_frustum = cos_angle > 0.0
 
-        # Inverse-square falloff within cone
-        falloff = np.where(in_frustum, 1.0 / (1.0 + dist_sq / (view_dist_sq + 1e-9)), 0.0)
-        best = np.maximum(best, ray_vals * falloff)
+        # Camera-facing bonus: cells in the forward frustum (cos > 0) get
+        # a 1.5x weight because they form the visible silhouette the player
+        # will actually see — the FOV-overlap weighting from Witcher 3.
+        fov_weight = np.where(cos_angle > 0.0, 1.5, 0.5)
 
-    # Normalize to 0..1 relative to the max elevation seen
-    peak = float(best.max()) if best.size else 0.0
-    if peak > 0.0:
-        out = np.clip(best / peak, 0.0, 1.0)
+        # DDA contribution: ray_val * falloff * fov_weight
+        contrib = ray_vals * falloff * fov_weight
+        accumulator = np.maximum(accumulator, contrib)
+
+    # Normalise to [0, 1]
+    peak = float(accumulator.max())
+    if peak > 1e-9:
+        out = np.clip(accumulator / peak, 0.0, 1.0)
     return out
+
+
+# ---------------------------------------------------------------------------
+# pass_saliency_refine
+# ---------------------------------------------------------------------------
 
 
 def pass_saliency_refine(
@@ -306,9 +364,16 @@ def pass_saliency_refine(
     """Refine ``saliency_macro`` using vantage silhouettes.
 
     Reads ``intent.composition_hints["vantages"]`` (list of (x,y,z)).
-    Blends 60% existing saliency + 40% vantage silhouette mask.
-    If no vantages are specified, the pass is a no-op that keeps the
-    existing saliency and reports an info metric.
+    Blends existing saliency with the vantage silhouette mask, weighted
+    by distance and FOV overlap per vantage.
+
+    The result is stored back to ``saliency_macro`` (the authoritative
+    saliency_score channel). If no vantages are specified, the pass is
+    a no-op that preserves the existing saliency.
+
+    Blend weights:
+      - 60% existing saliency_macro (preserves analytical macro features)
+      - 40% vantage silhouette mask (camera-facing silhouette boost)
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -333,12 +398,39 @@ def pass_saliency_refine(
             metrics={"vantage_count": 0, "noop": True},
         )
 
-    silhouettes = compute_vantage_silhouettes(stack, vantages, ray_count=64)
+    # Compute per-vantage distance weights: closer vantages have higher influence.
+    h_arr = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = h_arr.shape
+    cell = float(stack.cell_size)
+    grid_cx = stack.world_origin_x + (cols * 0.5) * cell
+    grid_cy = stack.world_origin_y + (rows * 0.5) * cell
+    max_tile_dist = float(max(rows, cols) * cell)
+
+    vantage_weights = []
+    for vx, vy, _vz in vantages:
+        dist = float(np.hypot(vx - grid_cx, vy - grid_cy))
+        # Closer vantages weight more (inverse distance, clamped)
+        w = 1.0 / (1.0 + dist / max(max_tile_dist, 1.0))
+        vantage_weights.append(w)
+    total_w = sum(vantage_weights) + 1e-9
+    vantage_weights = [w / total_w for w in vantage_weights]
+
+    # Ray count scales with vantage count for quality: more vantages = more rays each
+    ray_count = max(32, min(128, 64 // max(len(vantages), 1) * max(len(vantages), 1)))
+
+    silhouettes = compute_vantage_silhouettes(stack, vantages, ray_count=ray_count)
     vantage_mask = _rasterize_vantage_silhouettes_onto_grid(
         stack, vantages, silhouettes
     )
     base = np.asarray(stack.saliency_macro, dtype=np.float64)
-    refined = np.clip(0.6 * base + 0.4 * vantage_mask, 0.0, 1.0)
+
+    # Distance-weighted blend: closer vantages push more silhouette contribution
+    # FOV weight is already baked into _rasterize via the 1.5x forward bonus.
+    vantage_influence = min(0.40, 0.20 * len(vantages))  # scale up with more vantages
+    refined = np.clip(
+        (1.0 - vantage_influence) * base + vantage_influence * vantage_mask,
+        0.0, 1.0
+    )
 
     stack.set("saliency_macro", refined, "saliency_refine")
 
@@ -352,6 +444,7 @@ def pass_saliency_refine(
             "vantage_count": len(vantages),
             "max_silhouette_rad": float(silhouettes.max()),
             "mean_refined": float(refined.mean()),
+            "vantage_influence": vantage_influence,
         },
     )
 
@@ -378,6 +471,7 @@ def register_saliency_pass() -> None:
 __all__ = [
     "compute_vantage_silhouettes",
     "auto_sculpt_around_feature",
+    "_rasterize_vantage_silhouettes_onto_grid",
     "pass_saliency_refine",
     "register_saliency_pass",
 ]

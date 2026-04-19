@@ -139,13 +139,38 @@ def execute_region_with_rollback(
 ) -> RegionExecutionReport:
     """Run a sequence scoped to ``region`` with rollback on failure.
 
-    Before the sequence starts we save a checkpoint. If any pass in the
-    sequence reports ``status == "failed"`` we restore that checkpoint
-    so the mask stack returns to its pre-sequence state, and the report
-    surfaces the rollback marker so the caller can decide what to do.
-    This mirrors how Horizon/Decima's terrain editor handles iterative
-    local sculpt operations — failures never corrupt global state.
+    Rollback strategy (two-layer defence)
+    --------------------------------------
+    1. **Deep-copy snapshot** (primary): before the sequence starts, a
+       ``copy.deepcopy`` of ``controller.state`` is taken in-memory.  If any
+       pass in the sequence fails, the controller's state is replaced with the
+       snapshot immediately — this is O(state_size) but guaranteed to succeed
+       without any filesystem dependency.
+
+    2. **Checkpoint rollback** (secondary, best-effort): we also attempt to
+       save a pre-sequence checkpoint via the public checkpoint API.  If a
+       checkpoint was saved successfully *and* the deep-copy restore was
+       attempted, we additionally call ``rollback_to`` so the on-disk
+       checkpoint log reflects the rollback.  If the checkpoint API is
+       unavailable (e.g. disk full, headless test) we still complete the
+       deep-copy restore and mark ``rolled_back=True``.
+
+    This mirrors how Horizon/Decima's terrain editor handles iterative local
+    sculpt operations — failures never corrupt global state, and the rollback
+    is atomic from the caller's perspective.
+
+    Returns
+    -------
+    RegionExecutionReport with:
+    - ``results``: one PassResult per pass that ran (stops at first failure)
+    - ``padded_region``: the padded BBox used for execution
+    - ``wall_clock_seconds``: total wall-clock time for the sequence
+    - ``rolled_back``: True if a failure triggered state restoration
+    - ``rollback_checkpoint_id``: checkpoint ID if the secondary checkpoint
+      was saved (None if checkpoint API was unavailable)
     """
+    import copy as _copy
+
     world = controller.state.intent.region_bounds
     target = (
         compute_minimum_padding(region, pass_sequence, controller, world)
@@ -153,10 +178,10 @@ def execute_region_with_rollback(
         else region
     )
 
-    # Save a pre-sequence checkpoint through the public checkpoint API so
-    # we can roll back by label if any pass fails. The label is unique
-    # per invocation so concurrent callers can't collide, even though the
-    # pipeline is single-threaded today.
+    # --- Primary rollback: deep-copy of pipeline state ---
+    pre_state_snapshot = _copy.deepcopy(controller.state)
+
+    # --- Secondary rollback: checkpoint (best-effort) ---
     from .terrain_checkpoints import save_checkpoint as _save_ckpt
     from .terrain_checkpoints import rollback_to as _rollback_to
 
@@ -171,19 +196,28 @@ def execute_region_with_rollback(
     start = time.perf_counter()
     results: List[PassResult] = []
     rolled_back = False
+
     for pass_name in pass_sequence:
         res = controller.run_pass(pass_name, region=target, checkpoint=False)
         results.append(res)
         if res.status == "failed":
-            if pre_id is not None:
+            # Primary: restore deep-copied state unconditionally
+            try:
+                controller.state = pre_state_snapshot
+                rolled_back = True
+            except Exception:
+                rolled_back = False
+
+            # Secondary: attempt checkpoint rollback as well
+            if pre_id is not None and rolled_back:
                 try:
                     _rollback_to(controller, pre_label)
-                    rolled_back = True
                 except Exception:
-                    # Best-effort rollback; surface the failure via the
-                    # report rather than swallowing it.
-                    rolled_back = False
+                    # Checkpoint rollback failed — deep-copy restore already
+                    # succeeded so state is clean; don't mask that success.
+                    pass
             break
+
     wall = time.perf_counter() - start
 
     return RegionExecutionReport(

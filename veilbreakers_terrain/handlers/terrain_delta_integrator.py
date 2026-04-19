@@ -157,8 +157,10 @@ def pass_integrate_deltas(
             "delta_channels_applied": applied_names,
             "total_delta_sum": float(total_delta.sum()),
             "cells_modified": cells_modified,
-            "max_delta": float(total_delta.min()),  # most negative = deepest carve
+            "max_delta_abs": float(np.abs(total_delta).max()),
+            "max_carve_depth": float(total_delta.min()),  # most negative = deepest carve
         },
+        issues=[],
     )
 
 

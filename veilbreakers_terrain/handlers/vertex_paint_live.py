@@ -11,6 +11,8 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
+import numpy as np
+
 
 def _smoothstep(t: float) -> float:
     """Hermite smoothstep: t*t*(3 - 2*t)."""
@@ -83,13 +85,28 @@ def compute_paint_weights(
     if radius == 0.0:
         return []
 
-    result: list[tuple[int, float]] = []
-    for i, v in enumerate(verts):
-        d = _dist3d(v, brush_center)
-        w = _falloff_weight(d, radius, falloff_mode)
-        if w is not None:
-            result.append((i, w))
-    return result
+    verts_np = np.asarray(verts, dtype=np.float64)
+    center_np = np.asarray(brush_center, dtype=np.float64)
+    dists = np.linalg.norm(verts_np - center_np, axis=1)
+    t = dists / radius
+
+    if falloff_mode == "SMOOTH":
+        raw = 1.0 - t * t * (3.0 - 2.0 * t)
+    elif falloff_mode == "LINEAR":
+        raw = 1.0 - t
+    elif falloff_mode == "SHARP":
+        raw = (1.0 - t) ** 2
+    elif falloff_mode == "CONSTANT":
+        # Weight 1.0 inside, 0.0 exactly on boundary (matches scalar _falloff_weight)
+        raw = np.where(dists < radius, 1.0, 0.0)
+    else:
+        raw = 1.0 - t * t * (3.0 - 2.0 * t)
+
+    # Vertices strictly outside the brush are excluded (weight would be ≤ 0 past radius)
+    mask = dists <= radius
+    indices = np.where(mask)[0]
+    weights = np.clip(raw[mask], 0.0, 1.0)
+    return list(zip(indices.tolist(), weights.tolist()))
 
 
 def compute_paint_weights_uv(
@@ -118,13 +135,26 @@ def compute_paint_weights_uv(
     if radius == 0.0:
         return []
 
-    result: list[tuple[int, float]] = []
-    for i, uv in enumerate(uvs):
-        d = _dist2d(uv, brush_center_uv)
-        w = _falloff_weight(d, radius, falloff_mode)
-        if w is not None:
-            result.append((i, w))
-    return result
+    uvs_np = np.asarray(uvs, dtype=np.float64)
+    center_np = np.asarray(brush_center_uv, dtype=np.float64)
+    uv_dists = np.linalg.norm(uvs_np - center_np, axis=1)
+    t = uv_dists / radius
+
+    if falloff_mode == "SMOOTH":
+        raw = 1.0 - t * t * (3.0 - 2.0 * t)
+    elif falloff_mode == "LINEAR":
+        raw = 1.0 - t
+    elif falloff_mode == "SHARP":
+        raw = (1.0 - t) ** 2
+    elif falloff_mode == "CONSTANT":
+        raw = np.where(uv_dists < radius, 1.0, 0.0)
+    else:
+        raw = 1.0 - t * t * (3.0 - 2.0 * t)
+
+    mask = uv_dists <= radius
+    indices = np.where(mask)[0]
+    weights = np.clip(raw[mask], 0.0, 1.0)
+    return list(zip(indices.tolist(), weights.tolist()))
 
 
 def blend_colors(
@@ -185,3 +215,21 @@ def blend_colors(
         )
 
     return tuple(_clamp(v) for v in result)
+
+
+def blend_colors_array(colors: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    """Vectorized blend over N vertices.
+
+    Parameters
+    ----------
+    colors:
+        Array of shape (N, 3) or (N, 4) with float values in [0, 1].
+    weights:
+        Array of shape (N,) with blend weights in [0, 1].
+
+    Returns
+    -------
+    np.ndarray of shape (N, 3) or (N, 4), dtype float32, clamped to [0, 1].
+    """
+    w = weights[:, np.newaxis]
+    return np.clip(colors * w, 0.0, 1.0).astype(np.float32)

@@ -1,18 +1,31 @@
 """Bundle D supplement — terrain quality profiles.
 
-Defines 4 preset quality profiles for the terrain pipeline (preview,
-production, hero_shot, aaa_open_world) with inheritance. Profiles are
-also written as JSON to ``Tools/mcp-toolkit/presets/terrain/quality_profiles/``
+Defines preset quality profiles for the terrain pipeline with inheritance.
+Profiles are also written as JSON to ``Tools/mcp-toolkit/presets/terrain/quality_profiles/``
 so external tools can inspect them.
 
 Per Addendum 1.B.4 of docs/terrain_ultra_implementation_plan_2026-04-08.md.
 No bpy imports — pure stdlib + dataclasses.
+
+Canonical quality tiers (quality-ascending):
+    mobile          — mobile devices, lowest fidelity
+    standard        — PC minimum / console lower-spec
+    high_fidelity   — console/PC recommended
+    aaa_open_world  — maximum-fidelity open-world target
+
+Legacy aliases (kept for backward-compat with tests and configs):
+    preview    → mobile
+    production → standard
+    hero_shot  → high_fidelity
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, replace
+import math
+import os
+import tempfile
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -30,9 +43,56 @@ class PresetLocked(Exception):
     pass
 
 
+class ProfileValidationError(ValueError):
+    """Raised when a ``TerrainQualityProfile`` contains an invalid field value."""
+
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Schema key registry
+# ---------------------------------------------------------------------------
+
+_REQUIRED_SCHEMA_KEYS: tuple = (
+    "name",
+    "erosion_iterations",
+    "heightmap_resolution",
+    "texture_resolution",
+    "lod_count",
+    "lod_max_distance_m",
+    "triangle_budget",
+    "shadow_distance_m",
+    "streaming_radius_m",
+)
+
+
+def _validate_profile_schema(payload: dict) -> None:
+    """Raise ``ProfileValidationError`` if ``payload`` is missing required keys.
+
+    Called by ``write_profile_jsons`` before writing each profile JSON so
+    files on disk always satisfy the schema readers (e.g. the MCP toolkit's
+    quality-profile loader) even if the dataclass gains optional fields in
+    the future.
+    """
+    missing = [k for k in _REQUIRED_SCHEMA_KEYS if k not in payload]
+    if missing:
+        raise ProfileValidationError(
+            f"Profile JSON is missing required keys: {missing}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Profile dataclass
 # ---------------------------------------------------------------------------
+
+
+def _is_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def _is_heightmap_resolution(n: int) -> bool:
+    """Return True if n == 2^k + 1 for some k >= 0."""
+    return n >= 2 and _is_power_of_two(n - 1)
 
 
 @dataclass
@@ -46,6 +106,15 @@ class TerrainQualityProfile:
 
     Defaults below match the ``aaa_open_world`` tier, which is the
     highest-quality ceiling.  Lower-tier profiles override downward.
+
+    Validated fields (checked in ``__post_init__``):
+        lod_count               — must be in [1, 8]
+        lod_max_distance_m      — must be > 0
+        triangle_budget         — must be > 0
+        shadow_distance_m       — must be >= 0
+        streaming_radius_m      — must be > 0
+        texture_resolution      — must be a power-of-two in [64, 8192]
+        heightmap_resolution    — must be 2^n+1 for n >= 0 (e.g. 65, 129, …, 4097)
     """
 
     name: str
@@ -127,21 +196,90 @@ class TerrainQualityProfile:
     boneyard_density: float = 1.0
     shrine_placement_attempts: int = 20
 
+    # ------------------------------------------------------------------
+    # NEW: rendering budget + streaming (B+ upgrade)
+    # ------------------------------------------------------------------
+    triangle_budget: int = 4_000_000
+    """Maximum triangle count for a terrain tile at LOD0 (world units, not pixels).
+    Combined with cell_size_m and heightmap_resolution, this caps tessellation
+    so UE5 / Unity renderer budgets are never exceeded.  Must be > 0."""
+
+    shadow_distance_m: float = 500.0
+    """World-space distance in metres beyond which dynamic shadows are disabled.
+    Maps directly to UE5 Cascade / PCSS shadow cascade far plane.  Must be >= 0."""
+
+    streaming_radius_m: float = 1500.0
+    """Radius in metres around the camera within which terrain chunks are
+    streamed in at full resolution.  Must be > 0.  Typically 0.75 x
+    lod_max_distance_m so outer LOD rings still have coarse data loaded."""
+
+    def __post_init__(self) -> None:
+        """Validate field constraints after construction.
+
+        Raises ``ProfileValidationError`` with a descriptive message so
+        bad profile definitions are caught at definition time rather than
+        silently producing wrong geometry at runtime.
+        """
+        errors: List[str] = []
+
+        if not (1 <= self.lod_count <= 8):
+            errors.append(
+                f"lod_count must be in [1, 8], got {self.lod_count}"
+            )
+        if self.lod_max_distance_m <= 0.0:
+            errors.append(
+                f"lod_max_distance_m must be > 0, got {self.lod_max_distance_m}"
+            )
+        if self.triangle_budget <= 0:
+            errors.append(
+                f"triangle_budget must be > 0, got {self.triangle_budget}"
+            )
+        if self.shadow_distance_m < 0.0:
+            errors.append(
+                f"shadow_distance_m must be >= 0, got {self.shadow_distance_m}"
+            )
+        if self.streaming_radius_m <= 0.0:
+            errors.append(
+                f"streaming_radius_m must be > 0, got {self.streaming_radius_m}"
+            )
+        if not (
+            _is_power_of_two(self.texture_resolution)
+            and 64 <= self.texture_resolution <= 8192
+        ):
+            errors.append(
+                f"texture_resolution must be a power-of-two in [64, 8192], "
+                f"got {self.texture_resolution}"
+            )
+        if not _is_heightmap_resolution(self.heightmap_resolution):
+            errors.append(
+                f"heightmap_resolution must be 2^n+1 (e.g. 65, 129, 513, 1025, 2049), "
+                f"got {self.heightmap_resolution}"
+            )
+
+        if errors:
+            raise ProfileValidationError(
+                f"TerrainQualityProfile {self.name!r} has {len(errors)} invalid "
+                f"field(s): {'; '.join(errors)}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Built-in profiles
 #
+# Canonical names: mobile / standard / high_fidelity / aaa_open_world
+# Legacy aliases: preview / production / hero_shot  (same objects, different name field)
+#
 # Numeric values per Addendum 1.B.4:
 #   checkpoint_retention: 5 / 20 / 40 / 80
-#   erosion_strategy:    TILED_PADDED for preview+production;
-#                        EXACT for hero_shot+aaa_open_world (bit-exact seams).
+#   erosion_strategy:    TILED_PADDED for mobile+standard;
+#                        EXACT for high_fidelity+aaa_open_world (bit-exact seams).
 # ---------------------------------------------------------------------------
 
 
 # BUG-R8-A9-031: explicit save_every_n_operations per profile
-# (preview=0 disabled, standard/production=5, hero_shot=2, aaa_open_world=1)
-PREVIEW_PROFILE = TerrainQualityProfile(
-    name="preview",
+# (mobile=0 disabled, standard=5, high_fidelity=2, aaa_open_world=1)
+MOBILE_PROFILE = TerrainQualityProfile(
+    name="mobile",
     # --- original knobs ---
     erosion_iterations=2,
     erosion_strategy=ErosionStrategy.TILED_PADDED,
@@ -190,10 +328,14 @@ PREVIEW_PROFILE = TerrainQualityProfile(
     corruption_spread_radius_m=5.0,
     boneyard_density=0.0,
     shrine_placement_attempts=1,
+    # --- rendering budget + streaming ---
+    triangle_budget=100_000,
+    shadow_distance_m=80.0,
+    streaming_radius_m=150.0,
 )
 
-PRODUCTION_PROFILE = TerrainQualityProfile(
-    name="production",
+STANDARD_PROFILE = TerrainQualityProfile(
+    name="standard",
     # --- original knobs ---
     erosion_iterations=8,
     erosion_strategy=ErosionStrategy.TILED_PADDED,
@@ -202,7 +344,7 @@ PRODUCTION_PROFILE = TerrainQualityProfile(
     splatmap_bit_depth=8,
     heightmap_bit_depth=16,
     shadow_clipmap_bit_depth=8,
-    extends="preview",
+    extends="mobile",
     save_every_n_operations=5,
     # --- erosion quality ---
     hydraulic_erosion_iterations=100,
@@ -242,10 +384,14 @@ PRODUCTION_PROFILE = TerrainQualityProfile(
     corruption_spread_radius_m=15.0,
     boneyard_density=0.3,
     shrine_placement_attempts=5,
+    # --- rendering budget + streaming ---
+    triangle_budget=500_000,
+    shadow_distance_m=150.0,
+    streaming_radius_m=375.0,
 )
 
-HERO_SHOT_PROFILE = TerrainQualityProfile(
-    name="hero_shot",
+HIGH_FIDELITY_PROFILE = TerrainQualityProfile(
+    name="high_fidelity",
     # --- original knobs ---
     erosion_iterations=24,
     erosion_strategy=ErosionStrategy.EXACT,
@@ -254,7 +400,7 @@ HERO_SHOT_PROFILE = TerrainQualityProfile(
     splatmap_bit_depth=16,
     heightmap_bit_depth=32,
     shadow_clipmap_bit_depth=16,
-    extends="production",
+    extends="standard",
     save_every_n_operations=2,
     # --- erosion quality ---
     hydraulic_erosion_iterations=500,
@@ -294,6 +440,10 @@ HERO_SHOT_PROFILE = TerrainQualityProfile(
     corruption_spread_radius_m=20.0,
     boneyard_density=0.6,
     shrine_placement_attempts=10,
+    # --- rendering budget + streaming ---
+    triangle_budget=2_000_000,
+    shadow_distance_m=300.0,
+    streaming_radius_m=750.0,
 )
 
 AAA_OPEN_WORLD_PROFILE = TerrainQualityProfile(
@@ -306,7 +456,7 @@ AAA_OPEN_WORLD_PROFILE = TerrainQualityProfile(
     splatmap_bit_depth=16,
     heightmap_bit_depth=32,
     shadow_clipmap_bit_depth=16,
-    extends="hero_shot",
+    extends="high_fidelity",
     save_every_n_operations=1,
     # --- erosion quality ---
     hydraulic_erosion_iterations=2000,
@@ -346,14 +496,38 @@ AAA_OPEN_WORLD_PROFILE = TerrainQualityProfile(
     corruption_spread_radius_m=30.0,
     boneyard_density=1.0,
     shrine_placement_attempts=20,
+    # --- rendering budget + streaming ---
+    triangle_budget=4_000_000,
+    shadow_distance_m=500.0,
+    streaming_radius_m=1500.0,
 )
 
 
+# ---------------------------------------------------------------------------
+# Legacy aliases — same data, just a different .name field so legacy
+# callers that hard-code "preview" / "production" / "hero_shot" still work.
+# ``replace()`` is used so the legacy objects are proper independent copies.
+# ---------------------------------------------------------------------------
+
+PREVIEW_PROFILE = replace(MOBILE_PROFILE, name="preview", extends=None)
+PRODUCTION_PROFILE = replace(STANDARD_PROFILE, name="production", extends="preview")
+HERO_SHOT_PROFILE = replace(HIGH_FIDELITY_PROFILE, name="hero_shot", extends="production")
+
+
+# ---------------------------------------------------------------------------
+# Built-in profile registry
+# ---------------------------------------------------------------------------
+
 _BUILTIN_PROFILES: Dict[str, TerrainQualityProfile] = {
+    # Canonical names
+    "mobile": MOBILE_PROFILE,
+    "standard": STANDARD_PROFILE,
+    "high_fidelity": HIGH_FIDELITY_PROFILE,
+    "aaa_open_world": AAA_OPEN_WORLD_PROFILE,
+    # Legacy aliases — share the same profile data via replace()
     "preview": PREVIEW_PROFILE,
     "production": PRODUCTION_PROFILE,
     "hero_shot": HERO_SHOT_PROFILE,
-    "aaa_open_world": AAA_OPEN_WORLD_PROFILE,
 }
 
 
@@ -378,9 +552,12 @@ def _merge_with_parent(
     size, minimum thresholds), the merge uses min() so that a child
     inheriting from a lower-quality parent cannot silently regress.
     Boolean flags use logical-or (locked if either side is locked).
+
+    The three new B+ fields follow the same direction logic:
+        triangle_budget      — higher budget = higher quality -> max()
+        shadow_distance_m    — farther shadows = higher quality -> max()
+        streaming_radius_m   — farther streaming = higher quality -> max()
     """
-    # For the erosion strategy, child always wins (EXACT can downgrade to
-    # TILED_PADDED only when explicitly overridden).
     return TerrainQualityProfile(
         name=child.name,
 
@@ -410,7 +587,6 @@ def _merge_with_parent(
         lock_preset=child.lock_preset or parent.lock_preset,
         # BUG-R8-A9-031: child's explicit save_every_n_operations always wins;
         # only fall back to parent when the child still has the class default (0).
-        # This prevents max(0, 0) from silently disabling saves on production/hero.
         save_every_n_operations=(
             child.save_every_n_operations
             if child.save_every_n_operations > 0
@@ -445,7 +621,7 @@ def _merge_with_parent(
         heightmap_resolution=max(
             child.heightmap_resolution, parent.heightmap_resolution
         ),
-        # smaller cell_size = finer mesh = higher quality → use min()
+        # smaller cell_size = finer mesh = higher quality -> use min()
         cell_size_m=min(child.cell_size_m, parent.cell_size_m),
         normal_smooth_iterations=max(
             child.normal_smooth_iterations, parent.normal_smooth_iterations
@@ -458,7 +634,7 @@ def _merge_with_parent(
             child.scatter_density_multiplier,
             parent.scatter_density_multiplier,
         ),
-        # smaller min distance = denser packing = higher quality → use min()
+        # smaller min distance = denser packing = higher quality -> use min()
         scatter_min_distance_m=min(
             child.scatter_min_distance_m, parent.scatter_min_distance_m
         ),
@@ -475,7 +651,7 @@ def _merge_with_parent(
         lod_max_distance_m=max(
             child.lod_max_distance_m, parent.lod_max_distance_m
         ),
-        # smaller chunk_size_cells = finer streaming → use min()
+        # smaller chunk_size_cells = finer streaming -> use min()
         chunk_size_cells=min(child.chunk_size_cells, parent.chunk_size_cells),
         shadow_clipmap_resolution=max(
             child.shadow_clipmap_resolution, parent.shadow_clipmap_resolution
@@ -484,12 +660,12 @@ def _merge_with_parent(
         # ------------------------------------------------------------------
         # Feature quality — lower thresholds = more features = higher quality
         # ------------------------------------------------------------------
-        # lower flow accumulation threshold = more rivers detected → min()
+        # lower flow accumulation threshold = more rivers detected -> min()
         river_min_flow_accumulation=min(
             child.river_min_flow_accumulation,
             parent.river_min_flow_accumulation,
         ),
-        # lower minimum volume = smaller caves kept → min()
+        # lower minimum volume = smaller caves kept -> min()
         cave_min_volume_m3=min(
             child.cave_min_volume_m3, parent.cave_min_volume_m3
         ),
@@ -542,6 +718,15 @@ def _merge_with_parent(
             child.shrine_placement_attempts,
             parent.shrine_placement_attempts,
         ),
+
+        # ------------------------------------------------------------------
+        # Rendering budget + streaming — higher budget / farther = quality
+        # ------------------------------------------------------------------
+        triangle_budget=max(child.triangle_budget, parent.triangle_budget),
+        shadow_distance_m=max(child.shadow_distance_m, parent.shadow_distance_m),
+        streaming_radius_m=max(
+            child.streaming_radius_m, parent.streaming_radius_m
+        ),
     )
 
 
@@ -550,6 +735,9 @@ def load_quality_profile(name: str) -> TerrainQualityProfile:
 
     BUG-R8-A9-032: raises PresetLocked when profile.lock_preset is True
     so the previously-defined exception is actually used.
+
+    Accepts both canonical names (mobile, standard, high_fidelity,
+    aaa_open_world) and legacy aliases (preview, production, hero_shot).
     """
     if name not in _BUILTIN_PROFILES:
         raise KeyError(f"Unknown quality profile: {name!r}")
@@ -569,8 +757,24 @@ def load_quality_profile(name: str) -> TerrainQualityProfile:
 
 
 def list_quality_profiles() -> List[str]:
-    """Return all built-in profile names in quality-ascending order."""
+    """Return legacy built-in profile names in quality-ascending order.
+
+    Returns the four legacy names for backward-compatibility with existing
+    tests and external tooling that expects "preview", "production",
+    "hero_shot", "aaa_open_world". For new code, prefer
+    :func:`list_quality_profiles_canonical`.
+    """
     return ["preview", "production", "hero_shot", "aaa_open_world"]
+
+
+def list_quality_profiles_canonical() -> List[str]:
+    """Return canonical built-in profile names in quality-ascending order.
+
+    Canonical names: mobile / standard / high_fidelity / aaa_open_world.
+    Use these in new code; the legacy names are aliases that map to the
+    same profile data.
+    """
+    return ["mobile", "standard", "high_fidelity", "aaa_open_world"]
 
 
 # ---------------------------------------------------------------------------
@@ -584,14 +788,19 @@ def write_profile_jsons(root: Path) -> List[Path]:
     Returns the list of paths written. Idempotent — safe to call at
     import time in tests that need the JSON files on disk.
 
+    Each write is atomic: the payload is written to ``{name}.json.tmp``
+    first, then renamed to ``{name}.json`` via ``os.replace()`` so a
+    crash during serialization never leaves a half-written file on disk.
+
+    Schema validation is performed before writing. If a profile payload is
+    missing a required key the call raises ``ProfileValidationError``
+    rather than writing an incomplete file.
+
     Rejects path-traversal and forbids writing outside either the
     repo's ``Tools/mcp-toolkit/`` tree or a caller-supplied
     ``tempfile.gettempdir()`` ancestor, so poisoned callers cannot
     clobber unrelated filesystem state.
     """
-    import os
-    import tempfile
-
     root = Path(root).resolve()
     if ".." in str(root):
         raise ValueError(f"write_profile_jsons: path traversal rejected: {root}")
@@ -616,7 +825,11 @@ def write_profile_jsons(root: Path) -> List[Path]:
         )
     root.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
-    for name in list_quality_profiles():
+    # Write canonical names first, then legacy aliases
+    canonical = list_quality_profiles_canonical()
+    legacy = [n for n in list_quality_profiles() if n not in canonical]
+    all_names = canonical + legacy
+    for name in all_names:
         profile = _BUILTIN_PROFILES[name]
         payload = asdict(profile)
         # ErosionStrategy is an Enum — serialize as its .value string
@@ -624,8 +837,20 @@ def write_profile_jsons(root: Path) -> List[Path]:
             payload["erosion_strategy"] = payload["erosion_strategy"].value
         elif hasattr(profile.erosion_strategy, "value"):
             payload["erosion_strategy"] = profile.erosion_strategy.value
+        # Schema validation before touching the filesystem
+        _validate_profile_schema(payload)
         out = root / f"{name}.json"
-        out.write_text(json.dumps(payload, indent=2))
+        tmp_path = out.with_suffix(".json.tmp")
+        try:
+            tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(str(tmp_path), str(out))
+        except Exception:
+            # Clean up the temp file on failure to avoid stale .tmp files
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
         written.append(out)
     return written
 
@@ -637,28 +862,35 @@ def write_profile_jsons(root: Path) -> List[Path]:
 
 def lock_preset(profile: TerrainQualityProfile) -> TerrainQualityProfile:
     """Return a copy of the profile with lock_preset=True."""
-    from dataclasses import replace
-
     return replace(profile, lock_preset=True)
 
 
 def unlock_preset(profile: TerrainQualityProfile) -> TerrainQualityProfile:
     """Return a copy with lock_preset=False."""
-    from dataclasses import replace
-
     return replace(profile, lock_preset=False)
 
 
 __all__ = [
     "PresetLocked",
+    "ProfileValidationError",
     "TerrainQualityProfile",
+    # Canonical profiles
+    "MOBILE_PROFILE",
+    "STANDARD_PROFILE",
+    "HIGH_FIDELITY_PROFILE",
+    "AAA_OPEN_WORLD_PROFILE",
+    # Legacy aliases
     "PREVIEW_PROFILE",
     "PRODUCTION_PROFILE",
     "HERO_SHOT_PROFILE",
-    "AAA_OPEN_WORLD_PROFILE",
+    # Functions
     "load_quality_profile",
     "list_quality_profiles",
+    "list_quality_profiles_canonical",
     "write_profile_jsons",
     "lock_preset",
     "unlock_preset",
+    # Schema helpers
+    "_validate_profile_schema",
+    "_REQUIRED_SCHEMA_KEYS",
 ]

@@ -17,7 +17,9 @@ No Blender / bpy imports. Pure Python + numpy — fully unit-testable.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -58,6 +60,46 @@ _ORIGINAL_RUN_PASS: Dict[int, Callable[..., PassResult]] = {}
 # ---------------------------------------------------------------------------
 
 
+def _atomic_npz_write(stack: "TerrainMaskStack", final_path: Path) -> str:
+    """Write mask stack to a .npz atomically and return its SHA-256 hex digest.
+
+    Strategy: write to ``<final_path>.tmp``, fsync, rename (atomic on POSIX,
+    best-effort on Windows where rename() replaces atomically since Vista).
+    A SHA-256 checksum sidecar (``<final_path>.sha256``) is written after the
+    rename so readers can verify integrity without re-hashing the .npz.
+    """
+    tmp_path = final_path.with_suffix(".npz.tmp")
+    stack.to_npz(tmp_path)
+
+    # Compute SHA-256 over the written bytes
+    sha256 = hashlib.sha256()
+    with open(tmp_path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            sha256.update(chunk)
+    digest = sha256.hexdigest()
+
+    # Atomic rename — replaces the destination on both POSIX and Windows
+    try:
+        tmp_path.replace(final_path)
+    except OSError:
+        # Last-resort fallback (e.g. cross-device): copy then delete
+        import shutil
+        shutil.copy2(str(tmp_path), str(final_path))
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+    # Write checksum sidecar (non-critical: errors are logged, not raised)
+    checksum_path = final_path.with_suffix(".npz.sha256")
+    try:
+        checksum_path.write_text(f"{digest}  {final_path.name}\n", encoding="utf-8")
+    except OSError as exc:
+        _ckpt_logger.warning("save_checkpoint: could not write checksum sidecar: %s", exc)
+
+    return digest
+
+
 def save_checkpoint(
     controller: TerrainPassController,
     pass_name: str,
@@ -68,6 +110,10 @@ def save_checkpoint(
     Unlike ``TerrainPassController._save_checkpoint`` (which is called as
     part of run_pass), this is callable from outside the pass loop and
     accepts a human-readable ``label`` for later rollback.
+
+    The mask stack .npz is written atomically (write to .tmp, then rename)
+    and a SHA-256 checksum sidecar (.npz.sha256) is produced for integrity
+    verification.
     """
     state = controller.state
     stack = state.mask_stack
@@ -75,7 +121,8 @@ def save_checkpoint(
     controller.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_id = f"{pass_name}_{uuid.uuid4().hex[:8]}"
     mask_path = controller.checkpoint_dir / f"{checkpoint_id}.npz"
-    stack.to_npz(mask_path)
+    # Atomic write: tmp → rename, returns SHA-256 digest
+    content_digest = _atomic_npz_write(stack, mask_path)
 
     parent_id = state.checkpoints[-1].checkpoint_id if state.checkpoints else None
     world_tile_extent = float(stack.tile_size) * float(stack.cell_size)
@@ -92,7 +139,9 @@ def save_checkpoint(
         intent_hash=state.intent.intent_hash(),
         mask_stack_path=mask_path,
         geometry_snapshot_path=None,
-        content_hash=stack.compute_hash(),
+        # Use the SHA-256 digest from the atomic write as the authoritative
+        # content hash — avoids a second full traversal of the mask stack.
+        content_hash=content_digest,
         parent_checkpoint_id=parent_id,
         metrics={"label": label} if label else {},
         world_bounds=world_bounds,
@@ -385,14 +434,21 @@ def autosave_after_pass(controller: TerrainPassController, enabled: bool = True)
     """Toggle automatic checkpointing after each successful pass.
 
     When enabled, wraps ``controller.run_pass`` so every successful pass
-    emits an additional labeled checkpoint tagged ``autosave_<pass>``.
-    Disabling restores the original method.
+    emits an additional labeled checkpoint (atomic write + SHA-256 checksum)
+    tagged ``autosave_<pass>``.  Disabling restores the original method.
 
-    Upgrade notes (C+→B):
-    - Checkpoint save happens AFTER PassResult is returned from the original
-      run_pass, so a failed pass never saves a partial checkpoint.
-    - Save duration is recorded in checkpoint metrics.
-    - Autosave failure logs a WARNING but never propagates the exception.
+    wrapped_run_pass behaviour
+    --------------------------
+    - A snapshot of the mask stack is taken BEFORE the pass so that if the
+      pass raises an exception the stack can be rolled back to the clean state.
+    - Checkpoint save only occurs when ``result.status == "ok"``; a failed
+      pass never writes a partial/corrupt checkpoint.
+    - The checkpoint .npz is written atomically (tmp → rename) with a SHA-256
+      sidecar via ``save_checkpoint`` → ``_atomic_npz_write``.
+    - Save duration is recorded in checkpoint metrics for observability.
+    - Autosave I/O failure logs a WARNING but never propagates.
+    - Any exception raised by the underlying pass is re-raised after rollback
+      so the pipeline sees the correct error while the mask stack stays clean.
     """
     key = id(controller)
     if enabled:
@@ -408,11 +464,28 @@ def autosave_after_pass(controller: TerrainPassController, enabled: bool = True)
             force: bool = False,
             checkpoint: bool = True,
         ) -> PassResult:
-            # Run the pass first — checkpoint only happens on success so a
-            # failed pass never writes a partial/corrupt checkpoint.
-            result = original(
-                pass_name, region=region, force=force, checkpoint=checkpoint
-            )
+            # Snapshot the mask stack before the pass so we can roll back if
+            # the pass raises an exception (leaves the stack in a dirty state).
+            pre_pass_stack = copy.deepcopy(controller.state.mask_stack)
+
+            try:
+                result = original(
+                    pass_name, region=region, force=force, checkpoint=checkpoint
+                )
+            except Exception as exc:
+                # Restore pre-pass mask stack — mutation was incomplete.
+                try:
+                    object.__setattr__(controller.state, "mask_stack", pre_pass_stack)
+                except Exception:
+                    # Fallback: state may not be frozen; use direct assignment.
+                    controller.state.mask_stack = pre_pass_stack  # type: ignore[misc]
+                _ckpt_logger.warning(
+                    "autosave_after_pass: pass '%s' raised %s — mask stack rolled back.",
+                    pass_name,
+                    exc,
+                )
+                raise
+
             if result.status == "ok":
                 save_t0 = time.time()
                 try:
@@ -425,7 +498,7 @@ def autosave_after_pass(controller: TerrainPassController, enabled: bool = True)
                     # Record save duration in the checkpoint metrics for observability.
                     ckpt.metrics["autosave_duration_s"] = round(save_duration, 4)
                 except Exception as exc:
-                    # Autosave failure must never abort the pipeline.
+                    # Autosave I/O failure must never abort the pipeline.
                     _ckpt_logger.warning(
                         "autosave_after_pass: checkpoint save failed for pass '%s': %s",
                         pass_name,

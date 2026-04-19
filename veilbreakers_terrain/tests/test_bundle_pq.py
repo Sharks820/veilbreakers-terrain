@@ -69,21 +69,24 @@ class TestDEMImport:
         bounds = BBox(0.0, 0.0, 1000.0, 1000.0)
         a = import_dem_tile(src, bounds)
         b = import_dem_tile(src, bounds)
-        np.testing.assert_array_equal(a, b)
+        np.testing.assert_array_equal(a.heightmap, b.heightmap)
 
     def test_synthetic_dem_varies_with_bbox(self):
         src = DEMSource(source_type="synthetic", url_or_path="", resolution_m=30.0)
         a = import_dem_tile(src, BBox(0.0, 0.0, 1000.0, 1000.0))
         b = import_dem_tile(src, BBox(10.0, 10.0, 1010.0, 1010.0))
-        assert not np.array_equal(a, b)
+        assert not np.array_equal(a.heightmap, b.heightmap)
 
     def test_loads_real_npy(self, tmp_path: Path):
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         p = tmp_path / "dem.npy"
         np.save(str(p), arr)
         src = DEMSource(source_type="local", url_or_path=str(p), resolution_m=1.0)
-        out = import_dem_tile(src, BBox(0.0, 0.0, 8.0, 8.0))
-        np.testing.assert_allclose(out, arr.astype(np.float32))
+        # Pass target_shape matching the source so no resampling occurs
+        tile = import_dem_tile(src, BBox(0.0, 0.0, 8.0, 8.0), target_shape=(8, 8))
+        # import_dem_tile normalises to [0, 1]; reconstruct expected normalised array
+        expected = (arr - arr.min()) / (arr.max() - arr.min())
+        np.testing.assert_allclose(tile.heightmap, expected.astype(np.float32), rtol=1e-5)
 
     def test_resample_shape(self):
         dem = np.arange(64, dtype=np.float32).reshape(8, 8)

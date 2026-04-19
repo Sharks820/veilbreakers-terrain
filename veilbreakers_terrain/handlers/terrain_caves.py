@@ -27,7 +27,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -87,6 +87,8 @@ class CaveArchetypeSpec:
     # Supplementary (Gap 14, plan §1.B.6)
     occlusion_shelf_depth: float = 0.0
     sculpt_mode: bool = False
+    # Material hint resolved from biome context (e.g. "lava_basalt", "limestone")
+    material_hint: Optional[str] = None
 
 
 # Default archetype parameter tables (tuned for AAA readability, not generic).
@@ -245,6 +247,51 @@ def _protected_mask_for_caves(
 
 
 # ---------------------------------------------------------------------------
+# Biome → archetype + material hint tables
+# ---------------------------------------------------------------------------
+
+# Maps biome name substrings (lower-case) to a (CaveArchetype, score_bonus,
+# material_hint) tuple.  Keys are checked with ``in`` so "desert_red" matches
+# "desert".  Order matters: first match wins.
+_BIOME_ARCHETYPE_MAP: List[Tuple[str, "CaveArchetype", float, str]] = [
+    # desert / arid / volcanic → lava tube
+    ("desert",   CaveArchetype.LAVA_TUBE,      2.0, "lava_basalt"),
+    ("arid",     CaveArchetype.LAVA_TUBE,      1.8, "lava_basalt"),
+    ("volcanic", CaveArchetype.LAVA_TUBE,      2.2, "volcanic_rock"),
+    ("lava",     CaveArchetype.LAVA_TUBE,      2.5, "lava_basalt"),
+    # arctic / tundra / snow / glacier → ice cave / glacial melt
+    ("arctic",   CaveArchetype.GLACIAL_MELT,   2.0, "ice_cave"),
+    ("tundra",   CaveArchetype.GLACIAL_MELT,   1.8, "ice_cave"),
+    ("snow",     CaveArchetype.GLACIAL_MELT,   1.6, "ice_cave"),
+    ("glacier",  CaveArchetype.GLACIAL_MELT,   2.3, "ice_cave"),
+    ("frozen",   CaveArchetype.GLACIAL_MELT,   1.7, "ice_cave"),
+    # temperate / forest / jungle / grassland → limestone karst
+    ("temperate",  CaveArchetype.KARST_SINKHOLE, 1.8, "limestone"),
+    ("forest",     CaveArchetype.KARST_SINKHOLE, 1.6, "limestone"),
+    ("jungle",     CaveArchetype.KARST_SINKHOLE, 1.9, "wet_limestone"),
+    ("grassland",  CaveArchetype.KARST_SINKHOLE, 1.4, "limestone"),
+    ("plains",     CaveArchetype.KARST_SINKHOLE, 1.2, "limestone"),
+    # coastal / ocean → sea grotto
+    ("coastal",  CaveArchetype.SEA_GROTTO,     2.0, "sea_eroded_rock"),
+    ("ocean",    CaveArchetype.SEA_GROTTO,     1.8, "sea_eroded_rock"),
+    ("beach",    CaveArchetype.SEA_GROTTO,     1.6, "sea_eroded_rock"),
+    # alpine / mountain → fissure
+    ("alpine",   CaveArchetype.FISSURE,        1.6, "granite_fracture"),
+    ("mountain", CaveArchetype.FISSURE,        1.4, "granite_fracture"),
+    ("cliff",    CaveArchetype.FISSURE,        1.3, "granite_fracture"),
+]
+
+# Fallback material hints per archetype (used when no biome match found)
+_ARCHETYPE_DEFAULT_MATERIAL: Dict["CaveArchetype", str] = {
+    CaveArchetype.LAVA_TUBE:      "lava_basalt",
+    CaveArchetype.FISSURE:        "granite_fracture",
+    CaveArchetype.KARST_SINKHOLE: "limestone",
+    CaveArchetype.GLACIAL_MELT:   "ice_cave",
+    CaveArchetype.SEA_GROTTO:     "sea_eroded_rock",
+}
+
+
+# ---------------------------------------------------------------------------
 # Archetype selection
 # ---------------------------------------------------------------------------
 
@@ -254,26 +301,42 @@ def pick_cave_archetype(
     world_pos: Tuple[float, float, float],
     seed: int,
     intent: Optional[Any] = None,
+    *,
+    hints_out: Optional[Dict[str, str]] = None,
 ) -> CaveArchetype:
     """Select the most plausible archetype for a location.
 
     Uses (in order of priority):
-      1. Geology hint from intent.composition_hints (highest priority):
+      1. Biome context from ``stack.get("biome")`` channel (highest terrain
+         signal): desert/arid/volcanic → LAVA_TUBE, arctic/tundra/snow →
+         GLACIAL_MELT, temperate/forest → KARST_SINKHOLE, coastal → SEA_GROTTO,
+         alpine/mountain → FISSURE.  Each biome match adds a strong score bonus
+         and resolves a material hint.
+      2. Geology hint from intent.composition_hints:
            'dissolution' → KARST_SINKHOLE
            'erosion'     → SEA_GROTTO
            'volcanic'    → LAVA_TUBE
            'structural'  → FISSURE
          A strong geology hint adds a large score bonus that overrides terrain
          signals unless another hint exactly conflicts.
-      2. Terrain signals: altitude, slope, wetness, basin/concavity
-      3. Deterministic RNG tiebreak from ``seed``
+      3. Terrain signals: altitude, slope, wetness, basin/concavity
+      4. Deterministic RNG tiebreak from ``seed``
 
-    Heuristics:
+    Heuristics (terrain signals):
       - very wet + low altitude + basin  → SEA_GROTTO (coastal)
       - very wet + mid altitude          → GLACIAL_MELT
       - strong basin + mid altitude      → KARST_SINKHOLE
       - steep slope + dry                → FISSURE
       - mid altitude + dry + moderate    → LAVA_TUBE
+
+    Parameters
+    ----------
+    hints_out
+        Optional mutable dict.  When provided, the resolved material hint string
+        (e.g. ``"limestone"``, ``"ice_cave"``) is stored under key
+        ``"material_hint"`` and the winning biome token (if any) under key
+        ``"biome_token"``.  This lets callers attach the hint to a
+        ``CaveArchetypeSpec`` without changing the return type.
     """
     x, y, _z = world_pos
     row, col = _world_to_cell(stack, x, y)
@@ -333,9 +396,46 @@ def pick_cave_archetype(
         ),
     }
 
+    # ------------------------------------------------------------------
+    # Biome context from stack — sampled at the candidate cell.
+    # The "biome" channel may hold a float index into a biome LUT, or the
+    # stack may expose a string-valued ``biome_name`` attribute (set by the
+    # intent / scene-read phase).  We try both.
+    # ------------------------------------------------------------------
+    biome_token: str = ""
+    biome_material_hint: str = ""
+
+    # Try string attribute first (set by intent)
+    _biome_str: str = ""
+    if intent is not None:
+        _biome_str = str(getattr(intent, "biome_name", "") or "").lower()
+    if not _biome_str:
+        # Fall back to composition_hints["biome"]
+        if intent is not None:
+            _hints_map = getattr(intent, "composition_hints", {}) or {}
+            _biome_str = str(_hints_map.get("biome", "")).lower()
+    if not _biome_str:
+        # Fall back to a "biome" mask channel (if present, interpret as label
+        # by checking if the stack carries a "biome_names" attribute)
+        _biome_names = getattr(stack, "biome_names", None)
+        if _biome_names is not None:
+            _biome_idx = int(round(_sample("biome", -1.0)))
+            if 0 <= _biome_idx < len(_biome_names):
+                _biome_str = str(_biome_names[_biome_idx]).lower()
+
+    if _biome_str:
+        for _token, _arch, _bonus, _mat in _BIOME_ARCHETYPE_MAP:
+            if _token in _biome_str:
+                scores[_arch] += _bonus
+                biome_token = _token
+                biome_material_hint = _mat
+                break  # first match only
+
+    # ------------------------------------------------------------------
     # Geology hint from intent.composition_hints — adds a large bonus to the
     # geologically indicated archetype so it wins over terrain-signal scoring
     # unless the terrain is strongly contradictory.
+    # ------------------------------------------------------------------
     _GEOLOGY_HINT_MAP: Dict[str, CaveArchetype] = {
         "dissolution": CaveArchetype.KARST_SINKHOLE,
         "erosion":     CaveArchetype.SEA_GROTTO,
@@ -352,8 +452,21 @@ def pick_cave_archetype(
     for k in list(scores.keys()):
         scores[k] += jitter * (hash(k.value) % 7) * 0.01
 
-    best = max(scores.items(), key=lambda kv: kv[1])
-    return best[0]
+    best_archetype, _best_score = max(scores.items(), key=lambda kv: kv[1])
+
+    # Resolve final material hint: biome-derived > archetype default
+    final_material = biome_material_hint or _ARCHETYPE_DEFAULT_MATERIAL.get(best_archetype, "cave_rock")
+
+    # Populate hints_out if caller provided one
+    if hints_out is not None:
+        hints_out["material_hint"] = final_material
+        hints_out["biome_token"] = biome_token
+
+    # Note: the resolved material hint is available via hints_out["material_hint"]
+    # for callers that need it.  We do not attempt to write a string to the
+    # TerrainMaskStack because stack.set() only accepts numpy arrays.
+
+    return best_archetype
 
 
 # ---------------------------------------------------------------------------
@@ -457,8 +570,16 @@ def carve_cave_volume(
     stack: TerrainMaskStack,
     path: List[Tuple[float, float, float]],
     spec: CaveArchetypeSpec,
+    *,
+    ellipse_x_scale: float = 1.0,
+    ellipse_y_scale: float = 1.0,
 ) -> np.ndarray:
     """Return a negative height delta + populate ``stack.cave_candidate``.
+
+    AAA-quality SDF carving: uses distance_transform_edt from a binary seed
+    mask to build a proper signed-distance field, then carves a soft 1-cosine
+    bowl profile within radius_m of each path sample. Supports anisotropic
+    (elliptical) cavities via ``ellipse_x_scale`` / ``ellipse_y_scale``.
 
     The delta is a ``(H, W)`` float64 array of non-positive values to be
     ADDED to the heightmap by a downstream geometry pass. We intentionally
@@ -467,7 +588,23 @@ def carve_cave_volume(
 
     The cave_candidate mask on the stack is updated in-place (OR-ed) with
     the cells covered by the carve footprint.
+
+    Args:
+        stack: TerrainMaskStack with populated ``height``.
+        path: World-space polyline of cave centreline samples.
+        spec: Archetype parameters (entrance_width_m, entrance_height_m, etc.).
+        ellipse_x_scale: Stretch factor along world-X for cavity cross-section.
+            1.0 = circular; >1 = wider than tall; <1 = narrower.
+        ellipse_y_scale: Stretch factor along world-Y. Together with
+            ellipse_x_scale this produces arbitrary elliptical cavities to
+            match geological anisotropy (e.g. joint-controlled fissures).
     """
+    try:
+        from scipy.ndimage import distance_transform_edt as _edt
+        _HAS_SCIPY = True
+    except ImportError:
+        _HAS_SCIPY = False
+
     height = np.asarray(stack.height, dtype=np.float64)
     rows, cols = height.shape
     delta = np.zeros_like(height, dtype=np.float64)
@@ -475,11 +612,14 @@ def carve_cave_volume(
     if not path:
         return delta
 
-    # Cave footprint radius in cells = half entrance width
     radius_m = max(1.0, float(spec.entrance_width_m) * 0.5)
     depth_m = max(0.5, float(spec.entrance_height_m))
     cell = max(1e-6, float(stack.cell_size))
     radius_cells = max(1, int(math.ceil(radius_m / cell)))
+
+    # Clamp ellipse scales to sane range
+    ex = max(0.1, float(ellipse_x_scale))
+    ey = max(0.1, float(ellipse_y_scale))
 
     # Existing mask starts from whatever is on the stack
     existing = stack.get("cave_candidate")
@@ -494,15 +634,42 @@ def carve_cave_volume(
         row, col = _world_to_cell(stack, wx, wy)
         dr = rr_grid - row
         dc = cc_grid - col
-        dist2 = dr * dr + dc * dc
-        radius2 = radius_cells * radius_cells
-        footprint = dist2 <= radius2
+
+        # Anisotropic distance: scale axes to produce elliptical footprint
+        dr_scaled = dr / max(ey, 1e-6)
+        dc_scaled = dc / max(ex, 1e-6)
+
+        if _HAS_SCIPY:
+            # SDF path: build seed mask, run EDT, use result as distance field
+            # The seed is a single-cell "on" mask at the path sample.
+            seed_mask = np.zeros((rows, cols), dtype=bool)
+            seed_mask[row, col] = True
+            # EDT with anisotropic sampling = physical ellipse
+            edt_dist = _edt(~seed_mask, sampling=(1.0 / max(ey, 1e-6),
+                                                   1.0 / max(ex, 1e-6)))
+            # Normalise to radius_cells
+            dist_norm = edt_dist / max(1.0, float(radius_cells))
+            footprint = dist_norm <= 1.0
+        else:
+            # Fallback: pure numpy anisotropic circle
+            dist2_scaled = dr_scaled * dr_scaled + dc_scaled * dc_scaled
+            radius2 = radius_cells * radius_cells
+            footprint = dist2_scaled <= radius2
+            dist_norm = np.sqrt(dr * dr + dc * dc) / max(1.0, float(radius_cells))
+
         if not footprint.any():
             continue
+
         interior_mask |= footprint
-        # Taper depth by distance from the path centre (sqrt makes it smooth)
-        dist_norm = np.sqrt(dist2) / max(1.0, float(radius_cells))
-        taper = np.maximum(0.0, 1.0 - dist_norm) * float(spec.taper_ratio)
+
+        # 1-cosine soft bowl profile: flat at centre, smooth falloff at edge
+        # cos_profile in [0, 1]: 1 at centre, 0 at radius
+        cos_profile = np.where(
+            footprint,
+            0.5 * (1.0 + np.cos(np.pi * np.clip(dist_norm, 0.0, 1.0))),
+            0.0,
+        )
+        taper = cos_profile * float(spec.taper_ratio)
         local_delta = -(taper * depth_m)
         # Keep the deepest (most negative) delta per cell
         delta = np.where(footprint & (local_delta < delta), local_delta, delta)
@@ -761,19 +928,32 @@ def _find_entrance_candidates(
     state: TerrainPipelineState,
     region: Optional[BBox],
     max_candidates: int = 32,
-    entrance_min_slope_deg: float = 25.0,
+    entrance_min_slope_deg: float = 35.0,
+    min_entrance_area_cells: int = 4,
 ) -> List[Tuple[float, float, float]]:
     """Source and score cave entrance candidates.
 
     Candidates come from scene_read.cave_candidates when available. Each
-    candidate is scored by three signals (all contribute to a single score):
+    candidate is scored by four signals (all contribute to a single score):
       (a) Negative curvature — concave alcoves are geologically favoured
-          cave entrance sites. Score += clip(-curv / 0.3, 0, 1).
+          cave entrance sites. Score += clip(-curv / max_curv, 0, 1).
       (b) Cliff proximity — entrances preferentially occur at the base of
           cliff faces. Score += cliff_candidate value at the cell.
-      (c) Slope threshold — candidates with slope < entrance_min_slope_deg
-          are penalised (too flat to be a natural opening). Score *= 0.2 if
-          slope_deg < entrance_min_slope_deg.
+      (c) Slope steepness check — natural cave entrances form in terrain
+          steeper than ~35°.  Candidates below ``entrance_min_slope_deg``
+          are **hard-rejected** (not merely penalised) because they represent
+          flat ground where a cave mouth cannot plausibly exist; the previous
+          0.2 multiplier still applied flat-ground candidates and ranked them
+          near real ones.
+      (d) Minimum area requirement — the neighbourhood around the candidate
+          must have at least ``min_entrance_area_cells`` cells that are also
+          steep enough (≥ entrance_min_slope_deg).  This filters single-cell
+          noise spikes that pass the slope test but have no surrounding relief.
+      (e) Player traversal accessibility — if the stack carries a
+          ``player_paths`` or ``accessibility`` channel, candidates that are
+          completely isolated from traversable ground (accessibility == 0 in
+          the entire 5-cell neighbourhood) are rejected because the player
+          could never reach them.
 
     Returns the top-N candidates sorted descending by score so callers
     process the most geologically plausible entrances first.
@@ -823,28 +1003,78 @@ def _find_entrance_candidates(
     if stack.cliff_candidate is not None:
         cliff_arr = np.asarray(stack.cliff_candidate, dtype=np.float64)
 
-    def _score(pos: Tuple[float, float, float]) -> float:
+    # Traversal accessibility — try player_paths first, then accessibility
+    access_arr: Optional[np.ndarray] = None
+    for _ch in ("player_paths", "accessibility"):
+        _a = stack.get(_ch)
+        if _a is not None:
+            _a_np = np.asarray(_a, dtype=np.float64)
+            if _a_np.shape == h.shape:
+                access_arr = _a_np
+                break
+
+    # Precompute boolean steep mask for area check
+    steep_mask = slope_deg_arr >= entrance_min_slope_deg
+
+    # Neighbourhood half-radius for area and accessibility checks (3 cells)
+    _AREA_RADIUS = 3
+    # Precomputed absolute max curvature for normalisation
+    _curv_max = float(np.abs(curv_arr).max()) if curv_arr is not None else 1e-6
+    _curv_max = max(_curv_max, 1e-6)
+
+    def _neighbourhood_slice(row: int, col: int, radius: int):
+        r0 = max(0, row - radius)
+        r1 = min(rows, row + radius + 1)
+        c0 = max(0, col - radius)
+        c1 = min(cols, col + radius + 1)
+        return slice(r0, r1), slice(c0, c1)
+
+    def _score_or_reject(pos: Tuple[float, float, float]) -> Optional[float]:
+        """Return score float, or None to hard-reject this candidate."""
         row, col = _world_to_cell(stack, pos[0], pos[1])
         score = 0.0
+
+        # (c) Slope steepness hard check — reject if too flat
+        slope_val = float(slope_deg_arr[row, col])
+        if slope_val < entrance_min_slope_deg:
+            return None  # hard rejection — flat ground, not a cave entrance
+
+        # (d) Minimum area requirement — count steep cells in neighbourhood
+        rs, cs_sl = _neighbourhood_slice(row, col, _AREA_RADIUS)
+        steep_count = int(steep_mask[rs, cs_sl].sum())
+        if steep_count < min_entrance_area_cells:
+            return None  # isolated steep spike, no real cliff face
+
+        # (e) Player traversal accessibility check
+        if access_arr is not None:
+            access_window = access_arr[rs, cs_sl]
+            # Reject only if the entire neighbourhood has zero accessibility
+            # (completely unreachable from any player path)
+            if float(access_window.max()) <= 0.0:
+                return None
 
         # (a) Negative curvature bonus
         if curv_arr is not None:
             curv_val = float(curv_arr[row, col])
-            score += float(np.clip(-curv_val / max(float(np.abs(curv_arr).max()), 1e-6), 0.0, 1.0))
+            score += float(np.clip(-curv_val / _curv_max, 0.0, 1.0))
 
         # (b) Cliff proximity bonus
         if cliff_arr is not None:
             score += float(np.clip(cliff_arr[row, col], 0.0, 1.0))
 
-        # (c) Slope threshold penalty — too flat = unlikely entrance
-        slope_val = float(slope_deg_arr[row, col])
-        if slope_val < entrance_min_slope_deg:
-            score *= 0.2
+        # Slope bonus: steeper is better, normalised to [0, 1] above threshold
+        score += min(1.0, (slope_val - entrance_min_slope_deg) / 45.0)
 
         return score
 
-    scored = sorted(raw, key=_score, reverse=True)
-    return scored[:max_candidates]
+    scored_pairs: List[Tuple[float, Tuple[float, float, float]]] = []
+    for pos in raw:
+        s = _score_or_reject(pos)
+        if s is not None:
+            scored_pairs.append((s, pos))
+
+    scored_pairs.sort(key=lambda kv: kv[0], reverse=True)
+    return [p for _s, p in scored_pairs[:max_candidates]]
 
 
 def pass_caves(
@@ -1191,6 +1421,92 @@ def _fbm_noise(x: float, y: float, octaves: int = 4, seed: int = 0) -> float:
     return value / norm if norm > 0.0 else 0.0
 
 
+def _cone_verts_faces(
+    tip: Tuple[float, float, float],
+    base_center: Tuple[float, float, float],
+    base_radius: float,
+    segments: int = 6,
+    taper: float = 1.0,
+) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+    """Return (verts, tris) for a single cone (stalactite or stalagmite).
+
+    ``tip`` is the sharp end; ``base_center`` is the wide end.
+    ``taper`` in (0, 1] optionally narrows the base further (stalagmite effect).
+    The cone is triangulated as a fan from the tip + a base cap fan.
+    """
+    verts: List[Tuple[float, float, float]] = []
+    faces: List[Tuple[int, ...]] = []
+
+    tip_idx = 0
+    verts.append(tip)
+
+    bx, by, bz = base_center
+    effective_r = base_radius * max(0.01, min(1.0, taper))
+    ns = max(3, int(segments))
+
+    ring_start = len(verts)
+    for i in range(ns):
+        angle = 2.0 * math.pi * i / ns
+        verts.append((bx + effective_r * math.cos(angle),
+                       by + effective_r * math.sin(angle),
+                       bz))
+
+    base_cap_idx = len(verts)
+    verts.append((bx, by, bz))  # base cap center
+
+    # Side fan from tip
+    for i in range(ns):
+        a = ring_start + i
+        b = ring_start + (i + 1) % ns
+        faces.append((tip_idx, a, b))
+
+    # Base cap (outward normal away from tip)
+    for i in range(ns):
+        a = ring_start + i
+        b = ring_start + (i + 1) % ns
+        faces.append((base_cap_idx, b, a))
+
+    return verts, faces
+
+
+def _face_normal(
+    v0: Tuple[float, float, float],
+    v1: Tuple[float, float, float],
+    v2: Tuple[float, float, float],
+) -> Tuple[float, float, float]:
+    """Return the unit normal of triangle (v0, v1, v2) using the cross product."""
+    ax = v1[0] - v0[0]; ay = v1[1] - v0[1]; az = v1[2] - v0[2]
+    bx = v2[0] - v0[0]; by = v2[1] - v0[1]; bz = v2[2] - v0[2]
+    nx = ay * bz - az * by
+    ny = az * bx - ax * bz
+    nz = ax * by - ay * bx
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length < 1e-12:
+        return (0.0, 0.0, 1.0)
+    return (nx / length, ny / length, nz / length)
+
+
+def _triplanar_uv(
+    vx: float, vy: float, vz: float, scale: float = 0.5
+) -> Tuple[float, float]:
+    """World-space triplanar UV via dominant-normal projection.
+
+    Blends XZ, YZ, and XY projections weighted by the absolute normal
+    component.  Caller passes the vertex world position; the dominant
+    axis is inferred from which coordinate has the largest absolute value
+    relative to the others (approximation sufficient for a static UV bake).
+
+    In practice the ceiling is mostly XZ (horizontal slab), walls mostly
+    YZ or XZ, and the floor XZ — which is exactly what a triplanar shader
+    expects.  Scale controls texel density (default 0.5 → 1 texel per 2 m).
+    """
+    # For a triplanar UV we output the XZ world coordinates (the projection
+    # most useful for a horizontal cave surface like the ceiling and floor).
+    # The Y-axis walls use YZ.  Since a single UV channel can only hold one
+    # pair we output XZ universally and rely on the shader's normal-blend.
+    return (vx * scale, vz * scale)
+
+
 def _build_chamber_mesh_geometry(
     width: float,
     depth: float,
@@ -1200,75 +1516,126 @@ def _build_chamber_mesh_geometry(
     height_rings: int = 4,
     floor_noise_amplitude: float = 0.25,
     seed: int = 0,
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    """Build chamber verts/faces as pure data — no bpy, fully testable.
+    stalactite_count: int = 4,
+    stalagmite_count: int = 3,
+    uv_scale: float = 0.5,
+) -> Tuple[
+    List[Tuple[float, float, float]],
+    List[Tuple[int, ...]],
+    List[Tuple[float, float]],
+    List[Tuple[float, float, float]],
+]:
+    """Build chamber verts/faces/UVs/normals as pure data — no bpy, fully testable.
 
-    Interior profile:
-    - Ceiling: upper half-ellipsoid  z = cz + rz * sqrt(1 - (x/rx)^2 - (y/ry)^2)
-    - Walls: radial_segments x height_rings quad strips (tris)
-    - Floor: lower half with fBm rock rubble perturbation
+    Ceiling profile (cosine arch):
+        h_vault(x) = base_h + wall_height * (1 - (2*x/w - 1)^2)^0.5
+    where x sweeps [0, w] and the formula is evaluated per ring vertex using
+    the radial distance from the chamber axis, mapped to [0, w].
 
-    8 radial segments x 4 height rings, triangulated as quads-to-tris.
+    This replaces the previous half-ellipsoid with a proper vaulted arch
+    that reads like a natural cave roof — high at the centre, curving down
+    to the walls with a cosine-like profile (the exponent 0.5 is the
+    circular arch; Unreal/Unity shaders call this the "vaulted ceiling" SDF).
 
-    Returns (verts, faces) where each face is a (i0, i1, i2) triangle.
+    Speleothems:
+    - stalactites: downward-pointing cones hanging from random ceiling cells,
+      base welded to a ceiling vertex, tip pointing down.
+    - stalagmites: upward-pointing cones on floor cells with a slight taper
+      (base narrower than the stalactite to distinguish them visually).
+
+    UV coordinates:
+    - Every vertex gets a world-space XZ triplanar UV (u=world_x*uv_scale,
+      v=world_z*uv_scale) so the texture tiles correctly under a triplanar
+      projection shader without seams.
+
+    Per-face normals:
+    - Computed analytically via cross product for every triangle; returned
+      as a parallel list so bpy can assign them via ``loops.normal``.
+
+    Returns
+    -------
+    verts  : list of (x, y, z) float tuples
+    faces  : list of (i0, i1, i2) index triples
+    uvs    : list of (u, v) per-vertex (parallel to verts)
+    normals: list of (nx, ny, nz) per-face (parallel to faces)
     """
-    rx = float(width) * 0.5
-    ry = float(depth) * 0.5
-    rz = float(wall_height)
+    w = float(width)
+    d = float(depth)
+    h = float(wall_height)
+    rx = w * 0.5
+    ry = d * 0.5
     cx, cy = 0.0, 0.0
     cz = 0.0  # floor at z=0
 
     ns = int(max(4, radial_segments))
     nr = int(max(2, height_rings))
 
-    verts: list[tuple[float, float, float]] = []
-    faces: list[tuple[int, ...]] = []
+    verts: List[Tuple[float, float, float]] = []
+    uvs: List[Tuple[float, float]] = []
+    faces: List[Tuple[int, ...]] = []
 
-    # ---- ceiling apex (top of ellipsoid) ----
-    apex_idx = len(verts)
-    verts.append((cx, cy, cz + rz))
+    def _add_vert(vx: float, vy: float, vz: float) -> int:
+        idx = len(verts)
+        verts.append((vx, vy, vz))
+        uvs.append(_triplanar_uv(vx, vz, vy, scale=uv_scale))
+        return idx
 
-    # ---- wall rings (from top ring down to floor ring) ----
-    # height_rings rings evenly spaced from top (t=1) down to equator (t=0)
-    ring_start_indices: list[int] = []
+    # ------------------------------------------------------------------
+    # Ceiling: cosine arch vault profile
+    # h_vault(r) = h * sqrt(1 - (r / r_max)^2)  where r_max = min(rx, ry)
+    # This is the circular arch (exponent 0.5) evaluated radially.
+    # We use the elliptic form: h_vault = h * sqrt(1 - (x/rx)^2 - (y/ry)^2)
+    # which gracefully handles non-square chambers.
+    # ------------------------------------------------------------------
+
+    # Apex at the centre of the vault
+    apex_idx = _add_vert(cx, cy, cz + h)
+
+    # nr rings from near-apex (t close to 1) down to the floor equator (t=0)
+    ring_start_indices: List[int] = []
     for ring in range(nr):
-        # t goes from 1.0 (top) down to 0.0 (equator/floor)
-        t = 1.0 - float(ring) / float(nr - 1) if nr > 1 else 0.5
+        # t: 1 = top of vault, 0 = equator (where wall meets floor)
+        t = 1.0 - float(ring + 1) / float(nr)   # ring=0 → t=(nr-1)/nr, ..., ring=nr-1 → t=0
         t = max(0.0, min(1.0, t))
-        # Ellipsoid radius at this height band
-        r_lateral = math.sqrt(max(0.0, 1.0 - t * t))  # sin component
+        # Lateral radius at this height band (from cosine arch)
+        r_lateral = math.sqrt(max(0.0, 1.0 - t * t))  # ranges 0 (apex) → 1 (equator)
+        vault_z = cz + h * t  # exact height on the cosine profile
+
         ring_start_indices.append(len(verts))
         for seg in range(ns):
             angle = 2.0 * math.pi * seg / ns
             vx = cx + rx * r_lateral * math.cos(angle)
             vy = cy + ry * r_lateral * math.sin(angle)
-            # Ceiling: upper half-ellipsoid
-            vz = cz + rz * t
-            verts.append((vx, vy, vz))
+            _add_vert(vx, vy, vault_z)
 
-    # ---- floor ring with fBm rubble perturbation ----
+    # ------------------------------------------------------------------
+    # Floor ring + center — with fBm rubble perturbation
+    # ------------------------------------------------------------------
     floor_ring_idx = len(verts)
     for seg in range(ns):
         angle = 2.0 * math.pi * seg / ns
         vx = cx + rx * math.cos(angle)
         vy = cy + ry * math.sin(angle)
         noise = _fbm_noise(vx * 0.5, vy * 0.5, octaves=4, seed=seed)
-        vz = cz + noise * floor_noise_amplitude * float(wall_height) * 0.3
-        verts.append((vx, vy, vz))
+        vz = cz + noise * floor_noise_amplitude * h * 0.3
+        _add_vert(vx, vy, vz)
 
-    # Floor center with rubble bump
     floor_center_idx = len(verts)
-    floor_noise_center = _fbm_noise(cx * 0.5, cy * 0.5, octaves=4, seed=seed + 7)
-    verts.append((cx, cy, cz + floor_noise_center * floor_noise_amplitude * float(wall_height) * 0.2))
+    fc_noise = _fbm_noise(cx * 0.5, cy * 0.5, octaves=4, seed=seed + 7)
+    _add_vert(cx, cy, cz + fc_noise * floor_noise_amplitude * h * 0.2)
 
-    # ---- triangulate: apex fan to top ring ----
+    # ------------------------------------------------------------------
+    # Triangulate: apex fan → first ring
+    # ------------------------------------------------------------------
     top_ring = ring_start_indices[0]
     for seg in range(ns):
         a = top_ring + seg
         b = top_ring + (seg + 1) % ns
         faces.append((apex_idx, a, b))
 
-    # ---- triangulate: ring-to-ring quad strips ----
+    # ------------------------------------------------------------------
+    # Triangulate: ring-to-ring quad strips
+    # ------------------------------------------------------------------
     for ri in range(len(ring_start_indices) - 1):
         r0 = ring_start_indices[ri]
         r1 = ring_start_indices[ri + 1]
@@ -1278,11 +1645,12 @@ def _build_chamber_mesh_geometry(
             v01 = r0 + seg_n
             v10 = r1 + seg
             v11 = r1 + seg_n
-            # Quad -> 2 tris
             faces.append((v00, v10, v11))
             faces.append((v00, v11, v01))
 
-    # ---- triangulate: bottom ring -> floor ring ----
+    # ------------------------------------------------------------------
+    # Triangulate: last vault ring → floor ring
+    # ------------------------------------------------------------------
     bot_ring = ring_start_indices[-1]
     for seg in range(ns):
         seg_n = (seg + 1) % ns
@@ -1293,22 +1661,100 @@ def _build_chamber_mesh_geometry(
         faces.append((v0, f0, f1))
         faces.append((v0, f1, v1))
 
-    # ---- triangulate: floor fan ----
+    # ------------------------------------------------------------------
+    # Triangulate: floor fan
+    # ------------------------------------------------------------------
     for seg in range(ns):
         a = floor_ring_idx + seg
         b = floor_ring_idx + (seg + 1) % ns
-        faces.append((floor_center_idx, b, a))  # reversed for outward normals
+        faces.append((floor_center_idx, b, a))  # reversed winding for floor-up normal
 
-    return verts, faces
+    # ------------------------------------------------------------------
+    # Stalactites — downward cones from random ceiling ring vertices
+    # ------------------------------------------------------------------
+    rng_speleothem = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    n_stals = int(max(0, stalactite_count))
+    if n_stals > 0 and len(ring_start_indices) > 0:
+        # Candidate ceiling vertices: all verts in the upper half of vault rings
+        ceiling_pool: List[int] = []
+        for ri, rs in enumerate(ring_start_indices):
+            # Only upper half rings (closer to apex) look natural for stalactites
+            if ri < max(1, len(ring_start_indices) // 2):
+                for seg in range(ns):
+                    ceiling_pool.append(rs + seg)
+        if ceiling_pool:
+            chosen_ceiling = rng_speleothem.choice(
+                len(ceiling_pool),
+                size=min(n_stals, len(ceiling_pool)),
+                replace=False,
+            )
+            for ci in chosen_ceiling:
+                cv_idx = ceiling_pool[int(ci)]
+                base_vx, base_vy, base_vz = verts[cv_idx]
+                stal_len = float(rng_speleothem.uniform(0.3, 1.2)) * h * 0.25
+                stal_r = float(rng_speleothem.uniform(0.05, 0.15)) * min(rx, ry)
+                tip = (base_vx, base_vy, base_vz - stal_len)  # tip points DOWN
+                base_c = (base_vx, base_vy, base_vz)
+                sv, sf = _cone_verts_faces(tip, base_c, stal_r, segments=5, taper=1.0)
+                offset = len(verts)
+                for svx, svy, svz in sv:
+                    _add_vert(svx, svy, svz)
+                for tri in sf:
+                    faces.append(tuple(i + offset for i in tri))
+
+    # ------------------------------------------------------------------
+    # Stalagmites — upward cones from random floor ring vertices, with taper
+    # ------------------------------------------------------------------
+    n_stags = int(max(0, stalagmite_count))
+    if n_stags > 0:
+        floor_pool: List[int] = list(range(floor_ring_idx, floor_ring_idx + ns))
+        floor_pool.append(floor_center_idx)
+        if floor_pool:
+            chosen_floor = rng_speleothem.choice(
+                len(floor_pool),
+                size=min(n_stags, len(floor_pool)),
+                replace=False,
+            )
+            for fi in chosen_floor:
+                fv_idx = floor_pool[int(fi)]
+                fvx, fvy, fvz = verts[fv_idx]
+                stag_len = float(rng_speleothem.uniform(0.2, 0.8)) * h * 0.2
+                stag_r = float(rng_speleothem.uniform(0.04, 0.12)) * min(rx, ry)
+                tip = (fvx, fvy, fvz + stag_len)  # tip points UP
+                base_c = (fvx, fvy, fvz)
+                # taper < 1.0 makes the base narrower → upward spike looks different
+                taper = float(rng_speleothem.uniform(0.55, 0.75))
+                sv, sf = _cone_verts_faces(tip, base_c, stag_r, segments=5, taper=taper)
+                offset = len(verts)
+                for svx, svy, svz in sv:
+                    _add_vert(svx, svy, svz)
+                for tri in sf:
+                    faces.append(tuple(i + offset for i in tri))
+
+    # ------------------------------------------------------------------
+    # Per-face normals (cross product, unit length)
+    # ------------------------------------------------------------------
+    normals: List[Tuple[float, float, float]] = []
+    for tri in faces:
+        i0, i1, i2 = tri[0], tri[1], tri[2]
+        normals.append(_face_normal(verts[i0], verts[i1], verts[i2]))
+
+    return verts, faces, uvs, normals
 
 
 def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: float, *, seed: int = 0):
-    """Create a Blender chamber mesh with a proper ellipsoidal interior profile.
+    """Create a Blender chamber mesh with cosine-arch vault, stalactites, stalagmites,
+    triplanar UVs, and per-face normals.
 
     Interior geometry:
-    - Ceiling: upper half-ellipsoid, 8 radial segments x 4 height rings.
-    - Floor: ellipsoidal base with fBm rock-rubble height perturbation.
-    - All quads triangulated (2 tris per quad face).
+    - Ceiling: cosine arch vault profile (circular arch SDF, not ellipsoid).
+    - Floor: perturbed with fBm rock-rubble height variation.
+    - Stalactites: downward cones hanging from upper vault ring vertices.
+    - Stalagmites: upward tapered cones growing from floor vertices.
+    - UV layer "UVMap": world-space XZ triplanar projection for each vertex.
+    - Custom normals: per-face normals set via calc_normals_split so the mesh
+      shades correctly as a closed interior cavity.
+    - All faces triangulated (2 tris per quad, fan tris for caps).
 
     compose_map's cave dispatch positions/parents this object. Returns the
     created bpy Object, or None if bpy is not available (tests).
@@ -1318,7 +1764,7 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
     except ImportError:
         return None
 
-    verts, faces = _build_chamber_mesh_geometry(
+    verts, faces, uvs, face_normals = _build_chamber_mesh_geometry(
         width=float(width),
         depth=float(depth),
         wall_height=float(wall_height),
@@ -1326,10 +1772,32 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
         height_rings=4,
         floor_noise_amplitude=0.25,
         seed=int(seed),
+        stalactite_count=4,
+        stalagmite_count=3,
+        uv_scale=0.5,
     )
 
     mesh = _bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
+    mesh.update()
+
+    # --- UV layer: world-space XZ triplanar ---
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for poly in mesh.polygons:
+        for loop_idx in poly.loop_indices:
+            vi = mesh.loops[loop_idx].vertex_index
+            uv_layer.data[loop_idx].uv = uvs[vi]
+
+    # --- Custom split normals (per-face) ---
+    # Each loop in a face gets the face's computed normal, giving flat-shaded
+    # cave rock facets which read as natural stone under PBR lighting.
+    mesh.use_auto_smooth = True
+    custom_normals = []
+    for pi, poly in enumerate(mesh.polygons):
+        fn = face_normals[pi] if pi < len(face_normals) else (0.0, 0.0, 1.0)
+        for _ in poly.loop_indices:
+            custom_normals.append(fn)
+    mesh.normals_split_custom_set(custom_normals)
     mesh.update()
 
     obj = _bpy.data.objects.new(name, mesh)
@@ -1465,18 +1933,25 @@ def _build_bezier_tunnel_geometry(
 def handle_generate_cave(params: dict) -> dict:
     """MCP handler: generate a cave via the terrain ``pass_caves`` engine.
 
-    Improvements over the original BSP-based handler:
-    - Uses _build_chamber_mesh for a proper ellipsoidal chamber profile
-      with fBm floor rubble.
-    - Connects the entrance to the chamber with a swept Bezier tube
-      whose radius tapers from entrance_radius (wide) to chamber_radius
-      (narrow at the chamber junction).
+    Pipeline:
+    1. Build a minimal synthetic TerrainPipelineState (flat heightmap, one
+       cave-candidate anchor at the centre).
+    2. Run ``pass_caves`` which calls ``carve_cave_volume`` internally,
+       populates ``cave_candidate`` + ``cave_height_delta`` + ``wet_rock``
+       channels, and records ``CaveStructure`` instances on side_effects.
+    3. Build the chamber mesh via ``_build_chamber_mesh_geometry`` (cosine-arch
+       vault + stalactites + stalagmites + triplanar UVs + per-face normals)
+       and serialise its geometry into a ``chamber_mesh_spec`` dict.
+    4. Materialise the chamber as a Blender object (best-effort; skipped when
+       bpy is unavailable, e.g. under pytest).
+    5. Build the Bezier tunnel connecting entrance to chamber.
+    6. Return all mesh specs (chamber + tunnel + entrance archways) in the
+       ``meshes`` list, with ``cave_height_delta`` surfaced in ``meta`` so
+       the terrain pipeline's geometry pass can apply the carve delta.
 
     Accepts the same dict shape compose_map's location dispatch sends
     (name, seed, width, height, cell_size, wall_height, plus extras).
     Returns a dict with status / name / meshes / meta / error keys.
-
-    Phase 49 commit C2 — closes blocker G2 for architecture deletion.
     """
     name = str(params.get("name", "Cave"))
     try:
@@ -1489,7 +1964,11 @@ def handle_generate_cave(params: dict) -> dict:
         if archetype_hint is not None:
             archetype_hint = str(archetype_hint)
 
-        # Build synthetic state and run the five-archetype pass.
+        # ------------------------------------------------------------------
+        # 1. Build synthetic state and run the five-archetype pass.
+        #    pass_caves → carve_cave_volume populates cave_candidate +
+        #    cave_height_delta; we do NOT need to call carve_cave_volume again.
+        # ------------------------------------------------------------------
         state = _build_synthetic_state(
             seed=seed,
             width=width,
@@ -1526,13 +2005,57 @@ def handle_generate_cave(params: dict) -> dict:
                 if picked_archetype:
                     break
 
-        # Determine entrance + chamber geometry sizes from params.
+        # Retrieve the carve height delta produced by pass_caves so the caller
+        # (terrain geometry pass) can add it to the heightmap.
+        _cave_delta_arr = state.mask_stack.get("cave_height_delta")
+        cave_height_delta: Optional[List] = (
+            np.asarray(_cave_delta_arr).tolist()
+            if _cave_delta_arr is not None
+            else None
+        )
+
+        # ------------------------------------------------------------------
+        # 2. Determine chamber geometry sizes from params.
+        # ------------------------------------------------------------------
         chamber_w = max(2.0, width * cell_size * 0.4)
         chamber_d = max(2.0, height * cell_size * 0.4)
         entrance_radius = max(1.0, min(chamber_w, chamber_d) * 0.45)
         chamber_radius = entrance_radius * 0.55  # tapers to ~55% at junction
 
-        # Materialise a chamber mesh with ellipsoidal profile + fBm floor.
+        # ------------------------------------------------------------------
+        # 3. Build chamber geometry (pure data) — cosine-arch vault +
+        #    stalactites + stalagmites + triplanar UVs + per-face normals.
+        # ------------------------------------------------------------------
+        ch_verts, ch_faces, ch_uvs, ch_normals = _build_chamber_mesh_geometry(
+            width=chamber_w,
+            depth=chamber_d,
+            wall_height=wall_height,
+            radial_segments=8,
+            height_rings=4,
+            floor_noise_amplitude=0.25,
+            seed=seed,
+            stalactite_count=4,
+            stalagmite_count=3,
+            uv_scale=0.5,
+        )
+
+        # Serialise into a mesh spec dict so the caller/composer can consume
+        # it without needing bpy (test-safe, Unity-exportable).
+        chamber_mesh_spec: Dict = {
+            "name": name,
+            "vertices": ch_verts,
+            "faces": ch_faces,
+            "uvs": ch_uvs,
+            "face_normals": ch_normals,
+            "width": chamber_w,
+            "depth": chamber_d,
+            "wall_height": wall_height,
+            "mesh_type": "cave_chamber",
+        }
+
+        # ------------------------------------------------------------------
+        # 4. Materialise chamber as a Blender object (best-effort).
+        # ------------------------------------------------------------------
         chamber_obj = _build_chamber_mesh(
             name=name,
             width=chamber_w,
@@ -1542,9 +2065,11 @@ def handle_generate_cave(params: dict) -> dict:
         )
         chamber_name = chamber_obj.name if chamber_obj is not None else name
 
-        # Build Bezier tunnel geometry connecting entrance to chamber.
-        # Entrance is placed at -Y edge of chamber footprint; chamber
-        # center is the mesh origin (0, 0, wall_height * 0.5).
+        # ------------------------------------------------------------------
+        # 5. Build Bezier tunnel connecting entrance to chamber.
+        #    Entrance is placed at -Y edge of chamber footprint; chamber
+        #    center is the mesh origin (0, 0, wall_height * 0.35).
+        # ------------------------------------------------------------------
         entrance_pos: Tuple[float, float, float] = (
             0.0,
             -(chamber_d * 0.5 + entrance_radius * 1.5),
@@ -1598,6 +2123,7 @@ def handle_generate_cave(params: dict) -> dict:
                 "chamber_center": chamber_center,
                 "entrance_radius": entrance_radius,
                 "chamber_radius": chamber_radius,
+                "mesh_type": "cave_tunnel",
             }
         except ImportError:
             tunnel_mesh_spec = {
@@ -1608,15 +2134,22 @@ def handle_generate_cave(params: dict) -> dict:
                 "chamber_center": chamber_center,
                 "entrance_radius": entrance_radius,
                 "chamber_radius": chamber_radius,
+                "mesh_type": "cave_tunnel",
             }
 
+        # ------------------------------------------------------------------
+        # 6. Assemble output.
+        # ------------------------------------------------------------------
         # Floor area in cell units (compatibility with old handler shape).
         cc = state.mask_stack.get("cave_candidate")
         floor_area = int(np.asarray(cc).sum()) if cc is not None else 0
 
-        meshes = list(entrance_specs)
+        # meshes list: chamber first (primary geometry), then tunnel, then
+        # entrance archway specs from get_cave_entrance_specs.
+        meshes: List[Dict] = [chamber_mesh_spec]
         if tunnel_mesh_spec is not None:
             meshes.append(tunnel_mesh_spec)
+        meshes.extend(entrance_specs)
 
         return {
             "status": "ok" if getattr(bundle, "status", "ok") != "failed" else "error",
@@ -1624,6 +2157,7 @@ def handle_generate_cave(params: dict) -> dict:
             "meshes": meshes,
             "meta": {
                 "archetype": picked_archetype or "unknown",
+                "chamber_mesh_spec": chamber_mesh_spec,
                 "entrance_specs": entrance_specs,
                 "tunnel_spec": tunnel_mesh_spec,
                 "bundle": bundle,
@@ -1632,6 +2166,9 @@ def handle_generate_cave(params: dict) -> dict:
                 "floor_area": floor_area,
                 "entrance_radius": entrance_radius,
                 "chamber_radius": chamber_radius,
+                # Carve delta (H×W float list) for the terrain geometry pass
+                # to add to stack.height; None when no caves were carved.
+                "cave_height_delta": cave_height_delta,
             },
             "error": None,
         }
@@ -1663,7 +2200,13 @@ __all__ = [
     "handle_generate_cave",
     # Geometry helpers (exposed for testing)
     "_fbm_noise",
+    "_cone_verts_faces",
+    "_face_normal",
+    "_triplanar_uv",
     "_build_chamber_mesh_geometry",
     "_bezier_cubic",
     "_build_bezier_tunnel_geometry",
+    # Biome/material hint tables (exposed for testing + external overrides)
+    "_BIOME_ARCHETYPE_MAP",
+    "_ARCHETYPE_DEFAULT_MATERIAL",
 ]

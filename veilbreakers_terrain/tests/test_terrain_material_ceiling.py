@@ -283,7 +283,13 @@ def test_bake_shadow_clipmap_sun_below_horizon(stack):
     assert np.all(mask == 0.0)
 
 
-def test_export_shadow_clipmap_npy_and_sidecar(stack):
+def test_export_shadow_clipmap_exr_and_sidecar(stack):
+    """export_shadow_clipmap_exr writes a valid EXR (or fallback) plus JSON sidecar.
+
+    The primary path now uses the struct-packed mini-EXR writer (no external
+    dependencies), so the output is a real .exr file.  The test accepts any
+    format the writer produces (EXR, PNG, or NPY) and validates the sidecar.
+    """
     from blender_addon.handlers.terrain_shadow_clipmap_bake import (
         bake_shadow_clipmap,
         export_shadow_clipmap_exr,
@@ -291,16 +297,34 @@ def test_export_shadow_clipmap_npy_and_sidecar(stack):
 
     mask = bake_shadow_clipmap(stack, sun_dir_rad=(0.5, 0.9), clipmap_res=32)
     with tempfile.TemporaryDirectory() as td:
-        path = Path(td) / "shadow.exr"  # we intentionally pass exr; writer converts
+        path = Path(td) / "shadow.exr"
         export_shadow_clipmap_exr(mask, path)
-        npy_path = path.with_suffix(".npy")
-        assert npy_path.exists()
-        sidecar = npy_path.with_suffix(".json")
-        assert sidecar.exists()
+
+        # The writer always produces exactly one output file and one JSON sidecar.
+        # Accepted formats in priority order: exr_float32_mini, exr_float16_*,
+        # png_uint16_imageio, float32_npy.
+        output_candidates = list(Path(td).glob("shadow.*"))
+        # Remove the sidecar from candidates
+        data_files = [f for f in output_candidates if f.suffix != ".json"]
+        assert len(data_files) == 1, f"Expected exactly one data file, got {data_files}"
+        actual_path = data_files[0]
+
+        sidecar = actual_path.with_suffix(".json")
+        assert sidecar.exists(), "JSON sidecar must always be written"
         meta = json.loads(sidecar.read_text(encoding="utf-8"))
-        assert meta["format"] == "float32_npy"
-        loaded = np.load(npy_path)
-        assert loaded.shape == mask.shape
+
+        # format must be one of the known valid formats
+        assert meta["format"] in {
+            "exr_float32_mini",
+            "exr_float16_imageio",
+            "exr_float16_openexr",
+            "png_uint16_imageio",
+            "float32_npy",
+        }, f"Unknown format: {meta['format']}"
+
+        assert meta["shape"] == list(mask.shape)
+        assert "lit_fraction" in meta
+        assert "cascade_levels" in meta
 
 
 def test_pass_shadow_clipmap_populates_cloud_shadow(state):

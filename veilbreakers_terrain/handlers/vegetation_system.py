@@ -291,18 +291,36 @@ def compute_vegetation_placement(
     min_distance: float = 3.0,
     water_level: float = _DEFAULT_WATER_LEVEL,
     exclusion_zones: list[dict] | None = None,
+    moisture_map: Any | None = None,
+    competition_radius: float = 0.0,
 ) -> list[dict[str, Any]]:
     """Compute vegetation placements for a biome on terrain geometry.
 
     Pure-logic function -- no Blender dependency.
+
+    Uses Bridson Poisson-disk sampling for blue-noise base distribution,
+    then applies per-candidate filters in order:
+      1. Exclusion zones (buildings, roads).
+      2. Water-level rejection (below normalised water height).
+      3. Moisture filter: each species has optional ``min_moisture`` /
+         ``max_moisture`` bounds [0, 1].  A procedural moisture proxy is
+         derived from normalised height (low altitude = wetter) unless an
+         explicit ``moisture_map`` array is supplied.
+      4. Altitude filter: biome entries may carry ``min_altitude`` /
+         ``max_altitude`` [0, 1] bounds for altitudinal banding (e.g. treeline).
+      5. Slope filter: category-level slope caps (trees < 45°, rocks < 75°).
+      6. Species competition: when ``competition_radius > 0``, already-placed
+         instances of a different species within that radius suppress a new
+         placement.  This creates ecologically plausible species clusters and
+         avoids unnatural interleaving.
+      7. Density probability roll.
 
     Parameters
     ----------
     terrain_vertices : list of (x, y, z) tuples
         Terrain mesh vertex positions.
     terrain_faces : list of index tuples
-        Face index lists (unused in current implementation, reserved for
-        future triangle-based sampling).
+        Face index lists (reserved for future triangle-based sampling).
     terrain_normals : list of (nx, ny, nz) tuples
         Per-vertex normals for slope calculation.
     biome_name : str
@@ -312,15 +330,25 @@ def compute_vegetation_placement(
     seed : int
         Random seed for deterministic generation.
     min_distance : float
-        Minimum distance between placed vegetation instances.
+        Minimum distance between placed vegetation instances (Poisson disk r).
     water_level : float
-        Normalized height below which no vegetation is placed (0-1 range
-        relative to terrain height range).
+        Normalised height [0, 1] below which no vegetation is placed.
+    exclusion_zones : list of dict or None
+        PROP-004 -- axis-aligned rectangular no-plant zones.
+    moisture_map : array-like or None
+        Optional 2-D array of moisture values in [0, 1] with shape (rows, cols)
+        covering the area_bounds rectangle.  When None, moisture is estimated
+        from normalised height (low = wet, high = dry).
+    competition_radius : float
+        If > 0, a new instance is suppressed when an already-placed instance of a
+        *different* species exists within this radius.  Set to 0 (default) to
+        disable competition.  Typical value: ``min_distance * 1.5``.
 
     Returns
     -------
     list of dict
-        Each dict has: position (x, y, z), type, style, scale, rotation.
+        Each dict has: position (x, y, z), type, style, scale, rotation,
+        category, moisture.
     """
     if biome_name not in BIOME_VEGETATION_SETS:
         raise ValueError(
@@ -338,23 +366,22 @@ def compute_vegetation_placement(
     if width <= 0 or depth <= 0:
         return []
 
-    # Build spatial lookup from terrain vertices
     if not terrain_vertices:
         return []
 
-    # Compute height range for normalization
+    # ------------------------------------------------------------------
+    # Height / slope grid for fast nearest-vertex queries
+    # ------------------------------------------------------------------
     heights = [v[2] for v in terrain_vertices]
     min_h = min(heights)
     max_h = max(heights)
     has_height_variation = max_h > min_h
     height_range = max_h - min_h if has_height_variation else 1.0
 
-    # Build a grid index for fast vertex lookup
     grid_res = max(1, int(math.sqrt(len(terrain_vertices))))
     cell_w = width / grid_res if grid_res > 0 else width
     cell_d = depth / grid_res if grid_res > 0 else depth
 
-    # Map vertices into grid
     vertex_grid: dict[tuple[int, int], list[int]] = {}
     for i, (vx, vy, _vz) in enumerate(terrain_vertices):
         gi = int((vx - min_x) / cell_w) if cell_w > 0 else 0
@@ -363,53 +390,65 @@ def compute_vegetation_placement(
         gj = max(0, min(gj, grid_res - 1))
         vertex_grid.setdefault((gi, gj), []).append(i)
 
-    def _sample_terrain(px: float, py: float) -> tuple[float, float]:
-        """Sample height and slope at a world position.
-
-        Returns (normalized_height, slope_degrees).
-        """
+    def _sample_terrain(px: float, py: float) -> tuple[float, float, float]:
+        """Sample (normalised_height, slope_degrees, moisture) at world position."""
         gi = int((px - min_x) / cell_w) if cell_w > 0 else 0
         gj = int((py - min_y) / cell_d) if cell_d > 0 else 0
         gi = max(0, min(gi, grid_res - 1))
         gj = max(0, min(gj, grid_res - 1))
 
-        # Find nearest vertex in cell and neighbors
         best_idx = -1
         best_dist_sq = float("inf")
         for di in range(-1, 2):
             for dj in range(-1, 2):
                 ni, nj = gi + di, gj + dj
                 for vi in vertex_grid.get((ni, nj), []):
-                    vx, vy, _vz = terrain_vertices[vi]
+                    vx, vy, _vz2 = terrain_vertices[vi]
                     dsq = (px - vx) ** 2 + (py - vy) ** 2
                     if dsq < best_dist_sq:
                         best_dist_sq = dsq
                         best_idx = vi
 
         if best_idx < 0:
-            return 0.5, 0.0  # Default: mid-height, flat
+            return 0.5, 0.0, 0.5
 
         _vx, _vy, vz = terrain_vertices[best_idx]
         norm_height = (vz - min_h) / height_range
 
-        # Compute slope from normal
         nx, ny, nz = terrain_normals[best_idx]
         normal_len = math.sqrt(nx * nx + ny * ny + nz * nz)
-        if normal_len > 0:
-            nz_norm = abs(nz) / normal_len
-            nz_norm = max(0.0, min(1.0, nz_norm))
+        if normal_len > 1e-12:
+            nz_norm = max(0.0, min(1.0, abs(nz) / normal_len))
             slope_deg = math.degrees(math.acos(nz_norm))
         else:
             slope_deg = 0.0
 
-        return norm_height, slope_deg
+        # Moisture: use explicit map if available, else derive from altitude.
+        # Low altitude → wetter (rivers, valleys); high altitude → drier.
+        if moisture_map is not None:
+            try:
+                rows = len(moisture_map)
+                cols = len(moisture_map[0])
+                mi = max(0, min(int((py - min_y) / depth * rows), rows - 1))
+                mj = max(0, min(int((px - min_x) / width * cols), cols - 1))
+                moisture = float(moisture_map[mi][mj])
+            except (IndexError, TypeError):
+                moisture = max(0.0, min(1.0, 1.0 - norm_height))
+        else:
+            # Procedural moisture proxy: low altitude = wetter, with gentle curve
+            moisture = max(0.0, min(1.0, 1.0 - norm_height ** 0.7))
 
-    # Poisson disk sampling within bounds
+        return norm_height, slope_deg, moisture
+
+    # ------------------------------------------------------------------
+    # Poisson-disk sample points
+    # ------------------------------------------------------------------
     from ._scatter_engine import poisson_disk_sample
-
     raw_points = poisson_disk_sample(width, depth, min_distance, seed=seed)
 
-    # Build weighted category list for random selection
+    # ------------------------------------------------------------------
+    # Build weighted entry list for density-based selection
+    # ------------------------------------------------------------------
     all_entries: list[tuple[str, dict[str, Any]]] = []
     for category in ("trees", "ground_cover", "rocks"):
         for entry in biome.get(category, []):
@@ -418,21 +457,47 @@ def compute_vegetation_placement(
     if not all_entries:
         return []
 
-    # Compute total density for weighted selection
     total_density = sum(e["density"] for _, e in all_entries)
 
+    # ------------------------------------------------------------------
+    # Competition grid: coarse spatial hash of placed instance species.
+    # Only used when competition_radius > 0.
+    # ------------------------------------------------------------------
+    comp_cell = max(competition_radius, min_distance)
+    placed_species: dict[tuple[int, int], list[tuple[str, float, float]]] = {}
+
+    def _competition_blocked(wx: float, wy: float, species_type: str) -> bool:
+        """Return True if a competing species is within competition_radius."""
+        if competition_radius <= 0:
+            return False
+        ci = int((wx - min_x) / comp_cell)
+        cj = int((wy - min_y) / comp_cell)
+        for di in range(-2, 3):
+            for dj in range(-2, 3):
+                for sp_type, sx, sy in placed_species.get((ci + di, cj + dj), []):
+                    if sp_type != species_type:
+                        dist_sq = (wx - sx) ** 2 + (wy - sy) ** 2
+                        if dist_sq < competition_radius ** 2:
+                            return True
+        return False
+
+    def _register_placed(wx: float, wy: float, species_type: str) -> None:
+        ci = int((wx - min_x) / comp_cell)
+        cj = int((wy - min_y) / comp_cell)
+        placed_species.setdefault((ci, cj), []).append((species_type, wx, wy))
+
+    # ------------------------------------------------------------------
+    # Main placement loop
+    # ------------------------------------------------------------------
     placements: list[dict[str, Any]] = []
 
-    for rx, ry in raw_points:
-        # Offset to world space
-        wx = rx + min_x
-        wy = ry + min_y
+    for rx_pt, ry_pt in raw_points:
+        wx = rx_pt + min_x
+        wy = ry_pt + min_y
 
-        # Sample terrain at this position
-        norm_h, slope_deg = _sample_terrain(wx, wy)
+        norm_h, slope_deg, moisture = _sample_terrain(wx, wy)
 
-        # PROP-004: Exclusion zone filter -- skip positions inside any
-        # axis-aligned rectangular exclusion zone (roads, buildings, etc.)
+        # 1. Exclusion zones
         if exclusion_zones:
             in_exclusion = False
             for ez in exclusion_zones:
@@ -443,16 +508,15 @@ def compute_vegetation_placement(
             if in_exclusion:
                 continue
 
-        # Water level filter: only applies when terrain has height variation
-        # (flat terrain has all vertices at norm_h=0 which is a false positive)
+        # 2. Water level filter
         if has_height_variation and norm_h < water_level:
             continue
 
-        # Select vegetation type based on density weights
+        # 3. Species selection with density weights
         roll = rng.uniform(0.0, total_density)
         cumulative = 0.0
-        selected_cat = None
-        selected_entry = None
+        selected_cat: str | None = None
+        selected_entry: dict[str, Any] | None = None
 
         for cat, entry in all_entries:
             cumulative += entry["density"]
@@ -464,12 +528,31 @@ def compute_vegetation_placement(
         if selected_entry is None:
             selected_cat, selected_entry = all_entries[-1]
 
-        # Slope filter by category
+        assert selected_cat is not None  # for type checker
+
+        # 4. Altitude filter (optional per-entry bounds)
+        alt_min = selected_entry.get("min_altitude", 0.0)
+        alt_max = selected_entry.get("max_altitude", 1.0)
+        if not (alt_min <= norm_h <= alt_max):
+            continue
+
+        # 5. Moisture filter (optional per-entry bounds)
+        moist_min = selected_entry.get("min_moisture", 0.0)
+        moist_max = selected_entry.get("max_moisture", 1.0)
+        if not (moist_min <= moisture <= moist_max):
+            continue
+
+        # 6. Slope filter by category
         max_slope = _max_slope_for_category(selected_cat)
         if slope_deg > max_slope:
             continue
 
-        # Density probability check (higher density = more likely to place)
+        # 7. Species competition — suppress if a competing species is too close
+        species_key = selected_entry.get("style", selected_entry["type"])
+        if _competition_blocked(wx, wy, species_key):
+            continue
+
+        # 8. Density probability roll
         if rng.random() > selected_entry["density"]:
             continue
 
@@ -478,9 +561,7 @@ def compute_vegetation_placement(
         scale = rng.uniform(scale_range[0], scale_range[1])
         rotation = rng.uniform(0.0, 360.0)
 
-        # Sample terrain height for z position
-        sample_h, _ = _sample_terrain(wx, wy)
-        wz = min_h + sample_h * height_range
+        wz = min_h + norm_h * height_range
 
         placements.append({
             "position": (wx, wy, wz),
@@ -488,8 +569,11 @@ def compute_vegetation_placement(
             "style": selected_entry.get("style", "default"),
             "scale": scale,
             "rotation": rotation,
-            "category": selected_cat,  # PROP-003: needed for LOD chain tagging
+            "category": selected_cat,
+            "moisture": moisture,
         })
+
+        _register_placed(wx, wy, species_key)
 
     return placements
 
@@ -675,13 +759,111 @@ def _create_biome_vegetation_template(
     )
 
 
+def build_vegetation_placement_spec(
+    placements: list[dict[str, Any]],
+    biome_name: str,
+    lod_distances: list[float] | None = None,
+    camera_position: tuple[float, float, float] | None = None,
+) -> dict[str, Any]:
+    """Build a placement specification dict from raw placement list.
+
+    Pure-logic function — no Blender dependency.  Enriches each placement
+    with:
+      - ``lod_level``: LOD tier (0–3) based on distance from ``camera_position``
+        (or from area centre when no camera is given) and the ``lod_distances``
+        thresholds.  LOD0 = closest / highest detail; LOD3 = furthest / impostor.
+      - ``mesh_name``: canonical species key in the form ``"type_style"`` for
+        use as the GPU-instancing mesh identifier.
+      - Density per species as a summary ``species_density`` table in the spec.
+
+    LOD distance thresholds (metres from camera):
+      LOD0: d < lod_distances[0]    — full mesh, full detail
+      LOD1: d < lod_distances[1]    — reduced mesh
+      LOD2: d < lod_distances[2]    — billboard card
+      LOD3: d >= lod_distances[2]   — impostor sprite
+
+    Defaults: [15, 35, 60] metres (matches UE5/Unity typical outdoor scenes).
+
+    Args:
+        placements: Output of ``compute_vegetation_placement``.
+        biome_name: Biome identifier (for metadata).
+        lod_distances: [lod1_m, lod2_m, lod3_m] distance cutoffs.
+        camera_position: (x, y, z) world position of reference camera.
+            When None, uses the geometric centre of all placements.
+
+    Returns:
+        dict with:
+          ``placements``: enriched list of placement dicts.
+          ``biome``: biome name.
+          ``instance_count``: total instance count.
+          ``species_density``: dict mapping species key → count.
+          ``lod_distribution``: dict mapping lod_level → count.
+          ``lod_distances``: the thresholds used.
+    """
+    if lod_distances is None:
+        lod_distances = [15.0, 35.0, 60.0]
+
+    # Fill in LOD distances to always have 3 values
+    ld = list(lod_distances) + [60.0] * max(0, 3 - len(lod_distances))
+    d0, d1, d2 = float(ld[0]), float(ld[1]), float(ld[2])
+
+    # Reference camera position (default: centroid of placements)
+    if camera_position is not None:
+        cam_x, cam_y, cam_z = float(camera_position[0]), float(camera_position[1]), float(camera_position[2])
+    elif placements:
+        cam_x = sum(p["position"][0] for p in placements) / len(placements)
+        cam_y = sum(p["position"][1] for p in placements) / len(placements)
+        cam_z = sum(p["position"][2] for p in placements) / len(placements)
+    else:
+        cam_x, cam_y, cam_z = 0.0, 0.0, 0.0
+
+    species_density: dict[str, int] = {}
+    lod_distribution: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0}
+    enriched: list[dict[str, Any]] = []
+
+    for p in placements:
+        mesh_name = f"{p.get('type', 'unknown')}_{p.get('style', 'default')}"
+
+        # Distance from reference camera
+        px, py, pz = p["position"]
+        dist = math.sqrt((px - cam_x) ** 2 + (py - cam_y) ** 2 + (pz - cam_z) ** 2)
+
+        # LOD tier assignment
+        if dist < d0:
+            lod_level = 0
+        elif dist < d1:
+            lod_level = 1
+        elif dist < d2:
+            lod_level = 2
+        else:
+            lod_level = 3
+
+        species_density[mesh_name] = species_density.get(mesh_name, 0) + 1
+        lod_distribution[lod_level] = lod_distribution.get(lod_level, 0) + 1
+
+        ep = dict(p)
+        ep["mesh_name"] = mesh_name
+        ep["lod_level"] = lod_level
+        ep["distance_from_camera"] = dist
+        enriched.append(ep)
+
+    return {
+        "placements": enriched,
+        "biome": biome_name,
+        "instance_count": len(enriched),
+        "species_density": species_density,
+        "lod_distribution": lod_distribution,
+        "lod_distances": [d0, d1, d2],
+    }
+
+
 def scatter_biome_vegetation(
     params: dict,
 ) -> dict:
     """Materialize per-biome vegetation on terrain using quality placement.
 
-    Combines biome vegetation sets with Poisson disk sampling, slope/height
-    filtering, and optional wind vertex color baking.
+    Combines biome vegetation sets with Poisson disk sampling, slope/height/
+    moisture filtering, species competition zones, and LOD assignment.
 
     Params:
         terrain_name (str): Existing terrain object name.
@@ -692,18 +874,92 @@ def scatter_biome_vegetation(
         season (str, optional): Season variant (summer/autumn/winter/corrupted).
         bake_wind_colors (bool, default False): Whether to compute wind vertex
             colors on tree instances.
-        water_level (float, default 0.05): Normalized height below which nothing
+        water_level (float, default 0.05): Normalised height below which nothing
             is placed.
         exclusion_zones (list of dict, optional): PROP-004 -- axis-aligned
             rectangular zones where no vegetation is placed.  Each dict has
             keys ``min_x``, ``min_y``, ``max_x``, ``max_y`` (world space).
         lod_distances (list of float, optional): PROP-003 -- distance
-            thresholds for LOD0/LOD1/LOD2 custom-property tags on non-tree
-            instances.  Defaults to [15.0, 35.0, 60.0].
+            thresholds [LOD1_m, LOD2_m, LOD3_m] for LOD group tagging.
+            Defaults to [15.0, 35.0, 60.0].
+        competition_radius (float, default 0.0): Species competition exclusion
+            radius.  When > 0, suppresses a new placement when a competing
+            species occupies the zone.  Typical: min_distance * 1.5.
+        moisture_map: Optional 2-D array of moisture values [0,1].
+        spec_only (bool, default False): When True, skip all bpy operations and
+            return the placement spec dict directly (for testing / export).
 
-    Returns dict with: name, instance_count, vegetation_types, biome, season.
+    Returns dict with: name, instance_count, vegetation_types, biome, season,
+                       lod_distribution, species_density.
     """
-    # Import bpy only inside materializer (not at module level for testability)
+    biome_name = params.get("biome_name")
+    if not biome_name:
+        raise ValueError("'biome_name' is required")
+
+    min_distance = float(params.get("min_distance", 3.0))
+    seed = int(params.get("seed", 42))
+    max_instances = int(params.get("max_instances", 5000))
+    season = params.get("season")
+    bake_wind_colors: bool = bool(params.get("bake_wind_colors", False))
+    water_level = float(params.get("water_level", _DEFAULT_WATER_LEVEL))
+    exclusion_zones: list[dict] = params.get("exclusion_zones") or []
+    lod_distances: list[float] = params.get("lod_distances") or [15.0, 35.0, 60.0]
+    competition_radius = float(params.get("competition_radius", 0.0))
+    moisture_map = params.get("moisture_map")
+    spec_only: bool = bool(params.get("spec_only", False))
+
+    # ------------------------------------------------------------------
+    # Pure-logic spec mode — no Blender required
+    # ------------------------------------------------------------------
+    if spec_only:
+        terrain_vertices: list[tuple[float, float, float]] = params.get("terrain_vertices") or []
+        terrain_normals: list[tuple[float, float, float]] = params.get("terrain_normals") or []
+        terrain_faces: list[tuple[int, ...]] = params.get("terrain_faces") or []
+        area_bounds: tuple[float, float, float, float] = params.get("area_bounds") or (0.0, 0.0, 100.0, 100.0)
+
+        if not terrain_vertices:
+            # Synthesize a flat 1×1 terrain if no geometry supplied
+            area_bounds = area_bounds
+            terrain_vertices = [
+                (area_bounds[0], area_bounds[1], 0.0),
+                (area_bounds[2], area_bounds[1], 0.0),
+                (area_bounds[2], area_bounds[3], 0.0),
+                (area_bounds[0], area_bounds[3], 0.0),
+            ]
+            terrain_normals = [(0.0, 0.0, 1.0)] * 4
+            terrain_faces = [(0, 1, 2, 3)]
+
+        placements = compute_vegetation_placement(
+            terrain_vertices,
+            terrain_faces,
+            terrain_normals,
+            biome_name,
+            area_bounds,
+            seed=seed,
+            min_distance=min_distance,
+            water_level=water_level,
+            exclusion_zones=exclusion_zones,
+            moisture_map=moisture_map,
+            competition_radius=competition_radius,
+        )
+
+        if len(placements) > max_instances:
+            placements = placements[:max_instances]
+
+        spec = build_vegetation_placement_spec(
+            placements,
+            biome_name=biome_name,
+            lod_distances=lod_distances,
+        )
+
+        if season:
+            spec["season"] = season
+
+        return spec
+
+    # ------------------------------------------------------------------
+    # Blender materializer mode
+    # ------------------------------------------------------------------
     try:
         import bpy
         import bmesh
@@ -713,21 +969,6 @@ def scatter_biome_vegetation(
     terrain_name = params.get("terrain_name")
     if not terrain_name:
         raise ValueError("'terrain_name' is required")
-
-    biome_name = params.get("biome_name")
-    if not biome_name:
-        raise ValueError("'biome_name' is required")
-
-    min_distance = params.get("min_distance", 3.0)
-    seed = params.get("seed", 42)
-    max_instances = params.get("max_instances", 5000)
-    season = params.get("season")
-    bake_wind_colors: bool = bool(params.get("bake_wind_colors", False))
-    water_level = params.get("water_level", _DEFAULT_WATER_LEVEL)
-    # PROP-004: exclusion zones (rectangular no-plant areas e.g. roads, buildings)
-    exclusion_zones: list[dict] = params.get("exclusion_zones") or []
-    # PROP-003: LOD distance thresholds for non-tree scatter objects
-    lod_distances: list[float] = params.get("lod_distances") or [15.0, 35.0, 60.0]
 
     obj = bpy.data.objects.get(terrain_name)
     if obj is None:
@@ -739,16 +980,13 @@ def scatter_biome_vegetation(
     bm.from_mesh(mesh)
     bm.verts.ensure_lookup_table()
     bm.faces.ensure_lookup_table()
-
-    # Recalculate normals for accurate slope
     bm.normal_update()
 
-    terrain_vertices = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
-    terrain_normals = [(v.normal.x, v.normal.y, v.normal.z) for v in bm.verts]
-    terrain_faces = [tuple(v.index for v in f.verts) for f in bm.faces]
+    bm_terrain_vertices = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
+    bm_terrain_normals = [(v.normal.x, v.normal.y, v.normal.z) for v in bm.verts]
+    bm_terrain_faces = [tuple(v.index for v in f.verts) for f in bm.faces]
     bm.free()
 
-    # Compute area bounds from terrain dimensions
     dims = obj.dimensions
     loc = obj.location
     half_x = dims.x / 2.0
@@ -760,24 +998,31 @@ def scatter_biome_vegetation(
         loc.y + half_y,
     )
 
-    # Compute placements (PROP-004: pass exclusion zones through)
     placements = compute_vegetation_placement(
-        terrain_vertices,
-        terrain_faces,
-        terrain_normals,
+        bm_terrain_vertices,
+        bm_terrain_faces,
+        bm_terrain_normals,
         biome_name,
         area_bounds,
         seed=seed,
         min_distance=min_distance,
         water_level=water_level,
         exclusion_zones=exclusion_zones,
+        moisture_map=moisture_map,
+        competition_radius=competition_radius,
     )
 
-    # Cap instances
     if len(placements) > max_instances:
         placements = placements[:max_instances]
 
-    # Create scatter collection
+    # Enrich with LOD assignments
+    spec = build_vegetation_placement_spec(
+        placements,
+        biome_name=biome_name,
+        lod_distances=lod_distances,
+    )
+    enriched_placements = spec["placements"]
+
     scatter_coll_name = f"{terrain_name}_{biome_name}_vegetation"
     scatter_coll = bpy.data.collections.new(scatter_coll_name)
     bpy.context.scene.collection.children.link(scatter_coll)
@@ -787,11 +1032,9 @@ def scatter_biome_vegetation(
     templates: dict[str, Any] = {}
 
     veg_counts: dict[str, int] = {}
-    # Phase 50-02 G3: _setup_billboard_lod now lives in the toolkit-side
-    # lod_pipeline module (was lazy-imported from terrain's environment_scatter).
     from .lod_pipeline import _setup_billboard_lod
 
-    veg_types_needed = set(p["type"] for p in placements)
+    veg_types_needed = set(p["type"] for p in enriched_placements)
     for veg_type in veg_types_needed:
         templates[veg_type] = _create_biome_vegetation_template(veg_type, template_coll)
         if veg_type == "tree":
@@ -800,9 +1043,6 @@ def scatter_biome_vegetation(
                 mesh_data = templates[veg_type].data
                 tree_verts = [(v.co.x, v.co.y, v.co.z) for v in mesh_data.vertices]
                 wind_colors = compute_wind_vertex_colors(tree_verts)
-                # Blender 3.2+ / 4.x API: color_attributes replaces vertex_colors.
-                # Wind color layout (see WIND_COLOR_LAYOUT): R=sway_strength,
-                # G=sway_frequency, B=phase_offset, A=trunk_sway_intensity.
                 if "WindColor" in mesh_data.color_attributes:
                     mesh_data.color_attributes.remove(mesh_data.color_attributes["WindColor"])
                 attr = mesh_data.color_attributes.new(
@@ -813,15 +1053,14 @@ def scatter_biome_vegetation(
                 for poly in mesh_data.polygons:
                     for loop_idx, vert_idx in zip(poly.loop_indices, poly.vertices):
                         r, g, b = wind_colors[vert_idx]
-                        rgba[loop_idx, 0] = r  # sway_strength
-                        rgba[loop_idx, 1] = g  # sway_frequency
-                        rgba[loop_idx, 2] = b  # phase_offset
-                        # A=trunk_sway_intensity: 0.0 for tips/canopy (no trunk sway)
+                        rgba[loop_idx, 0] = r
+                        rgba[loop_idx, 1] = g
+                        rgba[loop_idx, 2] = b
                         rgba[loop_idx, 3] = 0.0
                 attr.data.foreach_set("color", rgba.ravel())
 
-    for p in placements:
-        veg_key = f"{p['type']}_{p['style']}"
+    for p in enriched_placements:
+        veg_key = p.get("mesh_name", f"{p['type']}_{p['style']}")
         veg_counts[veg_key] = veg_counts.get(veg_key, 0) + 1
 
         template = templates.get(p["type"])
@@ -837,15 +1076,15 @@ def scatter_biome_vegetation(
         instance.scale = (s, s, s)
         instance.rotation_euler = (0, 0, math.radians(p["rotation"]))
 
-        # PROP-003: Tag LOD distances on non-tree instances as custom properties.
-        # Trees are handled by the wind/rig pipeline; rocks and ground cover need
-        # LOD chains so the engine can cull them at distance.
+        # Tag LOD distances: trees get billboard pipeline, others get custom props.
+        lod_level = p.get("lod_level", 0)
         if p.get("category") != "trees":
-            _lod = list(lod_distances) + [0.0] * max(0, 3 - len(lod_distances))
-            instance["lod0_distance"] = float(_lod[0])
-            instance["lod1_distance"] = float(_lod[1])
-            instance["lod2_distance"] = float(_lod[2])
+            _ld = list(lod_distances) + [0.0] * max(0, 3 - len(lod_distances))
+            instance["lod0_distance"] = float(_ld[0])
+            instance["lod1_distance"] = float(_ld[1])
+            instance["lod2_distance"] = float(_ld[2])
             instance["lod_enabled"] = True
+            instance["lod_level"] = lod_level
 
         scatter_coll.objects.link(instance)
 
@@ -856,6 +1095,8 @@ def scatter_biome_vegetation(
         "instance_count": total_instances,
         "vegetation_types": veg_counts,
         "biome": biome_name,
+        "species_density": spec["species_density"],
+        "lod_distribution": spec["lod_distribution"],
     }
 
     if season:

@@ -29,7 +29,22 @@ def _merge_pass_outputs(
     target_controller: TerrainPassController,
     source_result: PassResult,
 ) -> PassResult:
-    """Merge a worker pass result back into the shared controller state."""
+    """Merge a worker pass result back into the shared controller state.
+
+    Channel conflict resolution
+    ---------------------------
+    When a channel being written by this pass was already written by a
+    *different* pass in the same wave (i.e. it is already present in
+    ``target_stack.populated_by_pass`` with a different writer), that is a
+    DAG ordering conflict.  We log it at WARNING level and let the newer pass
+    win (last writer in deterministic sort order takes precedence).  This
+    makes conflicts visible without silently producing corrupted state.
+
+    Undeclared channels
+    -------------------
+    Channels written by this pass but absent from ``produces_channels`` are
+    logged as WARNINGs — they bypass DAG ordering and can cause subtle bugs.
+    """
     definition = target_controller.get_pass(source_result.pass_name)
     target_stack = target_controller.state.mask_stack
     source_stack = source_result.metrics.pop("_worker_mask_stack", None)
@@ -39,7 +54,7 @@ def _merge_pass_outputs(
             f"Worker for pass '{source_result.pass_name}' returned no mask stack snapshot"
         )
 
-    # Warn on channels written by this pass but not declared in produces_channels (Fix 2.5)
+    # Warn on channels written by this pass but not declared in produces_channels
     declared = set(definition.produces_channels)
     for channel, writer in source_stack.populated_by_pass.items():
         if writer == source_result.pass_name and channel not in declared:
@@ -54,6 +69,20 @@ def _merge_pass_outputs(
             raise PassDAGError(
                 f"Pass '{source_result.pass_name}' declared unknown channel '{channel}'"
             )
+
+        # Conflict detection: another pass already wrote this channel in the
+        # same merge sequence.  Newer pass (current) wins; log at WARNING.
+        existing_writer = target_stack.populated_by_pass.get(channel)
+        if existing_writer is not None and existing_writer != source_result.pass_name:
+            logger.warning(
+                "Channel conflict: channel '%s' was already written by pass '%s'; "
+                "pass '%s' is overwriting it (newer pass wins). "
+                "Check DAG produces_channels declarations to resolve the conflict.",
+                channel,
+                existing_writer,
+                source_result.pass_name,
+            )
+
         val = copy.deepcopy(getattr(source_stack, channel))
         object.__setattr__(target_stack, channel, val)
         if val is not None:

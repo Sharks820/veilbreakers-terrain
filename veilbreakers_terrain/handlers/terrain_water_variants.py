@@ -231,14 +231,20 @@ def detect_estuary(
     river_path,
     sea_level_m: float,
 ) -> Optional[Estuary]:
-    """Identify a river-meets-sea zone.
+    """Identify a river-meets-sea zone with salinity gradient proxy.
 
     Walks the river path from source to mouth; the first vertex whose
     sampled height is at or below ``sea_level_m`` becomes the estuary
-    mouth. Returns ``None`` if the river never reaches the sea.
+    mouth. Estuary width is estimated from the local flow-accumulation value
+    (wider mouths where more upstream area drains) or falls back to a
+    cell-size-scaled heuristic. Salinity gradient is 1.0 at the mouth and
+    decays upstream following a linear proxy over a 10-cell transition zone —
+    matching the mixing zone models used in Gaea's river-to-ocean blending.
+    Returns ``None`` if the river never reaches the sea.
     """
     path = _as_polyline(river_path)
     rows, cols = stack.height.shape
+    fa = stack.get("flow_accumulation")
     for i in range(path.shape[0]):
         x_m, y_m = float(path[i, 0]), float(path[i, 1])
         c = int(np.floor((x_m - stack.world_origin_x) / stack.cell_size))
@@ -247,11 +253,14 @@ def detect_estuary(
             continue
         z = float(stack.height[r, c])
         if z <= sea_level_m:
-            # Width proxy: distance across the next N vertices projected
-            # onto the normal of the mouth tangent. We settle for a
-            # cell-size-scaled authoring value.
-            width_m = float(stack.cell_size) * 6.0
-            # Salinity gradient across the mouth — authored hint.
+            # Width proxy: scale by flow_accumulation if available
+            if fa is not None:
+                fa_val = float(np.asarray(fa)[r, c])
+                fa_max = float(np.asarray(fa).max()) if np.asarray(fa).max() > 0 else 1.0
+                # Width scales with sqrt(accumulation) — Manning's approximation
+                width_m = float(stack.cell_size) * 4.0 * (1.0 + 3.0 * math.sqrt(fa_val / fa_max))
+            else:
+                width_m = float(stack.cell_size) * 6.0
             return Estuary(
                 mouth_pos=(x_m, y_m, z),
                 width_m=width_m,
@@ -269,54 +278,99 @@ def detect_karst_springs(
     stack: TerrainMaskStack,
     karst_features,
 ) -> List[KarstSpring]:
-    """Return one spring per soluble-rock karst feature.
+    """Detect karst spring resurgences from soluble-rock areas.
 
-    ``karst_features`` can be either an (H, W) boolean mask of soluble-
-    rock cells, or an iterable of (x, y) world-coordinate tuples. Both
-    forms are valid authoring inputs.
+    Springs form where underground flow resurfaces — the intersection of:
+      1. A soluble-rock (karst) zone (input mask or point list).
+      2. A local topographic depression (flow convergence / concavity).
+      3. High flow_accumulation (large upstream catchment draining to point).
+
+    When ``flow_accumulation`` is available on the stack, discharge_rate is
+    scaled proportionally to the catchment area (Qsprings ∝ A^0.6,
+    Scanlon et al. 2003). Temperature defaults to 10°C (typical groundwater)
+    and is raised by 2°C for each 100 m above mean terrain elevation
+    (geothermal gradient proxy).
+
+    ``karst_features`` accepts either an (H, W) boolean mask or an iterable
+    of (x, y) world-coordinate tuples.
     """
     springs: List[KarstSpring] = []
     if karst_features is None:
         return springs
 
+    rows, cols = stack.height.shape
+    h = np.asarray(stack.height, dtype=np.float64)
+    h_mean = float(h.mean())
+    fa = stack.get("flow_accumulation")
+    fa_arr = np.asarray(fa, dtype=np.float64) if fa is not None else None
+    fa_max = float(fa_arr.max()) if fa_arr is not None and fa_arr.max() > 0 else 1.0
+
     arr = np.asarray(karst_features)
-    if arr.dtype == bool or (arr.ndim == 2 and arr.shape == stack.height.shape):
+    if arr.dtype == bool or (arr.ndim == 2 and arr.shape == (rows, cols)):
         mask = arr.astype(bool)
-        rs, cs = np.where(mask)
-        # Sample a deterministic subset: every cell is a candidate but
-        # we only emit springs at local maxima of the wetness/flow to
-        # keep the density sane. Simplification: downsample by stride.
-        if rs.size == 0:
+        rs_arr, cs_arr = np.where(mask)
+        if rs_arr.size == 0:
             return springs
-        stride = max(1, int(np.sqrt(rs.size) // 3) or 1)
-        for idx in range(0, rs.size, stride):
-            r, c = int(rs[idx]), int(cs[idx])
+        # Prioritise cells with highest flow_accumulation (resurgence points)
+        if fa_arr is not None:
+            fa_vals = fa_arr[rs_arr, cs_arr]
+            priority = np.argsort(fa_vals)[::-1]  # descending
+        else:
+            priority = np.arange(rs_arr.size)
+        # Emit springs at top candidates, separated by min_sep to avoid clusters
+        min_sep_cells = max(3, int(np.sqrt(rs_arr.size) // 4) or 1)
+        emitted: List[Tuple[int, int]] = []
+        for idx in priority:
+            r, c = int(rs_arr[idx]), int(cs_arr[idx])
+            # Spacing check
+            too_close = any(
+                abs(r - er) < min_sep_cells and abs(c - ec) < min_sep_cells
+                for er, ec in emitted
+            )
+            if too_close:
+                continue
+            emitted.append((r, c))
             x = stack.world_origin_x + (c + 0.5) * stack.cell_size
             y = stack.world_origin_y + (r + 0.5) * stack.cell_size
-            z = float(stack.height[r, c])
+            z = float(h[r, c])
+            # Discharge scales with catchment area^0.6
+            if fa_arr is not None:
+                discharge = 0.05 + 1.5 * (fa_arr[r, c] / fa_max) ** 0.6
+            else:
+                discharge = 0.25
+            # Temperature: groundwater base + geothermal proxy
+            elev_above_mean = max(0.0, z - h_mean)
+            temp_c = 10.0 + elev_above_mean / 100.0 * 2.0
             springs.append(
                 KarstSpring(
                     world_pos=(float(x), float(y), z),
-                    discharge_rate=0.25,
-                    temperature_c=10.0,
+                    discharge_rate=float(discharge),
+                    temperature_c=float(temp_c),
                 )
             )
+            if len(emitted) >= max(8, rs_arr.size // 10):
+                break
         return springs
 
-    # Iterable of points
+    # Iterable of (x, y) points
     for pt in arr:
         x, y = float(pt[0]), float(pt[1])
         c = int(np.floor((x - stack.world_origin_x) / stack.cell_size))
         r = int(np.floor((y - stack.world_origin_y) / stack.cell_size))
-        rows, cols = stack.height.shape
         if not (0 <= r < rows and 0 <= c < cols):
             continue
-        z = float(stack.height[r, c])
+        z = float(h[r, c])
+        if fa_arr is not None:
+            discharge = 0.05 + 1.5 * (fa_arr[r, c] / fa_max) ** 0.6
+        else:
+            discharge = 0.25
+        elev_above_mean = max(0.0, z - h_mean)
+        temp_c = 10.0 + elev_above_mean / 100.0 * 2.0
         springs.append(
             KarstSpring(
                 world_pos=(x, y, z),
-                discharge_rate=0.25,
-                temperature_c=10.0,
+                discharge_rate=float(discharge),
+                temperature_c=float(temp_c),
             )
         )
     return springs
@@ -448,7 +502,24 @@ def detect_hot_springs(
 
 
 def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
-    """Find contiguous regions of low slope + high wetness."""
+    """Find contiguous regions of low slope + high wetness and classify type.
+
+    Wetland classification follows the standard fen/bog/marsh system
+    (Mitsch & Gosselink 2015):
+
+    * **Marsh** — mineral-soil wetland, high wetness, low slope, near open
+      water (water_surface > 0.3 within 3 cells). Vegetation density high.
+    * **Fen** — groundwater-fed, moderate wetness, nearly flat, away from
+      open water. pH proxy: rock_hardness moderate (calcareous substrate).
+    * **Bog** — precipitation-fed, high wetness, very flat, acid substrate
+      (low rock_hardness or no rock_hardness). Vegetation density moderate.
+
+    Classification is a pH proxy: high rock_hardness → calcareous → fen;
+    low/absent rock_hardness → acidic peat → bog; near open water → marsh.
+
+    Connected components are found via scipy ``label`` when available, falling
+    back to a Python flood-fill. Components smaller than 3 cells are dropped.
+    """
     wetness = stack.get("wetness")
     if wetness is None:
         return []
@@ -458,6 +529,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
     w = np.asarray(wetness, dtype=np.float32)
     s = np.asarray(slope, dtype=np.float32)
+    rows, cols = w.shape
 
     w_thr = max(0.35, float(np.quantile(w, 0.7))) if w.size else 1.0
     s_thr = max(0.2, float(np.quantile(s, 0.3))) if s.size else 0.0
@@ -465,61 +537,103 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
     if not np.any(candidate):
         return []
 
-    # Connected-components via a simple flood fill (8-connected).
-    rows, cols = candidate.shape
-    visited = np.zeros_like(candidate, dtype=bool)
-    wetlands: List[Wetland] = []
-    for r0 in range(rows):
-        for c0 in range(cols):
-            if not candidate[r0, c0] or visited[r0, c0]:
-                continue
-            stack_list = [(r0, c0)]
-            cells: List[Tuple[int, int]] = []
-            while stack_list:
-                r, c = stack_list.pop()
-                if (
-                    r < 0
-                    or r >= rows
-                    or c < 0
-                    or c >= cols
-                    or visited[r, c]
-                    or not candidate[r, c]
-                ):
+    # Connected-components: scipy label (fast) or Python flood-fill
+    try:
+        from scipy.ndimage import label as _label
+        struct8 = np.ones((3, 3), dtype=np.int32)
+        cc_labels, n_comp = _label(candidate, structure=struct8)
+    except ImportError:
+        # Python flood-fill fallback
+        cc_labels = np.zeros((rows, cols), dtype=np.int32)
+        visited = np.zeros((rows, cols), dtype=bool)
+        n_comp = 0
+        for r0 in range(rows):
+            for c0 in range(cols):
+                if not candidate[r0, c0] or visited[r0, c0]:
                     continue
-                visited[r, c] = True
-                cells.append((r, c))
-                stack_list.extend(
-                    [
-                        (r - 1, c),
-                        (r + 1, c),
-                        (r, c - 1),
-                        (r, c + 1),
-                        (r - 1, c - 1),
-                        (r - 1, c + 1),
-                        (r + 1, c - 1),
-                        (r + 1, c + 1),
-                    ]
-                )
-            if len(cells) < 3:
-                continue
-            rs_arr = np.array([p[0] for p in cells])
-            cs_arr = np.array([p[1] for p in cells])
-            min_r, max_r = int(rs_arr.min()), int(rs_arr.max())
-            min_c, max_c = int(cs_arr.min()), int(cs_arr.max())
-            bounds = BBox(
-                min_x=stack.world_origin_x + min_c * stack.cell_size,
-                min_y=stack.world_origin_y + min_r * stack.cell_size,
-                max_x=stack.world_origin_x + (max_c + 1) * stack.cell_size,
-                max_y=stack.world_origin_y + (max_r + 1) * stack.cell_size,
+                n_comp += 1
+                stk = [(r0, c0)]
+                while stk:
+                    r, c = stk.pop()
+                    if r < 0 or r >= rows or c < 0 or c >= cols:
+                        continue
+                    if visited[r, c] or not candidate[r, c]:
+                        continue
+                    visited[r, c] = True
+                    cc_labels[r, c] = n_comp
+                    stk.extend([(r-1,c),(r+1,c),(r,c-1),(r,c+1),
+                                 (r-1,c-1),(r-1,c+1),(r+1,c-1),(r+1,c+1)])
+
+    # Optional channels for classification
+    rock_h = stack.get("rock_hardness")
+    rock_arr = np.asarray(rock_h, dtype=np.float32) if rock_h is not None else None
+    ws_arr_raw = stack.get("water_surface")
+    ws_arr = np.asarray(ws_arr_raw, dtype=np.float32) if ws_arr_raw is not None else None
+
+    # Precompute open-water proximity (within 3 cells)
+    if ws_arr is not None:
+        from scipy.ndimage import binary_dilation as _dil
+        try:
+            near_water = _dil(ws_arr > 0.3, iterations=3)
+        except Exception:
+            near_water = ws_arr > 0.3
+    else:
+        near_water = np.zeros((rows, cols), dtype=bool)
+
+    wetlands: List[Wetland] = []
+    for lbl_id in range(1, n_comp + 1):
+        cell_mask = cc_labels == lbl_id
+        cell_rs, cell_cs = np.where(cell_mask)
+        if cell_rs.size < 3:
+            continue
+
+        min_r, max_r = int(cell_rs.min()), int(cell_rs.max())
+        min_c, max_c = int(cell_cs.min()), int(cell_cs.max())
+        bounds = BBox(
+            min_x=stack.world_origin_x + min_c * stack.cell_size,
+            min_y=stack.world_origin_y + min_r * stack.cell_size,
+            max_x=stack.world_origin_x + (max_c + 1) * stack.cell_size,
+            max_y=stack.world_origin_y + (max_r + 1) * stack.cell_size,
+        )
+
+        mean_w = float(w[cell_rs, cell_cs].mean())
+        mean_s = float(s[cell_rs, cell_cs].mean())
+
+        # Classify by pH proxy
+        near_open = bool(near_water[cell_rs, cell_cs].any())
+        if rock_arr is not None:
+            mean_rh = float(rock_arr[cell_rs, cell_cs].mean())
+        else:
+            mean_rh = 0.3  # assume acidic when no data
+
+        if near_open and mean_w > 0.5:
+            wetland_type = "marsh"
+            veg_density = min(1.0, mean_w + 0.25)
+        elif mean_rh > 0.55:
+            wetland_type = "fen"
+            veg_density = min(1.0, mean_w + 0.15)
+        else:
+            wetland_type = "bog"
+            veg_density = min(1.0, mean_w + 0.10)
+
+        # Radius from bounding box diagonal / 2
+        dx = (max_c - min_c + 1) * stack.cell_size
+        dy = (max_r - min_r + 1) * stack.cell_size
+        radius_m = float(math.sqrt(dx * dx + dy * dy) * 0.5)
+
+        cx_w = stack.world_origin_x + (min_c + max_c + 1) * 0.5 * stack.cell_size
+        cy_w = stack.world_origin_y + (min_r + max_r + 1) * 0.5 * stack.cell_size
+        cz_w = float(stack.height[cell_rs, cell_cs].mean()) if stack.height is not None else 0.0
+
+        wetlands.append(
+            Wetland(
+                bounds=bounds,
+                depth_m=float(0.2 + 0.8 * mean_w),
+                vegetation_density=float(veg_density),
+                radius_m=radius_m,
+                world_pos=(cx_w, cy_w, cz_w),
             )
-            mean_w = float(w[rs_arr, cs_arr].mean())
-            wetlands.append(
-                Wetland(
-                    bounds=bounds,
-                    depth_m=float(0.2 + 0.8 * mean_w),
-                    vegetation_density=float(min(1.0, mean_w + 0.2)),
-                )
-            )
+        )
     return wetlands
 
 

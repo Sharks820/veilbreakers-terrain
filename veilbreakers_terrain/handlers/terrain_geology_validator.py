@@ -97,60 +97,265 @@ def validate_strata_consistency(
 def validate_strahler_ordering(
     water_network: Optional[Any],
 ) -> List[ValidationIssue]:
-    """Check Strahler stream-ordering hierarchy for plausibility.
+    """Validate Strahler stream-ordering topology using BFS from outlets.
 
-    Accepts a ``water_network`` with attribute ``streams`` (iterable of
-    objects with ``order``, ``parent_order``) OR a dict with key
-    ``streams`` containing similar entries. Returns a soft issue for any
-    stream whose order exceeds its parent's order + 1 (geologically
-    implausible tributary).
+    Strahler ordering rules (Strahler 1952):
+      - Order 1: headwater streams (no tributaries).
+      - Order N: confluence of two order-(N-1) streams raises the order to N.
+      - Merging streams of unequal order keeps the higher order unchanged.
+
+    This function accepts a river network in several formats (see below),
+    computes the expected Strahler order for every node via BFS from the
+    outlet(s), then flags any edge where a *higher-order stream feeds into a
+    lower-order one* — a topological impossibility under Strahler rules.
+
+    Accepted ``water_network`` formats
+    -----------------------------------
+    1. **Dict with ``nodes`` + ``edges`` keys** (preferred)::
+
+           {
+             "nodes": [{"id": "n0"}, {"id": "n1"}, ...],
+             "edges": [{"from": "n0", "to": "n1"}, ...]
+           }
+
+       Edges are directed *downstream* (from tributary toward outlet).
+       If a ``strahler_order`` key is present on an edge or node it is used
+       as the asserted order for violation-detection; otherwise the function
+       computes orders from topology.
+
+    2. **Flat list of stream records** — same legacy format as before::
+
+           [{"order": 2, "parent_order": 1}, ...]
+
+       or list-of-2-tuples ``[(order, parent_order), ...]``.
+       Topology BFS is skipped; the flat-list path checks the
+       ``order > parent_order + 1`` rule directly.
+
+    3. **Object with ``.streams`` attribute or dict with ``"streams"`` key**
+       — same legacy flat-record path as format 2.
+
+    4. **networkx DiGraph** (``edges(data=True)``) — BFS is performed on the
+       graph; asserted orders are taken from edge ``strahler_order`` attrs when
+       present.
+
+    Returns
+    -------
+    List of :class:`ValidationIssue` (severity ``"soft"``) for every
+    detected violation.  An empty list means the network is topologically
+    consistent with Strahler rules.
     """
     issues: List[ValidationIssue] = []
     if water_network is None:
         return issues
 
+    # ------------------------------------------------------------------
+    # Helper: extract a value from a dict-or-object
+    # ------------------------------------------------------------------
+    def _get(obj: Any, name: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(name, default)
+        return getattr(obj, name, default)
+
+    # ------------------------------------------------------------------
+    # Path A: dict with "nodes"/"edges" — full BFS topology validation
+    # ------------------------------------------------------------------
+    if isinstance(water_network, dict) and "edges" in water_network:
+        edges_raw: List[Any] = list(water_network.get("edges", []))
+        # Build adjacency: downstream_of[node] = list of upstream nodes
+        # Edges are directed FROM upstream TO downstream.
+        downstream: Dict[Any, Any] = {}   # node -> downstream node
+        upstream_of: Dict[Any, List[Any]] = {}  # node -> [upstream nodes]
+        asserted_order: Dict[tuple, int] = {}  # (from, to) -> strahler_order
+
+        for e in edges_raw:
+            src = _get(e, "from") or _get(e, "source")
+            dst = _get(e, "to") or _get(e, "target")
+            if src is None or dst is None:
+                continue
+            downstream[src] = dst
+            upstream_of.setdefault(dst, []).append(src)
+            so = _get(e, "strahler_order")
+            if so is not None:
+                asserted_order[(src, dst)] = int(so)
+
+        # Identify headwaters (nodes with no upstream neighbors)
+        all_nodes: set = set(downstream.keys()) | set(upstream_of.keys())
+        headwaters = [n for n in all_nodes if n not in upstream_of]
+
+        # BFS/post-order from headwaters to outlets to compute Strahler order.
+        # We use iterative post-order DFS so deep networks don't hit Python's
+        # recursion limit.
+        computed: Dict[Any, int] = {}
+
+        def _compute_order(start_node: Any) -> int:
+            """Iterative post-order DFS to compute Strahler order."""
+            stack = [(start_node, False)]
+            while stack:
+                node, visited = stack.pop()
+                if visited:
+                    ups = upstream_of.get(node, [])
+                    if not ups:
+                        computed[node] = 1
+                    else:
+                        child_orders = sorted(
+                            [computed.get(u, 1) for u in ups], reverse=True
+                        )
+                        if len(child_orders) >= 2 and child_orders[0] == child_orders[1]:
+                            computed[node] = child_orders[0] + 1
+                        else:
+                            computed[node] = child_orders[0]
+                else:
+                    stack.append((node, True))
+                    for up in upstream_of.get(node, []):
+                        if up not in computed:
+                            stack.append((up, False))
+            return computed.get(start_node, 1)
+
+        # Seed computation from every outlet (nodes with no downstream)
+        outlets = [n for n in all_nodes if n not in downstream]
+        for outlet in outlets:
+            _compute_order(outlet)
+
+        # Validate each edge: upstream node order must be <= downstream order.
+        # A violation occurs when a higher-order stream feeds into a lower-order
+        # node — impossible under Strahler rules.
+        for e_idx, e in enumerate(edges_raw):
+            src = _get(e, "from") or _get(e, "source")
+            dst = _get(e, "to") or _get(e, "target")
+            if src is None or dst is None:
+                continue
+
+            src_order = asserted_order.get((src, dst), computed.get(src, 1))
+            dst_order = computed.get(dst, 1)
+
+            if src_order > dst_order:
+                issues.append(
+                    ValidationIssue(
+                        code="STRAHLER_UPHILL_ORDER",
+                        severity="soft",
+                        affected_feature=f"edge_{e_idx}_{src}_to_{dst}",
+                        message=(
+                            f"stream edge {src!r}→{dst!r}: upstream order "
+                            f"{src_order} > downstream order {dst_order} — "
+                            "higher-order tributary feeding lower-order channel"
+                        ),
+                        remediation=(
+                            "check edge direction or recompute Strahler orders "
+                            "from corrected network topology"
+                        ),
+                    )
+                )
+        return issues
+
+    # ------------------------------------------------------------------
+    # Path B: networkx DiGraph
+    # ------------------------------------------------------------------
+    if callable(getattr(water_network, "edges", None)) and callable(
+        getattr(water_network, "predecessors", None)
+    ):
+        # Build upstream_of from the graph and run the same BFS logic.
+        upstream_of_nx: Dict[Any, List[Any]] = {}
+        has_downstream_nx: set = set()
+        asserted_nx: Dict[tuple, int] = {}
+
+        for u, v, data in water_network.edges(data=True):
+            upstream_of_nx.setdefault(v, []).append(u)
+            has_downstream_nx.add(u)
+            so = data.get("strahler_order") if isinstance(data, dict) else None
+            if so is not None:
+                asserted_nx[(u, v)] = int(so)
+
+        all_nx = set(water_network.nodes())
+        computed_nx: Dict[Any, int] = {}
+
+        def _compute_nx(start: Any) -> int:
+            stack = [(start, False)]
+            while stack:
+                node, visited = stack.pop()
+                if visited:
+                    ups = upstream_of_nx.get(node, [])
+                    if not ups:
+                        computed_nx[node] = 1
+                    else:
+                        child_orders = sorted(
+                            [computed_nx.get(u, 1) for u in ups], reverse=True
+                        )
+                        if len(child_orders) >= 2 and child_orders[0] == child_orders[1]:
+                            computed_nx[node] = child_orders[0] + 1
+                        else:
+                            computed_nx[node] = child_orders[0]
+                else:
+                    stack.append((node, True))
+                    for up in upstream_of_nx.get(node, []):
+                        if up not in computed_nx:
+                            stack.append((up, False))
+            return computed_nx.get(start, 1)
+
+        outlets_nx = [n for n in all_nx if n not in has_downstream_nx]
+        for outlet in outlets_nx:
+            _compute_nx(outlet)
+
+        for e_idx, (u, v, data) in enumerate(water_network.edges(data=True)):
+            src_order = asserted_nx.get((u, v), computed_nx.get(u, 1))
+            dst_order = computed_nx.get(v, 1)
+            if src_order > dst_order:
+                issues.append(
+                    ValidationIssue(
+                        code="STRAHLER_UPHILL_ORDER",
+                        severity="soft",
+                        affected_feature=f"edge_{e_idx}_{u}_to_{v}",
+                        message=(
+                            f"stream edge {u!r}→{v!r}: upstream order "
+                            f"{src_order} > downstream order {dst_order}"
+                        ),
+                    )
+                )
+        return issues
+
+    # ------------------------------------------------------------------
+    # Path C: flat list / legacy object with .streams — order-pair checks
+    # ------------------------------------------------------------------
     streams: Optional[Iterable[Any]] = None
     if hasattr(water_network, "streams"):
         streams = getattr(water_network, "streams")
     elif isinstance(water_network, dict) and "streams" in water_network:
         streams = water_network["streams"]
     elif isinstance(water_network, list):
-        # list-of-tuples: [(order, parent_order), ...]
-        streams = [
-            {"order": t[0], "parent_order": t[1]}
-            for t in water_network
-            if isinstance(t, (tuple, list)) and len(t) >= 2
-        ]
-    elif callable(getattr(water_network, "edges", None)):
-        # networkx DiGraph: edges carry order/parent_order as edge attribute dicts
-        streams = [
-            data
-            for _u, _v, data in water_network.edges(data=True)
-            if isinstance(data, dict) and "order" in data and "parent_order" in data
-        ]
+        # Accept list-of-dicts (with "order"/"parent_order" keys) directly,
+        # OR list-of-2-tuples [(order, parent_order), ...].
+        streams_list: List[Any] = []
+        for t in water_network:
+            if isinstance(t, dict) and ("order" in t or "parent_order" in t):
+                streams_list.append(t)
+            elif isinstance(t, (tuple, list)) and len(t) >= 2:
+                streams_list.append({"order": t[0], "parent_order": t[1]})
+        streams = streams_list
 
     if streams is None:
         return issues
-
-    def _get(obj: Any, name: str, default: Any = None) -> Any:
-        if isinstance(obj, dict):
-            return obj.get(name, default)
-        return getattr(obj, name, default)
 
     for idx, s in enumerate(streams):
         order = _get(s, "order")
         parent_order = _get(s, "parent_order")
         if order is None or parent_order is None:
             continue
-        if int(order) > int(parent_order) + 1:
+        # Strahler rule: a tributary's order must be <= parent order.
+        # order > parent_order is impossible (the parent receives this stream,
+        # so it must be at least as high-order).
+        if int(order) > int(parent_order):
             issues.append(
                 ValidationIssue(
-                    code="STRAHLER_JUMP",
+                    code="STRAHLER_UPHILL_ORDER",
                     severity="soft",
                     affected_feature=f"stream_{idx}",
                     message=(
-                        f"stream order {order} exceeds parent order "
-                        f"{parent_order} + 1 — implausible tributary"
+                        f"stream order {order} exceeds parent (downstream) "
+                        f"order {parent_order} — higher-order stream cannot "
+                        "feed into a lower-order channel"
+                    ),
+                    remediation=(
+                        "verify stream direction; tributaries must be "
+                        "equal-or-lower order than the channel they join"
                     ),
                 )
             )

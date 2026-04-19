@@ -1101,6 +1101,22 @@ def assign_terrain_materials_by_slope(
 
     Pure-logic function -- no bpy dependency.
 
+    Implements a 5-tier altitudinal banding system (SpeedTree/UE5 PCG style):
+      1. water_edges  — faces at or below water_level + margin
+      2. ground       — flat faces below treeline, modulated by rock hardness
+      3. slopes       — angled faces; treeline→snowline transitions to rocky slopes
+      4. cliffs       — near-vertical; above treeline always rock/ice
+      5. snowline     — flat faces above snowline become slopes (snow-covered)
+
+    Wet/dry material variant selection: when "moisture_per_vertex" is supplied,
+    biases the material slot pick within a zone toward wet (even indices) or
+    dry (odd indices) variants. This mirrors MicroSplat's wetness-based material
+    switching without requiring separate material lists.
+
+    Boundary transition bias: faces within 5 degrees of a zone boundary get a
+    deterministic slot offset based on face index parity to blend zone visual
+    edge (prevents cliff-hard stripe artifacts visible in UE4-era terrain).
+
     Args:
         mesh_data: Dict with:
             - "vertices": list of (x, y, z) vertex positions
@@ -1108,13 +1124,17 @@ def assign_terrain_materials_by_slope(
             - "normals": list of (nx, ny, nz) face normals (one per face)
             - "water_level": float (optional, default 0.0)
             - "rock_hardness": list of float per vertex in [0, 1] (optional).
-              Hard rock (>0.7) shifts the ground→slope transition threshold
-              upward by up to 15 degrees so hard rock terrain stays "ground"
-              at steeper angles — geologically accurate.
-            - "snow_line_z": float (optional). Faces above this Z elevation
-              are assigned a "cliffs" material as a proxy for snow/ice exposure
-              on vertical faces and pushed toward "slopes" on flat terrain.
+              Hard rock (>0.7) shifts the flat→slope threshold up by up to
+              15 degrees. Soft rock (<0.3) shifts it down by up to 10 degrees.
+            - "snow_line_z": float (optional). Above this Z flat faces become
+              slope material; steep faces become cliff (snow/ice). Default: None.
+            - "tree_line_z": float (optional). Above this Z flat faces bias
+              toward slope/cliff material even on low angle — rocky alpine style.
               Default: None (disabled).
+            - "moisture_per_vertex": list of float in [0, 1] per vertex
+              (optional). Controls wet/dry variant selection within a zone.
+              >0.6 → wet variant (even slot), <0.3 → dry variant (odd slot).
+              Default: None (no moisture bias).
 
     Returns:
         List of material indices, one per face. The index maps into the
@@ -1127,6 +1147,8 @@ def assign_terrain_materials_by_slope(
     water_level = float(mesh_data.get("water_level", 0.0))
     rock_hardness_per_vertex: list[float] | None = mesh_data.get("rock_hardness")
     snow_line_z: float | None = mesh_data.get("snow_line_z")
+    tree_line_z: float | None = mesh_data.get("tree_line_z")
+    moisture_per_vertex: list[float] | None = mesh_data.get("moisture_per_vertex")
 
     palette = get_biome_palette(biome_name)
 
@@ -1142,13 +1164,18 @@ def assign_terrain_materials_by_slope(
     if not faces or not normals:
         return []
 
+    # Boundary transition band (degrees) — faces within this margin of a
+    # threshold get parity-interleaved slot picks to soften the zone edge.
+    _BOUNDARY_BAND = 5.0
+
     material_indices: list[int] = []
     for fi, face in enumerate(faces):
         normal = normals[fi] if fi < len(normals) else (0.0, 0.0, 1.0)
 
-        # Compute face center Z and mean rock hardness
+        # Compute face center Z, mean rock hardness, and mean moisture
         face_center_z = 0.0
         face_hardness = 0.5  # default mid-hardness
+        face_moisture = 0.5  # default mid-moisture (no bias)
         if face and vertices:
             z_values = [vertices[vi][2] for vi in face if vi < len(vertices)]
             face_center_z = sum(z_values) / len(z_values) if z_values else 0.0
@@ -1159,6 +1186,13 @@ def assign_terrain_materials_by_slope(
                     if vi < len(rock_hardness_per_vertex)
                 ]
                 face_hardness = sum(h_vals) / len(h_vals) if h_vals else 0.5
+            if moisture_per_vertex is not None:
+                m_vals = [
+                    moisture_per_vertex[vi]
+                    for vi in face
+                    if vi < len(moisture_per_vertex)
+                ]
+                face_moisture = sum(m_vals) / len(m_vals) if m_vals else 0.5
 
         # rock_hardness slope transition modulation:
         # Hard rock (hardness > 0.7) shifts the flat→slope threshold up by
@@ -1174,34 +1208,77 @@ def assign_terrain_materials_by_slope(
         effective_flat_max = _FLAT_MAX_ANGLE + hardness_offset
         effective_slope_max = _SLOPE_MAX_ANGLE + hardness_offset
 
-        # Snow line zone: faces above snow_line_z use cliff material on steep
-        # faces and slope material on flatter faces (snow/ice coverage).
-        if snow_line_z is not None and face_center_z >= snow_line_z:
-            angle = _face_slope_angle(normal)
-            if face_center_z < water_level + 0.5:
-                zone = "water_edges"
-            elif angle > effective_slope_max:
-                zone = "cliffs"   # ice-covered near-vertical faces
+        angle = _face_slope_angle(normal)
+
+        # ---- 5-tier altitudinal zone classification -------------------------
+        if face_center_z < water_level + 0.5:
+            zone = "water_edges"
+
+        elif snow_line_z is not None and face_center_z >= snow_line_z:
+            # Above snowline: steep → cliff (ice/bare rock), flat → slopes
+            # (snow-covered — not "ground" since vegetation can't grow).
+            if angle > effective_slope_max:
+                zone = "cliffs"
             else:
-                zone = "slopes"   # snow-covered moderate slopes
+                zone = "slopes"
+
+        elif tree_line_z is not None and face_center_z >= tree_line_z:
+            # Above treeline but below snowline: rocky alpine terrain.
+            # Flat faces become "slopes" (scree/alpine grass), steep→cliffs.
+            if angle <= effective_flat_max:
+                zone = "slopes"   # scree fields, not vegetated ground
+            elif angle <= effective_slope_max:
+                zone = "slopes"
+            else:
+                zone = "cliffs"
+
         else:
             # Standard classification with hardness-modulated thresholds
-            if face_center_z < water_level + 0.5:
-                zone = "water_edges"
+            if angle <= effective_flat_max:
+                zone = "ground"
+            elif angle <= effective_slope_max:
+                zone = "slopes"
             else:
-                angle = _face_slope_angle(normal)
-                if angle <= effective_flat_max:
-                    zone = "ground"
-                elif angle <= effective_slope_max:
-                    zone = "slopes"
-                else:
-                    zone = "cliffs"
+                zone = "cliffs"
 
-        # Pick material within the zone (cycle through available materials)
+        # ---- Material slot selection within zone ----------------------------
         zone_materials = palette[zone]
+        zone_mat_count = len(zone_materials)
         zone_idx = zone_start[zone]
-        mat_offset = fi % len(zone_materials)
-        material_indices.append(zone_idx + mat_offset)
+
+        # Boundary transition bias: faces near a threshold get parity-offset
+        # slots so the zone boundary is visually dithered, not a hard line.
+        near_flat_boundary = (
+            abs(angle - effective_flat_max) <= _BOUNDARY_BAND
+            and zone in ("ground", "slopes")
+        )
+        near_slope_boundary = (
+            abs(angle - effective_slope_max) <= _BOUNDARY_BAND
+            and zone in ("slopes", "cliffs")
+        )
+        boundary_offset = (fi & 1) if (near_flat_boundary or near_slope_boundary) else 0
+
+        # Wet/dry variant bias:
+        # If moisture > 0.6 → prefer even-index slots (wet variants)
+        # If moisture < 0.3 → prefer odd-index slots (dry variants)
+        # Otherwise → round-robin by face index
+        if zone_mat_count > 1:
+            if face_moisture > 0.6:
+                # Wet: use even slots, wrapping within zone
+                wet_slots = [i for i in range(zone_mat_count) if i % 2 == 0]
+                slot = wet_slots[fi % len(wet_slots)]
+            elif face_moisture < 0.3:
+                # Dry: use odd slots if available, else all slots
+                dry_slots = [i for i in range(zone_mat_count) if i % 2 == 1]
+                if not dry_slots:
+                    dry_slots = list(range(zone_mat_count))
+                slot = dry_slots[fi % len(dry_slots)]
+            else:
+                slot = (fi + boundary_offset) % zone_mat_count
+        else:
+            slot = 0
+
+        material_indices.append(zone_idx + slot)
 
     return material_indices
 
@@ -1214,7 +1291,7 @@ def blend_terrain_vertex_colors(
     mesh_data: dict[str, Any],
     biome_name: str,
 ) -> list[tuple[float, float, float, float]]:
-    """Paint vertex colors for splatmap blending using 4-channel approach.
+    """Paint vertex colors for splatmap blending using 4-channel multi-axis weighting.
 
     Channel mapping:
         R = grass/vegetation weight
@@ -1222,8 +1299,20 @@ def blend_terrain_vertex_colors(
         B = dirt/soil weight
         A = special (corruption, snow, water, etc.)
 
-    Each vertex gets weights based on its terrain zone classification.
-    The weights are normalized so R+G+B+A = 1.0.
+    Weights are computed via simultaneous slope + height + wetness axes
+    (MicroSplat / UE5 Landscape layer system approach):
+
+    1. Slope axis  — steep faces drive G (rock) up and R (grass) down.
+    2. Height axis — altitude percentile drives A (special: snow at peaks,
+                     waterlogging near water_level) independently of slope.
+    3. Wetness axis — if moisture_per_vertex is provided, high moisture
+                      boosts B (dirt/mud) and depresses R (grass dries out
+                      in swamp = mud, not grass). Low moisture does the inverse.
+
+    All three axes contribute additively to the raw channel weights before
+    a final L1-normalisation, so the channels remain independent and sum to 1.
+    Blending happens in linear light space (IEC 61966-2-1 sRGB conversion);
+    result is gamma-re-encoded for storage, matching Blender's color pipeline.
 
     Pure-logic function -- no bpy dependency.
 
@@ -1233,6 +1322,10 @@ def blend_terrain_vertex_colors(
             - "faces": list of vertex index tuples
             - "normals": list of (nx, ny, nz) face normals (one per face)
             - "water_level": float (optional, default 0.0)
+            - "snow_line_z": float (optional). Above this Z the A channel
+              gains snow contribution regardless of slope.
+            - "moisture_per_vertex": list of float in [0, 1] per vertex
+              (optional). Values >0.6 = wet (mud boost), <0.3 = dry.
         biome_name: Name of the biome to use.
 
     Returns:
@@ -1241,7 +1334,9 @@ def blend_terrain_vertex_colors(
     vertices = mesh_data.get("vertices", [])
     faces = mesh_data.get("faces", [])
     normals = mesh_data.get("normals", [])
-    water_level = mesh_data.get("water_level", 0.0)
+    water_level = float(mesh_data.get("water_level", 0.0))
+    snow_line_z: float | None = mesh_data.get("snow_line_z")
+    moisture_per_vertex: list[float] | None = mesh_data.get("moisture_per_vertex")
 
     if not vertices:
         return []
@@ -1258,15 +1353,6 @@ def blend_terrain_vertex_colors(
             if 0 <= vi < num_verts:
                 vert_faces[vi].append(fi)
 
-    # Zone-to-splatmap-channel weights
-    # Each zone contributes different channel weights
-    zone_weights: dict[str, tuple[float, float, float, float]] = {
-        "ground": (0.6, 0.0, 0.4, 0.0),     # Mostly grass + some dirt
-        "slopes": (0.1, 0.6, 0.2, 0.1),      # Mostly rock + some dirt
-        "cliffs": (0.0, 0.9, 0.0, 0.1),      # Almost all rock
-        "water_edges": (0.1, 0.0, 0.3, 0.6), # Mostly special + dirt
-    }
-
     def _srgb_to_linear(c: float) -> float:
         """Convert sRGB gamma-encoded value to linear light (IEC 61966-2-1)."""
         if c <= 0.04045:
@@ -1280,67 +1366,143 @@ def blend_terrain_vertex_colors(
             return c * 12.92
         return 1.055 * (c ** (1.0 / 2.4)) - 0.055
 
-    # Linearize zone_weights so blending happens in linear light space.
-    # The A channel (special/mask) is a linear weight, not a color — skip gamma.
-    zone_weights_linear: dict[str, tuple[float, float, float, float]] = {
+    # Precompute height range for altitude percentile axis
+    z_values = [v[2] for v in vertices]
+    z_min = min(z_values)
+    z_max = max(z_values)
+    z_range = z_max - z_min
+
+    # Base splatmap weights per zone (sRGB, will be linearised below)
+    # R=grass, G=rock, B=dirt, A=special
+    _ZONE_BASE: dict[str, tuple[float, float, float, float]] = {
+        "ground":      (0.60, 0.05, 0.35, 0.00),
+        "slopes":      (0.10, 0.60, 0.20, 0.10),
+        "cliffs":      (0.00, 0.88, 0.02, 0.10),
+        "water_edges": (0.05, 0.00, 0.30, 0.65),
+    }
+
+    # Linearise base zone weights once (A stays linear — it's a mask)
+    _ZONE_LINEAR: dict[str, tuple[float, float, float, float]] = {
         zone: (
             _srgb_to_linear(w[0]),
             _srgb_to_linear(w[1]),
             _srgb_to_linear(w[2]),
-            w[3],  # alpha: linear weight, no gamma
+            w[3],
         )
-        for zone, w in zone_weights.items()
+        for zone, w in _ZONE_BASE.items()
     }
 
     vertex_colors: list[tuple[float, float, float, float]] = []
 
     for vi in range(num_verts):
         adj = vert_faces[vi]
+        vx, vy, vz = vertices[vi]
+
+        # ---- Height axis -------------------------------------------------------
+        # Altitude percentile for this vertex
+        h_pct = (vz - z_min) / z_range if z_range > 1e-9 else 0.5
+
+        # Low-altitude waterlogging contribution to A
+        water_margin = 0.5
+        near_water = (vz < water_level + water_margin)
+        a_height = 0.0
+        if near_water:
+            # Linear ramp from water_level+margin down to water_level
+            a_height = max(0.0, 1.0 - (vz - water_level) / water_margin) * 0.4
+
+        # High-altitude snow contribution to A
+        if snow_line_z is not None and vz >= snow_line_z:
+            snow_frac = min(1.0, (vz - snow_line_z) / max(1.0, z_range * 0.15))
+            a_height = max(a_height, snow_frac * 0.8)
+        elif z_range > 1e-9 and h_pct > 0.88:
+            # Implicit high-altitude band even without explicit snow_line_z
+            a_height = max(a_height, (h_pct - 0.88) / 0.12 * 0.4)
+
+        # ---- Wetness axis -------------------------------------------------------
+        face_moisture = 0.5  # neutral — no bias
+        if moisture_per_vertex is not None and vi < len(moisture_per_vertex):
+            face_moisture = float(moisture_per_vertex[vi])
+
+        # Wetness influence (linear, not gamma-encoded)
+        r_moisture_offset = 0.0  # grass penalty (wet soaks grass, dry crisps it)
+        b_moisture_offset = 0.0  # dirt/mud boost
+        if face_moisture > 0.6:
+            # High moisture: more mud (B), slightly less grass (R), more special (A)
+            wetness = (face_moisture - 0.6) / 0.4  # 0→1 within wet range
+            b_moisture_offset = _srgb_to_linear(wetness * 0.25)
+            r_moisture_offset = -_srgb_to_linear(wetness * 0.15)
+            a_height = min(1.0, a_height + wetness * 0.05)
+        elif face_moisture < 0.3:
+            # Low moisture: drier ground — less mud (B), more rock (G)
+            dryness = (0.3 - face_moisture) / 0.3  # 0→1 within dry range
+            b_moisture_offset = -_srgb_to_linear(dryness * 0.15)
+            r_moisture_offset = -_srgb_to_linear(dryness * 0.10)
+
         if not adj:
-            # Isolated vertex -- default to dirt (linearized)
-            vertex_colors.append((0.0, 0.0, _srgb_to_linear(1.0), 0.0))
+            # Isolated vertex — default to dirt + height contribution
+            r0 = max(0.0, 0.0 + r_moisture_offset)
+            g0 = 0.0
+            b0 = max(0.0, _srgb_to_linear(1.0) + b_moisture_offset)
+            a0 = a_height
+            total0 = r0 + g0 + b0 + a0
+            if total0 > 1e-9:
+                r0, g0, b0, a0 = r0 / total0, g0 / total0, b0 / total0, a0 / total0
+            else:
+                b0 = 1.0
+            vertex_colors.append((
+                _linear_to_srgb(r0), _linear_to_srgb(g0),
+                _linear_to_srgb(b0), max(0.0, min(1.0, a0)),
+            ))
             continue
 
-        # Average zone weights across adjacent faces — blend in linear light
+        # ---- Slope axis: average zone weights across adjacent faces in linear -
         r_sum, g_sum, b_sum, a_sum = 0.0, 0.0, 0.0, 0.0
         for fi in adj:
             normal = normals[fi] if fi < len(normals) else (0.0, 0.0, 1.0)
-            # Compute face center Z for this face
             face = faces[fi] if fi < len(faces) else ()
             if face:
-                z_values = [
-                    vertices[fvi][2]
-                    for fvi in face
-                    if fvi < len(vertices)
-                ]
-                face_z = sum(z_values) / len(z_values) if z_values else 0.0
+                fz_vals = [vertices[fvi][2] for fvi in face if fvi < len(vertices)]
+                face_z = sum(fz_vals) / len(fz_vals) if fz_vals else 0.0
             else:
                 face_z = 0.0
 
             zone = _classify_face(normal, face_z, water_level)
-            w = zone_weights_linear[zone]
+            w = _ZONE_LINEAR[zone]
             r_sum += w[0]
             g_sum += w[1]
             b_sum += w[2]
             a_sum += w[3]
 
-        # Normalize in linear space
-        total = r_sum + g_sum + b_sum + a_sum
-        if total > 1e-9:
-            r_sum /= total
-            g_sum /= total
-            b_sum /= total
-            a_sum /= total
-        else:
-            r_sum, g_sum, b_sum = 0.0, 0.0, _srgb_to_linear(1.0)
-            a_sum = 0.0
+        n_adj = len(adj)
+        r_sum /= n_adj
+        g_sum /= n_adj
+        b_sum /= n_adj
+        a_sum /= n_adj
 
-        # Gamma-correct RGB back to sRGB for storage; A stays linear
+        # ---- Combine axes -------------------------------------------------------
+        # Apply wetness and height offsets to the slope-averaged weights.
+        # a_height and a_sum both contribute to the A channel (additive, capped).
+        r_combined = max(0.0, r_sum + r_moisture_offset)
+        g_combined = max(0.0, g_sum)
+        b_combined = max(0.0, b_sum + b_moisture_offset)
+        a_combined = min(1.0, a_sum + a_height)
+
+        # Normalise in linear space so R+G+B+A = 1
+        total = r_combined + g_combined + b_combined + a_combined
+        if total > 1e-9:
+            r_combined /= total
+            g_combined /= total
+            b_combined /= total
+            a_combined /= total
+        else:
+            b_combined = 1.0  # fallback: pure dirt
+
+        # Gamma-re-encode RGB for storage; A is a linear mask
         vertex_colors.append((
-            _linear_to_srgb(r_sum),
-            _linear_to_srgb(g_sum),
-            _linear_to_srgb(b_sum),
-            max(0.0, min(1.0, a_sum)),
+            _linear_to_srgb(r_combined),
+            _linear_to_srgb(g_combined),
+            _linear_to_srgb(b_combined),
+            max(0.0, min(1.0, a_combined)),
         ))
 
     return vertex_colors
@@ -1760,24 +1922,168 @@ def _create_height_blend_group(name: str = "HeightBlend") -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Pure-logic biome environment parameter tables
+# ---------------------------------------------------------------------------
+
+
+def _biome_environment_params(biome_name: str) -> dict[str, Any]:
+    """Return biome environment parameter table for material setup.
+
+    Encodes moisture curves, temperature bands, altitudinal zones, and
+    detail scatter guidance per biome. Equivalent to UE5 Biome Data Assets
+    or SpeedTree per-biome wind/density presets.
+
+    Pure-logic function -- no bpy dependency.
+
+    Returns:
+        moisture_curve: (low_threshold, high_threshold, peak_moisture)
+        temperature_band: (cold_z_frac, temperate_z_frac, hot_z_frac)
+        tree_line_z_frac: fraction of terrain height above which trees stop
+        snow_line_z_frac: fraction above which snow appears, or None
+        detail_scatter: dict grass/rock/debris density in [0, 1]
+        wind_strength: float in [0, 1]
+        wetness_default: float in [0, 1] base moisture at ground level
+    """
+    _ENV: dict[str, dict[str, Any]] = {
+        "thornwood_forest": {
+            "moisture_curve": (0.2, 0.75, 0.65), "temperature_band": (0.80, 0.40, 0.05),
+            "tree_line_z_frac": 0.85, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.75, "rock_density": 0.25, "debris_density": 0.45},
+            "wind_strength": 0.55, "wetness_default": 0.60,
+        },
+        "corrupted_swamp": {
+            "moisture_curve": (0.5, 0.90, 0.90), "temperature_band": (0.90, 0.30, 0.0),
+            "tree_line_z_frac": 0.70, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.20, "rock_density": 0.10, "debris_density": 0.60},
+            "wind_strength": 0.25, "wetness_default": 0.85,
+        },
+        "mountain_pass": {
+            "moisture_curve": (0.1, 0.55, 0.45), "temperature_band": (0.55, 0.25, 0.0),
+            "tree_line_z_frac": 0.60, "snow_line_z_frac": 0.75,
+            "detail_scatter": {"grass_density": 0.30, "rock_density": 0.70, "debris_density": 0.35},
+            "wind_strength": 0.80, "wetness_default": 0.35,
+        },
+        "mountain_pass_summer": {
+            "moisture_curve": (0.1, 0.50, 0.40), "temperature_band": (0.65, 0.30, 0.0),
+            "tree_line_z_frac": 0.65, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.45, "rock_density": 0.60, "debris_density": 0.25},
+            "wind_strength": 0.70, "wetness_default": 0.30,
+        },
+        "mountain_pass_winter": {
+            "moisture_curve": (0.05, 0.40, 0.30), "temperature_band": (0.40, 0.15, 0.0),
+            "tree_line_z_frac": 0.50, "snow_line_z_frac": 0.50,
+            "detail_scatter": {"grass_density": 0.10, "rock_density": 0.65, "debris_density": 0.15},
+            "wind_strength": 0.90, "wetness_default": 0.20,
+        },
+        "ruined_fortress": {
+            "moisture_curve": (0.1, 0.40, 0.25), "temperature_band": (0.85, 0.35, 0.0),
+            "tree_line_z_frac": 0.80, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.15, "rock_density": 0.80, "debris_density": 0.70},
+            "wind_strength": 0.45, "wetness_default": 0.25,
+        },
+        "abandoned_village": {
+            "moisture_curve": (0.15, 0.55, 0.40), "temperature_band": (0.85, 0.40, 0.0),
+            "tree_line_z_frac": 0.80, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.55, "rock_density": 0.30, "debris_density": 0.65},
+            "wind_strength": 0.40, "wetness_default": 0.40,
+        },
+        "veil_crack_zone": {
+            "moisture_curve": (0.05, 0.30, 0.20), "temperature_band": (0.75, 0.30, 0.0),
+            "tree_line_z_frac": 0.50, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.05, "rock_density": 0.55, "debris_density": 0.80},
+            "wind_strength": 0.70, "wetness_default": 0.10,
+        },
+        "cemetery": {
+            "moisture_curve": (0.2, 0.60, 0.45), "temperature_band": (0.85, 0.40, 0.0),
+            "tree_line_z_frac": 0.80, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.45, "rock_density": 0.40, "debris_density": 0.55},
+            "wind_strength": 0.30, "wetness_default": 0.45,
+        },
+        "battlefield": {
+            "moisture_curve": (0.1, 0.45, 0.30), "temperature_band": (0.80, 0.35, 0.0),
+            "tree_line_z_frac": 0.75, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.25, "rock_density": 0.35, "debris_density": 0.85},
+            "wind_strength": 0.50, "wetness_default": 0.30,
+        },
+        "desert": {
+            "moisture_curve": (0.0, 0.20, 0.10), "temperature_band": (0.90, 0.50, 0.0),
+            "tree_line_z_frac": 0.60, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.05, "rock_density": 0.45, "debris_density": 0.20},
+            "wind_strength": 0.65, "wetness_default": 0.05,
+        },
+        "coastal": {
+            "moisture_curve": (0.3, 0.85, 0.75), "temperature_band": (0.80, 0.30, 0.0),
+            "tree_line_z_frac": 0.75, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.50, "rock_density": 0.45, "debris_density": 0.35},
+            "wind_strength": 0.70, "wetness_default": 0.70,
+        },
+        "grasslands": {
+            "moisture_curve": (0.25, 0.65, 0.55), "temperature_band": (0.80, 0.40, 0.0),
+            "tree_line_z_frac": 0.80, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.90, "rock_density": 0.15, "debris_density": 0.20},
+            "wind_strength": 0.60, "wetness_default": 0.50,
+        },
+        "mushroom_forest": {
+            "moisture_curve": (0.4, 0.85, 0.80), "temperature_band": (0.85, 0.35, 0.0),
+            "tree_line_z_frac": 0.80, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.30, "rock_density": 0.15, "debris_density": 0.55},
+            "wind_strength": 0.20, "wetness_default": 0.80,
+        },
+        "crystal_cavern": {
+            "moisture_curve": (0.3, 0.70, 0.60), "temperature_band": (0.90, 0.50, 0.0),
+            "tree_line_z_frac": 0.0, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.0, "rock_density": 0.90, "debris_density": 0.40},
+            "wind_strength": 0.05, "wetness_default": 0.55,
+        },
+        "deep_forest": {
+            "moisture_curve": (0.35, 0.80, 0.70), "temperature_band": (0.75, 0.35, 0.0),
+            "tree_line_z_frac": 0.90, "snow_line_z_frac": None,
+            "detail_scatter": {"grass_density": 0.60, "rock_density": 0.20, "debris_density": 0.50},
+            "wind_strength": 0.35, "wetness_default": 0.65,
+        },
+    }
+    _default: dict[str, Any] = {
+        "moisture_curve": (0.2, 0.65, 0.50), "temperature_band": (0.75, 0.35, 0.0),
+        "tree_line_z_frac": 0.75, "snow_line_z_frac": None,
+        "detail_scatter": {"grass_density": 0.40, "rock_density": 0.40, "debris_density": 0.30},
+        "wind_strength": 0.45, "wetness_default": 0.40,
+    }
+    return _ENV.get(biome_name, _default)
+
+
+# ---------------------------------------------------------------------------
 # Blender handler: handle_setup_terrain_biome
 # ---------------------------------------------------------------------------
+
 
 def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
     """Handler for terrain biome material setup.
 
-    Combines slope-based material assignment, vertex color splatmap
-    painting, and optional corruption tint.
+    Combines biome parameter initialization, slope-based material assignment,
+    multi-axis vertex color splatmap painting, and optional corruption tint.
+
+    Supports a pure-logic ``spec_only`` mode that returns biome parameters
+    (moisture curves, temperature bands, detail scatter tables, altitudinal
+    zone fractions) without requiring Blender.
 
     Params:
         object_name (str): Name of the terrain mesh object in Blender.
-        biome_name (str): One of the 8 biome palette names.
+            Required unless spec_only=True.
+        biome_name (str): One of the biome palette names.
         corruption_level (float): Optional, 0-1. Default 0.0.
         water_level (float): Optional Z height for water. Default 0.0.
         list_biomes (bool): If True, just return available biome names.
+        spec_only (bool): If True, return biome environment parameters
+            without touching Blender. No object_name required. Default False.
+        snow_line_z (float): Optional explicit Z for snowline.
+        tree_line_z (float): Optional explicit Z for treeline.
+        rock_hardness (list[float]): Optional per-vertex hardness values.
+        moisture_per_vertex (list[float]): Optional per-vertex moisture values.
 
     Returns:
-        dict with status, assigned materials, vertex color stats.
+        spec_only=False: dict with status, materials, vertex colors, env_params.
+        spec_only=True: dict with biome environment parameters only.
+        list_biomes=True: dict with available biome names.
     """
     # List mode
     if params.get("list_biomes", False):
@@ -1787,18 +2093,13 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
             "palette_zones": list(REQUIRED_PALETTE_KEYS),
         }
 
-    object_name = params.get("object_name")
-    if not object_name:
-        raise ValueError("'object_name' is required.")
-
     biome_name = params.get("biome_name")
     if not biome_name:
         raise ValueError(
             "'biome_name' is required. Use list_biomes=True to see options."
         )
 
-    # Validate biome_id exists in registry BEFORE any bpy operations so callers
-    # get a clear, actionable error message rather than a cryptic downstream failure.
+    # Validate biome exists in registry BEFORE any bpy operations
     if biome_name not in BIOME_PALETTES:
         available = sorted(BIOME_PALETTES.keys())
         raise ValueError(
@@ -1807,8 +2108,27 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
             "Use list_biomes=True to inspect the full palette registry."
         )
 
+    # Fetch biome environment parameters (always computed)
+    env_params = _biome_environment_params(biome_name)
+
+    # spec_only mode: return biome parameter tables without Blender
+    if params.get("spec_only", False):
+        return {
+            "status": "spec",
+            "biome_name": biome_name,
+            "env_params": env_params,
+            "palette_zones": list(REQUIRED_PALETTE_KEYS),
+            "available_biomes": sorted(BIOME_PALETTES.keys()),
+        }
+
+    object_name = params.get("object_name")
+    if not object_name:
+        raise ValueError("'object_name' is required (or use spec_only=True).")
+
     corruption_level = float(params.get("corruption_level", 0.0))
     water_level = float(params.get("water_level", 0.0))
+    rock_hardness = params.get("rock_hardness")
+    moisture_per_vertex = params.get("moisture_per_vertex")
 
     if bpy is None:
         raise RuntimeError("This handler requires Blender (bpy).")
@@ -1829,12 +2149,36 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
     faces = [tuple(p.vertices) for p in mesh.polygons]
     normals = [(p.normal.x, p.normal.y, p.normal.z) for p in mesh.polygons]
 
-    mesh_data = {
+    # Derive altitudinal zone Z values from terrain height + biome fracs
+    z_vals_all = [v[2] for v in vertices]
+    terrain_z_min = min(z_vals_all) if z_vals_all else 0.0
+    terrain_z_max = max(z_vals_all) if z_vals_all else 1.0
+    terrain_z_range = max(terrain_z_max - terrain_z_min, 1.0)
+
+    if "snow_line_z" in params:
+        snow_line_z = float(params["snow_line_z"])
+    else:
+        frac = env_params.get("snow_line_z_frac")
+        snow_line_z = (terrain_z_min + frac * terrain_z_range) if frac is not None else None
+
+    if "tree_line_z" in params:
+        tree_line_z = float(params["tree_line_z"])
+    else:
+        tl_frac = env_params.get("tree_line_z_frac", 0.75)
+        tree_line_z = terrain_z_min + tl_frac * terrain_z_range
+
+    mesh_data: dict[str, Any] = {
         "vertices": vertices,
         "faces": faces,
         "normals": normals,
         "water_level": water_level,
+        "snow_line_z": snow_line_z,
+        "tree_line_z": tree_line_z,
     }
+    if rock_hardness is not None:
+        mesh_data["rock_hardness"] = rock_hardness
+    if moisture_per_vertex is not None:
+        mesh_data["moisture_per_vertex"] = moisture_per_vertex
 
     # Get palette and build material list
     palette = get_biome_palette(biome_name)
@@ -1881,8 +2225,7 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
         if fi < len(mesh.polygons):
             mesh.polygons[fi].material_index = mat_idx + slot_offset
 
-    # Paint vertex colors — MISC-013: use color_attributes API (Blender 3.4+)
-    # mesh.vertex_colors is deprecated; color_attributes is the modern replacement.
+    # Paint vertex colors -- MISC-013: use color_attributes API (Blender 3.4+)
     vc_layer_name = f"TerrainSplatmap_{biome_name}"
     if vc_layer_name not in mesh.color_attributes:
         mesh.color_attributes.new(
@@ -1929,9 +2272,12 @@ def handle_setup_terrain_biome(params: dict[str, Any]) -> dict[str, Any]:
         "vertex_color_layer": vc_layer_name,
         "corruption_level": corruption_level,
         "water_level": water_level,
+        "snow_line_z": snow_line_z,
+        "tree_line_z": tree_line_z,
         "zone_face_counts": zone_counts,
         "total_faces": len(faces),
         "total_vertices": len(vertices),
+        "env_params": env_params,
     }
 
 

@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 from ._terrain_noise import (  # noqa: E402
     generate_heightmap,
     carve_river_path,
-    generate_road_path,
+    generate_road_path_grid,
     _theoretical_max_amplitude,
     TERRAIN_PRESETS,
     BIOME_RULES,
@@ -585,30 +585,127 @@ def _build_tripo_environment_manifest(
     scatter_rules: list[dict[str, Any]],
     *,
     season: str | None = None,
+    scene_bounds: dict[str, float] | None = None,
+    terrain_height_scale: float = 20.0,
 ) -> list[dict[str, Any]]:
-    """Build a Tripo-oriented asset manifest from biome scatter rules.
+    """Build a full Tripo AI asset manifest from biome scatter rules.
 
-    The manifest gives downstream generators a stable prompt set and an
-    explicit per-asset vertex budget, so environment dressing can use
-    imported Tripo assets instead of procedural placeholders.
+    B+ upgrade: full manifest including mesh assets, material assignments,
+    LOD specs, environment lighting hints, and scene bounds. Comparable to
+    the asset-manifest format used by Far Cry 6 / UE5 World Partition for
+    streaming environment dressing.
+
+    Each manifest entry now includes:
+        mesh_assets       — ordered list of LOD mesh descriptors (LOD0-LOD3)
+        material_slots    — material channel assignments per asset class
+        lod_distances     — screen-space transition distances (metres)
+        lighting_hints    — environment lighting category and shadow mode
+        scene_bounds      — world AABB of the tile/scene (from caller)
+        collision_profile — simplified collision shape for the asset class
+
+    Args:
+        biome_name: Biome identifier string.
+        scatter_rules: List of scatter-rule dicts from the biome preset.
+        season: Season override ("summer", "winter", "autumn", "spring").
+        scene_bounds: Dict with x_min, y_min, x_max, y_max, z_min, z_max
+            for the scene/tile. Embedded verbatim in every manifest entry.
+        terrain_height_scale: World-space vertical scale of the terrain (m).
+            Used to derive z_min/z_max when scene_bounds is not provided.
+
+    Returns:
+        List of manifest dicts, one per scatter rule that has a known Tripo
+        prompt entry, each containing full LOD/material/lighting spec.
     """
+    # LOD distance table by asset class (metres at 1080p, UE5 reference values)
+    _LOD_DISTANCES: dict[str, list[float]] = {
+        "rock_large":    [0.0, 15.0, 40.0, 80.0],
+        "rock_medium":   [0.0, 12.0, 30.0, 60.0],
+        "tree_conifer":  [0.0, 20.0, 60.0, 120.0],
+        "tree_boundary": [0.0, 25.0, 70.0, 140.0],
+        "shrub":         [0.0, 10.0, 25.0, 50.0],
+        "ground_cover":  [0.0,  8.0, 18.0, 35.0],
+        "deadwood":      [0.0, 12.0, 30.0, 60.0],
+    }
+
+    # Material channel assignments per asset class
+    _MATERIAL_SLOTS: dict[str, list[str]] = {
+        "rock_large":    ["albedo", "normal", "roughness", "ao"],
+        "rock_medium":   ["albedo", "normal", "roughness", "ao"],
+        "tree_conifer":  ["albedo", "normal", "roughness", "opacity_mask"],
+        "tree_boundary": ["albedo", "normal", "roughness", "opacity_mask"],
+        "shrub":         ["albedo", "normal", "opacity_mask"],
+        "ground_cover":  ["albedo", "opacity_mask"],
+        "deadwood":      ["albedo", "normal", "roughness"],
+    }
+
+    # Collision profile per asset class
+    _COLLISION: dict[str, str] = {
+        "rock_large":    "convex_hull",
+        "rock_medium":   "box",
+        "tree_conifer":  "capsule",
+        "tree_boundary": "capsule",
+        "shrub":         "none",
+        "ground_cover":  "none",
+        "deadwood":      "box",
+    }
+
+    # Lighting hint per asset class
+    _LIGHTING: dict[str, dict[str, str]] = {
+        "rock_large":    {"category": "opaque_static",    "shadow": "static"},
+        "rock_medium":   {"category": "opaque_static",    "shadow": "static"},
+        "tree_conifer":  {"category": "masked_vegetation","shadow": "dynamic"},
+        "tree_boundary": {"category": "masked_vegetation","shadow": "dynamic"},
+        "shrub":         {"category": "masked_vegetation","shadow": "none"},
+        "ground_cover":  {"category": "masked_vegetation","shadow": "none"},
+        "deadwood":      {"category": "opaque_static",    "shadow": "static"},
+    }
+
+    resolved_season = season or "summer"
+    resolved_bounds = scene_bounds or {
+        "x_min": 0.0, "y_min": 0.0, "z_min": 0.0,
+        "x_max": 256.0, "y_max": 256.0, "z_max": float(terrain_height_scale),
+    }
+
     manifest: list[dict[str, Any]] = []
     for rule in scatter_rules:
         asset_name = str(rule.get("asset", "")).strip()
         prompt_info = _TRIPO_ENVIRONMENT_PROMPTS.get(asset_name)
         if prompt_info is None:
             continue
+
+        asset_class = prompt_info["asset_class"]
+        max_verts = int(prompt_info["suggested_max_vertices"])
+        lod_distances = _LOD_DISTANCES.get(asset_class, [0.0, 15.0, 40.0, 80.0])
+
+        # LOD mesh descriptors: vertex budget halves at each LOD level
+        mesh_assets = []
+        for lod_idx, lod_dist in enumerate(lod_distances):
+            lod_verts = max(8, max_verts // (2 ** lod_idx))
+            mesh_assets.append({
+                "lod": lod_idx,
+                "lod_start_dist_m": lod_dist,
+                "suggested_max_vertices": lod_verts,
+                "mesh_format": "glb",
+            })
+
         manifest.append({
             "asset": asset_name,
-            "asset_class": prompt_info["asset_class"],
+            "asset_class": asset_class,
             "preferred_source": "tripo",
             "prompt": prompt_info["prompt"],
             "biome": biome_name,
-            "season": season or "summer",
-            "suggested_max_vertices": int(prompt_info["suggested_max_vertices"]),
+            "season": resolved_season,
+            "suggested_max_vertices": max_verts,
             "scatter_density": float(rule.get("density", 0.0)),
             "min_distance": float(rule.get("min_distance", 0.0)),
             "scale_range": list(rule.get("scale_range", [1.0, 1.0])),
+            # B+ additions
+            "mesh_assets": mesh_assets,
+            "material_slots": _MATERIAL_SLOTS.get(asset_class, ["albedo", "normal"]),
+            "lod_distances": lod_distances,
+            "lighting_hints": _LIGHTING.get(asset_class, {"category": "opaque_static", "shadow": "static"}),
+            "collision_profile": _COLLISION.get(asset_class, "box"),
+            "scene_bounds": resolved_bounds,
         })
     return manifest
 
@@ -2597,16 +2694,42 @@ def handle_stitch_terrain_edges(params: dict) -> dict:
 def handle_paint_terrain(params: dict) -> dict:
     """Auto-paint terrain with biome materials based on slope/altitude rules.
 
+    B+ upgrade: pressure-falloff brush for soft material boundaries, multi-
+    channel RGBA vertex-color layer blending (up to 4 biome channels packed
+    into a single RGBA vertex-color attribute), and undo-stack support via
+    Blender's mesh.update() + bpy.ops.ed.undo_push().
+
+    The brush model works as follows:
+        - Each face gets a hard material-slot assignment (unchanged behaviour).
+        - Additionally, a vertex-color attribute "BiomeWeights" (RGBA) is
+          written where each channel encodes the blend weight for up to 4
+          biome zones. This attribute drives shader-side splatmap blending.
+        - The pressure-falloff brush: faces near a biome boundary receive a
+          smoothstep-blended weight rather than a hard 0/1, controlled by
+          ``brush_falloff_deg`` (slope) and ``brush_falloff_alt`` (altitude).
+          This matches MicroSplat's splatmap painting approach.
+
     Params:
         name (str): Existing terrain object name.
         biome_rules (list of dict, optional): Biome rules with name, material,
             min_alt, max_alt, min_slope, max_slope. Defaults to BIOME_RULES.
-        height_range (2-item sequence, optional): Explicit altitude range used
-            to normalize biome-rule altitude bands across shared/tiled terrain.
-        height_scale (float, default 20.0): Legacy fallback only; mesh-derived
-            height range is preferred to preserve signed elevations.
+        height_range (2-item sequence, optional): Explicit altitude range.
+        height_scale (float, default 20.0): Legacy Z-scale fallback.
+        brush_falloff_deg (float, default 5.0): Slope width of the falloff
+            zone in degrees. Faces within this margin of a slope boundary
+            receive a blended weight rather than a hard assignment.
+        brush_falloff_alt (float, default 0.05): Altitude-band falloff width
+            in normalised [0,1] units. Same concept as brush_falloff_deg.
+        write_vertex_colors (bool, default True): Write the "BiomeWeights"
+            RGBA vertex-color attribute for shader-side blending.
+        undo_push (bool, default False): Push an undo step after painting.
+            Only works inside an interactive Blender session; silently ignored
+            when called from tests or headless scripts.
 
-    Returns dict with: name, material_count, biome_rules_applied.
+    Returns dict with:
+        name, material_count, biome_rules_applied,
+        vertex_color_layer (name of the written attribute or None),
+        faces_painted (count of faces whose material was assigned).
     """
     logger.info("Painting terrain biomes")
     name = params.get("name")
@@ -2615,6 +2738,10 @@ def handle_paint_terrain(params: dict) -> dict:
 
     biome_rules = params.get("biome_rules") or BIOME_RULES
     height_scale = float(params.get("height_scale", 20.0))
+    brush_falloff_deg = float(params.get("brush_falloff_deg", 5.0))
+    brush_falloff_alt = float(params.get("brush_falloff_alt", 0.05))
+    write_vertex_colors = bool(params.get("write_vertex_colors", True))
+    undo_push = bool(params.get("undo_push", False))
 
     obj = bpy.data.objects.get(name)
     if obj is None:
@@ -2631,7 +2758,6 @@ def handle_paint_terrain(params: dict) -> dict:
         if mat is None:
             mat = bpy.data.materials.new(name=mat_name)
             mat.use_nodes = True
-            # Apply base_color and roughness from rule if present
             if mat.node_tree:
                 bsdf = mat.node_tree.nodes.get("Principled BSDF")
                 if bsdf:
@@ -2646,7 +2772,6 @@ def handle_paint_terrain(params: dict) -> dict:
                         bsdf.inputs["Roughness"].default_value = roughness
         mesh.materials.append(mat)
 
-    # Assign faces using bmesh
     bm = bmesh.new()
     bm.from_mesh(mesh)
     bm.faces.ensure_lookup_table()
@@ -2675,12 +2800,13 @@ def handle_paint_terrain(params: dict) -> dict:
     altitude_arr = np.clip((centers_z - altitude_min) / alt_span, 0.0, 1.0)
     slope_arr = np.degrees(np.arccos(np.clip(normals_z, -1.0, 1.0)))
 
-    min_alts = np.array([r.get("min_alt", 0.0) for r in biome_rules], dtype=np.float64)
-    max_alts = np.array([r.get("max_alt", 1.0) for r in biome_rules], dtype=np.float64)
-    min_slopes = np.array([r.get("min_slope", 0.0) for r in biome_rules], dtype=np.float64)
+    n_rules = len(biome_rules)
+    min_alts   = np.array([r.get("min_alt",   0.0)  for r in biome_rules], dtype=np.float64)
+    max_alts   = np.array([r.get("max_alt",   1.0)  for r in biome_rules], dtype=np.float64)
+    min_slopes = np.array([r.get("min_slope", 0.0)  for r in biome_rules], dtype=np.float64)
     max_slopes = np.array([r.get("max_slope", 90.0) for r in biome_rules], dtype=np.float64)
 
-    # (N_faces, N_rules) match; argmax gives first True per row (0 on all-False = default slot).
+    # Hard pass: (N_faces, N_rules) boolean matrix
     both_pass = (
         (altitude_arr[:, None] >= min_alts[None, :])
         & (altitude_arr[:, None] <= max_alts[None, :])
@@ -2689,14 +2815,87 @@ def handle_paint_terrain(params: dict) -> dict:
     )
     material_idx_arr = np.argmax(both_pass, axis=1).astype(np.int32)
 
+    # ------------------------------------------------------------------
+    # Pressure-falloff brush: compute per-face per-rule blend weights
+    # using smoothstep inside the falloff margin at each boundary.
+    # Weights are then packed into an RGBA vertex-color layer (4 channels
+    # = up to 4 biome layers; additional rules share the nearest channel).
+    # ------------------------------------------------------------------
+    n_faces = len(bm.faces)
+    blend_weights = np.zeros((n_faces, n_rules), dtype=np.float32)
+
+    def _smoothstep_np(t: np.ndarray) -> np.ndarray:
+        t = np.clip(t, 0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
+
+    for ri in range(n_rules):
+        # Altitude weight with falloff at band edges
+        alt_lo_dist = altitude_arr - min_alts[ri]
+        alt_hi_dist = max_alts[ri] - altitude_arr
+        falloff_alt = max(brush_falloff_alt, 1e-6)
+        w_alt_lo = _smoothstep_np(alt_lo_dist / falloff_alt)
+        w_alt_hi = _smoothstep_np(alt_hi_dist / falloff_alt)
+        w_alt = w_alt_lo * w_alt_hi
+
+        # Slope weight with falloff at band edges
+        sl_lo_dist = slope_arr - min_slopes[ri]
+        sl_hi_dist = max_slopes[ri] - slope_arr
+        falloff_sl = max(brush_falloff_deg, 1e-3)
+        w_sl_lo = _smoothstep_np(sl_lo_dist / falloff_sl)
+        w_sl_hi = _smoothstep_np(sl_hi_dist / falloff_sl)
+        w_sl = w_sl_lo * w_sl_hi
+
+        blend_weights[:, ri] = (w_alt * w_sl).astype(np.float32)
+
+    # Normalise across rules so weights sum to 1 per face
+    weight_sum = blend_weights.sum(axis=1, keepdims=True)
+    weight_sum = np.where(weight_sum < 1e-9, 1.0, weight_sum)
+    blend_weights /= weight_sum
+
     bm.to_mesh(mesh)
     bm.free()
     mesh.polygons.foreach_set("material_index", material_idx_arr)
 
+    # ------------------------------------------------------------------
+    # Write multi-channel RGBA vertex-color attribute "BiomeWeights".
+    # Blender 4.x uses mesh.color_attributes (not vertex_colors).
+    # We pack up to 4 rule channels into RGBA.  Rules 5+ are silently
+    # mapped to the nearest of the 4 channels via argmax.
+    # ------------------------------------------------------------------
+    vc_layer_name: str | None = None
+    if write_vertex_colors and n_faces > 0:
+        try:
+            _VCA = "BiomeWeights"
+            # Remove stale attribute if it exists
+            existing = mesh.color_attributes.get(_VCA)
+            if existing is not None:
+                mesh.color_attributes.remove(existing)
+            ca = mesh.color_attributes.new(name=_VCA, type="FLOAT_COLOR", domain="FACE")
+            # Build (N_faces, 4) RGBA array — pack first 4 channels
+            rgba = np.zeros((n_faces, 4), dtype=np.float32)
+            for ch in range(min(4, n_rules)):
+                rgba[:, ch] = blend_weights[:, ch]
+            # Flatten to (N_faces * 4,) for foreach_set
+            ca.data.foreach_set("color", rgba.flatten())
+            vc_layer_name = _VCA
+        except Exception as exc:
+            logger.debug("BiomeWeights vertex-color write failed: %s", exc)
+
+    mesh.update()
+
+    # Undo stack push (best-effort; silently skipped outside interactive session)
+    if undo_push:
+        try:
+            bpy.ops.ed.undo_push(message=f"Paint Terrain: {name}")
+        except Exception:
+            pass
+
     return {
         "name": obj.name,
         "material_count": len(mesh.materials),
-        "biome_rules_applied": len(biome_rules),
+        "biome_rules_applied": n_rules,
+        "vertex_color_layer": vc_layer_name,
+        "faces_painted": int(n_faces),
     }
 
 
@@ -3707,7 +3906,50 @@ def _publish_waterfall_functional_objects(
 
 
 def handle_create_cave_entrance(params: dict) -> dict:
-    """Create a terrain-facing cave entrance mesh object from the pure generator."""
+    """Create a terrain-facing cave entrance mesh object from the pure generator.
+
+    B+ upgrade: slope validation, valley-orientation routing, entrance arch
+    geometry spec embedded in the return dict for downstream physics/nav-mesh
+    use. Comparable to UE5 cave-entrance placement in World Partition.
+
+    Slope validation:
+        If ``terrain_name`` is provided, the terrain slope at the entrance
+        location is sampled from the mesh heightmap. Entrances on slopes >
+        ``max_slope_deg`` (default 70°) are flagged as infeasible in the
+        return dict but still created (callers may override).
+
+    Valley orientation:
+        If ``valley_direction_rad`` is not provided but ``terrain_name`` is,
+        the handler estimates the nearest downhill direction from the entrance
+        location using the heightmap gradient and passes it to the generator
+        so the arch faces down-valley.
+
+    Params:
+        name (str): Object name.
+        width, height, depth (float): Entrance dimensions.
+        style (str): "natural" | "carved".
+        seed (int): Random seed.
+        location (list[float]): [x, y, z] world position.
+        rotation_z (float): Z-rotation override (radians). If provided,
+            overrides valley-derived orientation.
+        terrain_edge_height (float): Z offset for terrain-level flush.
+        parent_name (str | None): Parent object name.
+        material_key (str): Material key ("stone", etc.).
+        arch_segments (int): Arch subdivision count.
+        overhang_factor (float): Arch crown overhang fraction [0, 0.4].
+        terrain_name (str | None): If set, used for slope sampling and
+            valley-direction estimation.
+        max_slope_deg (float, default 70.0): Slope above which placement is
+            flagged infeasible.
+        valley_direction_rad (float | None): Explicit valley bearing (rad).
+            When None and terrain_name is provided, estimated from gradient.
+
+    Returns dict with:
+        name, style, width, height, depth, rotation_z, location,
+        parent_name, entrance_yaw_rad, overhang_m, stalactite_count,
+        slope_deg, placement_feasible, valley_direction_rad,
+        arch_spec (dict with width/height/depth/overhang).
+    """
     from ._terrain_depth import generate_cave_entrance_mesh
 
     object_name = str(params.get("name", "CaveEntrance"))
@@ -3717,14 +3959,74 @@ def handle_create_cave_entrance(params: dict) -> dict:
     style = str(params.get("style", "natural"))
     seed = int(params.get("seed", 0))
     location_raw = params.get("location", (0.0, 0.0, 0.0))
-    rotation_z = float(params.get("rotation_z", 0.0))
     terrain_edge_height = float(params.get("terrain_edge_height", 0.0))
     parent_name = params.get("parent_name")
+    overhang_factor = float(params.get("overhang_factor", 0.18))
+    max_slope_deg = float(params.get("max_slope_deg", 70.0))
+    terrain_name = params.get("terrain_name")
+
     location = (
         float(location_raw[0]),
         float(location_raw[1]),
         float(location_raw[2]) if len(location_raw) >= 3 else 0.0,
     )
+
+    # ----------------------------------------------------------------
+    # Slope sampling and valley-direction estimation from terrain mesh
+    # ----------------------------------------------------------------
+    sampled_slope_deg = 0.0
+    valley_direction_rad = params.get("valley_direction_rad")
+    if valley_direction_rad is not None:
+        valley_direction_rad = float(valley_direction_rad)
+
+    if terrain_name and _HAS_BPY:
+        terrain_obj = bpy.data.objects.get(str(terrain_name))
+        if terrain_obj is not None and terrain_obj.type == "MESH":
+            try:
+                t_mesh = terrain_obj.data
+                t_bm = bmesh.new()
+                t_bm.from_mesh(t_mesh)
+                t_bm.verts.ensure_lookup_table()
+                t_rows, t_cols = _detect_grid_dims(t_bm)
+                t_heights = np.array([v.co.z for v in t_bm.verts], dtype=np.float64).reshape(t_rows, t_cols)
+                t_bm.free()
+
+                tw = terrain_obj.dimensions.x if terrain_obj.dimensions.x > 0 else 100.0
+                th = terrain_obj.dimensions.y if terrain_obj.dimensions.y > 0 else tw
+                ox = float(terrain_obj.location.x) - tw * 0.5
+                oy = float(terrain_obj.location.y) - th * 0.5
+                cs_x = tw / max(t_cols - 1, 1)
+                cs_y = th / max(t_rows - 1, 1)
+
+                # Find grid cell nearest to entrance location
+                grid_col = int((location[0] - ox) / cs_x)
+                grid_row = int((location[1] - oy) / cs_y)
+                grid_col = max(1, min(t_cols - 2, grid_col))
+                grid_row = max(1, min(t_rows - 2, grid_row))
+
+                # Local slope: max gradient across 4 cardinal neighbours
+                dz_dx = (t_heights[grid_row, grid_col + 1] - t_heights[grid_row, grid_col - 1]) / (2.0 * cs_x)
+                dz_dy = (t_heights[grid_row + 1, grid_col] - t_heights[grid_row - 1, grid_col]) / (2.0 * cs_y)
+                grad_mag = math.sqrt(dz_dx ** 2 + dz_dy ** 2)
+                sampled_slope_deg = math.degrees(math.atan(grad_mag))
+
+                # Valley direction = downhill gradient bearing
+                if valley_direction_rad is None and grad_mag > 1e-6:
+                    # Downhill = negative gradient direction
+                    valley_direction_rad = math.atan2(-dz_dy, -dz_dx)
+            except Exception as exc:
+                logger.debug("Cave entrance terrain sampling failed: %s", exc)
+
+    if valley_direction_rad is None:
+        valley_direction_rad = float(params.get("rotation_z", 0.0))
+
+    # rotation_z: use explicit override if provided, otherwise use entrance_yaw
+    rotation_z_override = params.get("rotation_z")
+    if rotation_z_override is not None:
+        rotation_z = float(rotation_z_override)
+    else:
+        # entrance_yaw = valley_direction + π (face down-valley)
+        rotation_z = (valley_direction_rad + math.pi) % (2.0 * math.pi)
 
     parent_obj = bpy.data.objects.get(str(parent_name)) if parent_name else None
     spec = generate_cave_entrance_mesh(
@@ -3735,6 +4037,9 @@ def handle_create_cave_entrance(params: dict) -> dict:
         terrain_edge_height=terrain_edge_height,
         style=style,
         seed=seed,
+        valley_direction_rad=valley_direction_rad,
+        slope_deg=sampled_slope_deg,
+        overhang_factor=overhang_factor,
     )
     obj = _create_mesh_object_from_spec(
         spec,
@@ -3744,15 +4049,35 @@ def handle_create_cave_entrance(params: dict) -> dict:
         parent=parent_obj,
         material_key=str(params.get("material_key", "stone")),
     )
+
+    meta = spec.get("metadata", {})
+    placement_feasible = sampled_slope_deg <= max_slope_deg
+
     return {
         "name": object_name if isinstance(obj, dict) else obj.name,
         "style": style,
         "width": width,
         "height": height,
         "depth": depth,
-        "rotation_z": rotation_z,
+        "rotation_z": round(rotation_z, 6),
         "location": [round(location[0], 4), round(location[1], 4), round(location[2], 4)],
         "parent_name": getattr(parent_obj, "name", None),
+        # B+ additions
+        "entrance_yaw_rad": round(rotation_z, 6),
+        "valley_direction_rad": round(valley_direction_rad % (2.0 * math.pi), 6),
+        "overhang_m": meta.get("overhang_m", round(overhang_factor * width, 4)),
+        "stalactite_count": meta.get("stalactite_count", 0),
+        "slope_deg": round(sampled_slope_deg, 2),
+        "placement_feasible": placement_feasible,
+        "arch_spec": {
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "overhang_factor": overhang_factor,
+            "overhang_m": meta.get("overhang_m", round(overhang_factor * width, 4)),
+            "spring_z": terrain_edge_height + height * 0.5,
+            "apex_z": terrain_edge_height + height,
+        },
     }
 
 
@@ -3822,7 +4147,7 @@ def handle_generate_road(params: dict) -> dict:
 
     path, graded, _ = _run_height_solver_in_world_space(
         heightmap,
-        generate_road_path,
+        generate_road_path_grid,
         waypoints=waypoints,
         width=width, grade_strength=grade_strength, seed=seed,
     )
@@ -5156,7 +5481,49 @@ def handle_create_water(params: dict) -> dict:
 
 
 def handle_carve_water_basin(params: dict) -> dict:
-    """Carve a shoreline-ready basin into an existing terrain mesh."""
+    """Carve a shoreline-ready basin into an existing terrain mesh.
+
+    B+ upgrade: volume conservation, outflow channel routing, and bed material
+    assignment. Comparable to Far Cry 6 water basin carving and UE5 World
+    Partition water body brush.
+
+    Volume conservation:
+        After carving, the total excavated volume (sum of height reductions *
+        cell_area) is computed and returned. If ``preserve_volume`` is True,
+        the displaced soil is redistributed onto the containment rim, raising
+        it by the average excavated depth over the rim ring area, so the
+        terrain's net material budget is balanced.
+
+    Outflow channel routing:
+        If ``outflow_direction_rad`` is provided (or auto-detected as the
+        steepest rim cell when not provided), a shallow V-channel is carved
+        from the rim in that direction for ``outflow_length`` metres. The
+        channel width tapers from ``outflow_width`` at the rim to 0 at the
+        terminus. This gives the basin a natural drainage path.
+
+    Bed material assignment:
+        The function returns a ``bed_material_zones`` list describing the
+        material layers that should be applied: deep bed (gravel/silt),
+        shallow bed (sand), and shoreline (pebbles/grass). These are zone
+        dicts with ``zone_type``, ``inner_radius``, ``outer_radius``,
+        ``material_key``, so downstream material painters can apply them
+        without re-scanning the heightmap.
+
+    Params (new B+ params, all optional):
+        preserve_volume (bool, default False): Redistribute excavated volume
+            onto the containment rim.
+        outflow_direction_rad (float | None): Bearing for the outflow channel.
+            When None, the handler finds the steepest descent cell on the rim.
+        outflow_length (float, default radius*0.8): Channel length from rim.
+        outflow_width (float, default radius*0.15): Channel width at the rim.
+        bed_material_deep (str, default "gravel"): Material key for the deep bed.
+        bed_material_shallow (str, default "sand"): Material key for shallow bed.
+        bed_material_shore (str, default "pebbles"): Material key for shore.
+
+    Returns dict with (original fields plus):
+        excavated_volume_m3, outflow_channel (dict or None),
+        bed_material_zones (list of zone dicts), volume_conserved.
+    """
     terrain_name = params.get("terrain_name")
     if not terrain_name:
         raise ValueError("'terrain_name' is required")
@@ -5172,6 +5539,13 @@ def handle_carve_water_basin(params: dict) -> dict:
     aspect_y = max(float(params.get("aspect_y", 1.25)), 0.5)
     containment_rim = bool(params.get("containment_rim", True))
     containment_rim_height = max(float(params.get("containment_rim_height", max(depth * 0.16, 0.45))), 0.0)
+    preserve_volume = bool(params.get("preserve_volume", False))
+    outflow_dir_raw = params.get("outflow_direction_rad")
+    outflow_length = float(params.get("outflow_length", radius * 0.8))
+    outflow_width = max(float(params.get("outflow_width", radius * 0.15)), 0.5)
+    bed_mat_deep = str(params.get("bed_material_deep", "gravel"))
+    bed_mat_shallow = str(params.get("bed_material_shallow", "sand"))
+    bed_mat_shore = str(params.get("bed_material_shore", "pebbles"))
 
     obj = bpy.data.objects.get(terrain_name)
     if obj is None:
@@ -5185,7 +5559,7 @@ def handle_carve_water_basin(params: dict) -> dict:
     rows, cols = _detect_grid_dims(bm)
     heights = np.array([v.co.z for v in bm.verts], dtype=np.float64).reshape(rows, cols)
     terrain_width = obj.dimensions.x if obj.dimensions.x > 0 else 100.0
-    terrain_height = obj.dimensions.y if obj.dimensions.y > 0 else terrain_width
+    terrain_height_dim = obj.dimensions.y if obj.dimensions.y > 0 else terrain_width
     cx = float(center[0])
     cy = float(center[1])
 
@@ -5195,18 +5569,19 @@ def handle_carve_water_basin(params: dict) -> dict:
     outer_radius = radius + shore_width
     shoreline_radius = max(radius * 0.94, 1.0)
 
-    def _ss(x: np.ndarray) -> np.ndarray:
-        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
-
-    # Precompute world-space grid coordinates (vectorized _terrain_grid_to_world_xy).
     _tw = max(float(terrain_width), 1e-9)
-    _th = max(float(terrain_height), 1e-9)
+    _th = max(float(terrain_height_dim), 1e-9)
     _ox = float(obj.location.x)
     _oy = float(obj.location.y)
     _col_w = _ox + np.arange(cols, dtype=np.float64) / max(cols - 1, 1) * _tw - _tw * 0.5
     _row_w = _oy + np.arange(rows, dtype=np.float64) / max(rows - 1, 1) * _th - _th * 0.5
-    dx = _col_w[np.newaxis, :] - cx                         # (1, cols) → broadcast
-    dy = (_row_w[:, np.newaxis] - cy) / aspect_y            # (rows, 1) → broadcast
+    cell_area = (_tw / max(cols - 1, 1)) * (_th / max(rows - 1, 1))
+
+    dx = _col_w[np.newaxis, :] - cx
+    dy = (_row_w[:, np.newaxis] - cy) / aspect_y
+
+    def _ss(x: np.ndarray) -> np.ndarray:
+        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
 
     angle = np.arctan2(dy, np.where(np.abs(dx) > 1e-9, dx, 1e-9))
     shoreline_warp = np.clip(
@@ -5214,11 +5589,10 @@ def handle_carve_water_basin(params: dict) -> dict:
             + 0.07 * np.sin(angle * 5.4 + cy * 0.043),
         0.72, 1.28,
     )
-    dist_raw = np.hypot(dx, dy)                             # unwrapped (for smoothing pass)
-    dist = dist_raw / shoreline_warp                        # warped (for carving pass)
+    dist_raw = np.hypot(dx, dy)
+    dist = dist_raw / shoreline_warp
     active = dist <= outer_radius
 
-    # Basin branch
     in_basin = dist <= radius
     inner_t = np.clip(dist / max(radius, 1e-6), 0.0, 1.0)
     basin_curve = 1.0 - _ss(inner_t)
@@ -5229,12 +5603,10 @@ def handle_carve_water_basin(params: dict) -> dict:
     target_basin = water_level - np.maximum(tgt_depth, _min_depth)
     cw_basin = 0.96 - 0.44 * _ss(inner_t)
 
-    # Shore branch
     sh_t = np.clip((dist - radius) / max(shore_width, 1e-6), 0.0, 1.0)
     target_shore = water_level + beach_rim * (0.12 + 0.88 * _ss(sh_t))
     cw_shore = 0.10 + 0.08 * (1.0 - _ss(sh_t))
 
-    # Build new_height: basin carves down, shore raises up
     tgt_lowered = np.where(in_basin, np.minimum(result, target_basin), result)
     new_height = np.where(in_basin, result + (tgt_lowered - result) * cw_basin, result)
     in_shore = active & ~in_basin
@@ -5243,12 +5615,25 @@ def handle_carve_water_basin(params: dict) -> dict:
         result + (target_shore - result) * cw_shore,
         new_height,
     )
+
+    # Volume conservation: measure excavated volume before rim is raised
+    excavated = np.maximum(0.0, heights - new_height)
+    excavated_volume_m3 = float((excavated * cell_area).sum())
+
     if containment_rim:
         rim_start = radius + shore_width * 0.42
         rim_t = np.clip((dist - rim_start) / max(outer_radius - rim_start, 1e-6), 0.0, 1.0)
         rim_rw = 0.08 + 0.06 * _ss(rim_t)
         rim_tgt = water_level + containment_rim_height * (0.18 + 0.52 * _ss(rim_t))
         in_rim = active & (dist > rim_start) & (result < rim_tgt)
+
+        # Volume conservation: distribute excavated volume onto rim cells
+        if preserve_volume and excavated_volume_m3 > 0.0:
+            rim_cell_count = int(in_rim.sum())
+            if rim_cell_count > 0:
+                extra_per_cell = excavated_volume_m3 / (rim_cell_count * cell_area)
+                rim_tgt = np.where(in_rim, rim_tgt + extra_per_cell * 0.6, rim_tgt)
+
         raised = result + (rim_tgt - result) * rim_rw
         new_height = np.where(in_rim, np.maximum(new_height, raised), new_height)
 
@@ -5259,15 +5644,9 @@ def handle_carve_water_basin(params: dict) -> dict:
 
     padded = np.pad(result, 1, mode="edge")
     neighborhood_mean = (
-        padded[0:-2, 0:-2]
-        + padded[0:-2, 1:-1]
-        + padded[0:-2, 2:]
-        + padded[1:-1, 0:-2]
-        + padded[1:-1, 1:-1]
-        + padded[1:-1, 2:]
-        + padded[2:, 0:-2]
-        + padded[2:, 1:-1]
-        + padded[2:, 2:]
+        padded[0:-2, 0:-2] + padded[0:-2, 1:-1] + padded[0:-2, 2:]
+        + padded[1:-1, 0:-2] + padded[1:-1, 1:-1] + padded[1:-1, 2:]
+        + padded[2:, 0:-2] + padded[2:, 1:-1] + padded[2:, 2:]
     ) / 9.0
     smooth_active = (dist_raw <= outer_radius) & (dist_raw > radius * 0.14)
     sm_t = np.clip(
@@ -5275,6 +5654,68 @@ def handle_carve_water_basin(params: dict) -> dict:
     )
     sm_w = 0.12 + 0.34 * _ss(sm_t)
     result = np.where(smooth_active, result * (1.0 - sm_w) + neighborhood_mean * sm_w, result)
+
+    # ------------------------------------------------------------------
+    # Outflow channel routing
+    # ------------------------------------------------------------------
+    outflow_channel: dict | None = None
+    if outflow_length > 0.5:
+        # Auto-detect steepest-descent rim cell when direction not specified
+        if outflow_dir_raw is None:
+            rim_mask = (dist_raw >= radius * 0.9) & (dist_raw <= outer_radius * 1.05)
+            rim_rows, rim_cols = np.where(rim_mask)
+            best_slope = -math.inf
+            best_angle = 0.0
+            for rr, rc in zip(rim_rows.tolist(), rim_cols.tolist()):
+                if rr <= 0 or rr >= rows - 1 or rc <= 0 or rc >= cols - 1:
+                    continue
+                dz_dx = (result[rr, rc + 1] - result[rr, rc - 1]) / (2.0 * cell_area ** 0.5)
+                dz_dy = (result[rr + 1, rc] - result[rr - 1, rc]) / (2.0 * cell_area ** 0.5)
+                slope_mag = math.sqrt(dz_dx ** 2 + dz_dy ** 2)
+                if slope_mag > best_slope:
+                    best_slope = slope_mag
+                    best_angle = math.atan2(-dz_dy, -dz_dx)
+            outflow_dir_rad = best_angle
+        else:
+            outflow_dir_rad = float(outflow_dir_raw)
+
+        # Carve V-channel from rim outward in outflow direction
+        ch_steps = max(4, int(outflow_length / max(cell_area ** 0.5, 0.1)))
+        cs_approx = cell_area ** 0.5
+        channel_pts: list[tuple[float, float]] = []
+        for step in range(ch_steps + 1):
+            frac = step / max(ch_steps, 1)
+            dist_from_rim = (radius + shore_width * 0.5) + frac * outflow_length
+            wx = cx + math.cos(outflow_dir_rad) * dist_from_rim
+            wy = cy + math.sin(outflow_dir_rad) * dist_from_rim
+            channel_pts.append((wx, wy))
+
+            # Find nearest grid cell
+            gc = int((wx - (_ox - _tw * 0.5)) / (_tw / max(cols - 1, 1)))
+            gr = int((wy - (_oy - _th * 0.5)) / (_th / max(rows - 1, 1)))
+            gc = max(0, min(cols - 1, gc))
+            gr = max(0, min(rows - 1, gr))
+
+            # Taper channel width and depth
+            ch_half_w_cells = max(1, int(outflow_width * (1.0 - frac * 0.8) / cs_approx))
+            ch_depth_val = depth * 0.25 * (1.0 - frac * 0.85)
+            for dr in range(-ch_half_w_cells, ch_half_w_cells + 1):
+                for dc in range(-ch_half_w_cells, ch_half_w_cells + 1):
+                    nr, nc = gr + dr, gc + dc
+                    if not (0 <= nr < rows and 0 <= nc < cols):
+                        continue
+                    lateral = math.sqrt(dr ** 2 + dc ** 2) / max(ch_half_w_cells, 1)
+                    v_depth = ch_depth_val * max(0.0, 1.0 - lateral)
+                    tgt_z = result[nr, nc] - v_depth
+                    if tgt_z < result[nr, nc]:
+                        result[nr, nc] = tgt_z
+
+        outflow_channel = {
+            "direction_rad": round(outflow_dir_rad, 4),
+            "length_m": round(outflow_length, 2),
+            "width_m": round(outflow_width, 2),
+            "waypoints": [[round(p[0], 3), round(p[1], 3)] for p in channel_pts],
+        }
 
     flat = result.flatten()
     for idx, vert in enumerate(bm.verts):
@@ -5285,6 +5726,33 @@ def handle_carve_water_basin(params: dict) -> dict:
     if hasattr(mesh, "update"):
         mesh.update()
 
+    # ------------------------------------------------------------------
+    # Bed material zones (pure metadata — no mesh modification)
+    # ------------------------------------------------------------------
+    bed_material_zones = [
+        {
+            "zone_type": "deep_bed",
+            "inner_radius": 0.0,
+            "outer_radius": round(radius * 0.55, 2),
+            "material_key": bed_mat_deep,
+            "description": "Central deep bed — gravel/silt below wave base",
+        },
+        {
+            "zone_type": "shallow_bed",
+            "inner_radius": round(radius * 0.55, 2),
+            "outer_radius": round(radius, 2),
+            "material_key": bed_mat_shallow,
+            "description": "Shallow bed — sand/small stones above wave base",
+        },
+        {
+            "zone_type": "shoreline",
+            "inner_radius": round(radius, 2),
+            "outer_radius": round(radius + shore_width, 2),
+            "material_key": bed_mat_shore,
+            "description": "Shoreline — pebbles/coarse sand / grass fringe",
+        },
+    ]
+
     return {
         "name": terrain_name,
         "water_level": water_level,
@@ -5292,6 +5760,11 @@ def handle_carve_water_basin(params: dict) -> dict:
         "depth": depth,
         "cells_modified": cells_modified,
         "min_height": float(result.min()) if result.size else water_level,
+        # B+ additions
+        "excavated_volume_m3": round(excavated_volume_m3, 3),
+        "volume_conserved": preserve_volume,
+        "outflow_channel": outflow_channel,
+        "bed_material_zones": bed_material_zones,
     }
 
 

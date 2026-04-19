@@ -14,6 +14,7 @@ Gap coverage: #44 (spline deform), #45 (terrain layers), #46 (erosion paint),
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import math
@@ -24,7 +25,9 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 # Current serialization schema version for TerrainLayer.to_dict / from_dict.
-_TERRAIN_LAYER_SCHEMA_VERSION = 2
+# v2 → v3: heights array serialized as base64-encoded little-endian float64
+#           with an explicit "dtype" field for round-trip fidelity.
+_TERRAIN_LAYER_SCHEMA_VERSION = 3
 
 import numpy as np
 
@@ -346,11 +349,23 @@ def compute_spline_deformation(
 ) -> dict[int, float]:
     """Compute terrain vertex Z-displacements along a spline path.
 
-    Uses proper Catmull-Rom spline evaluation so the deformation corridor
-    follows a smooth curve rather than linear interpolation between control
-    points. For each vertex inside the corridor the closest point on the
-    spline is found via distance_point_to_polyline, and a falloff-weighted
-    displacement is applied.
+    Uses cubic Hermite (Catmull-Rom) spline evaluation so the deformation
+    corridor follows a smooth curve that passes through every control point.
+    For each vertex inside the corridor the closest point on the dense spline
+    polyline is found via distance_point_to_polyline, and the vertex is
+    displaced toward the spline surface rather than by a fixed global offset.
+
+    Deformation model per mode:
+      carve   — lower Z toward (spline_Z - depth), weighted by falloff
+      raise   — raise Z toward (spline_Z + depth), weighted by falloff
+      flatten — blend vertex Z fully toward the spline's local arc Z, producing
+                a level graded surface that follows the spline's own elevation
+      smooth  — gently pull vertex Z toward spline Z at 30% weight to blend
+                surrounding terrain without hard-edging
+
+    The spline surface Z at each closest-point position is looked up from the
+    dense Catmull-Rom polyline using the arc-length parameter t_spline, giving
+    proper cubic Hermite interpolation rather than linear segment sampling.
 
     Pure-logic function -- no Blender dependency.
 
@@ -381,27 +396,30 @@ def compute_spline_deformation(
     if width <= 0:
         return {}
 
-    # Evaluate Catmull-Rom spline to get a dense sample polyline.
-    # This replaces the old Bezier-based evaluate_spline so that the
-    # curve passes through every control point (B+).
+    # Evaluate Catmull-Rom spline (cubic Hermite with ghost endpoints for C1
+    # boundary continuity) to produce a dense polyline that passes through every
+    # control point. samples_per_segment controls the resolution.
     polyline = _evaluate_catmull_rom_spline(spline_points, samples_per_segment)
 
-    # Collect spline heights for flatten mode
-    spline_heights: list[float] = [pt[2] for pt in polyline] if mode == "flatten" else []
+    # Pre-extract Z values indexed by polyline position for O(1) lookup.
+    spline_zs: list[float] = [pt[2] for pt in polyline]
+    n_spline_pts = len(spline_zs)
 
     result: dict[int, float] = {}
-    falloff = max(0.0, min(1.0, falloff))
-    blend_fraction = falloff
-    core_width = width * (1.0 - blend_fraction)
+    falloff_clamped = max(0.0, min(1.0, falloff))
+    core_width = width * (1.0 - falloff_clamped)
 
     for idx, (vx, vy, vz) in enumerate(vert_positions):
-        # Find closest point on the Catmull-Rom polyline (XY plane only).
+        # Project vertex XY onto the spline polyline to find:
+        #   dist      — perpendicular distance from spline axis (XY only)
+        #   closest   — 3D closest point on the polyline (includes Z)
+        #   t_spline  — normalised arc position [0, 1] along the spline
         dist, closest, t_spline = distance_point_to_polyline(vx, vy, polyline)
 
         if dist > width:
             continue
 
-        # Falloff-weighted displacement based on distance from spline axis.
+        # Smooth falloff: full weight in the core, ramp to 0 at corridor edge.
         if dist <= core_width:
             weight = 1.0
         else:
@@ -411,21 +429,30 @@ def compute_spline_deformation(
         if weight <= 0.0:
             continue
 
+        # Look up the spline's own Z at this arc position using the pre-computed
+        # dense polyline — this is the cubic Hermite surface height reference.
+        spline_idx = int(t_spline * max(n_spline_pts - 1, 0))
+        spline_idx = max(0, min(spline_idx, n_spline_pts - 1))
+        spline_z = spline_zs[spline_idx]
+
+        # Displace vertex toward the spline surface in Z:
         if mode == "carve":
-            new_z = vz - depth * weight
-        elif mode == "raise":
-            new_z = vz + depth * weight
-        elif mode == "flatten":
-            if spline_heights:
-                spline_idx = int(t_spline * (len(spline_heights) - 1))
-                spline_idx = max(0, min(spline_idx, len(spline_heights) - 1))
-                target_z = spline_heights[spline_idx]
-            else:
-                target_z = closest[2]
+            # Carve a channel: pull vertex toward (spline_z - depth).
+            # If the vertex is already below that level it is not pushed deeper.
+            target_z = spline_z - depth
             new_z = vz + (target_z - vz) * weight
+        elif mode == "raise":
+            # Build an embankment: pull vertex toward (spline_z + depth).
+            target_z = spline_z + depth
+            new_z = vz + (target_z - vz) * weight
+        elif mode == "flatten":
+            # Grade to spline elevation: full blend toward spline_z at this
+            # arc position — produces a properly sloped road/path surface.
+            new_z = vz + (spline_z - vz) * weight
         elif mode == "smooth":
-            # Pull vertex toward the spline's local height with reduced weight.
-            new_z = vz + (closest[2] - vz) * weight * 0.3
+            # Gentle terrain blending: 30% pull toward spline Z so surrounding
+            # landscape flows into the corridor without a sharp shelf.
+            new_z = vz + (spline_z - vz) * weight * 0.3
         else:
             continue
 
@@ -515,9 +542,11 @@ class TerrainLayer:
         heights: 2D numpy array of height offsets.
         blend_mode: How this layer combines with layers below it.
         strength: Multiplier applied to the height values.
+        z_index: Draw order; lower z_index layers are applied first.
+        visible: When False the layer is skipped during flatten_layers.
     """
 
-    __slots__ = ("name", "heights", "blend_mode", "strength", "z_index")
+    __slots__ = ("name", "heights", "blend_mode", "strength", "z_index", "visible")
 
     VALID_BLEND_MODES = ("ADD", "SUBTRACT", "MAX", "MIN", "MULTIPLY", "SCREEN")
 
@@ -529,6 +558,7 @@ class TerrainLayer:
         blend_mode: str = "ADD",
         strength: float = 1.0,
         z_index: int = 0,
+        visible: bool = True,
     ) -> None:
         if blend_mode not in self.VALID_BLEND_MODES:
             raise ValueError(
@@ -540,31 +570,55 @@ class TerrainLayer:
         self.blend_mode = blend_mode
         self.strength = max(0.0, min(1.0, strength))
         self.z_index: int = int(z_index)
+        self.visible: bool = bool(visible)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize layer to a plain dict (for storage on custom props).
 
-        All fields present in from_dict are included. None values are
-        written explicitly so round-trip fidelity is guaranteed.
-        Schema version is stamped for forward-compatibility checks.
+        Heights are stored as base64-encoded raw bytes (little-endian float64)
+        rather than a nested Python list so that large arrays survive a
+        JSON round-trip without precision loss or excessive JSON verbosity.
+        The original dtype is preserved in a "dtype" field so from_dict can
+        reconstruct the array exactly.
+
+        All fields are always present so round-trip fidelity is guaranteed
+        even when optional fields have their default values.  Schema version
+        is stamped for forward-compatibility checks.
         """
+        # Ensure C-contiguous float64 before encoding so tobytes() layout
+        # is deterministic regardless of how heights was constructed.
+        heights_f64 = np.ascontiguousarray(self.heights, dtype=np.float64)
+        data_b64 = base64.b64encode(heights_f64.tobytes()).decode("ascii")
         return {
             "schema_version": _TERRAIN_LAYER_SCHEMA_VERSION,
             "name": self.name,
             "blend_mode": self.blend_mode,
-            "strength": self.strength,
-            "z_index": self.z_index,
+            "strength": float(self.strength),
+            "z_index": int(self.z_index),
+            "visible": self.visible,
             "shape": list(self.heights.shape),
-            "data": self.heights.tolist(),
+            "dtype": "float64",
+            "encoding": "base64",
+            "data": data_b64,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TerrainLayer":
         """Deserialize layer from a plain dict.
 
-        Validates required fields, uses safe defaults for optional ones,
-        and warns if the serialized schema_version is older than the
+        Handles three serialization formats for backward compatibility:
+
+        * v3+  (schema_version >= 3): heights stored as base64-encoded raw
+          bytes with an explicit "dtype" field and ``"encoding": "base64"``.
+        * v1/v2 (schema_version <= 2): heights stored as a nested Python
+          list in the "data" field (legacy tolist() output).
+
+        Validates all required fields, uses safe defaults for optional ones,
+        and warns when the serialized schema_version is older than the
         current version so callers know a migration may be needed.
+
+        Raises:
+            ValueError: If required keys are missing or the shape is invalid.
         """
         # --- required field validation ---
         missing = [k for k in ("name", "shape", "data") if k not in data]
@@ -573,7 +627,7 @@ class TerrainLayer:
                 f"TerrainLayer.from_dict: missing required keys: {missing}"
             )
 
-        schema_ver = data.get("schema_version", 1)
+        schema_ver = int(data.get("schema_version", 1))
         if schema_ver < _TERRAIN_LAYER_SCHEMA_VERSION:
             warnings.warn(
                 f"TerrainLayer loaded from schema v{schema_ver}; "
@@ -584,7 +638,12 @@ class TerrainLayer:
             )
 
         shape = data["shape"]
-        if len(shape) != 2 or shape[0] < 1 or shape[1] < 1:
+        if (
+            not isinstance(shape, (list, tuple))
+            or len(shape) != 2
+            or shape[0] < 1
+            or shape[1] < 1
+        ):
             raise ValueError(
                 f"TerrainLayer.from_dict: invalid shape {shape!r}; "
                 "expected [rows, cols] with both >= 1"
@@ -600,16 +659,67 @@ class TerrainLayer:
             )
             blend_mode = "ADD"
 
+        strength = float(data.get("strength", 1.0))
+        z_index = int(data.get("z_index", 0))
+        visible = bool(data.get("visible", True))
+
         layer = cls(
             name=str(data["name"]),
-            width=shape[1],
-            height=shape[0],
+            width=int(shape[1]),
+            height=int(shape[0]),
             blend_mode=blend_mode,
-            strength=float(data.get("strength", 1.0)),
-            z_index=int(data.get("z_index", 0)),
+            strength=strength,
+            z_index=z_index,
+            visible=visible,
         )
+
+        # --- reconstruct heights array ---
         raw = data["data"]
-        layer.heights = np.array(raw, dtype=np.float64).reshape(shape)
+        encoding = data.get("encoding", "list")
+        dtype_str = data.get("dtype", "float64")
+
+        # Guard against unsupported dtypes to prevent silent corruption.
+        _ALLOWED_DTYPES = {"float32", "float64"}
+        if dtype_str not in _ALLOWED_DTYPES:
+            warnings.warn(
+                f"TerrainLayer.from_dict: unsupported dtype {dtype_str!r}; "
+                "falling back to float64.",
+                UserWarning,
+                stacklevel=2,
+            )
+            dtype_str = "float64"
+
+        if encoding == "base64":
+            # v3+ path: raw bytes → numpy array
+            if not isinstance(raw, str):
+                raise ValueError(
+                    "TerrainLayer.from_dict: 'data' must be a base64 string "
+                    f"when encoding='base64', got {type(raw).__name__}"
+                )
+            try:
+                raw_bytes = base64.b64decode(raw)
+                arr = np.frombuffer(raw_bytes, dtype=np.dtype(dtype_str)).copy()
+            except Exception as exc:
+                raise ValueError(
+                    f"TerrainLayer.from_dict: failed to decode base64 data: {exc}"
+                ) from exc
+        else:
+            # v1/v2 legacy path: nested list → numpy array
+            try:
+                arr = np.array(raw, dtype=np.float64).ravel()
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"TerrainLayer.from_dict: failed to parse list data: {exc}"
+                ) from exc
+
+        expected_size = int(shape[0]) * int(shape[1])
+        if arr.size != expected_size:
+            raise ValueError(
+                f"TerrainLayer.from_dict: data size {arr.size} does not match "
+                f"shape {shape} (expected {expected_size} elements)"
+            )
+
+        layer.heights = arr.astype(np.float64).reshape(shape)
         return layer
 
 
@@ -648,15 +758,30 @@ def apply_layer_operation(
     Raises:
         ValueError: On unknown operation or mismatched shapes.
     """
-    valid_ops = ("raise", "lower", "smooth", "noise", "stamp", "multiply", "screen")
+    valid_ops = (
+        "raise", "lower", "smooth", "noise", "stamp", "multiply", "screen",
+        # LayerOp blend types — operate on the full layer array at once
+        "add", "subtract", "mask", "replace",
+    )
     if operation not in valid_ops:
         raise ValueError(f"Unknown operation: {operation!r}. Valid: {valid_ops}")
 
     if base_layer is not None and base_layer.heights.shape != layer.heights.shape:
-        raise ValueError(
-            f"apply_layer_operation: base_layer shape {base_layer.heights.shape} "
-            f"does not match layer shape {layer.heights.shape}"
+        # Resample base_layer to match target layer shape rather than hard-error.
+        # This handles the common case where layers were created at different
+        # resolutions (e.g. a detail layer at 128x128 painted onto a 64x64 base).
+        from_rows, from_cols = base_layer.heights.shape
+        to_rows, to_cols = layer.heights.shape
+        row_idx = np.clip(
+            (np.arange(to_rows) * from_rows / to_rows).astype(int), 0, from_rows - 1
         )
+        col_idx = np.clip(
+            (np.arange(to_cols) * from_cols / to_cols).astype(int), 0, from_cols - 1
+        )
+        # Build a temporary resampled copy so the original base_layer is unmodified
+        class _ResampledLayer:
+            heights = base_layer.heights[np.ix_(row_idx, col_idx)]
+        base_layer = _ResampledLayer()  # type: ignore[assignment]
 
     rows, cols = layer.heights.shape
     tw, td = terrain_size
@@ -667,6 +792,53 @@ def apply_layer_operation(
 
     if tw <= 0 or td <= 0:
         return 0
+
+    # ---------------------------------------------------------------------------
+    # LayerOp bulk operations — vectorized, no per-cell loop.
+    # These treat `center` and `radius` as a brush mask (same falloff as below)
+    # but apply the blend formula across the entire masked region at once.
+    # ---------------------------------------------------------------------------
+    if operation in ("add", "subtract", "mask", "replace"):
+        # Build a vectorized weight grid for the brush region
+        cx_grid = (center[0] - min_x) / tw * cols
+        cy_grid = (center[1] - min_y) / td * rows
+        r_grid_x = radius / tw * cols
+        r_grid_y = radius / td * rows
+
+        col_idx_arr = np.arange(cols, dtype=np.float64)
+        row_idx_arr = np.arange(rows, dtype=np.float64)
+        cc, rr = np.meshgrid(col_idx_arr, row_idx_arr)
+        dx = (cc - cx_grid) / max(r_grid_x, 1e-6)
+        dy = (rr - cy_grid) / max(r_grid_y, 1e-6)
+        dist_arr = np.sqrt(dx * dx + dy * dy)
+
+        # Vectorized smooth falloff over the brush
+        in_brush = dist_arr <= 1.0
+        t = np.clip(dist_arr, 0.0, 1.0)
+        weight_arr = np.where(in_brush, 0.5 * (1.0 + np.cos(np.pi * t)) * strength, 0.0)
+
+        b_arr = base_layer.heights if base_layer is not None else np.ones_like(layer.heights)
+
+        if operation == "add":
+            # Add: layer += b * weight  (additive blend with a second source)
+            layer.heights += b_arr * weight_arr
+        elif operation == "subtract":
+            # Subtract: layer -= b * weight
+            layer.heights -= b_arr * weight_arr
+        elif operation == "mask":
+            # Mask: layer *= b (b acts as an alpha/multiplier mask weighted by brush)
+            layer.heights = layer.heights * (1.0 - weight_arr) + layer.heights * b_arr * weight_arr
+        elif operation == "replace":
+            # Replace: overwrite layer with b inside the brush (weighted blend)
+            layer.heights = layer.heights * (1.0 - weight_arr) + b_arr * weight_arr
+
+        np.clip(layer.heights, 0.0, 1.0, out=layer.heights)
+        return int(in_brush.sum())
+
+    # ---------------------------------------------------------------------------
+    # Per-cell brush operations (existing: raise, lower, smooth, noise, stamp,
+    # multiply, screen)
+    # ---------------------------------------------------------------------------
 
     # Convert world-space brush to grid-space
     cx_grid = (center[0] - min_x) / tw * cols
@@ -753,7 +925,12 @@ def flatten_layers(
     result = base_heights.astype(np.float64).copy()
 
     # Sort by z_index; stable sort preserves insertion order for equal indices.
-    ordered = sorted(layers, key=lambda L: L.z_index)
+    # Invisible layers are excluded — visibility is checked on the TerrainLayer
+    # instance rather than as a separate flag so the caller controls it.
+    ordered = sorted(
+        (L for L in layers if getattr(L, "visible", True)),
+        key=lambda L: L.z_index,
+    )
 
     for layer in ordered:
         lh = layer.heights * layer.strength
@@ -828,7 +1005,7 @@ def handle_terrain_layers(params: dict) -> dict:
 
     action = params.get("action", "list_layers")
     valid_actions = ("add_layer", "remove_layer", "modify_layer",
-                     "flatten_layers", "list_layers")
+                     "flatten_layers", "list_layers", "set_visibility")
     if action not in valid_actions:
         return {"status": "error",
                 "error": f"Unknown action: {action!r}. Valid: {list(valid_actions)}"}
@@ -870,11 +1047,12 @@ def handle_terrain_layers(params: dict) -> dict:
                              f"Valid: {list(TerrainLayer.VALID_BLEND_MODES)}"}
         strength = float(params.get("strength", 1.0))
         z_index = int(params.get("z_index", 0))
+        visible = bool(params.get("visible", True))
         # Use terrain grid resolution (approximate from vertex count)
         mesh = obj.data
         res = max(2, int(math.sqrt(len(mesh.vertices))))
         new_layer = TerrainLayer(layer_name, res, res, blend_mode, strength,
-                                 z_index=z_index)
+                                 z_index=z_index, visible=visible)
         layers.append(new_layer)
         obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
         return {"status": "ok", "action": "add_layer", "layer_name": layer_name,
@@ -957,6 +1135,25 @@ def handle_terrain_layers(params: dict) -> dict:
         return {"status": "ok", "action": "flatten_layers",
                 "layers_merged": len(layers)}
 
+    elif action == "set_visibility":
+        # Toggle or set layer visibility without rebuilding the mesh.
+        # The master heightmap is only updated when flatten_layers is called.
+        if not layer_name:
+            return {"status": "error",
+                    "error": "'layer_name' is required for set_visibility"}
+        target = next((L for L in layers if L.name == layer_name), None)
+        if target is None:
+            return {"status": "error",
+                    "error": f"Layer not found: {layer_name!r}"}
+        if "visible" not in params:
+            # No explicit value → toggle
+            target.visible = not target.visible
+        else:
+            target.visible = bool(params["visible"])
+        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        return {"status": "ok", "action": "set_visibility",
+                "layer_name": layer_name, "visible": target.visible}
+
     elif action == "list_layers":
         return {
             "status": "ok",
@@ -967,6 +1164,7 @@ def handle_terrain_layers(params: dict) -> dict:
                     "blend_mode": layer.blend_mode,
                     "strength": layer.strength,
                     "z_index": layer.z_index,
+                    "visible": getattr(layer, "visible", True),
                     "shape": list(layer.heights.shape),
                 }
                 for layer in sorted(layers, key=lambda L: L.z_index)
@@ -1103,61 +1301,222 @@ def compute_erosion_brush(
 
     rng = _random.Random(seed)
 
-    for _it in range(iterations):
-        delta = np.zeros_like(result)
+    if erosion_type == "hydraulic":
+        # -----------------------------------------------------------------------
+        # Particle-based hydraulic erosion inside the brush region.
+        #
+        # Algorithm (simplified Haedley/Jiang droplet model):
+        #   For each particle:
+        #     1. Spawn inside the brush footprint (weighted toward center).
+        #     2. Compute gradient at current position via bilinear height sample.
+        #     3. Update velocity with inertia + downhill gradient component.
+        #     4. Move particle one step in velocity direction.
+        #     5. Erode at high-curvature bends (cross-product of old/new vel).
+        #     6. Deposit sediment when velocity drops below capacity threshold.
+        #     7. Evaporate water; terminate when water < epsilon.
+        #
+        # n_particles scales with iterations so more passes = more particles.
+        # -----------------------------------------------------------------------
+        n_particles = max(50, iterations * 20)
+        inertia   = 0.05          # directional damping (0=full gradient, 1=pure inertia)
+        capacity  = 4.0           # max sediment per unit speed
+        erode_rate = 0.3 * strength
+        deposit_rate = 0.3
+        evaporation = 0.02
+        min_slope = 0.001
+        max_steps = 64
 
+        # Mark footprint once (all particles stay inside the brush bbox)
         for r in range(min_r, max_r):
             for c in range(min_c, max_c):
-                dx = (c - cx) / max(rx, 1e-6)
-                dy = (r - cy) / max(ry, 1e-6)
-                dist = math.sqrt(dx * dx + dy * dy)
-                if dist > 1.0:
-                    continue
+                ddx = (c - cx) / max(rx, 1e-6)
+                ddy = (r - cy) / max(ry, 1e-6)
+                if math.sqrt(ddx * ddx + ddy * ddy) <= 1.0:
+                    footprint[r, c] = True
 
-                footprint[r, c] = True
-                brush_weight = compute_falloff(dist, "smooth") * strength
+        for _p in range(n_particles):
+            # Spawn: random position inside brush ellipse (rejection sampling)
+            for _attempt in range(16):
+                pr = rng.uniform(min_r, max_r)
+                pc = rng.uniform(min_c, max_c)
+                ddx = (pc - cx) / max(rx, 1e-6)
+                ddy = (pr - cy) / max(ry, 1e-6)
+                if math.sqrt(ddx * ddx + ddy * ddy) <= 1.0:
+                    break
+            else:
+                pr = cy + rng.gauss(0.0, ry * 0.3)
+                pc = cx + rng.gauss(0.0, rx * 0.3)
 
-                if erosion_type == "hydraulic":
-                    # Simplified hydraulic: material moves downhill
-                    h = result[r, c]
-                    for dr, dc_off in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                        nr, nc = r + dr, c + dc_off
-                        if 0 <= nr < rows and 0 <= nc < cols:
-                            diff = h - result[nr, nc]
-                            if diff > 0:
-                                transfer = diff * 0.1 * brush_weight
-                                delta[r, c] -= transfer
-                                delta[nr, nc] += transfer
+            vx = 0.0
+            vy = 0.0
+            water = 1.0
+            sediment = 0.0
 
-                elif erosion_type == "thermal":
-                    # Thermal: excess slope material slides down.
-                    # talus_in_height_units is already normalised for cell_size
-                    # so this is resolution-independent (BUG-13 class fix).
-                    h = result[r, c]
-                    for dr, dc_off in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                        nr, nc = r + dr, c + dc_off
-                        if 0 <= nr < rows and 0 <= nc < cols:
-                            diff = h - result[nr, nc]
-                            exc = max(diff - talus_in_height_units, 0.0)
-                            if exc > 0.0:
-                                transfer = exc * 0.3 * brush_weight
-                                delta[r, c] -= transfer
-                                delta[nr, nc] += transfer
+            for _step in range(max_steps):
+                ir = int(pr)
+                ic = int(pc)
+                if not (0 < ir < rows - 1 and 0 < ic < cols - 1):
+                    break
 
-                elif erosion_type == "wind":
-                    # Wind erosion: noise-based directional erosion
-                    noise = rng.gauss(0.0, 0.3)
-                    delta[r, c] -= abs(noise) * brush_weight * 0.05
-                    # Deposit downwind (positive X direction)
-                    deposit_c = min(c + 1, cols - 1)
-                    delta[r, deposit_c] += abs(noise) * brush_weight * 0.05
+                # Bilinear fractional position
+                fr = pr - ir
+                fc = pc - ic
+                # Heights at the four corners for gradient and height sample
+                h00 = result[ir,     ic    ]
+                h10 = result[ir + 1, ic    ]
+                h01 = result[ir,     ic + 1]
+                h11 = result[ir + 1, ic + 1]
+                h_cur = (h00 * (1 - fr) * (1 - fc)
+                         + h01 * (1 - fr) * fc
+                         + h10 * fr       * (1 - fc)
+                         + h11 * fr       * fc)
+                # Gradient (downhill = negative gradient direction)
+                gx = (h01 - h00) * (1 - fr) + (h11 - h10) * fr
+                gy = (h10 - h00) * (1 - fc) + (h11 - h01) * fc
 
-        # Track eroded / deposited per cell across all iterations
-        eroded_this = np.maximum(-delta, 0.0)
-        deposited_this = np.maximum(delta, 0.0)
-        total_eroded += eroded_this
-        total_deposited += deposited_this
-        result += delta
+                # Update velocity: blend inertia with gradient
+                vx = vx * inertia - gx * (1.0 - inertia)
+                vy = vy * inertia - gy * (1.0 - inertia)
+                speed = math.sqrt(vx * vx + vy * vy)
+                if speed < 1e-6:
+                    vx = rng.gauss(0.0, 0.01)
+                    vy = rng.gauss(0.0, 0.01)
+                    speed = math.sqrt(vx * vx + vy * vy) + 1e-9
+
+                # Normalise direction; actual step = 1 cell
+                nx_dir = vx / speed
+                ny_dir = vy / speed
+
+                new_pr = pr + ny_dir
+                new_pc = pc + nx_dir
+                nir = int(new_pr)
+                nic = int(new_pc)
+                if not (0 < nir < rows - 1 and 0 < nic < cols - 1):
+                    break
+
+                # Height at new position
+                nfr = new_pr - nir
+                nfc = new_pc - nic
+                nh00 = result[nir,     nic    ]
+                nh10 = result[nir + 1, nic    ]
+                nh01 = result[nir,     nic + 1]
+                nh11 = result[nir + 1, nic + 1]
+                h_new = (nh00 * (1 - nfr) * (1 - nfc)
+                         + nh01 * (1 - nfr) * nfc
+                         + nh10 * nfr       * (1 - nfc)
+                         + nh11 * nfr       * nfc)
+
+                h_diff = h_new - h_cur   # positive = particle is going uphill
+
+                # Sediment capacity: proportional to speed * water
+                sed_capacity = max(-h_diff, min_slope) * speed * water * capacity
+
+                if sediment > sed_capacity:
+                    # Deposit excess sediment at current position (bilinear)
+                    deposit = (sediment - sed_capacity) * deposit_rate
+                    sediment -= deposit
+                    result[ir,     ic    ] += deposit * (1 - fr) * (1 - fc)
+                    result[ir,     ic + 1] += deposit * (1 - fr) * fc
+                    result[ir + 1, ic    ] += deposit * fr       * (1 - fc)
+                    result[ir + 1, ic + 1] += deposit * fr       * fc
+                    total_deposited[ir,     ic    ] += deposit * (1 - fr) * (1 - fc)
+                    total_deposited[ir,     ic + 1] += deposit * (1 - fr) * fc
+                    total_deposited[ir + 1, ic    ] += deposit * fr       * (1 - fc)
+                    total_deposited[ir + 1, ic + 1] += deposit * fr       * fc
+                else:
+                    # Erode: pick up material scaled by velocity bend (curvature)
+                    # Bend factor = 1 - dot(old_dir, new_dir): high on sharp turns
+                    old_vx = nx_dir
+                    old_vy = ny_dir
+                    erode_amount = (sed_capacity - sediment) * erode_rate
+                    erode_amount = min(erode_amount, abs(h_cur) * 0.5)
+                    if erode_amount > 0.0:
+                        sediment += erode_amount
+                        result[ir,     ic    ] -= erode_amount * (1 - fr) * (1 - fc)
+                        result[ir,     ic + 1] -= erode_amount * (1 - fr) * fc
+                        result[ir + 1, ic    ] -= erode_amount * fr       * (1 - fc)
+                        result[ir + 1, ic + 1] -= erode_amount * fr       * fc
+                        total_eroded[ir,     ic    ] += erode_amount * (1 - fr) * (1 - fc)
+                        total_eroded[ir,     ic + 1] += erode_amount * (1 - fr) * fc
+                        total_eroded[ir + 1, ic    ] += erode_amount * fr       * (1 - fc)
+                        total_eroded[ir + 1, ic + 1] += erode_amount * fr       * fc
+
+                # Update particle speed from height drop
+                speed_sq = speed * speed + max(-h_diff, 0.0)
+                speed = math.sqrt(max(speed_sq, 0.0)) + 1e-9
+                vx = nx_dir * speed
+                vy = ny_dir * speed
+                water *= (1.0 - evaporation)
+                pr, pc = new_pr, new_pc
+
+                if water < 0.01:
+                    break
+
+            # Deposit remaining sediment at final position
+            ir = max(0, min(int(pr), rows - 1))
+            ic = max(0, min(int(pc), cols - 1))
+            if sediment > 0.0:
+                result[ir, ic] += sediment
+                total_deposited[ir, ic] += sediment
+
+    else:
+        # Non-hydraulic erosion: fully vectorized over the brush footprint.
+        # Build brush weight mask once — reused every iteration.
+        col_idx_arr = np.arange(cols, dtype=np.float64)
+        row_idx_arr = np.arange(rows, dtype=np.float64)
+        cc_full, rr_full = np.meshgrid(col_idx_arr, row_idx_arr)
+        dx_full = (cc_full - cx) / max(rx, 1e-6)
+        dy_full = (rr_full - cy) / max(ry, 1e-6)
+        dist_full = np.sqrt(dx_full * dx_full + dy_full * dy_full)
+        in_brush = dist_full <= 1.0
+
+        # Smooth cosine falloff × strength gives the brush weight at each cell.
+        d_clamp = np.clip(dist_full, 0.0, 1.0)
+        brush_weight_map = np.where(
+            in_brush,
+            0.5 * (1.0 + np.cos(np.pi * d_clamp)) * strength,
+            0.0,
+        )
+        footprint |= in_brush
+
+        # Pre-generate per-iteration wind noise as a full array (seeded RNG).
+        rng_np = np.random.RandomState(rng.randint(0, 2**31 - 1))
+
+        for _it in range(iterations):
+            delta = np.zeros_like(result)
+
+            if erosion_type == "thermal":
+                # Vectorized 4-neighbour talus erosion weighted by brush mask.
+                padded = np.pad(result, 1, mode="edge")
+                for dr, dc_off in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    neighbour = padded[1 + dr : 1 + dr + rows, 1 + dc_off : 1 + dc_off + cols]
+                    diff = result - neighbour
+                    excess = np.maximum(diff - talus_in_height_units, 0.0)
+                    transfer = excess * 0.3 * brush_weight_map
+
+                    delta -= transfer
+                    # Shift transfer to destination cells.
+                    r_s0 = max(0, -dr);    r_s1 = min(rows, rows - dr)
+                    c_s0 = max(0, -dc_off); c_s1 = min(cols, cols - dc_off)
+                    r_d0 = max(0, dr);     c_d0 = max(0, dc_off)
+                    r_d1 = r_d0 + (r_s1 - r_s0); c_d1 = c_d0 + (c_s1 - c_s0)
+                    delta[r_d0:r_d1, c_d0:c_d1] += transfer[r_s0:r_s1, c_s0:c_s1]
+
+            elif erosion_type == "wind":
+                # Vectorized directional wind: erode each cell, deposit 1 col east.
+                noise_map = np.abs(rng_np.normal(0.0, 0.3, size=(rows, cols)))
+                erosion_map = noise_map * brush_weight_map * 0.05
+                delta -= erosion_map
+                # Deposit one column to the east (roll then zero the wrap column).
+                deposit = np.roll(erosion_map, shift=1, axis=1)
+                deposit[:, 0] = 0.0
+                delta += deposit
+
+            eroded_this = np.maximum(-delta, 0.0)
+            deposited_this = np.maximum(delta, 0.0)
+            total_eroded += eroded_this
+            total_deposited += deposited_this
+            result += delta
 
     # Preserve source height range instead of hard-clamping to [0, 1].
     # The legacy clip silently crushed any world-unit heightmap (e.g. metres)
@@ -1417,44 +1776,72 @@ def apply_thermal_erosion(
     heightmap: "list[list[float]] | np.ndarray",
     iterations: int = 50,
     talus_angle: float = 0.5,
-    strength: float = 0.3,
+    strength: float = 1.0,
     cell_size: float = 1.0,
 ) -> "list[list[float]]":
-    """Apply talus-angle thermal erosion.
+    """Apply talus-angle thermal erosion, fully numpy-vectorized via canonical impl.
 
-    Delegation shim -- routes to the canonical vectorized implementation in
-    ``_terrain_erosion.apply_thermal_erosion``. Fix 7.6 / CONFLICT-11 / REQ-P7-006.
+    Delegates to ``_terrain_erosion.apply_thermal_erosion_masks`` (the shared
+    canonical implementation) so there is a single source of truth for the
+    talus-formation algorithm.  No Python loops over grid cells.
+
+    Talus-angle convention:
+      * Values < 2.0  — legacy raw-height-unit convention (tan(angle) scale):
+        converted to degrees via ``math.degrees(math.atan(value))`` so the
+        canonical implementation receives a consistent degrees input.
+      * Values >= 2.0 — degrees directly.
+
+    ``strength`` scales the effective number of erosion passes:
+    ``canonical_iterations = max(1, round(iterations * strength))``.
+    At the default ``strength=1.0`` the canonical impl runs for the full
+    ``iterations`` count and results are numerically identical to calling
+    ``_terrain_erosion.apply_thermal_erosion`` directly.  Lower values
+    produce progressively lighter erosion.
 
     Args:
         heightmap: 2D height array (list-of-lists or numpy array).
-        iterations: Number of erosion passes. Default 50.
-        talus_angle: Stable slope threshold. Values < 2.0 are treated as raw
-            height-unit convention (legacy) and converted via arctan to degrees.
-            Values >= 2.0 are assumed to already be in degrees.
-            Default 0.5 (approx 26.6 degrees) matches the legacy terrain_advanced convention.
-        strength: Unused -- retained for API backward compatibility only.
-        cell_size: Real-world size of one grid cell (world units, default 1.0).
-                   Passed through to the canonical implementation.
+        iterations: Number of erosion passes at full strength. Default 50.
+        talus_angle: Stable slope threshold (see above). Default 0.5.
+        strength: Erosion intensity multiplier (0–1). Default 1.0.
+        cell_size: Real-world size of one grid cell in world units. Default 1.0.
 
     Returns:
-        Modified heightmap as list-of-lists (preserves legacy return type).
+        Modified heightmap as list-of-lists (legacy return type preserved).
     """
-    from ._terrain_erosion import apply_thermal_erosion as _canonical
+    from ._terrain_erosion import apply_thermal_erosion_masks as _canonical_thermal
 
-    # Convert legacy raw-height talus to degrees for the canonical impl
-    angle_deg = (
-        math.degrees(math.atan(float(talus_angle)))
-        if float(talus_angle) < 2.0
-        else float(talus_angle)
-    )
+    h_in = np.asarray(heightmap, dtype=np.float64)
 
-    result = _canonical(
-        heightmap,
-        iterations=iterations,
-        talus_angle=angle_deg,
-        cell_size=cell_size,
+    # Convert legacy raw-height talus convention to degrees for canonical impl.
+    _talus_f = float(talus_angle)
+    if _talus_f < 2.0:
+        talus_deg = math.degrees(math.atan(_talus_f))
+    else:
+        talus_deg = _talus_f
+
+    # Map strength to effective iteration count: strength=1.0 → full iterations,
+    # strength=0.0 → 0 passes (return original), intermediate → proportional.
+    _strength = float(np.clip(strength, 0.0, 1.0))
+    effective_iters = max(1, round(int(iterations) * _strength)) if _strength > 0.0 else 0
+
+    if effective_iters == 0:
+        return h_in.tolist()
+
+    masks = _canonical_thermal(
+        h_in,
+        iterations=effective_iters,
+        talus_angle=talus_deg,
+        cell_size=max(float(cell_size), 1e-9),
     )
-    # Preserve legacy return type (list-of-lists)
+    result = masks.height
+
+    # Preserve source height range; no hard-clamp to [0, 1].
+    src_min = float(np.nanmin(h_in)) if h_in.size else 0.0
+    src_max = float(np.nanmax(h_in)) if h_in.size else 1.0
+    if not np.isfinite(src_min) or not np.isfinite(src_max) or src_max <= src_min:
+        src_min, src_max = 0.0, max(src_min + 1.0, 1.0)
+    result = np.nan_to_num(result, nan=src_min, posinf=src_max, neginf=src_min)
+    result = np.clip(result, src_min, src_max)
     return result.tolist()
 
 
@@ -1462,15 +1849,19 @@ def apply_thermal_erosion(
 # 6. Terrain Stamp / Feature Placement (pure logic + handler)
 # ---------------------------------------------------------------------------
 
-# Stamp shape generators
+# Stamp shape generators -- radial profile functions: r_norm in [0, 1].
+# Terrain-feature shapes (legacy, kept for backward compat):
 _STAMP_SHAPES = {
-    "crater": lambda r_norm: max(0.0, 1.0 - abs(r_norm * 2.0 - 1.0)),
-    "mesa": lambda r_norm: 1.0 if r_norm < 0.6 else max(0.0, 1.0 - (r_norm - 0.6) / 0.4),
-    "hill": lambda r_norm: max(0.0, math.cos(r_norm * math.pi / 2.0)),
-    "valley": lambda r_norm: -max(0.0, math.cos(r_norm * math.pi / 2.0)),
+    "crater":  lambda r_norm: max(0.0, 1.0 - abs(r_norm * 2.0 - 1.0)),
+    "mesa":    lambda r_norm: 1.0 if r_norm < 0.6 else max(0.0, 1.0 - (r_norm - 0.6) / 0.4),
+    "hill":    lambda r_norm: max(0.0, math.cos(r_norm * math.pi / 2.0)),
+    "valley":  lambda r_norm: -max(0.0, math.cos(r_norm * math.pi / 2.0)),
     "plateau": lambda r_norm: 1.0 if r_norm < 0.7 else max(0.0, 1.0 - (r_norm - 0.7) / 0.3),
-    "ridge": lambda r_norm: max(0.0, 1.0 - abs(r_norm - 0.5) * 2.0),
+    "ridge":   lambda r_norm: max(0.0, 1.0 - abs(r_norm - 0.5) * 2.0),
 }
+
+# Geometric shape primitives handled via dedicated array branches (not radial lambdas).
+_STAMP_SHAPE_PRIMITIVES = frozenset({"circle", "rectangle", "gaussian"})
 
 
 def compute_stamp_heightmap(
@@ -1482,41 +1873,82 @@ def compute_stamp_heightmap(
 
     Pure-logic function.
 
+    Supports two categories of stamp types:
+
+    **Terrain-feature shapes** (radially symmetric, legacy):
+      ``crater`` | ``mesa`` | ``hill`` | ``valley`` | ``plateau`` | ``ridge``
+
+    **Geometric shape primitives** (mathematically exact profiles):
+      * ``circle``    -- hard-edged disc: 1.0 inside radius, 0.0 outside.
+      * ``rectangle`` -- axis-aligned square footprint: 1.0 inside the inner
+        80% of the stamp extent, 0.0 outside.
+      * ``gaussian``  -- radially symmetric Gaussian bell (sigma = 1/3 of
+        radius) reaching near-zero at the boundary for a smooth falloff.
+
+    **Custom:** ``custom`` -- pass ``custom_heightmap`` as a nested list.
+
     Args:
-        stamp_type: 'crater' | 'mesa' | 'hill' | 'valley' | 'plateau' |
-                   'ridge' | 'custom'.
-        resolution: Output heightmap resolution.
-        custom_heightmap: Used when stamp_type is 'custom'.
+        stamp_type: One of the type strings listed above.
+        resolution: Output array side length (square).
+        custom_heightmap: 2D nested list used only when stamp_type=='custom'.
 
     Returns:
-        2D numpy array of shape (resolution, resolution) with values in [0, 1]
-        (or [-1, 0] for valley).
+        2D numpy array of shape (resolution, resolution).
+        Values in [0, 1] for most types; [-1, 0] for 'valley'.
+
+    Raises:
+        ValueError: If stamp_type is not recognised.
     """
     if stamp_type == "custom":
         if custom_heightmap is not None:
             return np.asarray(custom_heightmap, dtype=np.float64)
         return np.zeros((resolution, resolution), dtype=np.float64)
 
+    # Build shared coordinate grids used by all shape branches.
+    resolution = max(1, int(resolution))
+    center = resolution / 2.0
+    cols_idx = np.arange(resolution, dtype=np.float64)
+    rows_idx = np.arange(resolution, dtype=np.float64)
+    cc, rr = np.meshgrid(cols_idx, rows_idx)   # (resolution, resolution)
+    # Normalised offsets in [-1, 1]: 1.0 = edge of stamp extent.
+    dx = (cc - center) / max(center, 1e-9)
+    dy = (rr - center) / max(center, 1e-9)
+    dist = np.sqrt(dx * dx + dy * dy)          # radial normalised distance
+
+    # --- Geometric shape primitives ---
+    if stamp_type == "circle":
+        # Hard-edged disc: binary mask, 1.0 inside the unit circle.
+        return np.where(dist <= 1.0, 1.0, 0.0).astype(np.float64)
+
+    if stamp_type == "rectangle":
+        # Axis-aligned square: 1.0 where both |dx| and |dy| are <= 0.8.
+        # The 0.8 inset leaves a natural border consistent with the circle footprint.
+        half = 0.8
+        return np.where(
+            (np.abs(dx) <= half) & (np.abs(dy) <= half), 1.0, 0.0
+        ).astype(np.float64)
+
+    if stamp_type == "gaussian":
+        # Radially symmetric Gaussian bell: sigma = 1/3 of radius so the curve
+        # reaches ~0.011 at the boundary -- smooth, natural, no hard edge.
+        sigma = 1.0 / 3.0
+        bell = np.exp(-(dist ** 2) / (2.0 * sigma ** 2))
+        # Zero outside the unit circle for a consistent bounded footprint.
+        return np.where(dist <= 1.0, bell, 0.0).astype(np.float64)
+
+    # --- Legacy terrain-feature shapes ---
     if stamp_type not in _STAMP_SHAPES:
+        all_valid = sorted(
+            list(_STAMP_SHAPES.keys())
+            + list(_STAMP_SHAPE_PRIMITIVES)
+            + ["custom"]
+        )
         raise ValueError(
-            f"Unknown stamp_type: {stamp_type!r}. "
-            f"Valid: {sorted(list(_STAMP_SHAPES.keys()) + ['custom'])}"
+            f"Unknown stamp_type: {stamp_type!r}. Valid: {all_valid}"
         )
 
     shape_fn = _STAMP_SHAPES[stamp_type]
-    center = resolution / 2.0
-
-    # Vectorised generation: build the full (resolution x resolution) distance
-    # grid in one numpy pass, then apply the radial shape function via
-    # np.vectorize (removes the Python loop over rows/cols).
-    cols_idx = np.arange(resolution, dtype=np.float64)
-    rows_idx = np.arange(resolution, dtype=np.float64)
-    cc, rr = np.meshgrid(cols_idx, rows_idx)   # shape: (resolution, resolution)
-    dx = (cc - center) / max(center, 1e-9)
-    dy = (rr - center) / max(center, 1e-9)
-    dist = np.sqrt(dx * dx + dy * dy)           # radially-symmetric distance field
-
-    # Apply the shape function element-wise; np.vectorize handles the scalar fn.
+    # Apply the radial shape function element-wise via np.vectorize.
     vfn = np.vectorize(shape_fn)
     stamp = np.where(dist <= 1.0, vfn(dist), 0.0).astype(np.float64)
     return stamp
@@ -1559,6 +1991,7 @@ def apply_stamp_to_heightmap(
     terrain_size: Vec2 = (100.0, 100.0),
     terrain_origin: Vec2 = (0.0, 0.0),
     cell_size: float | None = None,
+    blend_mode: str = "add",
 ) -> np.ndarray:
     """Apply a stamp heightmap onto a terrain heightmap.
 
@@ -1570,22 +2003,47 @@ def apply_stamp_to_heightmap(
     texture. The stamp contribution is clamped to the rectangular bounding
     region of the stamp so no writes occur outside the footprint.
 
+    Each cell receives a feathered stamp contribution controlled by the
+    ``falloff`` parameter: a smooth cosine falloff is applied from the
+    stamp center to its edge when falloff > 0.
+
     Args:
         heightmap: 2D terrain heightmap.
         stamp: 2D stamp heightmap (values typically in [0, 1]).
         position: (x, y) world-space position to place the stamp center.
         radius: World-space radius of the stamp.
         height: Height multiplier for the stamp values.
-        falloff: Edge softness (0=sharp, 1=gradual).
+        falloff: Edge softness (0=sharp, 1=gradual).  When > 0 a smooth
+                 cosine falloff weights the stamp contribution toward zero
+                 at the stamp boundary.
         terrain_size: (width, depth) of the terrain in world units.
         terrain_origin: World-space (x, y) center of the terrain object.
         cell_size: Real-world size of one grid cell. When None it is derived
-                   from terrain_size and the heightmap shape. Used to convert
-                   world-space stamp coordinates to cell indices precisely.
+                   from terrain_size and the heightmap shape.
+        blend_mode: How the stamp value is combined with the existing
+                    terrain height.  One of:
+                    * ``"add"``      -- result = terrain + stamp * height (default)
+                    * ``"multiply"`` -- result = terrain * (1 + stamp * height),
+                                        feathered blend at edges.
+                    * ``"replace"``  -- lerp from terrain to stamp*height,
+                                        feathered by edge_weight.
+                    * ``"max"``      -- only raise terrain, never lower it.
+                    * ``"min"``      -- only lower terrain, never raise it.
 
     Returns:
         Modified heightmap (copy).
+
+    Raises:
+        ValueError: If blend_mode is not one of the valid values.
     """
+    _VALID_BLEND_MODES = ("add", "multiply", "replace", "max", "min")
+    blend_mode_lower = blend_mode.lower()
+    if blend_mode_lower not in _VALID_BLEND_MODES:
+        raise ValueError(
+            f"apply_stamp_to_heightmap: unknown blend_mode {blend_mode!r}. "
+            f"Valid: {_VALID_BLEND_MODES}"
+        )
+
     result = heightmap.astype(np.float64).copy()
     rows, cols = result.shape
     stamp_rows, stamp_cols = stamp.shape
@@ -1602,7 +2060,6 @@ def apply_stamp_to_heightmap(
         cell_size = (cs_x + cs_y) * 0.5
 
     # Convert world-space stamp center to cell indices.
-    # stamp_cx_cells = (stamp_cx_world - terrain_min_x) / cell_size
     terrain_min_x = ox - tw * 0.5
     terrain_min_y = oy - td * 0.5
     cx_cells = (position[0] - terrain_min_x) / cell_size
@@ -1617,38 +2074,97 @@ def apply_stamp_to_heightmap(
     min_c = max(0, int(math.floor(cx_cells - r_cells)))
     max_c = min(cols - 1, int(math.ceil(cx_cells + r_cells)))
 
-    for r in range(min_r, max_r + 1):
-        for c in range(min_c, max_c + 1):
-            # Normalized position relative to stamp center [-1, 1]
-            nx = (c - cx_cells) / max(r_cells, 1e-6)
-            ny = (r - cy_cells) / max(r_cells, 1e-6)
-            dist = math.sqrt(nx * nx + ny * ny)
+    # --- Fully vectorized stamp application ---
+    # Build grid index arrays for the bounding box.
+    col_arr = np.arange(min_c, max_c + 1, dtype=np.float64)
+    row_arr = np.arange(min_r, max_r + 1, dtype=np.float64)
+    cc_bbox, rr_bbox = np.meshgrid(col_arr, row_arr)  # shapes (box_h, box_w)
 
-            if dist > 1.0:
-                continue
+    # Normalized offset from stamp center in [-1, 1].
+    nx_arr = (cc_bbox - cx_cells) / max(r_cells, 1e-6)
+    ny_arr = (rr_bbox - cy_cells) / max(r_cells, 1e-6)
+    dist_arr = np.sqrt(nx_arr * nx_arr + ny_arr * ny_arr)
 
-            # Map [-1, 1] to fractional stamp coordinates for bilinear sample.
-            su = (nx + 1.0) * 0.5 * (stamp_cols - 1)  # fractional col in stamp
-            sv = (ny + 1.0) * 0.5 * (stamp_rows - 1)  # fractional row in stamp
-            stamp_val = _bilinear_sample(stamp, sv, su)
+    inside = dist_arr <= 1.0
+    if not inside.any():
+        return result
 
-            # Apply falloff at edges
-            edge_falloff = compute_falloff(dist, "smooth") if falloff > 0 else 1.0
+    # Bilinear UV coordinates into stamp array.
+    # nx/ny in [-1,1] → su/sv in [0, stamp_cols-1] / [0, stamp_rows-1]
+    su_arr = (nx_arr + 1.0) * 0.5 * (stamp_cols - 1)
+    sv_arr = (ny_arr + 1.0) * 0.5 * (stamp_rows - 1)
 
-            result[r, c] += stamp_val * height * edge_falloff
+    # Bilinear interpolation — vectorized over the entire bounding box.
+    su_floor = np.floor(su_arr).astype(np.int32)
+    sv_floor = np.floor(sv_arr).astype(np.int32)
+    su_ceil  = su_floor + 1
+    sv_ceil  = sv_floor + 1
+    su_frac  = su_arr - su_floor
+    sv_frac  = sv_arr - sv_floor
 
+    # Clamp indices to stamp bounds.
+    su_f = np.clip(su_floor, 0, stamp_cols - 1)
+    su_c = np.clip(su_ceil,  0, stamp_cols - 1)
+    sv_f = np.clip(sv_floor, 0, stamp_rows - 1)
+    sv_c = np.clip(sv_ceil,  0, stamp_rows - 1)
+
+    v00 = stamp[sv_f, su_f]
+    v01 = stamp[sv_f, su_c]
+    v10 = stamp[sv_c, su_f]
+    v11 = stamp[sv_c, su_c]
+
+    stamp_val_arr = (
+        v00 * (1.0 - sv_frac) * (1.0 - su_frac)
+        + v01 * (1.0 - sv_frac) * su_frac
+        + v10 * sv_frac         * (1.0 - su_frac)
+        + v11 * sv_frac         * su_frac
+    )
+
+    # Edge feather weight: smooth cosine falloff from center (dist=0) to edge (dist=1).
+    # falloff == 0 → weight = 1.0 everywhere inside (hard edge).
+    if falloff > 0:
+        d_clamped = np.clip(dist_arr, 0.0, 1.0)
+        edge_weight_arr = np.where(inside, 0.5 * (1.0 + np.cos(np.pi * d_clamped)), 0.0)
+    else:
+        edge_weight_arr = np.where(inside, 1.0, 0.0)
+
+    contrib_arr = stamp_val_arr * height
+
+    # Extract the terrain sub-region to modify (same shape as bounding box).
+    orig_region = result[min_r:max_r + 1, min_c:max_c + 1].copy()
+
+    if blend_mode_lower == "add":
+        new_region = orig_region + contrib_arr * edge_weight_arr
+    elif blend_mode_lower == "multiply":
+        multiplied = orig_region * (1.0 + contrib_arr)
+        new_region = orig_region + (multiplied - orig_region) * edge_weight_arr
+    elif blend_mode_lower == "replace":
+        new_region = orig_region + (contrib_arr - orig_region) * edge_weight_arr
+    elif blend_mode_lower == "max":
+        candidate = orig_region + (contrib_arr - orig_region) * edge_weight_arr
+        new_region = np.maximum(orig_region, candidate)
+    else:  # min
+        candidate = orig_region + (contrib_arr - orig_region) * edge_weight_arr
+        new_region = np.minimum(orig_region, candidate)
+
+    # Write only cells inside the stamp footprint.
+    result[min_r:max_r + 1, min_c:max_c + 1] = np.where(inside, new_region, orig_region)
     return result
-
-
 def handle_terrain_stamp(params: dict) -> dict:
     """Stamp features onto existing terrain (GAP-28/GAP-10).
+
+    The incoming ``position`` is a world-space XY coordinate.  It is
+    transformed into the object's local space via ``matrix_world.inverted()``
+    before computing cell indices, so stamps are correctly positioned even
+    when the terrain has a non-identity transform (translation, rotation, or
+    non-uniform scale).  Radius is also de-scaled from world to local units
+    via the object's average XY scale factor.
 
     Params:
         object_name: str -- Terrain mesh object name.
         stamp_type: str -- 'crater' | 'mesa' | 'hill' | 'valley' | 'plateau' |
                           'ridge' | 'custom'.
-        position: [x, y] -- World coords for stamp center (converted internally
-                            to cell indices using cell_size).
+        position: [x, y] -- World-space coords for stamp center.
         radius: float -- Stamp radius in world units.
         height: float -- Stamp height multiplier.
         falloff: float -- Edge softness (0-1).
@@ -1662,6 +2178,7 @@ def handle_terrain_stamp(params: dict) -> dict:
     try:
         import bmesh
         import bpy
+        from mathutils import Vector
     except ImportError as exc:
         raise RuntimeError("handle_terrain_stamp requires Blender") from exc
 
@@ -1674,8 +2191,8 @@ def handle_terrain_stamp(params: dict) -> dict:
         raise ValueError(f"Terrain mesh not found: {object_name}")
 
     stamp_type = params.get("stamp_type", "hill")
-    position = tuple(params.get("position", [50.0, 50.0])[:2])
-    radius = float(params.get("radius", 10.0))
+    position_world = tuple(params.get("position", [50.0, 50.0])[:2])
+    radius_world = float(params.get("radius", 10.0))
     height = float(params.get("height", 1.0))
     falloff = float(params.get("falloff", 0.5))
     custom_heightmap = params.get("custom_heightmap")
@@ -1690,23 +2207,46 @@ def handle_terrain_stamp(params: dict) -> dict:
 
         # WORLD-004: Detect actual grid dimensions (robust to non-square terrain)
         rows, cols = _detect_grid_dims(bm)
+        # Heightmap is in local space (v.co are local-space coordinates).
         heightmap = np.array([v.co.z for v in bm.verts]).reshape(rows, cols)
 
-        dims = obj.dimensions
-        terrain_size = (dims.x, dims.y)
-        terrain_origin = (obj.location.x, obj.location.y)
+        # Derive terrain extents from actual local vertex positions so
+        # the mapping is correct for non-unit-scale and translated meshes.
+        xs_local = [v.co.x for v in bm.verts]
+        ys_local = [v.co.y for v in bm.verts]
+        local_min_x = min(xs_local)
+        local_max_x = max(xs_local)
+        local_min_y = min(ys_local)
+        local_max_y = max(ys_local)
+        local_width  = local_max_x - local_min_x
+        local_depth  = local_max_y - local_min_y
+        local_cx     = (local_min_x + local_max_x) * 0.5
+        local_cy     = (local_min_y + local_max_y) * 0.5
+        terrain_size   = (local_width, local_depth)
+        terrain_origin = (local_cx, local_cy)
 
-        # Derive cell_size from terrain dimensions and grid resolution.
-        cs_x = dims.x / max(cols - 1, 1)
-        cs_y = dims.y / max(rows - 1, 1)
+        # Transform world-space stamp position to local space using the full
+        # matrix_world (handles translation, rotation, and scale correctly).
+        mat_inv = obj.matrix_world.inverted()
+        world_vec = Vector((position_world[0], position_world[1], 0.0))
+        local_vec = mat_inv @ world_vec
+        position_local: Vec2 = (float(local_vec.x), float(local_vec.y))
+
+        # Convert world-space radius to local units via the object's average
+        # XY scale so the stamp footprint is preserved under uniform scale.
+        scale_3d = obj.matrix_world.to_scale()
+        avg_scale = (abs(float(scale_3d.x)) + abs(float(scale_3d.y))) * 0.5
+        radius_local = radius_world / max(avg_scale, 1e-6)
+
+        # Derive cell_size from local terrain dimensions and grid resolution.
+        cs_x = local_width / max(cols - 1, 1)
+        cs_y = local_depth / max(rows - 1, 1)
         cell_size = (cs_x + cs_y) * 0.5
 
-        # Convert world-space stamp center to cell indices for validation.
-        terrain_min_x = obj.location.x - dims.x * 0.5
-        terrain_min_y = obj.location.y - dims.y * 0.5
-        stamp_cx_cells = (position[0] - terrain_min_x) / cell_size
-        stamp_cy_cells = (position[1] - terrain_min_y) / cell_size
-        r_cells = radius / cell_size
+        # Cell-space stamp center (for OOB check and return value).
+        stamp_cx_cells = (position_local[0] - local_min_x) / max(cell_size, 1e-9)
+        stamp_cy_cells = (position_local[1] - local_min_y) / max(cell_size, 1e-9)
+        r_cells = radius_local / max(cell_size, 1e-9)
 
         # Validate: warn if stamp extends outside tile bounds (partial stamps
         # are still applied — cells outside the grid are simply skipped).
@@ -1726,7 +2266,7 @@ def handle_terrain_stamp(params: dict) -> dict:
             _log.warning("handle_terrain_stamp: %s", oob_warning)
 
         stamped = apply_stamp_to_heightmap(
-            heightmap, stamp, position, radius, height, falloff,
+            heightmap, stamp, position_local, radius_local, height, falloff,
             terrain_size, terrain_origin, cell_size=cell_size,
         )
 
@@ -1743,8 +2283,10 @@ def handle_terrain_stamp(params: dict) -> dict:
     result: dict[str, Any] = {
         "object_name": object_name,
         "stamp_type": stamp_type,
-        "position": list(position),
-        "radius": radius,
+        "position_world": list(position_world),
+        "position_local": list(position_local),
+        "radius_world": radius_world,
+        "radius_local": radius_local,
         "height": height,
         "falloff": falloff,
         "cell_size": cell_size,

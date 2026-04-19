@@ -583,9 +583,20 @@ def _apply_sdf_exclusion(
     terrain_half_y = terrain_height / 2.0
     col_f = ((world_x - terrain_origin_x + terrain_half_x) / terrain_width) * (road_sdf_np.shape[1] - 1)
     row_f = ((world_y - terrain_origin_y + terrain_half_y) / terrain_height) * (road_sdf_np.shape[0] - 1)
-    r_idx = int(np.clip(row_f, 0, road_sdf_np.shape[0] - 1))
-    c_idx = int(np.clip(col_f, 0, road_sdf_np.shape[1] - 1))
-    return float(road_sdf_np[r_idx, c_idx]) < placement_radius
+    H, W = road_sdf_np.shape
+    r0 = int(math.floor(max(0.0, min(row_f, H - 1))))
+    c0 = int(math.floor(max(0.0, min(col_f, W - 1))))
+    r1 = min(r0 + 1, H - 1)
+    c1 = min(c0 + 1, W - 1)
+    tr = row_f - math.floor(row_f)
+    tc = col_f - math.floor(col_f)
+    sdf_val = (
+        road_sdf_np[r0, c0] * (1.0 - tr) * (1.0 - tc)
+        + road_sdf_np[r0, c1] * (1.0 - tr) * tc
+        + road_sdf_np[r1, c0] * tr * (1.0 - tc)
+        + road_sdf_np[r1, c1] * tr * tc
+    )
+    return float(sdf_val) < placement_radius
 
 
 def _write_tree_instance_points(
@@ -696,42 +707,78 @@ class LocationLayer:
         n_candidates = max(1, round(self.density * cs * cs))
         rr_sq = self.repulsion_radius * self.repulsion_radius
 
-        # accepted_per_cell[(i, j)] = list of (x, y) accepted points in that cell
+        # --- Batch-generate all candidate (x, y) positions via numpy broadcasting ---
+        # Replicate _location_layer_rand2 exactly for all (i, j, k) triples at once.
+        # _location_layer_rand2 computes:
+        #   h = seed ^ (i * 73856093) ^ (j * 19349663) ^ (k * 83492791)
+        #   h = ((h ^ (h >> 13)) & 0xFFFFFFFF) * 1664525 + 1013904223) & 0xFFFFFFFF
+        #   rx = ((h & 0xFFFF) / 65535.0) - 0.5   [same scramble again for ry]
+        # All arithmetic uses uint32 wrapping (& 0xFFFFFFFF).
+        i_idx = np.arange(n_rows, dtype=np.uint32)
+        j_idx = np.arange(n_cols, dtype=np.uint32)
+        k_idx = np.arange(n_candidates, dtype=np.uint32)
+        # Grid shape: (n_rows, n_cols, n_candidates)
+        ii, jj, kk = np.meshgrid(i_idx, j_idx, k_idx, indexing="ij")
+
+        seed_u32 = np.uint32(self.seed)
+        h = (
+            seed_u32
+            ^ (ii * np.uint32(73856093))
+            ^ (jj * np.uint32(19349663))
+            ^ (kk * np.uint32(83492791))
+        )
+        # First scramble → rx
+        h = (h ^ (h >> np.uint32(13))) * np.uint32(1664525) + np.uint32(1013904223)
+        rx = (h & np.uint32(0xFFFF)).astype(np.float64) / 65535.0 - 0.5  # [-0.5, 0.5]
+        # Second scramble → ry
+        h = (h ^ (h >> np.uint32(13))) * np.uint32(1664525) + np.uint32(1013904223)
+        ry = (h & np.uint32(0xFFFF)).astype(np.float64) / 65535.0 - 0.5  # [-0.5, 0.5]
+
+        # Map to world-space position (identical formula to scalar version)
+        cx_all = (jj.astype(np.float64) * cs + cs * (rx + 0.5)).clip(0.0, width_m)
+        cy_all = (ii.astype(np.float64) * cs + cs * (ry + 0.5)).clip(0.0, height_m)
+        # Flatten to 1-D arrays sorted by (i, j, k) order
+        cx_flat = cx_all.ravel()
+        cy_flat = cy_all.ravel()
+        total = cx_flat.shape[0]
+
+        # --- Per-cell repulsion in raster order ---
+        # Candidate positions are pre-computed; the Python loop only decides
+        # accept/reject using the 3x3 neighbour dict — no inner candidate-gen cost.
         accepted_per_cell: dict = {}
         all_instances: list = []
 
-        for i in range(n_rows):
-            for j in range(n_cols):
-                accepted_per_cell.setdefault((i, j), [])
-                for k in range(n_candidates):
-                    rx, ry = _location_layer_rand2(i, j, self.seed, k)
-                    cx = j * cs + cs * (rx + 0.5)
-                    cy = i * cs + cs * (ry + 0.5)
-                    # Clamp to region bounds
-                    cx = max(0.0, min(width_m, cx))
-                    cy = max(0.0, min(height_m, cy))
+        for flat_idx in range(total):
+            grid_i = flat_idx // (n_cols * n_candidates)
+            rem = flat_idx % (n_cols * n_candidates)
+            grid_j = rem // n_candidates
 
-                    # 3x3 repulsion check
-                    accepted = True
-                    for di in (-1, 0, 1):
-                        if not accepted:
+            cx = float(cx_flat[flat_idx])
+            cy = float(cy_flat[flat_idx])
+
+            key = (grid_i, grid_j)
+            accepted_per_cell.setdefault(key, [])
+
+            accepted = True
+            for di in (-1, 0, 1):
+                if not accepted:
+                    break
+                for dj in (-1, 0, 1):
+                    ni, nj = grid_i + di, grid_j + dj
+                    for px, py in accepted_per_cell.get((ni, nj), ()):
+                        ddx = cx - px
+                        ddy = cy - py
+                        if ddx * ddx + ddy * ddy < rr_sq:
+                            accepted = False
                             break
-                        for dj in (-1, 0, 1):
-                            ni, nj = i + di, j + dj
-                            for px, py in accepted_per_cell.get((ni, nj), ()):
-                                dx = cx - px
-                                dy = cy - py
-                                if dx * dx + dy * dy < rr_sq:
-                                    accepted = False
-                                    break
-                            if not accepted:
-                                break
+                    if not accepted:
+                        break
 
-                    if accepted:
-                        accepted_per_cell[(i, j)].append((cx, cy))
-                        z = height_sample_fn(cx, cy) if height_sample_fn is not None else 0.0
-                        rot = wind_sample_fn(cx, cy) if wind_sample_fn is not None else 0.0
-                        all_instances.append((cx, cy, float(z), float(rot), float(prototype_id)))
+            if accepted:
+                accepted_per_cell[key].append((cx, cy))
+                z = height_sample_fn(cx, cy) if height_sample_fn is not None else 0.0
+                rot = wind_sample_fn(cx, cy) if wind_sample_fn is not None else 0.0
+                all_instances.append((cx, cy, float(z), float(rot), float(prototype_id)))
 
         if not all_instances:
             return np.empty((0, 5), dtype=np.float32)
@@ -1454,6 +1501,36 @@ def _build_scatter_density_map(
     return np.clip(density, 0.0, 1.0).astype(np.float32)
 
 
+# ---------------------------------------------------------------------------
+# LOD distance thresholds (world-space metres from viewer origin).
+# LOD0 = full-detail mesh, LOD1 = reduced, LOD2 = impostor/billboard,
+# LOD3 = culled.  Thresholds are (lod1_dist, lod2_dist, cull_dist).
+# ---------------------------------------------------------------------------
+_LOD_THRESHOLDS: dict[str, tuple[float, float, float]] = {
+    "tree":    (30.0,  80.0, 200.0),
+    "bush":    (20.0,  50.0, 120.0),
+    "grass":   (15.0,  35.0,  80.0),
+    "rock":    (25.0,  60.0, 150.0),
+    "default": (25.0,  60.0, 150.0),
+}
+
+
+def _lod_for_distance(dist: float, veg_type: str) -> int:
+    """Return LOD level (0–3) given Euclidean distance from the viewer.
+
+    LOD0 < lod1_dist <= LOD1 < lod2_dist <= LOD2 < cull_dist <= LOD3
+    """
+    key = veg_type if veg_type in _LOD_THRESHOLDS else "default"
+    lod1, lod2, cull = _LOD_THRESHOLDS[key]
+    if dist < lod1:
+        return 0
+    if dist < lod2:
+        return 1
+    if dist < cull:
+        return 2
+    return 3
+
+
 def _scatter_pass(
     heightmap: np.ndarray,
     slope_map: np.ndarray,
@@ -1466,51 +1543,47 @@ def _scatter_pass(
     combat_clearings: "list[dict] | None" = None,
     water_proximity_map: "np.ndarray | None" = None,
     disturbance_map: "np.ndarray | None" = None,
+    viewer_origin: "tuple[float, float] | None" = None,
 ) -> list[dict[str, Any]]:
     """Execute a single scatter pass (structure, ground_cover, or debris).
 
-    Upgrade notes (C+→B):
-    - Density is now modulated by slope, water proximity, and disturbance
-      patches using ``_build_scatter_density_map`` — all vectorized numpy,
-      no Python loops over individual cells.
-    - Flat areas receive higher tree/grass density; wet cells boost moisture-
-      loving species; disturbed patches boost pioneer species.
-    - Per-candidate density lookup is a single array index (O(1)).
+    Candidate generation uses Bridson's Poisson-disk algorithm (via
+    ``poisson_disk_sample``) to guarantee blue-noise spacing.  Acceptance is
+    driven by a per-cell density field built from slope, water proximity, and
+    disturbance (``_build_scatter_density_map``).
+
+    Per-placement outputs
+    ---------------------
+    rotation  : float — uniform in [0, 2π) radians around world Z-axis.
+    scale     : float — base_scale * uniform([0.8, 1.2]), i.e. exactly ±20%.
+    lod       : int   — 0–3 derived from Euclidean distance to viewer_origin.
 
     Parameters
     ----------
-    heightmap : np.ndarray
-        Normalized 2D heightmap [0,1].
-    slope_map : np.ndarray
-        Slope in degrees.
-    terrain_size : float
-        World-space terrain size in meters.
-    pass_type : str
-        One of "structure" (trees/bushes), "ground_cover" (grass/flowers),
-        "debris" (rocks/sticks).
-    biome : str
-        Biome key for density lookup.
-    seed : int
-        Random seed.
-    building_zones : list of (min_x, min_y, max_x, max_y)
-        Axis-aligned bounding boxes to exclude.
-    tree_positions : list of (x, y)
-        Already-placed tree positions to avoid within 1m (for grass pass).
-    combat_clearings : list of clearing dicts
-        Reserved clearing areas.
-    water_proximity_map : np.ndarray or None
-        Per-cell water proximity in [0,1] (1 = adjacent to water).
-    disturbance_map : np.ndarray or None
-        Per-cell disturbance intensity in [0,1] (>0.5 = disturbed ground).
+    heightmap : np.ndarray  (H,W) float32, values in [0,1]
+    slope_map : np.ndarray  (H,W) float32, degrees
+    terrain_size : float    World-space terrain size in metres.
+    pass_type : str         "structure" | "ground_cover" | "debris"
+    biome : str             Biome key for base density lookup.
+    seed : int              Random seed.
+    building_zones : list of (min_x, min_y, max_x, max_y) exclusion boxes.
+    tree_positions : list of (x, y) for grass-pass exclusion within 1m.
+    combat_clearings : list of clearing dicts (keys: center, radius).
+    water_proximity_map : (H,W) float32 in [0,1] or None.
+    disturbance_map     : (H,W) float32 in [0,1] or None.
+    viewer_origin : (x, y) world-space viewer for LOD distance; defaults to (0,0).
 
     Returns
     -------
-    list of placement dicts with keys: position, vegetation_type, rotation, scale.
+    list of dicts, each with: position, vegetation_type, rotation, scale, lod, gpu_instance.
     """
     rng = random.Random(seed)
     base_density = _BIOME_DENSITY.get(biome, 0.5)
     rows, cols = heightmap.shape
     terrain_half = terrain_size / 2.0
+
+    # Viewer position defaults to terrain centre
+    vx, vy = viewer_origin if viewer_origin is not None else (0.0, 0.0)
 
     # Build vectorized density map once — used for all per-candidate lookups
     density_map = _build_scatter_density_map(
@@ -1556,6 +1629,13 @@ def _scatter_pass(
                 return True
         return False
 
+    def _viewer_dist(wx: float, wy: float) -> float:
+        return math.sqrt((wx - vx) ** 2 + (wy - vy) ** 2)
+
+    def _scale_pm20(base: float) -> float:
+        """Return base scaled by uniform([0.8, 1.2]) — exactly ±20%."""
+        return base * rng.uniform(0.8, 1.2)
+
     placements: list[dict[str, Any]] = []
 
     if pass_type == "structure":
@@ -1573,11 +1653,13 @@ def _scatter_pass(
                 continue
             if rng.random() > _density_at(pos):
                 continue
+            dist = _viewer_dist(wx, wy)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "tree",
-                "rotation": rng.uniform(0, 360),
-                "scale": rng.uniform(0.8, 1.5),
+                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "scale": _scale_pm20(1.0),
+                "lod": _lod_for_distance(dist, "tree"),
                 "gpu_instance": True,
             })
 
@@ -1592,11 +1674,13 @@ def _scatter_pass(
                 continue
             if rng.random() > min(1.0, _density_at(pos) * 1.1):
                 continue
+            dist = _viewer_dist(wx, wy)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "bush",
-                "rotation": rng.uniform(0, 360),
-                "scale": rng.uniform(0.5, 1.0),
+                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "scale": _scale_pm20(0.75),
+                "lod": _lod_for_distance(dist, "bush"),
                 "gpu_instance": True,
             })
 
@@ -1636,12 +1720,14 @@ def _scatter_pass(
                 continue
             if rng.random() > _density_at(pos):
                 continue
+            dist = _viewer_dist(wx, wy)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": f"grass_{biome_grass}",
-                "rotation": rng.uniform(0, 360),
-                "scale": 1.0,
+                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "scale": _scale_pm20(1.0),
                 "biome": biome_grass,
+                "lod": _lod_for_distance(dist, "grass"),
                 "gpu_instance": True,
             })
 
@@ -1659,13 +1745,15 @@ def _scatter_pass(
                     continue
             if rng.random() > _density_at(pos) * 1.2:  # rocks slightly more aggressive
                 continue
-            scale, size_class = _rock_size_from_power_law(rng)
+            base_scale, size_class = _rock_size_from_power_law(rng)
+            dist = _viewer_dist(wx, wy)
             placements.append({
                 "position": (wx, wy),
                 "vegetation_type": "rock",
-                "rotation": rng.uniform(0, 360),
-                "scale": scale,
+                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "scale": _scale_pm20(base_scale),
                 "size_class": size_class,
+                "lod": _lod_for_distance(dist, "rock"),
                 "gpu_instance": True,
             })
 

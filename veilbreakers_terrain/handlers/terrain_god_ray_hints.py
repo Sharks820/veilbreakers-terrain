@@ -1,9 +1,10 @@
 """Bundle L — terrain_god_ray_hints.
 
-Identifies plausible god-ray / light-shaft source locations: narrow
-valleys, canyon mouths, and cave openings where directional sunlight
-through atmospheric haze forms visible beams. Hints are exported as
-JSON for the Unity consumer (light probe placement).
+Identifies plausible god-ray / light-shaft source locations: places
+where a sunbeam passes through foliage or dust AND is partially
+occluded by nearby terrain — the classic visible-shaft condition.
+Hints are exported as JSON for the Unity consumer (light probe /
+volumetric light placement).
 
 Pure numpy, no bpy, deterministic.
 """
@@ -71,6 +72,75 @@ def _normalize_sun_dir(sun_dir_rad: Tuple[float, float]) -> Tuple[float, float]:
     return az, alt
 
 
+def _build_terrain_silhouette_shadow(
+    h: np.ndarray,
+    sun_az: float,
+    sun_alt: float,
+    cell_size: float,
+) -> np.ndarray:
+    """Return a boolean mask: True where a cell is in shadow from the sun.
+
+    Algorithm
+    ---------
+    We march rays from each cell toward the sun (opposite direction of sun
+    vector projected onto the grid). A cell is shadowed if any terrain
+    sample along its path to the sun is tall enough to block the sun ray.
+
+    The sun direction in grid space:
+        dx_sun = cos(sun_alt) * sin(sun_az)   (east component)
+        dy_sun = cos(sun_alt) * cos(sun_az)   (north component)
+        dz_sun = sin(sun_alt)                 (vertical rise per horizontal unit)
+
+    We step along the *opposite* direction (from cell toward sun) using
+    fixed-step ray marching.  At step distance d (meters) the expected
+    minimum height to not be blocked is:
+        h_horizon = h[cell] + d * tan(sun_alt)
+
+    If any encountered terrain exceeds h_horizon, the cell is shadowed.
+    """
+    rows, cols = h.shape
+    tan_alt = math.tan(max(sun_alt, 1e-4))
+
+    # Sun direction projected on the XY (grid) plane, pointing away from sun.
+    # We step in this direction from each cell to trace the sun ray.
+    dx = math.cos(sun_alt) * math.sin(sun_az)   # east (col) component
+    dy = math.cos(sun_alt) * math.cos(sun_az)   # north (row) component
+
+    # Number of marching steps — enough to cross the entire tile diagonally.
+    diag = math.sqrt(rows * rows + cols * cols)
+    # Step size: 2 cells worth of diagonal, so we use ~diag/2 steps.
+    n_steps = max(4, int(diag / 2))
+    step_cells = 2.0  # march 2 cells per step
+    step_m = step_cells * cell_size
+
+    # Pre-build row/col index grids for vectorised march.
+    col_grid = np.arange(cols, dtype=np.float32)[np.newaxis, :]
+    row_grid = np.arange(rows, dtype=np.float32)[:, np.newaxis]
+
+    shadow = np.zeros((rows, cols), dtype=bool)
+
+    for s in range(1, n_steps + 1):
+        d_m = s * step_m
+        # Grid coordinates of the "look-toward-sun" sample for each cell.
+        # We step in the direction FROM cell TOWARD sun.
+        sample_col = col_grid + (dx / cell_size) * d_m
+        sample_row = row_grid + (dy / cell_size) * d_m
+
+        # Clamp to grid bounds.
+        sc = np.clip(np.round(sample_col).astype(np.int32), 0, cols - 1)
+        sr = np.clip(np.round(sample_row).astype(np.int32), 0, rows - 1)
+
+        # Terrain height at the sample point.
+        h_sample = h[sr, sc]
+        # Horizon height: to NOT be blocked, h_sample must be below this.
+        h_horizon = h + d_m * tan_alt
+
+        # If the sampled terrain is above the horizon, the cell is shadowed.
+        shadow |= h_sample > h_horizon
+
+    return shadow
+
+
 def compute_god_ray_hints(
     stack: TerrainMaskStack,
     sun_dir_rad: Tuple[float, float],
@@ -80,20 +150,28 @@ def compute_god_ray_hints(
 
     Algorithm
     ---------
-    1. Compute local concavity (basin laplacian).
-    2. Intersect concave cells with any ``cave_candidate`` and/or
-       ``waterfall_lip_candidate`` masks — these are the highest-priority
-       sources.
-    3. Additionally score high-concavity valley cells that are partially
-       under cloud shadow (light-dark transition boundary).
-    4. Return the top-N scored cells as hints, with direction pointing
-       from the sun azimuth.
+    God rays are visible where ALL three conditions hold simultaneously:
+      1. Foliage / dust medium is present (forest_mask or detail_density
+         "tree", or fallback to low-slope vegetated cells).
+      2. The cell is on the LIT side — not fully in terrain shadow.
+      3. The lit cell is adjacent to (or near) a shadow transition,
+         meaning the shaft is bounded on one side — creating the visible
+         beam against the darker region.
+
+    Steps:
+      a. Compute terrain shadow mask using ray-march toward the sun.
+      b. Build foliage density from ``forest_mask`` or height-slope proxy.
+      c. Shadow-boundary score: gradient of the shadow mask detects the
+         lit/shadow transition edge.  Cells just inside the LIT side of
+         that boundary with dense foliage are the ideal shaft origins.
+      d. Apply cave-entrance / waterfall bonus (these tightly bound light).
+      e. Non-max suppress and return up to 16 hints.
 
     Parameters
     ----------
     stack:
-        Mask stack. Uses ``height``, optionally ``cave_candidate``,
-        ``waterfall_lip_candidate``.
+        Mask stack. Uses ``height``, ``slope``, ``forest_mask`` (optional),
+        ``cave_candidate`` (optional), ``waterfall_lip_candidate`` (optional).
     sun_dir_rad:
         (azimuth, altitude) in radians. Altitude must be > 0.
     cloud_shadow:
@@ -113,23 +191,61 @@ def compute_god_ray_hints(
             f"cloud_shadow shape {cs.shape} must match height shape {h.shape}"
         )
 
-    az, _alt = _normalize_sun_dir(sun_dir_rad)
+    az, alt = _normalize_sun_dir(sun_dir_rad)
+    cell = float(stack.cell_size)
 
-    lap = (
-        np.roll(h, 1, 0)
-        + np.roll(h, -1, 0)
-        + np.roll(h, 1, 1)
-        + np.roll(h, -1, 1)
-        - 4.0 * h
-    ) / (float(stack.cell_size) ** 2)
-    # Concavity score [0..1]
-    p_hi = float(np.percentile(lap, 95.0))
-    if p_hi < 1e-6:
-        conc_score = np.zeros_like(lap, dtype=np.float32)
+    # ------------------------------------------------------------------
+    # Step 1: Terrain shadow from ray-march
+    # ------------------------------------------------------------------
+    shadow_mask = _build_terrain_silhouette_shadow(h, az, alt, cell)
+
+    # ------------------------------------------------------------------
+    # Step 2: Foliage / scatter density
+    # ------------------------------------------------------------------
+    forest_raw = stack.get("forest_mask")
+    if forest_raw is not None:
+        foliage = np.clip(np.asarray(forest_raw, dtype=np.float32), 0.0, 1.0)
     else:
-        conc_score = np.clip(lap / p_hi, 0.0, 1.0).astype(np.float32)
+        # Fallback: use detail_density "tree" if available.
+        tree_raw = None
+        if stack.detail_density is not None:
+            tree_raw = stack.detail_density.get("tree")
+        if tree_raw is not None:
+            foliage = np.clip(np.asarray(tree_raw, dtype=np.float32), 0.0, 1.0)
+        else:
+            # Last resort: low-slope cells above median height are likely
+            # vegetated in dark-fantasy biomes.
+            slope_raw = stack.slope
+            if slope_raw is None:
+                gy, gx = np.gradient(h, cell)
+                slope_raw = np.arctan(np.sqrt(gx * gx + gy * gy))
+            slope_deg = np.degrees(np.asarray(slope_raw, dtype=np.float64))
+            h_median = float(np.median(h))
+            foliage = np.where(
+                (slope_deg < 25.0) & (h > h_median), 1.0, 0.0
+            ).astype(np.float32)
 
-    # Feature-kind source bonuses.
+    # ------------------------------------------------------------------
+    # Step 3: Shadow boundary — cells just inside the lit side
+    # ------------------------------------------------------------------
+    shadow_f = shadow_mask.astype(np.float32)
+    # Gradient of shadow mask: high values at lit/shadow edges.
+    shad_grad_r = np.abs(shadow_f - np.roll(shadow_f, 1, 0))
+    shad_grad_c = np.abs(shadow_f - np.roll(shadow_f, 1, 1))
+    boundary_score = np.clip(shad_grad_r + shad_grad_c, 0.0, 1.0)
+
+    # Only score cells that are LIT (not in shadow) — shafts come from the
+    # lit side penetrating into shadow, not from inside the shadow volume.
+    lit_mask = (~shadow_mask).astype(np.float32)
+
+    # Cloud-shadow edge bonus: same principle, additional modulation.
+    cs_grad_r = np.abs(cs - np.roll(cs, 1, 0))
+    cs_grad_c = np.abs(cs - np.roll(cs, 1, 1))
+    cs_edge = np.clip(cs_grad_r + cs_grad_c, 0.0, 1.0)
+
+    # ------------------------------------------------------------------
+    # Step 4: Feature-kind bonuses
+    # ------------------------------------------------------------------
     cave = stack.get("cave_candidate")
     wfall = stack.get("waterfall_lip_candidate")
     cave_mask = (
@@ -143,52 +259,58 @@ def compute_god_ray_hints(
         else np.zeros_like(h, dtype=np.float32)
     )
 
-    # Light-dark boundary score: edge of cloud shadow = strong candidate.
-    cs_grad_r = np.abs(cs - np.roll(cs, 1, 0))
-    cs_grad_c = np.abs(cs - np.roll(cs, 1, 1))
-    cs_edge = np.clip(cs_grad_r + cs_grad_c, 0.0, 1.0)
-
-    # Composite intensity
+    # ------------------------------------------------------------------
+    # Step 5: Composite intensity
+    # God ray requires:  foliage present  +  near shadow boundary  +  lit
+    # Caves / waterfalls are prime sources regardless of foliage density.
+    # ------------------------------------------------------------------
     intensity = (
-        0.5 * conc_score
-        + 0.6 * cave_mask
-        + 0.5 * wfall_mask
-        + 0.3 * cs_edge
+        0.40 * foliage * boundary_score * lit_mask   # core shaft condition
+        + 0.20 * foliage * lit_mask                  # lit foliage background
+        + 0.20 * cs_edge * lit_mask                  # cloud shadow edge
+        + 0.60 * cave_mask                           # cave-entrance always high
+        + 0.50 * wfall_mask                          # waterfall mist shafts
     ).astype(np.float32)
 
-    # Non-max suppression: select local maxima above the 90th percentile.
+    # ------------------------------------------------------------------
+    # Step 6: Non-max suppression + top-N extraction
+    # ------------------------------------------------------------------
     thresh = float(np.percentile(intensity, 90.0))
     if thresh < 1e-6:
         thresh = float(intensity.max() * 0.5)
     candidates: list[Tuple[float, int, int, str]] = []
     if _HAS_SCIPY_NMS:
-        local_max = _maximum_filter(intensity, size=3, mode='reflect')
-        nms_mask  = (intensity >= local_max) & (intensity > thresh)
+        local_max = _maximum_filter(intensity, size=5, mode='reflect')
+        nms_mask = (intensity >= local_max) & (intensity > thresh)
         for r, c in zip(*np.where(nms_mask)):
             v = float(intensity[r, c])
             if cave_mask[r, c] > 0.5:
                 fkind = "cave_entrance"
             elif wfall_mask[r, c] > 0.5:
                 fkind = "waterfall_lip"
+            elif foliage[r, c] > 0.5:
+                fkind = "foliage_shaft"
             else:
-                fkind = "valley"
+                fkind = "valley_shaft"
             candidates.append((v, int(r), int(c), fkind))
     else:
         rows, cols = intensity.shape
-        for r in range(1, rows - 1):
-            for c in range(1, cols - 1):
+        for r in range(2, rows - 2):
+            for c in range(2, cols - 2):
                 v = float(intensity[r, c])
                 if v < thresh:
                     continue
-                window = intensity[r - 1 : r + 2, c - 1 : c + 2]
+                window = intensity[r - 2 : r + 3, c - 2 : c + 3]
                 if v < float(window.max()) - 1e-9:
                     continue
                 if cave_mask[r, c] > 0.5:
                     fkind = "cave_entrance"
                 elif wfall_mask[r, c] > 0.5:
                     fkind = "waterfall_lip"
+                elif foliage[r, c] > 0.5:
+                    fkind = "foliage_shaft"
                 else:
-                    fkind = "valley"
+                    fkind = "valley_shaft"
                 candidates.append((v, r, c, fkind))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))
@@ -196,7 +318,6 @@ def compute_god_ray_hints(
     hints: list[GodRayHint] = []
     ox = float(stack.world_origin_x)
     oy = float(stack.world_origin_y)
-    cell = float(stack.cell_size)
     for idx, (v, r, c, fkind) in enumerate(top):
         wx = ox + (c + 0.5) * cell
         wy = oy + (r + 0.5) * cell
@@ -249,8 +370,15 @@ def pass_god_ray_hints(
     t0 = time.perf_counter()
     stack = state.mask_stack
     hints_cfg = state.intent.composition_hints if state.intent else {}
-    sun_az = float(hints_cfg.get("sun_azimuth_rad", math.radians(135.0)))
-    sun_alt = float(hints_cfg.get("sun_altitude_rad", math.radians(35.0)))
+
+    # Support both flat keys and a nested sun_dir dict.
+    sun_dir_hint = hints_cfg.get("sun_dir")
+    if isinstance(sun_dir_hint, (list, tuple)) and len(sun_dir_hint) >= 2:
+        sun_az = float(sun_dir_hint[0])
+        sun_alt = float(sun_dir_hint[1])
+    else:
+        sun_az = float(hints_cfg.get("sun_azimuth_rad", math.radians(135.0)))
+        sun_alt = float(hints_cfg.get("sun_altitude_rad", math.radians(35.0)))
 
     cs = stack.get("cloud_shadow")
     if cs is None:

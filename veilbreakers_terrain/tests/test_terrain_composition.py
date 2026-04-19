@@ -424,9 +424,13 @@ class TestRhythm:
         rng = np.random.default_rng(1)
         pts = [(float(x), float(y)) for x, y in rng.uniform(0, 500, size=(30, 2))]
         bounds = BBox(0.0, 0.0, 500.0, 500.0)
-        issues = validate_rhythm(pts, bounds, min_rhythm=0.99)
-        assert len(issues) >= 1
-        assert issues[0].code == "rhythm.too_random"
+        # validate_rhythm returns a per-type dict: {feature_type: [ValidationIssue]}
+        result = validate_rhythm(pts, bounds, min_rhythm=0.99)
+        assert isinstance(result, dict)
+        all_issues = [issue for issues in result.values() for issue in issues]
+        assert len(all_issues) >= 1
+        codes = {i.code for i in all_issues}
+        assert "rhythm.too_random" in codes
 
 
 # ---------------------------------------------------------------------------

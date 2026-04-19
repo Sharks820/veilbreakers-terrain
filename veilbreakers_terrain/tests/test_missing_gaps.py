@@ -701,33 +701,33 @@ class TestComputeTerrainChunks:
 
 
 class TestComputeChunkLod:
-    """Tests for compute_chunk_lod downsampling."""
+    """Tests for compute_chunk_lod (LOD level selector) and _downsample_heightmap."""
 
     def test_downsample_halves_resolution(self):
         """Downsampling a 64x64 chunk to 32 produces 32x32."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(64, 64, value=0.5)
-        result = compute_chunk_lod(chunk, 32)
+        result = _downsample_heightmap(chunk, 32)
         assert len(result) == 32
         assert len(result[0]) == 32
 
     def test_downsample_preserves_flat_value(self):
         """Flat heightmap keeps its value after downsampling."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(64, 64, value=0.7)
-        result = compute_chunk_lod(chunk, 16)
+        result = _downsample_heightmap(chunk, 16)
         for row in result:
             for val in row:
                 assert val == pytest.approx(0.7, abs=1e-6)
 
     def test_downsample_corners_match(self):
         """Corner values are preserved exactly after downsampling."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_gradient_heightmap(64, 64)
-        result = compute_chunk_lod(chunk, 8)
+        result = _downsample_heightmap(chunk, 8)
         # Top-left corner
         assert result[0][0] == pytest.approx(chunk[0][0], abs=1e-6)
         # Bottom-right corner
@@ -735,26 +735,26 @@ class TestComputeChunkLod:
 
     def test_no_downsample_if_already_small(self):
         """If input is already <= target, return copy unchanged."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(4, 4, value=0.3)
-        result = compute_chunk_lod(chunk, 8)
+        result = _downsample_heightmap(chunk, 8)
         assert len(result) == 4
         assert len(result[0]) == 4
 
     def test_empty_chunk(self):
         """Empty chunk returns empty."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
 
-        result = compute_chunk_lod([], 8)
+        result = _downsample_heightmap([], 8)
         assert result == []
 
     def test_target_zero_returns_empty(self):
         """Target resolution of 0 returns empty."""
-        from blender_addon.handlers.terrain_chunking import compute_chunk_lod
+        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(8, 8)
-        result = compute_chunk_lod(chunk, 0)
+        result = _downsample_heightmap(chunk, 0)
         assert result == []
 
 

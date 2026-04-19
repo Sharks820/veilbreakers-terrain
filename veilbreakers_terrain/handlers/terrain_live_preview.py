@@ -313,11 +313,53 @@ def edit_hero_feature(
         max_y=wp[1] + r,
     )
 
+    # ------------------------------------------------------------------ #
+    # Stamp hero_feature_preview channel on the mask stack.               #
+    #                                                                      #
+    # Builds a float32 (H, W) influence-weight overlay centred on the     #
+    # mutated feature's world position, using a cosine radial falloff     #
+    # over the feature's exclusion_radius.  Existing preview data is      #
+    # preserved outside the new feature's influence zone (max-blend) so   #
+    # multiple sequential edits accumulate rather than overwrite.         #
+    # ------------------------------------------------------------------ #
+    stack = state.mask_stack
+    try:
+        H, W = stack.height.shape
+        cell = float(stack.cell_size) if stack.cell_size > 0 else 1.0
+        ox = float(stack.world_origin_x)
+        oy = float(stack.world_origin_y)
+
+        # World-space coordinate grid for the tile
+        row_coords = oy + np.arange(H, dtype=np.float64) * cell
+        col_coords = ox + np.arange(W, dtype=np.float64) * cell
+        yy, xx = np.meshgrid(row_coords, col_coords, indexing="ij")
+
+        cx, cy = float(wp[0]), float(wp[1])
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+
+        # Cosine radial weight: 1 at centre, 0 at r and beyond
+        weight = np.where(
+            dist >= r,
+            0.0,
+            0.5 * (1.0 + np.cos(np.pi * dist / r)),
+        ).astype(np.float32)
+
+        # Max-blend with any existing preview so earlier edits are not erased
+        existing = stack.get("hero_feature_preview")
+        if existing is not None and existing.shape == weight.shape:
+            preview = np.maximum(existing, weight)
+        else:
+            preview = weight
+
+        stack.set("hero_feature_preview", preview, "edit_hero_feature")
+    except Exception as _prev_exc:  # pragma: no cover — never fail the edit itself
+        issues.append(f"hero_feature_preview update failed: {_prev_exc}")
+
     return {
         "applied": applied,
         "issues": issues,
         "feature_id": feature_id,
-        "dirty_channels": ["hero_exclusion", "cliff_candidate", "cave_candidate"],
+        "dirty_channels": ["hero_exclusion", "cliff_candidate", "cave_candidate", "hero_feature_preview"],
         "region": list(region.to_tuple()),
     }
 

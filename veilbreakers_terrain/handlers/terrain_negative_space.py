@@ -60,15 +60,14 @@ def find_saliency_peaks(
     *,
     peak_threshold: float = BUSY_THRESHOLD,
     min_separation_cells: int = 4,
-) -> List[Tuple[int, int]]:
-    """Return grid-space (row, col) centres of the dominant saliency peaks.
+) -> List[Tuple[int, int, float]]:
+    """Return sorted (row, col, value) triples for dominant saliency peaks.
 
-    Performs a simple non-maximum suppression over the saliency map: a
-    cell is a peak if it sits above ``peak_threshold`` AND is the max
-    inside a square window of radius ``min_separation_cells``. This is
-    intentionally cheap — Bundle H's full hierarchy pass uses a more
-    sophisticated segmentation; this helper exists for the rhythm /
-    spacing validator to avoid importing it.
+    NMS algorithm: a cell is a peak if it is above peak_threshold AND is the
+    local maximum within a (2*sep+1) square window. Strongest peaks are
+    claimed first so weaker neighbours within the suppression radius are
+    excluded. Results are sorted descending by saliency value so callers
+    can take top-k peaks without secondary sorting.
     """
     if stack.saliency_macro is None:
         return []
@@ -78,27 +77,26 @@ def find_saliency_peaks(
 
     rows, cols = sal.shape
     sep = max(int(min_separation_cells), 1)
-    peaks: List[Tuple[int, int]] = []
-    # Sort candidate cells descending by saliency so we claim the
-    # strongest peaks first and suppress weaker ones nearby.
+    peaks: List[Tuple[int, int, float]] = []
     candidates = np.argwhere(sal >= peak_threshold)
     if candidates.size == 0:
         return []
     values = sal[candidates[:, 0], candidates[:, 1]]
-    order = np.argsort(-values)
+    order = np.argsort(-values)  # strongest first
     claimed = np.zeros_like(sal, dtype=bool)
     for idx in order:
         r, c = int(candidates[idx, 0]), int(candidates[idx, 1])
         if claimed[r, c]:
             continue
-        peaks.append((r, c))
+        peak_val = float(sal[r, c])
+        peaks.append((r, c, peak_val))
         r0 = max(0, r - sep)
         r1 = min(rows, r + sep + 1)
         c0 = max(0, c - sep)
         c1 = min(cols, c + sep + 1)
         claimed[r0:r1, c0:c1] = True
+    # Already sorted descending by value (strongest claimed first)
     return peaks
-
 
 def compute_min_peak_spacing(
     stack: TerrainMaskStack,
@@ -122,7 +120,8 @@ def compute_min_peak_spacing(
     if len(peaks) < 2:
         return float("inf")
     cell_size = float(stack.cell_size) if stack.cell_size else 1.0
-    coords = np.asarray(peaks, dtype=np.float64) * cell_size
+    # Extract (row, col) from (row, col, value) triples
+    coords = np.asarray([(r, c) for r, c, _ in peaks], dtype=np.float64) * cell_size
     diffs = coords[:, None, :] - coords[None, :, :]
     dists = np.sqrt((diffs * diffs).sum(axis=-1))
     # Set self-distances to +inf so min() returns the real neighbour distance.

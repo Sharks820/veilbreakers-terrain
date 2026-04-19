@@ -98,67 +98,106 @@ def compute_horizon_lod(
 
 def build_horizon_skybox_mask(
     stack: TerrainMaskStack,
-    vantage_pos: Tuple[float, float, float],
-    ray_count: int = 128,
+    vantage_pos: Optional[Tuple[float, float, float]] = None,
+    ray_count: int = 360,
 ) -> np.ndarray:
-    """Ray-cast a horizon profile (max elevation angle) from ``vantage_pos``.
+    """Build a 360-sample horizon elevation map from a vantage point.
 
-    Casts ``ray_count`` azimuth-distributed rays from the given world-space
-    vantage point, returning for each ray the maximum elevation angle
-    (radians, in [-pi/2, pi/2]) that any terrain cell subtends from that
-    vantage. This is the skybox horizon profile — Unity consumers can use
-    it to mask the lower portion of a cubemap cleanly against terrain.
+    For each azimuth angle (sampled at 360 increments = 1° resolution by
+    default), traces a ray from the vantage outward along that azimuth and
+    records the maximum elevation angle subtended by the terrain silhouette
+    along that ray.  This is the classic "horizon map" used by skybox
+    masking, ambient occlusion baking, and far-terrain LOD systems.
+
+    Algorithm
+    ---------
+    Analytical approach (vectorised, no per-ray loop):
+
+    1.  Compute world-space (dx, dy, dz) from every grid cell to the
+        vantage, where dz = h[cell] - vantage_z.
+    2.  For each cell, compute:
+          azimuth  = atan2(dy, dx)            in [-pi, pi]
+          elev     = atan2(dz, horiz_dist)    in [-pi/2, pi/2]
+    3.  Bin every cell into the nearest azimuth slot (0 … ray_count-1).
+    4.  For each slot, take the maximum elevation angle seen (terrain
+        silhouette is the highest point that blocks the sky).
+    5.  Cells at the vantage position (dist ~ 0) are excluded.
+
+    The result is a ``ray_count``-element float32 array of elevation angles
+    in radians, one per azimuth degree bin.  Negative values mean the
+    horizon dips below horizontal (open sky); positive means terrain rises
+    above eye level in that direction.
+
+    If ``vantage_pos`` is None the vantage is placed at the centre of the
+    playable area (stack centre) at mean terrain height.
 
     Parameters
     ----------
     stack:
         Source height stack.
     vantage_pos:
-        (x, y, z) world-space meters (Z-up).
+        (x, y, z) world-space meters (Z-up).  None → tile centre.
     ray_count:
-        Number of azimuth bins (uniform around the full 2*pi).
+        Number of azimuth bins.  Default 360 = 1° per bin.
 
     Returns
     -------
     np.ndarray
-        float32 shape ``(ray_count,)`` — elevation angle per azimuth bin.
+        float32 shape ``(ray_count,)`` — horizon elevation angle (radians)
+        per azimuth bin, index 0 = due east, increasing CCW.
     """
     if stack.height is None:
         raise ValueError("build_horizon_skybox_mask requires stack.height")
-    if ray_count < 3:
-        raise ValueError(f"ray_count must be >= 3, got {ray_count}")
+    if ray_count < 4:
+        raise ValueError(f"ray_count must be >= 4, got {ray_count}")
 
-    vx, vy, vz = float(vantage_pos[0]), float(vantage_pos[1]), float(vantage_pos[2])
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cell = float(stack.cell_size)
     ox = float(stack.world_origin_x)
     oy = float(stack.world_origin_y)
 
-    # World-space coordinates of every cell center.
+    # Default vantage: centre of tile at mean terrain height
+    if vantage_pos is None:
+        vx = ox + cols * cell * 0.5
+        vy = oy + rows * cell * 0.5
+        vz = float(h.mean())
+    else:
+        vx, vy, vz = float(vantage_pos[0]), float(vantage_pos[1]), float(vantage_pos[2])
+
+    # World-space coordinates of every cell centre (vectorised meshgrid).
     js = np.arange(cols, dtype=np.float64)
     is_ = np.arange(rows, dtype=np.float64)
-    wx = ox + (js + 0.5) * cell
-    wy = oy + (is_ + 0.5) * cell
-    gx, gy = np.meshgrid(wx, wy)
-    dx = gx - vx
-    dy = gy - vy
-    dz = h - vz
-    dist = np.sqrt(dx * dx + dy * dy)
-    # Avoid div-by-zero at vantage cell.
-    safe_dist = np.where(dist < 1e-6, 1e-6, dist)
-    elev = np.arctan2(dz, safe_dist)  # radians
-    azimuth = np.arctan2(dy, dx)  # radians, [-pi, pi]
+    wx = ox + (js + 0.5) * cell          # shape (cols,)
+    wy = oy + (is_ + 0.5) * cell         # shape (rows,)
+    gx, gy = np.meshgrid(wx, wy)         # both (rows, cols)
 
-    profile = np.full((ray_count,), -np.pi * 0.5, dtype=np.float32)
-    # Bin by azimuth into [0, ray_count).
+    dx = gx - vx    # east component
+    dy = gy - vy    # north component
+    dz = h - vz     # vertical component
+
+    horiz_dist = np.sqrt(dx * dx + dy * dy)
+
+    # Exclude the vantage cell itself (horiz_dist ~ 0 produces spurious angles).
+    valid = horiz_dist >= (cell * 0.5)
+
+    # Elevation angle to each cell (radians).
+    elev = np.arctan2(dz, np.where(valid, horiz_dist, 1.0))
+
+    # Azimuth angle to each cell: atan2(dy, dx) in [-pi, pi].
+    # Map to bin index in [0, ray_count).
+    azimuth = np.arctan2(dy, dx)
     bins = ((azimuth + np.pi) / (2.0 * np.pi) * ray_count).astype(np.int32)
     bins = np.clip(bins, 0, ray_count - 1)
-    flat_bins = bins.ravel()
-    flat_elev = elev.ravel().astype(np.float32)
-    # Per-bin max via np.maximum.at (unbuffered).
+
+    # Initialise horizon at -pi/2 (looking straight down = no terrain visible).
+    profile = np.full((ray_count,), -np.pi * 0.5, dtype=np.float32)
+
+    # Per-bin maximum elevation via np.maximum.at (unbuffered scatter-max).
+    flat_bins = bins[valid].ravel()
+    flat_elev = elev[valid].ravel().astype(np.float32)
     np.maximum.at(profile, flat_bins, flat_elev)
-    # Cells at the vantage itself (dist ~ 0) are nonsense; leave floor.
+
     return profile
 
 
@@ -208,21 +247,41 @@ def pass_horizon_lod(
         bias = ((upsampled - lo) / (hi - lo)).astype(np.float32)
     stack.set("lod_bias", bias, "horizon_lod")
 
-    # Build horizon skybox profiles from vantage positions.
+    # ------------------------------------------------------------------
+    # Horizon skybox mask — 360 azimuth samples (1° per bin) from the
+    # centre of the playable area.  The resulting elevation-angle array
+    # is stored as the "horizon_elevation_angles" stack channel so
+    # downstream passes (ambient occlusion, skybox masking, fog) can
+    # consume it directly without re-computing.
+    # ------------------------------------------------------------------
     vantage_hint = hints.get("horizon_skybox_vantages", None)
     if vantage_hint:
-        vantages = list(vantage_hint)
+        primary_vantage: Optional[Tuple[float, float, float]] = tuple(vantage_hint[0])  # type: ignore[arg-type]
+        all_vantages = list(vantage_hint)
     else:
-        cs = float(stack.cell_size)
-        cx = float(stack.world_origin_x) + src_shape[1] * cs * 0.5
-        cy = float(stack.world_origin_y) + src_shape[0] * cs * 0.5
+        cs_f = float(stack.cell_size)
+        cx = float(stack.world_origin_x) + src_shape[1] * cs_f * 0.5
+        cy = float(stack.world_origin_y) + src_shape[0] * cs_f * 0.5
         cz = float(stack.height.mean())
-        vantages = [(cx, cy, cz)]
-    ray_count = int(hints.get("horizon_skybox_ray_count", 128))
-    skybox_profiles = [
-        build_horizon_skybox_mask(stack, vp, ray_count=ray_count).tolist()
-        for vp in vantages
-    ]
+        primary_vantage = (cx, cy, cz)
+        all_vantages = [primary_vantage]
+
+    # Always use 360 samples (1° bins) — the spec-mandated resolution.
+    ray_count = int(hints.get("horizon_skybox_ray_count", 360))
+    ray_count = max(4, ray_count)
+
+    # Compute and store the primary horizon elevation angle array.
+    horizon_angles = build_horizon_skybox_mask(
+        stack, vantage_pos=primary_vantage, ray_count=ray_count
+    )
+    stack.set("horizon_elevation_angles", horizon_angles, "horizon_lod")
+
+    # Also compute profiles for any additional vantages (metrics only).
+    skybox_profiles = [horizon_angles.tolist()]
+    for vp in all_vantages[1:]:
+        skybox_profiles.append(
+            build_horizon_skybox_mask(stack, vantage_pos=tuple(vp), ray_count=ray_count).tolist()  # type: ignore[arg-type]
+        )
 
     # Determinism-friendly ratio guard.
     ratio = float(out_res) / float(max(1, src_min))
@@ -231,7 +290,7 @@ def pass_horizon_lod(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("lod_bias",),
+        produced_channels=("lod_bias", "horizon_elevation_angles"),
         metrics={
             "source_res": int(src_min),
             "target_res": int(out_res),
@@ -239,8 +298,11 @@ def pass_horizon_lod(
             "ratio_target_over_source": ratio,
             "silhouette_max_m": float(lod_map.max()),
             "silhouette_min_m": float(lod_map.min()),
+            "horizon_ray_count": ray_count,
+            "horizon_elevation_max_rad": float(horizon_angles.max()),
+            "horizon_elevation_min_rad": float(horizon_angles.min()),
             "horizon_skybox_profiles": skybox_profiles,
-            "horizon_skybox_vantage_count": len(vantages),
+            "horizon_skybox_vantage_count": len(all_vantages),
         },
     )
 
@@ -253,10 +315,10 @@ def register_bundle_l_horizon_lod_pass() -> None:
             name="horizon_lod",
             func=pass_horizon_lod,
             requires_channels=("height",),
-            produces_channels=("lod_bias",),
+            produces_channels=("lod_bias", "horizon_elevation_angles"),
             seed_namespace="horizon_lod",
             requires_scene_read=False,
-            description="Bundle L: silhouette-preserving far-terrain LOD",
+            description="Bundle L: silhouette-preserving far-terrain LOD + 360-sample horizon map",
         )
     )
 

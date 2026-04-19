@@ -145,19 +145,21 @@ def _band_texture(stack: TerrainMaskStack) -> BandScore:
     h = np.asarray(stack.height, dtype=np.float64)
     if h.ndim != 2 or h.shape[0] < 3 or h.shape[1] < 3:
         return BandScore("texture", "texture", 0.0).clamp()
-    # High-frequency detail = local detail - smoothed local detail.
-    # Approximate a blur via a 3x3 mean kernel via array slicing.
-    kernel_sum = np.zeros_like(h)
-    count = np.zeros_like(h)
-    for dr in (-1, 0, 1):
-        for dc in (-1, 0, 1):
-            shifted = np.roll(np.roll(h, dr, axis=0), dc, axis=1)
-            kernel_sum += shifted
-            count += 1.0
-    blurred = kernel_sum / count
+    # High-frequency detail = height - smoothed height.
+    # Use reflect-padded 3×3 mean (NOT np.roll which wraps tile edges and
+    # injects false high-frequency correlations at borders).
+    try:
+        from scipy.ndimage import uniform_filter
+        blurred = uniform_filter(h, size=3, mode="reflect")
+    except ImportError:
+        h_pad = np.pad(h, 1, mode="reflect")
+        blurred = (
+            h_pad[:-2, :-2] + h_pad[:-2, 1:-1] + h_pad[:-2, 2:]
+            + h_pad[1:-1, :-2] + h_pad[1:-1, 1:-1] + h_pad[1:-1, 2:]
+            + h_pad[2:, :-2] + h_pad[2:, 1:-1] + h_pad[2:, 2:]
+        ) / 9.0
     high_freq = h - blurred
     std = float(np.std(high_freq))
-    # Target range: a "barely any detail" terrain has std ~ 0; rich has > 0.5m
     rng = float(h.max() - h.min()) or 1.0
     normalized = std / rng
     score = _normalize_to_score(normalized, 0.0, 0.05)

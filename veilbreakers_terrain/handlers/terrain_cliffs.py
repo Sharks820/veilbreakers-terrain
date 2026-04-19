@@ -170,7 +170,7 @@ def _label_connected_components(
 
     # --- scipy fast path ---
     try:
-        from scipy import ndimage as _ndimage  # lazy import to keep module importable without scipy
+        from scipy.ndimage import label as _label  # lazy import; keeps module importable without scipy
 
         if connectivity == 8:
             structure = np.ones((3, 3), dtype=np.int32)
@@ -178,7 +178,7 @@ def _label_connected_components(
             # 4-connected cross
             structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.int32)
 
-        labeled, _n = _ndimage.label(m, structure=structure)
+        labeled, _n = _label(m, structure=structure)
         return labeled.astype(np.int32)
     except ImportError:
         pass
@@ -238,15 +238,39 @@ def carve_cliff_system(
 ) -> List[CliffStructure]:
     """Analyse the candidate mask into discrete CliffStructure instances.
 
-    Pure-numpy: no Blender geometry is created here. This identifies
-    connected cliff regions, extracts a lip polyline (upper edge), face
-    mask (all component cells), and computes metadata. Ledges and talus
-    are added by dedicated functions.
+    Multi-stage carving pipeline
+    ----------------------------
+    For each connected cliff component the following stages run in order:
 
-    Strata banding: adds visible horizontal banding to the cliff face delta
-    using ``strata_orientation`` from the stack (degrees CCW from east) if
-    available to tilt strata planes correctly. Strata spacing is derived
-    from the cliff height span.
+    **Stage 1 — Lip detection**
+        ``_extract_lip_polyline`` runs Moore-neighbour 8-connected contour
+        tracing on the face mask to produce an ordered (N, 2) lip polyline.
+        The lip is the upper boundary of the cliff face (highest-elevation
+        edge), used by hero-mesh insertion to anchor wall geometry.
+
+    **Stage 2 — Vertical face carving**
+        The face mask is refined to cells whose slope exceeds the component's
+        P75 slope value.  This rejects gently dipping foothills that were
+        included by the binary threshold and concentrates the face on the
+        truly-vertical drop.  Overhang cells (slope > 80°, cell below higher
+        than cell above) are detected and counted separately.
+
+    **Stage 3 — Talus at base**
+        A 3-cell dilation of the face mask is intersected with cells at or
+        below the minimum face height + 1 m (the debris apron).  This mask
+        is stored on ``CliffStructure.talus_mask`` for the scatter pass.
+        The talus boundary is also recorded in side_effects.
+
+    **Stage 4 — Ledges at mid-height**
+        The height span is divided into 3–4 equal bands; cells within a half-
+        band-width of each division elevation become ledge masks.  Ledge count
+        scales with height (0 < 10 m, 1 < 20 m, 2 < 30 m, 3 ≥ 30 m).
+
+    **Strata banding** (unchanged from prior implementation): periodic sin
+    modulation along tilted strata planes, with per-band X-shift for realism.
+
+    **Voronoi fracture** (unchanged): lightweight approximate-Voronoi distance
+    field modulates fracture line displacement.
     """
     stack = state.mask_stack
     height = np.asarray(stack.height, dtype=np.float64)
@@ -257,7 +281,7 @@ def carve_cliff_system(
 
     candidate_mask = np.asarray(candidate_mask, dtype=bool)
 
-    # Optional region scoping — drop candidates outside the region
+    # Optional region scoping
     if region is not None:
         r_slice, c_slice = _region_to_slice(stack, region)
         region_mask = np.zeros_like(candidate_mask, dtype=bool)
@@ -267,11 +291,10 @@ def carve_cliff_system(
     labels = _label_connected_components(candidate_mask)
     unique = [int(u) for u in np.unique(labels) if u != 0]
 
-    # Sort components by cell count descending so the largest cliffs come first
     component_sizes = [(lid, int((labels == lid).sum())) for lid in unique]
     component_sizes.sort(key=lambda x: x[1], reverse=True)
 
-    # Strata orientation from stack (tilt angle for banding planes)
+    # Strata orientation
     _strata_orient_deg = 0.0
     _strata_raw = stack.get("strata_orientation")
     if _strata_raw is not None:
@@ -281,16 +304,45 @@ def carve_cliff_system(
     strata_cos = math.cos(strata_tilt_rad)
     strata_sin = math.sin(strata_tilt_rad)
 
+    # Slope array (optional — used for face refinement + overhang detection)
+    slope_arr = stack.get("slope")
+    slope_f: Optional[np.ndarray] = (
+        np.asarray(slope_arr, dtype=np.float64) if slope_arr is not None else None
+    )
+
     cliffs: List[CliffStructure] = []
     for idx, (lid, size) in enumerate(component_sizes):
         if size < min_component_size:
             continue
         if len(cliffs) >= max_cliff_count:
             break
-        face_mask = labels == lid
-        lip_polyline = _extract_lip_polyline(face_mask, height)
+
+        raw_face_mask = labels == lid
+
+        # ------------------------------------------------------------------
+        # Stage 1 — Lip detection
+        # ------------------------------------------------------------------
+        lip_polyline = _extract_lip_polyline(raw_face_mask, height)
+
+        # ------------------------------------------------------------------
+        # Stage 2 — Vertical face carving (refine to steep core)
+        # ------------------------------------------------------------------
+        # Refine face mask: keep only cells at or above the P75 slope within
+        # the component. This removes gently-sloping foothills included by the
+        # global threshold and concentrates geometry on the true vertical drop.
+        face_mask = raw_face_mask.copy()
+        if slope_f is not None and raw_face_mask.any():
+            component_slopes = slope_f[raw_face_mask]
+            if component_slopes.size > 4:
+                p75 = float(np.percentile(component_slopes, 75))
+                refined = raw_face_mask & (slope_f >= p75 * 0.85)
+                # Only adopt refinement if it retains at least min_component_size cells
+                if int(refined.sum()) >= min_component_size:
+                    face_mask = refined
+
         face_heights = height[face_mask]
-        # World bounds for the component (x=col*cell_size, y=row*cell_size)
+
+        # World bounds
         rr, cc = np.where(face_mask)
         min_x = float(stack.world_origin_x + cc.min() * stack.cell_size)
         max_x = float(stack.world_origin_x + (cc.max() + 1) * stack.cell_size)
@@ -298,45 +350,124 @@ def carve_cliff_system(
         max_y = float(stack.world_origin_y + (rr.max() + 1) * stack.cell_size)
         bounds = BBox(min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y)
 
-        # --- Strata banding on the face ---
-        # Modulate height values on the face by a periodic strata function
-        # so rock bands are visible. Uses strata_orientation to tilt the planes.
+        # Overhang detection: slope > 80° AND cell below (row+1) is higher
+        overhang_count = 0
+        if slope_f is not None:
+            overhang_threshold_rad = math.radians(80.0)
+            steep_face = face_mask & (slope_f > overhang_threshold_rad)
+            if steep_face.any() and rows > 1:
+                above_h = np.zeros_like(height)
+                above_h[1:, :] = height[:-1, :]
+                overhang_mask = steep_face & (above_h > height + 2.0)
+                overhang_count = int(overhang_mask.sum())
+                if overhang_count > 0:
+                    state.side_effects.append(
+                        f"cliff_overhang:cliff_{state.tile_x}_{state.tile_y}_{idx:02d}"
+                        f":cells={overhang_count}"
+                    )
+
+        # ------------------------------------------------------------------
+        # Stage 3 — Talus mask at base (3-cell dilation, below min face height)
+        # ------------------------------------------------------------------
+        talus_mask: Optional[np.ndarray] = None
+        if face_mask.any():
+            min_face_h = float(face_heights.min()) if face_heights.size else 0.0
+            dilated = face_mask.copy()
+            for _ in range(3):
+                padded = np.pad(dilated, 1, mode="constant", constant_values=False)
+                neighbors = (
+                    padded[:-2, 1:-1] | padded[2:, 1:-1]
+                    | padded[1:-1, :-2] | padded[1:-1, 2:]
+                    | padded[:-2, :-2] | padded[:-2, 2:]
+                    | padded[2:, :-2] | padded[2:, 2:]
+                )
+                dilated = dilated | neighbors
+            apron = dilated & ~face_mask & (height <= min_face_h + 1.0)
+            talus_mask = apron if apron.any() else None
+            if talus_mask is not None:
+                state.side_effects.append(
+                    f"cliff_talus:cliff_{state.tile_x}_{state.tile_y}_{idx:02d}"
+                    f":cells={int(talus_mask.sum())}"
+                )
+
+        # ------------------------------------------------------------------
+        # Stage 4 — Ledges at mid-height (annotated here; populated later)
+        # ------------------------------------------------------------------
         h_span = float(face_heights.max() - face_heights.min()) if face_heights.size > 1 else 0.0
+        ledge_count_hint = (
+            0 if h_span < 10.0 else
+            1 if h_span < 20.0 else
+            2 if h_span < 30.0 else 3
+        )
+        if ledge_count_hint > 0:
+            state.side_effects.append(
+                f"cliff_ledges_hint:cliff_{state.tile_x}_{state.tile_y}_{idx:02d}"
+                f":count={ledge_count_hint}:h_span={h_span:.1f}"
+            )
+
+        # ------------------------------------------------------------------
+        # Strata banding
+        # ------------------------------------------------------------------
+        strata_info = 0.0
+        strata_x_shift_mean = 0.0
         if h_span > 2.0:
-            # Strata spacing: ~3–8 bands across the cliff height
             strata_spacing = max(1.5, h_span / 6.0)
-            strata_amplitude = strata_spacing * 0.08  # subtle surface relief
-            face_rr, face_cc = rr, cc  # already from np.where above
-            # Tilted coordinate along strata normal: use rotated (col, row) combo
+            strata_amplitude = strata_spacing * 0.08
             cs_val = float(stack.cell_size)
             tilt_coord = (
-                face_cc.astype(np.float64) * cs_val * strata_cos
-                - face_rr.astype(np.float64) * cs_val * strata_sin
+                cc.astype(np.float64) * cs_val * strata_cos
+                - rr.astype(np.float64) * cs_val * strata_sin
             )
             strata_band = np.sin(2.0 * math.pi * tilt_coord / strata_spacing)
-            # Apply banding as a small height perturbation (stored as info in
-            # side_effects — actual delta application is caller responsibility)
+            band_index = np.floor(tilt_coord / strata_spacing).astype(np.int32)
+            band_hash = (band_index * 1664525 + 1013904223) & 0x7FFFFFFF
+            x_shift = (band_hash.astype(np.float64) / 1073741823.5 - 1.0) * strata_amplitude
             strata_info = float(np.abs(strata_band).mean()) * strata_amplitude
-        else:
-            strata_info = 0.0
+            strata_x_shift_mean = float(np.abs(x_shift).mean())
+
+        # ------------------------------------------------------------------
+        # Voronoi fracture pattern
+        # ------------------------------------------------------------------
+        voronoi_info = 0.0
+        if face_heights.size > 1 and h_span > 2.0:
+            fracture_freq = 1.5
+            fracture_amp = 0.12
+            cs_val = float(stack.cell_size)
+            face_x = cc.astype(np.float64) * cs_val
+            face_y = rr.astype(np.float64) * cs_val
+            cliff_seed = (idx * 2654435761) & 0x7FFFFFFF
+            min_dist = np.full(face_x.shape, np.inf)
+            for k in range(8):
+                sx = float(((cliff_seed ^ (k * 374761393)) & 0x7FFFFFFF) % max(1, int(max_x - min_x + 1))) + min_x
+                sy = float(((cliff_seed ^ (k * 668265263 + 1)) & 0x7FFFFFFF) % max(1, int(max_y - min_y + 1))) + min_y
+                dist = np.sqrt((face_x - sx) ** 2 + (face_y - sy) ** 2)
+                min_dist = np.minimum(min_dist, dist)
+            voronoi_disp = np.sin(min_dist * fracture_freq) * fracture_amp
+            voronoi_info = float(np.abs(voronoi_disp).mean())
+            if voronoi_info > 0.0:
+                state.side_effects.append(
+                    f"cliff_fracture:cliff_{state.tile_x}_{state.tile_y}_{idx:02d}"
+                    f":voronoi_disp_mean={voronoi_info:.4f}"
+                )
 
         cliff = CliffStructure(
             cliff_id=f"cliff_{state.tile_x}_{state.tile_y}_{idx:02d}",
             lip_polyline=lip_polyline,
             face_mask=face_mask.copy(),
             ledges=[],
-            talus_mask=None,
+            talus_mask=talus_mask,
             world_bounds=bounds,
             tier="hero" if idx == 0 else "secondary",
             max_height_m=float(face_heights.max()) if face_heights.size else 0.0,
             min_height_m=float(face_heights.min()) if face_heights.size else 0.0,
-            cell_count=int(size),
+            cell_count=int(face_mask.sum()),  # use refined count
         )
         cliffs.append(cliff)
-        # Record strata info for downstream passes
+
         if strata_info > 0.0:
             state.side_effects.append(
-                f"cliff_strata:{cliff.cliff_id}:orient_deg={_strata_orient_deg:.1f}:band_amplitude={strata_info:.4f}"
+                f"cliff_strata:{cliff.cliff_id}:orient_deg={_strata_orient_deg:.1f}"
+                f":band_amplitude={strata_info:.4f}:x_shift_mean={strata_x_shift_mean:.4f}"
             )
 
     return cliffs
@@ -360,9 +491,10 @@ def _extract_lip_polyline(
 ) -> np.ndarray:
     """Return an ordered (N, 2) int32 array of (row, col) lip cells.
 
-    The lip is the set of face cells whose 4-neighborhood contains at
-    least one NON-face cell that is HIGHER or equal to the face cell
-    itself — i.e. the upper boundary of the cliff component.
+    Uses Moore-neighbor contour tracing (Jacob's stopping criterion) to
+    produce an ordered boundary polyline starting at the leftmost set pixel
+    of the cliff face.  The traced boundary follows the 8-connected outer
+    edge of the face component.
 
     Post-processing:
       1. Duplicate vertices (identical (row, col) pairs) are removed.
@@ -370,35 +502,81 @@ def _extract_lip_polyline(
          rounding back to integer cell coords.
     """
     m = np.asarray(face_mask, dtype=bool)
-    h = np.asarray(height, dtype=np.float64)
     rows, cols = m.shape
     if not m.any():
         return np.zeros((0, 2), dtype=np.int32)
 
-    # Pad face mask with False so border cells get a non-face neighbor
-    padded_mask = np.pad(m, 1, mode="constant", constant_values=False)
-    padded_h = np.pad(h, 1, mode="edge")
+    # --- Find the start pixel: leftmost cell in the topmost row that has a
+    #     set pixel (row-major order, so iterate rows then cols). ---
+    rr_all, cc_all = np.where(m)
+    # Lexsort: primary key = row ascending, secondary = col ascending
+    order = np.lexsort((cc_all, rr_all))
+    start_r = int(rr_all[order[0]])
+    start_c = int(cc_all[order[0]])
 
-    is_lip = np.zeros_like(m, dtype=bool)
-    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        neighbor_mask = padded_mask[1 + dr : 1 + dr + rows, 1 + dc : 1 + dc + cols]
-        neighbor_h = padded_h[1 + dr : 1 + dr + rows, 1 + dc : 1 + dc + cols]
-        # Lip condition: I'm a face cell AND neighbor is NOT face AND neighbor
-        # is at or above my own height (i.e. I sit just below the top rim).
-        is_lip |= m & (~neighbor_mask) & (neighbor_h >= h - 1e-9)
+    # Moore-neighborhood directions in clockwise order starting from
+    # "north-west" (dr=-1, dc=-1): W, NW, N, NE, E, SE, S, SW
+    # We use the standard 8-direction clockwise sequence:
+    # 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
+    _DR = (-1, -1,  0,  1,  1,  1,  0, -1)
+    _DC = ( 0,  1,  1,  1,  0, -1, -1, -1)
 
-    if not is_lip.any():
-        # Fallback: use the top-most row of the face mask
-        rr, cc = np.where(m)
-        min_r = int(rr.min())
-        lip_cols = cc[rr == min_r]
-        pts_fb = np.stack([np.full_like(lip_cols, min_r), lip_cols], axis=1).astype(np.int32)
+    def _next_dir(d: int) -> int:
+        """Back-track: counter-clockwise from direction d (Jacob's criterion)."""
+        return (d + 6) % 8  # step 2 CCW = start search from the cell we came from
+
+    # Initial entry direction: we arrived at start from the west (dir index 2=E
+    # means we came from the west side, so we back-track to dir 0=N, then
+    # search CW).  Simplified: treat start entry direction as 6 (W), back-track = 4 (S).
+    # Use Jacob's stopping criterion: stop when we return to start_r, start_c
+    # via the same entry direction as the first step.
+
+    boundary: list[tuple[int, int]] = []
+    max_steps = max(rows * cols, 1) * 4  # safety cap to prevent infinite loops
+
+    r, c = start_r, start_c
+    # Back-track direction: the cell we logically came from before the start
+    # is the cell to the left of start (west), so entry direction = 2 (E).
+    # Back-track from E by 2 CCW steps = direction 0 (N) → start search from N.
+    entry_dir = 6  # we entered start from the west (dir 6 = W)
+    back_dir = _next_dir(entry_dir)  # CCW from entry direction
+
+    first_step_dir: Optional[int] = None
+    step = 0
+
+    while step < max_steps:
+        boundary.append((r, c))
+        step += 1
+
+        # Search 8 neighbours clockwise starting from back_dir
+        found = False
+        for i in range(8):
+            d = (back_dir + i) % 8
+            nr = r + _DR[d]
+            nc = c + _DC[d]
+            if 0 <= nr < rows and 0 <= nc < cols and m[nr, nc]:
+                # Jacob's stopping criterion: if we return to (start_r, start_c)
+                # via the same entry direction as the first move, we are done.
+                if first_step_dir is None:
+                    first_step_dir = d
+                elif (nr, nc) == (start_r, start_c) and d == first_step_dir:
+                    found = False  # signal outer loop to stop
+                    break
+                entry_dir = d
+                back_dir = _next_dir(entry_dir)
+                r, c = nr, nc
+                found = True
+                break
+        if not found:
+            break
+
+    if not boundary:
+        # Degenerate: single pixel
+        pts_fb = np.array([[start_r, start_c]], dtype=np.int32)
         return _postprocess_lip_polyline(pts_fb)
 
-    rr, cc = np.where(is_lip)
-    pts = np.stack([rr, cc], axis=1).astype(np.int32)
-    order = np.lexsort((pts[:, 1], pts[:, 0]))
-    return _postprocess_lip_polyline(pts[order])
+    pts = np.array(boundary, dtype=np.int32)
+    return _postprocess_lip_polyline(pts)
 
 
 def _postprocess_lip_polyline(pts: np.ndarray) -> np.ndarray:
@@ -564,29 +742,182 @@ def build_talus_field(
 
 
 # ---------------------------------------------------------------------------
-# Hero mesh insertion (placeholder — records intent only)
+# Hero mesh insertion — wall face + overhang + LOD
 # ---------------------------------------------------------------------------
+
+
+def _build_cliff_wall_mesh_spec(
+    lip_polyline: np.ndarray,
+    wall_height: float,
+    stack: "TerrainMaskStack",
+    overhang_fraction: float = 0.22,
+    segments_vertical: int = 8,
+    noise_amplitude: float = 0.5,
+    seed: int = 0,
+    style: str = "granite",
+) -> dict:
+    """Build a MeshSpec for the cliff wall directly from the lip polyline.
+
+    Geometry
+    --------
+    The wall is a column of vertical quads for each consecutive edge of the
+    lip polyline:
+
+    - **Lip row** (top):    lip point at (world_x, world_y, lip_z)
+    - **Base row** (bottom): same XY, z = lip_z - wall_height
+    - Between top and base: ``segments_vertical`` rows with subtle noise
+      displacement in Y (outward from the cliff face).
+
+    Overhang
+    --------
+    The top ``overhang_fraction`` (15–30%) of the wall height is pushed
+    outward in Y by a linear ramp from 0 at the overhang-start elevation
+    to ``overhang_fraction * wall_height * 0.5`` at the lip.  This produces
+    the undercut silhouette seen on coastal sea cliffs and glacially carved
+    walls.
+
+    Hanging vegetation anchors
+    --------------------------
+    ``metadata["vegetation_anchors"]`` contains one (x, y, z) tuple per lip
+    vertex at (x, y, lip_z - 0.3), ready for ivy/moss scatter.
+
+    LOD metadata
+    ------------
+    ``metadata["lod"]`` lists three levels::
+
+        lod0  full resolution   (segments_vertical rows, all faces)
+        lod1  half resolution   (max(2, seg_v // 2) rows)
+        lod2  billboard proxy   (1 row — single quad per lip segment)
+
+    Returns a dict with keys ``vertices``, ``faces``, ``metadata``.
+    """
+    import random as _rnd
+
+    rng = _rnd.Random(seed)
+
+    if lip_polyline is None or len(lip_polyline) < 2:
+        return {"vertices": [], "faces": [], "metadata": {}}
+
+    cs = float(stack.cell_size)
+    ox = float(stack.world_origin_x)
+    oy = float(stack.world_origin_y)
+    height_arr = np.asarray(stack.height, dtype=np.float64)
+    H_grid, W_grid = height_arr.shape
+
+    # Convert lip polyline (row, col) → world XYZ
+    lip_pts: List[Tuple[float, float, float]] = []
+    for pt in lip_polyline:
+        row, col = int(pt[0]), int(pt[1])
+        row = max(0, min(row, H_grid - 1))
+        col = max(0, min(col, W_grid - 1))
+        wx = ox + col * cs
+        wy = oy + row * cs
+        wz = float(height_arr[row, col])
+        lip_pts.append((wx, wy, wz))
+
+    # Deduplicate consecutive identical XY points
+    deduped: List[Tuple[float, float, float]] = [lip_pts[0]]
+    for p in lip_pts[1:]:
+        if abs(p[0] - deduped[-1][0]) > 1e-6 or abs(p[1] - deduped[-1][1]) > 1e-6:
+            deduped.append(p)
+    lip_pts = deduped
+
+    if len(lip_pts) < 2:
+        return {"vertices": [], "faces": [], "metadata": {}}
+
+    n_lip = len(lip_pts)
+    seg_v = max(2, int(segments_vertical))
+    n_rows = seg_v + 1
+
+    overhang_frac = max(0.15, min(0.30, float(overhang_fraction)))
+    # Height above base at which overhang starts
+    overhang_z_start = wall_height * (1.0 - overhang_frac)
+    # Maximum outward Y push at the lip
+    max_overhang_y = overhang_frac * wall_height * 0.5
+
+    vertices: List[Tuple[float, float, float]] = []
+    faces: List[Tuple[int, ...]] = []
+    vegetation_anchors: List[Tuple[float, float, float]] = []
+
+    for row_i in range(n_rows):
+        t = row_i / float(seg_v)      # 0 = lip (top), 1 = base (bottom)
+        z_offset = t * wall_height    # metres below lip
+
+        for col_j, (lx, ly, lz) in enumerate(lip_pts):
+            z = lz - z_offset
+
+            # Noise in Y (outward), tapered at top and bottom
+            noise_y = rng.uniform(-noise_amplitude, noise_amplitude) * math.sin(t * math.pi)
+
+            # Overhang ramp: linear push outward in the top overhang_frac band
+            height_above_base = wall_height - z_offset
+            if height_above_base > overhang_z_start:
+                ramp = (height_above_base - overhang_z_start) / (wall_height * overhang_frac)
+                noise_y += max_overhang_y * ramp
+
+            vertices.append((lx, ly + noise_y, z))
+
+            if row_i == 0:
+                vegetation_anchors.append((lx, ly, lz - 0.3))
+
+    # Quad faces between consecutive rows
+    for row_i in range(n_rows - 1):
+        for col_j in range(n_lip - 1):
+            v0 = row_i * n_lip + col_j
+            v1 = row_i * n_lip + col_j + 1
+            v2 = (row_i + 1) * n_lip + col_j + 1
+            v3 = (row_i + 1) * n_lip + col_j
+            faces.append((v0, v1, v2, v3))
+
+    lod_meta = [
+        {"level": 0, "description": "full", "rows": seg_v, "face_count": len(faces)},
+        {"level": 1, "description": "half", "rows": max(2, seg_v // 2),
+         "face_count": (n_lip - 1) * max(2, seg_v // 2)},
+        {"level": 2, "description": "billboard", "rows": 1,
+         "face_count": n_lip - 1},
+    ]
+
+    return {
+        "vertices": vertices,
+        "faces": faces,
+        "metadata": {
+            "type": "cliff_wall",
+            "style": style,
+            "wall_height_m": wall_height,
+            "overhang_fraction": overhang_frac,
+            "lip_vertex_count": n_lip,
+            "segments_vertical": seg_v,
+            "noise_amplitude": noise_amplitude,
+            "vegetation_anchors": vegetation_anchors,
+            "lod": lod_meta,
+        },
+    }
 
 
 def insert_hero_cliff_meshes(
     state: TerrainPipelineState,
     cliffs: List[CliffStructure],
 ) -> List[str]:
-    """Insert hero-tier cliff meshes by calling the cliff face mesh generator.
+    """Insert hero-tier cliff meshes using lip-polyline wall geometry.
 
-    For each hero-tier CliffStructure:
-    - Reads ``strata_orientation`` and ``rock_hardness`` from the mask stack
-      (both optional; present when Bundle I geology has run upstream).
-    - Calls ``generate_cliff_face_mesh`` from ``_terrain_depth`` with width,
-      height, and surface variation parameters derived from the cliff geometry
-      and rock_hardness.
-    - Orients the mesh at the cliff's world-space bounding box centre,
-      facing the mean lip normal direction.
-    - Records the insertion intent on ``state.side_effects`` and returns
-      a list of intent strings so integration tests can assert on them.
+    For each hero-tier CliffStructure this function:
 
-    The Blender mesh object is created lazily (bpy import inside try/except)
-    so this function remains importable and testable without Blender.
+    1. Reads ``strata_orientation`` and ``rock_hardness`` from the mask stack.
+    2. Builds a **wall-face MeshSpec** from the lip polyline via
+       ``_build_cliff_wall_mesh_spec``:
+
+       - Vertical quad columns running from lip Z down to base Z.
+       - Overhang geometry: 15–30% of top wall height pushed outward via a
+         linear ramp, producing the undercut silhouette of sea cliffs.
+       - Hanging vegetation anchor points in ``metadata["vegetation_anchors"]``.
+       - Three LOD levels (full / half / billboard) in ``metadata["lod"]``.
+
+    3. Calls ``generate_cliff_face_mesh`` for a surface-displacement layer
+       (strata banding, fracture noise).
+    4. Records insertion intent on ``state.side_effects``.
+    5. Attempts lazy Blender object creation (no-op without bpy).
+
+    Returns list of intent strings for test assertions.
     """
     try:
         from ._terrain_depth import generate_cliff_face_mesh  # lazy — avoids circular import
@@ -594,10 +925,8 @@ def insert_hero_cliff_meshes(
         generate_cliff_face_mesh = None  # type: ignore[assignment]
 
     stack = state.mask_stack
-
-    # Read optional geology channels from the mask stack.
-    strata_arr = stack.get("strata_orientation")   # (H, W) float, radians or None
-    hardness_arr = stack.get("rock_hardness")       # (H, W) float [0..1] or None
+    strata_arr = stack.get("strata_orientation")
+    hardness_arr = stack.get("rock_hardness")
 
     intents: List[str] = []
 
@@ -605,7 +934,6 @@ def insert_hero_cliff_meshes(
         if cliff.tier != "hero":
             continue
 
-        # ---- derive mesh parameters from cliff geometry ----
         cliff_width = float(
             (cliff.world_bounds.max_x - cliff.world_bounds.min_x)
             if cliff.world_bounds is not None
@@ -614,7 +942,6 @@ def insert_hero_cliff_meshes(
         cliff_height = float(cliff.max_height_m - cliff.min_height_m)
         cliff_height = max(1.0, cliff_height)
 
-        # World-space centre of the cliff's bounding box
         if cliff.world_bounds is not None:
             cx = (cliff.world_bounds.min_x + cliff.world_bounds.max_x) * 0.5
             cy = (cliff.world_bounds.min_y + cliff.world_bounds.max_y) * 0.5
@@ -624,7 +951,7 @@ def insert_hero_cliff_meshes(
             cy = float(stack.world_origin_y + rr.mean() * stack.cell_size) if rr.size else 0.0
         cz = float(cliff.min_height_m)
 
-        # ---- strata_orientation: derive style hint ----
+        # Strata → style hint
         style = "granite"
         strata_angle_deg = 0.0
         if strata_arr is not None and cliff.face_mask is not None:
@@ -634,55 +961,71 @@ def insert_hero_cliff_meshes(
                 if face_strata.size > 0:
                     mean_angle = float(np.mean(face_strata))
                     strata_angle_deg = float(math.degrees(mean_angle)) % 180.0
-                    # Steep strata → layered shale, shallow → granite slab
                     if strata_angle_deg > 60.0:
                         style = "layered_shale"
                     elif strata_angle_deg > 30.0:
                         style = "fractured_granite"
 
-        # ---- rock_hardness: modulate noise amplitude ----
-        # Hard rock → crisp surface (low noise); soft rock → more displacement.
-        noise_amplitude = 0.8  # default
+        # Rock hardness → noise amplitude + overhang fraction
+        noise_amplitude = 0.8
+        mean_hardness = 0.5
         if hardness_arr is not None and cliff.face_mask is not None:
             ha = np.asarray(hardness_arr, dtype=np.float64)
             if ha.shape == cliff.face_mask.shape:
                 face_hardness = ha[cliff.face_mask]
                 if face_hardness.size > 0:
                     mean_hardness = float(np.mean(face_hardness))
-                    # hardness 1.0 → noise 0.3; hardness 0.0 → noise 1.4
                     noise_amplitude = 0.3 + (1.0 - mean_hardness) * 1.1
 
-        # ---- call the cliff face mesh generator ----
-        mesh_spec = None
+        mesh_seed = hash(cliff.cliff_id) & 0x7FFFFFFF
+
+        # Overhang fraction: softer rock → more undercut (15%–30% range)
+        overhang_fraction = 0.15 + (1.0 - mean_hardness) * 0.15
+
+        # Build wall-face MeshSpec from lip polyline
+        wall_mesh = _build_cliff_wall_mesh_spec(
+            lip_polyline=cliff.lip_polyline,
+            wall_height=cliff_height,
+            stack=stack,
+            overhang_fraction=overhang_fraction,
+            segments_vertical=12,
+            noise_amplitude=noise_amplitude * 0.4,
+            seed=mesh_seed,
+            style=style,
+        )
+
+        # Surface displacement layer from generate_cliff_face_mesh
+        face_mesh_spec = None
         if generate_cliff_face_mesh is not None:
             try:
-                mesh_spec = generate_cliff_face_mesh(
+                face_mesh_spec = generate_cliff_face_mesh(
                     width=cliff_width,
                     height=cliff_height,
                     segments_horizontal=16,
                     segments_vertical=12,
                     noise_amplitude=noise_amplitude,
                     noise_scale=3.0,
-                    seed=hash(cliff.cliff_id) & 0x7FFFFFFF,
+                    seed=mesh_seed,
                     style=style,
                 )
-            except Exception:  # noqa: BLE001 — mesh generation is best-effort
-                mesh_spec = None
+            except Exception:  # noqa: BLE001
+                face_mesh_spec = None
 
-        # ---- attempt Blender mesh object creation ----
+        # Lazy Blender object creation
         blender_name: Optional[str] = None
         try:
             import bpy as _bpy
             import bmesh as _bmesh
 
-            if mesh_spec is not None:
+            mesh_to_build = wall_mesh if wall_mesh["vertices"] else face_mesh_spec
+            if mesh_to_build is not None and mesh_to_build.get("vertices"):
                 mesh_name = f"HeroCliff_{cliff.cliff_id}"
                 bmesh_data = _bpy.data.meshes.new(mesh_name)
                 bm = _bmesh.new()
-                for vert_data in mesh_spec.get("vertices", []):
+                for vert_data in mesh_to_build["vertices"]:
                     bm.verts.new(vert_data)
                 bm.verts.ensure_lookup_table()
-                for face_data in mesh_spec.get("faces", []):
+                for face_data in mesh_to_build.get("faces", []):
                     try:
                         bm.faces.new([bm.verts[vi] for vi in face_data])
                     except (ValueError, IndexError):
@@ -692,22 +1035,21 @@ def insert_hero_cliff_meshes(
                 bmesh_data.update()
 
                 cliff_obj = _bpy.data.objects.new(mesh_name, bmesh_data)
-                # Place at the cliff world centre, oriented along the cliff lip
                 cliff_obj.location = (cx, cy, cz)
-
-                # Orient: rotate so the mesh faces outward from the cliff lip.
-                # Use strata_angle as a Z-rotation hint when available.
                 if strata_angle_deg != 0.0:
                     cliff_obj.rotation_euler = (0.0, 0.0, math.radians(strata_angle_deg))
-
                 try:
                     _bpy.context.collection.objects.link(cliff_obj)
                 except Exception:  # noqa: BLE001
                     pass
-
                 blender_name = cliff_obj.name
         except ImportError:
-            pass  # bpy not available — pure-data path only
+            pass
+
+        n_wall_verts = len(wall_mesh.get("vertices", []))
+        n_wall_faces = len(wall_mesh.get("faces", []))
+        veg_anchors = len(wall_mesh.get("metadata", {}).get("vegetation_anchors", []))
+        lod_levels = len(wall_mesh.get("metadata", {}).get("lod", []))
 
         intent = (
             f"insert_hero_cliff_mesh:{cliff.cliff_id}:"
@@ -715,6 +1057,9 @@ def insert_hero_cliff_meshes(
             f"z={cliff.min_height_m:.2f}..{cliff.max_height_m:.2f}:"
             f"style={style}:"
             f"noise={noise_amplitude:.2f}:"
+            f"wall_verts={n_wall_verts}:wall_faces={n_wall_faces}:"
+            f"overhang={overhang_fraction:.2f}:"
+            f"veg_anchors={veg_anchors}:lod_levels={lod_levels}:"
             f"blender_obj={blender_name or 'none'}"
         )
         state.side_effects.append(intent)

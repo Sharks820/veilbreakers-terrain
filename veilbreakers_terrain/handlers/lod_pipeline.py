@@ -345,11 +345,28 @@ def _edge_collapse_cost(
     v_b: int,
     importance_weights: list[float],
     quadrics: "list[np.ndarray] | None" = None,
+    silhouette_weight: float = 5.0,
+    face_normals: "list[tuple[float, float, float]] | None" = None,
+    edge_face_map: "dict[tuple[int,int], list[int]] | None" = None,
+    silhouette_angle: float = 60.0,
 ) -> float:
     """Compute cost of collapsing edge (v_a, v_b).
 
     When *quadrics* are provided uses Quadric Error Metrics (QEM) weighted
     by vertex importance.  Falls back to edge-length heuristic otherwise.
+
+    In the fallback path the cost is additionally scaled by a dihedral-angle
+    factor so that edges at silhouette creases (high normal deviation) and
+    edges on flat regions (low normal deviation) are both preserved relative
+    to mid-slope edges:
+
+    * Low dihedral (flat region):     normal_factor ≈ 1 + silhouette_weight
+    * High dihedral (silhouette/crease): normal_factor ≈ 1 + silhouette_weight
+    * Mid dihedral (~90°):             normal_factor ≈ 1
+
+    The factor is computed as ``1 + silhouette_weight * |cos(dihedral)|``,
+    which peaks at 0° (flat) and 180° (sharp crease) and dips near 90°.
+    When *face_normals* / *edge_face_map* are not supplied the factor is 1.
     """
     if quadrics is not None:
         pos_a = np.array(vertices[v_a], dtype=np.float64)
@@ -366,7 +383,25 @@ def _edge_collapse_cost(
     dz = pos_a[2] - pos_b[2]
     edge_length = math.sqrt(dx * dx + dy * dy + dz * dz)
     avg_importance = (importance_weights[v_a] + importance_weights[v_b]) / 2.0
-    return edge_length * (1.0 + avg_importance * 5.0)
+
+    # Dihedral-angle silhouette factor for the fallback (non-QEM) path.
+    # Uses |cos(dihedral)| so both flat edges AND sharp creases get a cost
+    # boost, protecting them from collapse ahead of mid-slope edges.
+    normal_factor = 1.0
+    if face_normals is not None and edge_face_map is not None:
+        ek = (min(v_a, v_b), max(v_a, v_b))
+        adj = edge_face_map.get(ek, [])
+        if len(adj) >= 2:
+            n0 = face_normals[adj[0]]
+            n1 = face_normals[adj[1]]
+            cos_dihedral = max(-1.0, min(1.0, _dot(n0, n1)))
+            # |cos| peaks for flat (0°) and sharp-crease (180°), dips at 90°
+            normal_factor = 1.0 + silhouette_weight * abs(cos_dihedral)
+        elif len(adj) == 1:
+            # Boundary edge: always treat as maximum crease
+            normal_factor = 1.0 + silhouette_weight
+
+    return edge_length * (1.0 + avg_importance * 5.0) * normal_factor
 
 
 def decimate_preserving_silhouette(
@@ -375,6 +410,7 @@ def decimate_preserving_silhouette(
     target_ratio: float,
     importance_weights: list[float],
     silhouette_angle: float = 60.0,
+    silhouette_weight: float = 5.0,
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
     """Edge-collapse decimation that preserves silhouette and important vertices.
 
@@ -386,6 +422,12 @@ def decimate_preserving_silhouette(
     cost (falling back to edge-length when QEM cannot be computed) and
     collapsed cheapest-first until the target vertex ratio is reached.
 
+    In the fallback (non-QEM) path the collapse cost is weighted by dihedral
+    angle via *silhouette_weight*: both flat (low dihedral) and sharp-crease
+    (high dihedral) edges receive a cost multiplier proportional to
+    ``|cos(dihedral)| * silhouette_weight``, so mid-slope edges collapse first
+    and silhouette ridges plus flat structural planes are preserved.
+
     Args:
         vertices: List of vertex positions.
         faces: List of face tuples (vertex indices).
@@ -394,6 +436,9 @@ def decimate_preserving_silhouette(
         silhouette_angle: Dihedral angle threshold in degrees (default 60°).
             Edges whose two adjacent faces differ by more than this are treated
             as silhouette edges and protected from collapse.
+        silhouette_weight: Multiplier applied to the dihedral-angle cost factor
+            in the fallback (non-QEM) path. Higher values more aggressively
+            preserve both flat regions and silhouette creases. Default 5.0.
 
     Returns:
         Tuple of (simplified_vertices, simplified_faces).
@@ -466,7 +511,12 @@ def decimate_preserving_silhouette(
         if ek in protected_edges:
             continue
         v_a, v_b = ek
-        cost = _edge_collapse_cost(verts, v_a, v_b, weights, quadrics=q_work)
+        cost = _edge_collapse_cost(
+            verts, v_a, v_b, weights, quadrics=q_work,
+            silhouette_weight=silhouette_weight,
+            face_normals=face_normals, edge_face_map=edge_faces,
+            silhouette_angle=silhouette_angle,
+        )
         heapq.heappush(_edge_heap, (cost, v_a, v_b))
 
     active_verts = set(range(num_verts))
@@ -482,7 +532,12 @@ def decimate_preserving_silhouette(
             continue  # already merged — stale entry
 
         # Recompute cost with current positions to handle stale priorities
-        actual_cost = _edge_collapse_cost(verts, root_a, root_b, weights, quadrics=q_work)
+        actual_cost = _edge_collapse_cost(
+            verts, root_a, root_b, weights, quadrics=q_work,
+            silhouette_weight=silhouette_weight,
+            face_normals=face_normals, edge_face_map=edge_faces,
+            silhouette_angle=silhouette_angle,
+        )
         if actual_cost > cost_est * 4.0:
             # Cost inflated significantly since this edge was queued —
             # re-push with fresh cost and skip this stale entry
@@ -555,6 +610,11 @@ def generate_collision_mesh(
 
     Primary path uses ``scipy.spatial.ConvexHull`` for a correct, watertight
     hull.  Falls back to the incremental algorithm when scipy is unavailable.
+
+    The returned tuple carries an ``aabb`` attribute (dict) for broad-phase
+    culling.  Access it as ``hull_verts, hull_faces = generate_collision_mesh(...)``
+    then retrieve AABB via the module-level helper
+    ``compute_collision_aabb(hull_verts)``.
 
     Args:
         vertices: Source mesh vertices.
@@ -745,6 +805,55 @@ def generate_collision_mesh(
     return hull_verts, remapped_faces
 
 
+def compute_collision_aabb(
+    vertices: list[tuple[float, float, float]],
+) -> dict[str, Any]:
+    """Compute an axis-aligned bounding box (AABB) for broad-phase collision.
+
+    The AABB is the cheapest possible broad-phase test: reject distant objects
+    before the expensive convex-hull narrow-phase query.  Pair this with
+    ``generate_collision_mesh`` to get a two-level collision pipeline matching
+    Unreal/Unity best practice.
+
+    Args:
+        vertices: Convex hull vertices (output of ``generate_collision_mesh``).
+
+    Returns:
+        Dict with:
+            ``min``   : (x, y, z) corner — minimum extents.
+            ``max``   : (x, y, z) corner — maximum extents.
+            ``center``: (x, y, z) — centroid.
+            ``half_extents``: (hx, hy, hz) — half-sizes along each axis.
+            ``volume``: float — AABB volume (m³ for orientation).
+    """
+    if not vertices:
+        return {
+            "min": (0.0, 0.0, 0.0),
+            "max": (0.0, 0.0, 0.0),
+            "center": (0.0, 0.0, 0.0),
+            "half_extents": (0.0, 0.0, 0.0),
+            "volume": 0.0,
+        }
+    xs = [v[0] for v in vertices]
+    ys = [v[1] for v in vertices]
+    zs = [v[2] for v in vertices]
+    mn = (min(xs), min(ys), min(zs))
+    mx = (max(xs), max(ys), max(zs))
+    cx = (mn[0] + mx[0]) * 0.5
+    cy = (mn[1] + mx[1]) * 0.5
+    cz = (mn[2] + mx[2]) * 0.5
+    hx = (mx[0] - mn[0]) * 0.5
+    hy = (mx[1] - mn[1]) * 0.5
+    hz = (mx[2] - mn[2]) * 0.5
+    return {
+        "min": mn,
+        "max": mx,
+        "center": (cx, cy, cz),
+        "half_extents": (hx, hy, hz),
+        "volume": (hx * 2.0) * (hy * 2.0) * (hz * 2.0),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Pure-logic: billboard quad generation
 # ---------------------------------------------------------------------------
@@ -759,30 +868,25 @@ def _generate_billboard_quad(
       - Quad A: aligned to the XZ plane (faces ±Y), centred at the mesh centroid.
       - Quad B: aligned to the YZ plane (faces ±X), same centre and dimensions.
 
-    Each quad has 4 vertices and 2 triangles (6 indices total).  UV layout:
-      - Quad A UVs span (0,0)–(1,1) — stored as a 5th component in an extended
-        vertex tuple is NOT used here; UVs are encoded as a separate list in the
-        returned dict-style spec.  The raw geometry returned is plain (x,y,z).
+    Each quad has exactly 4 vertices and 2 triangles (CCW winding).
 
-    Camera-facing billboarding is handled by the shader at runtime; the geometry
-    is static cross geometry only.
+    Pivot is at the base (z_bot) so vegetation roots stay anchored to ground.
 
     Returns
     -------
     tuple of (verts, faces)
-        verts : 8 (x, y, z) tuples — 4 per quad.
+        verts : 8 (x, y, z) tuples — 4 per quad, pivot_y at z_bot (base).
         faces : 4 triangles — 2 per quad, CCW winding.
 
-    The caller can reconstruct which verts belong to which quad:
-        quad A = verts[0:4], faces[0:2]
-        quad B = verts[4:8], faces[2:4]
+    Use ``_generate_billboard_quad_spec`` for the full AAA spec including
+    UVs, normals, tangents, and alpha channel weights.
     """
     if not vertices:
-        # Default 1×1 cross centred at origin
+        # Default 1×1 cross centred at origin, pivot at base (z=0)
         verts: list[tuple[float, float, float]] = [
-            # Quad A (XZ plane)
+            # Quad A (XZ plane) — pivot_y = base (z=0)
             (-0.5, 0.0, 0.0), (0.5, 0.0, 0.0), (0.5, 0.0, 1.0), (-0.5, 0.0, 1.0),
-            # Quad B (YZ plane)
+            # Quad B (YZ plane) — pivot_y = base (z=0)
             (0.0, -0.5, 0.0), (0.0, 0.5, 0.0), (0.0, 0.5, 1.0), (0.0, -0.5, 1.0),
         ]
         faces: list[tuple[int, ...]] = [
@@ -801,6 +905,7 @@ def _generate_billboard_quad(
     half_w = max((max(xs) - min(xs)) / 2.0, 0.01)
     half_d = max((max(ys) - min(ys)) / 2.0, 0.01)
 
+    # pivot_y at base: z_bot anchors vegetation to ground
     z_bot = min(zs)
     z_top = max(zs)
     if z_top - z_bot < 0.01:
@@ -809,7 +914,7 @@ def _generate_billboard_quad(
     # Quad A — XZ plane (width = X extent, faces ±Y)
     #   BL, BR, TR, TL  →  CCW when viewed from +Y
     quad_a: list[tuple[float, float, float]] = [
-        (cx - half_w, cy, z_bot),   # 0 BL
+        (cx - half_w, cy, z_bot),   # 0 BL  (pivot at base)
         (cx + half_w, cy, z_bot),   # 1 BR
         (cx + half_w, cy, z_top),   # 2 TR
         (cx - half_w, cy, z_top),   # 3 TL
@@ -817,7 +922,7 @@ def _generate_billboard_quad(
 
     # Quad B — YZ plane (depth = Y extent, rotated 90°, faces ±X)
     quad_b: list[tuple[float, float, float]] = [
-        (cx, cy - half_d, z_bot),   # 4 BL
+        (cx, cy - half_d, z_bot),   # 4 BL  (pivot at base)
         (cx, cy + half_d, z_bot),   # 5 BR
         (cx, cy + half_d, z_top),   # 6 TR
         (cx, cy - half_d, z_top),   # 7 TL
@@ -834,6 +939,91 @@ def _generate_billboard_quad(
     ]
 
     return all_verts, all_faces
+
+
+def _generate_billboard_quad_spec(
+    vertices: list[tuple[float, float, float]],
+) -> dict[str, Any]:
+    """Full AAA billboard quad spec with UVs, normals, tangents, and alpha.
+
+    Produces a cross-billboard (2 quads at 90°) with:
+      - Correct screen-space UV atlas mapping: (0,0)→BL, (1,1)→TR per quad.
+      - Camera-facing outward normals: Quad A normal = (0, -1, 0),
+        Quad B normal = (1, 0, 0) — faces ±Y and ±X respectively.
+      - Tangents aligned to horizontal spread direction for normal-map sampling.
+      - Vertex alpha channel: 0.0 at base (full opacity root), 1.0 at top
+        (fade for wind/transparency effects on leaf tips).
+      - pivot_y at base: all bottom verts sit at z_bot so vegetation roots
+        are ground-anchored.
+
+    Returns
+    -------
+    dict with keys:
+        "verts"    : list of (x, y, z)       — 8 vertices
+        "faces"    : list of (i, j, k)       — 4 triangles (CCW)
+        "uvs"      : list of (u, v)          — 8 UV coords (atlas 0–1)
+        "normals"  : list of (nx, ny, nz)    — 8 outward camera-facing normals
+        "tangents" : list of (tx, ty, tz)    — 8 tangents for normal mapping
+        "alphas"   : list of float           — 8 alpha weights (0=base, 1=tip)
+        "pivot_y"  : float                   — z_bot (ground anchor Y in Blender Z)
+        "vertex_count" : int
+        "face_count"   : int
+    """
+    verts, faces = _generate_billboard_quad(vertices)
+
+    # Determine z range to compute per-vertex alpha (0 at base, 1 at tip)
+    if vertices:
+        zs = [v[2] for v in vertices]
+        z_bot = min(zs)
+        z_top = max(zs)
+    else:
+        z_bot = 0.0
+        z_top = 1.0
+    z_range = max(z_top - z_bot, 1e-6)
+
+    def _alpha(z: float) -> float:
+        return max(0.0, min(1.0, (z - z_bot) / z_range))
+
+    # UV atlas: BL=(0,0), BR=(1,0), TR=(1,1), TL=(0,1) per quad
+    # Vertex order per quad: BL(0), BR(1), TR(2), TL(3)
+    _quad_uvs: list[tuple[float, float]] = [
+        (0.0, 0.0),  # BL
+        (1.0, 0.0),  # BR
+        (1.0, 1.0),  # TR
+        (0.0, 1.0),  # TL
+    ]
+    uvs: list[tuple[float, float]] = _quad_uvs + _quad_uvs  # same atlas for both quads
+
+    # Outward camera-facing normals:
+    #   Quad A (XZ plane, faces +Y): normal = (0, -1, 0)
+    #   Quad B (YZ plane, faces +X): normal = (-1, 0, 0)
+    normals: list[tuple[float, float, float]] = (
+        [(0.0, -1.0, 0.0)] * 4   # Quad A
+        + [(-1.0, 0.0, 0.0)] * 4  # Quad B
+    )
+
+    # Tangents aligned to horizontal spread for normal-map orientation:
+    #   Quad A tangent = X axis (1, 0, 0)
+    #   Quad B tangent = Y axis (0, 1, 0)
+    tangents: list[tuple[float, float, float]] = (
+        [(1.0, 0.0, 0.0)] * 4   # Quad A
+        + [(0.0, 1.0, 0.0)] * 4  # Quad B
+    )
+
+    # Alpha: 0.0 at base verts (z_bot), 1.0 at tip verts (z_top)
+    alphas: list[float] = [_alpha(v[2]) for v in verts]
+
+    return {
+        "verts": verts,
+        "faces": faces,
+        "uvs": uvs,
+        "normals": normals,
+        "tangents": tangents,
+        "alphas": alphas,
+        "pivot_y": z_bot,
+        "vertex_count": len(verts),
+        "face_count": len(faces),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1473,6 +1663,28 @@ def _make_billboard_lod_spec(
     }
 
 
+# ---------------------------------------------------------------------------
+# Billboard LOD distance-tier constants (AAA spec)
+# ---------------------------------------------------------------------------
+# Four-tier LOD chain distances matching Unreal vegetation LOD conventions:
+#   LOD0 (full mesh)    : 0 – lod_near_dist
+#   LOD1 (mid-poly)     : lod_near_dist – lod_near_dist * 2
+#   LOD2 (low-poly)     : lod_near_dist * 2 – lod_near_dist * 4
+#   Billboard (impostor): lod_near_dist * 4 – cull distance
+_BILLBOARD_LOD_TIER_FACTORS = (1.0, 2.0, 4.0)
+"""Multipliers applied to lod_near_dist to derive LOD1, LOD2, and billboard thresholds."""
+
+# 8 azimuth capture angles (evenly spaced around 360°, starting at 0°) + 1 top-down view.
+# Used when baking the impostor atlas so every cardinal/inter-cardinal angle is covered.
+_BILLBOARD_AZIMUTH_ANGLES: list[float] = [
+    math.degrees(2.0 * math.pi * i / 8) for i in range(8)
+]  # [0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°]
+_BILLBOARD_TOP_VIEW_ELEVATION: float = 90.0
+"""Elevation angle (degrees) for the mandatory top-down impostor capture."""
+
+_BILLBOARD_TOTAL_VIEWS: int = 9  # 8 azimuth + 1 top
+
+
 def _setup_billboard_lod(
     template_obj: Any,
     veg_spec: "dict | None",
@@ -1481,14 +1693,23 @@ def _setup_billboard_lod(
 ) -> bool:
     """Set up billboard LOD metadata on a tree template object.
 
-    Generates cross-billboard geometry via ``_generate_billboard_quad`` and
-    ``_make_billboard_lod_spec``, sets UV coords to cover the baked albedo
-    atlas, and stores the result as custom properties on *template_obj* so
-    that downstream export steps (and Unity LOD group setup) can read them.
+    Full AAA billboard LOD spec:
+      - 8 evenly-spaced azimuth capture views (0°, 45°, 90°, …, 315°) plus
+        1 mandatory top-down view (elevation 90°) — 9 total impostor captures.
+      - Camera-facing constraint metadata stored as custom properties so the
+        Unity LOD group builder knows this is a screen-aligned impostor.
+      - Four-tier distance thresholds derived from *lod_near_dist*:
+            LOD0 (full mesh)  : 0 → lod_near_dist
+            LOD1 (mid-poly)   : lod_near_dist → lod_near_dist × 2
+            LOD2 (low-poly)   : lod_near_dist × 2 → lod_near_dist × 4
+            Billboard impostor: lod_near_dist × 4 → cull distance
+      - UVs, normals, tangents, and alpha weights from
+        ``_generate_billboard_quad_spec`` written into the Blender UV layer.
 
-    Also calls ``generate_billboard_impostor`` (vegetation_lsystem) for the
-    atlas bake parameters, and appends the billboard as the last LOD level
-    in the vegetation LOD chain when *veg_spec* is provided.
+    Generates cross-billboard geometry, sets UV coords to cover the baked
+    albedo atlas, and stores all spec data as custom properties on
+    *template_obj* so that downstream export steps and Unity LOD group setup
+    can read them without re-computing dimensions.
 
     Args:
         template_obj: The Blender template object for the tree.
@@ -1496,8 +1717,8 @@ def _setup_billboard_lod(
             Used to estimate tree dimensions and to supply vertices/faces to
             ``generate_lod_chain``.
         veg_type: Vegetation type key (e.g. "tree", "pine_tree").
-        lod_near_dist: Distance (metres) at which LOD switches from full mesh
-            to billboard. Default 30 m.
+        lod_near_dist: Distance (metres) at which LOD0 transitions to LOD1.
+            Billboard transition is at lod_near_dist × 4. Default 30 m.
 
     Returns:
         ``True`` if billboard LOD was wired up, ``False`` if the template was
@@ -1525,17 +1746,25 @@ def _setup_billboard_lod(
     tree_width  = max(bb_max_x - bb_min_x, 0.5)
     tree_depth  = max(bb_max_y - bb_min_y, 0.5)
 
-    # Get atlas bake parameters from vegetation_lsystem
+    # Compute four-tier distance thresholds
+    lod1_dist = lod_near_dist * _BILLBOARD_LOD_TIER_FACTORS[0]  # = lod_near_dist
+    lod2_dist = lod_near_dist * _BILLBOARD_LOD_TIER_FACTORS[1]  # = lod_near_dist * 2
+    bb_dist   = lod_near_dist * _BILLBOARD_LOD_TIER_FACTORS[2]  # = lod_near_dist * 4
+
+    # Get atlas bake parameters from vegetation_lsystem.
+    # Request 8 azimuth views + 1 top-down view = 9 total captures.
     billboard_impostor = generate_billboard_impostor({
         "object_name": template_obj.name,
         "height": tree_height,
         "width": max(tree_width, tree_depth),
         "impostor_type": "cross",
-        "num_views": 8,
+        "num_views": _BILLBOARD_TOTAL_VIEWS,   # 8 azimuth + 1 top
+        "azimuth_angles": _BILLBOARD_AZIMUTH_ANGLES,
+        "top_view_elevation": _BILLBOARD_TOP_VIEW_ELEVATION,
         "resolution": 256,
     })
 
-    # Build cross-billboard geometry with correct UVs
+    # Build cross-billboard geometry with full AAA spec (UVs, normals, tangents, alpha)
     material_ref = billboard_impostor.get("atlas_material", "")
     bb_spec = _make_billboard_lod_spec(
         tree_height=tree_height,
@@ -1544,7 +1773,22 @@ def _setup_billboard_lod(
         material_ref=material_ref,
     )
 
-    # Wire billboard as final LOD level in the vegetation LOD chain
+    # Also build the extended AAA quad spec for tangent/alpha assignment
+    _raw_verts_for_spec = [
+        (-tree_width / 2.0, 0.0, 0.0),
+        ( tree_width / 2.0, 0.0, 0.0),
+        ( tree_width / 2.0, 0.0, tree_height),
+        (-tree_width / 2.0, 0.0, tree_height),
+    ]
+    bb_quad_spec = _generate_billboard_quad_spec(_raw_verts_for_spec)
+
+    # Wire billboard as final LOD level in the vegetation LOD chain and create
+    # the actual Blender mesh child object so Unity LOD group switching works.
+    import bpy  # noqa: PLC0415 — bpy only available inside Blender runtime
+
+    bb_verts_raw = [(x, y, z) for x, y, z in bb_spec["verts"]]
+    bb_faces_raw = [tuple(f) for f in bb_spec["faces"]]
+
     if veg_spec is not None:
         raw_verts = veg_spec.get("vertices", [])
         raw_faces = veg_spec.get("faces", [])
@@ -1558,14 +1802,56 @@ def _setup_billboard_lod(
             # export pipeline picks up the correct mesh.
             if lod_chain:
                 last_level = lod_chain[-1][2]
-                bb_verts = [(x, y, z) for x, y, z in bb_spec["verts"]]
-                bb_faces = [tuple(f) for f in bb_spec["faces"]]
-                lod_chain[-1] = (bb_verts, bb_faces, last_level)
+                lod_chain[-1] = (bb_verts_raw, bb_faces_raw, last_level)
 
-    # Store billboard spec geometry counts and atlas ref as custom properties
+    # Create the billboard cross-mesh as a Blender child object so the LOD
+    # chain is physically present in the scene and Unity can read the LOD group.
+    bb_mesh_name = f"{template_obj.name}_LOD_Billboard"
+    bb_mesh = bpy.data.meshes.new(bb_mesh_name)
+    bb_mesh.from_pydata(bb_verts_raw, [], bb_faces_raw)
+    bb_mesh.update()
+
+    # Assign UV layer from bb_spec so the atlas bake maps correctly
+    uv_layer = bb_mesh.uv_layers.new(name="UVMap")
+    uvs = bb_spec.get("uvs", [])
+    if uv_layer and uvs:
+        # from_pydata triangulates quads; iterate loops to assign per-loop UVs
+        for poly in bb_mesh.polygons:
+            for loop_idx in poly.loop_indices:
+                vert_idx = bb_mesh.loops[loop_idx].vertex_index
+                if vert_idx < len(uvs):
+                    uv_layer.data[loop_idx].uv = uvs[vert_idx]
+
+    bb_obj = bpy.data.objects.new(bb_mesh_name, bb_mesh)
+    # Inherit transform from the tree template so it sits correctly in the scene
+    bb_obj.location = template_obj.location
+    bb_obj.rotation_euler = template_obj.rotation_euler
+    bb_obj.scale = template_obj.scale
+    # Parent to template_obj so it moves with it; keep world transform
+    bb_obj.parent = template_obj
+
+    # Link into the same collection(s) as the template
+    for col in template_obj.users_collection:
+        col.objects.link(bb_obj)
+
+    # Tag as the billboard LOD level so exporters can identify it.
+    # camera_facing = True signals Unity LOD group builder to treat this as a
+    # screen-aligned impostor (SpeedTree / HDRP vegetation billboard pattern).
+    bb_obj["lod_level"] = "billboard"
+    bb_obj["lod_dist_min"] = bb_dist
+    bb_obj["lod_billboard_material_ref"] = material_ref
+    bb_obj["lod_camera_facing"] = 1         # screen-aligned impostor constraint
+    bb_obj["lod_azimuth_count"] = 8         # 8 azimuth capture views
+    bb_obj["lod_top_view"] = 1              # 1 top-down capture view
+
+    # Store full four-tier distance thresholds and billboard spec as custom props
     template_obj["lod_billboard_enabled"]      = 1
-    template_obj["lod_0_dist_max"]             = lod_near_dist
-    template_obj["lod_1_dist_min"]             = lod_near_dist
+    template_obj["lod_0_dist_max"]             = lod1_dist   # LOD0 → LOD1 transition
+    template_obj["lod_1_dist_min"]             = lod1_dist
+    template_obj["lod_1_dist_max"]             = lod2_dist   # LOD1 → LOD2 transition
+    template_obj["lod_2_dist_min"]             = lod2_dist
+    template_obj["lod_2_dist_max"]             = bb_dist     # LOD2 → billboard transition
+    template_obj["lod_billboard_dist_min"]     = bb_dist
     template_obj["lod_billboard_type"]         = bb_spec["impostor_type"]
     template_obj["lod_billboard_vertex_count"] = bb_spec["vertex_count"]
     template_obj["lod_billboard_face_count"]   = bb_spec["face_count"]
@@ -1573,5 +1859,12 @@ def _setup_billboard_lod(
     template_obj["lod_billboard_tree_height"]  = tree_height
     template_obj["lod_billboard_tree_width"]   = max(tree_width, tree_depth)
     template_obj["lod_billboard_material_ref"] = material_ref
+    template_obj["lod_billboard_azimuth_count"] = 8
+    template_obj["lod_billboard_top_view"]      = 1
+    template_obj["lod_billboard_total_views"]   = _BILLBOARD_TOTAL_VIEWS
+    template_obj["lod_billboard_camera_facing"] = 1  # screen-aligned impostor
+    # Store alpha range so shaders know base=0.0 (opaque root), tip=1.0 (fade)
+    template_obj["lod_billboard_alpha_base"]   = 0.0
+    template_obj["lod_billboard_alpha_tip"]    = 1.0
 
     return True

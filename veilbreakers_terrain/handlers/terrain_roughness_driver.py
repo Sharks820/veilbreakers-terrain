@@ -79,17 +79,102 @@ def pass_roughness_driver(
     state: TerrainPipelineState,
     region: Optional[BBox],
 ) -> PassResult:
-    """Bundle K pass: wetness/wear-driven roughness.
+    """Bundle K pass: slope/curvature/material-zone-driven roughness.
 
-    Consumes: height (+ optional wetness, erosion_amount, deposition_amount,
-              ambient_occlusion_bake, roughness_variation)
-    Produces: roughness_variation
+    Consumes
+    --------
+    height (required)
+    slope              — steeper terrain = rougher surface (rock, talus)
+    curvature          — concave cells (bowls, valleys) = smoother (sediment)
+    material_zones     — integer zone map with per-zone roughness overrides
+                         read from ``composition_hints['material_zone_roughness']``
+    wetness            — wet surfaces = lower roughness (smooth mud/water)
+    erosion_amount     — actively eroded cells = higher roughness (broken rock)
+    deposition_amount  — deposition cells = moderate roughness (loose silt)
+    ambient_occlusion_bake — dust in crevices adds +0.05 roughness
+
+    Produces
+    --------
+    roughness_variation  [0..1] float32
+
+    Algorithm
+    ---------
+    1.  Start from the wetness/wear base (``compute_roughness_from_wetness_wear``).
+    2.  Slope contribution: normalise slope [0..1] and blend toward 0.90
+        (exposed rock) weighted by ``slope_weight=0.35``.  Steep terrain in
+        real-world photogrammetry (Quixel rock scans, MicroSplat cliff layers)
+        consistently measures PBR roughness 0.80–0.95.
+    3.  Curvature contribution: positive curvature (convex ridges) = rough;
+        negative curvature (concave basins) = smooth.  Normalised to [0..1]
+        and blended with ``curvature_weight=0.20``.  Concave cells get a
+        smoothness bonus toward 0.25 (sheltered, sediment-filled basins).
+    4.  Material zone override: if ``composition_hints['material_zone_roughness']``
+        is a dict mapping int zone_id → float roughness, each zone overwrites
+        the computed value for that zone's pixels.  Unknown zone IDs are
+        ignored.  This matches the MicroSplat per-layer roughness override
+        workflow.
+    5.  Final clip to [0..1] and cast to float32.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
 
-    rough = compute_roughness_from_wetness_wear(stack)
-    stack.set("roughness_variation", rough, "roughness_driver")
+    # Stage 1: base from wetness / wear model
+    rough = compute_roughness_from_wetness_wear(stack).astype(np.float64)
+
+    # Stage 2: slope contribution — steep = rough
+    slope_arr = stack.get("slope")
+    slope_driven = False
+    if slope_arr is not None:
+        s = np.asarray(slope_arr, dtype=np.float64)
+        s_max = float(s.max()) if s.size else 0.0
+        if s_max > 1e-9:
+            s_norm = np.clip(s / s_max, 0.0, 1.0)
+            # Blend toward 0.90 (rough exposed rock) proportional to slope
+            slope_weight = 0.35
+            rough = rough * (1.0 - slope_weight * s_norm) + 0.90 * slope_weight * s_norm
+            slope_driven = True
+
+    # Stage 3: curvature contribution — concave = smooth, convex = rough
+    curvature_arr = stack.get("curvature")
+    curvature_driven = False
+    if curvature_arr is not None:
+        c = np.asarray(curvature_arr, dtype=np.float64)
+        c_abs_max = float(np.abs(c).max()) if c.size else 0.0
+        if c_abs_max > 1e-9:
+            # Positive curvature: convex ridge → add roughness
+            convex = np.clip(c / c_abs_max, 0.0, 1.0)
+            # Negative curvature: concave basin → subtract roughness (smooth sediment)
+            concave = np.clip(-c / c_abs_max, 0.0, 1.0)
+            curvature_weight = 0.20
+            rough = (
+                rough
+                + curvature_weight * convex * (0.85 - rough)
+                - curvature_weight * concave * (rough - 0.25)
+            )
+            curvature_driven = True
+
+    # Stage 4: material zone roughness overrides
+    zone_arr = stack.get("material_zones")
+    zone_driven = False
+    hints: dict = {}
+    if state.intent is not None:
+        hints = state.intent.composition_hints or {}
+    zone_roughness_map: dict = hints.get("material_zone_roughness") or {}
+    if zone_arr is not None and zone_roughness_map:
+        z = np.asarray(zone_arr)
+        for zone_id_raw, zone_rough in zone_roughness_map.items():
+            try:
+                zone_id = int(zone_id_raw)
+                zone_r = float(zone_rough)
+            except (TypeError, ValueError):
+                continue
+            mask = z == zone_id
+            if mask.any():
+                rough = np.where(mask, zone_r, rough)
+                zone_driven = True
+
+    rough_f32 = np.clip(rough, 0.0, 1.0).astype(np.float32)
+    stack.set("roughness_variation", rough_f32, "roughness_driver")
 
     return PassResult(
         pass_name="roughness_driver",
@@ -98,11 +183,14 @@ def pass_roughness_driver(
         consumed_channels=("height",),
         produced_channels=("roughness_variation",),
         metrics={
-            "rough_min": float(rough.min()),
-            "rough_max": float(rough.max()),
-            "rough_mean": float(rough.mean()),
+            "rough_min": float(rough_f32.min()),
+            "rough_max": float(rough_f32.max()),
+            "rough_mean": float(rough_f32.mean()),
             "wet_driven": stack.get("wetness") is not None,
             "erosion_driven": stack.get("erosion_amount") is not None,
+            "slope_driven": slope_driven,
+            "curvature_driven": curvature_driven,
+            "zone_driven": zone_driven,
         },
         issues=[],
     )

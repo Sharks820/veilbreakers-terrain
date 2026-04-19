@@ -121,12 +121,43 @@ def run_determinism_check(
                 if reference.per_channel_hashes.get(ch) != h:
                     channel_divergences.append((rec.run_index, ch))
 
+    # Identify the *first* pass where non-determinism appears by walking the
+    # per-pass hash sequences for any mismatch runs and recording the earliest
+    # diverging index.  This lets callers bisect the problem without re-running.
+    suspect_passes: List[Tuple[int, str]] = []
+    for rec in run_records[1:]:
+        if rec.content_hash == reference.content_hash:
+            continue
+        ref_hashes = reference.pass_hashes
+        rec_hashes = rec.pass_hashes
+        for idx, (rh, ch) in enumerate(zip(ref_hashes, rec_hashes)):
+            if rh != ch and rh and ch:
+                # Recover pass name from pass_sequence if available
+                pass_name = (
+                    list(pass_sequence)[idx]
+                    if pass_sequence and idx < len(list(pass_sequence))
+                    else f"pass_index_{idx}"
+                )
+                entry = (idx, pass_name)
+                if entry not in suspect_passes:
+                    suspect_passes.append(entry)
+                break
+
+    durations = [r.duration_seconds for r in run_records]
+    dur_stdev = 0.0
+    if len(durations) >= 2:
+        mean = sum(durations) / len(durations)
+        dur_stdev = (sum((d - mean) ** 2 for d in durations) / len(durations)) ** 0.5
+
     return {
         "deterministic": not mismatches,
         "runs": run_records,
         "reference_hash": reference.content_hash,
         "mismatches": mismatches,
         "channel_divergences": channel_divergences,
+        "suspect_passes": suspect_passes,
+        "duration_stdev_s": dur_stdev,
+        "avg_duration_s": sum(durations) / len(durations) if durations else 0.0,
         "seed": int(seed),
         "run_count": runs,
     }

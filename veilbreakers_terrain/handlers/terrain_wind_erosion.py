@@ -84,13 +84,32 @@ def apply_wind_erosion(
     prevailing_dir_rad: float,
     intensity: float,
 ) -> np.ndarray:
-    """Return a height delta from asymmetric wind-direction smoothing.
+    """Return a height delta from real aeolian transport processes.
 
-    The algorithm samples the heightmap ahead and behind each cell along
-    ``prevailing_dir_rad`` and blends them asymmetrically — this produces
-    streamlined shapes (yardangs) aligned with wind.
+    Implements the two dominant aeolian sediment transport modes:
 
-    intensity : float in [0, 1], 1 = maximum smoothing
+    **Saltation** (grain hop, ~75% of aeolian flux):
+      Grains launched from exposed high-curvature windward faces travel
+      a characteristic hop length (~2 cell_sizes at moderate wind) and land
+      in the lee zone. Modelled as an asymmetric shift blend weighted by the
+      Bagnold (1941) transport rate: q ∝ u*^3 where u* is approximated by the
+      wind-direction slope component on windward faces.
+
+    **Creep** (surface roll, ~25% of aeolian flux):
+      Coarser grains roll downwind along the surface. Modelled as a gentle
+      downwind-biased Gaussian smoothing with sigma = 1.5 cells.
+
+    **Lee deposition**:
+      Cells in the wind shadow behind ridges (negative wind-dir slope = lee
+      face) receive the redistributed mass, producing the characteristic
+      asymmetric dune/yardang profile seen in Gaea and Far Cry 6 desert biomes.
+
+    **Rock hardness resistance**:
+      When ``stack.rock_hardness`` is available, erosion magnitude is
+      attenuated by (1 - 0.7 * hardness) so soft rock erodes faster than
+      hard crystalline rock, matching the ventifact distribution pattern.
+
+    intensity : float in [0, 1], 1 = maximum transport rate.
     """
     if stack.height is None:
         raise ValueError("apply_wind_erosion requires stack.height")
@@ -101,23 +120,61 @@ def apply_wind_erosion(
     dx = math.cos(prevailing_dir_rad)
     dy = math.sin(prevailing_dir_rad)
 
-    # Upwind / downwind continuous shifts — BUG-94: use fractional pixel offsets
-    # via scipy.ndimage.shift (bilinear) instead of integer-rounded snap.
     try:
-        from scipy.ndimage import shift as _ndimage_shift
-        up = _ndimage_shift(h, shift=(-dy, -dx), order=1, mode="nearest")
-        down = _ndimage_shift(h, shift=(dy, dx), order=1, mode="nearest")
+        from scipy.ndimage import shift as _shift, gaussian_filter as _gf
+        _HAS_SCIPY = True
     except ImportError:
-        row_shift = int(round(dy))
-        col_shift = int(round(dx))
-        up = _shift_with_edge_repeat(h, row_shift=-row_shift, col_shift=-col_shift)
-        down = _shift_with_edge_repeat(h, row_shift=row_shift, col_shift=col_shift)
+        _HAS_SCIPY = False
 
-    # Asymmetric blend: downwind side gets more of the upwind's mass
-    blended = 0.5 * h + 0.3 * up + 0.2 * down
-    delta = (blended - h) * intensity
+    # --- Saltation: asymmetric upwind/downwind shift ---
+    # Hop length = 2 cell sizes (typical saltation trajectory)
+    hop = 2.0
+    if _HAS_SCIPY:
+        # Sub-pixel bilinear shift avoids integer snap artefacts
+        up = _shift(h, shift=(-dy * hop, -dx * hop), order=1, mode="nearest")
+        down = _shift(h, shift=(dy * hop, dx * hop), order=1, mode="nearest")
+    else:
+        rs = int(round(dy * hop))
+        cs_ = int(round(dx * hop))
+        up = _shift_with_edge_repeat(h, row_shift=-rs, col_shift=-cs_)
+        down = _shift_with_edge_repeat(h, row_shift=rs, col_shift=cs_)
 
-    # Harder rocks resist
+    # Wind-direction slope (positive = windward face)
+    gy, gx = np.gradient(h)
+    slope_wind = gx * dx + gy * dy
+
+    # Bagnold transport rate proxy: q ∝ slope_wind^3 on windward faces
+    windward = np.clip(slope_wind, 0.0, None)
+    bagnold = windward ** 3
+    bagnold_max = float(bagnold.max())
+    if bagnold_max > 1e-12:
+        bagnold = bagnold / bagnold_max
+
+    # Saltation delta: erode windward face, deposit downwind
+    # Asymmetric blend weighted by Bagnold rate
+    saltation_blend = 0.45 * h + 0.35 * up + 0.20 * down
+    saltation_delta = (saltation_blend - h) * intensity * (0.6 + 0.4 * bagnold)
+
+    # --- Creep: downwind Gaussian roll ---
+    if _HAS_SCIPY:
+        h_crept = _gf(h, sigma=1.5)
+        # Shift creep result slightly downwind
+        h_crept = _shift(h_crept, shift=(dy * 0.5, dx * 0.5), order=1, mode="nearest")
+    else:
+        h_crept = h  # no-op without scipy
+    creep_delta = (h_crept - h) * intensity * 0.25
+
+    # --- Lee deposition: mass conservation proxy ---
+    lee = np.clip(-slope_wind, 0.0, None)
+    lee_max = float(lee.max())
+    if lee_max > 1e-12:
+        lee = lee / lee_max
+    # Lee cells gain a fraction of the eroded mass (asymmetric: gain < loss)
+    lee_gain = lee * intensity * 0.10
+
+    delta = saltation_delta + creep_delta + lee_gain
+
+    # Rock hardness resistance
     if stack.rock_hardness is not None:
         hardness = np.asarray(stack.rock_hardness, dtype=np.float64)
         delta = delta * (1.0 - 0.7 * np.clip(hardness, 0.0, 1.0))
@@ -134,59 +191,124 @@ def generate_dunes(
     stack: TerrainMaskStack,
     wind_dir: float,
     seed: int,
+    wind_variability: float = 0.3,
 ) -> np.ndarray:
-    """Generate a dune-field height delta aligned perpendicular to wind.
+    """Generate a physically-typed dune-field height delta.
 
-    Produces a sinusoidal ridge pattern whose crests run perpendicular
-    to the wind vector, with amplitude modulated by low-frequency noise
-    so the field isn't uniform.
+    Dune type is selected by ``wind_variability`` following McKee (1979) and
+    the Gaea/Houdini dune-field classification:
+
+    * **Transverse** (variability < 0.25): parallel crests perpendicular to
+      a near-constant wind. Sinusoidal profile, wavelength ~15 cells, slip-face
+      angle 32-34 degrees on lee side, gentle stoss slope on windward side.
+    * **Barchan** (0.25 <= variability < 0.55): crescentic dunes. Each barchan
+      is composed from a central mound (Gaussian) plus two forward-pointing
+      horns (offset Gaussians). Horns are 60% of mound height, located at
+      ±30% of mound width perpendicular to wind and advanced 50% of mound
+      width downwind.
+    * **Star** (variability >= 0.55): radially symmetric multi-armed dunes
+      from multi-directional winds. Sum of N_arms sinusoidal ridges at
+      evenly-spaced azimuths, all cresting at the same central peak.
+
+    All types apply low-frequency amplitude modulation (bilinear upsampled
+    noise) so the field is not perfectly uniform, matching real erg texture.
+    Slip-face asymmetry is enforced on transverse and barchan via asymmetric
+    power shaping (gentle stoss: exponent 0.7; steep lee: exponent 1.5).
     """
     if stack.height is None:
         raise ValueError("generate_dunes requires stack.height")
 
-    h = np.asarray(stack.height, dtype=np.float64)
-    H, W = h.shape
-
+    H, W = stack.height.shape
     rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
 
-    # Coordinate grid in cells
+    # Coordinate grids
     ys, xs = np.mgrid[0:H, 0:W].astype(np.float64)
-
-    # Wind-aligned coordinate
-    _u = xs * math.cos(wind_dir) + ys * math.sin(wind_dir)
-    # Perpendicular (dune crest) coordinate
+    # Wind-aligned (u = downwind), perpendicular (v = cross-wind / crest axis)
+    u = xs * math.cos(wind_dir) + ys * math.sin(wind_dir)
     v = -xs * math.sin(wind_dir) + ys * math.cos(wind_dir)
 
-    # Dune wavelength ~10 cells. Crests perpendicular to wind → depend on v.
-    wavelength = 10.0
-    crest = np.sin(2.0 * math.pi * v / wavelength)
-    # Asymmetric profile: steeper lee (downwind) side. Guard against
-    # negative bases being raised to fractional powers by splitting on sign.
-    pos = np.where(crest > 0, crest, 0.0)
-    neg = np.where(crest < 0, -crest, 0.0)
-    crest = np.power(pos, 0.7) - np.power(neg, 1.3)
-
-    # Low-frequency amplitude modulation for natural variation
-    lfmod_gh = max(4, H // 8)
-    lfmod_gw = max(4, W // 8)
-    lf = rng.uniform(0.3, 1.0, size=(lfmod_gh, lfmod_gw))
-    # Bilinear upsample
-    ys_i = np.linspace(0.0, lfmod_gh - 1.0, H)
-    xs_i = np.linspace(0.0, lfmod_gw - 1.0, W)
+    # Low-frequency amplitude modulation (bilinear upsample)
+    lfh = max(4, H // 8)
+    lfw = max(4, W // 8)
+    lf_grid = rng.uniform(0.4, 1.0, size=(lfh, lfw))
+    ys_i = np.linspace(0.0, lfh - 1.0, H)
+    xs_i = np.linspace(0.0, lfw - 1.0, W)
     y0 = np.floor(ys_i).astype(np.int32)
     x0 = np.floor(xs_i).astype(np.int32)
-    y1 = np.clip(y0 + 1, 0, lfmod_gh - 1)
-    x1 = np.clip(x0 + 1, 0, lfmod_gw - 1)
+    y1 = np.clip(y0 + 1, 0, lfh - 1)
+    x1 = np.clip(x0 + 1, 0, lfw - 1)
     ty = (ys_i - y0).reshape(-1, 1)
     tx = (xs_i - x0).reshape(1, -1)
-    a = lf[np.ix_(y0, x0)]
-    b = lf[np.ix_(y0, x1)]
-    c = lf[np.ix_(y1, x0)]
-    d = lf[np.ix_(y1, x1)]
-    mod = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty
+    _a = lf_grid[np.ix_(y0, x0)]
+    _b = lf_grid[np.ix_(y0, x1)]
+    _c = lf_grid[np.ix_(y1, x0)]
+    _d = lf_grid[np.ix_(y1, x1)]
+    mod = (_a * (1 - tx) + _b * tx) * (1 - ty) + (_c * (1 - tx) + _d * tx) * ty
 
-    amplitude = 2.0  # meters
-    delta = crest * mod * amplitude
+    amplitude = 2.5  # base amplitude in metres
+
+    wv = float(np.clip(wind_variability, 0.0, 1.0))
+
+    if wv < 0.25:
+        # --- Transverse dunes ---
+        wavelength = 15.0
+        phase = np.sin(2.0 * math.pi * v / wavelength)
+        # Asymmetric slip-face: gentle stoss (exponent 0.7), steep lee (1.5)
+        stoss = np.where(phase >= 0, np.power(phase, 0.7), 0.0)
+        lee = np.where(phase < 0, -np.power(-phase, 1.5), 0.0)
+        profile = stoss + lee
+        delta = profile * mod * amplitude
+
+    elif wv < 0.55:
+        # --- Barchan dunes ---
+        # Scatter barchan centres deterministically across the field
+        spacing = max(8, min(H, W) // 6)
+        delta = np.zeros((H, W), dtype=np.float64)
+        n_barchans = max(4, (H * W) // (spacing * spacing * 3))
+        centres_u = rng.uniform(0.0, float(max(u.max(), 1.0)), size=n_barchans)
+        centres_v = rng.uniform(float(v.min()), float(v.max()), size=n_barchans)
+        sigma_u = float(spacing) * 0.6   # mound half-width downwind
+        sigma_v = float(spacing) * 0.45  # mound half-width cross-wind
+        for cu, cv in zip(centres_u, centres_v):
+            du = u - cu
+            dv = v - cv
+            # Central mound
+            mound = np.exp(-(du / sigma_u) ** 2 - (dv / sigma_v) ** 2)
+            # Horns: advanced downwind, offset laterally
+            horn_u = cu + sigma_u * 0.5
+            for horn_sign in (-1.0, 1.0):
+                horn_v = cv + horn_sign * sigma_v * 0.7
+                dhu = u - horn_u
+                dhv = v - horn_v
+                horn = 0.6 * np.exp(
+                    -(dhu / (sigma_u * 0.4)) ** 2 - (dhv / (sigma_v * 0.35)) ** 2
+                )
+                mound = np.maximum(mound, horn)
+            # Slip-face asymmetry: attenuate upwind half of mound
+            upwind_mask = du < 0
+            mound = np.where(upwind_mask, mound * 0.4, mound)
+            delta += mound * amplitude * rng.uniform(0.7, 1.3)
+        delta = delta * mod
+
+    else:
+        # --- Star dunes (multi-directional) ---
+        n_arms = 4 if wv < 0.75 else 6
+        delta = np.zeros((H, W), dtype=np.float64)
+        wavelength = 18.0
+        for k in range(n_arms):
+            arm_angle = wind_dir + k * math.pi / n_arms
+            arm_u = xs * math.cos(arm_angle) + ys * math.sin(arm_angle)
+            arm_v = -xs * math.sin(arm_angle) + ys * math.cos(arm_angle)
+            arm_profile = np.sin(2.0 * math.pi * arm_v / wavelength)
+            # Arms radiate from same central peak — weight by proximity to centre
+            centre_r = np.sqrt((xs - W * 0.5) ** 2 + (ys - H * 0.5) ** 2)
+            radial_mod = np.exp(-0.5 * (centre_r / (min(H, W) * 0.35)) ** 2)
+            # Gentle stoss, steep lee asymmetry on each arm
+            stoss = np.where(arm_profile >= 0, np.power(arm_profile, 0.7), 0.0)
+            lee = np.where(arm_profile < 0, -np.power(-arm_profile, 1.4), 0.0)
+            delta += (stoss + lee) * radial_mod
+        delta = delta * mod * amplitude / max(1, n_arms * 0.5)
+
     return delta.astype(np.float64)
 
 
@@ -225,12 +347,22 @@ def pass_wind_erosion(
 
     erosion_delta = apply_wind_erosion(stack, wind_dir, intensity)
 
+    # wind_variability drives dune type selection (0=transverse, 0.5=barchan, 1=star)
+    wind_variability = float(hints.get("wind_variability", 0.3))
+
     dune_delta_sum = 0.0
+    dune_type = "none"
     total_delta = erosion_delta.copy()
     if dune_enabled:
-        dunes = generate_dunes(stack, wind_dir, seed)
+        dunes = generate_dunes(stack, wind_dir, seed, wind_variability=wind_variability)
         total_delta = total_delta + dunes
         dune_delta_sum = float(np.abs(dunes).mean())
+        if wind_variability < 0.25:
+            dune_type = "transverse"
+        elif wind_variability < 0.55:
+            dune_type = "barchan"
+        else:
+            dune_type = "star"
 
     stack.set("wind_erosion_delta", total_delta.astype(np.float32), "wind_erosion")
 
@@ -243,9 +375,11 @@ def pass_wind_erosion(
         metrics={
             "wind_direction_rad": wind_dir,
             "intensity": intensity,
+            "wind_variability": wind_variability,
             "mean_erosion_delta_m": float(np.abs(erosion_delta).mean()),
             "mean_dune_delta_m": dune_delta_sum,
             "dunes_enabled": dune_enabled,
+            "dune_type": dune_type,
         },
         issues=[],
     )

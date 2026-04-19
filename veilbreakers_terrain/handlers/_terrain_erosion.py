@@ -126,21 +126,51 @@ def apply_hydraulic_erosion_masks(
     *,
     hero_exclusion: Optional[np.ndarray] = None,
     erodibility_map: Optional[np.ndarray] = None,
+    erosion_mask: Optional[np.ndarray] = None,
+    deposition_mask: Optional[np.ndarray] = None,
+    erosion_mask_threshold: float = 0.5,
+    deposition_mask_threshold: float = 0.5,
 ) -> ErosionMasks:
-    """Apply droplet-based hydraulic erosion and return the full mask set.
+    """Apply droplet-based hydraulic erosion with per-channel spatial masks.
 
-    Parameters mirror ``apply_hydraulic_erosion``. The extra
-    ``hero_exclusion`` argument accepts a boolean mask of cells where
-    droplets should not erode or deposit (protected hero regions).
+    Extends droplet erosion with two spatial control maps matching Houdini's
+    HeightField Erode SOP ``Erodibility`` and ``Deposition`` layers:
+
+    - ``erosion_mask``: float [0,1] per-cell map. Erosion is permitted only
+      where ``erosion_mask > erosion_mask_threshold``. Cells below the
+      threshold are erosion-protected (soft rock / hero zones). The mask
+      multiplies the per-cell ``_erod_scale`` if erodibility_map is also set.
+    - ``deposition_mask``: float [0,1] per-cell map. Deposition is permitted
+      only where ``deposition_mask > deposition_mask_threshold``. Confines
+      alluvial fan / delta deposition to target basin/valley zones.
+
+    When a mask is None, that channel is unrestricted (all-ones equivalent).
+
+    The extra ``hero_exclusion`` boolean mask overrides both erosion and
+    deposition at the cell level regardless of the above masks.
 
     The returned ``height`` is NOT clipped — it reflects the true
     world-unit eroded surface including any out-of-source-range values.
+
+    Parameters
+    ----------
+    erosion_mask : np.ndarray (H, W) float [0, 1] or None
+        Spatial mask controlling where erosion is permitted.
+        Values <= erosion_mask_threshold → erosion blocked at that cell.
+    deposition_mask : np.ndarray (H, W) float [0, 1] or None
+        Spatial mask controlling where deposition is permitted.
+        Values <= deposition_mask_threshold → deposition blocked at that cell.
+    erosion_mask_threshold : float
+        Threshold above which erosion is permitted (default 0.5).
+    deposition_mask_threshold : float
+        Threshold above which deposition is permitted (default 0.5).
 
     Returns
     -------
     ErosionMasks
         Contains height plus erosion_amount, deposition_amount, wetness,
-        drainage, bank_instability, and a metrics dict.
+        drainage, bank_instability, and a metrics dict with
+        erosion_mask_applied and deposition_mask_applied flags.
     """
     h_in = np.asarray(heightmap, dtype=np.float64)
     result = h_in.copy()
@@ -181,6 +211,25 @@ def apply_hydraulic_erosion_masks(
         _erod_scale = erod_arr / max(float(erod_arr.mean()), 1e-12)
     else:
         _erod_scale = None
+
+    # Validate and store per-channel spatial masks
+    _erosion_mask: Optional[np.ndarray] = None
+    if erosion_mask is not None:
+        _erosion_mask = np.asarray(erosion_mask, dtype=np.float64)
+        if _erosion_mask.shape != result.shape:
+            raise ValueError(
+                f"erosion_mask shape {_erosion_mask.shape} does not match "
+                f"heightmap shape {result.shape}"
+            )
+
+    _deposition_mask: Optional[np.ndarray] = None
+    if deposition_mask is not None:
+        _deposition_mask = np.asarray(deposition_mask, dtype=np.float64)
+        if _deposition_mask.shape != result.shape:
+            raise ValueError(
+                f"deposition_mask shape {_deposition_mask.shape} does not match "
+                f"heightmap shape {result.shape}"
+            )
 
     for _ in range(iterations):
         px = rng.random() * (cols - 2) + 0.5
@@ -255,7 +304,6 @@ def apply_hydraulic_erosion_masks(
 
             # Hero-exclusion: skip this droplet-cell if ANY of the 4
             # bilinear-corner cells is inside a protected zone.
-            # Prevents erode/deposit from leaking into protected neighbors.
             skip_cell = False
             if hero_mask is not None:
                 if (
@@ -266,12 +314,22 @@ def apply_hydraulic_erosion_masks(
                 ):
                     skip_cell = True
 
+            # Per-channel mask checks (evaluated per droplet step)
+            can_erode = not skip_cell
+            can_deposit = not skip_cell
+            if _erosion_mask is not None:
+                if float(_erosion_mask[iy, ix]) <= erosion_mask_threshold:
+                    can_erode = False
+            if _deposition_mask is not None:
+                if float(_deposition_mask[iy, ix]) <= deposition_mask_threshold:
+                    can_deposit = False
+
             if sediment > c or h_diff > 0:
                 if h_diff > 0:
                     deposit_amount = min(sediment, h_diff)
                 else:
                     deposit_amount = (sediment - c) * deposition
-                if skip_cell:
+                if not can_deposit:
                     deposit_amount = 0.0
                 sediment -= deposit_amount
                 if deposit_amount != 0.0:
@@ -282,7 +340,7 @@ def apply_hydraulic_erosion_masks(
                 erode_amount = max(erode_amount, 0.0)
                 if _erod_scale is not None:
                     erode_amount *= float(_erod_scale[iy, ix])
-                if skip_cell:
+                if not can_erode:
                     erode_amount = 0.0
                 sediment += erode_amount
                 if erode_amount != 0.0:
@@ -322,9 +380,6 @@ def apply_hydraulic_erosion_masks(
     wetness_norm = wetness / max_wet if max_wet > 0.0 else wetness
 
     # Addendum 1 D.1 — derive sediment accumulation and pool deepening
-    # sediment_accumulation_at_base: deposition concentrated at slope bases.
-    # Approximated as deposition weighted by inverse slope (flat areas at
-    # the foot of slopes collect more sediment).
     padded_h = np.pad(result, 1, mode="edge")
     grad_x = padded_h[1:-1, 2:] - padded_h[1:-1, :-2]
     grad_y = padded_h[2:, 1:-1] - padded_h[:-2, 1:-1]
@@ -332,9 +387,6 @@ def apply_hydraulic_erosion_masks(
     inv_slope = 1.0 / (1.0 + slope_mag)
     sediment_accumulation_at_base = deposition_amount * inv_slope
 
-    # pool_deepening_delta: height lowered where water pools (high wetness,
-    # low drainage = stagnant). Computed as the difference between original
-    # and eroded height, masked to cells with above-median wetness.
     height_delta = h_in - result  # positive where material was removed
     if wetness_norm.size > 0:
         wet_median = float(np.median(wetness_norm))
@@ -362,6 +414,8 @@ def apply_hydraulic_erosion_masks(
             "total_deposition": float(deposition_amount.sum()),
             "total_sediment_at_base": float(sediment_accumulation_at_base.sum()),
             "total_pool_deepening": float(pool_deepening_delta.sum()),
+            "erosion_mask_applied": _erosion_mask is not None,
+            "deposition_mask_applied": _deposition_mask is not None,
         },
     )
 
@@ -426,15 +480,57 @@ def _erode_brush(
     radius: int,
     rows: int,
     cols: int,
+    *,
+    sediment_capacity: float = 1.0,
+    talus_smooth_passes: int = 1,
 ) -> None:
-    """Apply a weighted brush-shaped delta at (cx, cy).
+    """Brush-based erosion kernel with radius falloff, sediment capacity, and talus smoothing.
 
-    When called on ``result`` with a positive ``amount`` the brush removes
-    material (matches legacy behavior where erode_amount was positive
-    but subtracted below). When called on ``erosion_amount`` with a
-    negative amount the brush accumulates the absolute removed values
-    (so erosion_amount remains non-negative after negation).
+    Improvements over the simple linear-falloff brush:
+
+    1. **Sediment-capacity falloff** — the effective erode amount at each
+       cell is scaled by ``sediment_capacity`` (0–1). A cell at full capacity
+       receives a reduced erosion contribution (``amount * w * sediment_capacity``).
+       This prevents unrealistically deep single-droplet channels and produces
+       the rounded channel cross-section characteristic of real river beds.
+
+    2. **Talus smoothing pass** — after the main brush deposit/erode, optional
+       1-ring talus smoothing redistributes extreme local height differences
+       within the brush footprint. This replicates Houdini HeightField Erode's
+       ``Talus Resting Angle`` post-step, softening sharp brush edges and
+       producing natural slope transitions at channel banks.
+
+    3. **Distance kernel** — uses ``max(0, radius - dist)`` linear falloff
+       (identical to Sebastian Lague's reference implementation), ensuring
+       the brush is zero at exactly ``radius`` cells distance.
+
+    When called on ``result`` with positive ``amount`` the brush removes
+    material. When called on ``erosion_amount`` with negative ``amount``
+    it accumulates absolute removed values (so erosion_amount ≥ 0).
+
+    Parameters
+    ----------
+    hmap : np.ndarray
+        Heightmap array modified in-place.
+    cx, cy : int
+        Centre cell of the erosion brush.
+    amount : float
+        Total amount to distribute. Positive → removes from hmap.
+    radius : int
+        Brush radius in cells.
+    rows, cols : int
+        Heightmap dimensions for bounds checking.
+    sediment_capacity : float
+        Capacity factor [0, 1]. 1.0 = full erosion; lower values reduce
+        erosion proportionally (soft-capacity cutoff for bank protection).
+    talus_smooth_passes : int
+        Number of 1-ring talus redistribution passes after the brush
+        (default 1). 0 disables smoothing for maximum performance.
     """
+    # Clamp capacity
+    cap = max(0.0, min(1.0, sediment_capacity))
+    effective_amount = amount * cap
+
     total_weight = 0.0
     weights: list[tuple[int, int, float]] = []
 
@@ -449,9 +545,32 @@ def _erode_brush(
                     weights.append((ny, nx, w))
                     total_weight += w
 
-    if total_weight > 0:
-        for ny, nx, w in weights:
-            hmap[ny, nx] -= amount * (w / total_weight)
+    if total_weight <= 0 or effective_amount == 0.0:
+        return
+
+    norm = effective_amount / total_weight
+    for ny, nx, w in weights:
+        hmap[ny, nx] -= norm * w
+
+    # --- Talus smoothing passes within the brush footprint ---
+    # Redistribute height differences that exceed a local talus threshold.
+    # The threshold is set proportional to the brush radius so larger brushes
+    # produce smoother banks.
+    if talus_smooth_passes > 0 and radius >= 1:
+        talus_thresh = abs(amount) / max(total_weight, 1.0) * 0.5
+        _4DIRS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+        for _ in range(talus_smooth_passes):
+            for ny, nx, _ in weights:
+                h_here = hmap[ny, nx]
+                for dr, dc in _4DIRS:
+                    nr2, nc2 = ny + dr, nx + dc
+                    if 0 <= nr2 < rows and 0 <= nc2 < cols:
+                        diff = h_here - hmap[nr2, nc2]
+                        if diff > talus_thresh:
+                            transfer = (diff - talus_thresh) * 0.25
+                            hmap[ny, nx] -= transfer
+                            hmap[nr2, nc2] += transfer
+                            h_here = hmap[ny, nx]
 
 
 # ---------------------------------------------------------------------------
@@ -656,54 +775,84 @@ def compute_stream_power_erosion(
     # Precompute A^m (area factor, constant across steps unless A updates)
     A_m = np.power(np.maximum(A, 1.0), m)
 
-    # 8-connectivity offsets for steepest-descent neighbor search
-    _neighbors = [
-        (-1, -1), (-1, 0), (-1, 1),
-        (0,  -1),           (0,  1),
-        (1,  -1), (1,  0),  (1,  1),
-    ]
+    # 8-neighbor direction offsets and distances (for receiver array build)
     _SQRT2 = 1.4142135623730951
+    _dy8 = np.array([-1, -1, -1,  0,  0,  1,  1,  1], dtype=np.int32)
+    _dx8 = np.array([-1,  0,  1, -1,  1, -1,  0,  1], dtype=np.int32)
+    _dd8 = np.array([_SQRT2, 1.0, _SQRT2, 1.0, 1.0, _SQRT2, 1.0, _SQRT2])
+
+    def _build_receiver_topo(h_flat: np.ndarray) -> tuple:
+        """Return (receiver, topo_order) for steepest-descent D8 flow."""
+        H2D = h_flat.reshape(rows, cols)
+        flat_idx = np.arange(rows * cols, dtype=np.int32)
+        receiver = flat_idx.copy()  # self-loop = no receiver (outlet/flat)
+        best_slope = np.zeros(rows * cols, dtype=np.float64)
+
+        for d in range(8):
+            nr = np.arange(rows, dtype=np.int32)[:, None] + _dy8[d]
+            nc = np.arange(cols, dtype=np.int32)[None, :] + _dx8[d]
+            valid = (nr >= 0) & (nr < rows) & (nc >= 0) & (nc < cols)
+            nidx = np.where(valid, (nr * cols + nc), -1).ravel()
+            # Slope toward this neighbor
+            slope_d = np.where(
+                (nidx >= 0),
+                (h_flat - h_flat[np.where(nidx >= 0, nidx, 0)]) / (cell_size * _dd8[d]),
+                -np.inf,
+            )
+            update = slope_d > best_slope
+            best_slope = np.where(update, slope_d, best_slope)
+            receiver = np.where(update & (nidx >= 0), nidx, receiver)
+
+        # Topological sort via donor counting (Braun & Willett 2013 §3)
+        n_donors = np.zeros(rows * cols, dtype=np.int32)
+        is_outlet = receiver == flat_idx  # self-loops are outlets
+        non_outlet = ~is_outlet
+        np.add.at(n_donors, receiver[non_outlet], 1)
+
+        # BFS from outlets (n_donors == 0 and is_outlet, or leaf nodes)
+        queue = np.where(n_donors == 0)[0].tolist()
+        topo_order = []
+        while queue:
+            c = queue.pop()
+            topo_order.append(c)
+            r = receiver[c]
+            if r != c:  # not an outlet self-loop
+                n_donors[r] -= 1
+                if n_donors[r] == 0:
+                    queue.append(r)
+
+        return receiver, np.array(topo_order, dtype=np.int32)
+
+    h_flat = h.ravel().copy()
+    K_flat = K.ravel()
+    A_m_flat = A_m.ravel()
+    uplift_flat = np.full(rows * cols, uplift_rate, dtype=np.float64)
 
     for _ in range(steps):
-        # ε-topological order: process from lowest elevation upward.
-        # Build (elevation, row, col) heap.
-        heap = [(h[r, c], r, c) for r in range(rows) for c in range(cols)]
-        _heapq.heapify(heap)
+        receiver, topo_order = _build_receiver_topo(h_flat)
 
-        while heap:
-            elev, r, c = _heapq.heappop(heap)
-
-            # Skip stale heap entries (elevation changed since insertion)
-            if abs(h[r, c] - elev) > 1e-9:
+        # Vectorized implicit SPL: process in topological order (headwaters first)
+        # H_new[i] = (H[i] + dt * U + dt * K[i] * A_m[i] * H[receiver[i]] / (cell_size * dd[i])) /
+        #             (1 + dt * K[i] * A_m[i] / (cell_size * dd[i]))
+        # where dd[i] is the distance to receiver.
+        h_new = h_flat.copy()
+        for idx in topo_order:
+            r = receiver[idx]
+            if r == idx:  # outlet: apply uplift only
+                h_new[idx] = h_flat[idx] + dt * uplift_flat[idx]
                 continue
+            ri_row, ri_col = divmod(idx, cols)
+            rr_row, rr_col = divmod(r, cols)
+            dd = cell_size * math.sqrt((ri_row - rr_row) ** 2 + (ri_col - rr_col) ** 2)
+            dd = max(dd, 1e-9)
+            ki = float(K_flat[idx])
+            am = float(A_m_flat[idx])
+            coeff = dt * ki * am / dd
+            h_new[idx] = (h_flat[idx] + dt * uplift_flat[idx] + coeff * h_new[r]) / (1.0 + coeff)
 
-            # Find steepest downstream neighbor
-            best_slope = 0.0
-            for dr, dc in _neighbors:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < rows and 0 <= nc < cols:
-                    dz = h[r, c] - h[nr, nc]
-                    dist = cell_size * (_SQRT2 if (dr != 0 and dc != 0) else 1.0)
-                    s = dz / dist
-                    if s > best_slope:
-                        best_slope = s
+        h_flat = h_new
 
-            if best_slope <= 0.0:
-                # Boundary or local minimum — apply only uplift
-                h[r, c] += dt * uplift_rate
-                continue
-
-            # Implicit stream-power update:
-            # H_new = H + dt * (U - K * A^m * S^n)
-            K_i = K[r, c]
-            A_m_i = A_m[r, c]
-            incision = K_i * A_m_i * (best_slope ** n)
-            h[r, c] += dt * (uplift_rate - incision)
-
-        # Clamp: do not allow elevation below 0
-        h = np.clip(h, 0.0, None)
-
-    return h.astype(dem.dtype)
+    return h_flat.reshape(rows, cols).astype(dem.dtype)
 
 
 __all__ = [

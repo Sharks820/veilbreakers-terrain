@@ -93,12 +93,29 @@ def compute_macro_color(
             if np.any(mask):
                 color[mask] = np.array(rgb, dtype=np.float64)
 
-    # Wetness darkens
+    # Wetness darkens (wet ground darker + slight blue-grey shift, matching
+    # UE5 Landscape wet-surface material response)
     wet = stack.get("wetness")
     if wet is not None:
-        wet_arr = np.clip(np.asarray(wet, dtype=np.float64), 0.0, 1.0)
-        # darken up to 35%
-        color = color * (1.0 - 0.35 * wet_arr[..., None])
+        wet_arr = np.clip(np.asarray(wet, dtype=np.float64), 0.0, 1.0)[..., None]
+        # darken up to 35%; also shift toward cool blue-grey for standing water
+        wet_tint = np.array([0.20, 0.22, 0.28], dtype=np.float64).reshape(1, 1, 3)
+        color = color * (1.0 - 0.35 * wet_arr) + wet_tint * (0.15 * wet_arr)
+
+    # Erosion bleaching: eroded cells → paler, sandier (exposed fresh rock/soil
+    # is lighter before weathering; matches Gaea's erosion color export)
+    erosion = stack.get("erosion_amount")
+    if erosion is not None:
+        er = np.clip(np.asarray(erosion, dtype=np.float64), 0.0, 1.0)[..., None]
+        bleach_target = np.array([0.62, 0.58, 0.50], dtype=np.float64).reshape(1, 1, 3)
+        color = color * (1.0 - 0.25 * er) + bleach_target * (0.25 * er)
+
+    # Deposition staining: deposited sediment → muddy ochre tones
+    deposition = stack.get("deposition_amount")
+    if deposition is not None:
+        dep = np.clip(np.asarray(deposition, dtype=np.float64), 0.0, 1.0)[..., None]
+        mud_target = np.array([0.38, 0.32, 0.22], dtype=np.float64).reshape(1, 1, 3)
+        color = color * (1.0 - 0.30 * dep) + mud_target * (0.30 * dep)
 
     # Altitude cool shift (Z-up): above 0.7 h_norm shift toward blue-grey
     alt_mix = np.clip((h_norm - 0.6) / 0.4, 0.0, 1.0)[..., None]

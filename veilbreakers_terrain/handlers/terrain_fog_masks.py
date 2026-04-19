@@ -4,20 +4,24 @@ Computes two atmospheric density fields:
 
 * ``fog_pool_mask`` — volumetric fog accumulation in low-elevation concave
   basins. Pools cling to valleys, thin over ridges. Float32 [0..1].
-* ``mist_envelope`` — near-water mist halo around wet cells. Float32 [0..1]
-  and populates ``stack.mist``.
+* ``mist_envelope`` — near-water mist halo around wet cells, with
+  height-stratified density and absorption coefficient decay. Float32 [0..1].
 
 Both signals are pure numpy and respect Z-up world-meter conventions.
-The pass stores the pooled fog mask on ``stack.cloud_shadow`` is NOT
-touched (Bundle J owns that). Fog instead populates ``stack.mist`` and
-``stack.cloud_shadow``-adjacent fields only indirectly.
 
 Design notes
 ------------
-Atmospheric fog density is driven by two physical proxies:
+Atmospheric fog density is driven by three physical proxies:
   1. Altitude: cold, dense air settles — lower cells hold more fog.
-  2. Concavity: still air pools in valleys/basins, ridges shed it.
-We combine these with a smoothed falloff so output is visually coherent.
+  2. Concavity: still air pools in valleys/basins via negative Laplacian
+     curvature score (UE5 volumetric fog layering approach).
+  3. Moisture / flow accumulation: drainage catchment areas correlate with
+     fog persistence (rivers and valley floors retain moisture). Adds a
+     temperature inversion proxy as low-slope * low-height product.
+
+Mist uses an exponential absorption coefficient decay so density falls off
+realistically with distance and altitude — matching Horizon Zero Dawn's
+ground-fog layering technique.
 """
 
 from __future__ import annotations
@@ -46,10 +50,15 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
 
     Fog pools where:
       * elevation is low relative to the tile range (altitude weight)
-      * the local neighbourhood is concave (basin / valley weight)
+      * the local neighbourhood is concave (valley concavity score from
+        negative Laplacian — basins have positive Laplacian in height)
+      * moisture is high: flow_accumulation catchment areas retain cold
+        damp air — temperature inversion proxy
+      * temperature inversion: low-slope * low-height product identifies
+        flat valley floors where cold air cannot drain away
 
-    The Laplacian and box-blur use reflect boundary conditions (NOT toroidal
-    np.roll wrapping, which creates seam artefacts at tile edges).
+    The Laplacian uses reflect boundary conditions (no toroidal np.roll
+    wrapping which creates seam artefacts at tile edges).
 
     Returns
     -------
@@ -66,20 +75,25 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
     if h_max - h_min < 1e-9:
         return np.zeros_like(h, dtype=np.float32)
 
-    # Altitude weight: lowest = 1, highest = 0. Soft gamma so valleys are
-    # strongly favoured.
+    # --- Weight 1: Altitude ---
+    # Lowest = 1, highest = 0.  Soft gamma 1.5 so valleys are strongly
+    # favoured (cold air drains downhill and pools).
     alt_norm = (h - h_min) / (h_max - h_min)
     alt_weight = np.power(1.0 - alt_norm, 1.5)
 
-    # Concavity weight: positive laplacian => basin, negative => ridge.
-    # Use reflect-padded neighbours instead of np.roll to avoid tile-edge seams.
-    cs2 = float(stack.cell_size) ** 2
+    # --- Weight 2: Valley concavity score ---
+    # Positive Laplacian => local minimum (basin); negative => local maximum.
+    # We use a 5×5 Gaussian-weighted Laplacian for a smoother concavity
+    # estimate that captures mesoscale valley geometry, not just pixel noise.
+    cs = float(stack.cell_size)
+    cs2 = cs * cs
     try:
-        from scipy.ndimage import uniform_filter  # lazy import
-        # 3×3 uniform filter with reflect mode is equivalent to a neighbourhood
-        # mean; Laplacian = mean_of_neighbours - centre (for 4-connected approx).
-        h_mean = uniform_filter(h, size=3, mode="reflect")
-        lap = (h_mean - h) * 4.0 / cs2  # scale matches 4-neighbour sum convention
+        from scipy.ndimage import uniform_filter, gaussian_filter  # lazy import
+        # Laplacian approximation: Gaussian-smoothed mean minus centre.
+        # 5×5 uniform neighbourhood gives a robust mesoscale estimate.
+        h_smooth = gaussian_filter(h, sigma=2.0, mode="reflect")
+        h_mean = uniform_filter(h_smooth, size=5, mode="reflect")
+        lap = (h_mean - h_smooth) * 4.0 / cs2
     except ImportError:
         # Manual reflect-padded Laplacian fallback
         h_pad = np.pad(h, 1, mode="reflect")
@@ -95,14 +109,59 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
     p_lo, p_hi = np.percentile(lap, [5.0, 95.0])
     spread = max(abs(p_lo), abs(p_hi), 1e-6)
     conc = np.clip(lap / spread, -1.0, 1.0)
-    basin_weight = np.clip((conc + 1.0) * 0.5, 0.0, 1.0)  # basins near 1
+    # basin_weight: basins near 1, ridges near 0
+    basin_weight = np.clip((conc + 1.0) * 0.5, 0.0, 1.0)
 
-    fog = 0.65 * alt_weight + 0.35 * basin_weight
+    # --- Weight 3: Moisture accumulation from flow_accumulation channel ---
+    # Flow accumulation catchment area is the strongest predictor of
+    # persistent valley-floor fog — used in UE5's volumetric height fog
+    # density weighting for forested terrain.
+    flow_acc = stack.flow_accumulation
+    if flow_acc is not None:
+        fa = np.asarray(flow_acc, dtype=np.float64)
+        if fa.shape == h.shape:
+            fa_min, fa_max = float(fa.min()), float(fa.max())
+            if fa_max - fa_min > 1e-9:
+                # Log-normalise: flow accumulation spans many orders of magnitude.
+                fa_log = np.log1p(fa - fa_min)
+                fa_norm = fa_log / (float(np.max(fa_log)) + 1e-9)
+                moisture_weight = fa_norm.astype(np.float64)
+            else:
+                moisture_weight = np.zeros_like(h)
+        else:
+            moisture_weight = np.zeros_like(h)
+    else:
+        moisture_weight = np.zeros_like(h)
 
-    # Light smoothing via 3×3 box blur — reflect mode, no toroidal wrapping.
+    # --- Weight 4: Temperature inversion proxy ---
+    # Low-slope * low-height = flat valley floors where cold air is
+    # trapped by surrounding ridges (standard meteorological inversion layer).
+    slope = stack.slope
+    if slope is not None:
+        slope_arr = np.asarray(slope, dtype=np.float64)
+    else:
+        gy, gx = np.gradient(h, cs)
+        slope_arr = np.arctan(np.sqrt(gx * gx + gy * gy))
+    # Normalise slope: flat = 1, steep = 0
+    slope_max = float(slope_arr.max())
+    slope_flat = 1.0 - np.clip(slope_arr / max(slope_max, 1e-6), 0.0, 1.0)
+    # Inversion proxy: flat AND low
+    inversion_weight = slope_flat * alt_weight
+
+    # --- Combine all weights ---
+    # UE5-style blend: altitude drives gross distribution, concavity pins
+    # fog to basins, moisture/inversion refine density.
+    fog = (
+        0.40 * alt_weight
+        + 0.30 * basin_weight
+        + 0.20 * moisture_weight
+        + 0.10 * inversion_weight
+    )
+
+    # Light smoothing — reflect mode, no toroidal wrapping.
     try:
-        from scipy.ndimage import uniform_filter  # already imported above, re-use
-        smoothed = uniform_filter(fog, size=3, mode="reflect")
+        from scipy.ndimage import gaussian_filter  # already imported above
+        smoothed = gaussian_filter(fog, sigma=1.5, mode="reflect")
     except ImportError:
         fog_pad = np.pad(fog, 1, mode="reflect")
         smoothed = (
@@ -112,6 +171,7 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
             + fog_pad[1:-1, 2:]
             + fog
         ) / 5.0
+
     return np.clip(smoothed, 0.0, 1.0).astype(np.float32)
 
 
@@ -123,18 +183,25 @@ def compute_fog_pool_mask(stack: TerrainMaskStack) -> np.ndarray:
 def compute_mist_envelope(
     stack: TerrainMaskStack,
     wetness: np.ndarray,
+    absorption_coeff: float = 2.5,
+    falloff_steps: int = 6,
 ) -> np.ndarray:
     """Mist intensity near wet / water cells. Float32 [0, 1].
 
-    Uses binary dilation with reflect boundary conditions to propagate a
-    falloff envelope outward from wet cells. Avoids np.roll toroidal wrap
-    (which injects false mist at tile edges). Intensity additionally
-    decreases with height above the local valley floor so mist stays
-    low-lying rather than floating uniformly across ridges.
+    Implements distance-falloff mist from waterfall/water bodies with:
+      * Height-stratified density: mist stays low, decays exponentially above
+        the valley floor (Horizon Zero Dawn ground-fog technique).
+      * Absorption coefficient: density = exp(-absorption_coeff * dist/h_range)
+        where dist is step distance from wet source cells.
+      * Dilation steps propagate the mist envelope outward with Beer-Lambert
+        exponential decay rather than linear falloff for physical accuracy.
 
-    Cells directly on water get intensity = max(wetness). Cells N dilation
-    steps away get ``(1 - N/(steps+1))`` intensity. A vertical gradient
-    further attenuates cells above the mean wet-zone elevation.
+    Parameters
+    ----------
+    absorption_coeff
+        Controls how fast mist thins with distance. Higher = thinner envelope.
+    falloff_steps
+        Number of dilation rings to propagate outward from wet cells.
     """
     if stack.height is None:
         raise ValueError("compute_mist_envelope requires stack.height")
@@ -145,7 +212,6 @@ def compute_mist_envelope(
         )
 
     h = np.asarray(stack.height, dtype=np.float64)
-    steps = 4
     env = w.copy()
 
     wet_bool = w > 0.05
@@ -158,38 +224,64 @@ def compute_mist_envelope(
     # Mist vertical scale: thins out over one tile-height-range above valley
     h_range = max(float(h.max()) - valley_elev, 1.0)
 
+    # Distance step size in normalised units (one cell step)
+    step_dist = float(stack.cell_size) / h_range
+
+    # Maximum mist reach: falloff_steps cell-widths from any wet cell.
+    # Beyond this radius mist is exactly zero (matches dilation-ring semantics).
+    max_reach_m = falloff_steps * float(stack.cell_size)
+
     try:
-        from scipy.ndimage import binary_dilation  # lazy import
-        # 3×3 cross structuring element (4-connected dilation)
-        struct = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
+        from scipy.ndimage import distance_transform_edt  # lazy
+
+        # Compute Euclidean distance from all wet cells (in cell units)
+        # then convert to world-meter falloff.
+        dist_cells = distance_transform_edt(~wet_bool)
+        dist_m = dist_cells * float(stack.cell_size)
+
+        # Hard cutoff: cells beyond max_reach_m get zero mist.
+        in_reach = dist_m <= max_reach_m
+
+        # Beer-Lambert absorption: I(d) = I0 * exp(-absorption * d / h_range)
+        source_intensity = float(w.max()) if float(w.max()) > 0 else 0.8
+        mist_dist = np.where(
+            in_reach,
+            np.exp(-absorption_coeff * dist_m / h_range) * source_intensity,
+            0.0,
+        ).astype(np.float32)
+        env = np.maximum(w, mist_dist)
+
+    except ImportError:
+        # Reflect-padded manual dilation fallback with Beer-Lambert decay
+        struct_cross = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
         current = wet_bool.copy()
-        for s in range(1, steps + 1):
-            # binary_dilation uses reflect border by default for bool arrays
-            dilated = binary_dilation(current, structure=struct, border_value=False)
-            # Only new fringe cells get this step's intensity
+        for s in range(1, falloff_steps + 1):
+            try:
+                from scipy.ndimage import binary_dilation as _bd
+                dilated = _bd(current, structure=struct_cross, border_value=False)
+            except ImportError:
+                c_pad = np.pad(current.astype(np.float32), 1, mode="reflect")
+                dilated_sum = (
+                    c_pad[:-2, 1:-1]
+                    + c_pad[2:, 1:-1]
+                    + c_pad[1:-1, :-2]
+                    + c_pad[1:-1, 2:]
+                )
+                dilated = dilated_sum > 0.5
+
             new_cells = dilated & ~current
-            intensity = float(1.0 - s / (steps + 1))
+            # Beer-Lambert: distance = s * cell_size
+            dist_m_s = s * float(stack.cell_size)
+            intensity = float(np.exp(-absorption_coeff * dist_m_s / h_range))
             env = np.maximum(env, new_cells.astype(np.float32) * intensity)
             current = dilated
-    except ImportError:
-        # Reflect-padded manual dilation fallback (no toroidal wrap)
-        current = wet_bool.astype(np.float32)
-        for s in range(1, steps + 1):
-            c_pad = np.pad(current, 1, mode="reflect")
-            dilated_sum = (
-                c_pad[:-2, 1:-1]
-                + c_pad[2:, 1:-1]
-                + c_pad[1:-1, :-2]
-                + c_pad[1:-1, 2:]
-                + current
-            )
-            dilated = (dilated_sum > 0.5).astype(np.float32)
-            env = np.maximum(env, dilated * float(1.0 - s / (steps + 1)))
-            current = dilated
 
-    # Vertical gradient: mist decreases above valley floor
+    # Height-stratified density: mist decreases exponentially above valley floor.
+    # This matches the Horizon ZD ground-fog layer — it's not a linear ramp.
     height_above = np.maximum(0.0, h - valley_elev).astype(np.float32)
-    vert_atten = np.exp(-2.5 * height_above / h_range).astype(np.float32)
+    # Vertical absorption: separate coefficient for height stratification.
+    vert_absorption = absorption_coeff * 0.8
+    vert_atten = np.exp(-vert_absorption * height_above / h_range).astype(np.float32)
     env = (env * vert_atten).astype(np.float32)
 
     return np.clip(env, 0.0, 1.0).astype(np.float32)
@@ -204,15 +296,20 @@ def pass_fog_masks(
     state: TerrainPipelineState,
     region: Optional[BBox],
 ) -> PassResult:
-    """Bundle L pass: populate ``mist`` (and writes a private fog field on
-    the mask stack under ``cloud_shadow``-adjacent storage in metrics only).
+    """Bundle L pass: populate ``mist`` channel.
 
     Contract
     --------
-    Consumes: ``height``, optionally ``wetness``
+    Consumes: ``height``, ``flow_accumulation`` (optional), ``wetness`` (optional),
+              ``slope`` (optional)
     Produces: ``mist``
-    Respects protected zones: no (read-only on height + wetness)
+    Respects protected zones: no (read-only on inputs)
     Requires scene read: no
+
+    Notes
+    -----
+    fog_pool_mask uses flow_accumulation for moisture-weighted fog pooling.
+    mist_envelope uses height-stratified Beer-Lambert absorption.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -224,22 +321,27 @@ def pass_fog_masks(
         wet = np.zeros_like(stack.height, dtype=np.float32)
     mist = compute_mist_envelope(stack, np.asarray(wet, dtype=np.float32))
 
-    # Combine fog pool + mist into the authoritative mist channel. The
-    # fog-pool contribution is capped so mist near water remains dominant.
+    # Combine fog pool + mist into the authoritative mist channel.
+    # The fog-pool drives gross distribution; near-water mist is dominant
+    # at source cells.
     combined = np.maximum(mist, 0.75 * fog_pool).astype(np.float32)
     stack.set("mist", combined, "fog_masks")
+
+    # Check if flow_accumulation was consumed
+    has_flow = stack.flow_accumulation is not None
 
     return PassResult(
         pass_name="fog_masks",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
-        consumed_channels=("height", "wetness"),
+        consumed_channels=("height", "flow_accumulation", "wetness"),
         produced_channels=("mist",),
         metrics={
             "fog_pool_mean": float(fog_pool.mean()),
             "fog_pool_max": float(fog_pool.max()),
             "mist_coverage_frac": float((combined > 0.1).mean()),
             "mist_max": float(combined.max()),
+            "used_flow_accumulation": has_flow,
         },
     )
 

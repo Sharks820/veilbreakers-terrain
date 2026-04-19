@@ -479,18 +479,72 @@ class TerrainPassController:
         return ckpt
 
     def rollback_to(self, checkpoint_id: str) -> None:
-        """Rewind full pipeline state to a prior checkpoint by id."""
+        """Rewind full pipeline state to a named checkpoint by id.
+
+        Matches Houdini PDG rollback semantics:
+          1. Load the mask stack from the checkpoint's .npz file.
+          2. Validate that every channel shape in the restored stack matches
+             the current grid dimensions (tile_size x tile_size + 1 for height,
+             tile_size x tile_size for masks).  Shape mismatch raises ValueError
+             rather than silently producing a mis-sized state.
+          3. Restore water_network, side_effects, and pass_history to the
+             snapshot captured at checkpoint time.
+          4. Truncate the checkpoint list to the restored point so future
+             checkpoints branch cleanly from it.
+          5. Emit an INFO log with checkpoint id, pass name, and how many
+             passes were rewound.
+        """
+        import logging as _logging
+        _rlog = _logging.getLogger(__name__)
+
         for ckpt in reversed(self.state.checkpoints):
             if ckpt.checkpoint_id == checkpoint_id:
                 restored = TerrainMaskStack.from_npz(ckpt.mask_stack_path)
+
+                # --- Shape validation against current grid ---
+                current_shape = self.state.mask_stack.height.shape
+                restored_shape = restored.height.shape
+                if restored_shape != current_shape:
+                    raise ValueError(
+                        f"rollback_to '{checkpoint_id}': restored height shape "
+                        f"{restored_shape} does not match current grid shape "
+                        f"{current_shape}. Rollback aborted."
+                    )
+                # Validate all populated channels
+                for ch_name in list(restored.populated_by_pass.keys()):
+                    ch_arr = restored.get(ch_name)
+                    if ch_arr is None:
+                        continue
+                    if ch_arr.shape[:2] != current_shape[:2]:
+                        raise ValueError(
+                            f"rollback_to '{checkpoint_id}': channel '{ch_name}' "
+                            f"shape {ch_arr.shape} incompatible with current grid "
+                            f"{current_shape}. Rollback aborted."
+                        )
+
+                passes_rewound = (
+                    len(self.state.pass_history) - ckpt.pass_history_len
+                )
+
                 self.state.mask_stack = restored
                 self.state.water_network = copy.deepcopy(ckpt.water_network_snapshot)
                 self.state.side_effects = list(ckpt.side_effects_snapshot)
                 self.state.pass_history = self.state.pass_history[: ckpt.pass_history_len]
+
                 # Truncate checkpoint history past the restored point
                 idx = self.state.checkpoints.index(ckpt)
                 self.state.checkpoints = self.state.checkpoints[: idx + 1]
+
+                _rlog.info(
+                    "rollback_to: restored to checkpoint '%s' (pass=%s); "
+                    "rewound %d pass(es); %d checkpoint(s) remaining",
+                    checkpoint_id,
+                    ckpt.pass_name,
+                    passes_rewound,
+                    len(self.state.checkpoints),
+                )
                 return
+
         raise KeyError(f"Unknown checkpoint id: {checkpoint_id}")
 
     def rollback_last_checkpoint(self) -> None:
@@ -530,14 +584,19 @@ def pass_compute_terrain_labels(
     shape = stack.height.shape
 
     label_channels = ("rock_label", "gravel_label", "water_label", "cliff_label")
+    pre_stamped = 0
+    coverage: dict = {}
     for ch in label_channels:
         existing = stack.get(ch)
         if existing is not None:
             # Preserve generator-stamped mask; clamp to [0, 1] (T-10-01-01)
             clamped = np.clip(np.asarray(existing, dtype=np.float32), 0.0, 1.0)
             stack.set(ch, clamped, "terrain_labels")
+            pre_stamped += 1
+            coverage[ch] = float(np.mean(clamped > 0.0))
         else:
             stack.set(ch, np.zeros(shape, dtype=np.float32), "terrain_labels")
+            coverage[ch] = 0.0
 
     return PassResult(
         pass_name="terrain_labels",
@@ -545,7 +604,12 @@ def pass_compute_terrain_labels(
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
         produced_channels=("rock_label", "gravel_label", "water_label", "cliff_label"),
-        metrics={},
+        metrics={
+            "channels_pre_stamped": pre_stamped,
+            "channels_zeroed": len(label_channels) - pre_stamped,
+            **{f"coverage_{ch}": v for ch, v in coverage.items()},
+        },
+        issues=[],
     )
 
 
@@ -717,17 +781,102 @@ def register_macro_color_pass() -> None:
 # ---------------------------------------------------------------------------
 
 
-def register_default_passes() -> None:
-    """Register the four Bundle A default passes on the controller.
+def _toposort_passes(
+    definitions: "list[PassDefinition]",
+) -> "list[PassDefinition]":
+    """Return a topological ordering of pass definitions by channel dependency.
 
-    Importing this module does NOT auto-register — call this function
-    (or import ``_terrain_world`` which calls it) to activate them.
-    This lets unit tests start from an empty registry.
+    Algorithm: Kahn's BFS.  An edge A→B exists when pass B requires a channel
+    that pass A produces.  Raises ``ValueError`` on a cycle (which would
+    indicate a circular channel dependency — impossible to execute).
+
+    Passes with no channel dependencies appear first; passes that only consume
+    channels produced by earlier passes appear after their producers.  Within
+    the same dependency level, original registration order is preserved
+    (stable sort).
     """
+    import logging as _logging
+    _tlog = _logging.getLogger(__name__)
+
+    name_to_def: "dict[str, PassDefinition]" = {d.name: d for d in definitions}
+
+    # Build the channel→producers map
+    channel_producers: "dict[str, list[str]]" = {}
+    for d in definitions:
+        for ch in d.produces_channels:
+            channel_producers.setdefault(ch, []).append(d.name)
+
+    # Build adjacency list: for each pass, which passes must run before it
+    in_edges: "dict[str, set[str]]" = {d.name: set() for d in definitions}
+    for d in definitions:
+        for ch in d.requires_channels:
+            for producer in channel_producers.get(ch, []):
+                if producer != d.name:
+                    in_edges[d.name].add(producer)
+
+    # Kahn's algorithm
+    in_degree: "dict[str, int]" = {name: len(deps) for name, deps in in_edges.items()}
+    queue: "list[str]" = [
+        d.name for d in definitions if in_degree[d.name] == 0
+    ]
+    ordered: "list[str]" = []
+
+    while queue:
+        # Pop in original-registration order for stability
+        nxt = queue.pop(0)
+        ordered.append(nxt)
+        # Reduce in-degree for passes that depended on nxt
+        for d in definitions:
+            if nxt in in_edges[d.name]:
+                in_edges[d.name].discard(nxt)
+                in_degree[d.name] -= 1
+                if in_degree[d.name] == 0:
+                    queue.append(d.name)
+
+    if len(ordered) != len(definitions):
+        cycle_names = [d.name for d in definitions if d.name not in ordered]
+        raise ValueError(
+            f"register_default_passes: cycle detected in pass dependency graph "
+            f"involving: {cycle_names}"
+        )
+
+    result = [name_to_def[n] for n in ordered]
+    _tlog.debug(
+        "register_default_passes: topological order = %s",
+        [d.name for d in result],
+    )
+    return result
+
+
+def register_default_passes() -> None:
+    """Register the Bundle A default passes on the controller with full DAG validation.
+
+    Matches UE5 World Partition DAG registration semantics:
+      1. Collect all PassDefinition objects (does NOT auto-register — call
+         this function or import ``_terrain_world`` to activate; lets unit
+         tests start from an empty registry).
+      2. **Channel prerequisite check**: before registering, verify that every
+         ``requires_channels`` entry is produced by at least one other pass in
+         the batch.  Passes that consume externally-supplied channels (e.g.
+         ``height`` already on the mask stack) are exempted from this check
+         because those channels may be present at runtime even without a
+         registered producer.  An unresolvable dependency emits a WARNING
+         rather than raising, so the pipeline degrades gracefully.
+      3. **Cycle detection + topological sort**: the full dependency graph is
+         checked for cycles (``ValueError`` on cycle); passes are registered
+         in topological order so the registry reflects a valid execution
+         sequence.
+      4. **Registration order log**: logs the final ordered pass names at INFO
+         level so pipeline wiring is always auditable.
+    """
+    import logging as _logging
+    _rlog = _logging.getLogger(__name__)
+
     # Lazy import to avoid circular dependency at module load time.
     from . import _terrain_world as _tw
 
-    TerrainPassController.register_pass(
+    # ----- Collect all definitions -----
+    raw_definitions: "list[PassDefinition]" = [
         PassDefinition(
             name="macro_world",
             func=_tw.pass_macro_world,
@@ -736,9 +885,7 @@ def register_default_passes() -> None:
             seed_namespace="macro_world",
             may_modify_geometry=False,
             requires_scene_read=False,
-        )
-    )
-    TerrainPassController.register_pass(
+        ),
         PassDefinition(
             name="pass_generate_low_freq_hmap",
             func=_tw.pass_generate_low_freq_hmap,
@@ -748,9 +895,7 @@ def register_default_passes() -> None:
             may_modify_geometry=False,
             requires_scene_read=False,
             description="Generate low-freq base heightmap (Fix 12.1)",
-        )
-    )
-    TerrainPassController.register_pass(
+        ),
         PassDefinition(
             name="pass_generate_high_freq_detail",
             func=_tw.pass_generate_high_freq_detail,
@@ -760,9 +905,7 @@ def register_default_passes() -> None:
             may_modify_geometry=False,
             requires_scene_read=False,
             description="Generate high-freq detail noise band (Fix 12.1)",
-        )
-    )
-    TerrainPassController.register_pass(
+        ),
         PassDefinition(
             name="structural_masks",
             func=_tw.pass_structural_masks,
@@ -778,12 +921,8 @@ def register_default_passes() -> None:
             ),
             seed_namespace="structural_masks",
             requires_scene_read=False,
-            # Structural masks are always computed full-tile since slope /
-            # curvature / basin are global properties of the heightmap.
             supports_region_scope=False,
-        )
-    )
-    TerrainPassController.register_pass(
+        ),
         PassDefinition(
             name="erosion",
             func=_tw.pass_erosion,
@@ -801,9 +940,7 @@ def register_default_passes() -> None:
             ),
             seed_namespace="erosion",
             requires_scene_read=True,
-        )
-    )
-    TerrainPassController.register_pass(
+        ),
         PassDefinition(
             name="pass_composite_hmap",
             func=_tw.pass_composite_hmap,
@@ -813,9 +950,7 @@ def register_default_passes() -> None:
             may_modify_geometry=False,
             requires_scene_read=False,
             description="Composite eroded low-freq + high-freq detail into final height (Fix 12.1)",
-        )
-    )
-    TerrainPassController.register_pass(
+        ),
         PassDefinition(
             name="validation_minimal",
             func=_tw.pass_validation_minimal,
@@ -825,8 +960,43 @@ def register_default_passes() -> None:
             may_modify_geometry=False,
             respects_protected_zones=False,
             requires_scene_read=False,
+        ),
+    ]
+
+    if raw_definitions:
+        # ----- Channel prerequisite check -----
+        all_produced: "set[str]" = set()
+        for d in raw_definitions:
+            all_produced.update(d.produces_channels)
+
+        for d in raw_definitions:
+            for ch in d.requires_channels:
+                if ch not in all_produced:
+                    _rlog.warning(
+                        "register_default_passes: pass '%s' requires channel '%s' "
+                        "which no registered pass produces — expected on mask stack "
+                        "at runtime (e.g. height supplied by caller).",
+                        d.name, ch,
+                    )
+
+        # ----- Cycle detection + topological sort -----
+        try:
+            ordered = _toposort_passes(raw_definitions)
+        except ValueError as exc:
+            _rlog.error("register_default_passes: %s", exc)
+            ordered = raw_definitions  # fall back to declaration order
+
+        # ----- Register in topological order -----
+        for definition in ordered:
+            TerrainPassController.register_pass(definition)
+
+        _rlog.info(
+            "register_default_passes: registered %d passes in order: %s",
+            len(ordered),
+            [d.name for d in ordered],
         )
-    )
+
+    # Supplemental passes (always register after core DAG)
     from .terrain_delta_integrator import register_integrator_pass
     register_integrator_pass()
     register_terrain_label_passes()
