@@ -117,6 +117,25 @@ class TestUnityScaleAppliedToManifest:
         assert abs(uwo[0] - 100.0 * UNITY_SCALE_FACTOR) < 1e-6
         assert abs(uwo[2] - 200.0 * UNITY_SCALE_FACTOR) < 1e-6
 
+    def test_seam_contract_is_embedded(self):
+        stack = _make_minimal_stack()
+        with tempfile.TemporaryDirectory() as td:
+            manifest = export_unity_manifest(stack, Path(td))
+        seam = manifest["seam_contract"]
+        assert seam["tile_coords"] == [0, 0]
+        assert seam["world_bounds"]["min_x"] == 100.0
+        assert seam["edge_contracts"]["north"]["sample_count"] == 5
+
+    def test_world_id_flows_into_manifest_and_seam_contract(self):
+        stack = _make_minimal_stack()
+        stack.world_id = "veilbreakers_world"
+        stack.batch_id = "batch_alpha"
+        with tempfile.TemporaryDirectory() as td:
+            manifest = export_unity_manifest(stack, Path(td))
+        assert manifest["world_id"] == "veilbreakers_world"
+        assert manifest["seam_contract"]["world_id"] == "veilbreakers_world"
+        assert manifest["seam_contract"]["batch_id"] == "batch_alpha"
+
     def test_tile_size_not_scaled(self):
         """tile_size is a pixel count — must NOT be scaled."""
         stack = _make_minimal_stack(tile_size=4)

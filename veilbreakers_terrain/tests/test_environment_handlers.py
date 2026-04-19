@@ -4,7 +4,9 @@ Tests _validate_terrain_params, _export_heightmap_raw, and validates
 handler return dict structure via pure-logic extraction.
 """
 
+import json
 import struct
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -794,6 +796,45 @@ class TestControllerTerrainPath:
 
 
 class TestWorldTerrainGeneration:
+    def test_generate_terrain_tile_writes_resume_manifest(self, tmp_path):
+        from blender_addon.handlers import environment as env_mod
+
+        heightmap = np.array(
+            [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
+            dtype=np.float64,
+        )
+        mesh_result = {
+            "name": "TileA",
+            "vertex_count": 9,
+            "cliff_overlays": [],
+            "object_location": (1.0, 1.0, 0.0),
+        }
+
+        with patch.object(env_mod, "generate_world_heightmap", return_value=heightmap), \
+             patch.object(env_mod, "_create_terrain_mesh_from_heightmap", return_value=mesh_result):
+            result = env_mod.handle_generate_terrain_tile(
+                {
+                    "name": "TileA",
+                    "tile_x": 0,
+                    "tile_y": 0,
+                    "tile_size": 2,
+                    "resolution": 3,
+                    "cell_size": 2.0,
+                    "terrain_type": "mountains",
+                    "export_splatmaps": False,
+                    "export_dir": str(tmp_path),
+                    "seed": 17,
+                }
+            )
+
+        manifest_path = Path(result["tile_manifest_path"])
+        assert manifest_path.exists()
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["tile_name"] == "TileA"
+        assert manifest["seam_contract"]["tile_coords"] == [0, 0]
+        assert manifest["seam_contract"]["neighbor_tiles"]["east"] == [1, 0]
+        assert result["seam_contract"]["edge_contracts"]["east"]["sample_count"] == 3
+
     def test_world_terrain_wraps_tile_generation(self):
         """handle_generate_world_terrain delegates to tiled generation for compatibility."""
         from blender_addon.handlers import environment as env_mod
@@ -824,6 +865,56 @@ class TestWorldTerrainGeneration:
         assert {(tile["tile_x"], tile["tile_y"]) for tile in result["tiles"]} == {
             (0, 0), (1, 0), (0, 1), (1, 1),
         }
+
+    def test_world_terrain_writes_batch_manifest_and_frontier(self, tmp_path):
+        from blender_addon.handlers import environment as env_mod
+        from blender_addon.handlers.terrain_chunking import build_tile_seam_contract
+
+        def _fake_tile(params):
+            tile_x = params["tile_x"]
+            tile_y = params["tile_y"]
+            terrain_size = float(params.get("tile_size", 64)) * float(params.get("cell_size", 1.0))
+            seam_contract = build_tile_seam_contract(
+                [[tile_x, tile_x + 1], [tile_y, tile_y + 1]],
+                tile_x=tile_x,
+                tile_y=tile_y,
+                cell_size=float(params.get("cell_size", 1.0)),
+                world_origin_x=float(tile_x) * terrain_size,
+                world_origin_y=float(tile_y) * terrain_size,
+                world_id="World",
+                batch_id="World_0_0_2x2",
+            )
+            return {
+                "name": params["name"],
+                "tile_x": tile_x,
+                "tile_y": tile_y,
+                "terrain_size": terrain_size,
+                "world_origin_x": float(tile_x) * terrain_size,
+                "world_origin_y": float(tile_y) * terrain_size,
+                "vertex_count": 4,
+                "seam_contract": seam_contract,
+                "tile_manifest_path": str(tmp_path / f"{params['name']}.json"),
+            }
+
+        with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=_fake_tile):
+            result = env_mod.handle_generate_world_terrain(
+                {
+                    "name": "World",
+                    "tiles_x": 2,
+                    "tiles_y": 2,
+                    "tile_size": 64,
+                    "cell_size": 1.0,
+                    "export_dir": str(tmp_path),
+                }
+            )
+
+        batch_manifest_path = Path(result["batch_manifest_path"])
+        assert batch_manifest_path.exists()
+        batch_manifest = json.loads(batch_manifest_path.read_text())
+        assert batch_manifest["tile_count"] == 4
+        assert batch_manifest["adjacency"]
+        assert batch_manifest["frontier_tiles"]
+        assert {"tile_x": 2, "tile_y": 0} in batch_manifest["frontier_tiles"]
 
 
 def test_execute_terrain_pipeline_wires_water_network_and_spec():

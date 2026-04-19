@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainMaskStack, TerrainPipelineState
+from .terrain_chunking import build_tile_seam_contract
 
 
 _DETAIL_DENSITY_MAX_PER_CELL = 16
@@ -729,9 +730,11 @@ def export_unity_manifest(
             })
 
     determinism_hash = stack.compute_hash()
+    world_id = str(getattr(stack, "world_id", "unknown"))
+    batch_id = getattr(stack, "batch_id", None)
     manifest: Dict[str, Any] = {
         "schema_version": stack.unity_export_schema_version,
-        "world_id": "unknown",
+        "world_id": world_id,
         "tile_x": int(stack.tile_x),
         "tile_y": int(stack.tile_y),
         "tile_size": int(stack.tile_size),
@@ -760,6 +763,16 @@ def export_unity_manifest(
         "populated_channels": list(stack.populated_by_pass.keys()),
         "determinism_hash": determinism_hash,
         "validation_status": "passed",
+        "seam_contract": build_tile_seam_contract(
+            np.asarray(stack.height, dtype=np.float64),
+            tile_x=int(stack.tile_x),
+            tile_y=int(stack.tile_y),
+            cell_size=float(stack.cell_size),
+            world_origin_x=float(stack.world_origin_x),
+            world_origin_y=float(stack.world_origin_y),
+            world_id=world_id,
+            batch_id=str(batch_id) if batch_id is not None else None,
+        ),
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest

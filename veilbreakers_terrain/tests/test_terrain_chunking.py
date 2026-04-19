@@ -5,6 +5,8 @@ import json
 import numpy as np
 
 from blender_addon.handlers.terrain_chunking import (
+    build_tile_batch_manifest,
+    build_tile_seam_contract,
     compute_chunk_lod,
     compute_streaming_distances,
     compute_terrain_chunks,
@@ -173,6 +175,19 @@ class TestComputeTerrainChunks:
         chunk = result["chunks"][0]
         assert chunk["bounds"] == (512.0, 256.0, 640.0, 384.0)
 
+    def test_bounds_with_overlap_uses_correct_axes(self):
+        hmap = _make_heightmap(192, 192)
+        result = compute_terrain_chunks(
+            hmap,
+            chunk_size=64,
+            overlap=2,
+            world_scale=2.0,
+            world_origin=(100.0, 200.0),
+        )
+        interior = [c for c in result["chunks"] if c["grid_x"] == 1 and c["grid_y"] == 1][0]
+        assert interior["bounds"] == (228.0, 328.0, 356.0, 456.0)
+        assert interior["bounds_with_overlap"] == (224.0, 324.0, 360.0, 460.0)
+
 
 # ---------------------------------------------------------------------------
 # Metadata export
@@ -215,6 +230,67 @@ class TestExportMetadata:
         json_str = export_chunks_metadata(result)
         data = json.loads(json_str)
         assert tuple(data["terrain_metadata"]["world_origin"]) == (1024.0, 2048.0)
+
+    def test_export_includes_seam_manifest(self):
+        hmap = _make_heightmap(128, 128)
+        result = compute_terrain_chunks(hmap, chunk_size=64, overlap=1)
+        json_str = export_chunks_metadata(result)
+        data = json.loads(json_str)
+        seam_manifest = data["seam_manifest"]
+        assert seam_manifest["tile_count"] == 4
+        assert seam_manifest["adjacency"]
+        assert seam_manifest["frontier_tiles"]
+
+
+class TestSeamContracts:
+    def test_tile_seam_contract_includes_edges_and_neighbors(self):
+        hmap = np.arange(9, dtype=np.float64).reshape(3, 3)
+        contract = build_tile_seam_contract(
+            hmap,
+            tile_x=4,
+            tile_y=7,
+            cell_size=2.0,
+            world_origin_x=100.0,
+            world_origin_y=200.0,
+            world_id="world_a",
+            batch_id="batch_01",
+        )
+
+        assert contract["tile_coords"] == [4, 7]
+        assert contract["neighbor_tiles"]["east"] == [5, 7]
+        assert contract["world_bounds"] == {
+            "min_x": 100.0,
+            "min_y": 200.0,
+            "max_x": 104.0,
+            "max_y": 204.0,
+        }
+        assert contract["edge_contracts"]["east"]["sample_count"] == 3
+        assert contract["corner_heights"]["south_east"] == 8.0
+
+    def test_tile_batch_manifest_reports_mismatch_and_frontier(self):
+        left = build_tile_seam_contract(
+            [[0.0, 1.0], [2.0, 3.0]],
+            tile_x=0,
+            tile_y=0,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+        )
+        right = build_tile_seam_contract(
+            [[99.0, 4.0], [99.0, 5.0]],
+            tile_x=1,
+            tile_y=0,
+            cell_size=1.0,
+            world_origin_x=1.0,
+            world_origin_y=0.0,
+        )
+
+        manifest = build_tile_batch_manifest([left, right], world_id="world_a")
+
+        assert manifest["tile_count"] == 2
+        mismatch = [entry for entry in manifest["adjacency"] if entry["status"] == "mismatch"]
+        assert mismatch
+        assert {"tile_x": 0, "tile_y": 1} in manifest["frontier_tiles"]
 
 
 class TestValidateTileSeams:

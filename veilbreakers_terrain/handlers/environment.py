@@ -13,6 +13,7 @@ Provides terrain/environment command handlers:
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -1164,6 +1165,13 @@ def _export_world_tile_artifacts(
     return result
 
 
+def _write_json_manifest(path: str | Path, payload: dict[str, Any]) -> str:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    return str(target)
+
+
 def _resolve_height_range(
     params: dict,
     heightmap: np.ndarray,
@@ -2017,6 +2025,8 @@ def handle_generate_terrain_tile(params: dict) -> dict:
         or params.get("output_dir")
         or Path("Temp") / "VB_TerrainExports" / name
     )
+    world_id = str(params.get("world_id", params.get("world_name", "unknown")))
+    batch_id = params.get("batch_id")
 
     world_width = tile_size + 1 + (2 * erosion_margin)
     world_height = tile_size + 1 + (2 * erosion_margin)
@@ -2154,6 +2164,42 @@ def handle_generate_terrain_tile(params: dict) -> dict:
                 height_range=height_range,
             )
         )
+
+    from .terrain_chunking import build_tile_seam_contract
+
+    seam_contract = build_tile_seam_contract(
+        heightmap,
+        tile_x=tile_x,
+        tile_y=tile_y,
+        cell_size=cell_size,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        world_id=world_id,
+        batch_id=str(batch_id) if batch_id is not None else None,
+    )
+    tile_manifest = {
+        "schema_version": "1.0",
+        "world_id": world_id,
+        "batch_id": None if batch_id is None else str(batch_id),
+        "tile_name": terrain_result["name"],
+        "tile_x": tile_x,
+        "tile_y": tile_y,
+        "tile_size": tile_size,
+        "resolution": resolution,
+        "cell_size": cell_size,
+        "world_origin_x": world_origin_x,
+        "world_origin_y": world_origin_y,
+        "terrain_size": terrain_size,
+        "terrain_type": terrain_type,
+        "seed": seed,
+        "height_range": [height_range[0], height_range[1]],
+        "heightmap_path": result.get("heightmap_path"),
+        "alphamap_path": result.get("alphamap_path"),
+        "seam_contract": seam_contract,
+    }
+    tile_manifest_path = export_root / f"{name}_tile_manifest.json"
+    result["seam_contract"] = seam_contract
+    result["tile_manifest_path"] = _write_json_manifest(tile_manifest_path, tile_manifest)
     return result
 
 
@@ -2184,10 +2230,17 @@ def handle_generate_world_terrain(params: dict) -> dict:
     """
     _t0 = time.perf_counter()
     base_name = str(params.get("name", "WorldTerrain"))
+    world_id = str(params.get("world_id", base_name))
     start_tile_x = int(params.get("tile_x", params.get("start_tile_x", 0)))
     start_tile_y = int(params.get("tile_y", params.get("start_tile_y", 0)))
     tiles_x = max(1, int(params.get("tiles_x", params.get("world_tiles_x", 1))))
     tiles_y = max(1, int(params.get("tiles_y", params.get("world_tiles_y", 1))))
+    batch_id = str(
+        params.get(
+            "batch_id",
+            f"{base_name}_{start_tile_x}_{start_tile_y}_{tiles_x}x{tiles_y}",
+        )
+    )
 
     tile_results: list[dict[str, Any]] = []
     failed_tiles: list[dict[str, Any]] = []
@@ -2201,6 +2254,8 @@ def handle_generate_world_terrain(params: dict) -> dict:
             tile_params = dict(params)
             tile_params["tile_x"] = tile_x
             tile_params["tile_y"] = tile_y
+            tile_params["world_id"] = world_id
+            tile_params["batch_id"] = batch_id
             if tiles_x > 1 or tiles_y > 1:
                 tile_params["name"] = f"{base_name}_{tile_x}_{tile_y}"
             else:
@@ -2234,6 +2289,35 @@ def handle_generate_world_terrain(params: dict) -> dict:
             "max_y": max(oy + ts for oy, ts in zip(all_y_origins, tile_sizes)),
         }
 
+    batch_manifest_path: str | None = None
+    frontier_tiles: list[dict[str, int]] = []
+    if tile_results:
+        from .terrain_chunking import build_tile_batch_manifest
+
+        tile_contracts = [
+            contract
+            for contract in (
+                tile.get("seam_contract") for tile in tile_results
+            )
+            if isinstance(contract, dict)
+        ]
+        if tile_contracts:
+            batch_manifest = build_tile_batch_manifest(
+                tile_contracts,
+                world_id=world_id,
+                batch_id=batch_id,
+            )
+            frontier_tiles = list(batch_manifest.get("frontier_tiles", ()))
+            batch_export_root = Path(
+                params.get("export_dir")
+                or params.get("output_dir")
+                or Path("Temp") / "VB_TerrainExports" / base_name
+            )
+            batch_manifest_path = _write_json_manifest(
+                batch_export_root / "world_batch_manifest.json",
+                batch_manifest,
+            )
+
     _duration = time.perf_counter() - _t0
 
     if len(tile_results) == 1 and not failed_tiles:
@@ -2245,10 +2329,16 @@ def handle_generate_world_terrain(params: dict) -> dict:
         result.setdefault("affected_cells", total_affected_cells)
         result.setdefault("duration_seconds", round(_duration, 4))
         result["pass_name"] = "generate_world_terrain"
+        result["world_id"] = world_id
+        result["batch_id"] = batch_id
+        result["batch_manifest_path"] = batch_manifest_path
+        result["frontier_tiles"] = frontier_tiles
         return result
 
     return {
         "name": base_name,
+        "world_id": world_id,
+        "batch_id": batch_id,
         "deprecated_command": True,
         "compatibility_mode": "world_to_tile_wrapper",
         "tile_count": len(tile_results),
@@ -2260,6 +2350,8 @@ def handle_generate_world_terrain(params: dict) -> dict:
         "failed_tiles": failed_tiles,
         "total_vertex_count": total_vertex_count,
         "world_bounds": world_bounds,
+        "batch_manifest_path": batch_manifest_path,
+        "frontier_tiles": frontier_tiles,
         # AAA metrics
         "affected_cells": total_affected_cells,
         "duration_seconds": round(_duration, 4),

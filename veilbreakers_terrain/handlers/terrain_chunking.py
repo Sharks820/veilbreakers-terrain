@@ -33,6 +33,7 @@ a regular heightmap grid.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from typing import Any
@@ -358,10 +359,10 @@ def compute_terrain_chunks(
             max_y = origin_y + (gy + 1) * chunk_world_size
 
             # World-space bounds including overlap
-            min_x_ov = min_x - (r_core_start - r_start) * world_scale
-            min_y_ov = min_y - (c_core_start - c_start) * world_scale
-            max_x_ov = max_x + (r_end - r_core_end) * world_scale
-            max_y_ov = max_y + (c_end - c_core_end) * world_scale
+            min_x_ov = min_x - (c_core_start - c_start) * world_scale
+            min_y_ov = min_y - (r_core_start - r_start) * world_scale
+            max_x_ov = max_x + (c_end - c_core_end) * world_scale
+            max_y_ov = max_y + (r_end - r_core_end) * world_scale
 
             # Generate LOD levels
             lods: list[dict[str, Any]] = []
@@ -490,6 +491,7 @@ def export_chunks_metadata(
     export_data = {
         "terrain_metadata": metadata,
         "chunks": chunk_entries,
+        "seam_manifest": build_chunk_seam_manifest(chunks_result),
     }
 
     # Convert streaming_distance_lod keys from int to str for JSON compat
@@ -500,6 +502,202 @@ def export_chunks_metadata(
         }
 
     return json.dumps(export_data, indent=2)
+
+
+def build_tile_seam_contract(
+    heightmap: list[list[float]] | np.ndarray,
+    *,
+    tile_x: int,
+    tile_y: int,
+    cell_size: float,
+    world_origin_x: float,
+    world_origin_y: float,
+    world_id: str = "unknown",
+    batch_id: str | None = None,
+    neighbor_tiles: dict[str, tuple[int, int] | None] | None = None,
+) -> dict[str, Any]:
+    """Build a persistent seam contract for one exported tile.
+
+    The contract is intentionally lightweight but durable:
+    tile/world identity, world bounds, edge hashes, edge samples, corner values,
+    and the expected neighbour tile coordinates. This is the data needed to
+    resume batch generation later and verify that a newly generated tile still
+    fits the already-exported batch.
+    """
+    arr = np.asarray(heightmap, dtype=np.float64)
+    if arr.ndim < 2:
+        raise ValueError("heightmap must have at least 2 dimensions")
+    if arr.size == 0:
+        raise ValueError("heightmap must not be empty")
+
+    rows, cols = arr.shape[:2]
+    tile_extent_x = max(cols - 1, 0) * float(cell_size)
+    tile_extent_y = max(rows - 1, 0) * float(cell_size)
+    tile_key = f"{int(tile_x)},{int(tile_y)}"
+
+    if neighbor_tiles is None:
+        neighbor_tiles = {
+            "north": (int(tile_x), int(tile_y) - 1),
+            "south": (int(tile_x), int(tile_y) + 1),
+            "west": (int(tile_x) - 1, int(tile_y)),
+            "east": (int(tile_x) + 1, int(tile_y)),
+        }
+
+    edges = {
+        "north": arr[0, ...],
+        "south": arr[rows - 1, ...],
+        "west": arr[:, 0, ...],
+        "east": arr[:, cols - 1, ...],
+    }
+    corners = {
+        "north_west": _coerce_jsonable_edge_samples(arr[0, 0, ...]),
+        "north_east": _coerce_jsonable_edge_samples(arr[0, cols - 1, ...]),
+        "south_west": _coerce_jsonable_edge_samples(arr[rows - 1, 0, ...]),
+        "south_east": _coerce_jsonable_edge_samples(arr[rows - 1, cols - 1, ...]),
+    }
+
+    return {
+        "schema_version": "1.0",
+        "world_id": str(world_id),
+        "batch_id": None if batch_id is None else str(batch_id),
+        "tile_key": tile_key,
+        "tile_coords": [int(tile_x), int(tile_y)],
+        "grid_shape": [int(rows), int(cols)],
+        "cell_size": float(cell_size),
+        "world_origin": [float(world_origin_x), float(world_origin_y)],
+        "world_bounds": {
+            "min_x": float(world_origin_x),
+            "min_y": float(world_origin_y),
+            "max_x": float(world_origin_x + tile_extent_x),
+            "max_y": float(world_origin_y + tile_extent_y),
+        },
+        "neighbor_tiles": {
+            direction: None if coords is None else [int(coords[0]), int(coords[1])]
+            for direction, coords in neighbor_tiles.items()
+        },
+        "corner_heights": corners,
+        "edge_contracts": {
+            direction: {
+                "sample_count": int(edge.shape[0]) if edge.ndim >= 1 else 1,
+                "channel_count": int(np.prod(edge.shape[1:])) if edge.ndim > 1 else 1,
+                "sha256": _hash_edge_samples(edge),
+                "samples": _coerce_jsonable_edge_samples(edge),
+            }
+            for direction, edge in edges.items()
+        },
+        "height_sha256": _hash_edge_samples(arr),
+    }
+
+
+def build_tile_batch_manifest(
+    tile_contracts: list[dict[str, Any]],
+    *,
+    world_id: str = "unknown",
+    batch_id: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate tile seam contracts into a resumable world-batch manifest."""
+    by_coords: dict[tuple[int, int], dict[str, Any]] = {}
+    for contract in tile_contracts:
+        coords_raw = contract.get("tile_coords", (0, 0))
+        coords = (int(coords_raw[0]), int(coords_raw[1]))
+        by_coords[coords] = contract
+
+    adjacency: list[dict[str, Any]] = []
+    frontier: set[tuple[int, int]] = set()
+
+    for coords, contract in by_coords.items():
+        tx, ty = coords
+        neighbors = contract.get("neighbor_tiles", {})
+        edge_contracts = contract.get("edge_contracts", {})
+        for direction, delta in (
+            ("east", (1, 0, "west")),
+            ("south", (0, 1, "north")),
+        ):
+            neighbor_raw = neighbors.get(direction)
+            if neighbor_raw is None:
+                continue
+            neighbor_coords = (int(neighbor_raw[0]), int(neighbor_raw[1]))
+            neighbor_contract = by_coords.get(neighbor_coords)
+            if neighbor_contract is None:
+                frontier.add(neighbor_coords)
+                adjacency.append(
+                    {
+                        "tile_a": [tx, ty],
+                        "tile_b": [neighbor_coords[0], neighbor_coords[1]],
+                        "direction": direction,
+                        "status": "missing_neighbor",
+                    }
+                )
+                continue
+
+            opposite = delta[2]
+            edge_a = edge_contracts.get(direction, {})
+            edge_b = neighbor_contract.get("edge_contracts", {}).get(opposite, {})
+            match = edge_a.get("sha256") == edge_b.get("sha256")
+            adjacency.append(
+                {
+                    "tile_a": [tx, ty],
+                    "tile_b": [neighbor_coords[0], neighbor_coords[1]],
+                    "direction": direction,
+                    "status": "matched" if match else "mismatch",
+                    "edge_hash_a": edge_a.get("sha256"),
+                    "edge_hash_b": edge_b.get("sha256"),
+                }
+            )
+
+    sorted_tiles = sorted(by_coords.items(), key=lambda item: (item[0][1], item[0][0]))
+    return {
+        "schema_version": "1.0",
+        "world_id": str(world_id),
+        "batch_id": None if batch_id is None else str(batch_id),
+        "tile_count": len(sorted_tiles),
+        "tiles": [contract for _, contract in sorted_tiles],
+        "adjacency": adjacency,
+        "frontier_tiles": [
+            {"tile_x": int(coords[0]), "tile_y": int(coords[1])}
+            for coords in sorted(frontier, key=lambda item: (item[1], item[0]))
+        ],
+    }
+
+
+def build_chunk_seam_manifest(
+    chunks_result: dict[str, Any],
+    *,
+    world_id: str = "unknown",
+    batch_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a resumable seam manifest from ``compute_terrain_chunks`` output."""
+    metadata = chunks_result.get("metadata", {})
+    chunk_size_samples = int(metadata.get("chunk_size_samples", 0) or 0)
+    chunk_world_size = float(metadata.get("chunk_world_size", 0.0) or 0.0)
+    world_scale = (
+        chunk_world_size / float(chunk_size_samples)
+        if chunk_size_samples > 0 and chunk_world_size > 0.0
+        else 1.0
+    )
+
+    tile_contracts: list[dict[str, Any]] = []
+    for chunk in chunks_result.get("chunks", []):
+        core = _extract_chunk_core_heightmap(chunk, world_scale)
+        bounds = chunk.get("bounds", (0.0, 0.0, 0.0, 0.0))
+        tile_contracts.append(
+            build_tile_seam_contract(
+                core,
+                tile_x=int(chunk.get("grid_x", 0)),
+                tile_y=int(chunk.get("grid_y", 0)),
+                cell_size=world_scale,
+                world_origin_x=float(bounds[0]),
+                world_origin_y=float(bounds[1]),
+                world_id=world_id,
+                batch_id=batch_id,
+            )
+        )
+
+    return build_tile_batch_manifest(
+        tile_contracts,
+        world_id=world_id,
+        batch_id=batch_id,
+    )
 
 
 def validate_tile_seams(
@@ -679,6 +877,40 @@ def _empty_metadata() -> dict[str, Any]:
         "lod_levels": 0,
         "heightmap_size": (0, 0),
     }
+
+
+def _coerce_jsonable_edge_samples(edge: np.ndarray) -> Any:
+    arr = np.asarray(edge, dtype=np.float64)
+    if arr.ndim == 0:
+        return float(arr)
+    if arr.ndim == 1:
+        return arr.tolist()
+    return arr.reshape(arr.shape[0], -1).tolist()
+
+
+def _hash_edge_samples(edge: np.ndarray) -> str:
+    arr = np.ascontiguousarray(np.asarray(edge, dtype="<f8"))
+    return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
+def _extract_chunk_core_heightmap(
+    chunk: dict[str, Any],
+    world_scale: float,
+) -> np.ndarray:
+    arr = np.asarray(chunk.get("heightmap", []), dtype=np.float64)
+    if arr.ndim < 2 or arr.size == 0:
+        return arr
+
+    bounds = chunk.get("bounds", (0.0, 0.0, 0.0, 0.0))
+    bounds_ov = chunk.get("bounds_with_overlap", bounds)
+    left_pad = max(0, int(round((float(bounds[0]) - float(bounds_ov[0])) / world_scale)))
+    top_pad = max(0, int(round((float(bounds[1]) - float(bounds_ov[1])) / world_scale)))
+    right_pad = max(0, int(round((float(bounds_ov[2]) - float(bounds[2])) / world_scale)))
+    bottom_pad = max(0, int(round((float(bounds_ov[3]) - float(bounds[3])) / world_scale)))
+
+    row_end = arr.shape[0] - bottom_pad if bottom_pad > 0 else arr.shape[0]
+    col_end = arr.shape[1] - right_pad if right_pad > 0 else arr.shape[1]
+    return arr[top_pad:row_end, left_pad:col_end, ...]
 
 
 def _compute_tile_contracts(
