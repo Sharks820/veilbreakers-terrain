@@ -329,7 +329,7 @@ def test_navmesh_area_id_classification(stack):
     water[0:3, 0:3] = 1.0
     stack.set("water_surface", water, "test")
     area = compute_navmesh_area_id(stack, max_walkable_slope_deg=60.0)
-    assert area.dtype == np.int8
+    assert area.dtype == np.uint8
     assert (area[0:3, 0:3] == NAVMESH_SWIM).all()
     assert (area == NAVMESH_WALKABLE).any()
 

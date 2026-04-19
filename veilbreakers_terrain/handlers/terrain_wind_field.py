@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
@@ -225,11 +225,11 @@ def compute_wind_field(
     stack: TerrainMaskStack,
     prevailing_direction_rad: float,
     base_speed_mps: float,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Return ``(vx, vy)`` — two (H, W) float32 velocity component arrays in m/s.
+) -> np.ndarray:
+    """Return an ``(H, W, 2)`` float32 wind vector field in m/s.
 
-    ``vx`` is the east-facing (column-axis) component; ``vy`` is the
-    north-facing (row-axis) component.  Both are in world units (m/s).
+    ``[..., 0]`` is the east-facing (column-axis) component and
+    ``[..., 1]`` is the north-facing (row-axis) component.
 
     Terrain awareness:
         - base direction = (cos θ, sin θ) × base_speed
@@ -242,8 +242,7 @@ def compute_wind_field(
           turbulence (Kaimal & Finnigan 1994).
 
     Returns:
-        vx: (H, W) float32 — east-component of wind velocity in m/s.
-        vy: (H, W) float32 — north-component of wind velocity in m/s.
+        (H, W, 2) float32 wind field in world units (m/s).
 
     Raises:
         ValueError: if stack.height is not populated.
@@ -305,7 +304,7 @@ def compute_wind_field(
     vx = (np.cos(prevailing_direction_rad) * speed + 0.25 * base_speed_mps * perturb_u).astype(np.float32)
     vy = (np.sin(prevailing_direction_rad) * speed + 0.25 * base_speed_mps * perturb_v).astype(np.float32)
 
-    return vx, vy
+    return np.stack([vx, vy], axis=-1)
 
 
 def pass_wind_field(
@@ -324,11 +323,10 @@ def pass_wind_field(
     direction = float(hints.get("wind_direction_rad", 0.0))
     base_speed = float(hints.get("wind_base_speed_mps", 5.0))
 
-    vx, vy = compute_wind_field(stack, direction, base_speed)
-    field = np.stack([vx, vy], axis=-1)  # (H, W, 2) for stack storage
+    field = compute_wind_field(stack, direction, base_speed)
     stack.set("wind_field", field, "wind_field")
 
-    speed = np.sqrt(vx ** 2 + vy ** 2)
+    speed = np.sqrt(field[..., 0] ** 2 + field[..., 1] ** 2)
 
     return PassResult(
         pass_name="wind_field",

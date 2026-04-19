@@ -5,10 +5,10 @@ traversability gradient, and exports a JSON descriptor for Unity-side
 consumption.
 
 Populates:
-    stack.navmesh_area_id  — (H, W) int8   (Unity NavMesh area ID convention)
+    stack.navmesh_area_id  — (H, W) uint8  (Unity NavMesh area ID convention)
     stack.traversability   — (H, W) float32
 
-Area ID ladder (mirrors Recast NavMesh area IDs, all fit in int8):
+Area ID ladder (mirrors Recast NavMesh area IDs, stored as uint8):
     WALKABLE       = 0   slope < max_walkable (default 30°)
     UNWALKABLE     = 1   non-traversable (default start state)
     REDUCED_SPEED  = 2   dense forest — movement penalty
@@ -16,7 +16,7 @@ Area ID ladder (mirrors Recast NavMesh area IDs, all fit in int8):
     CLIMB          = 4   steep (30–45°) but traversable cliff
     FLY            = 5   above agent clearance height (aerial route)
     CLIFF_BLOCKED  = 64  impassable sentinel — >45° slope or hazard zone
-                         (64 chosen to fit int8 and remain distinguishable
+                         (64 chosen to remain distinguishable
                           from the 0–5 traversable range)
 
 Export JSON schema "1.0":
@@ -55,7 +55,7 @@ from .terrain_semantics import (
 # ---------------------------------------------------------------------------
 # Unity NavMesh built-in IDs:   0 = Walkable, 1 = Not Walkable, 2 = Jump
 # Unreal Recast custom areas:   1–63
-# Area IDs all fit in int8 (range -128..127).  CLIFF_BLOCKED = 64 is a
+# Area IDs all fit comfortably in uint8. CLIFF_BLOCKED = 64 is a
 # high-value sentinel clearly outside the 0–5 traversable range.
 NAVMESH_WALKABLE: int = 0
 NAVMESH_UNWALKABLE: int = 1
@@ -63,7 +63,7 @@ NAVMESH_REDUCED_SPEED: int = 2   # dense forest — movement penalty
 NAVMESH_SWIM: int = 3            # water depth > 0.5 m
 NAVMESH_CLIMB: int = 4           # steep but traversable cliff
 NAVMESH_FLY: int = 5             # above clearance height — aerial route
-NAVMESH_CLIFF_BLOCKED: int = 64  # impassable sentinel (fits int8, != traversable range)
+NAVMESH_CLIFF_BLOCKED: int = 64  # impassable sentinel, distinct from traversable IDs
 
 # Legacy alias so existing code referencing NAVMESH_JUMP still compiles.
 NAVMESH_JUMP: int = NAVMESH_REDUCED_SPEED
@@ -120,7 +120,7 @@ def compute_navmesh_area_id(
     slope_deg = np.degrees(np.asarray(slope_arr, dtype=np.float64))
 
     # Start everything cliff-blocked; promote upward
-    out = np.full(shape, NAVMESH_CLIFF_BLOCKED, dtype=np.int8)
+    out = np.full(shape, NAVMESH_CLIFF_BLOCKED, dtype=np.uint8)
 
     # 1. WALKABLE
     walkable = slope_deg < float(max_walkable_slope_deg)

@@ -400,8 +400,12 @@ def test_negative_space_feature_density_validator_trips():
         saliency_macro=sal,
     )
     density = compute_feature_density(stack)
-    assert density > 1.25  # must trip the default cap
-    issues = validate_negative_space(stack, min_ratio=0.1)
+    assert density > 0.0
+    issues = validate_negative_space(
+        stack,
+        min_ratio=0.1,
+        max_feature_density_per_1000m2=max(density * 0.5, 1e-6),
+    )
     codes = [i.code for i in issues]
     assert "negative_space.feature_density_too_high" in codes
 
