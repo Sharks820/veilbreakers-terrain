@@ -107,9 +107,10 @@ Plans:
 ---
 
 ## Phase 11 — Noise System Upgrades
-**Status:** Ready to plan
+**Status:** Planned
 **Goal:** Upgrade noise stack to AAA quality: Phacelle 2026 bell kernel, OpenSimplex2S, Voronoise, IQ fBm gradient accumulation, _pow_inv formula verification.
 **Depends on:** Fully independent — can run any time
+**Plans:** 3 plans
 **Fix items:** 11.1–11.8
 **Key fixes:**
 - Fix 11.1: OpenSimplex2S wrapper (fixes Perlin 45° axis-aligned bias)
@@ -120,6 +121,11 @@ Plans:
 - Fix 11.6: Phacelle noise — bell weight max(0, exp(-2d²)-0.01111), 10–25× cheaper
 - Fix 11.7: OpenSimplex2S array wrapper for terrain_erosion_filter
 - Fix 11.8: Voronoise(x,y,u,v,seed) following IQ reference implementation
+
+Plans:
+- [ ] 11-01-PLAN.md — _pow_inv fix (REQ-P11-005) + OpenSimplex2S public wrapper (REQ-P11-001)
+- [ ] 11-02-PLAN.md — Phacelle 2026 bell kernel (REQ-P11-002) + IQ fBm gradient accumulation (REQ-P11-004)
+- [ ] 11-03-PLAN.md — Voronoise IQ reference (REQ-P11-003) + domain_warp_fbm + cellular_smin (REQ-P11-004)
 
 ---
 
