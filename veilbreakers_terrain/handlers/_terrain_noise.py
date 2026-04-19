@@ -763,17 +763,45 @@ def compute_biome_assignments(
 # A* pathfinding utilities
 # ---------------------------------------------------------------------------
 
+_OFFSETS_16 = (
+    (-1, -1), (-1, 0), (-1, 1),
+    ( 0, -1),          ( 0, 1),
+    ( 1, -1), ( 1, 0), ( 1, 1),
+    (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+    ( 1, -2), ( 1, 2), ( 2, -1), ( 2,  1),
+)
+
+
 def _neighbors(row: int, col: int, rows: int, cols: int) -> list[tuple[int, int]]:
-    """Return valid 8-connected neighbor coordinates."""
+    """Return valid 16-connected neighbors (8 standard + 8 knight-moves)."""
     result = []
-    for dr in (-1, 0, 1):
-        for dc in (-1, 0, 1):
-            if dr == 0 and dc == 0:
-                continue
-            nr, nc = row + dr, col + dc
-            if 0 <= nr < rows and 0 <= nc < cols:
-                result.append((nr, nc))
+    for dr, dc in _OFFSETS_16:
+        nr, nc = row + dr, col + dc
+        if 0 <= nr < rows and 0 <= nc < cols:
+            result.append((nr, nc))
     return result
+
+
+def _fill_8connected_gaps(path: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Insert bridging cells so consecutive steps are at most 8-connected.
+
+    Knight-move steps (e.g. (0,0)->(2,1)) are split by inserting one cell
+    so rasterisation-based callers (river carving, road grading) get a fully
+    connected pixel path.
+    """
+    if len(path) < 2:
+        return path
+    filled: list[tuple[int, int]] = [path[0]]
+    for r1, c1 in path[1:]:
+        r0, c0 = filled[-1]
+        dr, dc = r1 - r0, c1 - c0
+        if abs(dr) > 1 or abs(dc) > 1:
+            if abs(dr) >= abs(dc):
+                filled.append((r0 + (1 if dr > 0 else -1), c0))
+            else:
+                filled.append((r0, c0 + (1 if dc > 0 else -1)))
+        filled.append((r1, c1))
+    return filled
 
 
 def _astar(
@@ -806,7 +834,8 @@ def _astar(
     g_score: dict[tuple[int, int], float] = {(sr, sc): 0.0}
 
     def heuristic(r: int, c: int) -> float:
-        return math.sqrt((r - dr) ** 2 + (c - dc) ** 2)
+        dx, dy = abs(r - dr), abs(c - dc)
+        return (dx + dy) + (math.sqrt(2) - 2.0) * min(dx, dy)
 
     while open_set:
         f, g, cr, cc = heapq.heappop(open_set)
@@ -822,14 +851,15 @@ def _astar(
                 cr, cc = came_from[(cr, cc)]
                 path.append((cr, cc))
             path.reverse()
-            return path
+            return _fill_8connected_gaps(path)
 
         for nr, nc in _neighbors(cr, cc, rows, cols):
             h_diff = abs(float(heightmap[nr, nc]) - float(heightmap[cr, cc]))
             step_dist = math.sqrt((nr - cr) ** 2 + (nc - cc) ** 2)
+            slope = h_diff / max(step_dist, 1e-6)
             move_cost = (
                 step_dist
-                + h_diff * slope_weight
+                + slope ** 2 * slope_weight
                 + float(heightmap[nr, nc]) * height_weight
             )
             tentative_g = g + move_cost

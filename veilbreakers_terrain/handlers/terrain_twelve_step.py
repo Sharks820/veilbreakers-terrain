@@ -388,30 +388,32 @@ def _generate_road_mesh_specs(
     tile_grid_y: int,
     cell_size: float,
     seed: int,
-) -> List[Dict[str, Any]]:
-    """Step 10: generate road mesh specifications from the world heightmap.
+) -> Tuple[List[Dict[str, Any]], np.ndarray]:
+    """Generate road mesh specifications and return the carved heightmap.
 
-    Delegates to ``generate_road_path`` from ``_terrain_noise`` when waypoints
-    are available in the intent. Returns a list of mesh spec dicts describing
-    each road segment (vertices, width, graded heightmap patch).
+    Returns ``(road_specs, carved_hmap)`` where ``carved_hmap`` is a copy of
+    ``world_hmap`` with all road grades applied.  The caller should replace
+    ``world_eroded`` with ``carved_hmap`` *before* per-tile extraction so that
+    road cuts propagate into every tile's height channel.
 
     If no waypoints are configured on the intent the function returns an empty
-    list and logs the skip.
+    list and the original heightmap unchanged.
     """
     from ._terrain_noise import generate_road_path
 
     waypoints: List[Tuple[int, int]] = getattr(intent, "road_waypoints", None) or []
     if len(waypoints) < 2:
         _log.info(
-            "Step 10 skipped: fewer than 2 road waypoints on intent (got %d)",
+            "Road carve skipped: fewer than 2 road waypoints on intent (got %d)",
             len(waypoints),
         )
-        return []
+        return [], world_hmap
 
     road_specs: List[Dict[str, Any]] = []
+    carved = world_hmap
     try:
-        path, graded_hmap = generate_road_path(
-            world_hmap,
+        path, carved = generate_road_path(
+            carved,
             waypoints,
             width=max(3, int(3.0 / cell_size)),
             grade_strength=0.8,
@@ -423,11 +425,11 @@ def _generate_road_mesh_specs(
             "vertex_count": len(path),
             "seed": seed,
         })
-        _log.info("Step 10: generated road with %d vertices", len(path))
+        _log.info("Road carve: generated road with %d vertices", len(path))
     except Exception as exc:  # noqa: BLE001
-        _log.warning("Step 10: road generation failed: %s", exc)
+        _log.warning("Road carve failed: %s", exc)
 
-    return road_specs
+    return road_specs, carved
 
 
 def _generate_water_body_specs(
@@ -588,8 +590,15 @@ def run_twelve_step_world_terrain(
         flow_accumulation=_world_flow_acc,
     )
 
-    # Step 9 — per-tile extraction
-    sequence.append("9_per_tile_extract")
+    # Step 9 — apply road carve to world heightmap before tile extraction
+    # Road carving must precede tile extraction so graded heights reach every tile.
+    sequence.append("9_apply_road_carve")
+    road_specs, world_eroded = _generate_road_mesh_specs(
+        world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed
+    )
+
+    # Step 10 — per-tile extraction (from carved world heightmap)
+    sequence.append("10_per_tile_extract")
     tile_stacks: Dict[Tuple[int, int], TerrainMaskStack] = {}
     tile_transforms: Dict[Tuple[int, int], TileTransform] = {}
     extracted_heights: Dict[Tuple[int, int], np.ndarray] = {}
@@ -628,10 +637,6 @@ def run_twelve_step_world_terrain(
                 tile_size_world=tile_size_world,
                 convention="object_origin_at_min_corner",
             )
-
-    # Step 10 — generate road meshes in world space
-    sequence.append("10_generate_road_meshes")
-    road_specs = _generate_road_mesh_specs(world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed)
 
     # Step 11 — generate water bodies in world space
     sequence.append("11_generate_water_bodies")

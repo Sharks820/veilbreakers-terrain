@@ -403,7 +403,25 @@ def export_unity_manifest(
     )
     splatmap_files = _write_splatmap_groups(files, output_dir, stack)
 
-    for channel in ("navmesh_area_id", "wind_field", "cloud_shadow", "gameplay_zone", "audio_reverb_class", "traversability"):
+    for channel in (
+        # Gameplay / engine channels
+        "navmesh_area_id", "wind_field", "cloud_shadow", "gameplay_zone",
+        "audio_reverb_class", "traversability",
+        # Terrain-derived data channels (previously dropped — CRITICAL fix)
+        "slope", "curvature", "concavity", "convexity",
+        "ridge", "basin", "saliency_macro",
+        "erosion_amount", "deposition_amount", "wetness",
+        "drainage", "bank_instability", "talus",
+        "flow_direction", "flow_accumulation",
+        "water_surface", "foam", "mist", "wet_rock", "tidal",
+        "biome_id", "macro_color", "roughness_variation", "snow_line_factor",
+        "strata_orientation", "rock_hardness",
+        "strat_erosion_delta", "sediment_height", "bedrock_height",
+        "coastline_delta", "karst_delta", "wind_erosion_delta", "glacial_delta",
+        "sediment_accumulation_at_base", "pool_deepening_delta",
+        "physics_collider_mask", "lightmap_uv_chart_id", "lod_bias",
+        "ambient_occlusion_bake",
+    ):
         value = stack.get(channel)
         if value is None:
             continue
