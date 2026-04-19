@@ -1,37 +1,36 @@
 # VeilBreakers Terrain — FIXPLAN Implementation Roadmap
 
 **Project:** VeilBreakers Terrain Generator
-**Goal:** Implement all FIXPLAN phases 7–13 from the master audit to achieve AAA-quality terrain generation verifiable against Gaea, Houdini, UE5, and real AAA RPG terrain.
+**Goal:** Implement all FIXPLAN phases 7–14 from the master audit to achieve AAA-quality terrain generation verifiable against Gaea, Houdini, UE5, and real AAA RPG terrain.
 **Source of truth:** `docs/TERRAIN_UPGRADE_MASTER_AUDIT.md`
-**Grade target:** All functions ≥ B+ verified against real AAA terrain generators
+**Grade target:** All functions >= B+ verified against real AAA terrain generators
 
 ---
 
 ## Phase 7 — AAA Algorithm Upgrades
-**Status:** Ready to plan
-**Goal:** Fix broken/missing channels (flow_direction, roughness_variation), wire Priorit-Flood hydrology, add 8-connectivity gap-fill, fix _pow_inv formula, vectorize remaining hot-path loops.
+**Status:** Planned
+**Goal:** Fix broken/missing channels (flow_direction, roughness_variation), wire Priority-Flood hydrology, fix _pow_inv formula, consolidate thermal erosion, vectorize remaining hot-path loops, unify slope naming convention, add triplanar projection.
 **Depends on:** Phases 1–6 (complete)
-**Fix items:** 7.1 (box_filter done), 7.2 (distance_from_mask done), 7.3–7.20 (open)
+**Plans:** 6 plans
+**Fix items:** 7.1 (box_filter done), 7.2 (distance_from_mask done), 7.3, 7.6, 7.13/7.14, 7.16, 7.17, 7.18, 7.19, 7.20 (CONFLICT-01/11), Fix 4.8 ext
 **Key fixes:**
 - Fix 7.3: Priority-Flood (Barnes 2014) watershed routing — replace naive pit detection
-- Fix 7.4: Stream-power O(n) catchment — replace O(n²) flow accumulation
-- Fix 7.5: Variable erodibility K(p) = base + strata(p)
 - Fix 7.6: Thermal erosion consolidation (4 implementations → 1 canonical)
-- Fix 7.7: IQ erosion fBm gradient accumulation
-- Fix 7.8: Water adjacency — rivers end at sea, not inland
-- Fix 7.9: Ridge saliency — ridge channel actually drives cliff-face geometry
-- Fix 7.10: Slope normalization fix — use radians not raw gradient magnitude
-- Fix 7.11: Brucks height-blend for rock/dirt material boundaries
-- Fix 7.12: Heitz-Neyret histogram-preserving detail blending
-- Fix 7.13: QEM LOD — real Garland-Heckbert quadric error metric (Fix 5.1+5.2)
-- Fix 7.14: LOD chain wiring — discard of generate_lod_chain() return value
-- Fix 7.15: Hero cliff mesh from CliffStructure.face_mask (Fix 5.11)
+- Fix 7.13/7.14: QEM LOD heap-based stale-skip priority queue
 - Fix 7.16: Triplanar projection for biome noise (BUG-116)
 - Fix 7.17: flow_direction zero-producers → wire Priority-Flood output
 - Fix 7.18: roughness_variation three-writer entanglement → canonical single writer
-- Fix 7.19: BUG-S10-001 _pow_inv formula fix (1-(1-p)^2 not 1/(1-p))
-- Fix 7.20: Convention unifications (CONFLICT-01–06 cleanup, CONFLICT-11 thermal)
-- Fix 4.8 ext: Vectorize detect_cliff_edges + pit detection
+- Fix 7.19: BUG-S10-001 _pow_inv formula fix (1-(1-p)^e not 1/(1-p))
+- Fix 7.20: CONFLICT-01 slope naming (radians/degrees), CONFLICT-11 thermal
+- Fix 4.8 ext: Vectorize detect_cliff_edges (scipy label)
+
+Plans:
+- [ ] 07-01-PLAN.md — _pow_inv formula fix: `1-(1-p)^e` + unit tests (REQ-P7-004)
+- [ ] 07-02-PLAN.md — roughness_variation single canonical writer + static grep test (REQ-P7-003)
+- [ ] 07-03-PLAN.md — Priority-Flood D8 pass_hydrology: flow_direction + flow_accumulation (REQ-P7-001, REQ-P7-002)
+- [ ] 07-04-PLAN.md — Thermal erosion consolidation: terrain_advanced.apply_thermal_erosion → delegation shim (REQ-P7-006)
+- [ ] 07-05-PLAN.md — Vectorize detect_cliff_edges + QEM heap-based stale-skip (REQ-P7-005)
+- [ ] 07-06-PLAN.md — Slope naming CONFLICT-01 + triplanar_blend for materials (REQ-P7-007)
 
 ---
 
@@ -137,7 +136,7 @@ Plans:
 **Fix items:** 12.1–12.3
 **Key fixes:**
 - Fix 12.1: Split heightmap into _hmap_low_freq + _hmap_high_freq; erode only low-freq (ARCHITECTURAL)
-- Fix 12.2: Stream-Power Law erosion — Cordonnier 2016 ε-topological-order O(n) solver
+- Fix 12.2: Stream-Power Law erosion — Cordonnier 2016 epsilon-topological-order O(n) solver
 - Fix 12.3: Variable erodibility K(p) = K_base + rock_hardness*K_strata_scale
 
 Plans:
@@ -164,12 +163,35 @@ Plans:
 
 ---
 
+## Phase 14 — Terrain Features Quality
+**Status:** Planned
+**Goal:** Close all FIXPLAN items and open bugs that were missing from Phases 7–13: correctness bugs (BUG-NEW-005, BUG-NEW-007, BUG-37, BUG-55, BUG-76, BUG-101, BUG-102), biome grammar vectorization (Fix 7.3–7.6), atmospheric volumes (Fix 7.14–7.16), mesh quality (Fix 7.8–7.12, BUG-87), stratigraphy/erosion hookup (BUG-98, BUG-99), water fixes (Fix 7.20a/b, Fix 7.12), wind artefacts (BUG-94, BUG-96), waterfall multi-system, and poi_mask channel.
+**Depends on:** Phases 1–13 (fixes must not conflict with prior phase outputs)
+**Plans:** 4 plans
+**Fix items:** BUG-NEW-005, BUG-NEW-007, BUG-37, BUG-55, BUG-76, BUG-87, BUG-94, BUG-96, BUG-98, BUG-99, BUG-101, BUG-102, Fix 6.9 CI, Fix 7.3–7.6, Fix 7.8–7.12, Fix 7.14–7.16, Fix 7.20a/b, waterfall-multi-system, poi-mask
+**Key fixes:**
+- BUG-NEW-005: Conditional stack.set() calls → zero-init deltas always set
+- BUG-37: D8 flow routing cell_size not applied to gradient
+- BUG-55: roughness_driver additive semantics → replace-mode
+- BUG-87: carve_u_valley nested Python loop → scipy EDT vectorization
+- BUG-94: wind erosion 3-bit direction snap → continuous gradient
+- BUG-96: wind field per-tile RNG seam → per-cell world-space XOR hash
+- BUG-99: pass_erosion missing rock_hardness K modifier
+- BUG-101: chunk grid floor division → math.ceil
+- BUG-102: seam edge comparison uses wrong edges for E/W and N/S
+- Fix 7.15: icosphere subdivision (12→42 verts, 20→80 faces)
+- poi_mask: TerrainMaskStack field + _ARRAY_CHANNELS + rasterize_poi_mask
+
+Plans:
+- [ ] 14-01-PLAN.md — Wave 1: correctness bugs + Fix 6.9 CI gate (BUG-NEW-005/007, BUG-37, BUG-55, BUG-76, BUG-101, BUG-102)
+- [ ] 14-02-PLAN.md — Wave 2: biome_grammar vectorization (Fix 7.3–7.6) + atmospheric_volumes (Fix 7.14–7.16)
+- [ ] 14-03-PLAN.md — Wave 3: mesh quality (Fix 7.8–7.12, BUG-87) + stratigraphy/erosion (BUG-98/99) + water (Fix 7.20a/b, Fix 7.12)
+- [ ] 14-04-PLAN.md — Wave 4: wind artefacts (BUG-94, BUG-96) + waterfall mist pass + poi_mask channel
+
+---
+
 ## Remaining Open Items from Phase 1–6
 
-**Fix 6.9 (CI gate):** Wire `scripts/callable_census_gate.py` as blocking CI step in `.github/workflows/`
-**BUG-NEW-005:** glacial/coastline zero-init delta + produces_channels declaration
-**BUG-NEW-007:** Unify dict-channel declaration policy
-**BUG-NEW-008:** roughness_variation three-writer rename/merge
 **Fix 2.7:** validate_registry_graph() after all registrations
 **CSV-003:** Fix row 1232 dead reference + grade upgrades for S6–S10 fixed functions
 
@@ -188,4 +210,9 @@ Phase 10 (Texturing) — after Fix 9.1 for snow; 10.1/10.2/10.6 independent
   Wave 1: 10-01 (structural labeling — ARCHITECTURAL)
   Wave 2: 10-02 (normal rock mask + Brucks + snow)
   Wave 3: 10-03 (ravine + macro color + SDF road blend, depends on 08-13)
+Phase 14 (Features Quality) — parallel with Phases 7–13, closes remaining open bugs
+  Wave 1: 14-01 (correctness + CI — no dependencies)
+  Wave 2: 14-02 (biome_grammar + atmospheric — after 14-01 for CI gate)
+  Wave 3: 14-03 (mesh quality + stratigraphy + water — after 14-01)
+  Wave 4: 14-04 (wind + waterfall mist + poi_mask — after 14-03)
 ```
