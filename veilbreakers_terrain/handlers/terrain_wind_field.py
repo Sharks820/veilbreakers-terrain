@@ -82,7 +82,10 @@ def compute_wind_field(
     ridge_factor = np.ones(shape, dtype=np.float64)
     if stack.ridge is not None:
         ridge = np.asarray(stack.ridge, dtype=np.float64)
-        ridge_factor = 1.0 + 0.3 * np.clip(ridge, 0.0, 1.0)
+        # Fix 9.6 / BUG-S9-011: use abs(ridge) so BOTH exposed ridgelines AND
+        # canyon walls accelerate flow (high-gradient surfaces channel wind).
+        # Old code: np.clip(ridge, 0.0, 1.0) silently discarded canyon wind.
+        ridge_factor = 1.0 + 0.3 * np.abs(ridge)
 
     basin_factor = np.ones(shape, dtype=np.float64)
     if stack.basin is not None:

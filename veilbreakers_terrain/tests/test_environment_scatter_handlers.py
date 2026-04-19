@@ -443,3 +443,135 @@ class TestHandlerImports:
         from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
         assert isinstance(PROP_GENERATOR_MAP, dict)
         assert len(PROP_GENERATOR_MAP) > 0
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.1 / 9.4 / 9.5 — channel consumer helpers (bpy-free)
+# ---------------------------------------------------------------------------
+
+class TestScatterChannelConsumers:
+    """Tests for detail_density, hero_exclusion, wind_field consumer helpers."""
+
+    # -- detail_density (Fix 9.1) --
+
+    def test_detail_density_dict_collapses_to_mean(self):
+        from blender_addon.handlers.environment_scatter import _collapse_detail_density
+        arr = np.full((4, 4), 0.5, dtype=np.float32)
+        result = _collapse_detail_density({"canopy": arr, "ground_cover": arr})
+        assert result is not None
+        assert result.shape == (4, 4)
+        assert float(result.mean()) == pytest.approx(0.5)
+
+    def test_detail_density_none_returns_none(self):
+        from blender_addon.handlers.environment_scatter import _collapse_detail_density
+        assert _collapse_detail_density(None) is None
+
+    def test_detail_density_empty_dict_returns_none(self):
+        from blender_addon.handlers.environment_scatter import _collapse_detail_density
+        assert _collapse_detail_density({}) is None
+
+    def test_density_reject_at_half_density(self):
+        """density=0.5 should reject ~half of candidates."""
+        from blender_addon.handlers.environment_scatter import _density_reject
+        dm = np.full((4, 4), 0.5, dtype=np.float32)
+        # rng_val=0.3 < 0.5 → accept (not rejected)
+        assert not _density_reject(dm, 2.0, 2.0, 0.3)
+        # rng_val=0.8 > 0.5 → reject
+        assert _density_reject(dm, 2.0, 2.0, 0.8)
+
+    def test_density_reject_none_map_never_rejects(self):
+        from blender_addon.handlers.environment_scatter import _density_reject
+        assert not _density_reject(None, 0.0, 0.0, 0.9999)
+
+    def test_density_reject_full_density_never_rejects(self):
+        from blender_addon.handlers.environment_scatter import _density_reject
+        dm = np.full((4, 4), 1.0, dtype=np.float32)
+        for rv in [0.0, 0.5, 0.99]:
+            assert not _density_reject(dm, 1.0, 1.0, rv)
+
+    def test_density_reject_zero_density_always_rejects(self):
+        from blender_addon.handlers.environment_scatter import _density_reject
+        dm = np.zeros((4, 4), dtype=np.float32)
+        for rv in [0.01, 0.5, 0.99]:
+            assert _density_reject(dm, 1.0, 1.0, rv)
+
+    # -- hero_exclusion (Fix 9.4) --
+
+    def test_hero_exclusion_all_ones_excludes_all(self):
+        from blender_addon.handlers.environment_scatter import _hero_excluded
+        excl = np.ones((8, 8), dtype=np.float32)
+        assert _hero_excluded(excl, 5.0, 5.0, 10.0, 10.0)
+
+    def test_hero_exclusion_all_zeros_excludes_none(self):
+        from blender_addon.handlers.environment_scatter import _hero_excluded
+        excl = np.zeros((8, 8), dtype=np.float32)
+        assert not _hero_excluded(excl, 5.0, 5.0, 10.0, 10.0)
+
+    def test_hero_exclusion_none_returns_false(self):
+        from blender_addon.handlers.environment_scatter import _hero_excluded
+        assert not _hero_excluded(None, 5.0, 5.0, 10.0, 10.0)
+
+    def test_hero_exclusion_partial_mask(self):
+        from blender_addon.handlers.environment_scatter import _hero_excluded
+        excl = np.zeros((10, 10), dtype=np.float32)
+        excl[5:, 5:] = 1.0  # top-right quadrant excluded
+        # Point at (7.5, 7.5) within a 10x10 terrain → falls in excluded quadrant
+        assert _hero_excluded(excl, 7.5, 7.5, 10.0, 10.0)
+        # Point at (2.5, 2.5) → clear
+        assert not _hero_excluded(excl, 2.5, 2.5, 10.0, 10.0)
+
+    # -- wind_field (Fix 9.5) --
+
+    def test_wind_rotation_none_returns_zero(self):
+        from blender_addon.handlers.environment_scatter import _wind_rotation_y
+        assert _wind_rotation_y(None, 5.0, 5.0, 10.0, 10.0) == pytest.approx(0.0)
+
+    def test_wind_rotation_plus_x_direction(self):
+        from blender_addon.handlers.environment_scatter import _wind_rotation_y
+        import math
+        wind = np.zeros((4, 4, 2), dtype=np.float32)
+        wind[..., 0] = 1.0   # wind_x = 1
+        wind[..., 1] = 0.0   # wind_y = 0
+        # arctan2(1, 0) = pi/2
+        rot = _wind_rotation_y(wind, 5.0, 5.0, 10.0, 10.0)
+        assert rot == pytest.approx(math.pi / 2, abs=1e-4)
+
+    def test_wind_rotation_plus_y_direction(self):
+        from blender_addon.handlers.environment_scatter import _wind_rotation_y
+        wind = np.zeros((4, 4, 2), dtype=np.float32)
+        wind[..., 0] = 0.0
+        wind[..., 1] = 1.0
+        # arctan2(0, 1) = 0.0
+        rot = _wind_rotation_y(wind, 5.0, 5.0, 10.0, 10.0)
+        assert rot == pytest.approx(0.0, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.2 — _write_tree_instance_points
+# ---------------------------------------------------------------------------
+
+class TestWriteTreeInstancePoints:
+    """Tests for _write_tree_instance_points helper (Fix 9.2)."""
+
+    def test_writes_float32_n5_to_stack(self):
+        from types import SimpleNamespace
+        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        stack = SimpleNamespace(tree_instance_points=None)
+        arr = np.array([[1.0, 2.0, 3.0, 0.5, 0.0]], dtype=np.float32)
+        _write_tree_instance_points(arr, stack)
+        assert stack.tree_instance_points is not None
+        assert stack.tree_instance_points.dtype == np.float32
+        assert stack.tree_instance_points.shape == (1, 5)
+
+    def test_none_stack_is_noop(self):
+        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        # Should not raise
+        _write_tree_instance_points(np.empty((0, 5), dtype=np.float32), None)
+
+    def test_wrong_shape_is_noop(self):
+        from types import SimpleNamespace
+        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        stack = SimpleNamespace(tree_instance_points=None)
+        arr = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)  # (1, 3) not (N, 5)
+        _write_tree_instance_points(arr, stack)
+        assert stack.tree_instance_points is None

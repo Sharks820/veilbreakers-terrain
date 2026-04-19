@@ -158,3 +158,40 @@ class TestBlenderServerDispatch:
         r = dispatch("not_real", None)
         assert r["status"] == "error"
         assert r["error"] == "unknown_location"
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.7 — scatter handlers registered in COMMAND_HANDLERS (BUG-S9-015)
+# ---------------------------------------------------------------------------
+class TestScatterCommandHandlers:
+    """Verify scatter_vegetation and scatter_biome_vegetation are in COMMAND_HANDLERS."""
+
+    def test_scatter_vegetation_registered(self) -> None:
+        assert "scatter_vegetation" in COMMAND_HANDLERS, (
+            "scatter_vegetation missing from COMMAND_HANDLERS"
+        )
+
+    def test_scatter_vegetation_callable(self) -> None:
+        assert callable(COMMAND_HANDLERS["scatter_vegetation"]), (
+            "COMMAND_HANDLERS['scatter_vegetation'] is not callable"
+        )
+
+    def test_scatter_biome_vegetation_registered(self) -> None:
+        assert "scatter_biome_vegetation" in COMMAND_HANDLERS, (
+            "scatter_biome_vegetation missing from COMMAND_HANDLERS"
+        )
+
+    def test_scatter_biome_vegetation_callable(self) -> None:
+        assert callable(COMMAND_HANDLERS["scatter_biome_vegetation"]), (
+            "COMMAND_HANDLERS['scatter_biome_vegetation'] is not callable"
+        )
+
+    def test_scatter_props_registered(self) -> None:
+        assert "scatter_props" in COMMAND_HANDLERS, (
+            "scatter_props missing from COMMAND_HANDLERS"
+        )
+
+    def test_scatter_props_callable(self) -> None:
+        assert callable(COMMAND_HANDLERS["scatter_props"]), (
+            "COMMAND_HANDLERS['scatter_props'] is not callable"
+        )

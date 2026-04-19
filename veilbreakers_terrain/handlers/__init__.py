@@ -645,6 +645,27 @@ def _build_command_handlers() -> Dict[str, Callable]:
             exc,
         )
 
+    # ------------------------------------------------------------------
+    # environment_scatter.py — scatter vegetation + props (Fix 9.7 / BUG-S9-015)
+    # ------------------------------------------------------------------
+    _try_register(
+        "scatter_vegetation",
+        f"{_pkg}.environment_scatter",
+        "handle_scatter_vegetation",
+    )
+    _try_register(
+        "scatter_props",
+        f"{_pkg}.environment_scatter",
+        "handle_scatter_props",
+    )
+
+    # vegetation_system.py — biome vegetation scatter
+    _try_register(
+        "scatter_biome_vegetation",
+        f"{_pkg}.vegetation_system",
+        "scatter_biome_vegetation",
+    )
+
     return handlers
 
 

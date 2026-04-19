@@ -463,6 +463,155 @@ def _terrain_cell_size_from_extent(
 
 
 # ---------------------------------------------------------------------------
+# Stack-channel consumer helpers — Fix 9.1 / 9.4 / 9.5
+# All pure Python + numpy; no bpy dependency. Testable in isolation.
+# ---------------------------------------------------------------------------
+
+def _collapse_detail_density(detail_dens_raw) -> "np.ndarray | None":
+    """Collapse a detail_density dict[str, (H,W)] to a single (H,W) float32 map.
+
+    Returns None when the input is None or empty.
+    """
+    if detail_dens_raw is None:
+        return None
+    if isinstance(detail_dens_raw, dict):
+        layers = list(detail_dens_raw.values())
+        if not layers:
+            return None
+        stacked = np.stack(
+            [np.asarray(l, dtype=np.float32) for l in layers], axis=0
+        )
+        return np.mean(stacked, axis=0)
+    # Fallback: treat as raw array
+    arr = np.asarray(detail_dens_raw, dtype=np.float32)
+    return arr if arr.ndim == 2 else None
+
+
+def _density_reject(density_map, row_f: float, col_f: float, rng_val: float) -> bool:
+    """Return True (reject) when density_map is below rng_val at (row_f, col_f).
+
+    Parameters
+    ----------
+    density_map : np.ndarray (H, W) float32 or None
+        Density multiplier in [0, 1]. None = uniform 1.0 (never reject).
+    row_f, col_f : float
+        Floating-point raster coordinates into density_map.
+    rng_val : float
+        Uniform random value in [0, 1] (caller provides).
+    """
+    if density_map is None:
+        return False
+    r = int(np.clip(row_f, 0, density_map.shape[0] - 1))
+    c = int(np.clip(col_f, 0, density_map.shape[1] - 1))
+    density_val = float(np.clip(density_map[r, c], 0.0, 1.0))
+    return rng_val > density_val
+
+
+def _hero_excluded(
+    excl: "np.ndarray | None",
+    world_x: float,
+    world_y: float,
+    terrain_width: float,
+    terrain_height: float,
+) -> bool:
+    """Return True when (world_x, world_y) falls in the hero_exclusion mask.
+
+    Parameters
+    ----------
+    excl : np.ndarray (H, W) or None
+        Non-zero = exclude.
+    world_x, world_y : float
+        Position in LOCAL terrain space [0, terrain_width] × [0, terrain_height].
+    """
+    if excl is None:
+        return False
+    ec = np.asarray(excl, dtype=np.float32)
+    col_f = (world_x / terrain_width) * (ec.shape[1] - 1)
+    row_f = (world_y / terrain_height) * (ec.shape[0] - 1)
+    r_idx = int(np.clip(row_f, 0, ec.shape[0] - 1))
+    c_idx = int(np.clip(col_f, 0, ec.shape[1] - 1))
+    return ec[r_idx, c_idx] != 0
+
+
+def _wind_rotation_y(
+    wind: "np.ndarray | None",
+    world_x: float,
+    world_y: float,
+    terrain_width: float,
+    terrain_height: float,
+) -> float:
+    """Return rotation_y in radians from wind_field at (world_x, world_y).
+
+    Parameters
+    ----------
+    wind : np.ndarray (H, W, 2) float32 or None
+        wind[..., 0] = wind_x (m/s), wind[..., 1] = wind_y (m/s).
+    world_x, world_y : float
+        Position in LOCAL terrain space.
+
+    Returns
+    -------
+    float : arctan2(wind_x, wind_y); 0.0 when wind is None.
+    """
+    if wind is None:
+        return 0.0
+    wf = np.asarray(wind, dtype=np.float32)
+    col_f = (world_x / terrain_width) * (wf.shape[1] - 1)
+    row_f = (world_y / terrain_height) * (wf.shape[0] - 1)
+    r_idx = int(np.clip(row_f, 0, wf.shape[0] - 1))
+    c_idx = int(np.clip(col_f, 0, wf.shape[1] - 1))
+    return float(np.arctan2(wf[r_idx, c_idx, 0], wf[r_idx, c_idx, 1]))
+
+
+def _apply_sdf_exclusion(
+    world_x: float,
+    world_y: float,
+    road_sdf_np: "np.ndarray | None",
+    placement_radius: float,
+    terrain_origin_x: float,
+    terrain_origin_y: float,
+    terrain_width: float,
+    terrain_height: float,
+) -> bool:
+    """Return True when (world_x, world_y) is within placement_radius of a road.
+
+    Uses road_sdf_dist channel (Fix 9.11). world_x/world_y are WORLD-space coords.
+    """
+    if road_sdf_np is None:
+        return False
+    terrain_half_x = terrain_width / 2.0
+    terrain_half_y = terrain_height / 2.0
+    col_f = ((world_x - terrain_origin_x + terrain_half_x) / terrain_width) * (road_sdf_np.shape[1] - 1)
+    row_f = ((world_y - terrain_origin_y + terrain_half_y) / terrain_height) * (road_sdf_np.shape[0] - 1)
+    r_idx = int(np.clip(row_f, 0, road_sdf_np.shape[0] - 1))
+    c_idx = int(np.clip(col_f, 0, road_sdf_np.shape[1] - 1))
+    return float(road_sdf_np[r_idx, c_idx]) < placement_radius
+
+
+def _write_tree_instance_points(
+    instances: np.ndarray,
+    stack,
+) -> None:
+    """Write LocationLayer output to stack.tree_instance_points (Fix 9.2).
+
+    Parameters
+    ----------
+    instances : np.ndarray shape (N, 5) float32 — (x, y, z, rotation_y, prototype_id)
+    stack : TerrainMaskStack or duck-typed stack with .set()
+    """
+    if stack is None or instances is None:
+        return
+    arr = np.asarray(instances, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] != 5:
+        return
+    if hasattr(stack, "set"):
+        stack.set("tree_instance_points", arr, "location_layer")
+    else:
+        # Fallback for simple namespace mocks used in tests
+        stack.tree_instance_points = arr
+
+
+# ---------------------------------------------------------------------------
 # Default biome vegetation rules
 # ---------------------------------------------------------------------------
 
@@ -1480,6 +1629,50 @@ def handle_scatter_vegetation(params: dict) -> dict:
         moisture_map=moisture_np,
     )
 
+    # ------------------------------------------------------------------ Fix 9.1
+    # detail_density consumer: reject candidates stochastically based on
+    # per-cell density multiplier from pass_vegetation_depth output.
+    # ------------------------------------------------------------------ Fix 9.1
+    _stack = params.get("stack")
+    _detail_dens_raw = _stack.get("detail_density") if _stack is not None else None
+    density_map = _collapse_detail_density(_detail_dens_raw)
+    if density_map is not None and len(placements) > 0:
+        _rng_density = random.Random(seed ^ 0xD1CE7)
+        _density_filtered = []
+        for _p in placements:
+            _px, _py = _p["position"][0], _p["position"][1]
+            _row_f = (_py / terrain_height) * (density_map.shape[0] - 1)
+            _col_f = (_px / terrain_width) * (density_map.shape[1] - 1)
+            if not _density_reject(density_map, _row_f, _col_f, _rng_density.random()):
+                _density_filtered.append(_p)
+        placements = _density_filtered
+
+    # ------------------------------------------------------------------ Fix 9.3/9.4/9.11
+    # Stack-channel exclusion setup (road_mask, road_sdf_dist, hero_exclusion)
+    # ------------------------------------------------------------------ Fix 9.3/9.4/9.11
+    _road_mask = None
+    if _stack is not None:
+        _road_mask = getattr(_stack, "road_mask", None)
+        if _road_mask is None and hasattr(_stack, "get"):
+            _road_mask = _stack.get("road_mask")
+    road_mask_np = np.asarray(_road_mask, dtype=np.uint8) if _road_mask is not None else None
+
+    _road_sdf = None
+    if _stack is not None:
+        _road_sdf = getattr(_stack, "road_sdf_dist", None)
+        if _road_sdf is None and hasattr(_stack, "get"):
+            _road_sdf = _stack.get("road_sdf_dist")
+    road_sdf_np = np.asarray(_road_sdf, dtype=np.float32) if _road_sdf is not None else None
+    placement_radius = float(params.get("road_sdf_clearance", 2.0))
+
+    _excl = _stack.get("hero_exclusion") if _stack is not None else None
+    excl_np = np.asarray(_excl, dtype=np.float32) if _excl is not None else None
+
+    # ------------------------------------------------------------------ Fix 9.5
+    # wind_field consumer: read for per-placement rotation_y
+    # ------------------------------------------------------------------ Fix 9.5
+    _wind = _stack.get("wind_field") if _stack is not None else None
+
     # Filter out placements that overlap with building footprints or roads
     # Collect bounding boxes of all EMPTY-type objects (building parents) in scene
     _exclusion_zones: list[tuple[float, float, float, float]] = []
@@ -1507,31 +1700,62 @@ def handle_scatter_vegetation(params: dict) -> dict:
                     _max_x + _margin, _max_y + _margin,
                 ))
 
-        # Also exclude road objects (with a buffer margin for natural clearance)
-        if _obj.type == "MESH" and ("road" in _obj.name.lower() or "_Road_" in _obj.name):
-            _bb = [_obj.matrix_world @ _mathutils_Vector(corner) for corner in _obj.bound_box]
-            _road_margin = 2.0  # meters buffer around road edges
-            _r_min_x = min(v.x for v in _bb) - _road_margin
-            _r_max_x = max(v.x for v in _bb) + _road_margin
-            _r_min_y = min(v.y for v in _bb) - _road_margin
-            _r_max_y = max(v.y for v in _bb) + _road_margin
-            _exclusion_zones.append((_r_min_x, _r_min_y, _r_max_x, _r_max_y))
+        # Legacy fallback: bpy name-string road exclusion (only when road_mask channel absent)
+        if road_mask_np is None:
+            if _obj.type == "MESH" and ("road" in _obj.name.lower() or "_Road_" in _obj.name):
+                _bb = [_obj.matrix_world @ _mathutils_Vector(corner) for corner in _obj.bound_box]
+                _road_margin = 2.0  # meters buffer around road edges
+                _r_min_x = min(v.x for v in _bb) - _road_margin
+                _r_max_x = max(v.x for v in _bb) + _road_margin
+                _r_min_y = min(v.y for v in _bb) - _road_margin
+                _r_max_y = max(v.y for v in _bb) + _road_margin
+                _exclusion_zones.append((_r_min_x, _r_min_y, _r_max_x, _r_max_y))
 
-    if _exclusion_zones:
-        terrain_half_x = terrain_width / 2.0
-        terrain_half_y = terrain_height / 2.0
-        _filtered = []
-        for p in placements:
-            wx = p["position"][0] - terrain_half_x + terrain_origin_x
-            wy = p["position"][1] - terrain_half_y + terrain_origin_y
-            _in_excluded = False
-            for bz_min_x, bz_min_y, bz_max_x, bz_max_y in _exclusion_zones:
-                if bz_min_x <= wx <= bz_max_x and bz_min_y <= wy <= bz_max_y:
-                    _in_excluded = True
-                    break
-            if not _in_excluded:
-                _filtered.append(p)
-        placements = _filtered
+    terrain_half_x = terrain_width / 2.0
+    terrain_half_y = terrain_height / 2.0
+    _filtered = []
+    for p in placements:
+        wx = p["position"][0] - terrain_half_x + terrain_origin_x
+        wy = p["position"][1] - terrain_half_y + terrain_origin_y
+        _in_excluded = False
+
+        # 1. Building bounding-box exclusion (existing)
+        for bz_min_x, bz_min_y, bz_max_x, bz_max_y in _exclusion_zones:
+            if bz_min_x <= wx <= bz_max_x and bz_min_y <= wy <= bz_max_y:
+                _in_excluded = True
+                break
+
+        # 2. road_mask channel exclusion (Fix 9.3)
+        if not _in_excluded and road_mask_np is not None:
+            _col_f = ((wx - terrain_origin_x + terrain_half_x) / terrain_width) * (road_mask_np.shape[1] - 1)
+            _row_f = ((wy - terrain_origin_y + terrain_half_y) / terrain_height) * (road_mask_np.shape[0] - 1)
+            _r = int(np.clip(_row_f, 0, road_mask_np.shape[0] - 1))
+            _c = int(np.clip(_col_f, 0, road_mask_np.shape[1] - 1))
+            if road_mask_np[_r, _c] != 0:
+                _in_excluded = True
+
+        # 3. SDF road exclusion (Fix 9.11)
+        if not _in_excluded and road_sdf_np is not None:
+            if _apply_sdf_exclusion(wx, wy, road_sdf_np, placement_radius,
+                                    terrain_origin_x, terrain_origin_y,
+                                    terrain_width, terrain_height):
+                _in_excluded = True
+
+        # 4. hero_exclusion channel (Fix 9.4)
+        if not _in_excluded and excl_np is not None:
+            # local coords: position within terrain [0, width] × [0, height]
+            _lx = p["position"][0]
+            _ly = p["position"][1]
+            if _hero_excluded(excl_np, _lx, _ly, terrain_width, terrain_height):
+                _in_excluded = True
+
+        if not _in_excluded:
+            # Fix 9.5: compute wind-field rotation_y for foliage orientation
+            _lx = p["position"][0]
+            _ly = p["position"][1]
+            p["rotation_y"] = _wind_rotation_y(_wind, _lx, _ly, terrain_width, terrain_height)
+            _filtered.append(p)
+    placements = _filtered
 
     # Cap instances
     if len(placements) > max_instances:
@@ -1610,6 +1834,26 @@ def handle_scatter_vegetation(params: dict) -> dict:
         scatter_coll.objects.link(instance)
 
     total_instances = sum(veg_counts.values())
+
+    # Fix 9.2: write tree_instance_points to stack for downstream exporters
+    if _stack is not None and placements:
+        _tree_rows = [
+            (
+                p["position"][0] - terrain_half_x + terrain_origin_x,
+                p["position"][1] - terrain_half_y + terrain_origin_y,
+                0.0,  # z populated in instance loop above; use 0 here as placeholder
+                float(p.get("rotation_y", 0.0)),
+                float(p.get("prototype_id", 0)),
+            )
+            for p in placements
+            if p.get("vegetation_type") == "tree"
+        ]
+        _tree_arr = (
+            np.array(_tree_rows, dtype=np.float32).reshape(-1, 5)
+            if _tree_rows
+            else np.empty((0, 5), dtype=np.float32)
+        )
+        _write_tree_instance_points(_tree_arr, _stack)
 
     return {
         "name": scatter_coll_name,
