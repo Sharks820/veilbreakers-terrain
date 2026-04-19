@@ -214,6 +214,125 @@ Phases 6A/6B/6C follow-up sweeps (`c9e5d53`, `49ca9d8`, `b3dc170`, `b747156`, `b
 
 ---
 
+## 0.H — SESSION 9 RESEARCH: ROADS, TEXTURING & SCATTER (2026-04-18)
+
+This section captures deep-dive research findings from Session 9 (2026-04-18): reference implementation archaeology on Rune Skovbo Johansen's LayerProcGen, AAA texturing techniques (MicroSplat / height-blend / Heitz-Neyret), and scatter/vegetation placement systems (Horizon ZD GPU placement, Ghost of Tsushima grass, Bridson Poisson). All three topic areas have **critical disconnections** between what our code implements and what the reference systems do.
+
+---
+
+### 0.H.1 — ROADS & PATHWAYS
+
+#### Rune's Exact Algorithm (confirmed from LayerProcGen source)
+
+- **Cost function:** `flatDist * (1 + (6·slope)²) + 12·avgCost(a,b)`, midpoint-subdivided
+- **Movement directions:** 24-direction (not 16 as previously believed)
+- **Smoothing:** Catmull-Rom → Bezier (3 samples/segment) + sharp-corner point duplication
+- **Carving:** direct heightmap write — innerWidth=2.5m, slopeWidth=1.5m, splatWidth=2.7m
+- **SDF per terrain cell:** `float3(vecX, vecY, signedDist)` — single field drives both road carving and vegetation exclusion
+- **Bridges:** closed-source only, NOT in public LayerProcGen
+
+#### Our Code — Two Disconnected Systems
+
+**System A — `road_network.py` (MCP-registered, grade D+):**
+- MST over 3D waypoints → flat quad ribbons at waypoint Z = "slapped on top"
+- No pathfinding. No heightmap consulted.
+- Switchbacks: random ±1-3m perpendicular noise (not contour-following)
+- Bridge detection: naive avg-Z < water_level test
+- `_road_segment_mesh_spec`: single flat quad, no subdivision, floats over terrain
+
+**System B — `_terrain_noise._astar` + `environment._apply_road_profile_to_heightmap`:**
+- A* exists but: LINEAR slope cost (not squared), 8-dir (not 24), no octile heuristic
+- `_apply_road_profile_to_heightmap`: B grade — good vectorized crown+shoulder+ditch
+- **CRITICAL BUG (G-R6):** `terrain_twelve_step.py:413` discards `graded_hmap` — carve never reaches heightmap
+
+#### Specific Gaps
+
+| ID | Severity | Location | Description |
+|---|:---:|---|---|
+| **G-R2** | HIGH | `_terrain_noise.py:830` | Slope cost not squared — trivial fix, change `slope` → `(1 + (6·slope)²)` |
+| **G-R3** | MEDIUM | `_terrain_noise.py` A* | 8-direction movement, not 16-24 |
+| **G-R4** | LOW | `_terrain_noise.py` A* | Euclidean heuristic, not octile |
+| **G-R5** | MEDIUM | `_terrain_noise.py` A* | `height_weight` on A* penalizes ridges — wrong for roads (should be 0.0 for roads) |
+| **G-R6** | CRITICAL | `terrain_twelve_step.py:413` | `graded_hmap` discarded — fix = capture return value and write back to heightmap |
+| **G-R7** | MEDIUM | System B | No width-vs-slope modulation (wider roads need more grading at steep slopes) |
+| **G-R8** | MEDIUM | System B | Bridge detection not in System B path — only in System A's naive avg-Z check |
+
+---
+
+### 0.H.2 — TEXTURING
+
+#### Rune's System
+
+- Classification is **STRUCTURAL not analytical**: generators stamp terrain-type enums (gully → "rock", path → "gravel")
+- MicroSplat (Unity Asset Store) confirmed April 2026 as splatmap renderer
+- Low-res world-space color texture multiplied over everything for macro variation
+- Unity Detail Cards for grass (billboards over splatmapped ground)
+- Ridge map from erosion filter → drainage streak material (crease cells get water texture)
+- Shadertoy demo uses Fewes/Clay John base (slope+height+noise thresholds) + Rune's ridge-map drainage
+
+#### Our Code
+
+- `terrain_materials_v2.py`: **A grade** — smoothstep envelope model matches Gaea semantics
+- **Missing: height-map blend (Brucks formula):** `ma = max(h0+(1-α), h1+α) - contrast; b0,b1 = max(...,0); result = (c0·b0 + c1·b1)/(b0+b1)` — makes rock poke through dirt naturally
+- **Missing: snow mask `normal.z` top-facing factor** — multiply by `max(0,n.z)^k`
+- **Missing: water saturation SDF** — needs `exp(-dist_to_water/r)` from water mask, not current proximity test
+- **Missing: generator-driven terrain-type labels** feeding splatmap (no structural classification pass)
+
+---
+
+### 0.H.3 — SCATTER / VEGETATION
+
+#### Rune's System
+
+- **NOT Poisson disk for locations:** N jittered pts/chunk + 1-pass linear-falloff repulsion across 3×3 neighborhood
+- SDF field (`float3(vecX, vecY, signedDist)`) — paths stamp it, vegetation reads it for exclusion: `if (dists.z < radius) skip`
+- **Grass density:** `grassSplatMax × 10 + hashJitter` — emergent from splat system, not separate Poisson pass
+- **Tree scatter:** closed-source in Big Forest, not in public LayerProcGen
+
+#### Our Code — Critical Disconnection
+
+- `pass_vegetation_depth` (B+): produces canopy/understory/shrub/ground_cover density field
+- `handle_scatter_vegetation` (C+): **IGNORES** `TerrainMaskStack.detail_density`, uses hardcoded rules
+- `tree_instance_points` channel: **NEVER populated** (Unity export is empty)
+- Road exclusion: object-name substring `"road" in obj.name.lower()` — brittle
+- Scatter handlers **NOT in `COMMAND_HANDLERS`**
+
+#### Specific Gaps
+
+| ID | Severity | Description |
+|---|:---:|---|
+| **SGA-001** | CRITICAL | `detail_density` → placement handler wire disconnected |
+| **SGA-002** | HIGH | `tree_instance_points` never populated for Unity export |
+| **SGA-003** | MEDIUM | Road exclusion by name-string, not SDF mask |
+| **SGA-004** | MEDIUM | No variable-radius Poisson + priority ordering (large-first) |
+| **SGA-005** | LOW | No curvature/flow-accumulation inputs to biome filter |
+
+---
+
+### 0.H.4 — AAA References (Session 9)
+
+| Reference | URL |
+|---|---|
+| Rune A\* source | `github.com/runevision/LayerProcGen/blob/main/Samples/TerrainSample/Scripts/Generation/TerrainObjects/TerrainPathFinder.cs` |
+| Galin 2010 roads | `perso.liris.cnrs.fr/eric.galin/Articles/2010-roads.pdf` |
+| UE5 Landscape Splines | `dev.epicgames.com/documentation/en-us/unreal-engine/landscape-splines-in-unreal-engine` |
+| Houdini Labs Road Generator | `sidefx.com/docs/houdini/nodes/sop/labs--road_generator.html` |
+| Heitz/Neyret 2018 histogram-preserving blend | `inria.hal.science/hal-01824773/file/HPN2018.pdf` |
+| UE5 Height-blend (Brucks) | LandscapeLayerBlend `LB_HeightBlend` mode |
+| Horizon ZD scatter | `guerrilla-games.com/read/gpu-based-procedural-placement-in-horizon-zero-dawn` |
+| Ghost of Tsushima grass | GDC 2021 Wohllaib, Voronoi clumping, unified wind texture |
+| Bridson Poisson | `cs.ubc.ca/~rbridson/docs/bridson-siggraph07-poissondisk.pdf` |
+| UE5 PCG scatter nodes | `dev.epicgames.com/documentation/en-us/unreal-engine/procedural-content-generation-framework-node-reference-in-unreal-engine` |
+
+---
+
+**Date:** 2026-04-18
+**Session:** 9 — Roads, Texturing & Scatter Research
+**Scope:** LayerProcGen source archaeology, MicroSplat/height-blend texturing, Horizon ZD/GoT scatter systems
+**Standard:** Compared against Rune LayerProcGen (Unity), UE5 Landscape Splines, Houdini Road Generator, Galin 2010, Heitz-Neyret 2018, Horizon Zero Dawn GPU placement, Ghost of Tsushima GDC 2021
+
+---
+
 ## 0. CODEX VERIFICATION ADDENDUM (2026-04-16)
 
 This addendum verifies the April 15, 2026 Opus audit against the current repository `HEAD` on April 16, 2026.
@@ -539,6 +658,7 @@ X2's Context7 pass on BUG-16..50 + BUG-60 surfaced **5 cross-cutting meta-findin
 0.B [Round 4 (Opus 4.7 Wave-2) Addendum](#0b-round-4-opus-47-wave-2-addendum-2026-04-16)
 0.C [Round 5 (8-Agent Ultrathink Wave) Addendum](#0c-round-5-8-agent-ultrathink-wave-addendum-2026-04-17)
 0.D [Round 6 FIXPLAN](#0d--round-6-fixplan-2026-04-17)
+0.H [Session 9 Research: Roads, Texturing & Scatter](#0h--session-9-research-roads-texturing--scatter-2026-04-18)
 1. [Executive Summary](#1-executive-summary)
 2. [Confirmed Bugs](#2-confirmed-bugs)
 3. [Grade Inflation Report](#3-grade-inflation-report)
