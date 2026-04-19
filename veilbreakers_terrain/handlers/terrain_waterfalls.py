@@ -53,6 +53,92 @@ _D8_DISTANCES: Tuple[float, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Foam vertex alpha — Fix 13.1
+# ---------------------------------------------------------------------------
+FOAM_RADIUS_DEFAULT: float = 2.0    # metres; distance from obstacle at which foam is 100%
+MAX_FOAM_SPEED_DEFAULT: float = 5.0 # m/s;  water too fast for foam to form above this speed
+
+
+def saturate(x: "np.ndarray | float") -> "np.ndarray | float":
+    """Clamp x to [0, 1].  Works on scalars and numpy arrays."""
+    return np.clip(x, 0.0, 1.0) if isinstance(x, np.ndarray) else max(0.0, min(1.0, float(x)))
+
+
+def bake_foam_vertex_alpha(
+    obstacle_proximity: "np.ndarray | float",
+    flow_speed: "np.ndarray | float",
+    foam_radius: float = FOAM_RADIUS_DEFAULT,
+    max_foam_speed: float = MAX_FOAM_SPEED_DEFAULT,
+) -> "np.ndarray | float":
+    """Bake per-vertex foam alpha for water mesh export (Fix 13.1).
+
+    Formula (AAA reference: obstacle-driven foam suppressed by high velocity):
+        foam = saturate(obstacle_proximity / foam_radius)
+               * (1.0 - flow_speed / max_foam_speed)
+    Output is clamped to [0, 1].
+
+    Args:
+        obstacle_proximity: Distance in metres to the nearest rock/shore obstacle.
+            If not available, approximate from rock_mask scipy EDT before calling.
+        flow_speed: Velocity magnitude in m/s at each vertex.
+        foam_radius: Distance (m) at which foam reaches full intensity. Default 2.0.
+        max_foam_speed: Flow speed (m/s) above which foam cannot form. Default 5.0.
+
+    Returns:
+        Per-vertex foam alpha in [0, 1].  Use as vertex alpha channel in water mesh.
+    """
+    prox_ratio = saturate(obstacle_proximity / max(foam_radius, 1e-9))
+    speed_ratio = 1.0 - flow_speed / max(max_foam_speed, 1e-9)
+    result = prox_ratio * speed_ratio
+    return saturate(result)
+
+
+def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict]":
+    """Build a list of per-vertex dicts for water mesh export (Fix 13.1).
+
+    Each dict has:
+        "position": [x, y, z]  (world-space metres)
+        "foam_alpha": float    ([0,1] foam vertex alpha)
+
+    obstacle_proximity is approximated from rock_mask scipy EDT when available,
+    else zeros (documented fallback per CONTEXT.md Claude's Discretion).
+    flow_speed is taken from stack.get("flow_speed") if available, else zeros.
+    """
+    height = stack.height if stack.height is not None else np.zeros((2, 2), dtype=np.float32)
+    rows, cols = height.shape
+
+    # Approximate obstacle_proximity from rock_mask EDT if available
+    if hasattr(stack, "rock_mask") and stack.rock_mask is not None:
+        from scipy.ndimage import distance_transform_edt
+        obstacle_prox = distance_transform_edt(stack.rock_mask == 0).astype(np.float32)
+        cell_size = float(getattr(stack, "cell_size", 1.0))
+        obstacle_prox = obstacle_prox * cell_size
+    else:
+        obstacle_prox = np.zeros((rows, cols), dtype=np.float32)
+
+    flow_speed_field = stack.get("flow_speed") if hasattr(stack, "get") else None
+    if flow_speed_field is None:
+        flow_speed_field = np.zeros((rows, cols), dtype=np.float32)
+
+    foam_alpha_grid = bake_foam_vertex_alpha(obstacle_prox, flow_speed_field)
+
+    vertices: List[dict] = []
+    world_origin_x = float(getattr(stack, "world_origin_x", 0.0))
+    world_origin_y = float(getattr(stack, "world_origin_y", 0.0))
+    cell_size = float(getattr(stack, "cell_size", 1.0))
+    for r in range(rows):
+        for c in range(cols):
+            x = world_origin_x + c * cell_size
+            y = world_origin_y + r * cell_size
+            z = float(height[r, c])
+            vertices.append({
+                "position": [x, y, z],
+                "foam_alpha": float(foam_alpha_grid[r, c]),
+            })
+    return vertices
+
+
+# ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
 
@@ -1005,4 +1091,9 @@ __all__ = [
     "validate_waterfall_system",
     "pass_waterfalls",
     "register_bundle_c_passes",
+    "saturate",
+    "bake_foam_vertex_alpha",
+    "export_water_mesh_vertices",
+    "FOAM_RADIUS_DEFAULT",
+    "MAX_FOAM_SPEED_DEFAULT",
 ]
