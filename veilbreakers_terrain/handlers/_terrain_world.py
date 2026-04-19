@@ -29,6 +29,7 @@ from ._terrain_erosion import (
     apply_hydraulic_erosion_masks,
     apply_thermal_erosion,
     apply_thermal_erosion_masks,
+    compute_stream_power_erosion,
 )
 from .terrain_erosion_filter import apply_analytical_erosion
 from ._terrain_noise import generate_heightmap
@@ -778,6 +779,19 @@ def pass_erosion(
         "alpine": dict(iterations=600, talus_angle=35.0),
     }.get(profile, dict(iterations=400, talus_angle=40.0))
 
+    # Fix 12.3: Variable erodibility from rock_hardness channel
+    _K_BASE: float = 0.001           # soft sediment baseline
+    _K_STRATA_SCALE: float = -0.0008 # hard rock reduces erodibility (granite ≈ 0.0002)
+    rock_hardness = stack.get("rock_hardness")
+    if rock_hardness is not None:
+        K_map: Optional[np.ndarray] = np.clip(
+            _K_BASE + np.asarray(rock_hardness, dtype=np.float64) * _K_STRATA_SCALE,
+            1e-6,  # minimum erodibility — never zero (prevents divide issues)
+            None,
+        ).astype(np.float32)
+    else:
+        K_map = None  # compute_stream_power_erosion will use K_scalar=_K_BASE
+
     # Fix 12.1: erode the low-freq base only; fall back to full height if split
     # not yet run (backward compat for tests that invoke pass_erosion in isolation).
     _low = stack.get("hmap_low_freq")
@@ -880,6 +894,40 @@ def pass_erosion(
         drainage_out = np.where(protected, 0.0, drainage_out)
         bank_instability_out = np.where(protected, 0.0, bank_instability_out)
         talus_out = np.where(protected, 0.0, talus_out)
+
+    # Fix 12.2: Stream-Power Law solver (Cordonnier 2016 ε-topological-order)
+    # Requires flow_accumulation from Phase 7 Priority-Flood. Falls back to
+    # uniform drainage_area if channel not yet populated.
+    flow_accum = stack.get("flow_accumulation")
+    if flow_accum is None:
+        logger.warning(
+            "pass_erosion: flow_accumulation channel not populated — "
+            "stream-power solver using uniform drainage_area (Phase 7 Priority-Flood not yet run). "
+            "Wire Fix 7.3 to enable full SPL incision."
+        )
+
+    new_height = compute_stream_power_erosion(
+        new_height,
+        K_scalar=_K_BASE,
+        m=0.5,
+        n=1.0,
+        uplift_rate=0.001,
+        dt=1000.0,
+        steps=50,
+        cell_size=float(stack.cell_size),
+        erodibility_map=K_map,
+        drainage_area=flow_accum,
+    )
+
+    # Re-apply region scoping after SPL (SPL operates on whole array)
+    if region is not None:
+        spl_scoped = h_before.copy()
+        spl_scoped[r_slice, c_slice] = new_height[r_slice, c_slice]
+        new_height = spl_scoped
+
+    # Re-apply protected zone masking after SPL
+    if protected.any():
+        new_height = np.where(protected, h_before, new_height)
 
     stack.set("height", new_height, "erosion")
     # Fix 12.1: also update hmap_low_freq so pass_composite_hmap sees the eroded base

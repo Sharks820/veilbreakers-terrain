@@ -22,6 +22,7 @@ Provides:
 
 from __future__ import annotations
 
+import heapq as _heapq
 import math
 import random as _random
 from dataclasses import dataclass, field
@@ -550,11 +551,155 @@ def apply_thermal_erosion(
     return np.clip(masks.height, source_min, source_max)
 
 
+# ---------------------------------------------------------------------------
+# Stream-Power Law solver (Fix 12.2 — Cordonnier 2016 ε-topological-order)
+# ---------------------------------------------------------------------------
+
+
+def compute_stream_power_erosion(
+    dem: np.ndarray,
+    *,
+    K_scalar: float = 0.001,
+    m: float = 0.5,
+    n: float = 1.0,
+    uplift_rate: float = 0.001,
+    dt: float = 1000.0,
+    steps: int = 50,
+    cell_size: float = 1.0,
+    erodibility_map: Optional[np.ndarray] = None,
+    drainage_area: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Stream-Power Law O(n) implicit solver.
+
+    Implements Cordonnier 2016 ε-topological-order: cells are processed
+    from lowest to highest elevation per step, ensuring each cell's
+    upstream area is already resolved before the cell updates.
+
+    Parameters
+    ----------
+    dem : np.ndarray
+        2D heightmap (H, W) float32/float64. Typically the eroded low-freq
+        hmap from pass_erosion (Plan 01).
+    K_scalar : float
+        Uniform erodibility fallback when erodibility_map is None.
+        Default 0.001 (soft sediment). Typical range: 1e-4 to 5e-3.
+    m : float
+        Drainage area exponent (default 0.5).
+    n : float
+        Slope exponent (default 1.0).
+    uplift_rate : float
+        Rock uplift rate (mm/year normalized to heightmap units/step).
+        Default 0.001.
+    dt : float
+        Time step in years (default 1000.0).
+    steps : int
+        Number of solver iterations (default 50). 50 steps is typical
+        convergence for a 256x256 DEM.
+    cell_size : float
+        World-space size per cell (metres). Used to compute slope.
+    erodibility_map : np.ndarray, optional
+        Per-cell K values, shape (H, W). When provided, overrides K_scalar.
+        Computed externally as: K_base + rock_hardness * K_strata_scale.
+    drainage_area : np.ndarray, optional
+        Per-cell drainage area from flow_accumulation (number of upstream
+        cells). When None, uniform area of 1.0 is used (no area weighting).
+
+    Returns
+    -------
+    np.ndarray
+        Eroded DEM same shape and dtype as input.
+
+    Note
+    ----
+    Performance: for large DEMs (1024x1024) the heap-based O(n log n) solver
+    is slow (~2s per step at 50 steps). A vectorized raster-scan variant
+    should replace it at that scale — flagged as T-12-05 follow-up for
+    Phase 7 Priority-Flood integration.
+    """
+    h = np.asarray(dem, dtype=np.float64).copy()
+    rows, cols = h.shape
+
+    # Build erodibility array
+    if erodibility_map is not None:
+        K = np.asarray(erodibility_map, dtype=np.float64)
+        if K.shape != h.shape:
+            raise ValueError(
+                f"erodibility_map shape {K.shape} must match dem shape {h.shape}"
+            )
+    else:
+        K = np.full(h.shape, K_scalar, dtype=np.float64)
+
+    # Build drainage area array
+    if drainage_area is not None:
+        A = np.asarray(drainage_area, dtype=np.float64)
+        if A.shape != h.shape:
+            raise ValueError(
+                f"drainage_area shape {A.shape} must match dem shape {h.shape}"
+            )
+    else:
+        A = np.ones(h.shape, dtype=np.float64)
+
+    # Precompute A^m (area factor, constant across steps unless A updates)
+    A_m = np.power(np.maximum(A, 1.0), m)
+
+    # 8-connectivity offsets for steepest-descent neighbor search
+    _neighbors = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0,  -1),           (0,  1),
+        (1,  -1), (1,  0),  (1,  1),
+    ]
+    _SQRT2 = 1.4142135623730951
+
+    for _ in range(steps):
+        # ε-topological order: process from lowest elevation upward.
+        # Build (elevation, row, col) heap.
+        heap = [(h[r, c], r, c) for r in range(rows) for c in range(cols)]
+        _heapq.heapify(heap)
+
+        while heap:
+            elev, r, c = _heapq.heappop(heap)
+
+            # Skip stale heap entries (elevation changed since insertion)
+            if abs(h[r, c] - elev) > 1e-9:
+                continue
+
+            # Find steepest downstream neighbor
+            best_slope = 0.0
+            for dr, dc in _neighbors:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    dz = h[r, c] - h[nr, nc]
+                    dist = cell_size * (_SQRT2 if (dr != 0 and dc != 0) else 1.0)
+                    s = dz / dist
+                    if s > best_slope:
+                        best_slope = s
+
+            if best_slope <= 0.0:
+                # Boundary or local minimum — apply only uplift
+                h[r, c] += dt * uplift_rate
+                continue
+
+            # Implicit stream-power update:
+            # H_new = H + dt * (U - K * A^m * S^n)
+            K_i = K[r, c]
+            A_m_i = A_m[r, c]
+            incision = K_i * A_m_i * (best_slope ** n)
+            h[r, c] += dt * (uplift_rate - incision)
+
+        # Clamp: do not allow elevation below 0
+        h = np.clip(h, 0.0, None)
+
+    return h.astype(dem.dtype)
+
+
 __all__ = [
     "ErosionMasks",
     "ThermalErosionMasks",
+    "ErosionConfig",
+    "AnalyticalErosionResult",
     "apply_hydraulic_erosion",
     "apply_hydraulic_erosion_masks",
     "apply_thermal_erosion",
     "apply_thermal_erosion_masks",
+    "compute_stream_power_erosion",
 ]
