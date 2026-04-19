@@ -132,6 +132,9 @@ def _select_by_plane(
     if n is None:
         return []
 
+    if side not in ("above", "below"):
+        raise ValueError(f"side must be 'above' or 'below', got {side!r}")
+
     result: list[int] = []
     for i, v in enumerate(verts):
         diff = _sub3(v, plane_point)
@@ -145,22 +148,53 @@ def _select_by_plane(
     return result
 
 
-def _parse_selection_criteria(criteria: dict) -> dict:
-    """Normalise / pass-through a selection criteria dict.
+_KNOWN_CRITERIA_KEYS: frozenset[str] = frozenset({
+    "operator", "threshold", "angle", "distance", "axis",
+    "invert", "min", "max", "mode",
+})
 
-    Currently a pass-through: returns the same dict unchanged.  Future
-    versions may validate keys or expand shorthand forms.
+
+def _parse_selection_criteria(criteria: dict, *, strict: bool = False) -> dict:
+    """Normalise and validate a selection criteria dict.
+
+    Returns a shallow copy with numeric strings coerced to float and
+    boolean strings ("true"/"false") coerced to bool.
 
     Parameters
     ----------
     criteria:
-        Arbitrary dict of selection parameters.
+        Dict of selection parameters.
+    strict:
+        If True, raises ValueError for unrecognised keys.
 
     Returns
     -------
-    The same dict (all keys preserved).
+    Normalised copy of criteria.
+
+    Raises
+    ------
+    TypeError
+        If criteria is not a dict.
+    ValueError
+        If strict=True and an unrecognised key is present.
     """
-    return criteria
+    if not isinstance(criteria, dict):
+        raise TypeError(f"criteria must be a dict, got {type(criteria).__name__!r}")
+    out: dict = {}
+    for key, value in criteria.items():
+        if strict and key not in _KNOWN_CRITERIA_KEYS:
+            raise ValueError(f"Unrecognised selection criterion: {key!r}")
+        if isinstance(value, str):
+            lower = value.lower()
+            if lower in ("true", "false"):
+                value = lower == "true"
+            else:
+                try:
+                    value = float(value)
+                except ValueError:
+                    pass
+        out[key] = value
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -48,11 +48,10 @@ def _falloff_weight(dist: float, radius: float, mode: str) -> float | None:
     elif mode == "SHARP":
         return (1.0 - t) ** 2
     elif mode == "CONSTANT":
-        # At exact boundary (t == 1.0) weight would be 1.0 but we exclude it
-        # to keep CONSTANT semantics clean (only fully-inside verts get 1.0).
-        if dist == radius:
-            return None
-        return 1.0
+        # BUG-S6-012: return 0.0 at boundary so CONSTANT matches other modes
+        # (all modes include boundary vertices at weight 0.0 rather than
+        # excluding them via None, keeping affected-vertex counts consistent).
+        return 0.0 if dist == radius else 1.0
     else:
         # Unknown mode — treat as SMOOTH
         return 1.0 - _smoothstep(t)
@@ -161,17 +160,23 @@ def blend_colors(
             for i in range(4)
         )
     elif mode == "ADD":
-        result = tuple(existing[i] + new_color[i] * strength for i in range(4))
+        # BUG-S6-011: preserve alpha (index 3) — it is a selection mask in
+        # Blender 4.5, not a paint component; blending it with ADD drives it
+        # toward 0 and wipes vertex selection state.
+        blended = tuple(existing[i] + new_color[i] * strength for i in range(3))
+        result = blended + (existing[3],)
     elif mode == "SUBTRACT":
-        result = tuple(existing[i] - new_color[i] * strength for i in range(4))
+        blended = tuple(existing[i] - new_color[i] * strength for i in range(3))
+        result = blended + (existing[3],)
     elif mode == "MULTIPLY":
         # factor = 1.0 + (new_color[i] - 1.0) * strength
         # At strength=0: factor=1.0 (identity)
         # At strength=1, new=0.5: factor=0.5
-        result = tuple(
+        blended = tuple(
             existing[i] * (1.0 + (new_color[i] - 1.0) * strength)
-            for i in range(4)
+            for i in range(3)
         )
+        result = blended + (existing[3],)
     else:
         # Fallback: MIX
         result = tuple(

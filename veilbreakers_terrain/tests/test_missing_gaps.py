@@ -188,56 +188,61 @@ class TestBlendColors:
             assert result[i] == pytest.approx(0.5)
 
     def test_add_blend_mode(self):
-        """ADD mode adds new * strength to existing."""
+        """ADD mode adds new * strength to RGB; alpha is preserved."""
         from blender_addon.handlers.vertex_paint_live import blend_colors
 
         existing = (0.3, 0.3, 0.3, 0.3)
         new_col = (0.2, 0.2, 0.2, 0.2)
         result = blend_colors(existing, new_col, 1.0, "ADD")
-        for i in range(4):
+        for i in range(3):
             assert result[i] == pytest.approx(0.5)
+        assert result[3] == pytest.approx(existing[3])  # alpha preserved
 
     def test_add_clamps_to_one(self):
-        """ADD mode clamps values above 1.0."""
+        """ADD mode clamps RGB above 1.0; alpha is preserved."""
         from blender_addon.handlers.vertex_paint_live import blend_colors
 
         existing = (0.8, 0.8, 0.8, 0.8)
         new_col = (0.5, 0.5, 0.5, 0.5)
         result = blend_colors(existing, new_col, 1.0, "ADD")
-        for i in range(4):
+        for i in range(3):
             assert result[i] == pytest.approx(1.0)
+        assert result[3] == pytest.approx(existing[3])  # alpha preserved
 
     def test_subtract_blend_mode(self):
-        """SUBTRACT mode subtracts new * strength from existing."""
+        """SUBTRACT mode subtracts new * strength from RGB; alpha is preserved."""
         from blender_addon.handlers.vertex_paint_live import blend_colors
 
         existing = (0.5, 0.5, 0.5, 0.5)
         new_col = (0.2, 0.2, 0.2, 0.2)
         result = blend_colors(existing, new_col, 1.0, "SUBTRACT")
-        for i in range(4):
+        for i in range(3):
             assert result[i] == pytest.approx(0.3)
+        assert result[3] == pytest.approx(existing[3])  # alpha preserved
 
     def test_subtract_clamps_to_zero(self):
-        """SUBTRACT mode clamps values below 0.0."""
+        """SUBTRACT mode clamps RGB below 0.0; alpha is preserved."""
         from blender_addon.handlers.vertex_paint_live import blend_colors
 
         existing = (0.1, 0.1, 0.1, 0.1)
         new_col = (0.5, 0.5, 0.5, 0.5)
         result = blend_colors(existing, new_col, 1.0, "SUBTRACT")
-        for i in range(4):
+        for i in range(3):
             assert result[i] == pytest.approx(0.0)
+        assert result[3] == pytest.approx(existing[3])  # alpha preserved
 
     def test_multiply_blend_mode(self):
-        """MULTIPLY mode: existing * lerp(1.0, new, strength)."""
+        """MULTIPLY mode: existing * lerp(1.0, new, strength) for RGB; alpha is preserved."""
         from blender_addon.handlers.vertex_paint_live import blend_colors
 
         existing = (0.8, 0.8, 0.8, 0.8)
         new_col = (0.5, 0.5, 0.5, 0.5)
         # factor = 1.0 + (0.5 - 1.0) * 1.0 = 0.5
-        # result = 0.8 * 0.5 = 0.4
+        # RGB result = 0.8 * 0.5 = 0.4
         result = blend_colors(existing, new_col, 1.0, "MULTIPLY")
-        for i in range(4):
+        for i in range(3):
             assert result[i] == pytest.approx(0.4)
+        assert result[3] == pytest.approx(existing[3])  # alpha preserved
 
     def test_multiply_strength_zero_returns_existing(self):
         """MULTIPLY at strength=0: factor=1.0, so result=existing."""
@@ -354,18 +359,20 @@ class TestEvaluateMeshQuality:
         assert q["topology_grade"] in ("A", "B", "C", "D", "E", "F")
 
     def test_clean_quad_gets_expected_grade(self):
-        """A single quad has boundary edges (non-manifold), so grade is D.
+        """A single quad has boundary edges (non-manifold), so grade is C.
 
-        This is correct: a lone quad's 4 edges are each shared by only 1
-        face, which counts as non-manifold in the grading rubric.  A fully
-        closed mesh (e.g., a cube) is needed for A/B grades.
+        A lone quad's 4 edges are each shared by only 1 face, which counts
+        as non-manifold (100% non-manifold ratio >= 10% threshold).  No
+        degenerate faces are present, so the grade is C (serious non-manifold)
+        rather than D (degenerate/unrenderable).  A fully closed mesh (e.g.,
+        a cube) is needed for A/B grades.
         """
         from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
-        # Boundary edges -> non_manifold > 0 -> grade D
-        assert q["topology_grade"] == "D"
+        # Boundary edges -> non_manifold ratio >= 10% -> grade C
+        assert q["topology_grade"] == "C"
 
     def test_closed_quad_mesh_gets_good_grade(self):
         """A closed box (all edges shared by 2 faces) gets A or B grade."""
@@ -466,26 +473,26 @@ class TestSelectFixAction:
         assert select_fix_action(quality, targets, actions) == "subdivide"
 
     def test_repair_when_non_manifold(self):
-        """Selects 'repair' when non-manifold edges exist."""
+        """Selects 'repair_non_manifold' when non-manifold edges exist."""
         from blender_addon.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 1000, "has_non_manifold": True,
-                    "has_degenerate_faces": False, "topology_grade": "D",
+                    "has_degenerate_faces": False, "topology_grade": "C",
                     "normal_consistency": 0.8, "uv_coverage": 1.0}
         targets = {"no_non_manifold": True}
-        actions = ["repair", "remesh", "decimate"]
-        assert select_fix_action(quality, targets, actions) == "repair"
+        actions = ["repair_non_manifold", "remesh", "decimate"]
+        assert select_fix_action(quality, targets, actions) == "repair_non_manifold"
 
     def test_repair_when_degenerate_faces(self):
-        """Selects 'repair' when degenerate faces exist."""
+        """Selects 'repair_degenerate' when degenerate faces exist."""
         from blender_addon.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 1000, "has_non_manifold": False,
-                    "has_degenerate_faces": True, "topology_grade": "C",
+                    "has_degenerate_faces": True, "topology_grade": "D",
                     "normal_consistency": 1.0, "uv_coverage": 1.0}
         targets = {"no_degenerate_faces": True}
-        actions = ["repair", "remesh", "decimate"]
-        assert select_fix_action(quality, targets, actions) == "repair"
+        actions = ["repair_degenerate", "remesh", "decimate"]
+        assert select_fix_action(quality, targets, actions) == "repair_degenerate"
 
     def test_remesh_when_bad_topology(self):
         """Selects 'remesh' when topology grade is worse than target."""
@@ -525,8 +532,8 @@ class TestSelectFixAction:
         quality = {"poly_count": 10000, "has_non_manifold": True,
                     "has_degenerate_faces": False, "topology_grade": "A",
                     "normal_consistency": 1.0, "uv_coverage": 1.0}
-        # 'repair' not in the list — should not select it even though
-        # non-manifold is the highest priority; falls through to decimate
+        # 'repair_non_manifold' not in the list — should not select it even
+        # though non-manifold is the highest priority; falls through to decimate
         targets = {"no_non_manifold": True, "max_poly_count": 5000}
         actions = ["decimate", "subdivide"]
         result = select_fix_action(quality, targets, actions)

@@ -17,6 +17,13 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    import numpy as _np
+    from scipy.spatial import Voronoi as _ScipyVoronoi
+    _SCIPY_AVAILABLE = True
+except ImportError:
+    _SCIPY_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Data dictionaries
 # ---------------------------------------------------------------------------
@@ -333,8 +340,44 @@ def _compute_voronoi_bounds(
     map_size: float,
     resolution: int = 20,
 ) -> Tuple[float, float, float, float]:
-    """Approximate Voronoi cell bounding box by sampling a grid."""
+    """Compute Voronoi cell bounding box.
+
+    Uses scipy.spatial.Voronoi for exact computation when scipy is available.
+    Falls back to grid sampling otherwise.
+    """
     cx, cy = centers[idx]
+
+    if _SCIPY_AVAILABLE and len(centers) >= 3:
+        # Mirror points around each map edge to give scipy boundary context,
+        # then collect the exact Voronoi vertices that belong to region idx.
+        pts = _np.array(centers, dtype=float)
+        # Add 8 mirror reflections so boundary cells get finite vertices
+        mirrors = _np.concatenate([
+            pts * _np.array([-1, 1]) + _np.array([0, 0]),          # reflect x
+            pts * _np.array([1, -1]) + _np.array([0, 0]),          # reflect y
+            pts * _np.array([-1, -1]),                              # reflect xy
+            pts + _np.array([2 * map_size, 0]),                     # right
+            pts + _np.array([-2 * map_size, 0]),                    # left
+            pts + _np.array([0, 2 * map_size]),                     # top
+            pts + _np.array([0, -2 * map_size]),                    # bottom
+        ])
+        all_pts = _np.vstack([pts, mirrors])
+        vor = _ScipyVoronoi(all_pts)
+        # point_region maps input index → region index in vor.regions
+        region_idx = vor.point_region[idx]
+        vert_indices = vor.regions[region_idx]
+        if len(vert_indices) > 0 and -1 not in vert_indices:
+            verts = vor.vertices[vert_indices]
+            # Clip to map bounds
+            verts[:, 0] = _np.clip(verts[:, 0], 0.0, map_size)
+            verts[:, 1] = _np.clip(verts[:, 1], 0.0, map_size)
+            min_x, min_y = float(verts[:, 0].min()), float(verts[:, 1].min())
+            max_x, max_y = float(verts[:, 0].max()), float(verts[:, 1].max())
+            if min_x < max_x and min_y < max_y:
+                return (min_x, min_y, max_x, max_y)
+        # Fall through to grid sampling if region has infinite vertices
+
+    # Grid-sampling fallback
     min_x, min_y = map_size, map_size
     max_x, max_y = 0.0, 0.0
     step = map_size / resolution
@@ -366,7 +409,7 @@ def _compute_voronoi_bounds(
 
 
 def _build_connections(
-    regions: List[Region], rng: random.Random
+    regions: List[Region], rng: random.Random, map_size: float = 2000.0
 ) -> List[Connection]:
     """Build MST-like connections using Prim's algorithm plus a few extras."""
     if len(regions) < 2:
@@ -390,7 +433,7 @@ def _build_connections(
                     best_dist = d
                     best_pair = (r, s)
         a, b = best_pair
-        road_type = "main" if best_dist < (500.0) else "path"
+        road_type = "main" if best_dist < (map_size * 0.25) else "path"
         connections.append(Connection(
             from_region=a.name,
             to_region=b.name,
@@ -404,7 +447,6 @@ def _build_connections(
     n = len(regions)
     extras = min(n, max(1, n // 3))
     region_list = list(regions)
-    rng_state = rng.getstate()
     for _ in range(extras * 3):
         if len(connections) >= n + extras:
             break
@@ -476,7 +518,8 @@ def generate_world_map(
     # 3. Build regions with approximate Voronoi bounds
     regions: List[Region] = []
     for i, (center, biome) in enumerate(zip(centers, biomes)):
-        bounds = _compute_voronoi_bounds(i, centers, map_size)
+        voronoi_res = max(20, int(math.sqrt(len(centers)) * 10))
+        bounds = _compute_voronoi_bounds(i, centers, map_size, resolution=voronoi_res)
         area = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
         area = max(1.0, area)
         name = f"{biome}_{i + 1}"
@@ -489,7 +532,7 @@ def generate_world_map(
         ))
 
     # 4. Build connections
-    connections = _build_connections(regions, rng)
+    connections = _build_connections(regions, rng, map_size)
 
     # 5. Generate POIs — deterministic scatter
     # Base count: 8 per region or min_pois, whichever is larger
@@ -497,21 +540,6 @@ def generate_world_map(
     poi_positions: List[POI] = []
 
     for _ in range(base_count):
-        x = rng.uniform(0.0, map_size)
-        y = rng.uniform(0.0, map_size)
-        region = _nearest_region((x, y), regions)
-        poi_type = rng.choice(poi_keys)
-        poi_def = POI_TYPES[poi_type]
-        props = poi_def["props"][:]
-        poi_positions.append(POI(
-            poi_type=poi_type,
-            position=(x, y),
-            props=props,
-            region=region.name,
-        ))
-
-    # Ensure min_pois is met exactly
-    while len(poi_positions) < min_pois:
         x = rng.uniform(0.0, map_size)
         y = rng.uniform(0.0, map_size)
         region = _nearest_region((x, y), regions)
@@ -597,8 +625,8 @@ def place_landmarks(
     for region in wm.regions:
         cx, cy = region.center
         bx0, by0, bx1, by1 = region.bounds
-        half_w = (bx1 - bx0) * 0.4
-        half_h = (by1 - by0) * 0.4
+        half_w = (bx1 - bx0) * 0.25
+        half_h = (by1 - by0) * 0.25
 
         for _ in range(landmarks_per_region):
             lm_type = rng.choice(lm_keys)
@@ -611,7 +639,7 @@ def place_landmarks(
             py = max(0.0, min(wm.map_size, cy + jy))
 
             min_h = lm_def["min_height"]
-            height = min_h + rng.uniform(0.0, min_h * 0.5)
+            height = min_h + rng.uniform(0.0, min_h * 2.0)
 
             vis = lm_def["visibility_range"]
 

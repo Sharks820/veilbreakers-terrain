@@ -113,9 +113,11 @@ _GRADE_ORDER = ("A", "B", "C", "D", "E", "F")
 
 def _grade_worse_than(grade: str, target: str) -> bool:
     """Return True if *grade* is strictly worse than *target*."""
-    gi = _GRADE_ORDER.index(grade) if grade in _GRADE_ORDER else len(_GRADE_ORDER)
-    ti = _GRADE_ORDER.index(target) if target in _GRADE_ORDER else 0
-    return gi > ti
+    if grade not in _GRADE_ORDER:
+        raise ValueError(f"Unknown grade {grade!r}; expected one of {_GRADE_ORDER}")
+    if target not in _GRADE_ORDER:
+        raise ValueError(f"Unknown target grade {target!r}; expected one of {_GRADE_ORDER}")
+    return _GRADE_ORDER.index(grade) > _GRADE_ORDER.index(target)
 
 
 # ---------------------------------------------------------------------------
@@ -172,15 +174,15 @@ def evaluate_mesh_quality(
         topology_grade = "A"
     elif not has_non_manifold and not has_degenerate_faces:
         topology_grade = "A"
-    elif not has_non_manifold:
-        topology_grade = "B"
+    elif has_degenerate_faces:
+        topology_grade = "D"   # unrenderable = worst
     elif total_edges > 0 and non_manifold_count / total_edges < 0.1:
-        topology_grade = "C"
+        topology_grade = "B"   # non-manifold warning < 10%
     else:
-        topology_grade = "D"
+        topology_grade = "C"   # non-manifold >= 10% = serious
 
     # Normal consistency — average dot product of adjacent face-pair normals
-    normal_consistency = 1.0
+    normal_consistency = 0.0
     if face_count > 1:
         # Build edge -> face index map
         edge_to_faces: dict[tuple, list[int]] = defaultdict(list)
@@ -200,7 +202,7 @@ def evaluate_mesh_quality(
                 if na is not None and nb is not None:
                     dot_sum += _dot(na, nb)
                     pair_count += 1
-        normal_consistency = dot_sum / pair_count if pair_count > 0 else 1.0
+        normal_consistency = dot_sum / pair_count if pair_count > 0 else 0.0
 
     # UV coverage
     uv_coverage = 0.0
@@ -262,13 +264,13 @@ def select_fix_action(
 
     # 1. Non-manifold
     if targets.get("no_non_manifold") and quality.get("has_non_manifold"):
-        a = _try("repair")
+        a = _try("repair_non_manifold")
         if a:
             return a
 
     # 2. Degenerate faces
     if targets.get("no_degenerate_faces") and quality.get("has_degenerate_faces"):
-        a = _try("repair")
+        a = _try("repair_degenerate")
         if a:
             return a
 

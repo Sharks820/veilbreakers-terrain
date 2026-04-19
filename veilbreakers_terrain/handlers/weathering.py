@@ -91,25 +91,18 @@ def _compute_edge_convexity(
 
     for edge in edges:
         a, b = edge[0], edge[1]
-        # Edge vector
-        vax, vay, vaz = (
-            float(vertices[b][0]) - float(vertices[a][0]),
-            float(vertices[b][1]) - float(vertices[a][1]),
-            float(vertices[b][2]) - float(vertices[a][2]),
-        )
-        length = math.sqrt(vax * vax + vay * vay + vaz * vaz)
-        if length < 1e-12:
-            continue
-        vax /= length
-        vay /= length
-        vaz /= length
-        # Dot of edge direction with each endpoint's normal
         na = vertex_normals[a]
-        nb = vertex_normals[b]
-        dot_a = vax * float(na[0]) + vay * float(na[1]) + vaz * float(na[2])
-        dot_b = vax * float(nb[0]) + vay * float(nb[1]) + vaz * float(nb[2])
-        convexity[a] += dot_a
-        convexity[b] -= dot_b
+        nb_v = vertex_normals[b]
+        # curvature = 1 - dot(na, nb): 0 for flat, +2 for opposing normals (convex ridge).
+        # Orientation-invariant: swapping a<->b gives identical curvature.
+        curvature = 1.0 - (
+            float(na[0]) * float(nb_v[0])
+            + float(na[1]) * float(nb_v[1])
+            + float(na[2]) * float(nb_v[2])
+        )
+        # Distribute equally to both endpoints (symmetric, orientation-invariant).
+        convexity[a] += curvature
+        convexity[b] += curvature
 
     # Normalise to [-1, 1]
     max_abs = max((abs(c) for c in convexity), default=1.0)
@@ -152,10 +145,11 @@ def compute_weathered_vertex_colors(
         convexity = _compute_edge_convexity(mesh_data)
 
     # Per-vertex bounding-box height normalisation for dirt accumulation.
-    ys = [float(v[1]) for v in vertices]
-    min_y = min(ys) if ys else 0.0
-    max_y = max(ys) if ys else 1.0
-    y_range = max_y - min_y if (max_y - min_y) > 1e-12 else 1.0
+    # Blender 4.5 world space is Z-up; height is index 2.
+    zs = [float(v[2]) for v in vertices]
+    min_z = min(zs) if zs else 0.0
+    max_z = max(zs) if zs else 1.0
+    z_range = max_z - min_z if (max_z - min_z) > 1e-12 else 1.0
 
     br, bg, bb, ba = (float(c) for c in base_color)
     dirt = preset["dirt_accumulation"]
@@ -166,7 +160,7 @@ def compute_weathered_vertex_colors(
     result: List[Tuple[float, float, float, float]] = []
     for i in range(n):
         cx = convexity[i]  # positive = convex = more edge wear / exposure
-        height_t = (float(vertices[i][1]) - min_y) / y_range  # 0 bottom, 1 top
+        height_t = (float(vertices[i][2]) - min_z) / z_range  # 0 bottom, 1 top (Z-up)
 
         # Dirt accumulates in concave regions (low convexity) and low areas.
         dirt_factor = dirt * (0.5 - 0.5 * cx) * (1.0 - height_t * 0.5)
@@ -203,7 +197,11 @@ def apply_structural_settling(
     seed: int = 42,
     _cached_bbox: Optional[Dict[str, float]] = None,
 ) -> List[Tuple[float, float, float]]:
-    """Displace vertices slightly downward (negative y) to simulate settling.
+    """Displace vertices slightly downward (negative Z) to simulate settling.
+
+    Blender 4.5 world space is Z-up, so settling is applied along the Z axis.
+    Displacement magnitude is height-weighted: taller vertices (higher normalized
+    Z) settle more than ground-level vertices, matching physical intuition.
 
     Parameters
     ----------
@@ -224,22 +222,19 @@ def apply_structural_settling(
     if not verts:
         return []
 
-    # bbox is computed for potential future use (height-weighted settling),
-    # but we keep the displacement purely seed-driven to stay deterministic
-    # regardless of whether the bbox is cached or freshly computed.
-    if _cached_bbox is None:
-        _compute_bounding_box(verts)  # compute for consistency, discard result
-    # (We intentionally do NOT use bbox values in the displacement so that
-    #  _cached_bbox vs. fresh-computed cannot diverge.)
+    if _cached_bbox is not None:
+        bbox = _cached_bbox
+    else:
+        bbox = _compute_bounding_box(verts)
+
+    min_z = bbox["min_z"]
+    max_z = bbox["max_z"]
+    z_range = max_z - min_z if (max_z - min_z) > 1e-12 else 1.0
 
     rng = random.Random(seed)
     result: List[Tuple[float, float, float]] = []
     for v in verts:
-        # Downward displacement (negative y) scaled by strength.
-        dy = -abs(rng.gauss(0.0, strength))
-        result.append((
-            float(v[0]),
-            float(v[1]) + dy,
-            float(v[2]),
-        ))
+        height_norm = (float(v[2]) - min_z) / z_range  # 0 at ground, 1 at top
+        dz = -abs(rng.gauss(0.0, strength)) * (0.5 + 0.5 * height_norm)
+        result.append((float(v[0]), float(v[1]), float(v[2]) + dz))
     return result

@@ -175,10 +175,10 @@ def compute_light_placements(props: list) -> list:
             "source_prop": prop_type,
             "position": (float(pos[0]), float(pos[1]), z),
             "energy": energy,
-            "color": ldef["color"],
+            "color": tuple(ldef["color"]),
             "radius": ldef["radius"],
             "shadow": ldef["shadow"],
-            "flicker": ldef["flicker"],
+            "flicker": dict(ldef["flicker"]) if ldef.get("flicker") else None,
         })
     return lights
 
@@ -264,12 +264,15 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
         total_energy = sum(lights[k]["energy"] for k in group)
         max_radius = max(lights[k]["radius"] for k in group)
         has_shadow = any(lights[k]["shadow"] for k in group)
-        has_flicker = next(
-            (lights[k]["flicker"] for k in group if lights[k].get("flicker")),
-            None,
-        )
+        max_k = max(group, key=lambda k: lights[k]["energy"])
+        has_flicker = lights[max_k].get("flicker")
 
-        if total_energy == 0.0:
+        max_energy_val = max(lights[k]["energy"] for k in group)
+        min_energy_val = min(lights[k]["energy"] for k in group)
+        if max_energy_val > 2.0 * max(min_energy_val, 1e-12):
+            anchor_k = max(group, key=lambda k: lights[k]["energy"])
+            px, py, pz = lights[anchor_k]["position"]
+        elif total_energy == 0.0:
             px = sum(lights[k]["position"][0] for k in group) / len(group)
             py = sum(lights[k]["position"][1] for k in group) / len(group)
             pz = sum(lights[k]["position"][2] for k in group) / len(group)
