@@ -1408,73 +1408,48 @@ def compute_flow_map(
 # ---------------------------------------------------------------------------
 
 def apply_thermal_erosion(
-    heightmap: list[list[float]] | np.ndarray,
+    heightmap: "list[list[float]] | np.ndarray",
     iterations: int = 50,
-    talus_angle: float = 30.0,
+    talus_angle: float = 0.5,
     strength: float = 0.3,
     cell_size: float = 1.0,
-) -> list[list[float]]:
-    """Thermal erosion -- material slumps from steep slopes to flat areas.
+) -> "list[list[float]]":
+    """Apply talus-angle thermal erosion.
 
-    Distinct from hydraulic (water-based). Simulates rockfall and scree slopes.
-    Pure-logic function.
+    Delegation shim -- routes to the canonical vectorized implementation in
+    ``_terrain_erosion.apply_thermal_erosion``. Fix 7.6 / CONFLICT-11 / REQ-P7-006.
 
     Args:
-        heightmap: 2D array of height values.
-        iterations: Number of erosion passes (default 50).
-        talus_angle: Maximum stable slope angle in **degrees** (default 30.0).
-                     Material on steeper slopes slides downhill. Lower values
-                     produce more erosion.
-        strength: Fraction of excess material transferred per iteration (0-1).
-                 Default 0.3.
+        heightmap: 2D height array (list-of-lists or numpy array).
+        iterations: Number of erosion passes. Default 50.
+        talus_angle: Stable slope threshold. Values < 2.0 are treated as raw
+            height-unit convention (legacy) and converted via arctan to degrees.
+            Values >= 2.0 are assumed to already be in degrees.
+            Default 0.5 (approx 26.6 degrees) matches the legacy terrain_advanced convention.
+        strength: Unused -- retained for API backward compatibility only.
         cell_size: Real-world size of one grid cell (world units, default 1.0).
-                   Normalises the talus threshold so that erosion behaviour
-                   is resolution-independent (BUG-13 class fix).
-                   ``talus_threshold = tan(radians(talus_angle)) * cell_size``
-                   matches the raw per-cell height difference used in the
-                   slope comparison.
+                   Passed through to the canonical implementation.
 
     Returns:
-        2D list of eroded height values (same dimensions as input).
+        Modified heightmap as list-of-lists (preserves legacy return type).
     """
-    hmap = np.asarray(heightmap, dtype=np.float64).copy()
-    rows, cols = hmap.shape
+    from ._terrain_erosion import apply_thermal_erosion as _canonical
 
-    if rows < 2 or cols < 2:
-        return hmap.tolist()
+    # Convert legacy raw-height talus to degrees for the canonical impl
+    angle_deg = (
+        math.degrees(math.atan(float(talus_angle)))
+        if float(talus_angle) < 2.0
+        else float(talus_angle)
+    )
 
-    # Convert degrees to a height-difference threshold that is cell_size-aware.
-    # This eliminates resolution dependency: the same angle produces the same
-    # visual result regardless of grid spacing (BUG-13 class fix).
-    talus_in_height_units = math.tan(math.radians(talus_angle)) * max(cell_size, 1e-6)
-
-    for _it in range(iterations):
-        diff_N = hmap[1:-1, 1:-1] - hmap[0:-2, 1:-1]
-        diff_S = hmap[1:-1, 1:-1] - hmap[2:,   1:-1]
-        diff_W = hmap[1:-1, 1:-1] - hmap[1:-1, 0:-2]
-        diff_E = hmap[1:-1, 1:-1] - hmap[1:-1, 2:  ]
-        exc_N = np.maximum(diff_N - talus_in_height_units, 0.0)
-        exc_S = np.maximum(diff_S - talus_in_height_units, 0.0)
-        exc_W = np.maximum(diff_W - talus_in_height_units, 0.0)
-        exc_E = np.maximum(diff_E - talus_in_height_units, 0.0)
-        total_exc = exc_N + exc_S + exc_W + exc_E
-        max_exc   = np.maximum.reduce([exc_N, exc_S, exc_W, exc_E])
-        active    = total_exc > 0.0
-        safe_total = np.where(active, total_exc, 1.0)
-        transfer   = np.where(active, max_exc * strength * 0.5, 0.0)
-        t_N = np.where(active, transfer * exc_N / safe_total, 0.0)
-        t_S = np.where(active, transfer * exc_S / safe_total, 0.0)
-        t_W = np.where(active, transfer * exc_W / safe_total, 0.0)
-        t_E = np.where(active, transfer * exc_E / safe_total, 0.0)
-        delta = np.zeros_like(hmap)
-        delta[1:-1, 1:-1] -= (t_N + t_S + t_W + t_E)
-        delta[0:-2, 1:-1] += t_N
-        delta[2:,   1:-1] += t_S
-        delta[1:-1, 0:-2] += t_W
-        delta[1:-1, 2:  ] += t_E
-        hmap += delta
-
-    return hmap.tolist()
+    result = _canonical(
+        heightmap,
+        iterations=iterations,
+        talus_angle=angle_deg,
+        cell_size=cell_size,
+    )
+    # Preserve legacy return type (list-of-lists)
+    return result.tolist()
 
 
 # ---------------------------------------------------------------------------
