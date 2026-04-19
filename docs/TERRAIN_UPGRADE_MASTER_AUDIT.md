@@ -5389,3 +5389,379 @@ Prior fix only modified docstrings/comments. **Zero channel assignments were cor
 | **BUG-R9-004 (dict channels)** | OPEN | `terrain_semantics.py` `to_npz`/`from_npz` | `wildlife_affinity`, `decal_density`, `detail_density` dict-of-ndarray channels still not round-tripped; checkpoint now captures `water_network` + `side_effects` but dict channels remain asymmetric between `compute_hash` and `to_npz`. |
 | **Phase 7 grade upgrades** | OPEN | `_box_filter_2d`, `_distance_from_mask`, residual D/C-grade functions | All D/C-grade functions still needing vectorization — queued as separate phase. |
 
+
+---
+
+## 0.I — SESSION 9-10 CODEBASE GAP AUDIT (2026-04-18)
+
+This section documents codebase gaps discovered during the Session 9 ULTRATHINK research wave and Session 10 follow-up analysis. These bugs were **not** captured in the numbered FIXPLAN prior to this addendum. Bugs BUG-S9-001 through BUG-S9-015 and BUG-S10-001 are new entries; they extend the FIXPLAN as Phases 7–11 documented in section 0.D.5.
+
+---
+
+### 0.I.1 — CRITICAL Gaps
+
+#### BUG-S9-001 — `terrain_pipeline.py:548` erosion `produces_channels` missing `"ridge"` — **RESOLVED**
+
+- **File:** `terrain_pipeline.py:548`
+- **Finding:** The erosion pass `produces_channels` declaration was missing `"ridge"`, causing the PassDAG to schedule the erosion pass in the wrong wave — any pass that consumes `ridge` could run before erosion completed.
+- **Status:** **FIXED at `63b7dbc`** — `"height"` and `"ridge"` both added to erosion `produces_channels` (also confirmed at `a4dafc2`). Marked resolved.
+
+---
+
+#### BUG-S9-002 — `terrain_unity_export.py` Unity export channel whitelist too narrow — **RESOLVED**
+
+- **File:** `terrain_unity_export.py`
+- **Finding:** The Unity export channel whitelist contained only 6 channels. Fifteen-plus channels declared in `TerrainMaskStack._ARRAY_CHANNELS` — including `ridge`, `drainage`, `flow_direction`, `water_surface`, `wetness`, `biome_id`, `macro_color`, `wind_field`, `hero_exclusion`, `traversability`, `navmesh_area_id`, `lod_bias`, `ambient_occlusion_bake`, `cloud_shadow`, `strata_orientation` — were silently dropped during export.
+- **Status:** **FIXED at `63b7dbc`** — whitelist expanded to include all declared array channels. Marked resolved.
+
+---
+
+#### BUG-S9-003 — `ridge` channel produced by erosion, consumed by nothing — **OPEN**
+
+- **Severity:** CRITICAL (data thrown away)
+- **Files:** `_terrain_world.py` (producer), `terrain_materials_v2.py` (not a consumer), `terrain_vegetation_depth.py` (not a consumer)
+- **Finding:** The `ridge` channel is written by `pass_erosion` (verified: `_terrain_world.py:537,593`) but is **never read by any downstream pass**. Confirmed by grep: `terrain_materials_v2.py` contains zero references to `ridge` or `drainage` as splatmap inputs. `terrain_vegetation_depth.py` does not use `ridge` in its density computation.
+- **AAA reference:** Rune LayerProcGen confirmed (Session 9 research, 0.H.2) uses the ridge map from erosion to drive drainage streak material (crease cells get water/dark texture) and ridge to vegetation density (ridges sparse, creases dense). This is the industry-standard wire.
+- **Fix A — materials:** In `terrain_materials_v2.py` splatmap construction, read `stack.ridge` (negative ridge = crease = drainage zone) and add a drainage-streak weight layer: `drainage_weight = np.clip(-stack.ridge, 0, 1)` then blend toward wet-rock/dark-soil material.
+- **Fix B — vegetation:** In `terrain_vegetation_depth.py` density computation, multiply ground-cover density by `(1 - ridge_norm)` and canopy density by `ridge_norm` (ridge peaks = sparse exposure; creases = dense understory). Where `ridge` is None, skip gracefully.
+- **Phase:** Phase 10 (Texturing Formula Upgrades) — Fix 10.3; Phase 10 — Fix 10.7
+
+---
+
+#### BUG-S9-004 — No POI→waypoint→road pipeline exists anywhere — **OPEN**
+
+- **Severity:** CRITICAL (feature entirely absent)
+- **Files:** `road_network.py`, `_terrain_noise.py`, `environment.py`
+- **Finding:** Road waypoints are 100% caller-supplied; no code in any handler automatically connects points of interest (hero zones, settlement anchors, dungeon entrances) to the road network. `road_network.py:handle_generate_road` accepts an explicit `waypoints` list with no fallback generation. `environment.py:handle_generate_road` likewise. The A* pathfinder in `_terrain_noise.py` is never called with POI coordinates.
+- **Fix:** Add a `compute_poi_waypoints(stack, intent)` helper that extracts POI coordinates from `intent.hero_feature_specs` and `intent.anchors` and returns them as an ordered waypoint list for road generation. Wire into `handle_generate_road` as default when `waypoints` is not supplied.
+- **Phase:** Phase 8 (Road System Rebuild) — Fix 8.6
+
+---
+
+### 0.I.2 — MAJOR Gaps
+
+#### BUG-S9-005 — `flow_direction` declared in `_ARRAY_CHANNELS`, zero producers — **OPEN**
+
+- **Severity:** MAJOR
+- **File:** `terrain_semantics.py:365`
+- **Finding:** `flow_direction` is declared as a named channel in `TerrainMaskStack._ARRAY_CHANNELS` (line 365). A search of the entire handlers directory finds zero calls that write `stack.flow_direction` or call `stack.set("flow_direction", ...)`. The channel is declared but never populated by any registered pass.
+- **Note from 0. Codex Addendum:** Prior audit noted `flow_direction` exists in helper outputs but is not copied onto `TerrainMaskStack`. This confirms that gap: the channel declaration exists but no pass bridges it.
+- **Fix:** Either (a) remove the declaration from `_ARRAY_CHANNELS` if no consumer exists, or (b) add a producer pass `pass_compute_flow_direction` that calls `terrain_advanced.compute_flow_map()` and writes `stack.set("flow_direction", result)`. Option (b) is preferred — flow direction is consumed by navmesh and audio zone logic.
+- **Phase:** Phase 7 (AAA Algorithm Upgrades) — Fix 7.17
+
+---
+
+#### BUG-S9-006 — No `road_mask` channel in `TerrainMaskStack` — **OPEN**
+
+- **Severity:** MAJOR
+- **Files:** `terrain_semantics.py`, `environment.py`, `environment_scatter.py`
+- **Finding:** Road carving happens in `environment.py:_apply_road_profile_to_heightmap` (B grade), but no boolean/SDF mask channel is written onto `TerrainMaskStack` after carving. The channel `road_mask` does not appear in `_ARRAY_CHANNELS`. Downstream passes (scatter, navmesh, audio zones) have no way to query whether a cell is road-occupied except through brittle name-string matching.
+- **Fix:** Add `road_mask` to `_ARRAY_CHANNELS` in `terrain_semantics.py`. After road carving in `_apply_road_profile_to_heightmap`, rasterize the inner-width road footprint into a binary mask and write via `stack.set("road_mask", mask)`. Use this mask in scatter exclusion (replacing Fix 9.3) and navmesh area-ID assignment.
+- **Phase:** Phase 8 (Road System Rebuild) — Fix 8.5
+
+---
+
+#### BUG-S9-007 — Scatter handlers ignore `wind_field` channel entirely — **OPEN**
+
+- **Severity:** MAJOR
+- **Files:** `environment_scatter.py` (`scatter_biome_vegetation`, `handle_scatter_vegetation`)
+- **Finding:** `TerrainMaskStack.wind_field` is declared and produced by `pass_wind_field` (registered). Both scatter handler functions ignore it. Vegetation placement does not respond to wind at all: exposed ridges with strong wind fields should produce sparse, wind-adapted placement; sheltered valleys should produce dense canopy placement.
+- **AAA reference:** Ghost of Tsushima GDC 2021 (Wohllaib) uses a unified wind texture to both drive grass animation AND modulate density — areas of high wind stress receive lower grass density.
+- **Fix:** In `handle_scatter_vegetation`, multiply placement probability by `wind_exposure_factor = 1.0 - np.clip(wind_magnitude * wind_density_scale, 0, max_wind_suppression)` where `wind_magnitude = np.linalg.norm(stack.wind_field, axis=-1)`. Gate on `stack.wind_field is not None`.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.5
+
+---
+
+#### BUG-S9-008 — `detail_density` from `pass_vegetation_depth` ignored by scatter handlers — **OPEN**
+
+- **Severity:** MAJOR (critical disconnection)
+- **Files:** `environment_scatter.py:handle_scatter_vegetation`, `terrain_vegetation_depth.py:pass_vegetation_depth`
+- **Finding:** `pass_vegetation_depth` (B+ grade) produces `stack.detail_density` — a dict of `{"canopy": ndarray, "understory": ndarray, "shrub": ndarray, "ground_cover": ndarray}`. `handle_scatter_vegetation` ignores this channel entirely and uses hardcoded `_DEFAULT_VEG_RULES` instead. The density field produced by `pass_vegetation_depth` is thrown away without being used.
+- **Evidence:** Confirmed in 0.H.3: "`handle_scatter_vegetation` (C+): IGNORES `TerrainMaskStack.detail_density`, uses hardcoded rules". Also SGA-001 in 0.H.3.
+- **Fix:** In `handle_scatter_vegetation`, check `if stack.detail_density is not None`. If present, use `stack.detail_density[layer]` as the per-cell probability weight for each vegetation layer instead of the `_DEFAULT_VEG_RULES` constants. Keep `_DEFAULT_VEG_RULES` as fallback when `detail_density` is absent.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.1
+
+---
+
+#### BUG-S9-009 — `tree_instance_points` channel declared but never populated — **OPEN**
+
+- **Severity:** MAJOR (Unity tree export always empty)
+- **Files:** `terrain_semantics.py:404` (declaration), `environment_scatter.py` (scatter handlers), `terrain_unity_export.py`
+- **Finding:** `tree_instance_points` is declared in `_ARRAY_CHANNELS` at `terrain_semantics.py:404`. A search of all scatter handlers (`scatter_biome_vegetation`, `handle_scatter_vegetation`) finds no code that writes `stack.set("tree_instance_points", ...)`. The Unity export path therefore always exports an empty tree instance list.
+- **Fix:** In `handle_scatter_vegetation` (or a dedicated `pass_tree_placement`), after computing placement points for canopy-layer vegetation, write `stack.set("tree_instance_points", tree_instance_array)` where `tree_instance_array` is a structured array of `(x, y, z, rotation, scale)` per instance.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.2
+
+---
+
+#### BUG-S9-010 — `hero_exclusion` declared and set but never read by scatter handlers — **OPEN**
+
+- **Severity:** MAJOR
+- **Files:** `terrain_semantics.py:358` (declaration), `environment_scatter.py` (scatter handlers)
+- **Finding:** `hero_exclusion` is declared in `_ARRAY_CHANNELS`. The Codex Verification Addendum confirms: "`hero_exclusion` has consumers but no writer under `veilbreakers_terrain/handlers`." Even granting that it may be set in some paths, scatter handlers do not read it. Hero zones do not exclude vegetation — scatter placement will overlap hero feature footprints.
+- **Fix:** In `handle_scatter_vegetation` and `scatter_biome_vegetation`, gate placement with `if stack.hero_exclusion is not None: mask &= (stack.hero_exclusion == 0)` before sampling scatter points.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.4
+
+---
+
+### 0.I.3 — MINOR Gaps
+
+#### BUG-S9-011 — `compute_wind_field` clips negative ridge to 0, loses canyon wind acceleration — **OPEN**
+
+- **Severity:** MINOR
+- **File:** `terrain_wind_field.py` (`compute_wind_field`)
+- **Finding:** The wind field computation clips `ridge` channel values to `max(ridge, 0)`, discarding negative values that represent concavities/canyons. In reality, canyons accelerate wind (Venturi effect) — negative ridge values should produce higher wind magnitude, not zero. Clipping at zero eliminates this effect entirely.
+- **Fix:** Replace `np.clip(ridge, 0, None)` with a signed contribution: separate `ridge_positive = np.clip(ridge, 0, None)` and `ridge_negative = np.clip(-ridge, 0, None)`, apply `ridge_positive * ridge_exposure_factor - ridge_negative * canyon_acceleration_factor` to wind magnitude.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.6
+
+---
+
+#### BUG-S9-012 — `roughness_variation` declared in `_ARRAY_CHANNELS`, zero producers write it as a channel — **OPEN**
+
+- **Severity:** MINOR
+- **File:** `terrain_semantics.py:374`
+- **Finding:** `roughness_variation` is declared in `_ARRAY_CHANNELS`. It appears in `procedural_materials.py` as a per-biome preset dict key (scalar value), but no pass writes `stack.set("roughness_variation", ndarray)` anywhere. `TerrainMaskStack.roughness_variation` is always `None` at export. Cross-reference BUG-NEW-008 (three-way overwrite): even with the overwrite resolved, the channel is never properly populated as an array.
+- **Fix:** Either (a) remove from `_ARRAY_CHANNELS` and treat as a per-biome-preset scalar only, or (b) designate `terrain_roughness_driver.py` as the sole canonical array producer; rename the other two module outputs to `roughness_breakup_delta` and `roughness_stochastic_delta`; add a merge pass that sums them into `roughness_variation`.
+- **Phase:** Phase 7 (AAA Algorithm Upgrades) — Fix 7.18
+
+---
+
+#### BUG-S9-013 — `snow_line_factor` declared in `_ARRAY_CHANNELS`, zero producers — **OPEN**
+
+- **Severity:** MINOR
+- **File:** `terrain_semantics.py:383`
+- **Finding:** `snow_line_factor` is declared in `_ARRAY_CHANNELS` but no pass writes it. The snow mask in `terrain_materials_v2.py` uses height-threshold logic but does not read `stack.snow_line_factor`. The channel is dead.
+- **Fix:** Either (a) remove the declaration, or (b) add a `pass_compute_snow_line` that computes `snow_line_factor` from `stack.height`, `stack.slope`, and `intent.climate_params` and writes via `stack.set()`. Option (b) is preferred for Phase 10: snow_line_factor feeds directly into the `normal.z` top-facing snow mask upgrade (Fix 10.4).
+- **Phase:** Phase 10 (Texturing Formula Upgrades) — Fix 10.5
+
+---
+
+#### BUG-S9-014 — Road exclusion in `environment_scatter.py:1511` uses brittle name-string matching — **OPEN**
+
+- **Severity:** MINOR (brittle, not a crash)
+- **File:** `environment_scatter.py:1511`
+- **Finding:** Road exclusion in scatter uses `"road" in obj.name.lower()` — a Blender object name substring check. This fails silently when: (a) road objects are named with prefixes/suffixes that don't include "road", (b) the codebase is running in headless/batch mode where Blender object names are not present, (c) any road object is renamed in the Blender scene.
+- **Fix:** Replace with `road_mask` channel check: `if stack.road_mask is not None: mask &= (stack.road_mask == 0)`. Requires BUG-S9-006 (add `road_mask` channel) to be resolved first.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.3 (depends on Fix 8.5)
+
+---
+
+#### BUG-S9-015 — Scatter handlers not registered in `COMMAND_HANDLERS` — **OPEN**
+
+- **Severity:** MINOR (wiring gap)
+- **File:** `veilbreakers_terrain/handlers/__init__.py`
+- **Finding:** `scatter_biome_vegetation` and `handle_scatter_vegetation` (both in `environment_scatter.py`) are not registered in `COMMAND_HANDLERS`. They cannot be invoked via the MCP command dispatcher or any tooling that routes through the command handler map. Confirmed by 0.H.3: "Scatter handlers NOT in `COMMAND_HANDLERS`".
+- **Fix:** Add entries to `COMMAND_HANDLERS` in `handlers/__init__.py`: `"scatter_vegetation": handle_scatter_vegetation` and `"scatter_biome": scatter_biome_vegetation`. Import from `environment_scatter`.
+- **Phase:** Phase 9 (Scatter + Vegetation Wire-Up) — Fix 9.7
+
+---
+
+### 0.I.4 — PassDAG Robustness (Session 10)
+
+#### BUG-S10-001 — `height`-channel sequencing relies on all passes correctly declaring `produces_channels` — MEDIUM ROBUSTNESS RISK
+
+- **Severity:** MEDIUM (robustness/future-proofing, not a current crash)
+- **File:** `terrain_pass_dag.py`, `terrain_pipeline.py` (all height-producing passes)
+- **Finding:** Multiple passes both require and produce `height`: `pass_macro_world`, `pass_erosion`, `pass_framing`, waterfall mutations. With `BUG-NEW-002`'s fix (track all producers per channel, exclude self-references), the DAG currently orders these correctly: `macro_world → erosion → framing → [waterfall mutations]`. The immediate deadlock concern from the prior audit is resolved.
+
+  The **robustness risk** remains: the correct ordering depends entirely on every height-mutating pass declaring `height` in `produces_channels`. If any future height-mutating pass omits this declaration, the DAG silently places it in the wrong wave — potentially running before height exists or in parallel with another height writer.
+
+- **Fix Option A (explicit channel aliases):** Introduce `height_pre_erosion`, `height_post_erosion`, `height_post_framing` as distinct channel names with explicit producers. Each stage declares `requires_channels=("height_pre_erosion",)` and `produces_channels=("height_post_erosion",)`. This eliminates the shared-channel fragility entirely and makes the ordering contract machine-checkable. Cost: significant refactor across all height-reading passes.
+
+- **Fix Option B (CI assertion — recommended):** Add a test `test_height_pass_order.py` that builds a `PassDAG.from_registry()` and asserts the topological order of all height-writing passes matches the canonical sequence `[pass_macro_world, pass_erosion, pass_framing, pass_waterfalls]`. This catches any future undeclared height-writing pass at CI time. Cost: low — one test file.
+
+- **Recommended:** Implement Fix Option B immediately (Phase 7, Fix 7.19). Schedule Fix Option A as a long-term architectural refactor.
+
+- **Phase:** Phase 7 (AAA Algorithm Upgrades) — Fix 7.19
+
+---
+
+### 0.I.5 — Session 9-10 Gap Summary
+
+| ID | Severity | Status | Phase |
+|---|:---:|:---:|---|
+| BUG-S9-001 | CRITICAL | RESOLVED (`63b7dbc`) | — |
+| BUG-S9-002 | CRITICAL | RESOLVED (`63b7dbc`) | — |
+| BUG-S9-003 | CRITICAL | OPEN | Phase 10, Fix 10.3 + 10.7 |
+| BUG-S9-004 | CRITICAL | OPEN | Phase 8, Fix 8.6 |
+| BUG-S9-005 | MAJOR | OPEN | Phase 7, Fix 7.17 |
+| BUG-S9-006 | MAJOR | OPEN | Phase 8, Fix 8.5 |
+| BUG-S9-007 | MAJOR | OPEN | Phase 9, Fix 9.5 |
+| BUG-S9-008 | MAJOR | OPEN | Phase 9, Fix 9.1 |
+| BUG-S9-009 | MAJOR | OPEN | Phase 9, Fix 9.2 |
+| BUG-S9-010 | MAJOR | OPEN | Phase 9, Fix 9.4 |
+| BUG-S9-011 | MINOR | OPEN | Phase 9, Fix 9.6 |
+| BUG-S9-012 | MINOR | OPEN | Phase 7, Fix 7.18 |
+| BUG-S9-013 | MINOR | OPEN | Phase 10, Fix 10.5 |
+| BUG-S9-014 | MINOR | OPEN | Phase 9, Fix 9.3 (depends 8.5) |
+| BUG-S9-015 | MINOR | OPEN | Phase 9, Fix 9.7 |
+| BUG-S10-001 | MEDIUM | OPEN | Phase 7, Fix 7.19 |
+
+**Date:** 2026-04-18
+**Session:** 9-10 gap audit
+**Standard:** All findings verified against live source (`terrain_semantics.py`, `terrain_materials_v2.py`, `environment_scatter.py`, `terrain_pass_dag.py`, `_terrain_world.py`). Ridge channel grep against `terrain_materials_v2.py` returned zero matches — confirmed not consumed.
+
+---
+
+## 0.D.5 Extension — FIXPLAN Phases 7–11 (2026-04-18)
+
+Phases 1–6 are complete (all 37 original fixes applied, 2,324 tests passing). The following phases extend the FIXPLAN with work discovered during Sessions 9-10.
+
+**Dependency rule:** Phases 7, 8, 9, 11 can all start immediately in parallel. Phase 10 should start after Phase 9 Fix 9.1 is merged but Fixes 10.1, 10.2, 10.6 are independent. Fix 8.5 (`road_mask`) must land before Fix 9.3. Never run Fix 8.9 without Fixes 8.1–8.3 first.
+
+---
+
+### Phase 7 — AAA Algorithm Upgrades *(parallel with Phases 8, 9, 10, 11)*
+
+Upgrade all remaining D/C-grade functions and fill declared-but-empty channels. Prerequisite: none (safe to start immediately).
+
+| Fix | File:Line | Bug | Description |
+|:---:|---|:---:|---|
+| **7.1** | `_biome_grammar.py` | BUG-R9-005 | Replace `_box_filter_2d` Python cell loop with `scipy.ndimage.uniform_filter`. Measured 33.1x speedup on 1024². (Upgrade D → A-) |
+| **7.2** | `_biome_grammar.py`, `terrain_wildlife_zones.py` | BUG-R9-006 | Replace chamfer/distance nested loops with `scipy.ndimage.distance_transform_edt`. Fix 4.7 landed for biome_grammar fallback diagonal; verify wildlife_zones chamfer is fully replaced. (Upgrade D → A-) |
+| **7.3** | `terrain_features.py:apply_hot_spring_features` | (Phase7) | Hoist loop invariants (`np.sqrt`, `sin`, `cos` precompute outside the per-cell loop); vectorize radial falloff. (Upgrade C+ → B+) |
+| **7.4** | `terrain_features.py:apply_landslide_scars` | (Phase7) | Hoist loop invariants; fix `fan_cx`/`fan_cy` mismatch where fan center is computed from wrong origin point. (Upgrade C+ → B) |
+| **7.5** | `terrain_features.py:apply_periglacial_patterns` | (Phase7) | Replace nested distance loop with KDTree-based Voronoi (`scipy.spatial.KDTree` or `sklearn.neighbors.BallTree`). (Upgrade C+ → B+) |
+| **7.6** | `terrain_features.py:apply_tafoni_weathering` | (Phase7) | Hoist loop invariants (`np.exp` base precompute, `tafoni_radius^2` precompute). (Upgrade C+ → B) |
+| **7.7** | `_terrain_depth.py:detect_cliff_edges` | BUG-R9-006 / Fix 4.8 ext | Replace connected-component BFS Python loop with `scipy.ndimage.label` flood fill. Estimated 50–500x speedup. (Upgrade B → A-) |
+| **7.8** | `terrain_waterfalls.py:generate_waterfall_mesh` | (Phase7) | Replace flat quad ribbon with a volumetric curtain: subdivided ribbon with per-vertex displacement (noise + gravity bow), translucent face material, foam spray points at pool base. (Upgrade C+ → B+) |
+| **7.9** | `_terrain_depth.py:generate_cliff_face_mesh` | (Phase7) | Add strata noise banding (horizontal displacement per strata layer), overhanging ledge generation via signed displacement, triplanar UV mapping on faces. (Upgrade B → A-) |
+| **7.10** | `terrain_features.py:generate_cave_entrance_mesh` | (Phase7) | Replace circular arch with irregular profile: sample noise-displaced ellipse, add stalactite hints at arch crown, asymmetric left/right wall scaling. (Upgrade B → B+) |
+| **7.11** | `terrain_features.py:generate_biome_transition_mesh` | (Phase7) | Sample from heightmap at transition boundary instead of flat mesh; add height-proportional transition width. (Upgrade B- → B) |
+| **7.12** | `terrain_chunking.py:_compute_tile_contracts` | (Phase7) | Replace approximate tile-boundary check with proper parametric line-tile-edge intersection test. (Upgrade C+ → B) |
+| **7.13** | `_water_network.py:detect_lakes` | (Phase7) / Fix 4.8 ext | Replace Python pit-detection loop with priority-flood (Barnes 2014): `scipy.ndimage.minimum_filter` pre-step identifies candidate pits; Barnes fill expands from boundary. (Upgrade C+ → B+) |
+| **7.14** | `atmospheric_volumes.py:compute_atmospheric_placements` | (Phase7) | Make placement terrain-aware: sample `stack.height` at placement XY, offset Z by terrain height + clearance instead of anchoring at absolute Z=0. (Upgrade D+ → C+) |
+| **7.15** | `atmospheric_volumes.py:compute_volume_mesh_spec` | (Phase7) | Replace approximate sphere primitive with proper icosphere subdivision (12 base vertices, iterative edge-midpoint split). (Upgrade D → C+) |
+| **7.16** | `atmospheric_volumes.py:estimate_atmosphere_performance` | (Phase7) | Replace constant-formula cost estimate with a GPU cost model: `base_fill_rate * resolution^2 * num_samples * density_factor`. (Upgrade C- → C+) |
+| **7.17** | `terrain_semantics.py`, `terrain_advanced.py` | BUG-S9-005 | Add `pass_compute_flow_direction`: call `compute_flow_map()`, write result via `stack.set("flow_direction", ...)`. Register in `register_default_passes`. Populate dead declared channel. |
+| **7.18** | `terrain_semantics.py`, `terrain_multiscale_breakup.py`, `terrain_roughness_driver.py` | BUG-S9-012 / BUG-NEW-008 | Resolve `roughness_variation` three-way overwrite: designate `terrain_roughness_driver.py` as sole canonical array producer; rename outputs from the other two to `roughness_breakup_delta` and `roughness_stochastic_delta`; add a merge pass. |
+| **7.19** | `tests/test_height_pass_order.py` (new) | BUG-S10-001 | Add CI test: build `PassDAG.from_registry()`, assert topological order of all height-writing passes matches canonical sequence `[pass_macro_world, pass_erosion, pass_framing, pass_waterfalls]`. Safety net for future height-mutating pass additions. |
+| **7.20** | `_terrain_world.py`, `_water_network.py`, `atmospheric_volumes.py` | (Phase7) | Remaining C/B function upgrades: water source sort ordering fix (ASCENDING → DESCENDING to fix trunk-river truncation); atmospheric fog density curve; `pass_macro_world` stub expansion from no-op to basic height generation. Audit each function against AAA benchmark before upgrading. |
+
+**Regression risk:** LOW for 7.1–7.2 (output-equivalent rewrites with regression tests). MEDIUM for 7.8–7.11 (mesh geometry changes — require visual QA). LOW for 7.17–7.19 (additive new pass + test).
+
+---
+
+### Phase 8 — Road System Rebuild *(parallel with Phase 7, Phase 9)*
+
+Replace the flat-ribbon road system with a proper terrain-aware pathfinding and carving pipeline. Prerequisite: Phases 1–2 complete.
+
+| Fix | File:Line | Bug | Description |
+|:---:|---|:---:|---|
+| **8.1** | `_terrain_noise.py:_astar` | G-R2 | Fix slope cost: change linear `slope` term to `flatDist * (1 + (6·slope)²)` per Rune's exact LayerProcGen formula. |
+| **8.2** | `_terrain_noise.py:_astar` | G-R3 | Expand movement directions from 8 to 16 (or 24). Add diagonal cost scaling: cardinal = `cell_size`, diagonal = `cell_size * √2`; compute sub-diagonal distances for 24-dir. |
+| **8.3** | `_terrain_noise.py:_astar` | G-R4 | Replace Euclidean heuristic with octile distance: `max(dx,dy) + (√2-1)*min(dx,dy)`. Consistent with 8/16/24-dir movement. |
+| **8.4** | `terrain_twelve_step.py:413`, `road_network.py` | G-R6 | Fix `graded_hmap` discard: capture return value of `_apply_road_profile_to_heightmap` and write back to heightmap. Verify in both `terrain_twelve_step.py` and `road_network.handle_generate_road`. |
+| **8.5** | `terrain_semantics.py`, `environment.py` | BUG-S9-006 | Add `road_mask` to `_ARRAY_CHANNELS`. After road carving in `_apply_road_profile_to_heightmap`, rasterize inner-width footprint into binary mask, write via `stack.set("road_mask", mask)`. |
+| **8.6** | `road_network.py`, `environment.py` | BUG-S9-004 | Add `compute_poi_waypoints(stack, intent)`: extract coordinates from `intent.hero_feature_specs` and `intent.anchors`, return as ordered waypoint list. Wire into `handle_generate_road` as default when `waypoints` not supplied. |
+| **8.7** | `road_network.py`, `environment.py` | G-R7/G-R8 | Implement 3-zone road carving: `innerWidth` (flat crowned surface), `slopeWidth` (graded shoulder), `splatWidth` (texture blend zone). Use Rune's parameters as defaults (innerWidth=2.5m, slopeWidth=1.5m, splatWidth=2.7m) or expose as configurable. |
+| **8.8** | `road_network.py` | (Phase8) | Implement Catmull-Rom → Bezier road smoothing: 3 samples per segment, sharp-corner point duplication for hairpins. Replace current straight-segment approach. |
+| **8.9** | `road_network.py` | (Phase8) | Replace MST over 3D waypoints with `_terrain_noise._astar` as the road placement engine. Requires Fixes 8.1–8.3 to be merged first — incorrect cost function produces worse roads than MST. |
+
+**Regression risk:** HIGH for 8.4/8.9 (road geometry changes significantly — require visual QA on generated terrain before/after). MEDIUM for 8.1–8.3 (A* path changes — regression test with fixed-seed terrain). LOW for 8.5–8.6 (additive channels/helpers).
+
+---
+
+### Phase 9 — Scatter + Vegetation Wire-Up *(parallel with Phase 7, Phase 8)*
+
+Close all critical disconnections in the scatter/vegetation pipeline. Prerequisite: Phase 3 complete. Fix 8.5 must land before Fix 9.3.
+
+| Fix | File:Line | Bug | Description |
+|:---:|---|:---:|---|
+| **9.1** | `environment_scatter.py:handle_scatter_vegetation` | BUG-S9-008 / SGA-001 | Wire `TerrainMaskStack.detail_density` → placement weights. If `stack.detail_density is not None`, use `detail_density[layer]` as per-cell probability for each vegetation layer instead of `_DEFAULT_VEG_RULES`. Keep `_DEFAULT_VEG_RULES` as fallback. |
+| **9.2** | `environment_scatter.py` | BUG-S9-009 / SGA-002 | Populate `tree_instance_points` channel: after canopy placement, build structured array of `(x, y, z, rotation_y, scale)` per tree instance and write via `stack.set("tree_instance_points", ...)`. |
+| **9.3** | `environment_scatter.py:1511` | BUG-S9-014 / SGA-003 | Replace `"road" in obj.name.lower()` exclusion with `stack.road_mask` channel check: `if stack.road_mask is not None: placement_mask &= (stack.road_mask == 0)`. **Requires Fix 8.5.** |
+| **9.4** | `environment_scatter.py` | BUG-S9-010 | Wire `hero_exclusion` into scatter: `if stack.hero_exclusion is not None: placement_mask &= (stack.hero_exclusion == 0)`. Apply in both `handle_scatter_vegetation` and `scatter_biome_vegetation`. |
+| **9.5** | `environment_scatter.py` | BUG-S9-007 | Wire `wind_field` into placement density: multiply placement probability by `wind_exposure_factor = 1.0 - clip(wind_magnitude * scale, 0, max_suppression)`. Gate on `stack.wind_field is not None`. |
+| **9.6** | `terrain_wind_field.py:compute_wind_field` | BUG-S9-011 | Fix canyon wind clipping: replace `clip(ridge, 0, None)` with signed contribution using separate `ridge_positive` and `ridge_negative` terms applying `canyon_acceleration_factor` for negative ridge values. |
+| **9.7** | `veilbreakers_terrain/handlers/__init__.py` | BUG-S9-015 | Register scatter handlers in `COMMAND_HANDLERS`: add `"scatter_vegetation": handle_scatter_vegetation` and `"scatter_biome": scatter_biome_vegetation`. Import from `environment_scatter`. |
+
+**Regression risk:** MEDIUM for 9.1 (vegetation density distribution changes with wired field — visual QA required). LOW for 9.2–9.7 (additive wiring, no existing behavior removed).
+
+---
+
+### Phase 10 — Texturing Formula Upgrades *(can start after Phase 9 Fix 9.1 for snow feed; Fixes 10.1, 10.2, 10.6 are independent)*
+
+Upgrade `terrain_materials_v2.py` with AAA blending formulas from Session 9 research. Prerequisite: Phase 3 complete.
+
+| Fix | File:Line | Bug | Description |
+|:---:|---|:---:|---|
+| **10.1** | `terrain_materials_v2.py` | (Phase10) | Add Brucks height-blend formula: `ma = max(h0+(1-α), h1+α) - contrast; b0,b1 = max(0,...); result = (c0·b0 + c1·b1)/(b0+b1)`. Replaces simple linear blend between material layers. Makes rock poke through dirt naturally at slope transitions. |
+| **10.2** | `_water_network.py` | (Phase10) | Add Priority-Flood (Barnes 2014) before drainage routing. Fills all pits to their spill level before computing flow accumulation — eliminates spurious isolated drainage basins. |
+| **10.3** | `terrain_materials_v2.py` | BUG-S9-003 (Fix A) | Wire `ridge` channel → drainage streak material: `drainage_weight = np.clip(-stack.ridge, 0, 1)` → blend toward wet-rock/dark-soil layer in splatmap construction. Guard: `if stack.ridge is not None`. |
+| **10.4** | `terrain_materials_v2.py` | (Phase10) | Add snow `normal.z` top-facing factor: multiply snow weight by `max(0, normal_z)^k` (default `k=2`) where `normal_z` is derived from heightmap gradient via `np.gradient`. Snow only accumulates on upward-facing surfaces. |
+| **10.5** | `terrain_semantics.py`, `terrain_materials_v2.py` | BUG-S9-013 | Add `pass_compute_snow_line`: compute `snow_line_factor` from `stack.height`, `stack.slope`, climate params; write via `stack.set("snow_line_factor", ...)`. Wire into snow mask computation in `terrain_materials_v2.py`. |
+| **10.6** | `terrain_materials_v2.py` | (Phase10) | Add water saturation SDF zone: `exp(-dist_to_water / soak_radius)` where `dist_to_water = scipy.ndimage.distance_transform_edt(water_surface == 0)`. Replaces current proximity test. |
+| **10.7** | `terrain_vegetation_depth.py` | BUG-S9-003 (Fix B) | Wire `ridge` channel → vegetation density: multiply `ground_cover` layer by `(1 - ridge_norm)` (ridges = sparse exposure); `understory` layer by `ridge_norm * crease_factor` (creases = dense understory). Guard: `if stack.ridge is not None`. |
+
+**Regression risk:** MEDIUM for 10.1 (splatmap appearance changes — visual QA required against reference terrain). LOW for 10.2–10.7 (additive channels/weights).
+
+---
+
+### Phase 11 — Noise System Upgrades *(fully independent, can run any time)*
+
+Upgrade `_terrain_noise.py` with analytical gradient noise and domain warping from IQ/Shadertoy research. Prerequisite: none.
+
+| Fix | File:Line | Bug | Description |
+|:---:|---|:---:|---|
+| **11.1** | `_terrain_noise.py` | (Phase11) | Add `noised(x, y)` analytical-derivative gradient noise: returns `(value, dv/dx, dv/dy)` tuple. Foundation for IQ erosion fBm and domain warping. Pure Python + NumPy, Blender 4.5-compatible. |
+| **11.2** | `_terrain_noise.py` | (Phase11) | Add IQ erosion fBm: gradient accumulation attenuation `1/(1 + |sum_gradient|^2)` reduces octave contributions in steep areas, producing naturally eroded detail. Implement as `fbm_eroded(x, y, octaves)` using `noised()`. |
+| **11.3** | `_terrain_noise.py` | (Phase11) | Add two-level domain warping `fbm(p + 4*fbm(p + 4*fbm(p)))` as `fbm_warped(x, y, octaves, warp_strength)`. Target use: cliff terrain base shape, cave wall texture, biome transition blending. |
+| **11.4** | `_terrain_noise.py` | (Phase11) | Fix permutation table wrap at 256: world coordinates > 256 cells cause visible tiling repeat. Either extend table to 512 with proper fold, or apply modular hashing to world coordinates before table lookup. |
+| **11.5** | `_terrain_noise.py` | (Phase11) | Verify/fix `_pow_inv` semantics: confirm intended formula is `1-(1-x)^p` (contrast stretch, `p>1` pushes mid-values toward 1). If current implementation uses exponent `1/(1-p)`, it is wrong for `p>1`. Add unit test asserting `_pow_inv(0.5, 2.0) ≈ 0.75`. |
+
+**Regression risk:** LOW for 11.1–11.3 (additive new functions, no existing callers). MEDIUM for 11.4 (permutation table change affects determinism — update golden snapshots after fix). LOW for 11.5 (existing callers may produce slightly different values — regression test before/after).
+
+---
+
+### 0.D.6 Extension — Updated Dependency Graph (Phases 7–11)
+
+```
+Phase 1 (crash fixes) — prerequisite for everything
+         │
+         ▼
+Phase 2 (pass graph) ─────────────────────────────────────────────────────┐
+         │                                                                  │
+         ▼                                                                  │
+Phase 3 (data integrity)     ┌── Phase 4 (perf) ─────────────────────────┤
+                             ├── Phase 5 (algos) ────────────────────────┤  all parallel
+                             └── Phase 6 (infra) ───────────────────────┘  after Phase 2
+                                       │
+                                       ▼  (Phases 1–6 COMPLETE — current baseline)
+                             ┌──────────────────────────────────────────┐
+                             │                                          │
+          Phase 7 ───────────┤                                          │
+         (AAA Alg.)          │── Phase 8 (Road) ──┐                    │
+          parallel           │                    │Fix 8.5→Fix 9.3     │
+                             │── Phase 9 (Scatter) ┤                   │
+                             │                    │                    │
+                             │       Phase 10 (Texturing) ─────────────┤
+                             │       (independent except 10.5 needs    │
+                             │        Phase 9 Fix 9.1 for snow feed)   │
+                             │                                          │
+                             └── Phase 11 (Noise) — fully independent ─┘
+```
+
+**Phase ordering rules:**
+- Phases 7, 8, 9, 11 start immediately in parallel after Phases 1–6 baseline.
+- Phase 10 Fixes 10.1, 10.2, 10.6 are independent of Phase 9. Fix 10.5 should wait for Phase 9 Fix 9.1.
+- Fix 8.5 (`road_mask` channel) **must** land before Fix 9.3 (scatter road exclusion via channel).
+- Fix 8.9 (A* road replacement) **must not** run before Fixes 8.1–8.3 (cost function upgrades).
+
+---
+
+### 0.D.9 — Phase 7–11 Summary Statistics
+
+| Metric | Count |
+|---|---:|
+| New phases added | **5** (Phases 7–11) |
+| New fix items | **39** (Fix 7.1–7.20 + 8.1–8.9 + 9.1–9.7 + 10.1–10.7 + 11.1–11.5) |
+| New bugs catalogued (Sessions 9–10) | **16** (BUG-S9-001..015, BUG-S10-001) |
+| Bugs already resolved at time of writing | **2** (BUG-S9-001, BUG-S9-002) |
+| Critical open gaps | **2** (BUG-S9-003 ridge wire, BUG-S9-004 POI→road) |
+| Major open gaps | **6** (BUG-S9-005..010) |
+| Minor + medium open gaps | **6** (BUG-S9-011..015, BUG-S10-001) |
+| Total FIXPLAN fix items (cumulative, all phases) | **76** (37 original + 39 new) |
+
+**Date:** 2026-04-18
+**Session:** 9-10 gap audit and FIXPLAN extension
+**Standard:** All new bugs verified against live source. All FIXPLAN fixes cross-referenced with 0.H research findings (Rune LayerProcGen, MicroSplat, Horizon ZD scatter, IQ Shadertoy). Ridge channel grep against `terrain_materials_v2.py` confirmed zero matches.
