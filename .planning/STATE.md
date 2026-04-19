@@ -3,20 +3,21 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-19T06:45:18.566Z"
+stopped_at: Completed 14-terrain-features-quality (14-01 through 14-04) — all 4 plans complete
+last_updated: "2026-04-19T08:55:19.264Z"
 progress:
-  total_phases: 7
-  completed_phases: 0
-  total_plans: 23
-  completed_plans: 1
-  percent: 4
+  total_phases: 8
+  completed_phases: 6
+  total_plans: 27
+  completed_plans: 20
+  percent: 74
 ---
 
 # Project State
 
 **Project:** VeilBreakers Terrain Generator
-**Last Updated:** 2026-04-18
-**Status:** Active — FIXPLAN phases 7–13 implementation in progress
+**Last Updated:** 2026-04-19
+**Status:** Active — Phase 14 terrain features quality complete
 
 ## Current Status
 
@@ -30,6 +31,7 @@ progress:
 | 11    | Noise System Upgrades | Ready to plan | 0 | Phacelle, OpenSimplex2S, Voronoise |
 | 12    | Erosion Architecture | Ready to plan | 0 | low/high-freq split, Stream-Power Law |
 | 13    | Content Consistency | ✓ Complete | 3 | foam vertex alpha, wind bend vertex color, Unity scale factor 0.85 |
+| 14    | Terrain Features Quality | ✓ Complete | 4 | BUG-94/96/98/99, Fix 7.x mesh, waterfalls, wind, POI mask |
 
 ## Key Decisions
 
@@ -40,16 +42,18 @@ progress:
 - **Erosion:** Erode low-freq only; add high-freq detail after erosion
 - **Roads:** 24-dir A*, avgCost, Catmull-Rom→Bezier + corner duplication, 3-zone carving
 - **Scatter:** LocationLayer (jitter + 3×3 repulsion), deterministic halo tiles
+- **BUG-96:** Per-cell world-space XOR hash seed in _perlin_like_field eliminates tile seam artefacts
+- **BUG-99:** Rock hardness K modifier applied to full combined erosion delta (analytical+hydraulic+thermal+SPL) after all passes
 
 ## Test Baseline
 
-- **Tests passing:** 2395 / 2395
-- **Last commit:** f9adc5f (p13-3: Unity scale factor 0.85)
+- **Tests passing:** 2710 / 2710 (+3 skipped)
+- **Last commit:** deae2ea (14-04: BUG-94/96 wind fixes, pass_waterfall_mist, poi_mask channel)
 - **Branch:** main
 
-## Phase 13 Session (2026-04-19)
+## Phase 14 Session (2026-04-19)
 
-- **Stopped at:** Completed Phase 13 (13-01, 13-02, 13-03) — all 3 plans complete
-- **Plans completed:** 13-01 foam vertex alpha, 13-02 wind bend vertex color, 13-03 Unity scale factor
-- **New tests:** +42 (2346 → 2395 passing, +3 skipped unchanged)
-- **Key decisions:** foam = saturate(prox/radius)*(1-speed/max); wind bend R=(h/H)^2*|dot(n,w)|; UNITY_SCALE_FACTOR=0.85 applied at serialization boundary only
+- **Stopped at:** Completed 14-terrain-features-quality (14-01 through 14-04) — all 4 plans complete
+- **Plans completed:** 14-01 bug fixes, 14-02 biome/atmospheric upgrades, 14-03 mesh quality + erosion, 14-04 wind/waterfall/POI
+- **New tests:** +96 (2614 → 2710 passing, +3 skipped unchanged)
+- **Key decisions:** BUG-96 XOR hash seed; BUG-99 full-delta k_mod; scipy EDT for carve_u_valley; AABB slab for tile contracts; Fix 7.20b HEIGHT_SCALE for macro world heightmap

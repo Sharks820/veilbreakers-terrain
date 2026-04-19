@@ -167,7 +167,7 @@ Plans:
 **Status:** Planned
 **Goal:** Close all FIXPLAN items and open bugs that were missing from Phases 7–13: correctness bugs (BUG-NEW-005, BUG-NEW-007, BUG-37, BUG-55, BUG-76, BUG-101, BUG-102), biome grammar vectorization (Fix 7.3–7.6), atmospheric volumes (Fix 7.14–7.16), mesh quality (Fix 7.8–7.12, BUG-87), stratigraphy/erosion hookup (BUG-98, BUG-99), water fixes (Fix 7.20a/b, Fix 7.12), wind artefacts (BUG-94, BUG-96), waterfall multi-system, and poi_mask channel.
 **Depends on:** Phases 1–13 (fixes must not conflict with prior phase outputs)
-**Plans:** 4 plans
+**Plans:** 4/4 plans complete
 **Fix items:** BUG-NEW-005, BUG-NEW-007, BUG-37, BUG-55, BUG-76, BUG-87, BUG-94, BUG-96, BUG-98, BUG-99, BUG-101, BUG-102, Fix 6.9 CI, Fix 7.3–7.6, Fix 7.8–7.12, Fix 7.14–7.16, Fix 7.20a/b, waterfall-multi-system, poi-mask
 **Key fixes:**
 - BUG-NEW-005: Conditional stack.set() calls → zero-init deltas always set
@@ -183,10 +183,10 @@ Plans:
 - poi_mask: TerrainMaskStack field + _ARRAY_CHANNELS + rasterize_poi_mask
 
 Plans:
-- [ ] 14-01-PLAN.md — Wave 1: correctness bugs + Fix 6.9 CI gate (BUG-NEW-005/007, BUG-37, BUG-55, BUG-76, BUG-101, BUG-102)
-- [ ] 14-02-PLAN.md — Wave 2: biome_grammar vectorization (Fix 7.3–7.6) + atmospheric_volumes (Fix 7.14–7.16)
-- [ ] 14-03-PLAN.md — Wave 3: mesh quality (Fix 7.8–7.12, BUG-87) + stratigraphy/erosion (BUG-98/99) + water (Fix 7.20a/b, Fix 7.12)
-- [ ] 14-04-PLAN.md — Wave 4: wind artefacts (BUG-94, BUG-96) + waterfall mist pass + poi_mask channel
+- [x] 14-01-PLAN.md — Wave 1: correctness bugs + Fix 6.9 CI gate (BUG-NEW-005/007, BUG-37, BUG-55, BUG-76, BUG-101, BUG-102)
+- [x] 14-02-PLAN.md — Wave 2: biome_grammar vectorization (Fix 7.3–7.6) + atmospheric_volumes (Fix 7.14–7.16)
+- [x] 14-03-PLAN.md — Wave 3: mesh quality (Fix 7.8–7.12, BUG-87) + stratigraphy/erosion (BUG-98/99) + water (Fix 7.20a/b, Fix 7.12)
+- [x] 14-04-PLAN.md — Wave 4: wind artefacts (BUG-94, BUG-96) + waterfall mist pass + poi_mask channel
 
 ---
 
