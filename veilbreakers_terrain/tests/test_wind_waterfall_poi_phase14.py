@@ -203,6 +203,22 @@ class TestWaterfallMistPass:
         registered = {p.name for p in TerrainPassController.PASS_REGISTRY.values()}
         assert "waterfall_mist" in registered
 
+    def test_bundle_c_registration_includes_mist(self):
+        """register_bundle_c_passes should wire the supplementary mist pass too."""
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_waterfalls import register_bundle_c_passes
+
+        original = dict(TerrainPassController.PASS_REGISTRY)
+        try:
+            TerrainPassController.clear_registry()
+            register_bundle_c_passes()
+            registered = {p.name for p in TerrainPassController.PASS_REGISTRY.values()}
+            assert "waterfalls" in registered
+            assert "waterfall_mist" in registered
+        finally:
+            TerrainPassController.clear_registry()
+            TerrainPassController.PASS_REGISTRY.update(original)
+
 
 # ---------------------------------------------------------------------------
 # poi_mask channel

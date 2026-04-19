@@ -1883,6 +1883,7 @@ def register_bundle_c_passes() -> None:
             description="Bundle C — waterfall hydrology chain + foam/mist/wet_rock/velocity masks",
         )
     )
+    register_bundle_c_mist_pass()
 
 
 # ---------------------------------------------------------------------------

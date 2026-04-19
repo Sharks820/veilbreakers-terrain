@@ -64,6 +64,18 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 key, module_path, fn_name, exc,
             )
 
+    def _make_signature_handler(fn: Callable) -> Callable:
+        import inspect
+
+        sig = inspect.signature(fn)
+
+        def _handler(params: dict) -> Any:
+            payload = params or {}
+            kwargs = {k: v for k, v in payload.items() if k in sig.parameters}
+            return fn(**kwargs)
+
+        return _handler
+
     _pkg = "veilbreakers_terrain.handlers"
 
     # ------------------------------------------------------------------
@@ -132,6 +144,56 @@ def _build_command_handlers() -> Dict[str, Callable]:
         f"{_pkg}.environment",
         "handle_run_terrain_pass",
     )
+    _try_register(
+        "env_generate_terrain",
+        f"{_pkg}.environment",
+        "handle_generate_terrain",
+    )
+    _try_register(
+        "env_generate_terrain_tile",
+        f"{_pkg}.environment",
+        "handle_generate_terrain_tile",
+    )
+    _try_register(
+        "env_generate_world_terrain",
+        f"{_pkg}.environment",
+        "handle_generate_world_terrain",
+    )
+    _try_register(
+        "env_stitch_terrain_edges",
+        f"{_pkg}.environment",
+        "handle_stitch_terrain_edges",
+    )
+    _try_register(
+        "env_paint_terrain",
+        f"{_pkg}.environment",
+        "handle_paint_terrain",
+    )
+    _try_register(
+        "env_carve_river",
+        f"{_pkg}.environment",
+        "handle_carve_river",
+    )
+    _try_register(
+        "env_carve_water_basin",
+        f"{_pkg}.environment",
+        "handle_carve_water_basin",
+    )
+    _try_register(
+        "env_create_water",
+        f"{_pkg}.environment",
+        "handle_create_water",
+    )
+    _try_register(
+        "env_export_heightmap",
+        f"{_pkg}.environment",
+        "handle_export_heightmap",
+    )
+    _try_register(
+        "env_generate_multi_biome_world",
+        f"{_pkg}.environment",
+        "handle_generate_multi_biome_world",
+    )
 
     # ------------------------------------------------------------------
     # coastline.py — coastline generation
@@ -154,15 +216,24 @@ def _build_command_handlers() -> Dict[str, Callable]:
     except Exception as exc:  # noqa: BLE001
         _log.warning("COMMAND_HANDLERS: failed to register coastline handler: %r", exc)
 
-    # Fail-closed stubs for unimplemented terrain generators
-    def _fail_closed(command_name: str) -> Callable:
-        def _handler(params: dict) -> dict:
-            return {"status": "error", "fail_closed": True, "command": command_name}
-        return _handler
-
-    handlers["env_generate_canyon"] = _fail_closed("env_generate_canyon")
-    handlers["env_generate_cliff_face"] = _fail_closed("env_generate_cliff_face")
-    handlers["env_generate_swamp_terrain"] = _fail_closed("env_generate_swamp_terrain")
+    # terrain_features.py — pure terrain archetype generators
+    try:
+        import importlib as _il_features
+        _features = _il_features.import_module(f"{_pkg}.terrain_features")
+        handlers["env_generate_canyon"] = _make_signature_handler(
+            _features.generate_canyon
+        )
+        handlers["env_generate_cliff_face"] = _make_signature_handler(
+            _features.generate_cliff_face
+        )
+        handlers["env_generate_swamp_terrain"] = _make_signature_handler(
+            _features.generate_swamp_terrain
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_features handlers: %r",
+            exc,
+        )
 
     # ------------------------------------------------------------------
     # world_map.py — world map generation (Task #45-46)
@@ -658,12 +729,41 @@ def _build_command_handlers() -> Dict[str, Callable]:
         f"{_pkg}.environment_scatter",
         "handle_scatter_props",
     )
+    _try_register(
+        "scatter_create_breakable",
+        f"{_pkg}.environment_scatter",
+        "handle_create_breakable",
+    )
 
     # vegetation_system.py — biome vegetation scatter
     _try_register(
         "scatter_biome_vegetation",
         f"{_pkg}.vegetation_system",
         "scatter_biome_vegetation",
+    )
+
+    # ------------------------------------------------------------------
+    # Additional public Blender utility handlers
+    # ------------------------------------------------------------------
+    _try_register(
+        "material_create_procedural",
+        f"{_pkg}.procedural_materials",
+        "handle_create_procedural_material",
+    )
+    _try_register(
+        "terrain_generate_lods",
+        f"{_pkg}.lod_pipeline",
+        "handle_generate_lods",
+    )
+    _try_register(
+        "terrain_setup_biome",
+        f"{_pkg}.terrain_materials",
+        "handle_setup_terrain_biome",
+    )
+    _try_register(
+        "terrain_sculpt",
+        f"{_pkg}.terrain_sculpt",
+        "handle_sculpt_terrain",
     )
 
     return handlers

@@ -85,3 +85,20 @@ def test_pass_hydrology_writes_stack():
     assert stack.flow_accumulation is not None, "flow_accumulation not written to stack"
     assert stack.flow_direction.shape == (tile_size, tile_size)
     assert stack.flow_accumulation.shape == (tile_size, tile_size)
+
+
+def test_register_default_passes_includes_hydrology():
+    """Bundle A default registration must expose pass_hydrology on the controller."""
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
+        TerrainPassController,
+        register_default_passes,
+    )
+
+    original = dict(TerrainPassController.PASS_REGISTRY)
+    try:
+        TerrainPassController.clear_registry()
+        register_default_passes()
+        assert "pass_hydrology" in TerrainPassController.PASS_REGISTRY
+    finally:
+        TerrainPassController.clear_registry()
+        TerrainPassController.PASS_REGISTRY.update(original)

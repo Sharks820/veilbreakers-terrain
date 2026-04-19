@@ -195,3 +195,35 @@ class TestScatterCommandHandlers:
         assert callable(COMMAND_HANDLERS["scatter_props"]), (
             "COMMAND_HANDLERS['scatter_props'] is not callable"
         )
+
+
+class TestExpandedCommandHandlers:
+    """Verify newly bridged public handlers stay exposed on the dispatch table."""
+
+    @pytest.mark.parametrize(
+        "command_name",
+        [
+            "env_generate_terrain",
+            "env_generate_terrain_tile",
+            "env_generate_world_terrain",
+            "env_stitch_terrain_edges",
+            "env_paint_terrain",
+            "env_carve_river",
+            "env_carve_water_basin",
+            "env_create_water",
+            "env_export_heightmap",
+            "env_generate_multi_biome_world",
+            "scatter_create_breakable",
+            "material_create_procedural",
+            "terrain_generate_lods",
+            "terrain_setup_biome",
+            "terrain_sculpt",
+        ],
+    )
+    def test_command_handler_registered(self, command_name: str) -> None:
+        assert command_name in COMMAND_HANDLERS, (
+            f"{command_name} missing from COMMAND_HANDLERS"
+        )
+        assert callable(COMMAND_HANDLERS[command_name]), (
+            f"COMMAND_HANDLERS[{command_name!r}] is not callable"
+        )
