@@ -76,15 +76,24 @@ def generate_cliff_face_mesh(
     seg_h = segments_horizontal
     seg_v = segments_vertical
 
+    # Strata banding: ~4 horizontal bands with X-offset displacement
+    strata_period = max(2, seg_v // 4)
+    strata_x_offsets = [rng.gauss(0.0, noise_amplitude * 0.3) for _ in range(strata_period + 1)]
+
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, ...]] = []
+    uvs: list[tuple[float, float]] = []
 
     for iy in range(seg_v + 1):
         for ix in range(seg_h + 1):
             x_frac = ix / seg_h
             y_frac = iy / seg_v
 
-            x = (x_frac - 0.5) * width
+            # Strata band X displacement: each band shifts slightly in X to simulate ledge overhang
+            band = (iy * strata_period) // max(seg_v, 1)
+            strata_x = strata_x_offsets[min(band, strata_period)]
+
+            x = (x_frac - 0.5) * width + strata_x
             z = y_frac * height
 
             # Base concave curve (partial cylinder effect)
@@ -100,6 +109,8 @@ def generate_cliff_face_mesh(
             y = base_curve + noise
 
             vertices.append((x, y, z))
+            # Triplanar UV: XZ projection (dominant for vertical cliff)
+            uvs.append((float(x_frac), float(y_frac)))
 
     # Quad faces for the grid
     for iy in range(seg_v):
@@ -119,6 +130,9 @@ def generate_cliff_face_mesh(
         style=style,
         segments_horizontal=seg_h,
         segments_vertical=seg_v,
+        strata_bands=strata_period + 1,
+        has_triplanar_uv=True,
+        uvs=uvs,
     )
 
 
@@ -184,16 +198,19 @@ def generate_cave_entrance_mesh(
             noise = rng.gauss(0.0, 0.05) if style == "natural" else 0.0
             ring.append((-half_w + noise, tunnel_y, vz))
 
-        # Arch semicircle (left to right across the top)
-        arch_radius = half_w
-        arch_center_z = spring_z
-        for ai in range(1, arch_segments):
-            angle = math.pi * ai / arch_segments  # 0 to pi
-            x = -math.cos(angle) * arch_radius
-            vz = arch_center_z + math.sin(angle) * (apex_z - spring_z)
-            noise_x = rng.gauss(0.0, 0.05) if style == "natural" else 0.0
-            noise_z = rng.gauss(0.0, 0.05) if style == "natural" else 0.0
-            ring.append((x + noise_x, tunnel_y, vz + noise_z))
+        # Noise-displaced ellipse arch (N=16 points, replaces plain semicircle)
+        N_arch = 16
+        arch_rng = random.Random(seed ^ (depth_i * 31 + 7))
+        for ai in range(1, N_arch):
+            angle = math.pi * ai / N_arch  # 0 to pi
+            # Ellipse: rx = half_w, rz spans spring_z to apex_z
+            base_x = -math.cos(angle) * half_w
+            base_z = spring_z + math.sin(angle) * (apex_z - spring_z)
+            # Noise displacement: amplitude scales with half_w
+            noise_r = arch_rng.gauss(0.0, half_w * 0.1) if style == "natural" else 0.0
+            x = base_x + noise_r * math.cos(angle)
+            vz = base_z + noise_r * math.sin(angle) * 0.5
+            ring.append((x, tunnel_y, vz))
 
         # Right side spring-line down to bottom
         for si in range(side_segs, -1, -1):
@@ -223,6 +240,17 @@ def generate_cave_entrance_mesh(
 
     parts.append((all_verts, all_faces))
 
+    # Stalactite hint points along the crown (top of arch at depth=0)
+    stala_rng = random.Random(seed ^ 0xDEAD)
+    stalactite_hints = [
+        (
+            half_w * math.cos(math.pi * (i + 1) / 5),
+            0.0,
+            apex_z - stala_rng.uniform(0.1, 0.3) * apex_z,
+        )
+        for i in range(4)
+    ]
+
     # Merge and return
     verts, faces = _merge_meshes(*parts)
     return _make_result(
@@ -232,6 +260,7 @@ def generate_cave_entrance_mesh(
         category="terrain_depth",
         style=style,
         terrain_edge_height=terrain_edge_height,
+        stalactite_hints=stalactite_hints,
     )
 
 
@@ -370,7 +399,7 @@ def generate_waterfall_mesh(
     seed: int = 0,
     curtain_thickness_top: float = 0.25,
     curtain_thickness_bottom: float = 0.05,
-    curtain_front_segs: int = 3,
+    curtain_front_segs: int = 8,
 ) -> MeshSpec:
     """Generate a stepped waterfall cascade with volumetric curtains and bowl pool.
 
@@ -559,6 +588,16 @@ def generate_waterfall_mesh(
 
     parts.append((pool_verts, pool_faces))
 
+    # Foam spray point list at pool rim (8 evenly spaced points)
+    spray_points = [
+        (
+            pool_radius * math.cos(2.0 * math.pi * i / 8),
+            pool_center_y,
+            pool_z_surface + pool_radius * math.sin(2.0 * math.pi * i / 8) * 0.1,
+        )
+        for i in range(8)
+    ]
+
     verts, faces = _merge_meshes(*parts)
     return _make_result(
         f"Waterfall_{style}",
@@ -570,6 +609,7 @@ def generate_waterfall_mesh(
         has_pool=True,
         volumetric_curtain=True,
         curtain_front_segs=curtain_front_segs,
+        spray_points=spray_points,
     )
 
 

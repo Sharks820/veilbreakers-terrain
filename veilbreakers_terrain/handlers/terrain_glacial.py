@@ -81,33 +81,61 @@ def carve_u_valley(
         for t in np.linspace(0.0, 1.0, n):
             dense.append((r0 + (r1 - r0) * t, c0 + (c1 - c0) * t))
 
-    dense_arr = np.array(dense)  # (N, 2)
+    # BUG-87: vectorized via scipy EDT (O(H*W) vs O(N * bbox_area) Python loop)
+    try:
+        from scipy.ndimage import distance_transform_edt as _edt
+        _HAS_EDT = True
+    except ImportError:
+        _HAS_EDT = False
 
-    # For each cell within a bounding box of the path, find min distance.
-    _ = np.arange(H).reshape(-1, 1)
-    _ = np.arange(W).reshape(1, -1)
+    dense_arr = np.array(dense)  # (N, 2)
 
     rmin = max(0, int(dense_arr[:, 0].min() - half_cells - 2))
     rmax = min(H, int(dense_arr[:, 0].max() + half_cells + 3))
     cmin = max(0, int(dense_arr[:, 1].min() - half_cells - 2))
     cmax = min(W, int(dense_arr[:, 1].max() + half_cells + 3))
 
-    for r in range(rmin, rmax):
-        for c in range(cmin, cmax):
-            dr = dense_arr[:, 0] - r
-            dc = dense_arr[:, 1] - c
-            d2 = dr * dr + dc * dc
-            dmin = math.sqrt(float(d2.min()))
-            if dmin >= half_cells:
-                continue
-            # U-profile: flat bottom (dmin < 0.3*half) then smooth wall
-            frac = dmin / half_cells
-            if frac < 0.3:
-                carve = 1.0
-            else:
-                t = (frac - 0.3) / 0.7
-                carve = math.sqrt(max(0.0, 1.0 - t * t))
-            delta[r, c] = -depth_m * carve
+    if _HAS_EDT:
+        # Build a binary mask: 0 = path cell (EDT "foreground"), 1 = background
+        path_mask = np.ones((H, W), dtype=np.uint8)
+        for (pr, pc) in dense:
+            ri = int(round(pr))
+            ci = int(round(pc))
+            if 0 <= ri < H and 0 <= ci < W:
+                path_mask[ri, ci] = 0
+
+        # distance_transform_edt returns pixel distance from each cell to
+        # the nearest foreground (0) cell — O(H*W) Euclidean DT.
+        dist_pixels = _edt(path_mask)  # (H, W) float64
+
+        dist_crop = dist_pixels[rmin:rmax, cmin:cmax]
+        frac = dist_crop / half_cells
+
+        # U-valley profile vectorized
+        carve = np.where(
+            frac < 0.3,
+            1.0,
+            np.sqrt(np.maximum(0.0, 1.0 - ((frac - 0.3) / 0.7) ** 2)),
+        )
+        carve[dist_crop >= half_cells] = 0.0
+        delta[rmin:rmax, cmin:cmax] = -depth_m * carve
+    else:
+        # Fallback: original loop (scipy not available)
+        for r in range(rmin, rmax):
+            for c in range(cmin, cmax):
+                dr = dense_arr[:, 0] - r
+                dc = dense_arr[:, 1] - c
+                d2 = dr * dr + dc * dc
+                dmin = math.sqrt(float(d2.min()))
+                if dmin >= half_cells:
+                    continue
+                frac = dmin / half_cells
+                if frac < 0.3:
+                    carve = 1.0
+                else:
+                    t = (frac - 0.3) / 0.7
+                    carve = math.sqrt(max(0.0, 1.0 - t * t))
+                delta[r, c] = -depth_m * carve
 
     return delta
 
