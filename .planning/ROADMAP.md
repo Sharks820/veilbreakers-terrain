@@ -124,26 +124,37 @@ Plans:
 ---
 
 ## Phase 12 — Erosion Architecture Upgrades
-**Status:** Ready to plan
+**Status:** Planned
 **Goal:** Restructure erosion to erode only low-frequency terrain then add high-freq detail after (Rune's architecture). Add Stream-Power Law solver and variable erodibility.
 **Depends on:** Phase 2 complete for PassDAG declarations; parallel with Phase 11
+**Plans:** 2 plans
 **Fix items:** 12.1–12.3
 **Key fixes:**
 - Fix 12.1: Split heightmap into _hmap_low_freq + _hmap_high_freq; erode only low-freq (ARCHITECTURAL)
 - Fix 12.2: Stream-Power Law erosion — Cordonnier 2016 ε-topological-order O(n) solver
 - Fix 12.3: Variable erodibility K(p) = K_base + rock_hardness*K_strata_scale
 
+Plans:
+- [ ] 12-01-PLAN.md — PassDAG architectural split: hmap_low_freq/hmap_high_freq channels + 4 new pass registrations
+- [ ] 12-02-PLAN.md — Stream-Power Law solver + variable erodibility wired into pass_erosion
+
 ---
 
 ## Phase 13 — Content System Consistency
-**Status:** Ready to plan
+**Status:** Planned
 **Goal:** Add foam vertex color for water, wind_bend vertex color for trees, and enforce 1m=0.85 Unity units scale convention in export.
 **Depends on:** Phase 3 complete; fully independent of Phases 7–12
+**Plans:** 3 plans
 **Fix items:** 13.1–13.3
 **Key fixes:**
 - Fix 13.1: Foam vertex alpha — foam = saturate(obstacle_proximity/radius) * (1-flow_speed/max_speed)
 - Fix 13.2: Wind bend vertex color (R=xz bend, G=y sway) for tree meshes
 - Fix 13.3: UNITY_SCALE_FACTOR = 0.85 applied to all exported coordinates
+
+Plans:
+- [ ] 13-01-PLAN.md — Foam vertex alpha: bake_foam_vertex_alpha() in terrain_waterfalls.py
+- [ ] 13-02-PLAN.md — Wind bend vertex color: compute_wind_bend_vertex_color() in terrain_unity_export.py
+- [ ] 13-03-PLAN.md — Unity scale factor: UNITY_SCALE_FACTOR = 0.85 constant + application sites
 
 ---
 
