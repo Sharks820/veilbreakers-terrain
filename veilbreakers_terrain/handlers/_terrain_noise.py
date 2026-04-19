@@ -661,17 +661,65 @@ def _theoretical_max_amplitude(octaves: int, persistence: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Slope map
+# Slope maps — CONFLICT-01 / REQ-P7-007
+# Internal SI unit = RADIANS. Degrees only at UI/JSON boundaries.
 # ---------------------------------------------------------------------------
 
-def compute_slope_map(
-    heightmap: np.ndarray,
-    cell_size: float | tuple[float, float] = 1.0,
-) -> np.ndarray:
-    """Compute slope in degrees from a heightmap.
 
-    Uses numpy gradient to compute partial derivatives, then converts
-    the magnitude to degrees from horizontal (0 = flat, 90 = vertical).
+def _compute_slope_gradient(
+    heightmap: np.ndarray,
+    cell_size: "float | tuple[float, float]" = 1.0,
+) -> np.ndarray:
+    """Return gradient magnitude array (shared helper for slope functions)."""
+    rows, cols = heightmap.shape
+    if rows < 2 or cols < 2:
+        return np.zeros(heightmap.shape, dtype=np.float64)
+
+    if isinstance(cell_size, (tuple, list)):
+        if len(cell_size) < 2:
+            raise ValueError("cell_size tuple must contain row and column spacing")
+        row_spacing = max(float(cell_size[0]), 1e-9)
+        col_spacing = max(float(cell_size[1]), 1e-9)
+    else:
+        row_spacing = col_spacing = max(float(cell_size), 1e-9)
+
+    dy, dx = np.gradient(heightmap, row_spacing, col_spacing)
+    return np.sqrt(dx ** 2 + dy ** 2)
+
+
+def compute_slope_map_radians(
+    heightmap: np.ndarray,
+    cell_size: "float | tuple[float, float]" = 1.0,
+) -> np.ndarray:
+    """Return slope angle in RADIANS (internal SI canonical unit).
+
+    Values in [0, pi/2]. Use this for all internal vectorised math
+    (np.tan, np.cos etc. are radian-native). REQ-P7-007 / CONFLICT-01.
+
+    Parameters
+    ----------
+    heightmap : np.ndarray
+        2D heightmap array.
+    cell_size : float | tuple[float, float]
+        World-space sample spacing. A scalar applies to both axes. A 2-item
+        tuple is interpreted as ``(row_spacing, col_spacing)``.
+
+    Returns
+    -------
+    np.ndarray
+        2D array of slope values in radians [0, pi/2].
+    """
+    magnitude = _compute_slope_gradient(heightmap, cell_size)
+    return np.arctan(magnitude)
+
+
+def compute_slope_map_degrees(
+    heightmap: np.ndarray,
+    cell_size: "float | tuple[float, float]" = 1.0,
+) -> np.ndarray:
+    """Return slope angle in DEGREES (display/export boundary only).
+
+    REQ-P7-007 / CONFLICT-01. Use compute_slope_map_radians for math.
 
     Parameters
     ----------
@@ -686,25 +734,12 @@ def compute_slope_map(
     np.ndarray
         2D array of slope values in degrees [0, 90].
     """
-    # np.gradient requires at least 2 elements per axis; a 1-pixel
-    # dimension has no neighbours so the slope is zero by definition.
-    rows, cols = heightmap.shape
-    if rows < 2 or cols < 2:
-        return np.zeros_like(heightmap)
+    return np.clip(np.degrees(compute_slope_map_radians(heightmap, cell_size)), 0.0, 90.0)
 
-    if isinstance(cell_size, (tuple, list)):
-        if len(cell_size) < 2:
-            raise ValueError("cell_size tuple must contain row and column spacing")
-        row_spacing = max(float(cell_size[0]), 1e-9)
-        col_spacing = max(float(cell_size[1]), 1e-9)
-    else:
-        row_spacing = col_spacing = max(float(cell_size), 1e-9)
 
-    dy, dx = np.gradient(heightmap, row_spacing, col_spacing)
-    magnitude = np.sqrt(dx ** 2 + dy ** 2)
-    slope_rad = np.arctan(magnitude)
-    slope_deg = np.degrees(slope_rad)
-    return np.clip(slope_deg, 0.0, 90.0)
+# Backward-compatibility alias — existing callers of compute_slope_map continue to work.
+# New code should call compute_slope_map_radians or compute_slope_map_degrees explicitly.
+compute_slope_map = compute_slope_map_degrees
 
 
 # ---------------------------------------------------------------------------

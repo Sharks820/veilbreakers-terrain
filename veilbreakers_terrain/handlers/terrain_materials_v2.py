@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
@@ -174,6 +174,57 @@ def default_dark_fantasy_rules() -> MaterialRuleSet:
 
 
 # ---------------------------------------------------------------------------
+# Triplanar projection (Fix 7.16 / BUG-116 / REQ-P7-007)
+# ---------------------------------------------------------------------------
+
+
+def triplanar_blend(
+    normal: np.ndarray,
+    pos: np.ndarray,
+    noise_fn: "Callable[[np.ndarray], np.ndarray]",
+    sharpness: float = 4.0,
+) -> np.ndarray:
+    """Triplanar noise blend weighted by surface normal.
+
+    Eliminates Z-only texture stretching on steep surfaces. The blend weights
+    are: w = abs(normal)^sharpness, normalised to sum=1 per cell.
+
+    Args:
+        normal: (H, W, 3) float32 surface normals, world-space.
+        pos: (H, W, 3) float32 world-space XYZ positions.
+        noise_fn: Callable accepting (N, 2) float64 UV coords, returning (N,) float.
+        sharpness: Exponent for normal-based weight sharpening. Default 4.0.
+            Higher values tighten the blend toward the dominant axis.
+
+    Returns:
+        (H, W) float32 blended noise values.
+
+    Reference: Fix 7.16 / BUG-116 / CONTEXT.md triplanar formula.
+    Formula: w = |n|^e / sum(|n|^e); blend = w.x*f(yz) + w.y*f(xz) + w.z*f(xy)
+    """
+    normal = np.asarray(normal, dtype=np.float64)
+    pos = np.asarray(pos, dtype=np.float64)
+
+    w = np.abs(normal) ** sharpness                    # (H, W, 3)
+    w_sum = w.sum(axis=2, keepdims=True).clip(1e-9, None)
+    w = w / w_sum                                       # normalised
+
+    H, W = normal.shape[:2]
+
+    # Three projection planes: YZ, XZ, XY
+    yz_coords = pos[..., 1:3].reshape(-1, 2).astype(np.float64)
+    xz_coords = pos[..., [0, 2]].reshape(-1, 2).astype(np.float64)
+    xy_coords = pos[..., :2].reshape(-1, 2).astype(np.float64)
+
+    n_yz = np.asarray(noise_fn(yz_coords)).reshape(H, W)
+    n_xz = np.asarray(noise_fn(xz_coords)).reshape(H, W)
+    n_xy = np.asarray(noise_fn(xy_coords)).reshape(H, W)
+
+    blend = (w[..., 0] * n_yz + w[..., 1] * n_xz + w[..., 2] * n_xy)
+    return blend.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
 
@@ -245,6 +296,34 @@ def compute_slope_material_weights(
             0.0,
         )
         combined = ch.base_weight * slope_w * alt_w * curv_w * wet_w
+
+        # Triplanar blend perturbation for steep-surface materials (Fix 7.16)
+        if ch.triplanar:
+            # Default sin-based noise_fn (Phase 11 will inject proper OpenSimplex2S)
+            def _default_noise(uv: np.ndarray) -> np.ndarray:
+                return np.sin(uv[:, 0] * 3.7 + uv[:, 1] * 2.1) * 0.5 + 0.5
+
+            h_arr = np.asarray(stack.height, dtype=np.float64)
+            H_s, W_s = h_arr.shape
+            r_idx, c_idx = np.mgrid[0:H_s, 0:W_s]
+            pos_3d = np.stack([
+                c_idx.astype(np.float64),
+                r_idx.astype(np.float64),
+                h_arr,
+            ], axis=2)
+            normals_3d = np.zeros((H_s, W_s, 3), dtype=np.float64)
+            normals_3d[..., 2] = 1.0  # default up-normal
+
+            # Tilt normals for steep cells using slope channel
+            if slope is not None:
+                steep = slope > math.radians(45.0)
+                normals_3d[steep, 0] = 0.7
+                normals_3d[steep, 2] = 0.7
+
+            noise_perturb = triplanar_blend(normals_3d, pos_3d, _default_noise)
+            # Apply as a subtle multiplicative perturbation [0.8, 1.2]
+            combined = combined * (0.8 + 0.4 * noise_perturb)
+
         weights[:, :, idx] = combined.astype(np.float32)
 
     # Fallback: any cell whose total weight is 0 gets 1.0 on the default layer
