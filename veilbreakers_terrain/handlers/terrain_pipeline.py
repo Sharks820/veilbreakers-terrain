@@ -637,6 +637,82 @@ def register_snow_line_pass() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Macro color pass (Phase 10 / Fix 10.8 / REQ-P10-004)
+# ---------------------------------------------------------------------------
+
+
+def pass_compute_macro_color(
+    state: "TerrainPipelineState",
+    region: Optional[BBox],
+) -> "PassResult":
+    """Sample world-space macro color texture and write macro_color channel (Fix 10.8 / REQ-P10-004).
+
+    Contract:
+        Consumes: height (for grid shape)
+        Produces: macro_color  — (H, W, 3) float32 RGB multiplier [0..1]
+
+    The macro texture can be supplied via state.intent.extra_params["macro_texture"]
+    as a (N, M, 3) float32 ndarray. If absent, falls back to ones (no color change).
+    """
+    import time
+    import numpy as np
+
+    from .terrain_materials_v2 import sample_macro_color as _sample_macro_color
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    H, W = stack.height.shape
+
+    # Build per-cell world coordinates
+    xs = np.arange(W, dtype=np.float32) * stack.cell_size + stack.world_origin_x
+    zs = np.arange(H, dtype=np.float32) * stack.cell_size + stack.world_origin_y
+    world_x, world_z = np.meshgrid(xs, zs)
+
+    # Retrieve authored macro texture from intent extras, or use white fallback
+    macro_tex = None
+    if state.intent is not None:
+        extras = getattr(state.intent, "__dict__", {}).get("extra_params") or {}
+        macro_tex = extras.get("macro_texture")
+
+    if macro_tex is None:
+        macro_color = np.ones((H, W, 3), dtype=np.float32)
+    else:
+        macro_tex = np.asarray(macro_tex, dtype=np.float32)
+        # Guard (T-10-03-03): reject non-(N,M,3) shapes
+        if macro_tex.ndim != 3 or macro_tex.shape[2] != 3:
+            macro_color = np.ones((H, W, 3), dtype=np.float32)
+        else:
+            macro_color = _sample_macro_color(world_x, world_z, macro_tex)
+
+    stack.set("macro_color", macro_color, "macro_color")
+
+    return PassResult(
+        pass_name="macro_color",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("macro_color",),
+        metrics={"macro_mean_r": float(macro_color[..., 0].mean())},
+    )
+
+
+def register_macro_color_pass() -> None:
+    """Register the macro_color pass on TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="macro_color",
+            func=pass_compute_macro_color,
+            requires_channels=("height",),
+            produces_channels=("macro_color",),
+            seed_namespace="macro_color",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="World-space macro color multiply: authored RGB tiled across terrain.",
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Default pass registration
 # ---------------------------------------------------------------------------
 
@@ -755,6 +831,7 @@ def register_default_passes() -> None:
     register_integrator_pass()
     register_terrain_label_passes()
     register_snow_line_pass()
+    register_macro_color_pass()
 
 
 __all__ = [
@@ -765,4 +842,6 @@ __all__ = [
     "register_terrain_label_passes",
     "pass_compute_snow_line",
     "register_snow_line_pass",
+    "pass_compute_macro_color",
+    "register_macro_color_pass",
 ]

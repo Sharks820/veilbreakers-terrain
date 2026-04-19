@@ -342,6 +342,125 @@ def compute_snow_line_factor(
 
 
 # ---------------------------------------------------------------------------
+# Ridge → ravine material (Fix 10.3 / REQ-P10-004)
+# ---------------------------------------------------------------------------
+
+RAVINE_THRESHOLD: float = 0.0
+"""Ridge channel value below this → erosion channel (ravine). Drives wetter drainage material.
+Fix 10.3: ridge channel produced by erosion is now consumed by the materials system.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Macro color multiply (Fix 10.8 / REQ-P10-004)
+# ---------------------------------------------------------------------------
+
+
+def sample_macro_color(
+    world_x: np.ndarray,
+    world_z: np.ndarray,
+    macro_texture: np.ndarray,
+    tile_size_m: float = 512.0,
+) -> np.ndarray:
+    """Sample a 64x64 authored macro color texture in world-space XZ (Fix 10.8).
+
+    The texture tiles every tile_size_m metres. Returns (H, W, 3) float32 RGB
+    where H×W matches the input world_x / world_z arrays.
+
+    Args:
+        world_x:       (H, W) float32, world X coordinates per cell.
+        world_z:       (H, W) float32, world Z coordinates per cell.
+        macro_texture: (tex_h, tex_w, 3) float32 authored RGB texture, values [0..1].
+        tile_size_m:   World-space extent of one full texture tile, metres.
+
+    Guard (T-10-03-03): non-(N,M,3) macro_texture should be handled by caller.
+    """
+    tex_h, tex_w = macro_texture.shape[:2]
+    # Wrap world coordinates into [0, 1) then map to texel indices
+    u = ((world_x / tile_size_m) % 1.0)
+    v = ((world_z / tile_size_m) % 1.0)
+    ui = np.clip((u * tex_w).astype(np.int32), 0, tex_w - 1)
+    vi = np.clip((v * tex_h).astype(np.int32), 0, tex_h - 1)
+    return macro_texture[vi, ui, :].astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# SDF road edge blending (Fix 10.9 / REQ-P10-005)
+# ---------------------------------------------------------------------------
+
+ROAD_EDGE_FADE_WIDTH: float = 2.0
+"""Distance in metres over which the road-gravel splatmap fades to terrain base.
+Fix 10.9 / REQ-P10-005. Requires road_sdf_dist channel from Phase 8 Fix 8.13.
+"""
+
+
+def apply_sdf_road_blend(
+    weights: np.ndarray,
+    road_sdf_dist: np.ndarray,
+    rules: "MaterialRuleSet",
+    road_channel_id: str = "scree",
+    edge_fade_width: float = ROAD_EDGE_FADE_WIDTH,
+) -> np.ndarray:
+    """Blend road-gravel splatmap against terrain base using SDF edge weight (Fix 10.9).
+
+    Formula (from CONTEXT.md Fix 10.9):
+        edge_weight = saturate(1.0 - road_sdf_dist / edge_fade_width)
+
+    where saturate = np.clip(..., 0.0, 1.0).
+
+    Cells within edge_fade_width of a road get their road_channel_id weight
+    blended toward 1.0 proportionally. All other weights are compressed to fill
+    the remainder (1.0 - edge_weight), keeping the per-cell sum = 1.0.
+
+    Args:
+        weights:        (H, W, L) float32, current splatmap weights (sum=1 per cell).
+        road_sdf_dist:  (H, W) float32, signed distance in metres from road.
+                        0 = on road, positive = off road.
+        rules:          MaterialRuleSet, used to resolve road_channel_id index.
+        road_channel_id: Channel ID to boost at road edges. Defaults to "scree".
+        edge_fade_width: Fade distance in metres. Default 2.0.
+                        Guard (T-10-03-02): clamped to minimum 1e-6.
+
+    Returns:
+        Modified (H, W, L) float32 weights, sum=1 per cell.
+    """
+    try:
+        road_idx = rules.index_of(road_channel_id)
+    except KeyError:
+        return weights  # No road channel in this rule set; return unchanged.
+
+    ew = max(float(edge_fade_width), 1e-6)  # T-10-03-02: guard /0
+    sdf = np.asarray(road_sdf_dist, dtype=np.float32)
+    # saturate(1.0 - road_sdf_dist / edge_fade_width)
+    edge_weight = np.clip(1.0 - sdf / ew, 0.0, 1.0)  # (H, W)
+
+    w = weights.copy()
+    L = w.shape[2]
+
+    # Boost road_channel to edge_weight; compress all other channels proportionally.
+    other_mask = np.ones(L, dtype=bool)
+    other_mask[road_idx] = False
+    other_w = w[:, :, other_mask]         # (H, W, L-1)
+
+    # Sum of non-road weights before rescaling
+    other_sum = other_w.sum(axis=2)        # (H, W)
+    # Scale factor for other weights: (1 - edge_weight) / (other_sum + eps)
+    scale = np.where(
+        other_sum > 1e-9,
+        (1.0 - edge_weight) / (other_sum + 1e-9),
+        0.0,
+    )                                      # (H, W)
+
+    # Write updated values back
+    w[:, :, road_idx] = edge_weight
+    other_indices = np.where(other_mask)[0]
+    for i, oi in enumerate(other_indices):
+        w[:, :, oi] = (other_w[:, :, i] * scale).astype(np.float32)
+
+    return w.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
 
@@ -491,6 +610,29 @@ def compute_slope_material_weights(
     except KeyError:
         pass  # rule set doesn't have cliff or ground channel; skip silently
 
+    # Fix 10.3: Ridge → ravine material blend.
+    # Negative ridge values = erosion channels. Apply darker/wetter drainage material.
+    ridge = stack.get("ridge")
+    if ridge is not None:
+        ridge_arr = np.asarray(ridge, dtype=np.float32)
+        ravine_mask = (ridge_arr < RAVINE_THRESHOLD).astype(np.float32)
+        if ravine_mask.any():
+            try:
+                wet_idx = rules.index_of("wet_rock")
+                # Ravine depth below threshold drives additional wet_rock weight.
+                # np.clip already guards against ridge values far outside [-1,1] (T-10-03-04)
+                ravine_depth = np.clip(-ridge_arr, 0.0, 1.0)
+                ravine_weight = ravine_mask * ravine_depth
+                weights[:, :, wet_idx] = np.clip(
+                    weights[:, :, wet_idx] + ravine_weight, 0.0, 1.0
+                ).astype(np.float32)
+            except KeyError:
+                pass  # No wet_rock channel in this rule set; skip silently.
+        # Re-normalize after ravine blend injection (labeled cells will re-override below)
+        total_rv = weights.sum(axis=2, keepdims=True)
+        total_rv = np.where(total_rv > 1e-9, total_rv, 1.0)
+        weights = (weights / total_rv).astype(np.float32)
+
     # --- Structural label overrides (Fix 10.10 / REQ-P10-001) ---
     # Feature generators stamp labels during generation; labels take priority over
     # analytical slope classification. Labeled cells skip the analytical path.
@@ -553,6 +695,13 @@ def compute_slope_material_weights(
     # Normalize unlabeled cells only (labeled cells are already sum=1.0)
     norm_denom = np.where(unlabeled, total, 1.0)
     weights[unlabeled] = (weights[unlabeled] / norm_denom[unlabeled, np.newaxis])
+
+    # Fix 10.9 (REQ-P10-005): SDF road edge blending — LAST operation.
+    # Requires road_sdf_dist channel from Phase 8 Fix 8.13.
+    # Gracefully skips if channel absent (Phase 8 not yet run). (T-10-03-01)
+    road_sdf_dist = stack.get("road_sdf_dist")
+    if road_sdf_dist is not None:
+        weights = apply_sdf_road_blend(weights, road_sdf_dist, rules)
 
     return weights.astype(np.float32)
 
@@ -673,6 +822,10 @@ __all__ = [
     "compute_normal_z",
     "apply_brucks_blend",
     "compute_snow_line_factor",
+    "RAVINE_THRESHOLD",
+    "sample_macro_color",
+    "ROAD_EDGE_FADE_WIDTH",
+    "apply_sdf_road_blend",
     "compute_slope_material_weights",
     "pass_materials",
     "register_bundle_b_material_passes",
