@@ -141,13 +141,18 @@ def test_export_unity_shader_template_writes_json():
         assert payload == data
 
 
-def test_pass_stochastic_shader_populates_roughness(state):
+def test_pass_stochastic_shader_populates_uv_mask(state):
+    # Fix 7.18: stochastic_shader no longer writes roughness_variation (single-writer rule).
+    # It writes stochastic_uv_mask only; roughness_variation is owned by roughness_driver.
     from blender_addon.handlers.terrain_stochastic_shader import pass_stochastic_shader
 
     result = pass_stochastic_shader(state, None)
     assert result.status == "ok"
-    assert state.mask_stack.get("roughness_variation") is not None
-    assert state.mask_stack.get("roughness_variation").dtype == np.float32
+    assert state.mask_stack.get("stochastic_uv_mask") is not None
+    # roughness_variation must NOT be written by this pass
+    assert state.mask_stack.get("roughness_variation") is None, (
+        "stochastic_shader must not write roughness_variation (Fix 7.18 single-writer rule)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -244,14 +249,17 @@ def test_multiscale_breakup_rejects_empty_scales(stack):
         compute_multiscale_breakup(stack, scales_m=(), seed=1)
 
 
-def test_pass_multiscale_breakup_sets_roughness(state):
+def test_pass_multiscale_breakup_does_not_write_roughness(state):
+    # Fix 7.18: multiscale_breakup no longer writes roughness_variation (single-writer rule).
+    # roughness_variation is owned exclusively by terrain_roughness_driver.
     from blender_addon.handlers.terrain_multiscale_breakup import pass_multiscale_breakup
 
     result = pass_multiscale_breakup(state, None)
     assert result.status == "ok"
-    rough = state.mask_stack.get("roughness_variation")
-    assert rough is not None
-    assert rough.min() >= 0.0 and rough.max() <= 1.0
+    # roughness_variation must NOT be written by this pass
+    assert state.mask_stack.get("roughness_variation") is None, (
+        "multiscale_breakup must not write roughness_variation (Fix 7.18 single-writer rule)"
+    )
 
 
 # ---------------------------------------------------------------------------

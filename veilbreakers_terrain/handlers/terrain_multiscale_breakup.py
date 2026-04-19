@@ -85,10 +85,10 @@ def pass_multiscale_breakup(
     state: TerrainPipelineState,
     region: Optional[BBox],
 ) -> PassResult:
-    """Bundle K pass: multi-scale breakup into roughness_variation.
+    """Bundle K pass: compute multi-scale breakup noise (read-only consumer).
 
     Consumes: height
-    Produces: roughness_variation
+    Produces: (nothing — roughness_variation is owned by terrain_roughness_driver, Fix 7.18)
     """
     from .terrain_pipeline import derive_pass_seed
 
@@ -106,20 +106,15 @@ def pass_multiscale_breakup(
     )
     breakup = compute_multiscale_breakup(stack, scales_m=scales, seed=seed)
 
-    existing = stack.get("roughness_variation")
-    if existing is None:
-        rough = 0.5 + 0.25 * breakup
-    else:
-        rough = np.asarray(existing, dtype=np.float32) + 0.15 * breakup
-    rough = np.clip(rough, 0.0, 1.0).astype(np.float32)
-    stack.set("roughness_variation", rough, "multiscale_breakup")
+    # roughness_variation is written only by terrain_roughness_driver (Fix 7.18)
+    # This pass computes a local breakup value but does not write back to the stack.
 
     return PassResult(
         pass_name="multiscale_breakup",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("roughness_variation",),
+        produced_channels=(),
         metrics={
             "scales_m": list(scales),
             "breakup_min": float(breakup.min()),
@@ -140,10 +135,10 @@ def register_bundle_k_multiscale_breakup_pass() -> None:
             name="multiscale_breakup",
             func=pass_multiscale_breakup,
             requires_channels=("height",),
-            produces_channels=("roughness_variation",),
+            produces_channels=(),
             seed_namespace="multiscale_breakup",
             requires_scene_read=False,
-            description="Bundle K: 3-scale noise breakup into roughness_variation",
+            description="Bundle K: 3-scale noise breakup (read-only; roughness_variation owned by roughness_driver)",
         )
     )
 

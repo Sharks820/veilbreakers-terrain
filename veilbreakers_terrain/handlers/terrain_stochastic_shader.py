@@ -343,13 +343,11 @@ def pass_stochastic_shader(
 
     Consumes: height
     Produces: stochastic_uv_mask (H, W, 2) float32 UV offsets stored on the
-              stack via stack.set(); roughness_variation updated with offset
-              magnitude as a perceptible downstream signal.
+              stack via stack.set().
 
     The full (H, W, 2) mask is stored under ``stochastic_uv_mask`` so the
-    Unity exporter can retrieve it directly.  A scalar offset-magnitude layer
-    is folded into ``roughness_variation`` so later passes see the stochastic
-    signal without needing to know about the 2-channel mask format.
+    Unity exporter can retrieve it directly.  roughness_variation is owned
+    exclusively by terrain_roughness_driver and is not written here (Fix 7.18).
     """
     from .terrain_pipeline import derive_pass_seed
 
@@ -381,22 +379,15 @@ def pass_stochastic_shader(
     # "stochastic_uv_mask" to retrieve the (H, W, 2) float32 array.
     stack.set("stochastic_uv_mask", mask, "stochastic_shader")
 
-    # Fold offset magnitude as a perturbation into roughness_variation so
-    # downstream passes see the stochastic signal through normal channels.
-    magnitude = np.sqrt(mask[..., 0] ** 2 + mask[..., 1] ** 2).astype(np.float32)
-    existing = stack.get("roughness_variation")
-    if existing is None:
-        rough = magnitude * 0.1
-    else:
-        rough = np.asarray(existing, dtype=np.float32) + magnitude * 0.02
-    stack.set("roughness_variation", rough.astype(np.float32), "stochastic_shader")
+    # roughness_variation is written only by terrain_roughness_driver (Fix 7.18)
+    # magnitude is computed but not written back to the stack.
 
     return PassResult(
         pass_name="stochastic_shader",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("stochastic_uv_mask", "roughness_variation"),
+        produced_channels=("stochastic_uv_mask",),
         metrics={
             "tile_size_m": tile_size_m,
             "coverage_fraction": coverage_fraction,
@@ -418,10 +409,10 @@ def register_bundle_k_stochastic_shader_pass() -> None:
             name="stochastic_shader",
             func=pass_stochastic_shader,
             requires_channels=("height",),
-            produces_channels=("stochastic_uv_mask", "roughness_variation"),
+            produces_channels=("stochastic_uv_mask",),
             seed_namespace="stochastic_shader",
             requires_scene_read=False,
-            description="Bundle K: stochastic tile-sampling UV offsets (fBm + Voronoi)",
+            description="Bundle K: stochastic tile-sampling UV offsets (fBm + Voronoi; roughness_variation owned by roughness_driver)",
         )
     )
 
