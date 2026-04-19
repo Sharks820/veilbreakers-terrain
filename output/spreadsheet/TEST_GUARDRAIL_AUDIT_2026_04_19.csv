@@ -1,0 +1,90 @@
+test_file,collected_tests,label,priority,legacy_alias,mock_heavy,source_introspection,registry_surface,skip_or_xfail,run_pass,command_handlers_exec,validate_tile_seams,notes
+veilbreakers_terrain/tests/contract/test_terrain_contracts.py,5,structure_only,P1,no,no,yes,no,no,no,no,no,"Good contract smoke coverage, but it validates YAML/files/functions by source inspection rather than runtime behavior."
+veilbreakers_terrain/tests/integration/test_full_terrain_pipeline.py,13,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_aaa_terrain_vegetation.py,47,mock_plumbing,P2,yes,yes,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_aaa_water_scatter.py,37,mock_plumbing,P2,yes,yes,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_adjacent_tile_contract.py,12,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_animation_environment.py,70,structure_only,P1,yes,yes,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_atmospheric_volumes.py,27,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_baked_terrain.py,15,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_biome_grammar.py,46,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_bundle_bcd_supplements.py,49,live_guardrail,P0,yes,yes,yes,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_bundle_egjn_supplements.py,55,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_bundle_pq.py,32,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_bundle_r.py,64,soft_guardrail,P2,yes,no,no,no,yes,no,no,no,"Good protocol/runtime-safety coverage, but at least one gate is skipped and the suite still rides the blender_addon alias shim."
+veilbreakers_terrain/tests/test_coverage_gaps.py,37,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_cross_feature.py,34,soft_guardrail,P1,yes,no,no,no,yes,no,no,no,"Cross-feature invariants are useful, but skip paths make it soft instead of fail-closed."
+veilbreakers_terrain/tests/test_delta_integrator.py,9,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_environment_handlers.py,86,mock_plumbing,P2,yes,yes,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_environment_scatter_handlers.py,62,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_erosion_config.py,7,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_erosion_freq_split.py,27,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_geometric_quality.py,21,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_mcp_dispatch.py,19,live_guardrail,P0,no,yes,no,yes,no,no,yes,no,
+veilbreakers_terrain/tests/test_mesh_quality_phase14.py,16,structure_only,P1,no,no,yes,no,no,no,no,no,
+veilbreakers_terrain/tests/test_missing_gaps.py,67,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_normal_rock_brucks_snow.py,12,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p13_foam_vertex_alpha.py,15,structure_only,P1,no,no,yes,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p13_unity_scale_factor.py,15,structure_only,P1,no,no,yes,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p13_wind_bend_vertex_color.py,12,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p7_conventions.py,7,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p7_pow_inv.py,4,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p7_priority_flood.py,5,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p7_roughness_channel.py,3,structure_only,P1,no,no,yes,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p7_thermal_consolidation.py,5,structure_only,P1,no,no,yes,no,no,no,no,no,
+veilbreakers_terrain/tests/test_p7_vectorization.py,5,structure_only,P1,no,no,yes,no,no,no,no,no,
+veilbreakers_terrain/tests/test_performance_optimization.py,22,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_phase14_wave1.py,16,live_guardrail,P0,no,no,no,no,no,no,no,yes,
+veilbreakers_terrain/tests/test_physical_plausibility.py,23,soft_guardrail,P1,yes,no,no,no,yes,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_precision_mesh_editing.py,71,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_preflight_crossrepo.py,3,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_ridge_macro_sdf.py,12,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_road_astar_24dir.py,21,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_road_channels.py,18,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_road_coastline_terrain_features.py,108,live_guardrail_expensive,P1,yes,no,no,yes,no,no,yes,no,"Exercises real generators, but runtime cost is high for a dispatch-surface test file (~24.7s in current sample run)."
+veilbreakers_terrain/tests/test_road_pipeline.py,28,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_statistical_terrain.py,26,soft_guardrail,P1,yes,no,no,no,yes,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_stream_power_erosion.py,19,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_structural_terrain_labels.py,9,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_terrain_advanced.py,70,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_advanced_world_units.py,5,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_assets.py,20,live_guardrail,P0,yes,no,no,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_atmosphere.py,17,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_banded.py,14,live_guardrail,P0,yes,no,no,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_biome_voronoi.py,9,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_cave_adapter.py,6,live_guardrail,P0,yes,no,yes,yes,no,no,yes,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_caves.py,27,live_guardrail,P0,yes,no,no,no,no,yes,no,no,High-value pass-level guardrail currently blocked by undeclared cave channels and archetype drift.
+veilbreakers_terrain/tests/test_terrain_checkpoints.py,16,live_guardrail,P0,yes,no,yes,no,no,yes,no,no,High-value runtime guardrail that currently catches a real Windows NPZ temp-path failure.
+veilbreakers_terrain/tests/test_terrain_chunking.py,28,live_guardrail_stale_api,P0,yes,no,no,no,no,no,no,yes,"Catches real contract drift, but expected behavior is stale versus current compute_chunk_lod return type."
+veilbreakers_terrain/tests/test_terrain_cliffs.py,15,live_guardrail,P0,yes,no,no,no,no,yes,no,no,High-value pass-level guardrail currently blocked by undeclared cliff channel writes.
+veilbreakers_terrain/tests/test_terrain_composition.py,33,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_deep_qa.py,29,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_depth.py,53,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_ecosystem.py,42,live_guardrail,P0,yes,no,yes,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_erosion.py,17,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_erosion_filter.py,13,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_features_phase14.py,12,soft_guardrail,P1,no,no,no,no,yes,no,no,no,
+veilbreakers_terrain/tests/test_terrain_features_v2.py,71,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_flatten.py,8,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_geology.py,32,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_iteration.py,30,live_guardrail,P0,yes,no,no,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_master_registrar.py,8,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_material_ceiling.py,30,structure_only,P1,yes,no,yes,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_materials.py,396,broad_fast_logic,P2,yes,yes,no,no,no,no,no,no,"Large file, but current runtime is efficient (~0.47s for 396 collected tests). Not a priority inefficiency target."
+veilbreakers_terrain/tests/test_terrain_materials_v2.py,18,live_guardrail,P0,yes,no,no,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_noise.py,58,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_noise_bugfixes.py,4,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_noise_phase11.py,35,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_pipeline_smoke.py,8,live_guardrail,P0,yes,no,no,no,no,yes,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_tiling.py,6,live_guardrail,P0,yes,no,no,no,no,no,no,yes,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_validation.py,36,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_visual_profiles.py,6,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py,42,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_waterfalls.py,14,live_guardrail,P0,yes,no,no,no,no,yes,no,no,High-value pass-level guardrail currently blocked by undeclared waterfall velocity and mist behavior drift.
+veilbreakers_terrain/tests/test_terrain_wind_field.py,5,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_wiring_integration.py,19,registry_surface,P2,yes,no,no,yes,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_terrain_world_orchestration.py,7,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_vb_toolkit_primitives_available.py,4,structure_only,P1,yes,no,yes,no,no,no,no,no,"Packaging smoke plus source-text grep. Useful for file presence, weak for callable behavior."
+veilbreakers_terrain/tests/test_water_network_upgrade.py,10,logic_guardrail,P2,yes,no,no,no,no,no,no,no,Uses blender_addon alias shim; this weakens packaging-surface confidence.
+veilbreakers_terrain/tests/test_wind_waterfall_poi_phase14.py,19,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_world_map_light_atmosphere.py,113,mixed_runtime_and_stale,P0,yes,no,no,yes,no,no,yes,no,"Contains live handler execution, but also stale recommendation/cost thresholds and wrapper paths that omit terrain-aware heightmap context."
