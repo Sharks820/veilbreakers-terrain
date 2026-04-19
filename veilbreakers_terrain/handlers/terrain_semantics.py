@@ -320,6 +320,10 @@ class TerrainMaskStack:
     road_mask: Optional[np.ndarray] = None
     road_sdf_dist: Optional[np.ndarray] = None
 
+    # Height decomposition channels (Fix 12.1 — low/high freq split)
+    hmap_low_freq: Optional[np.ndarray] = None   # base shape, max LOW_FREQ_OCTAVES=3 octaves
+    hmap_high_freq: Optional[np.ndarray] = None  # micro-detail, octaves 3-7
+
     # -- World-unit scalar metadata (required for Unity .raw round-trip) --
     height_min_m: Optional[float] = None
     height_max_m: Optional[float] = None
@@ -410,6 +414,9 @@ class TerrainMaskStack:
             # Road network (Phase 8)
             "road_mask",
             "road_sdf_dist",
+            # Height decomposition (Fix 12.1)
+            "hmap_low_freq",
+            "hmap_high_freq",
         ),
     )
 

@@ -17,6 +17,7 @@ Existing helpers (``sample_world_height``, ``generate_world_heightmap``,
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Optional
 
@@ -38,6 +39,16 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Phase 12.1 — low/high-freq split constants
+# ---------------------------------------------------------------------------
+
+LOW_FREQ_OCTAVES: int = 3    # octaves 0-2 → large-scale shape
+HIGH_FREQ_OCTAVES: int = 5   # octaves 3-7 → micro-detail (total 8 - LOW_FREQ_OCTAVES)
+DETAIL_SCALE: float = 0.2    # high-freq adds 20% amplitude on top of eroded base
 
 
 def _sample_single_height(
@@ -316,6 +327,178 @@ def world_region_dimensions(
 
 
 # ---------------------------------------------------------------------------
+# Phase 12.1 pass functions — low/high-freq split
+# ---------------------------------------------------------------------------
+
+
+def _terrain_type_from_intent(intent) -> str:
+    """Resolve terrain_type string from intent.noise_profile."""
+    noise_profile = (intent.noise_profile if intent else None) or "dark_fantasy_default"
+    terrain_type_map = {
+        "dark_fantasy_default": "mountains",
+        "temperate": "mountains",
+        "arid": "desert",
+        "arctic": "mountains",
+        "coastal": "coastal",
+    }
+    return terrain_type_map.get(str(noise_profile), "mountains")
+
+
+def pass_generate_low_freq_hmap(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+    deterministic_seed_override: Optional[int] = None,
+    low_freq_octaves: int = LOW_FREQ_OCTAVES,
+) -> PassResult:
+    """Pass: generate base heightmap using low octaves only (large-scale shape).
+
+    Produces both 'height' (initial value for downstream compat) and
+    'hmap_low_freq' (the erosion-ready base).
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    intent = state.intent
+    seed = int(
+        deterministic_seed_override
+        if deterministic_seed_override is not None
+        else (intent.seed if intent else 0)
+    )
+
+    tile_size = int(stack.tile_size)
+    cell_size = float(stack.cell_size)
+    world_origin_x = float(stack.world_origin_x)
+    world_origin_y = float(stack.world_origin_y)
+    terrain_type = _terrain_type_from_intent(intent)
+
+    hmap_low = generate_world_heightmap(
+        width=tile_size,
+        height=tile_size,
+        scale=float(tile_size) * cell_size,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        cell_size=cell_size,
+        seed=seed,
+        terrain_type=terrain_type,
+        octaves=low_freq_octaves,
+    ).astype(np.float32)
+
+    stack.set("hmap_low_freq", hmap_low, "pass_generate_low_freq_hmap")
+    stack.set("height", hmap_low, "pass_generate_low_freq_hmap")
+
+    elapsed = time.perf_counter() - t0
+    return PassResult(
+        pass_name="pass_generate_low_freq_hmap",
+        status="ok",
+        duration_seconds=elapsed,
+        produced_channels=("height", "hmap_low_freq"),
+        metrics={"elapsed_s": elapsed},
+    )
+
+
+def pass_generate_high_freq_detail(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+    deterministic_seed_override: Optional[int] = None,
+    high_freq_octaves: int = HIGH_FREQ_OCTAVES,
+) -> PassResult:
+    """Pass: generate high-frequency micro-detail noise band.
+
+    Independent of pass_erosion. Combined by pass_composite_hmap after erosion.
+    Uses a seed offset (+1) from the base heightmap seed so detail is
+    decorrelated from the base shape.
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    intent = state.intent
+    seed = int(
+        deterministic_seed_override
+        if deterministic_seed_override is not None
+        else (intent.seed if intent else 0)
+    )
+
+    tile_size = int(stack.tile_size)
+    cell_size = float(stack.cell_size)
+    world_origin_x = float(stack.world_origin_x)
+    world_origin_y = float(stack.world_origin_y)
+    terrain_type = _terrain_type_from_intent(intent)
+
+    # Use seed+1 to decorrelate high-freq from base; use 2x finer scale
+    hmap_high = generate_world_heightmap(
+        width=tile_size,
+        height=tile_size,
+        scale=float(tile_size) * cell_size * 0.5,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        cell_size=cell_size,
+        seed=seed + 1,
+        terrain_type=terrain_type,
+        octaves=high_freq_octaves,
+        normalize=True,
+    ).astype(np.float32)
+
+    # Center high-freq around 0 (normalize is [0,1], shift to [-0.5, 0.5])
+    hmap_high = hmap_high - 0.5
+
+    stack.set("hmap_high_freq", hmap_high, "pass_generate_high_freq_detail")
+
+    elapsed = time.perf_counter() - t0
+    return PassResult(
+        pass_name="pass_generate_high_freq_detail",
+        status="ok",
+        duration_seconds=elapsed,
+        produced_channels=("hmap_high_freq",),
+        metrics={"elapsed_s": elapsed},
+    )
+
+
+def pass_composite_hmap(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+    deterministic_seed_override: Optional[int] = None,
+    detail_scale: float = DETAIL_SCALE,
+) -> PassResult:
+    """Pass: composite eroded low-freq base + high-freq detail into final height.
+
+    final_height = hmap_low_freq + hmap_high_freq * detail_scale
+
+    Runs AFTER pass_erosion (which modified hmap_low_freq via stack.height).
+    detail_scale is exposed as a parameter for quality profile control.
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+
+    low = stack.get("hmap_low_freq")
+    high = stack.get("hmap_high_freq")
+
+    if low is None:
+        raise RuntimeError(
+            "pass_composite_hmap: hmap_low_freq not populated; "
+            "run pass_generate_low_freq_hmap first"
+        )
+    if high is None:
+        raise RuntimeError(
+            "pass_composite_hmap: hmap_high_freq not populated; "
+            "run pass_generate_high_freq_detail first"
+        )
+
+    low = np.asarray(low, dtype=np.float32)
+    high = np.asarray(high, dtype=np.float32)
+
+    final_height = low + high * detail_scale
+
+    stack.set("height", final_height, "pass_composite_hmap")
+
+    elapsed = time.perf_counter() - t0
+    return PassResult(
+        pass_name="pass_composite_hmap",
+        status="ok",
+        duration_seconds=elapsed,
+        produced_channels=("height",),
+        metrics={"elapsed_s": elapsed, "detail_scale": detail_scale},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Bundle A pass functions
 # ---------------------------------------------------------------------------
 
@@ -460,6 +643,10 @@ def pass_macro_world(
             ).astype(np.float32)
 
             stack.set("height", hmap, "macro_world")
+            # Fix 12.1 backward compat: macro_world also populates hmap_low_freq
+            # so tests using macro_world → erosion continue to work when
+            # erosion.requires_channels includes "hmap_low_freq".
+            stack.set("hmap_low_freq", hmap, "macro_world")
             issues.append(ValidationIssue(
                 code="MACRO_HEIGHT_GENERATED",
                 severity="info",
@@ -488,12 +675,17 @@ def pass_macro_world(
     # Ensure height is tracked as populated by this pass
     stack.populated_by_pass.setdefault("height", "macro_world")
 
+    # Fix 12.1 backward compat: always ensure hmap_low_freq is populated
+    # (covers the case where height was pre-populated and needs_generate=False).
+    if stack.get("hmap_low_freq") is None:
+        stack.set("hmap_low_freq", stack.height, "macro_world")
+
     soft_issues = [i for i in issues if not i.is_hard()]
     return PassResult(
         pass_name="macro_world",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
-        produced_channels=("height",),
+        produced_channels=("height", "hmap_low_freq"),
         metrics={
             "height_min": float(stack.height.min()),
             "height_max": float(stack.height.max()),
@@ -586,10 +778,18 @@ def pass_erosion(
         "alpine": dict(iterations=600, talus_angle=35.0),
     }.get(profile, dict(iterations=400, talus_angle=40.0))
 
-    h_before = stack.height.copy()
+    # Fix 12.1: erode the low-freq base only; fall back to full height if split
+    # not yet run (backward compat for tests that invoke pass_erosion in isolation).
+    _low = stack.get("hmap_low_freq")
+    if _low is None:
+        logger.warning(
+            "pass_erosion: hmap_low_freq not populated — falling back to stack.height "
+            "(run pass_generate_low_freq_hmap first for full Fix 12.1 behavior)"
+        )
+    h_before = (_low if _low is not None else stack.height).copy()
 
     # Combine hero_exclusion + protected-zone mask
-    protected = _protected_mask(state, stack.height.shape, "erosion")
+    protected = _protected_mask(state, h_before.shape, "erosion")
     if stack.hero_exclusion is not None:
         combined_exclusion = protected | stack.hero_exclusion.astype(bool)
     else:
@@ -682,6 +882,8 @@ def pass_erosion(
         talus_out = np.where(protected, 0.0, talus_out)
 
     stack.set("height", new_height, "erosion")
+    # Fix 12.1: also update hmap_low_freq so pass_composite_hmap sees the eroded base
+    stack.set("hmap_low_freq", new_height, "erosion")
     stack.set("erosion_amount", erosion_amount_out, "erosion")
     stack.set("deposition_amount", deposition_amount_out, "erosion")
     stack.set("wetness", wetness_out, "erosion")

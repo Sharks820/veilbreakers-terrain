@@ -518,10 +518,34 @@ def register_default_passes() -> None:
             name="macro_world",
             func=_tw.pass_macro_world,
             requires_channels=(),
-            produces_channels=("height",),
+            produces_channels=("height", "hmap_low_freq"),
             seed_namespace="macro_world",
             may_modify_geometry=False,
             requires_scene_read=False,
+        )
+    )
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_generate_low_freq_hmap",
+            func=_tw.pass_generate_low_freq_hmap,
+            requires_channels=(),
+            produces_channels=("height", "hmap_low_freq"),
+            seed_namespace="macro_world",
+            may_modify_geometry=False,
+            requires_scene_read=False,
+            description="Generate low-freq base heightmap (Fix 12.1)",
+        )
+    )
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_generate_high_freq_detail",
+            func=_tw.pass_generate_high_freq_detail,
+            requires_channels=(),
+            produces_channels=("hmap_high_freq",),
+            seed_namespace="macro_world_detail",
+            may_modify_geometry=False,
+            requires_scene_read=False,
+            description="Generate high-freq detail noise band (Fix 12.1)",
         )
     )
     TerrainPassController.register_pass(
@@ -549,9 +573,10 @@ def register_default_passes() -> None:
         PassDefinition(
             name="erosion",
             func=_tw.pass_erosion,
-            requires_channels=("height",),
+            requires_channels=("hmap_low_freq",),
             produces_channels=(
                 "height",
+                "hmap_low_freq",
                 "erosion_amount",
                 "deposition_amount",
                 "wetness",
@@ -562,6 +587,18 @@ def register_default_passes() -> None:
             ),
             seed_namespace="erosion",
             requires_scene_read=True,
+        )
+    )
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_composite_hmap",
+            func=_tw.pass_composite_hmap,
+            requires_channels=("hmap_low_freq", "hmap_high_freq"),
+            produces_channels=("height",),
+            seed_namespace="",
+            may_modify_geometry=False,
+            requires_scene_read=False,
+            description="Composite eroded low-freq + high-freq detail into final height (Fix 12.1)",
         )
     )
     TerrainPassController.register_pass(
