@@ -1,10 +1,10 @@
 # VeilBreakers Terrain Generation Guardrails
 
-**Status: CANONICAL — LOCKED**
-**Authority: Senior Technical Architect**
+**Status: WORKING TARGET SPEC — PARTIALLY STALE AGAINST LIVE BRANCH**
+**Authority: Historical target / design-intent reference**
 **Scope: All terrain generation, every agent session, every pass, every export**
 
-This document is the law of the land for VeilBreakers terrain generation. Any code, agent, or session that contradicts this document is wrong. Fix the code, not this document. Consult the architecture team before proposing changes to this specification.
+This document captures the intended terrain pipeline direction, but it is **not** the authoritative source for what is already implemented in the current branch. Use [docs/TERRAIN_UPGRADE_MASTER_AUDIT.md](C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\docs\TERRAIN_UPGRADE_MASTER_AUDIT.md) sections `0.J` and `0.K` for current live-state truth, stale-claim cleanup, and the active RPG-terrain implementation tracks.
 
 ---
 
@@ -175,10 +175,11 @@ Every terrain generation session MUST execute these steps in this exact order. T
 
 **This step MUST run BEFORE Step 10 (tile extraction).** Road carving grades the heightmap along the road corridor. If tile extraction happens before road carving, half the tiles will have un-graded terrain and seams will be broken at road entry/exit points. This ordering is enforced by the implementation — do not reorder.
 
-**Road carving specification:**
+**Road carving specification (target vs live reality):**
 - Width: `max(3, int(3.0 / cell_size))` cells
 - Grade strength: `0.8`
-- The `generate_road_path` A* solver uses squared slope cost `(6 * slope)^2` with 16-directional movement (AAA standard per research notes). Road carving writes `road_mask` and SDF-per-cell for scatter exclusion.
+- Live branch note: `_terrain_noise.generate_road_path()` is still 16-connected (8 directions + knight moves), not the 24-direction Rune target, and it does **not** currently write a canonical `road_mask` or SDF channel to `TerrainMaskStack`.
+- Target direction: upgrade the road solver toward Rune's 24-direction search, Catmull-Rom -> Bezier smoothing, three-zone carve widths, and SDF-driven scatter/material integration.
 
 **Skip condition:** If `intent.road_waypoints` has fewer than 2 points, road carve is silently skipped and `world_eroded` is returned unchanged. This is normal — many tiles have no roads.
 

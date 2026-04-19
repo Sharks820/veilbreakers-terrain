@@ -1,10 +1,12 @@
 # VeilBreakers Terrain — Master Upgrade Audit
 
-## 0.G — POST-PHASE-4 COMPREHENSIVE AUDIT (2026-04-18) — ★ START HERE ★
+> **Current read order:** use `0.J` and `0.K` for the live 2026-04-19 planning view. `0.G` remains an evidence log for the 2026-04-18 state, but parts of its status text are now historical and should not be treated as the current branch truth.
+
+## 0.G — POST-PHASE-4 COMPREHENSIVE AUDIT (2026-04-18) — HISTORICAL EVIDENCE LOG
 
 **Context:** Phases 1–4 of the FIXPLAN merged to `main` at `2be6561` on 2026-04-18. Three Opus agents performed a post-merge comprehensive audit across wiring/pass-graph, bugs/numerical correctness, and gaps/AAA best-practices.
 
-**Status (2026-04-18):** All 13 post-Phase-4 priority-queue fixes, plus Session 6 (14 new handler modules + P1/P2 bug wave, commit `962d281`), plus Session 7 (9 Codex P1/P2 correctness regressions, commit `e87ebb3`) are merged to `main`. Test suite: **2,324 passed, 0 failed, 3 skipped**. See [0.G Session Execution Status](#0g-session-execution-status-2026-04-18--7-sessions-complete-) below for per-session commit/change detail. Remaining open items are listed there under "Remaining — OPEN".
+**Status (historical, 2026-04-18):** All 13 post-Phase-4 priority-queue fixes, plus Session 6 (14 new handler modules + P1/P2 bug wave, commit `962d281`), plus Session 7 (9 Codex P1/P2 correctness regressions, commit `e87ebb3`) were merged to `main` at that point in time. The then-current test suite was **2,324 passed, 0 failed, 3 skipped**. For current 2026-04-19 truth on tests, wiring, dict-channel persistence, and phase state, see `0.J.1` and `0.K.1`.
 
 ### ⚠ IMMEDIATE: Two Vectorization Regressions Introduced by Phase 4
 
@@ -46,7 +48,7 @@ These bugs were **created by the phase-1-4-vectorize PR** and do not exist pre-m
 
 | ID | Severity | File:Line | Finding |
 |---|---|---|---|
-| CRIT-1 | CRITICAL (known) | `terrain_semantics.py:332-398`, `terrain_pipeline.py:434-444` | **BUG-R9-004 still open.** `to_npz`/`from_npz` exclude dict-of-ndarray channels (`wildlife_affinity`, `decal_density`, `detail_density`). `rollback_to()` restores only `mask_stack`; `state.water_network` and `state.side_effects` remain at post-failure state. Asymmetric hash: dict channels contribute to `compute_hash` but are not round-tripped via `to_npz`. |
+| CRIT-1 | CRITICAL (historical on 2026-04-18) | `terrain_semantics.py:332-398`, `terrain_pipeline.py:434-444` | **Superseded by 2026-04-19 fixes.** Dict-channel `to_npz`/`from_npz` persistence now exists for `wildlife_affinity`, `decal_density`, and `detail_density`, and rollback snapshots now include `water_network` / `side_effects`. Remaining risk is coverage and validation completeness, not total feature absence. |
 | HIGH-1 | HIGH (known) | `terrain_advanced.py` | No `cell_size` parameter anywhere. Thermal erosion, flow map, erosion brush all compare raw height deltas against talus/threshold constants with no world-unit normalization. Vectorization preserved the unit error. |
 | HIGH-2 | HIGH (known) | `terrain_fog_masks.py:72-131`, `terrain_god_ray_hints.py:119-148`, `terrain_readability_bands.py:154`, `terrain_banded.py:203-204` | `np.roll` toroidal wrap still active at 4 of 5 original locations (geology_validator strips edges; others don't). Tile-periodic seaming artifact. |
 | HIGH-3 | HIGH (known) | `_mesh_bridge.py:1035-1038` | Blender 4.5: `hasattr(mesh_data, "use_auto_smooth")` = False — auto-smooth silently skipped, no `use_edge_sharp` replacement. Meshes in 4.5 are flat-shaded or fully-smooth; intended crease angle is ignored. |
@@ -101,10 +103,10 @@ Agent 3 performed a full boundary scan. Summary:
 
 ### Critical AAA Gaps Still Open
 
-1. **No MCP dispatcher surface** — `handlers/__init__.py` exports only `register_all`. No `COMMAND_HANDLERS` dict. All 20+ `handle_*` functions in `environment.py` have no runtime entry point from any MCP bridge or operator. `ImportError: cannot import name 'COMMAND_HANDLERS'` on every test that asserts wiring.
+1. **Dispatcher surface exists; remaining gap is partial handler exposure.** `handlers/__init__.py` now exports a live `COMMAND_HANDLERS` dict. The current wiring gap is narrower: some terrain/scatter functions such as `handle_scatter_vegetation` / `scatter_biome_vegetation` are still not exposed through that dispatcher.
 2. **Zero visual pipeline wiring** — no `bpy.data.cameras.new`, no `scene.render.engine =`, no `bpy.ops.render.render`, no `scene.world =` across all 114 handler modules. Section 10 (master audit) remains fully valid.
 3. **Tripo GLB import still a stub** — `terrain_blender_safety.py:157-190` is a lock+validate wrapper; no `bpy.ops.import_scene.gltf(...)` call. ~36 scatter asset IDs unmapped.
-4. **`_OpenSimplexWrapper` silently produces Perlin** (BUG-R8-A10) — wrapper discards `self._os`, routes to Perlin, every tile has 45° axis-alignment artifact. NOT in any numbered FIXPLAN fix. Assign a bug number.
+4. **OpenSimplex wrapper bug is closed; residual noise-stack review remains open.** `_OpenSimplexWrapper` routing was fixed on 2026-04-18. The current open noise gaps are OpenSimplex2S parity review, Voronoise / IQ-domain-warp additions, Phacelle adoption review, and the 256-cell permutation-wrap risk in the fallback path.
 5. **Two hot-path Python loops not yet vectorized:** `_terrain_depth.detect_cliff_edges` (every terrain generate, `scipy.ndimage.label` = 50-500×) and `_water_network` pit detection at `:200-212` (`scipy.ndimage.minimum_filter` = 50-200×). Extend Fix 4.8 to cover both.
 
 ---
@@ -123,7 +125,7 @@ Agent 3 performed a full boundary scan. Summary:
 | 6 | BUG-NEW-005 | OPEN (deferred) | `glacial`/`coastline` zero-init delta channels + declare in `produces_channels` | DAG delta→integrator ordering |
 | 7 | BUG-NEW-008 | OPEN (deferred) | Rename `roughness_variation` to distinct channels or add merge pass | Stops silent three-way overwrite |
 | 8 | Fix 4.9 | ✅ `6a3c51d` (final closeout pending) | Coerce C-order in `TerrainMaskStack.set()`; align `to_npz` with `compute_hash` | Persistent checkpoint correctness |
-| 9 | BUG-R9-004 | ◐ `6a3c51d`, `f38bb84` (partial) | Checkpoint rollback: capture `water_network`/`side_effects` DONE; dict channels in `to_npz`/`from_npz` STILL OPEN | Rollback is a real rollback for scalar channels; dict channels still asymmetric |
+| 9 | BUG-R9-004 | ✅ closed on `2026-04-19` | Checkpoint rollback now captures `water_network`/`side_effects`, and dict channels now round-trip in `to_npz`/`from_npz` | Residual work is regression coverage, not missing persistence |
 | 10 | Fix 6.9 | ◐ `ce13b4d` (script shipped; CI gate OPEN) | Ship `scripts/callable_census_gate.py` | Script exists; blocking CI-gate workflow step still needed |
 | 11 | Fix 4.8 ext | OPEN | Vectorize `_terrain_depth.detect_cliff_edges` + `_water_network` pit detection | Hot-path speedup (Phase 7 queue) |
 | 12 | BUG-NEW-OpenSimplex | ✅ `49c8f58` | Fix `_OpenSimplexWrapper` — route `self._os.noise2(x,y)` directly | Eliminates Perlin 45° artifact |
@@ -204,9 +206,9 @@ Phases 6A/6B/6C follow-up sweeps (`c9e5d53`, `49ca9d8`, `b3dc170`, `b747156`, `b
 |---|---|---|
 | **Fix 4.9 (final)** | check FIXPLAN / `terrain_semantics.py` | Residual items from Fix 4.9 three-point plan — verify coverage against the C-contiguity invariants test and close any remaining systemic gaps |
 | **Fix 6.9 (CI gate)** | `.github/workflows/*.yml`, `scripts/callable_census_gate.py` | Script exists; **not yet wired as a blocking CI gate**. Add workflow step that fails when uncovered count grows or dead CSV references appear. |
-| **BUG-R9-004 (remainder)** | `terrain_semantics.py` `to_npz`/`from_npz` | Dict-of-ndarray channels (`wildlife_affinity`, `decal_density`, `detail_density`) still not round-tripped. Checkpoint now captures `water_network` and `side_effects` but dict channels persist asymmetrically between `compute_hash` and `to_npz`. |
+| **BUG-R9-004 (remainder)** | `terrain_semantics.py` `to_npz`/`from_npz` | **Closed on current tree.** Dict-of-ndarray channels (`wildlife_affinity`, `decal_density`, `detail_density`) now round-trip, and Unity/export scalar metadata also round-trips. Keep only regression tests / callable-census coverage as follow-up. |
 | **GRADES_VERIFIED.csv** | `docs/aaa-audit/GRADES_VERIFIED.csv` | Entries for new modules (Session 6) + grade upgrades for functions fixed in Sessions 4–7 being handled separately. |
-| **Phase 7 grade upgrades** | `_box_filter_2d`, `_distance_from_mask`, and remaining D/C-grade functions | All D/C-grade functions still needing vectorization — separate phase queued. |
+| **Phase 7 grade upgrades** | `_box_filter_2d`, `_distance_from_mask`, and remaining D/C-grade functions | **Partially closed.** `_box_filter_2d` and `_distance_from_mask` are fixed and regraded on the current tree. Keep the phase only for unrelated residual D/C-grade functions. |
 | BUG-NEW-007 | (lower severity, deferred) | Unify dict-channel declaration policy |
 | BUG-NEW-005 | (lower severity, deferred) | `glacial`/`coastline` zero-init delta channels + declare in `produces_channels` |
 | BUG-NEW-008 | (lower severity, deferred) | Rename `roughness_variation` overlap to distinct channels or add merge pass |
@@ -2029,6 +2031,7 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **Source:** V2 CSV cross-check (CSV row #44 R5/R6 notes).
 - **[Added by V2 verification, 2026-04-16]**
 - **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED IMPORTANT, upgrade to CRITICAL (parent of BUG-11) | Cone-area approximation `(h*0.5)²` dimensionally wrong — cone horizontal footprint is π·r²; Nubis/HDRP use feature-driven importance-sampling (not uniform-random rejection); affinity masks need soft-edge Gaussian (σ=2-5m); per-archetype min-distance mandatory to avoid HDRP volume-texture re-voxelize redundancy. | **Revised fix:** Poisson-disk importance-sample on soft affinity mask; `pz = sample_height_bilinear(...) + archetype.vertical_offset`; area = π·r² (corrected); per-archetype min_dist (fog 40m, fireflies 8m, god-rays 25m). **UPGRADE severity to CRITICAL** (parent of BUG-11). | **Reference:** https://advances.realtimerendering.com/s2017/Nubis%20-%20Authoring%20Realtime%20Volumetric%20Cloudscapes%20with%20the%20Decima%20Engine%20-%20Final%20.pdf | Agent: A9
+- **V5 Severity Recalibration (2026-04-19):** Per `V5_severity_realism.md`, BUG-140 severity **explicitly upgraded from MEDIUM → CRITICAL**. Justification: atmospheric volumes placed at z=0 produce volumes buried below terrain on any non-flat world tile. Real-time volumetric rendering (Nubis/HDRP) samples the volume bounds for density lookups; a z=0 placement means all fog/god-ray volumes are below the heightmap surface and produce zero screen contribution. Ship-blocking for any outdoor scene. Parent of BUG-11 (same z=0 root cause applied per-archetype).
 
 ### BUG-141 — `lod_pipeline._setup_billboard_lod` stores impostor metadata but never bakes atlas or creates billboard child mesh
 - **File:** `lod_pipeline.py:1048`
@@ -2647,6 +2650,62 @@ G1 verified all 22 modules listed above are STILL ORPHAN on HEAD `064f8d5` (no p
 - **Fix:** Standardize on degrees in `terrain_math.thermal_erosion`; deprecate `terrain_advanced.apply_thermal_erosion`; route brush through standardized impl.
 - **Context7 verification (R5, 2026-04-16):** No external library API to consult — thermal erosion semantics is a domain convention. Verdict: **NOT-IN-CONTEXT7** (intra-codebase). Domain check: Musgrave-Kolb-Mace 1989 (canonical reference) defines talus as the **angle of repose in degrees** (typical 33° for sand, 40° for gravel, 45° for cobble). Gaea / World Machine / Houdini Heightfield Erosion all expose talus as degrees. Source: Houdini `heightfield_erode_thermal` SOP `talus` parameter is degrees [0°, 90°]. Better fix: in addition to degrees standardization, expose `talus_per_material` lookup so caprock vs sand vs gravel each get their stable angle (current single-talus simplification is the AAA-shipping gap). Cross-check `apply_thermal_erosion` should also reject `talus < 0 or talus > 90` with `ValueError` — guards against the legacy raw-height-diff caller passing `40.0` (which means 40 metres of step in old code) into the new degrees-based impl.
 - **MCP best-practice research (R5+, 2026-04-16):** [WebSearch — Musgrave-Kolb-Mace 1989 SIGGRAPH '89 + Unity Terrain Tools docs] | https://history.siggraph.org/learning/the-synthesis-and-rendering-of-eroded-fractal-terrains-by-musgrave-kolb-and-mace/ ; https://dl.acm.org/doi/abs/10.1145/74334.74337 ; https://docs.unity3d.com/Packages/com.unity.terrain-tools@4.0/manual/erosion-thermal.html | *original 1989 paper: "transporting a certain amount of material in the steepest direction if the talus angle is above the threshold defined for the material"; Unity Terrain Tools `Thermal` brush + Houdini `heightfield_erode_thermal` both expose talus as degrees [0°, 90°]* | **CONFIRMED via MCP** — master fix matches Musgrave 1989 + modern AAA impls verbatim. **BETTER FIX:** cite `Musgrave-Kolb-Mace 1989, SIGGRAPH '89` in `terrain_math.thermal_erosion` docstring; add per-material angle table (sand 33°, gravel 40°, cobble 45°). **[Added by M1 MCP research, 2026-04-16]**
+
+### G2 Retroactive Expansion (2026-04-19) — CONFLICT-01..CONFLICT-06
+
+> These conflicts were catalogued in `G2_bugs_conventions_gaps.md` during the 2026-04-16 deep dive but were only referenced by ID in the master audit without dedicated entries. Expanded here for completeness and FIXPLAN assignment. CONFLICT-07 was renamed CONFLICT-17 in this document (see above).
+
+### CONFLICT-01 — Duplicate `WaterfallVolumetricProfile` dataclass definitions
+- **Files:** Two waterfall module files define `WaterfallVolumetricProfile` with **different fields** (vertex_density, front_face_fraction, curvature_radius in one; volumetric_scale, flow_velocity, opacity_falloff in the other).
+- **Symptom:** Import order determines which definition a caller resolves. Fields from one definition cause `AttributeError` when the other is imported first.
+- **Severity:** HIGH
+- **Fix:** Single canonical definition in `terrain_waterfalls_volumetric.py`; secondary module imports from it. Add `tests/test_no_duplicate_symbols.py` (also closes CONFLICT-13).
+- **FIXPLAN:** Phase 7 (cleanup sweep — group with CONFLICT-13 fix; Fix 7.20).
+
+### CONFLICT-02 — `_hash_noise` defined in two files with incompatible algorithms
+- **Files:** `coastline.py` `_hash_noise(x, y, seed)` — sin-hash (`sin(x*127.1 + y*311.7 + seed)*43758.5`) vs `terrain_features.py` `_hash_noise(x, y, seed)` — opensimplex-backed.
+- **Symptom:** Sin-hash has poor spectral properties (visible period artifacts at medium frequency). Same function name; callers cannot control which they get. Cross-file aliasing can silently swap implementations.
+- **Severity:** HIGH (linked to BUG-12 and BUG-23)
+- **Fix:** Single canonical `hash_noise` in `terrain_noise_utils.py` backed by OpenSimplex; deprecate sin-hash. (Directly linked to BUG-12 and BUG-23.)
+- **FIXPLAN:** Phase 11 (noise system upgrades — Fix 11.5 covers the noise consolidation sweep).
+
+### CONFLICT-03 — Grid-to-world coordinate converters use three different conventions
+- **Files:** Four files implement grid→world conversion using three incompatible conventions:
+  1. Cell-center: `world_x = (col + 0.5) * cell_size` (`terrain_advanced.py`)
+  2. Cell-corner: `world_x = col * cell_size` (`terrain_masks.py`)
+  3. Rounded center: `world_x = round(col * cell_size + cell_size/2, 3)` (`_biome_grammar.py`, `terrain_features.py`)
+- **Symptom:** Scatter objects placed by one module don't align with heightmap samples read by another. Off-by-half-cell errors accumulate at high scatter density. At cell_size=2m, max misalignment is 1.0m per axis.
+- **Severity:** HIGH
+- **Fix:** Single canonical `grid_to_world(row, col, cell_size, origin=(0,0))` in `terrain_math.py` using cell-center convention (DEM industry standard). Replace 12 call sites.
+- **FIXPLAN:** Phase 7 (Fix 7.20 — remaining convention unifications).
+
+### CONFLICT-04 — `compute_slope` returns radians; `compute_slope_map` returns degrees
+- **Files:**
+  - `terrain_advanced.py:compute_slope` — returns **radians** (`arctan(magnitude)`)
+  - `_terrain_noise.py:compute_slope_map` — returns **degrees** (`degrees(arctan(magnitude))`)
+- **Symptom:** Callers of `compute_slope` that pass the result to talus-angle thresholds treat it as degrees (seen in `apply_thermal_erosion` where `talus_angle=40` is compared against a radian value of ~0.7). Produces wrong erosion thresholds ~57× too tight. (Cross-referenced as BUG-09 and BUG-10.)
+- **Severity:** HIGH
+- **Fix:** Standardize on degrees throughout. Rename `compute_slope` → `compute_slope_radians` or deprecate it; route all callers to `compute_slope_map`. Add `# degrees` annotation on returns.
+- **FIXPLAN:** Phase 7 (Fix 7.20 — must land before Phase 11 noise upgrades that consume slope).
+
+### CONFLICT-05 — `talus_angle` parameter uses incompatible units across three call sites
+- **Files:**
+  - `_terrain_erosion.apply_thermal_erosion` — expects **degrees** (converts via `math.tan(math.radians(talus_angle))`)
+  - `terrain_advanced.compute_erosion_brush` — **hardcodes** `talus = 0.05` raw height-diff, ignoring caller param (BUG-38)
+  - `terrain_advanced.apply_thermal_erosion` — expects **raw height-diff** (no conversion)
+- **Symptom:** Caller passing `talus_angle=40` (degrees, industry standard) gets correct erosion from `_terrain_erosion` but catastrophic over-erosion from `terrain_advanced` which interprets 40 as a 40-unit height step. Factor ~700× divergence (tan(40°)≈0.839 vs 40.0 raw).
+- **Severity:** HIGH (overlaps with CONFLICT-11 and BUG-10/BUG-38)
+- **Fix:** Consolidate on degrees in `terrain_math.thermal_erosion`; deprecate `terrain_advanced.apply_thermal_erosion`; fix BUG-38 to respect passed `talus_angle`. This is the group fix for BUG-10+BUG-38+CONFLICT-05+CONFLICT-11 — best executed as a single atomic commit.
+- **FIXPLAN:** Phase 7 (Fix 7.20 — thermal erosion consolidation; atomic with CONFLICT-11 fix).
+
+### CONFLICT-06 — `ridge` channel carries two incompatible semantic types
+- **Files:**
+  - `terrain_structural_masks.pass_structural_masks` — writes `ridge` as a **bool mask** (`True` where ridge detected)
+  - `_terrain_erosion.pass_erosion` — writes `ridge` as a **float [-1.0, +1.0]** directional curvature value
+- **Symptom:** Consumers reading `stack.ridge` after erosion get float; after structural masks alone they get bool. Boolean operations on float work by coincidence; NumPy operations expecting float (e.g., `stack.ridge * slope`) can crash with bool×float type-promotion ambiguity on some NumPy/platform combinations.
+- **Severity:** IMPORTANT (linked to BUG-S9-003 ridge→drainage streak in materials)
+- **Fix:** Rename structural_masks output to `ridge_mask` (bool); keep erosion output as `ridge` (float curvature). Update all consumers. Declare separate channels in `_ARRAY_CHANNELS`.
+- **FIXPLAN:** Phase 10 (Fix 10.3 — ridge channel cleanup is prerequisite for ridge→drainage materials fix).
 
 ### Round 4 (Opus 4.7 wave-2, 2026-04-16) — CONFLICT-12..CONFLICT-16
 
@@ -4969,6 +5028,7 @@ Phase 3 (data integrity)            ┌── Phase 4 (perf) ────┤  al
 | Bug ID | File | Line | Description |
 |---|---|---:|---|
 | BUG-R8-A1-001 | terrain_pipeline.py | — | `save_every_n_operations` missing required `result` arg → Bundle D autosave has **never worked** |
+| BUG-R8-A2-001 | terrain_validation.py | — | Readability validators never wired into `DEFAULT_VALIDATORS` — 4 functions from `terrain_readability_bands` + `terrain_readability_semantic` never registered; readability gate never fires in any production run |
 | BUG-R8-A3-001 | terrain_karst.py | 100 | `h.ptp()` raises `AttributeError` on NumPy 2.0 — Fix 1.5 scope does not cover this file |
 | BUG-R8-A12-001 | terrain_advanced.py | — | 6 `handle_*` handlers (`handle_spline_deform`, `handle_terrain_layers`, `handle_erosion_paint`, `handle_terrain_stamp`, `handle_snap_to_terrain`, `handle_terrain_flatten_zone`) — zero dispatcher registrations; plan features 10/12/28/30/44/45/46 are **runtime-dead** |
 | BUG-R8-A12-003 | terrain_bundle_n.py | 20,30,47 | `register_bundle_n_passes()` body is `_ = module.fn` attribute pokes only — nothing actually registered; **Bundle N is a placebo**; budget enforcement, golden snapshots, determinism CI, telemetry all unregistered |
@@ -4992,6 +5052,14 @@ Phase 3 (data integrity)            ┌── Phase 4 (perf) ────┤  al
 | BUG-R8-A7-CRITICAL1 | terrain_chunk_manager.py | `compute_terrain_chunks` demands fully-materialized 4K×4K heightmap (~4 GB RAM) |
 | BUG-R8-A7-CRITICAL2 | terrain_node_gen.py | `import_dem_tile` uses `np.load(path)` **without** `allow_pickle=False` → **RCE risk** |
 | BUG-R8-A12-002 | terrain_stratigraphy.py | `pass_stratigraphy` never calls `apply_differential_erosion` and never writes `strat_erosion_delta` → mesas, hoodoos, layered cliffs **all dead** |
+
+#### BUG-R8-A2-001 — Readability validators never wired into `DEFAULT_VALIDATORS`
+- **File:** `terrain_validation.py` (validator registration block)
+- **Symptom:** `terrain_readability_bands.py`, `terrain_readability_semantic.py`, and two companion modules define 4 readability validation functions that are never added to `DEFAULT_VALIDATORS`. The validation pipeline therefore NEVER checks readability — saliency peaks, focal-point clarity, narrative flow, and visual rhythm gates never fire. Separately from BUG-183/185 (which are crash fixes for the validators themselves), this wiring gap means even after the crash is fixed, no readability gate enforces. Source: R8_A2 session; also referenced at master audit line ~3918 as "2 are guaranteed crashes (#12 readability validators)".
+- **Severity:** BLOCKER (readability validation is a core AAA quality gate — ship without it and terrain can be technically correct but visually unreadable)
+- **Fix:** In the validator registration block, add all 4 readability functions from `terrain_readability_bands` and `terrain_readability_semantic` to `DEFAULT_VALIDATORS` (after fixing the crash bugs BUG-183/185 that make them callable).
+- **FIXPLAN:** Phase 1 (extend Fix 1.1/1.2 scope — after crash is fixed, add the registration in the same commit so validators actually run).
+- **Source:** R8_A2_validation_semantics.md; master audit cross-ref line ~3918.
 
 ---
 
@@ -5602,6 +5670,161 @@ This section documents codebase gaps discovered during the Session 9 ULTRATHINK 
 
 ---
 
+## 0.J — SESSION 10 RESEARCH VALIDATION: ROADS, TEXTURING, SCATTER, NOISE (2026-04-19)
+
+> Source: Rune Skovbo Johansen LayerProcGen source analysis, Mastodon timeline (1,617 posts), Reddit/academic research (Barnes 2014, Cordonnier 2016), Shadertoy/IQ deep dive. These gaps represent deltas between our current implementation and reference AAA practice. All 20 are additive to existing phases — none overlap with BUG-S9 or earlier entries.
+
+### Status Key
+- **OPEN** — Not yet fixed; assigned to FIXPLAN phase below
+- **PARTIAL** — Partially addressed; existing phase covers part of the fix
+- **RESOLVED** — Already implemented in this session
+
+---
+
+### BUG-S10-002 — Terrain classification is analytical, not structural [CRITICAL]
+- **File:** `veilbreakers_terrain/handlers/terrain_materials_v2.py`, all classification functions
+- **Symptom:** Every terrain type assignment in our pipeline is derived analytically after the fact — slope > threshold → rock, altitude > threshold → snow, etc. Rune Johansen's system stamps terrain-type labels FROM the generators that create features: the gully generator stamps "rock", the path generator stamps "gravel", the snow system checks `max(0, normal.z)^k` (top-facing factor) × altitude, not just altitude. Analytical classification produces terrain that looks computationally derived; structural labeling produces terrain that looks authored. This is the root cause of our texturing looking "computed rather than authored."
+- **Severity:** CRITICAL — no fix to individual texture formulas will solve this without the structural labeling foundation
+- **Fix:** Add a `pass_compute_terrain_labels` that stamps terrain-type IDs during feature generation (gully pass stamps rock_label, path pass stamps gravel_label, etc.). `terrain_materials_v2.py` reads these labels as overrides before analytical fallback. This is Phase 10.10.
+- **Status:** OPEN → Phase 10.10
+- **Source:** Rune LayerProcGen architecture analysis; session 9 research.
+
+### BUG-S10-003 — Erosion applied to full-frequency heightmap; should separate low-freq and high-freq [CRITICAL]
+- **File:** `veilbreakers_terrain/handlers/_terrain_erosion.py` (all erosion functions), `terrain_pipeline.py` (pass ordering)
+- **Symptom:** We apply erosion (hydraulic, thermal, wind) to the fully-composed heightmap including all noise octaves. Rune's confirmed architecture: **erosion runs on low-frequency terrain only** (3 erosion octaves on a smooth base), then **high-frequency noise is added afterward** as a detail layer. Eroding high-frequency noise destroys fine detail while barely affecting the large-scale forms that erosion should shape. The result is flat-looking erosion that removes surface texture instead of carving geological forms.
+- **Severity:** CRITICAL — this architectural mismatch means our erosion can never match AAA output regardless of parameter tuning
+- **Fix:** Split heightmap generation into `_hmap_low_freq` (base + low octaves) and `_hmap_high_freq` (detail octaves). Run all erosion passes on `_hmap_low_freq`. Composite `_hmap_low_freq + _hmap_high_freq * detail_scale` after erosion. This is Phase 12.1.
+- **Status:** OPEN → Phase 12.1
+- **Source:** Rune Mastodon confirmed architecture (April 2026).
+
+### BUG-S10-004 — A* cost function missing `avgCost(a,b)` terrain-cost term [HIGH]
+- **File:** `veilbreakers_terrain/handlers/_terrain_noise.py:_astar` (around line 807)
+- **Symptom:** Rune's exact A* cost formula is `flatDist * (1 + (6·slope)²) + 12·avgCost(a,b)` where `avgCost(a,b)` is the average terrain cost from the cost map between cells a and b (e.g., forest density, existing path bonus, water penalty). Our current implementation uses `step_dist + slope**2 * slope_weight` — we have the squared slope component but are missing the `12·avgCost(a,b)` additive term entirely. This means our pathfinder ignores biome traversal cost: dense forest, water crossings, and preferred road corridors are all treated identically.
+- **Severity:** HIGH
+- **Fix:** Add a `cost_map` parameter to `_astar` (optional float32 array, same shape as heightmap). When provided, accumulate `12.0 * 0.5*(cost_map[r0,c0]+cost_map[nr,nc])` into `move_cost`. Default to None (no cost map, current behavior). This is Phase 8.10.
+- **Status:** OPEN → Phase 8.10
+
+### BUG-S10-005 — A* uses 16 movement directions; Rune uses 24 [HIGH]
+- **File:** `veilbreakers_terrain/handlers/_terrain_noise.py:_OFFSETS_16` (line ~775)
+- **Symptom:** We implemented 16-direction movement (8 cardinal/diagonal + 8 knight-moves) this session. Rune's system uses **24 directions**: 8 cardinal/diagonal + 8 standard knight-moves (±2,±1) + **8 more far-knight moves** (±3,±1) and (±1,±3). The additional 8 directions allow the pathfinder to route around cliff faces with even more resolution, particularly for switchback detection on very steep terrain.
+- **Severity:** HIGH (existing 16-dir is a significant improvement over 8-dir; 24-dir is the full reference implementation)
+- **Fix:** Expand `_OFFSETS_16` to `_OFFSETS_24` by adding 8 more offset pairs: `(-3,-1),(-3,1),(-1,-3),(-1,3),(1,-3),(1,3),(3,-1),(3,1)`. Update `_fill_8connected_gaps` logic to handle 3-cell jumps. This is Phase 8.11.
+- **Status:** OPEN → Phase 8.11 (Phase 8.2 was previously only 16-dir; this extends it fully)
+
+### BUG-S10-006 — Road smoothing missing sharp-corner duplication before Bezier pass [HIGH]
+- **File:** `veilbreakers_terrain/handlers/road_network.py` (road smoothing functions)
+- **Symptom:** Rune's road smoothing pipeline: **Catmull-Rom first, then Bezier**, with **sharp corners duplicated** before the Bezier pass. The duplication step is critical: without it, Bezier smoothing rounds away switchbacks on steep terrain — a 180° hairpin turn becomes a wide arc that cuts through the hillside. Phase 8.8 covers Catmull-Rom→Bezier but does not specify the corner duplication step.
+- **Severity:** HIGH (switchback handling is the difference between passable mountain roads and impassable geometry)
+- **Fix:** Before the Bezier pass, detect corners where consecutive path vectors have angle > threshold (e.g., > 120°). Duplicate the corner point before and after: `[..., p_before, corner, corner, p_after, ...]`. Bezier then treats the duplicated point as a sharp anchor. This is Phase 8.8 extension.
+- **Status:** OPEN → Phase 8.8 (update existing entry)
+
+### BUG-S10-007 — No per-cell SDF float3 for road/path influence [HIGH]
+- **File:** No existing file — new data structure required
+- **Symptom:** Rune stores an SDF (signed distance field) per terrain cell as `float3(vecX, vecY, signedDist)` for every path/road in the scene. Both scatter exclusion (`if cell_sdf.z < placement_radius: skip`) and material blending (SDF.z directly drives blend weight at road edges, sharper than smoothstep) read this SDF. Our system uses a rasterized boolean `road_mask` channel — binary on/off with no distance gradient. This means scatter can't do soft exclusion near roads (e.g., no trees within 5m, reduced density within 15m) and material blending at road edges is hard-cut.
+- **Severity:** HIGH
+- **Fix:** Add a `road_sdf` channel to `_ARRAY_CHANNELS` as `float32[H,W,3]` (or separate `road_sdf_x`, `road_sdf_y`, `road_sdf_dist` channels). Compute in road generation pass using 2D EDT (`scipy.ndimage.distance_transform_edt`) with direction vectors. Wire scatter exclusion and material edge blending to read `road_sdf_dist`. This is Phase 8.12.
+- **Status:** OPEN → Phase 8.12
+
+### BUG-S10-008 — No macro world-space color multiply texture [HIGH]
+- **File:** `veilbreakers_terrain/handlers/terrain_materials_v2.py`
+- **Symptom:** Rune uses a low-resolution world-space color multiply texture for large-scale color variation across a landscape (the subtle warm/cool shifts that make a terrain feel like it belongs to one coherent environment). We have splatmap layer colors and biome IDs but no world-space macro color modulation. Our terrain has uniform per-biome coloring; real AAA terrain has subtle tonal shifts that read as natural lighting, mineral variation, and environmental storytelling.
+- **Severity:** HIGH (the difference between "game terrain" and "natural landscape" in screenshot quality)
+- **Fix:** Add a `macro_color` pass that samples a low-res (e.g., 64×64) authored RGB texture in world space, then multiplies it into the final albedo in `terrain_materials_v2.py`. The macro texture is authored per-world-region. This is Phase 10.8.
+- **Status:** OPEN → Phase 10.8
+
+### BUG-S10-009 — SDF-based splatmap boundary blending at path edges not implemented [HIGH]
+- **File:** `veilbreakers_terrain/handlers/terrain_materials_v2.py`
+- **Symptom:** Rune's terrain shader reads `road_sdf.z` directly for material blending at path/road edges — this produces a sharp, authored-looking transition that respects the road's exact geometry. Our current path/road edge material transitions use analytical slope thresholds or a fixed smoothstep over the road_mask boolean. The result is either a hard cut (boolean mask) or a spatially-uniform fade (smoothstep) rather than the geometry-driven edge Rune achieves.
+- **Severity:** HIGH
+- **Fix:** In the splatmap computation, use `road_sdf_dist` to compute blend weight: `edge_weight = saturate(1.0 - road_sdf_dist / edge_fade_width)`. Apply this to blend road-gravel splatmap layer against terrain base. Requires BUG-S10-007 (road SDF) to be implemented first. This is Phase 10.9.
+- **Status:** OPEN → Phase 10.9 (depends on Phase 8.12)
+
+### BUG-S10-010 — Scatter uses Poisson/rule-based algorithm; Rune uses LocationLayer [HIGH]
+- **File:** `veilbreakers_terrain/handlers/environment_scatter.py` (all scatter placement functions)
+- **Symptom:** Rune's LocationLayer scatter is NOT Poisson disk sampling. It is: **N jittered points per chunk** (grid + random offset), then a **one-pass linear-falloff repulsion** across a 3×3 neighborhood. This is simpler, faster, and chunk-local (no halo needed for the repulsion step). Our scatter uses either hardcoded rules or attempts Poisson which is expensive and requires inter-chunk coordination. The jittered+repulsion approach naturally avoids clustering without the quadratic cost of Bridson's algorithm.
+- **Severity:** HIGH
+- **Fix:** Implement `_location_layer_sample(density_map, cell_jitter, repulsion_radius)` that: (1) generates N=density*cell_area jittered candidate points per grid cell, (2) iterates candidates and rejects any within `repulsion_radius` of an already-accepted point using a 3×3 neighborhood scan. Replace `_DEFAULT_VEG_RULES` placement with this. This is Phase 9.8.
+- **Status:** OPEN → Phase 9.8
+
+### BUG-S10-011 — Grass placement is explicit scatter; Rune's grass is emergent from splatmap [HIGH]
+- **File:** `veilbreakers_terrain/handlers/environment_scatter.py`
+- **Symptom:** Rune's grass architecture: `density = grassSplatMax × 10 + hashJitter`. Grass is zero on paths because the path splatmap drives the grass splat channel to zero. **Grass placement IS the splatmap** — no separate placement step exists. We place grass as explicit scatter instances with rules, which produces uniform density and ignores the fact that splatmap already carries the correct density information. Our grass doesn't thin naturally at path edges, rock outcroppings, or biome transitions.
+- **Severity:** HIGH (fundamental architectural gap; separate grass scatter is wasted work)
+- **Fix:** Remove explicit grass scatter. Read `splatmap_weights_layer[grass_layer]` × density scalar as the density input for Unity Detail Cards (or equivalent). Path generation that correctly drives grass splat to zero automatically produces path-edge thinning. This is Phase 9.9.
+- **Status:** OPEN → Phase 9.9 (requires Phase 10 splatmap fixes to be correct first)
+
+### BUG-S10-012 — No chunk-deterministic scatter with halo seaming [HIGH]
+- **File:** `veilbreakers_terrain/handlers/environment_scatter.py`
+- **Symptom:** For multi-chunk scatter (any placement that could cross a tile boundary), we have no halo system. Reference requirement: `halo = max_placement_radius` extra cells are computed in each direction, and `hash-based ordering` (not spatial order) ensures that a point placed in the halo of tile A is deterministically absent from tile B's core area. Without this, seam artifacts appear as density differences at chunk boundaries or doubled points in the overlap zone.
+- **Severity:** HIGH
+- **Fix:** Add `halo_cells = ceil(max_placement_radius / cell_size)` to scatter tile generation. Generate points in `(H + 2*halo_cells) × (W + 2*halo_cells)` region. Use `hash(world_x, world_y, seed)` to assign each point a deterministic ID; only include point in this tile's output if `hash(world_x, world_y) % num_tiles == tile_id`. This is Phase 9.10.
+- **Status:** OPEN → Phase 9.10
+
+### BUG-S10-013 — Phacelle Noise (Jan 2026) not implemented; erosion filter uses pre-2026 algorithm [HIGH]
+- **File:** `veilbreakers_terrain/handlers/terrain_erosion_filter.py`, `veilbreakers_terrain/handlers/_terrain_noise.py`
+- **Symptom:** Rune published Phacelle Noise ("phase + cell" portmanteau) in January 2026. Two variants: Simple (16 loop iterations, 1 sample/pixel, 10-25× cheaper than Phasor noise) and Sampled (16×16). The critical improvement is the **bell weight**: `max(0, exp(-2d²) - 0.01111)` — the constant `0.01111 ≈ exp(-2×1.5²)` produces exact zero at distance 1.5, eliminating grid artifacts. Our `terrain_erosion_filter.py` ports Rune's older erosion filter but misses this Jan 2026 upgrade to the underlying noise kernel.
+- **Severity:** HIGH (Phacelle is the building block under Rune's 2026 erosion filter; we ship the 2025 version)
+- **Fix:** Add `phacelle_noise_simple(p, seed, octaves)` to `_terrain_noise.py` using bell weight `max(0, exp(-2*d*d) - 0.01111)`. Update `terrain_erosion_filter.py` to use phacelle kernel instead of current noise. This is Phase 11.6.
+- **Status:** OPEN → Phase 11.6
+
+### BUG-S10-014 — OpenSimplex2S not used; Perlin axis-aligned bias present [HIGH]
+- **File:** `veilbreakers_terrain/handlers/_terrain_noise.py`
+- **Symptom:** Our `_PermTableNoise` uses classic Perlin noise which has a well-known axis-aligned bias — diagonal features (mountain ridges, cliff edges) tend to align to 45° due to the gradient table structure. OpenSimplex2S is a drop-in replacement that fixes this via a smoother, rotationally-symmetric gradient distribution. This produces more natural-looking terrain features without any configuration change needed.
+- **Severity:** HIGH (the "Perlin problem" is visible in any AAA comparison — ridge lines align unnaturally to grid diagonals)
+- **Fix:** Add `opensimplex2s_noise2_array(coords, seed)` wrapper around the `opensimplex` library's S-variant. Make `_make_noise_generator` prefer OpenSimplex2S when `opensimplex` is installed. This is Phase 11.7.
+- **Status:** OPEN → Phase 11.7
+
+### BUG-S10-015 — Stream-Power Law (Cordonnier 2016) not implemented [HIGH]
+- **File:** `veilbreakers_terrain/handlers/_water_network.py`, `veilbreakers_terrain/handlers/_terrain_erosion.py`
+- **Symptom:** The Stream-Power Law (Cordonnier, Braun & Salles 2016, "A versatile, linear complexity algorithm for flow routing in topographies with depressions") provides an O(n) implicit parallel solver for river incision on an ε-descending topological order. This is more physically accurate than our current D8 hydraulic erosion and faster at scale. Without it, our rivers don't carve correct V-shaped valleys and drainage networks don't exhibit the power-law tributary relationships seen in real terrain.
+- **Severity:** HIGH (river valley shape is a major visual differentiator between AAA and procedural terrain)
+- **Fix:** Implement `compute_stream_power_erosion(dem, uplift_rate, erodibility, K, m, n)` using Cordonnier 2016's ε-topological-order solver. Wire into `pass_erosion` as an optional erosion mode. This is Phase 12.2.
+- **Status:** OPEN → Phase 12.2
+
+### BUG-S10-016 — Variable erodibility K(p)=base+strata(p) not implemented [HIGH]
+- **File:** `veilbreakers_terrain/handlers/_terrain_erosion.py`
+- **Symptom:** Our hydraulic erosion uses a uniform erodibility constant K for the entire terrain. Rune and academic references (Cordonnier 2016) couple rock layer hardness into erosion via `K(p) = K_base + strata_hardness(p)` where `strata_hardness(p)` maps from the stratigraphy channel. Hard strata resist carving (caprock preserves mesas), soft strata carve deeply (produces canyons). Without variable erodibility, all terrain material erodes identically — no geological layering in the erosion output.
+- **Severity:** HIGH
+- **Fix:** Add `erodibility_map = K_base + terrain_rock_hardness * K_strata_scale` computation. Read from existing `rock_hardness` channel (already in `_ARRAY_CHANNELS`). Wire as multiplicative weight in hydraulic erosion. This is Phase 12.3.
+- **Status:** OPEN → Phase 12.3
+
+### BUG-S10-017 — `_pow_inv` formula unverified vs Rune's exact formula [MEDIUM]
+- **File:** `veilbreakers_terrain/handlers/_terrain_noise.py:_pow_inv` (if present)
+- **Symptom:** Rune's `_pow_inv` is `1-(1-x)^p`. Our code may use `1-(1-x)^(1/(1-p))` which is a different curve — the exponent relationship inverts differently. If our formula is wrong, all terrain preset shaping (crater rims, ridge profiles, canyon floors) is on a different curve from Rune's reference implementation.
+- **Severity:** MEDIUM (aesthetic but systematic — all shaped terrain features diverge from reference)
+- **Fix:** Read the current `_pow_inv` source. Compare formula. If it uses `1/(1-p)` exponent, change to `p`. Add unit test asserting `_pow_inv(0.5, 2.0) ≈ 0.75` (Rune's formula: `1-(1-0.5)^2 = 0.75`) vs wrong formula `1-(1-0.5)^(1/(1-2)) = 1-(0.5)^(-1) = 1-2 = -1`. This is Phase 11.5 (already exists — extend with formula spec).
+- **Status:** OPEN → Phase 11.5 (update existing entry with exact formula)
+
+### BUG-S10-018 — Voronoise not implemented [MEDIUM]
+- **File:** `veilbreakers_terrain/handlers/_terrain_noise.py`
+- **Symptom:** IQ's Voronoise is a single parameterized noise function with (u,v) controls that smoothly interpolates between value noise (u=0,v=1) and Worley/cell noise (u=1,v=0), with controllable smoothness and jitter. Missing from our noise library. Required for: rock surface detail that transitions between smooth and cracked depending on material type, cave wall texture variation, and cliff face variation between weathered and fractured zones.
+- **Severity:** MEDIUM
+- **Fix:** Add `voronoise(x, y, u, v, seed)` to `_terrain_noise.py` following IQ's Shadertoy reference implementation. This is Phase 11.8.
+- **Status:** OPEN → Phase 11.8
+
+### BUG-S10-019 — Foam system missing speed-lag vertex color architecture [MEDIUM]
+- **File:** `veilbreakers_terrain/handlers/terrain_water_variants.py` (or equivalent)
+- **Symptom:** Rune's foam implementation: speed-lag vertex color channel (stores historical flow speed) + static mesh waves with alpha fade modulated by wave height. No dynamic fluid simulation. Our terrain has no equivalent foam architecture — any foam is either absent or implemented as a static texture mask. Without the speed-lag vertex color, foam intensity cannot respond to water flow speed (fast water = less foam except at obstacles; slow water at edges = more foam).
+- **Severity:** MEDIUM
+- **Fix:** Add `foam_speed_lag` vertex color channel to water mesh export. In mesh generation, compute `foam = saturate(obstacle_proximity / foam_radius) * (1 - flow_speed / max_foam_speed)`. Bake into vertex alpha. This is Phase 13.1.
+- **Status:** OPEN → Phase 13.1
+
+### BUG-S10-020 — Tree wind uses no vertex-normal projection [MEDIUM]
+- **File:** `veilbreakers_terrain/handlers/vegetation_system.py` or `environment_scatter.py`
+- **Symptom:** Rune's tree wind implementation: **project wind direction onto vertex normals per vertex**. Not skeleton animation. Each tree vertex gets wind bend = `dot(wind_dir_world, vertex_normal) * wind_strength`. Missing from our vegetation export — we export static meshes with no wind bake. Without this, every tree in the scene needs a shader that recomputes this at runtime (expensive for GPU Instancer Pro at 10k+ trees).
+- **Severity:** MEDIUM (runtime cost penalty; visual quality penalty in distant/impostored trees)
+- **Fix:** In tree mesh export, add `wind_bend` vertex color channel (R=xz bend, G=y sway) computed from canonical wind direction and vertex normal. This is Phase 13.2.
+- **Status:** OPEN → Phase 13.2
+
+### BUG-S10-021 — Scale convention undocumented (1m = 0.85 Unity units) [LOW]
+- **File:** `veilbreakers_terrain/handlers/terrain_unity_export.py`, `docs/TERRAIN_GENERATION_GUARDRAILS.md`
+- **Symptom:** Rune's confirmed scale convention: **1 real-world meter = 0.85 Unity units**, with camera at clavicle height (approximately 1.5m × 0.85 = 1.275 Unity units above terrain). If we export at 1m = 1.0 Unity units, all terrain proportions are 17.6% too large — mountains look slightly too tall, roads too wide, and player movement speed feels slightly off against terrain scale. This is a subtle but perceptible quality issue.
+- **Severity:** LOW (scale mismatch; survivable but incorrect)
+- **Fix:** Add `UNITY_SCALE_FACTOR = 0.85` constant to `terrain_unity_export.py`. Apply to all exported coordinate values. Document in `TERRAIN_GENERATION_GUARDRAILS.md` under the Unity Export Contract section. This is Phase 13.3.
+- **Status:** OPEN → Phase 13.3
+
+---
+
 ## 0.D.5 Extension — FIXPLAN Phases 7–11 (2026-04-18)
 
 Phases 1–6 are complete (all 37 original fixes applied, 2,324 tests passing). The following phases extend the FIXPLAN with work discovered during Sessions 9-10.
@@ -5656,6 +5879,10 @@ Replace the flat-ribbon road system with a proper terrain-aware pathfinding and 
 | **8.7** | `road_network.py`, `environment.py` | G-R7/G-R8 | Implement 3-zone road carving: `innerWidth` (flat crowned surface), `slopeWidth` (graded shoulder), `splatWidth` (texture blend zone). Use Rune's parameters as defaults (innerWidth=2.5m, slopeWidth=1.5m, splatWidth=2.7m) or expose as configurable. |
 | **8.8** | `road_network.py` | (Phase8) | Implement Catmull-Rom → Bezier road smoothing: 3 samples per segment, sharp-corner point duplication for hairpins. Replace current straight-segment approach. |
 | **8.9** | `road_network.py` | (Phase8) | Replace MST over 3D waypoints with `_terrain_noise._astar` as the road placement engine. Requires Fixes 8.1–8.3 to be merged first — incorrect cost function produces worse roads than MST. |
+| **8.10** | `veilbreakers_terrain/handlers/_terrain_noise.py:_astar` | BUG-S10-004 | Add optional `cost_map` parameter; accumulate `12.0 * 0.5*(cost_map[r0,c0]+cost_map[nr,nc])` into `move_cost`. **⚛ ATOMIC WITH 8.1 (same function).** |
+| **8.11** | `veilbreakers_terrain/handlers/_terrain_noise.py:_OFFSETS_16→_OFFSETS_24` | BUG-S10-005 | Expand from 16 to 24 directions: add `(-3,-1),(-3,1),(-1,-3),(-1,3),(1,-3),(1,3),(3,-1),(3,1)`. Update `_fill_8connected_gaps` to handle 3-cell jumps. **EXTENDS Fix 8.2.** |
+| **8.12** | `veilbreakers_terrain/handlers/road_network.py` (smoothing) | BUG-S10-006 | Before Bezier pass, duplicate corners where consecutive angle > 120°. **EXTENDS Fix 8.8.** |
+| **8.13** | New channel `road_sdf_dist` in `terrain_semantics.py` + `road_network.py` | BUG-S10-007 | Compute `scipy.ndimage.distance_transform_edt` from road mask; store as `road_sdf_dist` float32 channel. Wire scatter exclusion (Phase 9) and material blending (Phase 10) to read it. |
 
 **Regression risk:** HIGH for 8.4/8.9 (road geometry changes significantly — require visual QA on generated terrain before/after). MEDIUM for 8.1–8.3 (A* path changes — regression test with fixed-seed terrain). LOW for 8.5–8.6 (additive channels/helpers).
 
@@ -5674,6 +5901,10 @@ Close all critical disconnections in the scatter/vegetation pipeline. Prerequisi
 | **9.5** | `environment_scatter.py` | BUG-S9-007 | Wire `wind_field` into placement density: multiply placement probability by `wind_exposure_factor = 1.0 - clip(wind_magnitude * scale, 0, max_suppression)`. Gate on `stack.wind_field is not None`. |
 | **9.6** | `terrain_wind_field.py:compute_wind_field` | BUG-S9-011 | Fix canyon wind clipping: replace `clip(ridge, 0, None)` with signed contribution using separate `ridge_positive` and `ridge_negative` terms applying `canyon_acceleration_factor` for negative ridge values. |
 | **9.7** | `veilbreakers_terrain/handlers/__init__.py` | BUG-S9-015 | Register scatter handlers in `COMMAND_HANDLERS`: add `"scatter_vegetation": handle_scatter_vegetation` and `"scatter_biome": scatter_biome_vegetation`. Import from `environment_scatter`. |
+| **9.8** | `veilbreakers_terrain/handlers/environment_scatter.py` | BUG-S10-010 | Implement `_location_layer_sample(density_map, cell_jitter, repulsion_radius)`: N jittered points per cell, one-pass 3×3 neighborhood repulsion. Replace rule-based placement. |
+| **9.9** | `veilbreakers_terrain/handlers/environment_scatter.py` | BUG-S10-011 | Remove explicit grass scatter. Drive grass density from `splatmap_weights_layer[grass_layer]` × density scalar. Grass becomes emergent from splatmap. |
+| **9.10** | `veilbreakers_terrain/handlers/environment_scatter.py` | BUG-S10-012 | Add `halo_cells = ceil(max_placement_radius / cell_size)` to scatter tile generation. Use `hash(world_x, world_y, seed) % num_tiles == tile_id` for chunk-deterministic seaming. |
+| **9.11** | `veilbreakers_terrain/handlers/environment_scatter.py` | BUG-S10-007 dep | Wire SDF exclusion: `if road_sdf_dist[r,c] < placement_radius: skip`. **Depends on Fix 8.13.** |
 
 **Regression risk:** MEDIUM for 9.1 (vegetation density distribution changes with wired field — visual QA required). LOW for 9.2–9.7 (additive wiring, no existing behavior removed).
 
@@ -5692,6 +5923,9 @@ Upgrade `terrain_materials_v2.py` with AAA blending formulas from Session 9 rese
 | **10.5** | `terrain_semantics.py`, `terrain_materials_v2.py` | BUG-S9-013 | Add `pass_compute_snow_line`: compute `snow_line_factor` from `stack.height`, `stack.slope`, climate params; write via `stack.set("snow_line_factor", ...)`. Wire into snow mask computation in `terrain_materials_v2.py`. |
 | **10.6** | `terrain_materials_v2.py` | (Phase10) | Add water saturation SDF zone: `exp(-dist_to_water / soak_radius)` where `dist_to_water = scipy.ndimage.distance_transform_edt(water_surface == 0)`. Replaces current proximity test. |
 | **10.7** | `terrain_vegetation_depth.py` | BUG-S9-003 (Fix B) | Wire `ridge` channel → vegetation density: multiply `ground_cover` layer by `(1 - ridge_norm)` (ridges = sparse exposure); `understory` layer by `ridge_norm * crease_factor` (creases = dense understory). Guard: `if stack.ridge is not None`. |
+| **10.8** | `veilbreakers_terrain/handlers/terrain_materials_v2.py` | BUG-S10-008 | Add macro world-space color multiply: sample low-res (64×64) RGB texture in world space, multiply into final albedo channel. Requires authored macro texture per world region. |
+| **10.9** | `veilbreakers_terrain/handlers/terrain_materials_v2.py` | BUG-S10-009 | SDF-based road edge blending: `edge_weight = saturate(1.0 - road_sdf_dist / edge_fade_width)`. **Depends on Fix 8.13.** |
+| **10.10** | `veilbreakers_terrain/handlers/terrain_materials_v2.py` + new `pass_compute_terrain_labels` | BUG-S10-002 | Add structural terrain-type labeling pass: gully generator stamps `rock_label`, path generator stamps `gravel_label`. Materials read label overrides before analytical fallback. **⚛ ARCHITECTURAL — must land before any Phase 10 formula fixes to be meaningful.** |
 
 **Regression risk:** MEDIUM for 10.1 (splatmap appearance changes — visual QA required against reference terrain). LOW for 10.2–10.7 (additive channels/weights).
 
@@ -5707,9 +5941,30 @@ Upgrade `_terrain_noise.py` with analytical gradient noise and domain warping fr
 | **11.2** | `_terrain_noise.py` | (Phase11) | Add IQ erosion fBm: gradient accumulation attenuation `1/(1 + |sum_gradient|^2)` reduces octave contributions in steep areas, producing naturally eroded detail. Implement as `fbm_eroded(x, y, octaves)` using `noised()`. |
 | **11.3** | `_terrain_noise.py` | (Phase11) | Add two-level domain warping `fbm(p + 4*fbm(p + 4*fbm(p)))` as `fbm_warped(x, y, octaves, warp_strength)`. Target use: cliff terrain base shape, cave wall texture, biome transition blending. |
 | **11.4** | `_terrain_noise.py` | (Phase11) | Fix permutation table wrap at 256: world coordinates > 256 cells cause visible tiling repeat. Either extend table to 512 with proper fold, or apply modular hashing to world coordinates before table lookup. |
-| **11.5** | `_terrain_noise.py` | (Phase11) | Verify/fix `_pow_inv` semantics: confirm intended formula is `1-(1-x)^p` (contrast stretch, `p>1` pushes mid-values toward 1). If current implementation uses exponent `1/(1-p)`, it is wrong for `p>1`. Add unit test asserting `_pow_inv(0.5, 2.0) ≈ 0.75`. |
+| **11.5** | `veilbreakers_terrain/handlers/_terrain_noise.py:_pow_inv` | BUG-S10-017 | Verify formula is `1-(1-x)^p` (Rune's exact). If current code uses `1-(1-x)^(1/(1-p))` change exponent to `p`. Unit test: `_pow_inv(0.5, 2.0) == 0.75`. |
+| **11.6** | `veilbreakers_terrain/handlers/_terrain_noise.py` + `terrain_erosion_filter.py` | BUG-S10-013 | Add `phacelle_noise_simple(p, seed, octaves)`: bell weight `max(0, exp(-2*d*d) - 0.01111)`, 16 loop iterations. Update erosion filter to use phacelle kernel. |
+| **11.7** | `veilbreakers_terrain/handlers/_terrain_noise.py` | BUG-S10-014 | Add `opensimplex2s` noise wrapper. Prefer OpenSimplex2S in `_make_noise_generator` when installed. Fixes Perlin axis-aligned bias. |
+| **11.8** | `veilbreakers_terrain/handlers/_terrain_noise.py` | BUG-S10-018 | Add `voronoise(x, y, u, v, seed)` following IQ's parameterized value↔Worley noise. Parameters: u=0 → value noise, u=1 → Worley; v controls smoothness. |
 
 **Regression risk:** LOW for 11.1–11.3 (additive new functions, no existing callers). MEDIUM for 11.4 (permutation table change affects determinism — update golden snapshots after fix). LOW for 11.5 (existing callers may produce slightly different values — regression test before/after).
+
+---
+
+#### Phase 12 — Erosion Architecture Upgrades *(parallel with Phase 11; Phase 12.2 and 12.3 require Phase 2 complete)*
+
+*Critical architectural fixes to erosion system based on Rune confirmed architecture and Cordonnier 2016 research.*
+
+- **12.1** | `veilbreakers_terrain/handlers/_terrain_world.py` + `terrain_pipeline.py` | BUG-S10-003 | Split heightmap into `_hmap_low_freq` (base + low octaves) and `_hmap_high_freq` (detail). Run all erosion passes on `_hmap_low_freq`. Composite after erosion: `final_hmap = eroded_low + high_freq * detail_scale`. **⚛ ARCHITECTURAL — changes pass_erosion inputs; update PassDAG declarations.**
+- **12.2** | `veilbreakers_terrain/handlers/_water_network.py` + `_terrain_erosion.py` | BUG-S10-015 | Implement Stream-Power Law (Cordonnier 2016) O(n) implicit solver: `ε-descending topological sort → SPL incision K*A^m*S^n`. Wire as optional `erosion_mode="stream_power"` in `pass_erosion`.
+- **12.3** | `veilbreakers_terrain/handlers/_terrain_erosion.py` | BUG-S10-016 | Add variable erodibility: `K_map = K_base + stack.get("rock_hardness") * K_strata_scale`. Use as multiplicative weight in hydraulic erosion kernel. Reads existing `rock_hardness` channel.
+
+#### Phase 13 — Content System Consistency *(fully independent, can run any time after Phase 3)*
+
+*Scale, animation, and export conventions to match Rune's confirmed Unity deployment architecture.*
+
+- **13.1** | `veilbreakers_terrain/handlers/terrain_water_variants.py` | BUG-S10-019 | Add `foam_speed_lag` vertex color channel to water mesh export: `foam = saturate(obstacle_proximity / foam_radius) * (1 - flow_speed / max_foam_speed)`. Bake into vertex alpha.
+- **13.2** | `veilbreakers_terrain/handlers/vegetation_system.py` or `environment_scatter.py` | BUG-S10-020 | Add `wind_bend` vertex color channel to tree mesh export: R=xz bend, G=y sway, computed from `dot(wind_dir_world, vertex_normal) * wind_strength`.
+- **13.3** | `veilbreakers_terrain/handlers/terrain_unity_export.py` + `docs/TERRAIN_GENERATION_GUARDRAILS.md` | BUG-S10-021 | Add `UNITY_SCALE_FACTOR = 0.85` constant. Apply to all exported coordinates. Document 1m=0.85 Unity units + clavicle camera height in Guardrails doc Unity Export Contract section.
 
 ---
 
@@ -5739,6 +5994,14 @@ Phase 3 (data integrity)     ┌── Phase 4 (perf) ────────�
                              │        Phase 9 Fix 9.1 for snow feed)   │
                              │                                          │
                              └── Phase 11 (Noise) — fully independent ─┘
+                             │                                          │
+                             │── Phase 12 (Erosion Arch.) ─────────────┤
+                             │   parallel with Phase 11                │
+                             │   12.1 is ARCHITECTURAL (PassDAG update)│
+                             │   12.2 + 12.3 require Phase 2 complete  │
+                             │                                          │
+                             └── Phase 13 (Content Consistency) ───────┘
+                                 fully independent after Phase 3
 ```
 
 **Phase ordering rules:**
@@ -5746,22 +6009,210 @@ Phase 3 (data integrity)     ┌── Phase 4 (perf) ────────�
 - Phase 10 Fixes 10.1, 10.2, 10.6 are independent of Phase 9. Fix 10.5 should wait for Phase 9 Fix 9.1.
 - Fix 8.5 (`road_mask` channel) **must** land before Fix 9.3 (scatter road exclusion via channel).
 - Fix 8.9 (A* road replacement) **must not** run before Fixes 8.1–8.3 (cost function upgrades).
+- Phase 12 runs parallel with Phase 11. Fix 12.1 is ARCHITECTURAL and must update PassDAG declarations before 12.2/12.3 run.
+- Phase 13 is fully independent of all other phases — can run any time after Phase 3 completes.
 
 ---
 
-### 0.D.9 — Phase 7–11 Summary Statistics
+### 0.D.9 — Phase 7–13 Summary Statistics
 
 | Metric | Count |
 |---|---:|
-| New phases added | **5** (Phases 7–11) |
-| New fix items | **39** (Fix 7.1–7.20 + 8.1–8.9 + 9.1–9.7 + 10.1–10.7 + 11.1–11.5) |
+| New phases added | **7** (Phases 7–13) |
+| New fix items (Sessions 9–10 original) | **39** (Fix 7.1–7.20 + 8.1–8.9 + 9.1–9.7 + 10.1–10.7 + 11.1–11.5) |
+| New fix items (Session 10 research, this addendum) | **20** (8.10–8.13 + 9.8–9.11 + 10.8–10.10 + 11.6–11.8 + 12.1–12.3 + 13.1–13.3) |
 | New bugs catalogued (Sessions 9–10) | **16** (BUG-S9-001..015, BUG-S10-001) |
+| New bugs catalogued (Session 10 research, this addendum) | **20** (BUG-S10-002..BUG-S10-021) |
 | Bugs already resolved at time of writing | **2** (BUG-S9-001, BUG-S9-002) |
-| Critical open gaps | **2** (BUG-S9-003 ridge wire, BUG-S9-004 POI→road) |
+| Critical open gaps | **4** (BUG-S9-003 ridge wire, BUG-S9-004 POI→road, BUG-S10-002 structural labels, BUG-S10-003 erosion freq split) |
 | Major open gaps | **6** (BUG-S9-005..010) |
 | Minor + medium open gaps | **6** (BUG-S9-011..015, BUG-S10-001) |
-| Total FIXPLAN fix items (cumulative, all phases) | **76** (37 original + 39 new) |
+| Total FIXPLAN fix items (cumulative, all phases) | **96** (37 original + 39 Sessions 9–10 + 20 Session 10 research) |
 
 **Date:** 2026-04-18
 **Session:** 9-10 gap audit and FIXPLAN extension
 **Standard:** All new bugs verified against live source. All FIXPLAN fixes cross-referenced with 0.H research findings (Rune LayerProcGen, MicroSplat, Horizon ZD scatter, IQ Shadertoy). Ridge channel grep against `terrain_materials_v2.py` confirmed zero matches.
+
+---
+
+## 0.J — 2026-04-19 Additive Planning Update (RPG Terrain / Rune / Reddit / AAA)
+
+> **Additive section only.** Do **not** delete or rewrite prior sections while parallel agents are using this file. Historical sections remain valid as evidence logs; this section is the current planning view where 0.G / 0.D.5–0.D.9 / 0.I contain stale status or phase assumptions.
+
+### 0.J.1 — Current Verification Corrections (2026-04-19)
+
+- **Current local test baseline:** `pytest -q` on 2026-04-19 = **2,342 passed, 3 skipped**. This supersedes the older `2,324 passed, 3 skipped` baseline in 0.G.
+- **`COMMAND_HANDLERS` exists and is live.** `veilbreakers_terrain/handlers/__init__.py` now builds a real dispatcher and registers the terrain-advanced handlers, world-map/light/perf/navmesh/validation/profile handlers, and multiple Session-6 modules. Older claims that the package exports only `register_all()` or that Session-6 modules are categorically unwired are now stale.
+- **`TerrainMaskStack.to_npz()` / `from_npz()` now round-trip dict channels.** `terrain_semantics.py:656-731` persists and restores `wildlife_affinity`, `decal_density`, and `detail_density`. The old BUG-R9-004 subclaim that dict channels are excluded from persistence no longer reproduces in the current tree.
+- **`water_network` and `side_effects` rollback snapshots are present.** `terrain_pipeline.py:474-487` and `terrain_checkpoints.py:105-106` now capture and restore these fields. The old "rollback is not real rollback" claim is partially historical; remaining rollback risk is now about coverage/testing completeness, not total absence.
+- **`_box_filter_2d` and `_distance_from_mask` are fixed in live code.** `_biome_grammar.py:289-340` now uses `scipy.ndimage.uniform_filter` or a vectorized SAT fallback for box filtering, plus an exact EDT fast path / corrected 8-connected chamfer fallback for distance. Any remaining phase work here is downstream grade cleanup or parity auditing, not "still D-grade primitive" implementation work.
+- **Callable census / CSV integrity are the current audit-coverage blocker.**
+  - `scripts/callable_census_gate.py --report` on 2026-04-19 reports **1,162 total callables / 901 graded / 261 uncovered**.
+  - `scripts/coverage_gap_analysis.py` reports **256 code-not-CSV symbols** and **625 CSV-not-code stale symbols**.
+  - Planning implication: `GRADES.csv` is historical seed material only; **`GRADES_VERIFIED.csv` is the real ledger** and now needs a cleanup phase of its own.
+- **`roughness_variation` is not a zero-producer channel anymore.** It is currently written by `terrain_multiscale_breakup.py`, `terrain_roughness_driver.py`, and `terrain_stochastic_shader.py`. The live problem is **writer entanglement / overwrite ambiguity**, not absence.
+- **`snow_line_factor` is not a zero-producer channel either.** `terrain_glacial.py` already writes it, and `terrain_geology_validator.py` advertises it in `produces_channels`. The remaining gap is material/placement consumption, not generation.
+
+### 0.J.2 — Source Priority For Planning
+
+Use sources in this order when RPG-terrain planning conflicts appear:
+
+1. **Rune / LayerProcGen / Big Forest / Mastodon timeline synthesis** — primary source for the road/path/SDF/classification stack and the 2026 noise direction.
+2. **AAA production references** — see `docs/AAA_ENVIRONMENT_PIPELINE_MEMO_2026_04_19.md` for ordered studio/vendor guidance (Ubisoft, Treyarch, Frostbite, Sucker Punch, Epic, Unity, Blender).
+3. **Reddit / GameDev / Polycount / RealTimeVFX practitioner consensus** — especially for seam handling, road layering, water foam, waterfalls, and Blender round-tripping.
+4. **ShaderToy / IQ / terrain-noise research** — analytical-derivative noise, domain warping, Voronoise, erosion fBm, and related texture/noise math.
+
+**RPG target bar:** Skyrim / Witcher / Ghost of Tsushima / Horizon-class terrain readability. That means traversal-first mountains, authored silhouettes, believable roads and waterways, structurally placed texture classes, and Blender-friendly hero corrections instead of a one-shot "generate everything then hope" stack.
+
+### 0.J.3 — Source-Backed Planning Principles
+
+#### Roads / Paths (Rune is a primary source here)
+
+- Rune's A* cost should be treated as a design anchor: `flatDist * (1 + (6·slope)^2) + 12·avgCost(a,b)`. The square term is not optional; linear slope cost materially under-penalizes cliffs.
+- Movement target is **24-direction**, not 8-direction.
+- Smoothing target is **Catmull-Rom, then Bezier**, with sharp corners duplicated before Bezier smoothing so switchbacks survive.
+- Road deformation target is **three width zones**:
+  - `innerWidth` = flat road bed
+  - `slopeWidth` = shoulder / graded ramp
+  - `splatWidth` = texture bleed / blend zone
+- The long-term target should be **road/path SDF-driven integration**, not only binary masks. Rune's stack uses the SDF directly for vegetation exclusion and material blending; practitioner sources independently confirm that world-space SDF / depth / distance-driven blending produces cleaner path edges than name-based or ribbon-only exclusion.
+
+#### Texturing / Material Classification
+
+- Rune's strongest lesson: **classification is structural, not purely analytical.** Important generators stamp terrain-type intent directly (`rock`, `gravel`, snow eligibility, etc.) instead of deriving everything after the fact from slope thresholds alone.
+- `terrain_materials_v2.py` is still missing the three most important formula-level upgrades already identified in 0.D.5 and re-confirmed by the current research pass:
+  1. **Brucks height blend**
+  2. **Snow top-facing factor** using `max(0, normal.z)^k`
+  3. **Water saturation SDF zone** using `exp(-dist_to_water / soak_radius)`
+- Add a **low-res world-space macro-color multiplier** for Skyrim/Witcher-style landscape color drift; current texturing remains too locally computed.
+- `ridge` and/or `drainage` must feed terrain-material decisions. Current audit findings remain valid: these channels exist but are still not meaningfully consumed in `terrain_materials_v2.py`.
+
+#### Scatter / Vegetation
+
+- Rune's public LocationLayer architecture is **not Bridson Poisson**. It is jittered points plus local repulsion; keep that as a valid target for large-scale RPG scatter where speed and determinism matter more than mathematically ideal disk spacing.
+- **Grass should be treated as splat-driven coverage**, not a separate authored placement pass wherever possible.
+- Road/path exclusion should move to **mask/SDF-driven rules**. Name-string matching remains unacceptable.
+- Community research converges on the same seam rule: cross-chunk scatter must use a **halo / ghost-border / padded neighborhood** and deterministic hash ordering.
+
+#### Water / Waterfalls / Hydrology
+
+- **Priority-Flood** is no longer optional for serious watershed correctness. `_water_network.py` already documents/implements Barnes 2014 in its lake detection path; the remaining planning gap is broader routing/contract integration, not whether the method exists conceptually.
+- Waterways should be **first-class graph data** with cross-node inlet/outlet contracts.
+- Waterfalls should be planned as **layered systems**:
+  - main falling body
+  - lip treatment
+  - landing splash / mist
+  - foam at top / bottom / outflow
+  - wet receiving surfaces
+- Foam should be driven from **intersection/depth/flow/SDF logic**, not only from a decorative normal/noise sheet.
+
+#### Blender / Visual QA
+
+- Blender should be treated as a **surgical edit / bake / hero-correction tool**, not a replacement for the runtime terrain pipeline.
+- Use it for:
+  - cliff caps and overhang inserts
+  - road retaining walls / cut-and-fill hero repairs
+  - waterfall lips / plunge-basin hero corrections
+  - rock kits and terrain-adjacent mesh cleanup
+- QA must include both **debug fields** and beauty shots:
+  - seam / ghost-border debug
+  - slope / curvature / flow / distance-field debug
+  - material-weight normalization debug
+  - near / mid / far gameplay-distance screenshots
+
+### 0.J.4 — Phase Merge Update (Do Not Delete Old Fix IDs)
+
+The old Fix IDs remain valid for cross-reference. For actual implementation planning, merge the existing Phase 7–11 work into the following tracks:
+
+| Merged Track | Absorbs | Why This Merge Exists | Current Planning Status |
+|---|---|---|---|
+| **Phase 7A — Terrain Contracts + Descriptor Wiring** | Old 7.17, 8.5, 9.1–9.5, 10.3, 10.5, 10.7 + new `poi_mask` / descriptor consumers | The live blocker is not individual algorithms; it is channels that exist but are not produced, consumed, or validated coherently. | **OPEN / highest leverage** |
+| **Phase 8A — Rune Roads + Path SDF Stack** | Old 8.1–8.9 + new SDF boundary work | Roads are currently the clearest mismatch versus the target RPG bar and the clearest place where Rune is a first-order reference. | **OPEN / critical** |
+| **Phase 9A — Structural Texturing + Macro Color** | Old 10.1, 10.3, 10.4, 10.6 + structural label stamping + macro-color multiply | Current texturing is still too analytical and under-authored. This is the main reason the terrain risks looking "computed." | **OPEN / critical** |
+| **Phase 10A — Hydrology + Waterfalls + Water Adjacency** | Old 7.8, 10.2, water SDF work, waterfall foam/mist work, node water alignment | Water correctness, waterfall presentation, and river continuity are tightly coupled and should not be split across separate polish phases. | **OPEN / critical** |
+| **Phase 11A — Scatter / Vegetation / Wind / Exclusion** | Old 9.1–9.7 + deterministic halo scatter + splat-driven grass | Scatter should follow the descriptor/texturing work, not race ahead of it. | **OPEN / major** |
+| **Phase 12A — Noise / Shader Math / Blender Round-Trip / Visual QA** | Old 11.1–11.5 + Phacelle / Voronoise / OpenSimplex2S review + Blender edit/bake path + screenshot QA | The noise stack, Blender round-trip, and visual QA gates should be planned together because they directly affect determinism and authoring iteration. | **OPEN / major** |
+
+### 0.J.5 — Phase Corrections To Existing 0.D.5 Items
+
+- **Old Fix 7.1** (`_box_filter_2d` D-grade rewrite): treat as **COMPLETE in current tree** for `_biome_grammar.py`. Only downstream grade updates / dependent function regrades remain.
+- **Old Fix 7.2** (`_distance_from_mask` D-grade rewrite): treat as **COMPLETE in current tree** for `_biome_grammar.py`. Keep only wildlife/other-distance parity review as open follow-up.
+- **Old Fix 10.5** (`pass_compute_snow_line`): treat as **OBSOLETE AS WRITTEN**. `snow_line_factor` already has live producers; the remaining work is to make texturing/scatter consume it correctly.
+- **Old Fix 7.18** (`roughness_variation` zero-producer wording): treat as **STALE AS WRITTEN**. The live problem is now three-writer entanglement, not zero producers.
+
+### 0.J.6 — Newly Consolidated Planning Gaps (Current Tree)
+
+#### Critical
+
+| Gap | Status | Notes |
+|---|---|---|
+| `ridge` produced but still not meaningfully consumed by `terrain_materials_v2.py` or vegetation density logic | OPEN | Confirms the old BUG-S9-003 direction; still a top-priority authoring gap |
+| No POI/anchor -> waypoint -> road generation pipeline | OPEN | Road waypoints are still largely caller-supplied; no systemic RPG road authoring path exists |
+| No `road_mask` channel in `TerrainMaskStack` | OPEN | `environment.py` paints roads locally but the stack does not expose a canonical road exclusion/authoring mask |
+| `terrain_materials_v2.py` still lacks Brucks height blend, top-facing snow weighting, and water-saturation SDF darkening | OPEN | These remain the highest-value material formula gaps |
+
+#### Major
+
+| Gap | Status | Notes |
+|---|---|---|
+| `flow_direction` is declared in `_ARRAY_CHANNELS` but no registered pass writes it into the stack | OPEN | Pure logic exists; pass-graph contract does not |
+| No `poi_mask` producer | OPEN | Needed for authored RPG traversal, roads, encounter-space validation, and scatter exclusions |
+| `handle_scatter_vegetation` / `scatter_biome_vegetation` are not registered in `COMMAND_HANDLERS` | OPEN | Older 0.D.5 Phase 9.7 remains valid |
+| Scatter ignores `wind_field` as a placement/shaping influence | OPEN | `terrain_vegetation_depth.py` reads wind; the runtime scatter handlers still do not |
+| `terrain_materials_v2.py` still classifies too much analytically after generation instead of consuming structural terrain-type intent | OPEN | Rune research makes this an architectural, not cosmetic, gap |
+| Waterfall / foam stack is still materially under-layered for RPG hero shots | OPEN | Top transition, landing zone, mist, and wet receiving surfaces remain under-specified |
+
+#### Important / Planning-Level
+
+| Gap | Status | Notes |
+|---|---|---|
+| `roughness_variation` is live but entangled across three writers | OPEN | Keep as Phase 7A / 9A cleanup, not "missing channel" cleanup |
+| Negative-ridge canyon acceleration in `compute_wind_field()` still needs review | OPEN | User-provided research remains directionally valid |
+| Noise stack still needs Phacelle / IQ / Voronoise / `_pow_inv` / 256-wrap review | OPEN | Keep in Phase 12A; do not mix into road/texturing first-pass implementation |
+| Blender hero-edit / bake-back pipeline is still implicit, not formalized | OPEN | Use the 2026-04-19 AAA memo as the planning anchor |
+
+### 0.J.7 — Mandatory Source Notes For Future Planning
+
+Future implementations in the merged tracks above should explicitly note the reference family they follow:
+
+- **Rune** for roads/path SDF boundaries, structural terrain-type stamping, and the 2026 noise direction.
+- **Reddit / GameDev / Polycount / RealTimeVFX** for practical seam handling, road edge blending, water foam heuristics, waterfall layering, and Blender usage patterns.
+- **AAA studio / vendor guidance** via `docs/AAA_ENVIRONMENT_PIPELINE_MEMO_2026_04_19.md` for pipeline order, non-destructive terrain editing, cliff/mesh blending, water system layering, and visual QA.
+- **ShaderToy / IQ / modern terrain papers** for domain warping, analytical-derivative noise, erosion fBm, and advanced mask generation.
+
+**Planning rule:** When Rune / Reddit / AAA guidance disagree, prefer:
+1. shipping-world correctness and readability,
+2. non-destructive editability,
+3. deterministic chunk-to-chunk contracts,
+4. then raw generation novelty.
+
+## 0.K — 2026-04-19 Research Completion / Stale-Claim Cleanup
+
+### 0.K.1 — Additional Corrections After Toolkit + Branch Sweep
+
+- **Internal toolkit research has now been cross-checked against this branch.** The main VeilBreakers toolkit docs that still matter for terrain planning are:
+  - `../veilbreakers-gamedev-toolkit/docs/terrain_ultra_implementation_plan_2026-04-08.md`
+  - `../veilbreakers-gamedev-toolkit/docs/terrain_aaa_implementation_guide.md`
+  - `../veilbreakers-gamedev-toolkit/docs/terrain_pipeline_handoff_for_claude.md`
+- **Those toolkit docs reinforce four live planning rules that remain valid and now explicitly belong in the implementation audit:**
+  1. compute flow / drainage on the **full world** before tile split,
+  2. re-run erosion if the baked world region expands because drainage changes at the boundary,
+  3. keep macro / meso / micro terrain bands separate instead of one blended noise blob,
+  4. treat bridge approaches, retaining transitions, cave mouths, and road cuts as terrain-authoring problems, not only mesh-placement problems.
+- **The 256-cell permutation-wrap warning remains valid.** Toolkit handoff notes and the live `_terrain_noise.py` fallback still confirm that the permutation-table path repeats on large worlds; this stays an open noise-stack risk.
+- **`terrain_macro_color.py` means "we have nothing like this" is no longer current.** We do have a live `macro_color` pass. The real gap is that it is still a simple per-cell biome/wetness/altitude tint map, not Rune-style low-res world-space macro-color multiplication with richer authored breakup.
+- **`terrain_twelve_step._generate_road_mesh_specs()` is no longer allowed to be described as discarding its carved heightmap.** Current live code returns `(road_specs, carved_hmap)` and the caller reassigns `world_eroded`. The remaining road gap is the algorithm quality of `_terrain_noise.generate_road_path()`, not missing handoff between step 9 and the world heightmap.
+- **Current road implementation is still materially below the RPG target bar.** `_terrain_noise.generate_road_path()` is still a 16-connected A* + uniform-width grade pass:
+  - no 24-direction search,
+  - no Catmull-Rom/Bezier smoothing,
+  - no sharp-corner duplication,
+  - no three-zone carve (`inner/slope/splat`),
+  - no canonical `road_mask` / road SDF channel output.
+- **`docs/TERRAIN_GENERATION_GUARDRAILS.md` is now a target-spec / design-intent document, not a source of truth for implemented branch reality.** It still contains aspirational requirements and some stale implementation claims; use this audit for live-state truth.
+
+### 0.K.2 — Added Internal Research Notes That Should Stay In The Audit
+
+- **Toolkit → audit import:** "flow on full world before split" and "expanded worlds require re-erosion" are now explicit retained planning requirements for seam-safe Skyrim-style terrain.
+- **Toolkit → audit import:** bridge approaches / retaining walls / terrain-grounded transitions belong in road/cliff/cave implementation planning, not only in mesh polish.
+- **Toolkit → audit import:** macro-color breakup must stay separate from micro detail and should remain visible in readability / visual-QA gates.
+- **Toolkit → audit import:** cave mouths, mountain passes, and terrain-framing transitions are part of authored traversal readability, which fits the user’s RPG target and should remain represented in future phase work.
