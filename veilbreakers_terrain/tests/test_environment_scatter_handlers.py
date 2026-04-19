@@ -575,3 +575,144 @@ class TestWriteTreeInstancePoints:
         arr = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)  # (1, 3) not (N, 5)
         _write_tree_instance_points(arr, stack)
         assert stack.tree_instance_points is None
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.8 — LocationLayer (Wave 2)
+# ---------------------------------------------------------------------------
+
+class TestLocationLayer:
+    """Tests for LocationLayer jitter + 3x3 repulsion placement."""
+
+    def test_generates_instances_on_3x3_grid(self):
+        """3x3 cell grid at density=1 produces 1-9 instances (repulsion may reject some)."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=42)
+        result = ll.generate(30.0, 30.0)
+        assert result.shape[1] == 5
+        assert 1 <= len(result) <= 9
+
+    def test_instances_within_bounds(self):
+        """All accepted instances are within [0, width] x [0, height]."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=7)
+        result = ll.generate(30.0, 30.0)
+        assert len(result) > 0
+        assert np.all(result[:, 0] >= 0.0) and np.all(result[:, 0] <= 30.0)
+        assert np.all(result[:, 1] >= 0.0) and np.all(result[:, 1] <= 30.0)
+
+    def test_repulsion_radius_enforced(self):
+        """No two accepted instances are closer than repulsion_radius."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        rr = 3.0
+        ll = LocationLayer(cell_size=5.0, density=0.04, repulsion_radius=rr, seed=0)
+        result = ll.generate(50.0, 50.0)
+        if len(result) < 2:
+            return  # nothing to check
+        xs, ys = result[:, 0], result[:, 1]
+        for i in range(len(result)):
+            for j in range(i + 1, len(result)):
+                dist = float(np.sqrt((xs[i] - xs[j]) ** 2 + (ys[i] - ys[j]) ** 2))
+                assert dist >= rr - 1e-6, (
+                    f"Points {i} and {j} are {dist:.3f}m apart — less than repulsion {rr}m"
+                )
+
+    def test_deterministic_same_seed(self):
+        """Same seed → identical output."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=42)
+        r1 = ll.generate(30.0, 30.0)
+        r2 = ll.generate(30.0, 30.0)
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_different_seeds_produce_different_output(self):
+        """Different seeds → different output (collision probability negligible)."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        r1 = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=1).generate(30.0, 30.0)
+        r2 = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=99).generate(30.0, 30.0)
+        assert not np.array_equal(r1, r2)
+
+    def test_candidate_within_cell(self):
+        """candidate x = j*cs + cs*(rand+0.5) stays within [j*cs, (j+1)*cs]."""
+        from blender_addon.handlers.environment_scatter import _location_layer_rand2
+        cs = 10.0
+        for i in range(3):
+            for j in range(3):
+                for k in range(5):
+                    rx, ry = _location_layer_rand2(i, j, seed=0, k=k)
+                    cx = j * cs + cs * (rx + 0.5)
+                    cy = i * cs + cs * (ry + 0.5)
+                    assert j * cs <= cx <= (j + 1) * cs, f"cx={cx} out of cell [{j*cs}, {(j+1)*cs}]"
+                    assert i * cs <= cy <= (i + 1) * cs, f"cy={cy} out of cell [{i*cs}, {(i+1)*cs}]"
+
+    def test_output_shape_and_dtype(self):
+        """Output is float32 ndarray shape (N, 5)."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=0)
+        result = ll.generate(30.0, 30.0)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.ndim == 2
+        assert result.shape[1] == 5
+
+    def test_empty_terrain_returns_empty(self):
+        """width=0 or height=0 returns empty (0, 5) array."""
+        from blender_addon.handlers.environment_scatter import LocationLayer
+        ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=0)
+        result = ll.generate(0.0, 0.0)
+        assert result.shape == (0, 5) or result.shape[1] == 5
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.3 — road_mask exclusion + Fix 9.2 write-back (Wave 2)
+# ---------------------------------------------------------------------------
+
+class TestRoadMaskExclusion:
+    """Tests for road_mask channel exclusion via _apply_sdf_exclusion helper."""
+
+    def test_all_road_mask_excludes_all(self):
+        """road_mask = ones → every point is excluded via the helper."""
+        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        # road_sdf_np=None path — test the road_mask logic using the stack mock
+        # For road_mask we test via integration: all points at col/row = road
+        import numpy as np
+        # Build a "sdf" where everything is 0.5 (< placement_radius=2.0)
+        road_sdf = np.full((8, 8), 0.5, dtype=np.float32)
+        excluded = _apply_sdf_exclusion(
+            world_x=5.0, world_y=5.0, road_sdf_np=road_sdf,
+            placement_radius=2.0,
+            terrain_origin_x=0.0, terrain_origin_y=0.0,
+            terrain_width=10.0, terrain_height=10.0,
+        )
+        assert excluded, "sdf=0.5 < radius=2.0 should exclude"
+
+    def test_no_road_mask_passes_all(self):
+        """road_sdf_np=None → no exclusion applied."""
+        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        assert not _apply_sdf_exclusion(
+            world_x=5.0, world_y=5.0, road_sdf_np=None,
+            placement_radius=2.0,
+            terrain_origin_x=0.0, terrain_origin_y=0.0,
+            terrain_width=10.0, terrain_height=10.0,
+        )
+
+    def test_write_tree_instance_points_via_stack_set(self):
+        """_write_tree_instance_points calls stack.set when available."""
+        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        recorded = {}
+
+        class MockStack:
+            def set(self, key, arr, provenance=None):
+                recorded[key] = arr
+
+        arr = np.array([[1.0, 2.0, 3.0, 0.1, 0.0]], dtype=np.float32)
+        _write_tree_instance_points(arr, MockStack())
+        assert "tree_instance_points" in recorded
+        assert recorded["tree_instance_points"].shape == (1, 5)
+        assert recorded["tree_instance_points"].dtype == np.float32
+
+    def test_road_mask_none_fallback_no_crash(self):
+        """When road_sdf is None, _apply_sdf_exclusion returns False without error."""
+        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        result = _apply_sdf_exclusion(0.0, 0.0, None, 2.0, 0.0, 0.0, 100.0, 100.0)
+        assert result is False

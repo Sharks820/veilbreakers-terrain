@@ -612,6 +612,160 @@ def _write_tree_instance_points(
 
 
 # ---------------------------------------------------------------------------
+# LocationLayer — Rune Skovbo Johansen jitter + 3x3 repulsion placement
+# Fix 9.8 / BUG-S10-010
+# ---------------------------------------------------------------------------
+
+def _location_layer_rand2(i: int, j: int, seed: int, k: int) -> tuple:
+    """Deterministic 2D random offset in [-0.5, 0.5] per cell (i, j), candidate k.
+
+    Uses integer hash mix with no floating-point RNG state — output is fully
+    deterministic given the same (i, j, seed, k) regardless of call order.
+    """
+    h = int(seed) ^ (int(i) * 73856093) ^ (int(j) * 19349663) ^ (int(k) * 83492791)
+    h = (h ^ (h >> 13)) & 0xFFFFFFFF
+    h = (h * 1664525 + 1013904223) & 0xFFFFFFFF
+    rx = ((h & 0xFFFF) / 65535.0) - 0.5
+    h = (h ^ (h >> 13)) & 0xFFFFFFFF
+    h = (h * 1664525 + 1013904223) & 0xFFFFFFFF
+    ry = ((h & 0xFFFF) / 65535.0) - 0.5
+    return rx, ry
+
+
+class LocationLayer:
+    """Jittered grid scatter with 3x3 neighbor repulsion (Rune's algorithm).
+
+    Each grid cell generates N candidates. Each candidate is placed at
+    ``cell_origin + cell_size * (rand2 + 0.5)`` — always within the cell.
+    A 3x3 neighborhood repulsion check rejects any candidate closer than
+    ``repulsion_radius`` to an already-accepted point in adjacent cells.
+
+    Parameters
+    ----------
+    cell_size : float
+        World-space size of each grid cell in meters.
+    density : float
+        Average instances per square meter.
+        N_candidates = max(1, round(density * cell_size^2)).
+    repulsion_radius : float
+        Minimum world-space distance between accepted instances.
+    seed : int
+        Deterministic seed combined with cell coordinates.
+    """
+
+    def __init__(
+        self,
+        cell_size: float = 5.0,
+        density: float = 0.04,
+        repulsion_radius: float = 2.5,
+        seed: int = 0,
+    ) -> None:
+        self.cell_size = float(cell_size)
+        self.density = float(density)
+        self.repulsion_radius = float(repulsion_radius)
+        self.seed = int(seed)
+
+    def generate(
+        self,
+        width_m: float,
+        height_m: float,
+        height_sample_fn=None,
+        wind_sample_fn=None,
+        prototype_id: int = 0,
+    ) -> np.ndarray:
+        """Generate scatter instances over a [0, width_m] x [0, height_m] region.
+
+        Parameters
+        ----------
+        width_m, height_m : float
+            World-space extent of the scatter region in meters.
+        height_sample_fn : callable(x, y) -> float, optional
+            Returns world-space Z for a given XY. Defaults to 0.0.
+        wind_sample_fn : callable(x, y) -> float, optional
+            Returns rotation_y in radians for a given XY. Defaults to 0.0.
+        prototype_id : int
+            Integer prototype index written to column 4 of output.
+
+        Returns
+        -------
+        np.ndarray shape (N, 5) float32 — (x, y, z, rotation_y, prototype_id)
+        """
+        cs = self.cell_size
+        n_cols = max(1, int(np.ceil(width_m / cs)))
+        n_rows = max(1, int(np.ceil(height_m / cs)))
+        n_candidates = max(1, round(self.density * cs * cs))
+        rr_sq = self.repulsion_radius * self.repulsion_radius
+
+        # accepted_per_cell[(i, j)] = list of (x, y) accepted points in that cell
+        accepted_per_cell: dict = {}
+        all_instances: list = []
+
+        for i in range(n_rows):
+            for j in range(n_cols):
+                accepted_per_cell.setdefault((i, j), [])
+                for k in range(n_candidates):
+                    rx, ry = _location_layer_rand2(i, j, self.seed, k)
+                    cx = j * cs + cs * (rx + 0.5)
+                    cy = i * cs + cs * (ry + 0.5)
+                    # Clamp to region bounds
+                    cx = max(0.0, min(width_m, cx))
+                    cy = max(0.0, min(height_m, cy))
+
+                    # 3x3 repulsion check
+                    accepted = True
+                    for di in (-1, 0, 1):
+                        if not accepted:
+                            break
+                        for dj in (-1, 0, 1):
+                            ni, nj = i + di, j + dj
+                            for px, py in accepted_per_cell.get((ni, nj), ()):
+                                dx = cx - px
+                                dy = cy - py
+                                if dx * dx + dy * dy < rr_sq:
+                                    accepted = False
+                                    break
+                            if not accepted:
+                                break
+
+                    if accepted:
+                        accepted_per_cell[(i, j)].append((cx, cy))
+                        z = height_sample_fn(cx, cy) if height_sample_fn is not None else 0.0
+                        rot = wind_sample_fn(cx, cy) if wind_sample_fn is not None else 0.0
+                        all_instances.append((cx, cy, float(z), float(rot), float(prototype_id)))
+
+        if not all_instances:
+            return np.empty((0, 5), dtype=np.float32)
+        return np.array(all_instances, dtype=np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Halo scatter tile assignment — Fix 9.10 / BUG-S10-012
+# ---------------------------------------------------------------------------
+
+def halo_scatter_point_id(
+    world_x: float,
+    world_y: float,
+    seed: int,
+    num_tiles: int,
+) -> int:
+    """Return the tile ID that owns a scatter point at (world_x, world_y).
+
+    Deterministic: same (x, y, seed, num_tiles) → same tile_id always.
+    Quantizes to 0.1m grid to prevent float precision drift at tile boundaries.
+
+    Usage: include point in tile output only if halo_scatter_point_id(...) == tile_id.
+    Generate points in (tile_width + 2*halo) x (tile_height + 2*halo) region; the hash
+    ensures seam-free coverage without duplication.
+    """
+    qx = int(round(world_x * 10))
+    qy = int(round(world_y * 10))
+    h = int(seed) ^ (qx * 73856093) ^ (qy * 19349663)
+    h = (h ^ (h >> 13)) & 0xFFFFFFFF
+    h = (h * 1664525 + 1013904223) & 0xFFFFFFFF
+    return h % max(1, int(num_tiles))
+
+
+# ---------------------------------------------------------------------------
 # Default biome vegetation rules
 # ---------------------------------------------------------------------------
 
