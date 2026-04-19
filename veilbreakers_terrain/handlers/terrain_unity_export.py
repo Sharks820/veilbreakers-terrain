@@ -676,6 +676,80 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
 
+_WIND_DIR_DEFAULT = (1.0, 0.0)  # +X fallback per CONTEXT.md Claude's Discretion
+_TREE_HEIGHT_DEFAULT = 10.0     # metres; used when height not in instance data
+
+
+# ---------------------------------------------------------------------------
+# Wind bend vertex color — Fix 13.2
+# ---------------------------------------------------------------------------
+
+def compute_wind_bend_vertex_color(
+    vertex_heights: np.ndarray,
+    tree_height: float,
+    wind_dir_xz: "tuple[float, float]" = (1.0, 0.0),
+    vertex_normals_xz: "np.ndarray | None" = None,
+) -> np.ndarray:
+    """Bake per-vertex wind bend color for tree mesh export (Fix 13.2).
+
+    Layout (per CONTEXT.md decision D-02):
+        R = XZ bend magnitude  (horizontal sway, quadratic height falloff)
+        G = Y sway magnitude   (0.1 * R, small vertical component)
+        B = 0.0                (reserved for future LOD or flex data)
+        A = 1.0
+
+    Formula:
+        wind_bend_xz = abs(dot(vertex_normal_xz, wind_dir)) * (h / tree_height)^2
+        wind_bend_y  = 0.1 * wind_bend_xz
+
+    Args:
+        vertex_heights: 1-D float array, tree-local height of each vertex (metres,
+            0 = root, tree_height = crown tip).
+        tree_height: Total tree height in metres. Must be > 0.
+        wind_dir_xz: Normalised world-space XZ wind direction.  Defaults to +X.
+            If (0,0) (no wind), all bend values are 0.
+        vertex_normals_xz: (N, 2) float array of per-vertex XZ normals.
+            If None, every vertex is treated as facing +X (1, 0).
+
+    Returns:
+        np.ndarray of shape (N, 4), dtype float32, values in [0, 1] for R/G/B;
+        A channel is always 1.0.
+    """
+    heights = np.asarray(vertex_heights, dtype=np.float64).ravel()
+    n = heights.shape[0]
+    th = max(float(tree_height), 1e-9)
+
+    # Height ratio with quadratic falloff — roots don't sway
+    height_ratio = np.clip(heights / th, 0.0, 1.0) ** 2
+
+    # Per-vertex dot product with wind direction
+    wd = np.asarray(wind_dir_xz, dtype=np.float64)
+    wd_norm = float(np.linalg.norm(wd))
+    if wd_norm < 1e-9:
+        # No wind — all zeros
+        rgba = np.zeros((n, 4), dtype=np.float32)
+        rgba[:, 3] = 1.0
+        return rgba
+
+    wd = wd / wd_norm
+    if vertex_normals_xz is not None:
+        nxz = np.asarray(vertex_normals_xz, dtype=np.float64).reshape(n, 2)
+    else:
+        nxz = np.tile([1.0, 0.0], (n, 1))
+
+    dot = np.abs(nxz[:, 0] * wd[0] + nxz[:, 1] * wd[1])
+
+    wind_bend_xz = np.clip(dot * height_ratio, 0.0, 1.0).astype(np.float32)
+    wind_bend_y  = np.clip(0.1 * wind_bend_xz, 0.0, 1.0).astype(np.float32)
+
+    rgba = np.zeros((n, 4), dtype=np.float32)
+    rgba[:, 0] = wind_bend_xz   # R = XZ bend
+    rgba[:, 1] = wind_bend_y    # G = Y sway
+    # rgba[:, 2] = 0.0           # B reserved
+    rgba[:, 3] = 1.0            # A always 1
+    return rgba
+
+
 def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     trees: List[Dict[str, Any]] = []
     arr = stack.tree_instance_points
@@ -687,11 +761,26 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "trees": trees}
 
     for row in points:
+        # Wind bend vertex color — Fix 13.2 / REQ-P13-002
+        # Two representative heights: root (0.0) and crown (tree_height)
+        _representative_heights = np.array([0.0, _TREE_HEIGHT_DEFAULT], dtype=np.float32)
+        _vcolors = compute_wind_bend_vertex_color(
+            vertex_heights=_representative_heights,
+            tree_height=_TREE_HEIGHT_DEFAULT,
+            wind_dir_xz=_WIND_DIR_DEFAULT,
+        )
+        # Serialize as list of RGBA dicts (root + crown)
+        vertex_color_list = [
+            {"r": float(_vcolors[i, 0]), "g": float(_vcolors[i, 1]),
+             "b": float(_vcolors[i, 2]), "a": float(_vcolors[i, 3])}
+            for i in range(len(_vcolors))
+        ]
         trees.append(
             {
                 "position": _zup_to_unity_vector([float(row[0]), float(row[1]), float(row[2])]),
                 "yaw_degrees": float(row[3]),
                 "prototype_id": int(row[4]),
+                "vertex_color": vertex_color_list,  # NEW — Fix 13.2
             }
         )
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "trees": trees}
@@ -703,4 +792,5 @@ __all__ = [
     "export_unity_manifest",
     "_export_heightmap",
     "_bit_depth_for_profile",
+    "compute_wind_bend_vertex_color",
 ]
