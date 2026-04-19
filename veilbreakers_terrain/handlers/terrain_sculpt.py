@@ -27,8 +27,26 @@ except ImportError:
     _scipy_ndimage = None  # type: ignore[assignment]
     _SCIPY_AVAILABLE = False
 
-import bmesh
-import bpy
+# Lazy-import guard: brush falloff math is pure-Python and testable without
+# Blender, but handle_sculpt_terrain needs bpy/bmesh. Guard the imports so
+# transitive imports outside Blender do not crash.
+try:
+    import bmesh
+    import bpy
+    _HAS_BPY = True
+except ModuleNotFoundError:
+    bmesh = None  # type: ignore[assignment]
+    bpy = None  # type: ignore[assignment]
+    _HAS_BPY = False
+
+
+def _require_bpy() -> None:
+    """Raise RuntimeError if bpy/bmesh are not available (outside Blender)."""
+    if not _HAS_BPY:
+        raise RuntimeError(
+            "This function requires Blender (bpy + bmesh). "
+            "It cannot run outside the Blender Python runtime."
+        )
 
 
 # ---------------------------------------------------------------------------

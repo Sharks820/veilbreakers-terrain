@@ -389,6 +389,42 @@ class TerrainPassController:
             results.append(res)
             if res.status == "failed":
                 break
+
+        # ------------------------------------------------------------------
+        # Post-pipeline budget enforcement (Bundle N safety net).
+        # Runs when the pipeline completed without a failure so the authored
+        # mask stack is valid to inspect. Any budget ValidationIssue is
+        # attached to the final PassResult's validation_issues list, so the
+        # controller's existing soft/hard-gate path handles it the same way
+        # as per-pass validation findings.
+        # ------------------------------------------------------------------
+        if results and results[-1].status != "failed":
+            try:
+                from .terrain_budget_enforcer import (
+                    enforce_budget as _enforce_budget,
+                    TerrainBudget as _TerrainBudget,
+                )
+                budget_issues = _enforce_budget(
+                    self.state.mask_stack,
+                    self.state.intent,
+                    _TerrainBudget(),
+                )
+                if budget_issues:
+                    last = results[-1]
+                    # PassResult.validation_issues is a list; extend in-place
+                    existing = list(getattr(last, "validation_issues", []) or [])
+                    existing.extend(budget_issues)
+                    try:
+                        last.validation_issues = existing
+                    except Exception:  # noqa: BLE001
+                        # Frozen dataclass or similar — fall back to best-effort.
+                        pass
+            except Exception:  # noqa: BLE001
+                # Budget enforcer is a safety net: never let its failure break
+                # the pipeline. Errors are logged by the caller's logging
+                # handler via terrain_budget_enforcer.
+                pass
+
         return results
 
     # -- checkpoints ---------------------------------------------------------

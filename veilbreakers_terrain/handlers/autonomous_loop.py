@@ -3,6 +3,48 @@
 Pure-Python, no bpy dependency. Provides:
 - evaluate_mesh_quality: analyse verts/faces and return quality metrics dict
 - select_fix_action: choose the next repair action given quality + targets
+
+AAA topology thresholds (2026-04-18 audit pass)
+-----------------------------------------------
+Thresholds below are calibrated against real AAA terrain standards observed
+in World Machine, Houdini Heightfield, SpeedTree, and Quixel Megascans
+workflows — NOT the more permissive heuristics a hobby pipeline tolerates.
+
+Key thresholds:
+
+* **Non-manifold edges**: ≥1% of total edges downgrades the grade from B to
+  C. AAA terrain tiles from Houdini / World Machine ship with 0% non-manifold
+  edges; 10% is unshippable. The old code treated 10% as the cutoff — far
+  too lenient. Watertight surfaces are required for SDF generation, collision
+  baking, and Unity terrain importers.
+
+* **Degenerate faces**: ANY zero-area face = hard reject (topology_grade = D).
+  Unrenderable faces bake invalid normals and crash tesselators.
+
+* **Normal consistency**: ``normal_consistency`` is the mean dot product of
+  adjacent face-pair normals. Values:
+    - ≥ 0.98  → watertight / smooth (AAA ship quality)
+    - 0.95–0.98 → acceptable (minor creasing)
+    - < 0.95  → flipped/inconsistent normals somewhere (fail ship review)
+
+* **UV coverage**: ``uv_coverage`` is the fraction of UV space occupied
+  (0..1). AAA hero terrain UVs typically land in 0.60–0.90 — high enough to
+  give adequate texel density, low enough to leave atlas gutters. Below 0.25
+  flags wasted UV real estate.
+
+* **Mesh density (external)**: AAA terrain tiles are at minimum 64×64 quad
+  grids (8192 tris) for background tiles and 256×256 (131072 tris) for hero
+  areas. This module does not enforce density — see ``terrain_budget_enforcer``
+  for the shipping budget.
+
+* **LOD chain (external)**: Minimum 4 levels (LOD0=full, LOD1=½, LOD2=¼,
+  LOD3=⅛). Enforced by ``lod_pipeline.LOD_PRESETS``; this module does not
+  validate LOD chains directly.
+
+Why this matters: allowing 10% non-manifold meant the evaluator called a
+visibly broken mesh "B grade" and would not have picked ``repair_non_manifold``
+even when that action was available. Tightening to 1% makes the autonomous
+loop react to the first sign of authored damage.
 """
 
 from __future__ import annotations
@@ -10,6 +52,26 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# AAA topology grading thresholds
+# ---------------------------------------------------------------------------
+# Tuned against World Machine / Houdini / SpeedTree ship criteria, not
+# per-project heuristics. See module docstring for rationale.
+
+#: Ratio of non-manifold edges that demotes topology_grade from B to C.
+#: AAA watertight tiles run at 0%; we treat anything ≥ 1% as a serious
+#: authoring error. (Old value: 10%.)
+AAA_NON_MANIFOLD_RATIO_THRESHOLD: float = 0.01
+
+#: Minimum normal-consistency score (mean dot-product of adjacent face
+#: normals) considered ship-quality for AAA terrain. Below this the loop
+#: should drive the next fix action toward a remesh.
+AAA_NORMAL_CONSISTENCY_MIN: float = 0.98
+
+#: Minimum UV coverage that avoids a "wasted UV space" warning.
+#: Below this, hero terrain UVs lose texel density.
+AAA_UV_COVERAGE_MIN: float = 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -169,17 +231,25 @@ def evaluate_mesh_quality(
         non_manifold_count = sum(1 for c in edge_counts.values() if c != 2)
     has_non_manifold = non_manifold_count > 0
 
-    # Topology grade
+    # Topology grade (AAA thresholds — see module docstring)
     if face_count == 0:
         topology_grade = "A"
     elif not has_non_manifold and not has_degenerate_faces:
         topology_grade = "A"
     elif has_degenerate_faces:
-        topology_grade = "D"   # unrenderable = worst
-    elif total_edges > 0 and non_manifold_count / total_edges < 0.1:
-        topology_grade = "B"   # non-manifold warning < 10%
+        # Zero-area faces are hard-rejected (unrenderable, bake invalid
+        # normals, break tesselation). Always D even if manifold elsewhere.
+        topology_grade = "D"
+    elif (
+        total_edges > 0
+        and non_manifold_count / total_edges < AAA_NON_MANIFOLD_RATIO_THRESHOLD
+    ):
+        # < 1% non-manifold edges — acceptable with review (AAA ships 0%).
+        topology_grade = "B"
     else:
-        topology_grade = "C"   # non-manifold >= 10% = serious
+        # ≥ 1% non-manifold — serious authoring damage; watertight surfaces
+        # required for SDF/collision/Unity-terrain import.
+        topology_grade = "C"
 
     # Normal consistency — average dot product of adjacent face-pair normals
     normal_consistency = 0.0

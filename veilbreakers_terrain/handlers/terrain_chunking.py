@@ -12,6 +12,23 @@ Provides:
   - compute_chunk_lod: Single-chunk LOD downsample
   - compute_streaming_distances: Per-LOD streaming distance recommendations
   - export_chunks_metadata: JSON export for Unity integration
+
+Scope note — relationship to :mod:`lod_pipeline`
+------------------------------------------------
+This module's LOD is **heightmap LOD**: bilinear downsample of a 2-D scalar
+field (height values). It feeds Unity's terrain streaming, which handles
+heightmap tessellation at render time.
+
+:mod:`lod_pipeline` is **mesh LOD**: Quadric-Error-Metrics edge-collapse
+decimation of explicit (vertex, face) mesh data for scatter assets (props,
+trees, vegetation, hero objects). Mesh LOD uses silhouette preservation and
+asset-type presets (``LOD_PRESETS``) that are meaningless for heightmaps.
+
+The two LOD systems are intentionally disconnected. Heightmaps do not go
+through ``generate_lod_chain``; scatter meshes do not go through
+``compute_chunk_lod``. Wiring them would be incorrect — bilinear downsample
+cannot preserve character silhouettes, and QEM decimation makes no sense on
+a regular heightmap grid.
 """
 
 from __future__ import annotations

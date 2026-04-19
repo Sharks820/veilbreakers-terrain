@@ -23,8 +23,27 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
-import bpy
-import bmesh
+# Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
+# transitively import this file outside Blender (tests, CI) must not crash at
+# import time; guarded functions raise RuntimeError at call time instead.
+try:
+    import bpy
+    import bmesh
+    _HAS_BPY = True
+except ModuleNotFoundError:
+    bpy = None  # type: ignore[assignment]
+    bmesh = None  # type: ignore[assignment]
+    _HAS_BPY = False
+
+
+def _require_bpy() -> None:
+    """Raise RuntimeError if bpy/bmesh are not available (outside Blender)."""
+    if not _HAS_BPY:
+        raise RuntimeError(
+            "This function requires Blender (bpy + bmesh). "
+            "It cannot run outside the Blender Python runtime."
+        )
+
 
 logger = logging.getLogger(__name__)
 

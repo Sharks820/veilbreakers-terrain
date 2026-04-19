@@ -19,9 +19,12 @@ import yaml
 # ------------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent  # veilbreakers-gamedev-toolkit
-CONTRACT_PATH = REPO_ROOT / ".planning" / "contracts" / "terrain.yaml"
-HANDLERS_DIR = REPO_ROOT / "Tools" / "mcp-toolkit" / "blender_addon" / "handlers"
+# test_terrain_contracts.py lives at:
+#   <repo_root>/veilbreakers_terrain/tests/contract/test_terrain_contracts.py
+# Four .parent hops take us to <repo_root>.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # veilbreakers-terrain
+CONTRACT_PATH = REPO_ROOT / "veilbreakers_terrain" / "contracts" / "terrain.yaml"
+HANDLERS_DIR = REPO_ROOT / "veilbreakers_terrain" / "handlers"
 
 
 # ------------------------------------------------------------------

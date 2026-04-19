@@ -23,9 +23,29 @@ from typing import Any
 
 import numpy as np
 
-import bpy
-import bmesh
-from mathutils import Vector as _mathutils_Vector
+# Lazy-import guard: bpy/bmesh/mathutils only available inside Blender. Pure-logic
+# helpers (poisson sampling, biome filters) remain importable outside Blender;
+# functions that touch bpy must call _require_bpy() at entry.
+try:
+    import bpy
+    import bmesh
+    from mathutils import Vector as _mathutils_Vector
+    _HAS_BPY = True
+except ModuleNotFoundError:
+    bpy = None  # type: ignore[assignment]
+    bmesh = None  # type: ignore[assignment]
+    _mathutils_Vector = None  # type: ignore[assignment]
+    _HAS_BPY = False
+
+
+def _require_bpy() -> None:
+    """Raise RuntimeError if bpy/bmesh are not available (outside Blender)."""
+    if not _HAS_BPY:
+        raise RuntimeError(
+            "This function requires Blender (bpy + bmesh). "
+            "It cannot run outside the Blender Python runtime."
+        )
+
 
 from ._scatter_engine import (
     poisson_disk_sample,
