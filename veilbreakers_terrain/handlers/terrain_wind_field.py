@@ -22,20 +22,49 @@ from .terrain_semantics import (
 )
 
 
-def _perlin_like_field(shape: tuple, seed: int, scale_cells: float) -> np.ndarray:
+def _perlin_like_field(
+    shape: tuple,
+    seed: int,
+    scale_cells: float,
+    world_row_offset: int = 0,
+    world_col_offset: int = 0,
+) -> np.ndarray:
     """Cheap pseudo-Perlin scalar field via bilinear-interpolated RNG grid.
 
     Deterministic given ``seed``. Returns values in roughly [-1, 1].
-    """
-    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
-    h, w = shape
-    gh = max(2, int(math.ceil(h / max(scale_cells, 1.0))) + 2)
-    gw = max(2, int(math.ceil(w / max(scale_cells, 1.0))) + 2)
-    grid = rng.uniform(-1.0, 1.0, size=(gh, gw)).astype(np.float64)
 
-    # Bilinear upsample
-    ys = np.linspace(0.0, gh - 1.0, h)
-    xs = np.linspace(0.0, gw - 1.0, w)
+    BUG-96 fix: each coarse-grid cell gets a world-space XOR hash seed derived
+    from its world position (world_row, world_col) so adjacent tiles agree at
+    seam edges. ``world_row_offset`` / ``world_col_offset`` are the world-space
+    cell indices of the top-left corner of this tile's coarse grid.
+    """
+    h_arr, w_arr = shape
+    gh = max(2, int(math.ceil(h_arr / max(scale_cells, 1.0))) + 2)
+    gw = max(2, int(math.ceil(w_arr / max(scale_cells, 1.0))) + 2)
+
+    # Per-cell world-space seed: each coarse-grid cell (gi, gj) gets a seed
+    # derived from its world position so adjacent tiles share the same values
+    # at their shared border cells.
+    scale_int = max(1, int(scale_cells))
+    gi_arr = np.arange(gh, dtype=np.int64)
+    gj_arr = np.arange(gw, dtype=np.int64)
+    world_rows = (world_row_offset + gi_arr * scale_int).reshape(-1, 1)  # (gh, 1)
+    world_cols = (world_col_offset + gj_arr * scale_int).reshape(1, -1)  # (1, gw)
+    cell_seeds = (
+        int(seed)
+        ^ (world_rows.astype(np.int64) * 73856093)
+        ^ (world_cols.astype(np.int64) * 19349663)
+    ).astype(np.int64) & 0x7FFFFFFF  # keep positive for default_rng
+
+    grid = np.empty((gh, gw), dtype=np.float64)
+    for gi in range(gh):
+        for gj in range(gw):
+            cell_rng = np.random.default_rng(int(cell_seeds[gi, gj]))
+            grid[gi, gj] = cell_rng.uniform(-1.0, 1.0)
+
+    # Bilinear upsample (unchanged from original)
+    ys = np.linspace(0.0, gh - 1.0, h_arr)
+    xs = np.linspace(0.0, gw - 1.0, w_arr)
     y0 = np.floor(ys).astype(np.int32)
     x0 = np.floor(xs).astype(np.int32)
     y1 = np.clip(y0 + 1, 0, gh - 1)
@@ -98,8 +127,22 @@ def compute_wind_field(
         ^ int(stack.tile_y) * 19349663
         ^ int(round(hmin * 1000.0)) & 0xFFFFFFFF
     ) & 0xFFFFFFFF
-    perturb_u = _perlin_like_field(shape, seed, scale_cells=16.0)
-    perturb_v = _perlin_like_field(shape, seed ^ 0xDEADBEEF, scale_cells=16.0)
+
+    # BUG-96: pass world-space cell offsets so adjacent tiles agree at seams.
+    cs = float(stack.cell_size) if stack.cell_size else 1.0
+    world_row_offset = int(round(float(stack.world_origin_y) / cs)) if stack.world_origin_y else 0
+    world_col_offset = int(round(float(stack.world_origin_x) / cs)) if stack.world_origin_x else 0
+
+    perturb_u = _perlin_like_field(
+        shape, seed, scale_cells=16.0,
+        world_row_offset=world_row_offset,
+        world_col_offset=world_col_offset,
+    )
+    perturb_v = _perlin_like_field(
+        shape, seed ^ 0xDEADBEEF, scale_cells=16.0,
+        world_row_offset=world_row_offset,
+        world_col_offset=world_col_offset,
+    )
 
     speed = base_speed_mps * altitude_factor * ridge_factor * basin_factor
 

@@ -69,7 +69,80 @@ from .terrain_waterfalls_volumetric import (  # noqa: E402
     enforce_functional_object_naming,
 )
 from ._water_network import WaterNetwork  # noqa: E402
-from .terrain_semantics import WorldHeightTransform  # noqa: E402
+from .terrain_semantics import TerrainMaskStack, WorldHeightTransform  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# POI mask rasterization (pure logic — no bpy required)
+# ---------------------------------------------------------------------------
+
+
+def rasterize_poi_mask(
+    stack: "TerrainMaskStack",
+    pois: list,
+    radius_m: float = 20.0,
+) -> np.ndarray:
+    """Rasterize a list of POI world-space positions into a (H, W) float32 mask.
+
+    Each POI within ``radius_m`` metres contributes 1.0 at its centre,
+    decaying linearly to 0.0 at the radius boundary. Overlapping POIs take
+    the maximum of their contributions.
+
+    T-14-04-01 mitigation: cap POI list at 1000 entries to prevent
+    O(N * H * W) blow-up from unbounded POI injection.
+
+    Parameters
+    ----------
+    stack : TerrainMaskStack
+        Must have ``height`` populated (for shape) and ``cell_size`` set.
+    pois : list of (world_x, world_y) or (world_x, world_y, ...) tuples
+    radius_m : float
+        Influence radius in world metres. Default 20.0.
+
+    Side effect
+    -----------
+    Calls ``stack.set("poi_mask", mask, "rasterize_poi_mask")`` before returning.
+    """
+    if stack.height is None:
+        raise ValueError("rasterize_poi_mask requires stack.height")
+    if len(pois) > 1000:
+        raise ValueError(
+            f"rasterize_poi_mask: poi list length {len(pois)} exceeds cap of 1000 "
+            "entries (T-14-04-01 DoS mitigation). Split into batches."
+        )
+
+    h_arr = np.asarray(stack.height)
+    H, W = h_arr.shape
+    cs = float(stack.cell_size) if stack.cell_size else 1.0
+    ox = float(stack.world_origin_x) if stack.world_origin_x is not None else 0.0
+    oy = float(stack.world_origin_y) if stack.world_origin_y is not None else 0.0
+
+    mask = np.zeros((H, W), dtype=np.float32)
+    radius_cells = max(1, int(math.ceil(radius_m / cs)))
+
+    row_grid, col_grid = np.mgrid[0:H, 0:W].astype(np.float64)
+
+    for poi in pois:
+        wx = float(poi[0])
+        wy = float(poi[1])
+        # Convert world position to fractional cell indices
+        col_c = (wx - ox) / cs - 0.5
+        row_c = (wy - oy) / cs - 0.5
+
+        r0 = max(0, int(row_c) - radius_cells - 1)
+        r1 = min(H, int(row_c) + radius_cells + 2)
+        c0 = max(0, int(col_c) - radius_cells - 1)
+        c1 = min(W, int(col_c) + radius_cells + 2)
+
+        dist = np.sqrt(
+            ((row_grid[r0:r1, c0:c1] - row_c) * cs) ** 2
+            + ((col_grid[r0:r1, c0:c1] - col_c) * cs) ** 2
+        )
+        contribution = np.clip(1.0 - dist / max(radius_m, 1e-9), 0.0, 1.0).astype(np.float32)
+        mask[r0:r1, c0:c1] = np.maximum(mask[r0:r1, c0:c1], contribution)
+
+    stack.set("poi_mask", mask, "rasterize_poi_mask")
+    return mask
 
 
 # ---------------------------------------------------------------------------

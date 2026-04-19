@@ -333,6 +333,12 @@ class TerrainMaskStack:
     hmap_low_freq: Optional[np.ndarray] = None   # base shape, max LOW_FREQ_OCTAVES=3 octaves
     hmap_high_freq: Optional[np.ndarray] = None  # micro-detail, octaves 3-7
 
+    # POI proximity mask — 1.0 within radius of any POI centre (Phase 14)
+    poi_mask: Optional[np.ndarray] = None
+
+    # Waterfall mist zone mask — float32 mist intensity per cell (Bundle C supplementary)
+    mist_zone_mask: Optional[np.ndarray] = None
+
     # -- World-unit scalar metadata (required for Unity .raw round-trip) --
     height_min_m: Optional[float] = None
     height_max_m: Optional[float] = None
@@ -426,6 +432,9 @@ class TerrainMaskStack:
             # Height decomposition (Fix 12.1)
             "hmap_low_freq",
             "hmap_high_freq",
+            # POI proximity + waterfall mist zone (Phase 14)
+            "poi_mask",
+            "mist_zone_mask",
             # Structural terrain labels (Phase 10 / Fix 10.10)
             "rock_label",
             "gravel_label",

@@ -1078,10 +1078,119 @@ def register_bundle_c_passes() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Bundle C supplementary: waterfall mist zone pass
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class WaterfallMistResult:
+    """Output of the waterfall mist pass.
+
+    mist_zone_mask : (H, W) float32, 0-1 intensity per cell.
+    wet_surface_decal : list of dicts, each with keys
+        world_x, world_y, radius_m, intensity.
+        Consumed by the Unity wet-surface shader.
+    """
+
+    mist_zone_mask: np.ndarray
+    wet_surface_decal: list
+
+
+def pass_waterfall_mist(
+    state: "TerrainPipelineState",
+    region: "Optional[BBox]",
+) -> "PassResult":
+    """Bundle C supplementary pass: waterfall mist zone + wet-surface decal list.
+
+    Runs AFTER pass_waterfalls (requires mist channel already populated).
+    Produces:
+        mist_zone_mask — (H, W) float32 copy of stack.mist (or zeros if absent)
+        wet_surface_decal — list of decal dicts written to stack._extra_channels
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+
+    h_shape = stack.height.shape if stack.height is not None else (1, 1)
+
+    # mist_zone_mask: copy of the mist channel produced by pass_waterfalls
+    if stack.mist is not None:
+        mist_zone_mask = np.asarray(stack.mist, dtype=np.float32).copy()
+    else:
+        mist_zone_mask = np.zeros(h_shape, dtype=np.float32)
+
+    # Guard for T-14-04-04: skip scipy label step on very large masks to
+    # avoid O(cells) memory blow-up in degenerate inputs.
+    threshold = 0.3
+    decal_list: list = []
+    mist_cells = int(np.sum(mist_zone_mask > threshold))
+    if mist_cells > 0 and mist_cells <= 1_000_000:
+        try:
+            from scipy.ndimage import label as _label  # local import
+
+            binary = mist_zone_mask > threshold
+            labeled, num_features = _label(binary)
+            cs = float(stack.cell_size) if stack.cell_size else 1.0
+            ox = float(stack.world_origin_x) if stack.world_origin_x is not None else 0.0
+            oy = float(stack.world_origin_y) if stack.world_origin_y is not None else 0.0
+            for feat_id in range(1, num_features + 1):
+                indices = np.argwhere(labeled == feat_id)
+                if len(indices) == 0:
+                    continue
+                centroid = indices.mean(axis=0)
+                row_c, col_c = float(centroid[0]), float(centroid[1])
+                intensity = float(mist_zone_mask[labeled == feat_id].max())
+                radius_m = math.sqrt(len(indices)) * cs
+                decal_list.append({
+                    "world_x": ox + col_c * cs,
+                    "world_y": oy + row_c * cs,
+                    "radius_m": float(radius_m),
+                    "intensity": intensity,
+                })
+        except ImportError:
+            pass  # scipy not available; decal_list stays empty
+
+    stack.set("mist_zone_mask", mist_zone_mask, "waterfall_mist")
+    stack._extra_channels = getattr(stack, "_extra_channels", {})
+    stack._extra_channels["wet_surface_decal"] = decal_list
+
+    return PassResult(
+        pass_name="waterfall_mist",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("mist",),
+        produced_channels=("mist_zone_mask", "wet_surface_decal"),
+        metrics={
+            "mist_zone_cells": mist_cells,
+            "wet_surface_decal_count": len(decal_list),
+        },
+        issues=[],
+    )
+
+
+def register_bundle_c_mist_pass() -> None:
+    """Register the Bundle C waterfall mist supplementary pass."""
+    from .terrain_pipeline import TerrainPassController
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="waterfall_mist",
+            func=pass_waterfall_mist,
+            requires_channels=("mist",),
+            produces_channels=("mist_zone_mask", "wet_surface_decal"),
+            seed_namespace="waterfall_mist",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Bundle C — waterfall mist zone mask + wet-surface decal list",
+        )
+    )
+
+
 __all__ = [
     "LipCandidate",
     "ImpactPool",
     "WaterfallChain",
+    "WaterfallMistResult",
     "detect_waterfall_lip_candidates",
     "solve_waterfall_from_river",
     "carve_impact_pool",
@@ -1090,7 +1199,9 @@ __all__ = [
     "generate_foam_mask",
     "validate_waterfall_system",
     "pass_waterfalls",
+    "pass_waterfall_mist",
     "register_bundle_c_passes",
+    "register_bundle_c_mist_pass",
     "saturate",
     "bake_foam_vertex_alpha",
     "export_water_mesh_vertices",
