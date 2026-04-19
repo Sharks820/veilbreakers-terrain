@@ -716,3 +716,130 @@ class TestRoadMaskExclusion:
         from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
         result = _apply_sdf_exclusion(0.0, 0.0, None, 2.0, 0.0, 0.0, 100.0, 100.0)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.11 — SDF road exclusion (Wave 3)
+# ---------------------------------------------------------------------------
+
+class TestSdfRoadExclusion:
+    """Tests for SDF-based road edge exclusion via _apply_sdf_exclusion."""
+
+    def _excl(self, world_x, world_y, sdf_val, placement_radius=2.0):
+        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        road_sdf = np.full((8, 8), sdf_val, dtype=np.float32)
+        return _apply_sdf_exclusion(
+            world_x=world_x, world_y=world_y,
+            road_sdf_np=road_sdf,
+            placement_radius=placement_radius,
+            terrain_origin_x=0.0, terrain_origin_y=0.0,
+            terrain_width=10.0, terrain_height=10.0,
+        )
+
+    def test_sdf_below_radius_excludes(self):
+        """sdf=1.0 < placement_radius=2.0 → excluded."""
+        assert self._excl(5.0, 5.0, sdf_val=1.0, placement_radius=2.0)
+
+    def test_sdf_above_radius_passes(self):
+        """sdf=5.0 >= placement_radius=2.0 → not excluded."""
+        assert not self._excl(5.0, 5.0, sdf_val=5.0, placement_radius=2.0)
+
+    def test_none_sdf_no_exclusion(self):
+        """road_sdf_dist is None → no exclusion applied."""
+        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        assert not _apply_sdf_exclusion(5.0, 5.0, None, 2.0, 0.0, 0.0, 10.0, 10.0)
+
+    def test_default_clearance_is_two_metres(self):
+        """Default road_sdf_clearance parameter is 2.0m."""
+        # sdf=1.9 should be excluded at default clearance of 2.0
+        assert self._excl(5.0, 5.0, sdf_val=1.9, placement_radius=2.0)
+
+    def test_sdf_and_road_mask_both_active(self):
+        """A point excluded by road_mask is still excluded by SDF (not re-admitted)."""
+        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        # Both sdf=0.5 (excluded) and None (not excluded) — test both branches
+        road_sdf_low = np.full((8, 8), 0.5, dtype=np.float32)
+        road_sdf_high = np.full((8, 8), 5.0, dtype=np.float32)
+        assert _apply_sdf_exclusion(5.0, 5.0, road_sdf_low, 2.0, 0.0, 0.0, 10.0, 10.0)
+        assert not _apply_sdf_exclusion(5.0, 5.0, road_sdf_high, 2.0, 0.0, 0.0, 10.0, 10.0)
+
+
+# ---------------------------------------------------------------------------
+# Fix 9.9 — Emergent grass + Fix 9.10 — Halo scatter (Wave 3)
+# ---------------------------------------------------------------------------
+
+class TestEmergentGrass:
+    """Tests for compute_emergent_grass_density (Fix 9.9)."""
+
+    def test_full_ground_weight_gives_scale(self):
+        """All ground weights = 1.0 → output = GRASS_DENSITY_SCALE (5.0)."""
+        from blender_addon.handlers.terrain_vegetation_depth import (
+            GRASS_DENSITY_SCALE, compute_emergent_grass_density,
+        )
+        splatmap = np.zeros((4, 4, 5), dtype=np.float32)
+        splatmap[..., 0] = 1.0
+        result = compute_emergent_grass_density(splatmap)
+        assert result.shape == (4, 4)
+        np.testing.assert_allclose(result, GRASS_DENSITY_SCALE, rtol=1e-5)
+
+    def test_half_ground_weight_gives_half_scale(self):
+        """All ground weights = 0.5 → output = 2.5."""
+        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        splatmap = np.zeros((4, 4, 5), dtype=np.float32)
+        splatmap[..., 0] = 0.5
+        result = compute_emergent_grass_density(splatmap)
+        np.testing.assert_allclose(result, 2.5, rtol=1e-5)
+
+    def test_zero_ground_weight_gives_zeros(self):
+        """All ground weights = 0.0 → output all zeros."""
+        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        splatmap = np.zeros((4, 4, 5), dtype=np.float32)
+        result = compute_emergent_grass_density(splatmap)
+        np.testing.assert_array_equal(result, 0.0)
+
+    def test_invalid_splatmap_returns_zeros_no_crash(self):
+        """splatmap with ndim != 3 or L <= grass_idx → returns zeros, no crash."""
+        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        # 2D splatmap
+        result_2d = compute_emergent_grass_density(np.ones((4, 4), dtype=np.float32))
+        assert result_2d.ndim == 2
+        np.testing.assert_array_equal(result_2d, 0.0)
+        # L=0 (no layers)
+        result_0l = compute_emergent_grass_density(np.zeros((4, 4, 0), dtype=np.float32))
+        np.testing.assert_array_equal(result_0l, 0.0)
+
+    def test_output_dtype_is_float32(self):
+        """Output is float32."""
+        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        splatmap = np.ones((4, 4, 3), dtype=np.float64)
+        result = compute_emergent_grass_density(splatmap)
+        assert result.dtype == np.float32
+
+
+class TestHaloScatter:
+    """Tests for halo_scatter_point_id (Fix 9.10)."""
+
+    def test_deterministic(self):
+        """Same inputs → same tile_id always."""
+        from blender_addon.handlers.environment_scatter import halo_scatter_point_id
+        v = halo_scatter_point_id(10.0, 20.0, seed=42, num_tiles=4)
+        for _ in range(10):
+            assert halo_scatter_point_id(10.0, 20.0, seed=42, num_tiles=4) == v
+
+    def test_range_within_num_tiles(self):
+        """100 random points → all tile_ids in [0, num_tiles)."""
+        from blender_addon.handlers.environment_scatter import halo_scatter_point_id
+        rng = np.random.default_rng(0)
+        xs = rng.uniform(0, 100, 100)
+        ys = rng.uniform(0, 100, 100)
+        for x, y in zip(xs, ys):
+            tid = halo_scatter_point_id(float(x), float(y), seed=7, num_tiles=4)
+            assert 0 <= tid < 4
+
+    def test_same_point_same_tile(self):
+        """Two identical points → same tile_id."""
+        from blender_addon.handlers.environment_scatter import halo_scatter_point_id
+        assert (
+            halo_scatter_point_id(50.0, 50.0, seed=1, num_tiles=8)
+            == halo_scatter_point_id(50.0, 50.0, seed=1, num_tiles=8)
+        )

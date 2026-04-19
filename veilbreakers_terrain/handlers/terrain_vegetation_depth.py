@@ -1186,6 +1186,83 @@ def register_vegetation_depth_pass() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Emergent grass pass — Fix 9.9 / BUG-S10-011
+# ---------------------------------------------------------------------------
+
+GRASS_DENSITY_SCALE: float = 5.0
+"""Unity Detail Cards per m^2 at full splatmap grass weight."""
+
+_GRASS_SPLAT_INDEX: int = 0
+"""Index into splatmap_weights_layer for the grass proxy layer (ground = 0).
+Replace with a structural label index after Fix 10.10 lands.
+"""
+
+
+def compute_emergent_grass_density(
+    splatmap: np.ndarray,
+    grass_idx: int = _GRASS_SPLAT_INDEX,
+) -> np.ndarray:
+    """Derive grass density from splatmap ground weight (Fix 9.9).
+
+    Parameters
+    ----------
+    splatmap : np.ndarray shape (H, W, L) float32
+        Splatmap weights — each layer sums to 1.0 per cell.
+    grass_idx : int
+        Layer index used as grass proxy (default 0 = ground layer).
+
+    Returns
+    -------
+    np.ndarray shape (H, W) float32 — Unity Detail Card density per m^2.
+    Returns zeros when splatmap is invalid or grass_idx out of range.
+    """
+    weights = np.asarray(splatmap, dtype=np.float32)
+    if weights.ndim != 3 or weights.shape[2] <= grass_idx:
+        H = int(weights.shape[0]) if weights.ndim >= 1 else 1
+        W = int(weights.shape[1]) if weights.ndim >= 2 else 1
+        return np.zeros((H, W), dtype=np.float32)
+    return (weights[..., grass_idx] * GRASS_DENSITY_SCALE).astype(np.float32)
+
+
+def pass_emergent_grass(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Write grass_density_map to stack from splatmap weights (Fix 9.9).
+
+    Consumes: splatmap_weights_layer
+    Produces: grass_density_map (float32 H×W texture for Unity SetDetailLayer)
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    splatmap = stack.get("splatmap_weights_layer")
+
+    if splatmap is None:
+        return PassResult(
+            pass_name="emergent_grass",
+            status="skipped",
+            issues=[],
+            duration_seconds=time.perf_counter() - t0,
+            consumed_channels=("splatmap_weights_layer",),
+            produced_channels=("grass_density_map",),
+            metrics={},
+        )
+
+    grass_map = compute_emergent_grass_density(splatmap)
+    stack.set("grass_density_map", grass_map, "emergent_grass")
+
+    return PassResult(
+        pass_name="emergent_grass",
+        status="ok",
+        issues=[],
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("splatmap_weights_layer",),
+        produced_channels=("grass_density_map",),
+        metrics={"grass_density_mean": float(grass_map.mean())},
+    )
+
+
 __all__ = [
     "VegetationLayer",
     "VegetationLayers",
@@ -1201,4 +1278,8 @@ __all__ = [
     "apply_allelopathic_exclusion",
     "pass_vegetation_depth",
     "register_vegetation_depth_pass",
+    # Fix 9.9 — emergent grass
+    "GRASS_DENSITY_SCALE",
+    "compute_emergent_grass_density",
+    "pass_emergent_grass",
 ]
