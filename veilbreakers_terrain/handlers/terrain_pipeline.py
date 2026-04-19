@@ -378,6 +378,7 @@ class TerrainPassController:
         if pass_sequence is None:
             pass_sequence = [
                 "macro_world",
+                "terrain_labels",   # Fix 10.10 / REQ-P10-001: must be before structural_masks
                 "structural_masks",
                 "erosion",
                 "validation_minimal",
@@ -499,6 +500,75 @@ class TerrainPassController:
 
 
 # ---------------------------------------------------------------------------
+# Structural terrain label pass (Phase 10 / Fix 10.10 / REQ-P10-001)
+# ---------------------------------------------------------------------------
+
+def pass_compute_terrain_labels(
+    state: "TerrainPipelineState",
+    region: Optional[BBox],
+) -> "PassResult":
+    """Initialize structural terrain label channels (Fix 10.10 / REQ-P10-001).
+
+    Each of the four label channels (rock_label, gravel_label, water_label,
+    cliff_label) is initialized to zeros if not already stamped by a feature
+    generator.  Feature generators that stamp a label during generation retain
+    their authored mask unchanged — this pass only guarantees the channels are
+    present so downstream passes never hit KeyError.
+
+    Values are clamped to [0, 1] after stamping to guard against out-of-range
+    inputs from feature generators (T-10-01-01).
+
+    Contract:
+        Requires: height
+        Produces: rock_label, gravel_label, water_label, cliff_label
+    """
+    import time
+    import numpy as np
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    shape = stack.height.shape
+
+    label_channels = ("rock_label", "gravel_label", "water_label", "cliff_label")
+    for ch in label_channels:
+        existing = stack.get(ch)
+        if existing is not None:
+            # Preserve generator-stamped mask; clamp to [0, 1] (T-10-01-01)
+            clamped = np.clip(np.asarray(existing, dtype=np.float32), 0.0, 1.0)
+            stack.set(ch, clamped, "terrain_labels")
+        else:
+            stack.set(ch, np.zeros(shape, dtype=np.float32), "terrain_labels")
+
+    return PassResult(
+        pass_name="terrain_labels",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("rock_label", "gravel_label", "water_label", "cliff_label"),
+        metrics={},
+    )
+
+
+def register_terrain_label_passes() -> None:
+    """Register the terrain_labels pass on TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="terrain_labels",
+            func=pass_compute_terrain_labels,
+            requires_channels=("height",),
+            produces_channels=("rock_label", "gravel_label", "water_label", "cliff_label"),
+            seed_namespace="terrain_labels",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description=(
+                "Structural terrain labeling: initializes label channels; "
+                "feature generators stamp during generation."
+            ),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Default pass registration
 # ---------------------------------------------------------------------------
 
@@ -615,10 +685,13 @@ def register_default_passes() -> None:
     )
     from .terrain_delta_integrator import register_integrator_pass
     register_integrator_pass()
+    register_terrain_label_passes()
 
 
 __all__ = [
     "TerrainPassController",
     "derive_pass_seed",
     "register_default_passes",
+    "pass_compute_terrain_labels",
+    "register_terrain_label_passes",
 ]

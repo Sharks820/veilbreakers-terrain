@@ -326,16 +326,68 @@ def compute_slope_material_weights(
 
         weights[:, :, idx] = combined.astype(np.float32)
 
-    # Fallback: any cell whose total weight is 0 gets 1.0 on the default layer
+    # --- Structural label overrides (Fix 10.10 / REQ-P10-001) ---
+    # Feature generators stamp labels during generation; labels take priority over
+    # analytical slope classification. Labeled cells skip the analytical path.
+    rock_label   = stack.get("rock_label")    # float32 mask [0..1]
+    gravel_label = stack.get("gravel_label")  # float32 mask [0..1]
+    water_label  = stack.get("water_label")   # float32 mask [0..1]
+    cliff_label  = stack.get("cliff_label")   # float32 mask [0..1]
+    has_labels = any(lbl is not None for lbl in (rock_label, gravel_label, water_label, cliff_label))
+
+    if has_labels:
+        # Map label channel → splatmap layer index.
+        # Only assign if the target channel_id exists in the rule set.
+        _label_channel_map = {
+            "rock_label":   ("cliff",),     # rock structural label → cliff material
+            "gravel_label": ("scree",),     # gravel structural label → scree material
+            "water_label":  ("wet_rock",),  # water structural label → wet_rock material
+            "cliff_label":  ("cliff",),     # cliff structural label → cliff material
+        }
+        label_arrays = {
+            "rock_label":   rock_label,
+            "gravel_label": gravel_label,
+            "water_label":  water_label,
+            "cliff_label":  cliff_label,
+        }
+        for label_key, target_ids in _label_channel_map.items():
+            lbl = label_arrays[label_key]
+            if lbl is None:
+                continue
+            lbl = np.asarray(lbl, dtype=np.float32)
+            labeled = lbl > 0.5  # boolean mask of labeled cells
+            if not labeled.any():
+                continue
+            for target_id in target_ids:
+                try:
+                    tidx = rules.index_of(target_id)
+                except KeyError:
+                    continue
+                # For labeled cells: zero all layers, then set the target layer to 1.0
+                weights[labeled, :] = 0.0
+                weights[labeled, tidx] = 1.0
+
+    # Build all_labeled mask for conditional normalization
+    if has_labels:
+        all_labeled = np.zeros((H, W), dtype=bool)
+        for label_key, lbl in label_arrays.items():
+            if lbl is not None:
+                all_labeled |= (np.asarray(lbl, dtype=np.float32) > 0.5)
+        unlabeled = ~all_labeled
+    else:
+        unlabeled = np.ones((H, W), dtype=bool)
+
+    # Fallback: any unlabeled cell whose total weight is 0 gets 1.0 on the default layer
     total = weights.sum(axis=2)
     default_idx = rules.index_of(rules.default_channel_id)
-    empty = total <= 1e-9
+    empty = (total <= 1e-9) & unlabeled
     if empty.any():
         weights[empty, default_idx] = 1.0
         total = weights.sum(axis=2)
 
-    # Normalize weights to sum to 1 per cell
-    weights /= total[:, :, None]
+    # Normalize unlabeled cells only (labeled cells are already sum=1.0)
+    norm_denom = np.where(unlabeled, total, 1.0)
+    weights[unlabeled] = (weights[unlabeled] / norm_denom[unlabeled, np.newaxis])
 
     return weights.astype(np.float32)
 

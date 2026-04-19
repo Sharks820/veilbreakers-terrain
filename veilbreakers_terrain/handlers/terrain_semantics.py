@@ -320,6 +320,15 @@ class TerrainMaskStack:
     road_mask: Optional[np.ndarray] = None
     road_sdf_dist: Optional[np.ndarray] = None
 
+    # Structural terrain labels (Phase 10 / Fix 10.10 / REQ-P10-001)
+    # Feature generators stamp these during generation; materials pass reads as
+    # authoritative overrides before falling back to analytical classification.
+    rock_label: Optional[np.ndarray] = None
+    gravel_label: Optional[np.ndarray] = None
+    water_label: Optional[np.ndarray] = None
+    cliff_label: Optional[np.ndarray] = None
+    strata_height: Optional[np.ndarray] = None
+
     # Height decomposition channels (Fix 12.1 — low/high freq split)
     hmap_low_freq: Optional[np.ndarray] = None   # base shape, max LOW_FREQ_OCTAVES=3 octaves
     hmap_high_freq: Optional[np.ndarray] = None  # micro-detail, octaves 3-7
@@ -417,6 +426,12 @@ class TerrainMaskStack:
             # Height decomposition (Fix 12.1)
             "hmap_low_freq",
             "hmap_high_freq",
+            # Structural terrain labels (Phase 10 / Fix 10.10)
+            "rock_label",
+            "gravel_label",
+            "water_label",
+            "cliff_label",
+            "strata_height",
         ),
     )
 
