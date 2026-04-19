@@ -168,6 +168,163 @@ def trace_river_from_flow(
     return path
 
 
+# ---------------------------------------------------------------------------
+# Priority-Flood D8 (Barnes et al. 2014) — Fix 7.3 / Fix 7.17
+# ---------------------------------------------------------------------------
+
+
+def priority_flood_d8(dem: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Barnes 2014 Priority-Flood watershed routing with D8 direction encoding.
+
+    Fills depressions by routing through the lowest available spill point,
+    then assigns each cell a D8 steepest-descent direction.
+
+    Args:
+        dem: 2D float elevation array.
+
+    Returns:
+        (flow_direction, flow_accumulation):
+          flow_direction  -- (H, W) int8 array, values 0-7 (D8 index) or -1
+              for border/no-outflow cells. Direction encodes the neighbor this
+              cell drains TO:
+              0=N(-1,0), 1=NE(-1,+1), 2=E(0,+1), 3=SE(+1,+1),
+              4=S(+1,0), 5=SW(+1,-1), 6=W(0,-1), 7=NW(-1,-1)
+          flow_accumulation -- (H, W) float64 array, each cell's upstream
+              drainage area in cells (>= 1.0). Computed via topological sort
+              on the D8 tree.
+
+    Reference: Barnes, R., Lehman, C., Mulla, D. (2014). "Priority-flood: An
+        optimal depression-filling and watershed-labeling algorithm for digital
+        elevation models." Computers & Geosciences 62, 117-127.
+        Fix 7.3 / Fix 7.17 / REQ-P7-001 / REQ-P7-002
+    """
+    hmap = np.asarray(dem, dtype=np.float64)
+    H, W = hmap.shape
+
+    visited = np.zeros((H, W), dtype=bool)
+    water_level = np.full((H, W), np.inf, dtype=np.float64)
+    flow_dir = np.full((H, W), -1, dtype=np.int8)
+
+    open_heap: list[tuple[float, int, int]] = []
+
+    # Seed all border cells — they are open to external drainage
+    for r in range(H):
+        for c_bnd in (0, W - 1):
+            if not visited[r, c_bnd]:
+                heapq.heappush(open_heap, (hmap[r, c_bnd], r, c_bnd))
+                water_level[r, c_bnd] = hmap[r, c_bnd]
+                visited[r, c_bnd] = True
+    for c in range(1, W - 1):
+        for r_bnd in (0, H - 1):
+            if not visited[r_bnd, c]:
+                heapq.heappush(open_heap, (hmap[r_bnd, c], r_bnd, c))
+                water_level[r_bnd, c] = hmap[r_bnd, c]
+                visited[r_bnd, c] = True
+
+    while open_heap:
+        wl, r, c = heapq.heappop(open_heap)
+        for d, (dr, dc) in enumerate(_D8_OFFSETS):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < H and 0 <= nc < W):
+                continue
+            if visited[nr, nc]:
+                continue
+            visited[nr, nc] = True
+            new_wl = max(wl, hmap[nr, nc])
+            water_level[nr, nc] = new_wl
+            # Neighbor drains back toward (r,c) — direction is opposite of d
+            flow_dir[nr, nc] = np.int8((d + 4) % 8)
+            heapq.heappush(open_heap, (new_wl, nr, nc))
+
+    # Compute flow accumulation via topological sort on the D8 tree.
+    # Sort cells by ascending water_level so upstream cells are processed first;
+    # iterate in reverse (highest water_level first) to propagate downhill.
+    order = np.argsort(water_level.ravel()).astype(np.int32)
+    rows_flat = order // W
+    cols_flat = order % W
+
+    flow_acc = np.ones((H, W), dtype=np.float64)
+
+    for idx in range(H * W - 1, -1, -1):  # highest water_level first
+        r_i = int(rows_flat[idx])
+        c_i = int(cols_flat[idx])
+        d = int(flow_dir[r_i, c_i])
+        if d < 0:
+            continue
+        dr, dc = _D8_OFFSETS[d]
+        nr, nc = r_i + dr, c_i + dc
+        if 0 <= nr < H and 0 <= nc < W:
+            flow_acc[nr, nc] += flow_acc[r_i, c_i]
+
+    return flow_dir, flow_acc
+
+
+def pass_hydrology(
+    state: "TerrainPipelineState",
+    region: "BBox | None",
+) -> "PassResult":
+    """Compute Priority-Flood D8 flow routing and write to the stack.
+
+    Writes:
+        flow_direction      -- D8 int8 direction index (-1 at borders/flat sinks)
+        flow_accumulation   -- float64 upstream drainage area in cells (>= 1.0)
+
+    Reads:
+        stack.height -- the DEM to route on
+
+    Fix 7.3 / Fix 7.17 / REQ-P7-001 / REQ-P7-002
+    """
+    import time as _time
+    from .terrain_semantics import PassResult
+
+    t0 = _time.perf_counter()
+    stack = state.mask_stack
+    dem = stack.height
+    if dem is None:
+        return PassResult(
+            pass_name="pass_hydrology",
+            status="failed",
+            duration_seconds=_time.perf_counter() - t0,
+            issues=[],
+        )
+
+    flow_dir, flow_acc = priority_flood_d8(dem)
+    stack.set("flow_direction", flow_dir, "pass_hydrology")
+    stack.set("flow_accumulation", flow_acc, "pass_hydrology")
+
+    return PassResult(
+        pass_name="pass_hydrology",
+        status="ok",
+        duration_seconds=_time.perf_counter() - t0,
+        produced_channels=("flow_direction", "flow_accumulation"),
+        consumed_channels=("height",),
+        metrics={
+            "dem_shape": list(dem.shape),
+            "flow_acc_max": float(flow_acc.max()),
+            "flow_acc_min": float(flow_acc.min()),
+        },
+        issues=[],
+    )
+
+
+def register_pass_hydrology() -> None:
+    """Register pass_hydrology with TerrainPassController (Fix 7.3)."""
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_hydrology",
+            func=pass_hydrology,
+            requires_channels=("height",),
+            produces_channels=("flow_direction", "flow_accumulation"),
+            seed_namespace="",
+            requires_scene_read=False,
+            description="Priority-Flood D8 flow routing (Barnes 2014) — Fix 7.3/7.17",
+        )
+    )
+
+
 def detect_lakes(
     heightmap: np.ndarray,
     flow_accumulation: np.ndarray,

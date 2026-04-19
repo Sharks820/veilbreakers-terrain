@@ -1,0 +1,87 @@
+"""Tests for Priority-Flood D8 + pass_hydrology (REQ-P7-001, REQ-P7-002, Fix 7.3/7.17)."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from veilbreakers_terrain.handlers._water_network import priority_flood_d8
+
+
+def test_flat_dem_border_drainage():
+    """All interior cells of a flat dem must drain somewhere (no -1 except borders)."""
+    dem = np.ones((5, 5), dtype=np.float64)
+    flow_dir, flow_acc = priority_flood_d8(dem)
+    # Interior cells (1..3, 1..3) should have a direction assigned
+    interior = flow_dir[1:4, 1:4]
+    assert np.all(interior >= 0), (
+        f"Interior cells should drain; got -1 at {np.argwhere(interior < 0).tolist()}"
+    )
+
+
+def test_pit_filled():
+    """A single interior pit must be assigned a flow direction (Priority-Flood fills it)."""
+    dem = np.ones((5, 5), dtype=np.float64)
+    dem[2, 2] = 0.0  # interior pit
+    flow_dir, _ = priority_flood_d8(dem)
+    assert flow_dir[2, 2] != -1, (
+        f"Pit at [2,2] should be filled and assigned a direction; got {flow_dir[2, 2]}"
+    )
+
+
+def test_flow_acc_minimum_one():
+    """Every cell must accumulate at least itself (>= 1.0)."""
+    dem = np.random.default_rng(42).uniform(0, 10, (8, 8))
+    _, flow_acc = priority_flood_d8(dem)
+    assert np.all(flow_acc >= 1.0), f"Minimum accumulation violated: {flow_acc.min()}"
+
+
+def test_flow_acc_outlet_receives_most():
+    """For a slope draining to one corner, that corner has the highest accumulation."""
+    H, W = 6, 6
+    # Slope: dem[r,c] = r + c  (drains toward [0,0])
+    r_idx, c_idx = np.mgrid[0:H, 0:W]
+    dem = (r_idx + c_idx).astype(np.float64)
+    _, flow_acc = priority_flood_d8(dem)
+    corner = flow_acc[0, 0]
+    assert corner == flow_acc.max(), (
+        f"Corner [0,0] should have highest acc ({corner}) but max is {flow_acc.max()}"
+    )
+
+
+def test_pass_hydrology_writes_stack():
+    """pass_hydrology must write flow_direction and flow_accumulation to the stack."""
+    from veilbreakers_terrain.handlers._water_network import pass_hydrology
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+        TerrainIntentState,
+        BBox,
+    )
+
+    tile_size = 4
+    height = np.ones((tile_size, tile_size), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    region = BBox(0.0, 0.0, float(tile_size), float(tile_size))
+    intent = TerrainIntentState(
+        seed=0,
+        region_bounds=region,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    result = pass_hydrology(state, None)
+
+    assert result.status == "ok", f"pass_hydrology returned status={result.status}"
+    assert stack.flow_direction is not None, "flow_direction not written to stack"
+    assert stack.flow_accumulation is not None, "flow_accumulation not written to stack"
+    assert stack.flow_direction.shape == (tile_size, tile_size)
+    assert stack.flow_accumulation.shape == (tile_size, tile_size)
