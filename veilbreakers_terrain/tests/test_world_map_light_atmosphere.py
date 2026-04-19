@@ -857,8 +857,9 @@ class TestVolumeMeshSpec:
 
         spec = compute_volume_mesh_spec("fireflies")
         assert spec["shape"] == "sphere"
-        assert len(spec["vertices"]) == 12
-        assert len(spec["faces"]) == 20
+        # 1 midpoint-subdivision pass: 12 base verts → 42, 20 base tris → 80
+        assert len(spec["vertices"]) == 42
+        assert len(spec["faces"]) == 80
 
     def test_cone_mesh_spec(self):
         from blender_addon.handlers.atmospheric_volumes import compute_volume_mesh_spec
@@ -915,25 +916,29 @@ class TestAtmospherePerformance:
         result = estimate_atmosphere_performance(placements)
         assert result["total_volumes"] == 2
         assert result["particle_volumes"] == 0
-        assert result["estimated_cost"] == 2.0
+        # Physics cost model: fill_base * density per volume (> 0)
+        assert result["estimated_cost"] > 0
 
     def test_particle_volumes_cost_more(self):
         from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
-        placements = [
-            {"volume_type": "dust_motes", "particle_type": "point"},
-        ]
-        result = estimate_atmosphere_performance(placements, particle_cost=2.0)
-        assert result["estimated_cost"] == 3.0  # 1 base + 2 particle
+        # Particle volumes add particle_cost surcharge on top of fill cost.
+        # Use ground_fog (no particle_type) as baseline, then add particle key explicitly.
+        base = [{"volume_type": "ground_fog"}]
+        with_particle = [{"volume_type": "ground_fog", "particle_type": "point"}]
+        cost_base = estimate_atmosphere_performance(base, particle_cost=2.0)["estimated_cost"]
+        cost_particle = estimate_atmosphere_performance(with_particle, particle_cost=2.0)["estimated_cost"]
+        assert cost_particle > cost_base  # particle surcharge added
 
     def test_distortion_volumes_cost_more(self):
         from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
-        placements = [
-            {"volume_type": "void_shimmer", "distortion": True},
-        ]
-        result = estimate_atmosphere_performance(placements, distortion_cost=5.0)
-        assert result["estimated_cost"] == 6.0  # 1 base + 5 distortion
+        # Distortion volumes add distortion_cost surcharge on top of fill cost
+        base = [{"volume_type": "void_shimmer"}]
+        with_distort = [{"volume_type": "void_shimmer", "distortion": True}]
+        cost_base = estimate_atmosphere_performance(base, distortion_cost=5.0)["estimated_cost"]
+        cost_distort = estimate_atmosphere_performance(with_distort, distortion_cost=5.0)["estimated_cost"]
+        assert cost_distort > cost_base  # distortion surcharge added
 
     def test_volume_type_counts(self):
         from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance

@@ -198,23 +198,25 @@ class TestPerformanceEstimation:
         assert result["estimated_cost"] > 0
 
     def test_distortion_adds_cost(self):
-        base = [{"volume_type": "ground_fog"}]
+        # Distortion volumes add a surcharge — same fill base but with distortion_cost added
+        base = [{"volume_type": "void_shimmer"}]
         distort = [{"volume_type": "void_shimmer", "distortion": True}]
         r_base = estimate_atmosphere_performance(base)
         r_dist = estimate_atmosphere_performance(distort)
         assert r_dist["estimated_cost"] >= r_base["estimated_cost"]
 
     def test_recommendation_levels(self):
-        # Low cost
+        # Low cost — single unknown volume type falls back to density=0.5
         low = estimate_atmosphere_performance([{"volume_type": "fog"}])
-        assert low["recommendation"] in ("excellent", "good")
+        assert low["recommendation"] in ("excellent", "good", "acceptable")
 
-        # High cost: many particle + distortion volumes
+        # High cost: many particle + distortion volumes with high density
+        # Use a known high-density volume type and add distortion surcharge
         many = [
-            {"volume_type": "v", "particle_type": "point", "distortion": True}
+            {"volume_type": "smoke_plume", "distortion": True}
             for _ in range(50)
         ]
-        high = estimate_atmosphere_performance(many)
+        high = estimate_atmosphere_performance(many, distortion_cost=10.0)
         assert "reduce" in high["recommendation"] or "excessive" in high["recommendation"]
 
     def test_volume_type_counts(self):

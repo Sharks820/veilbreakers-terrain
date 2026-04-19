@@ -391,14 +391,25 @@ def apply_periglacial_patterns(
     center_y = rng.randint(0, h, size=n_centers).astype(np.float64)
     center_x = rng.randint(0, w, size=n_centers).astype(np.float64)
 
-    # Vectorised distance-to-nearest-center: broadcast (N,1,1) vs (H,W)
+    # Vectorised distance-to-nearest-center
     ys = np.arange(h, dtype=np.float64)
     xs = np.arange(w, dtype=np.float64)
     yy, xx = np.meshgrid(ys, xs, indexing="ij")  # (H, W)
-    # (n_centers, H, W) — compute all distances at once, take min over axis 0
-    dy = yy[np.newaxis, :, :] - center_y[:, np.newaxis, np.newaxis]
-    dx = xx[np.newaxis, :, :] - center_x[:, np.newaxis, np.newaxis]
-    min_dist = np.sqrt(dy ** 2 + dx ** 2).min(axis=0)
+
+    if n_centers > 50 and _HAS_SCIPY:
+        # KDTree path — O(H*W * log(n_centers)) vs O(n_centers * H * W) broadcast
+        from scipy.spatial import KDTree
+        pts = np.stack([center_y, center_x], axis=1)  # (K, 2)
+        query_pts = np.stack([yy.ravel(), xx.ravel()], axis=1)  # (H*W, 2)
+        tree = KDTree(pts)
+        dists, _ = tree.query(query_pts, k=1)
+        min_dist = dists.reshape(h, w)
+    else:
+        # Broadcast path for small center count
+        # (n_centers, H, W) — compute all distances at once, take min over axis 0
+        dy = yy[np.newaxis, :, :] - center_y[:, np.newaxis, np.newaxis]
+        dx = xx[np.newaxis, :, :] - center_x[:, np.newaxis, np.newaxis]
+        min_dist = np.sqrt(dy ** 2 + dx ** 2).min(axis=0)
 
     # Normalize — ridges at polygon boundaries
     max_d = min_dist.max()
@@ -820,9 +831,10 @@ def apply_tafoni_weathering(
             cy, cx = divmod(idx, w)
             rx = rng.uniform(*rx_range)
             ry = rng.uniform(*ry_range)
-            dist = np.sqrt(((ys - cy) / ry) ** 2 + ((xs - cx) / rx) ** 2)
-            cavity = np.clip(1.0 - dist, 0.0, 1.0) ** 2
-            result -= cavity * depth_scale * intensity
+            # Gaussian falloff — smoother, more natural cavity edges than linear clip
+            sigma_sq = max(((rx + ry) * 0.5) ** 2, 1e-9)
+            cavity = np.exp(-(((ys - cy) ** 2 + (xs - cx) ** 2) / (2.0 * sigma_sq)))
+            result[:] -= cavity * depth_scale * intensity
 
     # Macro cavities: larger, deeper
     _place_cavities(effective_cavities, (2.5, 5.0), (2.5, 5.0), cavity_scale)

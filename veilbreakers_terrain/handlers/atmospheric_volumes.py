@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import random
+import warnings
 from typing import Any, Optional
 
 try:
@@ -224,6 +225,14 @@ def compute_atmospheric_placements(
         ``emission_strength``, ``distortion``.  When a heightmap is provided
         each placement also carries ``terrain_z`` (raw heightmap sample).
     """
+    if heightmap is None:
+        warnings.warn(
+            "compute_atmospheric_placements: no heightmap supplied; "
+            "volume z positions will be at absolute height_offset only. "
+            "Pass heightmap=stack.height for terrain-correct placement.",
+            stacklevel=2,
+        )
+
     rng = random.Random(seed)
     rules = BIOME_ATMOSPHERE_RULES.get(biome_name, _DEFAULT_ATMOSPHERE)
 
@@ -316,12 +325,18 @@ def compute_atmospheric_placements(
             px = max(min_x, min(max_x, px))
             py = max(min_y, min(max_y, py))
             terrain_z = float(hm[r_idx, c_idx])
-            pz = terrain_z * cell_size + height_offset
+            pz = terrain_z + height_offset
         else:
             px = rng.uniform(min_x, max_x)
             py = rng.uniform(min_y, max_y)
-            terrain_z = 0.0
-            pz = height_offset
+            # Sample terrain height at the chosen position when heightmap is available
+            if _has_numpy:
+                c_idx = int(np.clip((px - min_x) / max(cell_size, 1e-9), 0, cols - 1))
+                r_idx = int(np.clip((py - min_y) / max(cell_size, 1e-9), 0, rows - 1))
+                terrain_z = float(hm[r_idx, c_idx])
+            else:
+                terrain_z = 0.0
+            pz = terrain_z + height_offset
 
         return px, py, pz, terrain_z
 
@@ -468,8 +483,8 @@ def compute_volume_mesh_spec(
         ]
 
     elif shape == "sphere":
-        # Icosahedron base: 12 vertices, 20 triangular faces.
-        # No subdivision — keeps vertex/face count at exactly 12/20.
+        # Icosphere: 12-vert icosahedron base + 1 midpoint-subdivision pass.
+        # Result: 42 vertices, 80 triangular faces — manifold, evenly tessellated.
         r = h
         phi = (1.0 + math.sqrt(5.0)) / 2.0
 
@@ -495,12 +510,40 @@ def compute_volume_mesh_spec(
             (4,  9,  5), (2,  4, 11), (6,  2, 10), (8,  6,  7), (9,  8,  1),
         ]
 
+        # --- One midpoint-subdivision pass: 12 → 42 verts, 20 → 80 tris ---
+        edge_cache: dict[tuple[int, int], int] = {}
+        new_verts: list[tuple[float, float, float]] = list(raw)
+
+        def _mid(i: int, j: int) -> int:
+            key = (min(i, j), max(i, j))
+            if key in edge_cache:
+                return edge_cache[key]
+            vx = (new_verts[i][0] + new_verts[j][0]) * 0.5
+            vy = (new_verts[i][1] + new_verts[j][1]) * 0.5
+            vz = (new_verts[i][2] + new_verts[j][2]) * 0.5
+            mag = math.sqrt(vx * vx + vy * vy + vz * vz)
+            new_verts.append((vx / mag, vy / mag, vz / mag))
+            edge_cache[key] = len(new_verts) - 1
+            return edge_cache[key]
+
+        sub_tris: list[tuple[int, int, int]] = []
+        for (a, b, c) in base_tris:
+            ab = _mid(a, b)
+            bc = _mid(b, c)
+            ca = _mid(c, a)
+            sub_tris.extend([
+                (a, ab, ca),
+                (b, bc, ab),
+                (c, ca, bc),
+                (ab, bc, ca),
+            ])
+
         cx, cy, cz = position
         vertices = [
             (cx + vx * r, cy + vy * r, cz + vz * r)
-            for vx, vy, vz in raw
+            for vx, vy, vz in new_verts
         ]
-        faces = [tuple(t) for t in base_tris]  # type: ignore[assignment]
+        faces = [tuple(t) for t in sub_tris]  # type: ignore[assignment]
 
     else:  # cone — n_sides=8, apex + 8 base ring = 9 vertices (no base centre)
         n_sides = 8
@@ -562,22 +605,18 @@ def estimate_atmosphere_performance(
     placements: list[dict[str, Any]],
     particle_cost: float = 1.0,
     distortion_cost: float = 2.0,
+    resolution: int = 64,
+    num_samples: int = 8,
+    base_fill_rate: float = 0.01,
 ) -> dict[str, Any]:
     """Estimate relative GPU cost of atmospheric volume placements.
 
-    Cost model (integer-like, not ms):
-    - 1 per volume (base cost)
-    - particle_cost extra per volume whose particle_type is not None
-    - distortion_cost extra per volume with distortion=True
+    Physics-based cost model: each volume's fill cost scales with screen area
+    (resolution^2) and sample count, modulated by its density.
 
-    Volumes are identified as particle volumes if they carry a non-None
-    ``particle_type`` key in the placement dict, or if the volume type
-    definition in ATMOSPHERIC_VOLUMES has a non-None particle_type.
-
-    Recommendation thresholds (on estimated_cost):
-    - "excellent"  if cost == 0  (no volumes)
-    - "good"       if cost <= total_volumes  (base cost only, no extras)
-    - "acceptable" otherwise
+    Cost per volume = base_fill_rate * resolution^2 * num_samples * density
+    Distortion volumes carry an additional surcharge (full-screen post-process).
+    Particle volumes use a separate particle-system cost.
 
     Parameters
     ----------
@@ -587,6 +626,13 @@ def estimate_atmosphere_performance(
         Extra cost per particle volume (default 1.0).
     distortion_cost : float
         Extra cost per distortion volume (default 2.0).
+    resolution : int
+        Render resolution (width or height, pixels). Cost scales as resolution^2.
+        Default 64.
+    num_samples : int
+        Number of ray-march samples per volume. Default 8.
+    base_fill_rate : float
+        Base fill rate constant. Default 0.01.
 
     Returns
     -------
@@ -622,15 +668,32 @@ def estimate_atmosphere_performance(
         if p.get("distortion"):
             distortion_vols += 1
 
-    total = len(placements)
-    cost = float(total) + particle_cost * particle_vols + distortion_cost * distortion_vols
+    # Physics-based cost: base_fill_rate * resolution^2 * num_samples * density per volume
+    fill_base = base_fill_rate * (resolution ** 2) * num_samples
+    cost = 0.0
+    for p in placements:
+        vol_name = p.get("volume_type", "")
+        vol_def = ATMOSPHERIC_VOLUMES.get(vol_name)
+        density = float(vol_def.get("density", 0.5)) if vol_def else 0.5
+        cost += fill_base * density
 
+    # Distortion surcharge (full-screen post-process)
+    cost += distortion_cost * distortion_vols
+    # Particle volumes use CPU/GPU particle system
+    cost += particle_cost * particle_vols
+
+    total = len(placements)
+    # Recommendation thresholds:
+    # - excellent: no particle/distortion surcharges
+    # - acceptable: moderate particle/distortion overhead (< 20% of volumes)
+    # - excessive: heavy particle/distortion surcharge (>= 20% of volumes) or > 20 total
+    surcharge_vols = particle_vols + distortion_vols
     if particle_vols == 0 and distortion_vols == 0:
         recommendation = "excellent"
-    elif cost <= total * 2:
+    elif total <= 20 and surcharge_vols < total * 0.2:
         recommendation = "acceptable"
     else:
-        recommendation = "excessive: reduce volume count"
+        recommendation = "excessive: reduce volume count or density"
 
     return {
         "total_volumes": total,
