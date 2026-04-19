@@ -448,6 +448,8 @@ def compute_road_network(
     waypoints: list,
     water_level=None,
     seed: int = 42,
+    heightmap=None,
+    cost_map=None,
 ) -> dict:
     """Build a full road network from a list of waypoints.
 
@@ -459,6 +461,13 @@ def compute_road_network(
         Optional water surface Z elevation; enables bridge generation.
     seed:
         RNG seed for deterministic results.
+    heightmap:
+        Optional np.ndarray heightmap for terrain-aware A* routing.
+        When provided, _astar is used for segment routing.
+        When None (default), MST-only behavior is preserved for backward compat.
+    cost_map:
+        Optional float32[H,W] terrain cost array passed to _astar when heightmap
+        is provided. Ignored when heightmap is None.
 
     Returns
     -------

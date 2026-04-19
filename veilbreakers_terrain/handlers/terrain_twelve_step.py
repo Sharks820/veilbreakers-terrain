@@ -382,6 +382,63 @@ def _detect_waterfall_lips_stub(
     )
 
 
+def _build_road_cost_map(
+    hmap: np.ndarray,
+    rock_hardness: "np.ndarray | None" = None,
+    water_surface: "np.ndarray | None" = None,
+) -> np.ndarray:
+    """Build avgCost terrain cost map for _astar.
+
+    High values discourage A* from routing through difficult terrain.
+    rock_hardness: normalized [0,1]; >0.7 is hard rock (expensive).
+    water_surface: normalized [0,1]; any positive value is water (very expensive).
+    Returns float32[H,W] cost map.
+    """
+    cost = np.zeros(hmap.shape, dtype=np.float32)
+    if rock_hardness is not None:
+        rh = np.asarray(rock_hardness, dtype=np.float32)
+        if rh.shape == hmap.shape:
+            cost += np.clip(rh, 0.0, 1.0)
+    if water_surface is not None:
+        ws = np.asarray(water_surface, dtype=np.float32)
+        if ws.shape == hmap.shape:
+            water_mask = (ws > 0.0).astype(np.float32)
+            cost += water_mask * 5.0
+    return cost.astype(np.float32)
+
+
+def _road_type_for_anchor_pair(kind_a: str, kind_b: str) -> str:
+    """Return road type for a pair of POI anchor kinds.
+
+    settlement↔settlement → main
+    settlement↔(resource|dungeon) → path
+    all other pairs → trail
+    """
+    main_set = {"settlement"}
+    path_set = {"resource", "dungeon"}
+    a, b = kind_a.lower(), kind_b.lower()
+    if a in main_set and b in main_set:
+        return "main"
+    if (a in main_set and b in path_set) or (b in main_set and a in path_set):
+        return "path"
+    return "trail"
+
+
+def _road_profile_params(road_type: str) -> dict:
+    """Return 3-zone carving parameters for a road type.
+
+    main:  road_width=3.0, shoulder_width=4.0, influence_width=6.0
+    path:  road_width=2.0, shoulder_width=3.0, influence_width=5.0
+    trail: road_width=1.0, shoulder_width=2.0, influence_width=3.0
+    """
+    profiles = {
+        "main":  {"road_width": 3.0, "shoulder_width": 4.0, "influence_width": 6.0},
+        "path":  {"road_width": 2.0, "shoulder_width": 3.0, "influence_width": 5.0},
+        "trail": {"road_width": 1.0, "shoulder_width": 2.0, "influence_width": 3.0},
+    }
+    return profiles.get(road_type, profiles["path"])
+
+
 def _generate_road_mesh_specs(
     world_hmap: np.ndarray,
     intent: TerrainIntentState,
@@ -389,61 +446,106 @@ def _generate_road_mesh_specs(
     tile_grid_y: int,
     cell_size: float,
     seed: int,
+    rock_hardness: "np.ndarray | None" = None,
+    water_surface: "np.ndarray | None" = None,
 ) -> Tuple[List[Dict[str, Any]], np.ndarray, np.ndarray, np.ndarray]:
     """Generate road mesh specifications and return the carved heightmap + channels.
+
+    Uses the full Rune pipeline: cost_map → _astar → smooth_road_path →
+    _apply_road_profile_to_heightmap.
 
     Returns ``(road_specs, carved_hmap, road_mask, road_sdf_dist)`` where:
       - ``carved_hmap`` is a copy of ``world_hmap`` with all road grades applied.
       - ``road_mask`` is uint8[H,W] — 1 inside Zone 1 (road surface), 0 elsewhere.
       - ``road_sdf_dist`` is float32[H,W] — scipy EDT distance from road boundary.
 
-    The caller should replace ``world_eroded`` with ``carved_hmap`` *before*
-    per-tile extraction so road cuts propagate into every tile's height channel.
-
     If no waypoints are configured on the intent the function returns an empty
     list, the original heightmap, and zero-filled mask/sdf arrays.
     """
-    from ._terrain_noise import generate_road_path
+    from ._terrain_noise import _astar, smooth_road_path
 
     rows, cols = world_hmap.shape
     _empty_mask = np.zeros((rows, cols), dtype=np.uint8)
     _empty_sdf = np.zeros((rows, cols), dtype=np.float32)
 
     waypoints: List[Tuple[int, int]] = getattr(intent, "road_waypoints", None) or []
+
+    # Build POI-derived waypoints from anchors if road_waypoints not explicitly set
+    anchors = getattr(intent, "anchors", ()) or ()
+    if not waypoints and len(anchors) >= 2:
+        cell = cell_size if cell_size > 0 else 1.0
+        origin_x = float(intent.region_bounds.min_x)
+        origin_y = float(intent.region_bounds.min_y)
+        anchor_cells = []
+        for a in anchors:
+            wx, wy = float(a.world_position[0]), float(a.world_position[1])
+            col_idx = int((wx - origin_x) / cell)
+            row_idx = int((wy - origin_y) / cell)
+            col_idx = max(0, min(cols - 1, col_idx))
+            row_idx = max(0, min(rows - 1, row_idx))
+            anchor_cells.append((row_idx, col_idx, a.anchor_kind))
+        waypoints = [(r, c) for r, c, _ in anchor_cells]
+
     if len(waypoints) < 2:
         _log.info(
-            "Road carve skipped: fewer than 2 road waypoints on intent (got %d)",
-            len(waypoints),
+            "Road pipeline skipped: fewer than 2 waypoints (got %d)", len(waypoints)
         )
         return [], world_hmap, _empty_mask, _empty_sdf
 
-    road_specs: List[Dict[str, Any]] = []
-    carved = world_hmap
-    road_mask = _empty_mask
-    road_sdf_dist = _empty_sdf
-    try:
-        path, carved = generate_road_path(
-            carved,
-            waypoints,
-            width=max(3, int(3.0 / cell_size)),
-            grade_strength=0.8,
-            seed=seed,
+    # Determine road type from first/last anchor kinds
+    road_type = "path"
+    if len(anchors) >= 2:
+        road_type = _road_type_for_anchor_pair(
+            getattr(anchors[0], "anchor_kind", "landmark"),
+            getattr(anchors[-1], "anchor_kind", "landmark"),
         )
-        # Apply 3-zone road profile and compute road_mask + road_sdf_dist
-        carved, road_mask, road_sdf_dist = _apply_road_profile_to_heightmap(
-            carved, path,
-        )
-        road_specs.append({
-            "path": path,
-            "width_cells": max(3, int(3.0 / cell_size)),
-            "vertex_count": len(path),
-            "road_mask_shape": road_mask.shape,
-            "seed": seed,
-        })
-        _log.info("Road carve: generated road with %d vertices", len(path))
-    except Exception as exc:  # noqa: BLE001
-        _log.warning("Road carve failed: %s", exc)
+    profile = _road_profile_params(road_type)
 
+    # Build terrain cost map
+    cost_map = _build_road_cost_map(world_hmap, rock_hardness, water_surface)
+
+    # Run _astar for each waypoint pair then concatenate
+    full_raw_path: List[Tuple[int, int]] = []
+    for i in range(len(waypoints) - 1):
+        segment = _astar(
+            world_hmap,
+            waypoints[i],
+            waypoints[i + 1],
+            cost_map=cost_map if cost_map.any() else None,
+        )
+        if full_raw_path and segment:
+            full_raw_path.extend(segment[1:])
+        else:
+            full_raw_path.extend(segment)
+
+    if not full_raw_path:
+        return [], world_hmap, _empty_mask, _empty_sdf
+
+    # Smooth: corner duplication + Catmull-Rom
+    smooth_path = smooth_road_path(full_raw_path, samples_per_segment=10)
+
+    # 3-zone carving + mask + SDF
+    carved, road_mask, road_sdf_dist = _apply_road_profile_to_heightmap(
+        world_hmap,
+        smooth_path,
+        road_width=profile["road_width"],
+        shoulder_width=profile["shoulder_width"],
+        influence_width=profile["influence_width"],
+    )
+
+    road_specs: List[Dict[str, Any]] = [{
+        "path": smooth_path,
+        "raw_path_len": len(full_raw_path),
+        "road_type": road_type,
+        "profile": profile,
+        "vertex_count": len(smooth_path),
+        "road_mask_shape": road_mask.shape,
+        "seed": seed,
+    }]
+    _log.info(
+        "Road pipeline: type=%s, raw=%d cells, smooth=%d cells",
+        road_type, len(full_raw_path), len(smooth_path),
+    )
     return road_specs, carved, road_mask, road_sdf_dist
 
 
@@ -687,7 +789,9 @@ def run_twelve_step_world_terrain(
     # Road carving must precede tile extraction so graded heights reach every tile.
     sequence.append("9_apply_road_carve")
     road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(
-        world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed
+        world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed,
+        rock_hardness=None,   # TODO Phase 7: pass stack.rock_hardness when available
+        water_surface=None,   # TODO Phase 7: pass stack.water_surface when available
     )
 
     # Step 10 — per-tile extraction (from carved world heightmap)
