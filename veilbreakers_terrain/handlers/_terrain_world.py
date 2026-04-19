@@ -879,6 +879,7 @@ def pass_erosion(
         iterations=profile_params["iterations"],
         seed=seed,
         hero_exclusion=hero_arg,
+        erodibility_map=K_map,
     )
     # --- Thermal erosion (smooths sharp analytical features) ---
     thermal = apply_thermal_erosion_masks(

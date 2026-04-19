@@ -125,6 +125,7 @@ def apply_hydraulic_erosion_masks(
     height_range: Optional[float] = None,
     *,
     hero_exclusion: Optional[np.ndarray] = None,
+    erodibility_map: Optional[np.ndarray] = None,
 ) -> ErosionMasks:
     """Apply droplet-based hydraulic erosion and return the full mask set.
 
@@ -169,6 +170,17 @@ def apply_hydraulic_erosion_masks(
             )
     else:
         hero_mask = None
+
+    if erodibility_map is not None:
+        erod_arr = np.asarray(erodibility_map, dtype=np.float64)
+        if erod_arr.shape != result.shape:
+            raise ValueError(
+                f"erodibility_map shape {erod_arr.shape} does not match "
+                f"heightmap shape {result.shape}"
+            )
+        _erod_scale = erod_arr / max(float(erod_arr.mean()), 1e-12)
+    else:
+        _erod_scale = None
 
     for _ in range(iterations):
         px = rng.random() * (cols - 2) + 0.5
@@ -268,6 +280,8 @@ def apply_hydraulic_erosion_masks(
             else:
                 erode_amount = min((c - sediment) * erosion_rate, -h_diff)
                 erode_amount = max(erode_amount, 0.0)
+                if _erod_scale is not None:
+                    erode_amount *= float(_erod_scale[iy, ix])
                 if skip_cell:
                     erode_amount = 0.0
                 sediment += erode_amount
