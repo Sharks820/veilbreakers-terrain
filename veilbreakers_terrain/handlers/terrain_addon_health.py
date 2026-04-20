@@ -115,13 +115,40 @@ def assert_handlers_registered(required: Sequence[str]) -> None:
         )
 
 
+def _import_addon_package() -> object:
+    """Return the live addon package object, or raise ``ImportError``.
+
+    Resolves the package name from ``_addon_init_path()``'s grandparent
+    directory name so this works regardless of how the package was installed.
+    Uses ``importlib.import_module`` rather than relative-import gymnastics —
+    ``from .. import __init__`` is not valid Python (``__init__`` is not an
+    importable attribute of a package object) and raises ``ImportError`` in
+    all Blender versions.
+    """
+    import importlib
+
+    # The addon package lives two levels up from this handlers sub-package:
+    #   <pkg_root>/__init__.py   ← what we want
+    #   <pkg_root>/handlers/terrain_addon_health.py  ← __file__
+    pkg_root = Path(__file__).resolve().parent.parent
+    pkg_name = pkg_root.name  # e.g. "veilbreakers_terrain"
+    return importlib.import_module(pkg_name)
+
+
 def detect_stale_addon() -> bool:
     """Return True if the on-disk ``__init__.py`` differs from the running module.
 
-    Detection runs three checks in priority order:
-    1. SHA-256 content hash comparison (``__file__`` vs disk path).
-    2. .pyc cache-file mtime: disk source newer than compiled cache → stale.
-    3. ``bl_info['version']`` string comparison (legacy fallback).
+    Detection runs two checks in priority order:
+    1. SHA-256 content hash: disk source bytes vs. the source file the live
+       module was loaded from.  This is reliable on all platforms including
+       Windows (no mtime-precision issues).
+    2. ``bl_info['version']`` string comparison (legacy fallback for cases
+       where the live module's ``__file__`` is unavailable, e.g. frozen builds).
+
+    The old ``.pyc`` mtime check has been removed: mtime resolution on Windows
+    NTFS is 100 ns but FAT32/exFAT (USB, some CI runners) is 2 s, making the
+    check unreliable. Content hash covers the same signal without the platform
+    hazard.
 
     Returns ``False`` in fully headless mode where the addon module is not
     importable (nothing to be stale against).
@@ -133,38 +160,23 @@ def detect_stale_addon() -> bool:
         return False
 
     try:
-        from .. import __init__ as _live  # type: ignore
+        _live = _import_addon_package()
     except Exception:
         return False
 
-    # 1. Content hash
+    # 1. Content hash — primary check
     live_file = getattr(_live, "__file__", None)
     if live_file:
-        from pathlib import Path as _P
-
-        live_p = _P(live_file)
+        live_p = Path(live_file)
         if live_p.exists():
             disk_hash = hashlib.sha256(disk_path.read_bytes()).hexdigest()
             live_hash = hashlib.sha256(live_p.read_bytes()).hexdigest()
             if disk_hash != live_hash:
                 return True
+            # Hashes match → definitely not stale; skip version fallback.
+            return False
 
-    # 2. .pyc mtime
-    try:
-        import importlib.util as _ilu
-
-        cached = getattr(_ilu.find_spec(_live.__name__), "cached", None)
-        if cached:
-            from pathlib import Path as _P
-
-            cached_p = _P(cached)
-            if cached_p.exists():
-                if disk_path.stat().st_mtime > cached_p.stat().st_mtime:
-                    return True
-    except Exception:
-        pass
-
-    # 3. Version fallback
+    # 2. Version fallback (frozen / no __file__)
     on_disk_ver = _read_bl_info_version()
     live_bl = getattr(_live, "bl_info", None)
     if isinstance(live_bl, dict) and on_disk_ver is not None:
@@ -183,6 +195,11 @@ def force_addon_reload() -> bool:
     package exposes ``register()`` it is called after reload to re-bind any
     Blender operators.
 
+    In a live Blender session this is equivalent to disabling and re-enabling
+    the addon via ``bpy.ops.preferences.addon_disable`` /
+    ``bpy.ops.preferences.addon_enable``, but works in headless mode too
+    because it drives ``importlib.reload`` directly.
+
     Returns:
         ``True`` on success, ``False`` in headless mode or if an error occurs.
     """
@@ -190,9 +207,12 @@ def force_addon_reload() -> bool:
     import sys
 
     try:
-        from .. import __init__ as _live  # type: ignore
+        _live = _import_addon_package()
 
-        pkg_prefix = (_live.__package__ or _live.__name__) + "."
+        pkg_name = _live.__name__
+        pkg_prefix = pkg_name + "."
+
+        # Collect all sub-modules that are already in sys.modules.
         sub_mods = [
             m
             for name, m in list(sys.modules.items())
@@ -208,6 +228,7 @@ def force_addon_reload() -> bool:
 
         importlib.reload(_live)
 
+        # Re-bind Blender operators/handlers if the package exposes register().
         register_fn = getattr(_live, "register", None)
         if callable(register_fn):
             register_fn()

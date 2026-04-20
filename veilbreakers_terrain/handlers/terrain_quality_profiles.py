@@ -892,16 +892,21 @@ def write_profile_jsons(root: Path) -> List[Path]:
     tmp_root = Path(tempfile.gettempdir()).resolve()
     this_file = Path(__file__).resolve()
 
-    # Walk up the source tree to find the Tools/mcp-toolkit ancestor
+    # Derive the repo root from this file's location rather than searching for
+    # a hard-coded directory name ("mcp-toolkit" does not exist in this repo).
+    # Layout: <repo_root>/veilbreakers_terrain/handlers/terrain_quality_profiles.py
+    # so parents[0] = handlers/, parents[1] = veilbreakers_terrain/, parents[2] = repo root.
     repo_root: Optional[Path] = None
-    for ancestor in this_file.parents:
-        if ancestor.name == "mcp-toolkit":
-            repo_root = ancestor
-            break
+    try:
+        candidate = this_file.parents[2]  # veilbreakers-terrain/
+        if candidate.is_dir():
+            repo_root = candidate.resolve()
+    except IndexError:
+        pass
 
     allowed_roots: List[Path] = [tmp_root]
     if repo_root is not None:
-        allowed_roots.append(repo_root.resolve())
+        allowed_roots.append(repo_root)
 
     # Use Path.is_relative_to() (Py 3.9+) to avoid string-prefix false positives.
     # e.g. /tmp-other would incorrectly match /tmp with a startswith check.

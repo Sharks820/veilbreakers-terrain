@@ -12,6 +12,8 @@ docs/terrain_ultra_implementation_plan_2026-04-08.md §19 Bundle N.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -33,6 +35,7 @@ class DeterminismRun:
     per_channel_hashes: Dict[str, str] = field(default_factory=dict)
     duration_seconds: float = 0.0
     pass_hashes: Tuple[str, ...] = ()
+    full_state_hash: str = ""  # SHA-256 over mask stack + intent + pass history
 
 
 def _snapshot_channel_hashes(stack: TerrainMaskStack) -> Dict[str, str]:
@@ -61,6 +64,39 @@ def _clone_state(state: TerrainPipelineState) -> TerrainPipelineState:
     return copy.deepcopy(state)
 
 
+def _hash_full_state(state: TerrainPipelineState) -> str:
+    """Produce a SHA-256 over the complete pipeline state, not just the mask stack.
+
+    Covers:
+      * The mask stack content hash (all array channels + coordinate contract).
+      * The intent dict (serialised via JSON so nested mutable fields are included).
+      * pass_history length (structural change indicator).
+
+    Intent serialisation uses ``repr()`` as fallback for non-JSON-serialisable
+    values so the hash never silently drops a nested mutable field.
+    """
+    h = hashlib.sha256()
+
+    # 1. Mask stack — already a thorough SHA-256 over all array channels.
+    h.update(state.mask_stack.compute_hash().encode("utf-8"))
+
+    # 2. Intent — full recursive serialisation.
+    try:
+        intent_bytes = json.dumps(
+            state.intent.__dict__ if hasattr(state.intent, "__dict__") else repr(state.intent),
+            sort_keys=True,
+            default=repr,
+        ).encode("utf-8")
+    except Exception:
+        intent_bytes = repr(state.intent).encode("utf-8")
+    h.update(intent_bytes)
+
+    # 3. Structural pass-history indicator (length only — content is pass-specific).
+    h.update(str(len(state.pass_history)).encode("utf-8"))
+
+    return h.hexdigest()
+
+
 def run_determinism_check(
     controller: TerrainPassController,
     seed: int,
@@ -84,7 +120,6 @@ def run_determinism_check(
         raise ValueError("run_determinism_check requires runs >= 2")
 
     baseline_state = _clone_state(controller.state)
-    baseline_state.intent = baseline_state.intent  # retain intent
 
     run_records: List[DeterminismRun] = []
     for i in range(runs):
@@ -101,6 +136,7 @@ def run_determinism_check(
         content_hash = replay_state.mask_stack.compute_hash()
         channel_hashes = _snapshot_channel_hashes(replay_state.mask_stack)
         pass_hashes = tuple(r.content_hash_after or "" for r in results)
+        full_state_hash = _hash_full_state(replay_state)
         run_records.append(
             DeterminismRun(
                 run_index=i,
@@ -108,18 +144,26 @@ def run_determinism_check(
                 per_channel_hashes=channel_hashes,
                 duration_seconds=dt,
                 pass_hashes=pass_hashes,
+                full_state_hash=full_state_hash,
             )
         )
 
     reference = run_records[0]
     mismatches: List[Tuple[int, str]] = []
     channel_divergences: List[Tuple[int, str]] = []
+    full_state_mismatches: List[Tuple[int, str]] = []
     for rec in run_records[1:]:
+        # Check mask-stack hash (output channels).
         if rec.content_hash != reference.content_hash:
             mismatches.append((rec.run_index, rec.content_hash))
             for ch, h in rec.per_channel_hashes.items():
                 if reference.per_channel_hashes.get(ch) != h:
                     channel_divergences.append((rec.run_index, ch))
+        # Check full state hash (catches intent mutation + pass-history drift
+        # that would be invisible from mask-stack output alone).
+        if rec.full_state_hash and reference.full_state_hash:
+            if rec.full_state_hash != reference.full_state_hash:
+                full_state_mismatches.append((rec.run_index, rec.full_state_hash))
 
     # Identify the *first* pass where non-determinism appears by walking the
     # per-pass hash sequences for any mismatch runs and recording the earliest
@@ -150,10 +194,12 @@ def run_determinism_check(
         dur_stdev = (sum((d - mean) ** 2 for d in durations) / len(durations)) ** 0.5
 
     return {
-        "deterministic": not mismatches,
+        "deterministic": not mismatches and not full_state_mismatches,
         "runs": run_records,
         "reference_hash": reference.content_hash,
+        "reference_full_state_hash": reference.full_state_hash,
         "mismatches": mismatches,
+        "full_state_mismatches": full_state_mismatches,
         "channel_divergences": channel_divergences,
         "suspect_passes": suspect_passes,
         "duration_stdev_s": dur_stdev,
