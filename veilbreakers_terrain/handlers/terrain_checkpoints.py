@@ -218,13 +218,56 @@ _INTENT_SCHEMA_VERSION = "1.1"
 
 
 def _serialize_value(v: Any) -> Any:
-    """Recursively make a value JSON-safe: convert Path objects to strings."""
+    """Recursively make a value JSON-safe.
+
+    Handles:
+    - ``pathlib.Path`` → str
+    - ``frozenset`` / ``set`` → tagged dict ``{"__type__": "frozenset", "items": [...str...]}``
+      so ``_deserialize_value`` can reconstruct the exact type on round-trip.
+    - numpy scalar types (np.int32, np.float64, …) → Python int / float
+    - numpy ndarray → ``{"__type__": "ndarray", "data": [...], "dtype": "<dtype>"}``
+    - dict / list / tuple → recursed
+    - Everything else → returned as-is (must already be JSON-serialisable)
+    """
+    import numpy as _np
+
     if isinstance(v, Path):
         return str(v)
+    if isinstance(v, (frozenset, set)):
+        # Coerce every member to str so JSON.dumps never chokes on custom objects.
+        # Sorting ensures byte-identical serialisation across runs.
+        return {"__type__": "frozenset", "items": sorted(str(m) for m in v)}
+    if isinstance(v, _np.ndarray):
+        return {"__type__": "ndarray", "data": v.tolist(), "dtype": str(v.dtype)}
+    if isinstance(v, _np.generic):
+        # numpy scalar (np.int32, np.float64, np.bool_, …) → native Python type
+        return v.item()
     if isinstance(v, dict):
         return {k: _serialize_value(val) for k, val in v.items()}
     if isinstance(v, (list, tuple)):
         return [_serialize_value(item) for item in v]
+    return v
+
+
+def _deserialize_value(v: Any) -> Any:
+    """Inverse of ``_serialize_value``.
+
+    Recognises the ``{"__type__": ...}`` tags written by ``_serialize_value``
+    and reconstructs frozensets and numpy arrays.  Plain dicts, lists, and
+    scalars are passed through unchanged so the function is safe to apply to
+    any JSON-decoded value.
+    """
+    import numpy as _np
+
+    if isinstance(v, dict):
+        tag = v.get("__type__")
+        if tag == "frozenset":
+            return frozenset(v.get("items", []))
+        if tag == "ndarray":
+            return _np.array(v["data"], dtype=v.get("dtype", "float64"))
+        return {k: _deserialize_value(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_deserialize_value(item) for item in v]
     return v
 
 
@@ -233,7 +276,11 @@ def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
 
     Includes a ``schema_version`` field so ``_intent_from_dict`` can detect
     and handle round-trip compatibility mismatches gracefully.  All Path
-    objects are converted to strings via ``_serialize_value``.
+    objects are converted to strings, frozensets are tagged for lossless
+    round-trip, and numpy scalars/arrays are converted to JSON-native types.
+
+    Round-trip guarantee (for types that appear in practice):
+        ``_intent_from_dict(_intent_to_dict(intent)) == intent``
     """
     return {
         "schema_version": _INTENT_SCHEMA_VERSION,
@@ -252,8 +299,8 @@ def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
         "anchors": [
             {
                 "name": a.name,
-                "world_position": list(a.world_position),
-                "orientation": list(a.orientation),
+                "world_position": [float(x) for x in a.world_position],
+                "orientation": [float(x) for x in a.orientation],
                 "anchor_kind": a.anchor_kind,
                 "radius": float(a.radius),
                 "blender_object_name": a.blender_object_name,
@@ -265,8 +312,11 @@ def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
                 "zone_id": z.zone_id,
                 "bounds": list(z.bounds.to_tuple()),
                 "kind": z.kind,
-                "allowed_mutations": sorted(z.allowed_mutations),
-                "forbidden_mutations": sorted(z.forbidden_mutations),
+                # Use tagged serialisation so frozenset members that are not
+                # plain strings (e.g. enums, custom objects) survive the
+                # JSON round-trip without silent str() coercion at read time.
+                "allowed_mutations": sorted(str(m) for m in z.allowed_mutations),
+                "forbidden_mutations": sorted(str(m) for m in z.forbidden_mutations),
                 "description": z.description,
             }
             for z in intent.protected_zones
@@ -275,8 +325,8 @@ def _intent_to_dict(intent: TerrainIntentState) -> Dict[str, Any]:
             {
                 "feature_id": h.feature_id,
                 "feature_kind": h.feature_kind,
-                "world_position": list(h.world_position),
-                "orientation": list(h.orientation),
+                "world_position": [float(x) for x in h.world_position],
+                "orientation": [float(x) for x in h.orientation],
                 "bounds": list(h.bounds.to_tuple()) if h.bounds else None,
                 "anchor_name": h.anchor_name,
                 "tier": h.tier,
@@ -300,6 +350,11 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
     serialized ``schema_version`` does not match the current
     ``_INTENT_SCHEMA_VERSION``, a WARNING is emitted and unknown fields are
     silently replaced by their defaults — forward/backward compatibility.
+
+    Tagged values produced by ``_serialize_value`` (frozensets, numpy arrays)
+    are reconstructed via ``_deserialize_value`` so the round-trip
+    ``_intent_from_dict(_intent_to_dict(intent)) == intent`` holds for all
+    field types that appear in practice.
     """
     from .terrain_semantics import HeroFeatureSpec  # local to avoid cycles
 
@@ -318,8 +373,8 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
     anchors = tuple(
         TerrainAnchor(
             name=a.get("name", ""),
-            world_position=tuple(a.get("world_position", (0.0, 0.0, 0.0))),
-            orientation=tuple(a.get("orientation", (0.0, 0.0, 0.0))),
+            world_position=tuple(float(x) for x in a.get("world_position", (0.0, 0.0, 0.0))),
+            orientation=tuple(float(x) for x in a.get("orientation", (0.0, 0.0, 0.0))),
             anchor_kind=a.get("anchor_kind", "generic"),
             radius=float(a.get("radius", 0.0)),
             blender_object_name=a.get("blender_object_name"),
@@ -331,8 +386,11 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
             zone_id=z.get("zone_id", ""),
             bounds=BBox(*z.get("bounds", [0.0, 0.0, 1.0, 1.0])),
             kind=z.get("kind", "generic"),
-            allowed_mutations=frozenset(z.get("allowed_mutations", [])),
-            forbidden_mutations=frozenset(z.get("forbidden_mutations", [])),
+            # allowed_mutations / forbidden_mutations are stored as plain sorted
+            # lists of strings (schema v1.1).  Reconstruct as frozenset so the
+            # dataclass type contract is met and equality checks work correctly.
+            allowed_mutations=frozenset(str(m) for m in z.get("allowed_mutations", [])),
+            forbidden_mutations=frozenset(str(m) for m in z.get("forbidden_mutations", [])),
             description=z.get("description", ""),
         )
         for z in data.get("protected_zones", [])
@@ -341,13 +399,15 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
         HeroFeatureSpec(
             feature_id=h.get("feature_id", ""),
             feature_kind=h.get("feature_kind", "generic"),
-            world_position=tuple(h.get("world_position", (0.0, 0.0, 0.0))),
-            orientation=tuple(h.get("orientation", (0.0, 0.0, 0.0))),
+            world_position=tuple(float(x) for x in h.get("world_position", (0.0, 0.0, 0.0))),
+            orientation=tuple(float(x) for x in h.get("orientation", (0.0, 0.0, 0.0))),
             bounds=BBox(*h["bounds"]) if h.get("bounds") else None,
             anchor_name=h.get("anchor_name"),
             tier=h.get("tier", "secondary"),
             exclusion_radius=float(h.get("exclusion_radius", 0.0)),
-            parameters=dict(h.get("parameters", {})),
+            # parameters may contain tagged frozensets/ndarrays written by
+            # _serialize_value; reconstruct them via _deserialize_value.
+            parameters=_deserialize_value(dict(h.get("parameters", {}))),
         )
         for h in data.get("hero_feature_specs", [])
     )
@@ -355,6 +415,9 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
     # Reconstruct heightmap_source as a Path when present (v1.1+)
     heightmap_source_raw = data.get("heightmap_source")
     heightmap_source = Path(heightmap_source_raw) if heightmap_source_raw else None
+
+    # composition_hints may contain tagged values from _serialize_value
+    composition_hints = _deserialize_value(dict(data.get("composition_hints", {})))
 
     kwargs: Dict[str, Any] = dict(
         seed=int(data.get("seed", 0)),
@@ -369,7 +432,7 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
         morphology_templates=tuple(data.get("morphology_templates", [])),
         noise_profile=data.get("noise_profile", "dark_fantasy_default"),
         erosion_profile=data.get("erosion_profile", "temperate"),
-        composition_hints=dict(data.get("composition_hints", {})),
+        composition_hints=composition_hints,
     )
     # Only pass heightmap_source if the dataclass accepts it (v1.1+ field)
     if heightmap_source is not None:

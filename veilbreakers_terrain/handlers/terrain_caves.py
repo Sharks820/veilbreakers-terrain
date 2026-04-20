@@ -2259,6 +2259,26 @@ def _build_chamber_mesh_geometry(
     ns = int(max(4, radial_segments))
     nr = int(max(2, height_rings))
 
+    # ------------------------------------------------------------------
+    # Per-ring organic perturbation RNG — each vault ring gets an
+    # independent fBm-driven radial scale in [0.82, 1.18] and a Z offset
+    # in [−0.08h, +0.08h].  This breaks the perfect-ellipsoid silhouette
+    # that reads as synthetic/procedural; real cave profiles (Lechuguilla,
+    # Carlsbad) show chaotic cross-section outlines at every height band.
+    # The ring seeds are derived deterministically from the chamber seed so
+    # the same seed always produces the same chamber.
+    # ------------------------------------------------------------------
+    rng_rings = np.random.default_rng(int(seed ^ 0xCAFEBABE) & 0xFFFFFFFF)
+    # Per-ring: (radial_scale, z_jitter, per-segment angle jitter amplitude)
+    ring_radial_scales = rng_rings.uniform(0.82, 1.18, size=nr)
+    ring_z_jitters = rng_rings.uniform(-0.08 * h, 0.08 * h, size=nr)
+    # Per-segment-per-ring: small angular displacement ±(pi/ns)*0.35
+    ring_angle_offsets = rng_rings.uniform(
+        -math.pi / max(ns, 1) * 0.35,
+        math.pi / max(ns, 1) * 0.35,
+        size=(nr, ns),
+    )
+
     verts: List[Tuple[float, float, float]] = []
     uvs: List[Tuple[float, float]] = []
     faces: List[Tuple[int, ...]] = []
@@ -2270,11 +2290,14 @@ def _build_chamber_mesh_geometry(
         return idx
 
     # ------------------------------------------------------------------
-    # Ceiling: cosine arch vault profile
-    # h_vault(r) = h * sqrt(1 - (r / r_max)^2)  where r_max = min(rx, ry)
-    # This is the circular arch (exponent 0.5) evaluated radially.
-    # We use the elliptic form: h_vault = h * sqrt(1 - (x/rx)^2 - (y/ry)^2)
-    # which gracefully handles non-square chambers.
+    # Ceiling: cosine arch vault profile with organic ring perturbation.
+    #
+    # Base profile: h_vault = h * sqrt(1 - (x/rx)^2 - (y/ry)^2) (elliptic)
+    # Each ring is then perturbed by ring_radial_scales and ring_z_jitters,
+    # and each vertex within a ring is displaced by ring_angle_offsets so
+    # adjacent vertices are not uniformly spaced — matching the chaotic
+    # geometry visible in Witcher 3 cave cross-sections and Elden Ring
+    # underground chambers.
     # ------------------------------------------------------------------
 
     # Apex at the centre of the vault
@@ -2286,32 +2309,77 @@ def _build_chamber_mesh_geometry(
         # t: 1 = top of vault, 0 = equator (where wall meets floor)
         t = 1.0 - float(ring + 1) / float(nr)   # ring=0 → t=(nr-1)/nr, ..., ring=nr-1 → t=0
         t = max(0.0, min(1.0, t))
-        # Lateral radius at this height band (from cosine arch)
-        r_lateral = math.sqrt(max(0.0, 1.0 - t * t))  # ranges 0 (apex) → 1 (equator)
-        vault_z = cz + h * t  # exact height on the cosine profile
+        # Lateral radius at this height band (from cosine arch), scaled organically
+        r_lateral_base = math.sqrt(max(0.0, 1.0 - t * t))  # 0 (apex) → 1 (equator)
+        r_lateral = r_lateral_base * float(ring_radial_scales[ring])
+        # Z position with fBm jitter — closer to equator jitters more (higher energy)
+        z_jitter_scale = 1.0 - t  # 0 near apex, 1 at equator
+        vault_z = cz + h * t + float(ring_z_jitters[ring]) * z_jitter_scale
 
         ring_start_indices.append(len(verts))
         for seg in range(ns):
-            angle = 2.0 * math.pi * seg / ns
-            vx = cx + rx * r_lateral * math.cos(angle)
-            vy = cy + ry * r_lateral * math.sin(angle)
+            # Angular jitter: uniform offset + per-vertex fBm for irregular spacing
+            angle_base = 2.0 * math.pi * seg / ns
+            angle_jitter = float(ring_angle_offsets[ring, seg])
+            # Additional fBm perturbation for irregular radial push/pull
+            fbm_r = _fbm_noise(
+                math.cos(angle_base) * r_lateral + cx,
+                math.sin(angle_base) * r_lateral + cy,
+                octaves=3,
+                seed=seed + ring * 31 + seg,
+            )
+            r_perturbed = r_lateral * (1.0 + fbm_r * 0.12)  # ±12% radial variation
+            r_perturbed = max(r_perturbed, 0.0)
+            angle = angle_base + angle_jitter
+            vx = cx + rx * r_perturbed * math.cos(angle)
+            vy = cy + ry * r_perturbed * math.sin(angle)
             _add_vert(vx, vy, vault_z)
 
     # ------------------------------------------------------------------
-    # Floor ring + center — with fBm rubble perturbation
+    # Floor ring + center — fBm rubble perturbation + discrete boulder bumps.
+    #
+    # AAA floor model (Witcher 3 / Elden Ring cave floors):
+    # 1. Low-frequency fBm base warp (existing).
+    # 2. 2–4 discrete boulder mounds: each is a Gaussian "bump" centred at a
+    #    random floor-ring vertex, height 0.05–0.15h, radius 0.25–0.45 of
+    #    the chamber half-radius.  These cast recognizable shadows and break
+    #    the flat-floor read that gives away procedural generation.
+    # The bumps affect only the Z position of nearby floor vertices via a
+    # falloff kernel; they do not add geometry (that's handled by stalagmites).
     # ------------------------------------------------------------------
+    rng_floor = np.random.default_rng(int(seed ^ 0xF100F) & 0xFFFFFFFF)
+    n_boulders = int(rng_floor.integers(2, 5))  # 2..4 boulder centres
+    boulder_centres: List[Tuple[float, float, float, float]] = []
+    for _bi in range(n_boulders):
+        bangle = float(rng_floor.uniform(0.0, 2.0 * math.pi))
+        bfrac = float(rng_floor.uniform(0.15, 0.80))  # 0=centre, 1=edge
+        bx = cx + rx * bfrac * math.cos(bangle)
+        by = cy + ry * bfrac * math.sin(bangle)
+        bh = float(rng_floor.uniform(0.05, 0.15)) * h     # bump height
+        br = float(rng_floor.uniform(0.25, 0.45)) * min(rx, ry)  # bump radius
+        boulder_centres.append((bx, by, bh, br))
+
+    def _floor_height(vx: float, vy: float) -> float:
+        """Return Z for a floor vertex: fBm base + discrete boulder bumps."""
+        base_noise = _fbm_noise(vx * 0.5, vy * 0.5, octaves=4, seed=seed)
+        z = cz + base_noise * floor_noise_amplitude * h * 0.3
+        for bx, by, bh, br in boulder_centres:
+            dist2 = (vx - bx) ** 2 + (vy - by) ** 2
+            if dist2 < (br * 3.0) ** 2:  # early-out for distant boulders
+                gauss = math.exp(-0.5 * dist2 / max(br * br, 1e-8))
+                z += bh * gauss
+        return z
+
     floor_ring_idx = len(verts)
     for seg in range(ns):
         angle = 2.0 * math.pi * seg / ns
         vx = cx + rx * math.cos(angle)
         vy = cy + ry * math.sin(angle)
-        noise = _fbm_noise(vx * 0.5, vy * 0.5, octaves=4, seed=seed)
-        vz = cz + noise * floor_noise_amplitude * h * 0.3
+        vz = _floor_height(vx, vy)
         _add_vert(vx, vy, vz)
 
     floor_center_idx = len(verts)
-    fc_noise = _fbm_noise(cx * 0.5, cy * 0.5, octaves=4, seed=seed + 7)
-    _add_vert(cx, cy, cz + fc_noise * floor_noise_amplitude * h * 0.2)
+    _add_vert(cx, cy, _floor_height(cx, cy))
 
     # ------------------------------------------------------------------
     # Triangulate: apex fan → first ring
@@ -2466,21 +2534,28 @@ def _build_chamber_mesh_geometry(
 
 
 def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: float, *, seed: int = 0):
-    """Create a Blender chamber mesh with cosine-arch vault, stalactites, stalagmites,
-    triplanar UVs, and per-face normals.
+    """Create a Blender chamber mesh — AAA-grade organic cave interior.
 
-    Interior geometry:
-    - Ceiling: cosine arch vault profile (circular arch SDF, not ellipsoid).
-    - Floor: perturbed with fBm rock-rubble height variation.
-    - Stalactites: downward cones hanging from upper vault ring vertices.
-    - Stalagmites: upward tapered cones growing from floor vertices.
-    - UV layer "UVMap": world-space XZ triplanar projection for each vertex.
-    - Custom normals: per-face normals set via calc_normals_split so the mesh
-      shades correctly as a closed interior cavity.
-    - All faces triangulated (2 tris per quad, fan tris for caps).
+    Geometry (16 radial segments × 6 height rings):
+    - Ceiling: cosine-arch vault with per-ring organic radial/Z perturbation;
+      no two rings are perfectly concentric — matches Witcher 3 cave geometry.
+    - Floor: fBm base warp + 2–4 discrete boulder-bump Gaussian mounds for
+      recognizable shadow-casting rocks (God of War cave floor convention).
+    - Stalactites: Dreybrodt-growth cones, parabolic cross-section, biased
+      toward apex (oldest / wettest drip zone).
+    - Stalagmites: shorter upward cones with tapered base.
 
-    compose_map's cave dispatch positions/parents this object. Returns the
-    created bpy Object, or None if bpy is not available (tests).
+    UV channels:
+    - "UVMap"      — world-space XZ triplanar (tiles at 1 texel per 2 m).
+    - "UVWetRock"  — height-driven wet-rock mask: u=world_X*0.25, v=world_Z*0.25
+      with a ceiling-proximity ramp so ceiling faces receive full wet-rock
+      intensity while floor faces receive ~0.3.  Drives the wet-rock shader
+      parameter (Elden Ring / Horizon damp-cave material convention).
+
+    Custom split normals: per-face flat normals via normals_split_custom_set,
+    giving faceted stone reads under PBR lighting without needing a bevel modifier.
+
+    Returns the created bpy.types.Object, or None outside Blender (tests).
     """
     try:
         import bpy as _bpy
@@ -2491,12 +2566,12 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
         width=float(width),
         depth=float(depth),
         wall_height=float(wall_height),
-        radial_segments=8,
-        height_rings=4,
-        floor_noise_amplitude=0.25,
+        radial_segments=16,   # AAA: 16 segments (was 8) — smooth silhouette
+        height_rings=6,       # AAA: 6 rings (was 4) — richer vault curvature
+        floor_noise_amplitude=0.28,
         seed=int(seed),
-        stalactite_count=4,
-        stalagmite_count=3,
+        stalactite_count=6,   # more speleothems for visual density
+        stalagmite_count=4,
         uv_scale=0.5,
     )
 
@@ -2504,16 +2579,31 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
     mesh.from_pydata(verts, [], faces)
     mesh.update()
 
-    # --- UV layer: world-space XZ triplanar ---
+    # --- UV channel 0: world-space XZ triplanar (primary rock texture) ---
     uv_layer = mesh.uv_layers.new(name="UVMap")
     for poly in mesh.polygons:
         for loop_idx in poly.loop_indices:
             vi = mesh.loops[loop_idx].vertex_index
             uv_layer.data[loop_idx].uv = uvs[vi]
 
-    # --- Custom split normals (per-face) ---
-    # Each loop in a face gets the face's computed normal, giving flat-shaded
-    # cave rock facets which read as natural stone under PBR lighting.
+    # --- UV channel 1: wet-rock mask with height-proximity ramp ---
+    # Ceiling vertices (high Z) get full wet-rock intensity (u≈1) via a ramp
+    # from 0 (floor) to 1 (apex).  The shader multiplies this into the
+    # wet-rock roughness/albedo blend, replicating Elden Ring's damp-cave look.
+    h_float = float(wall_height)
+    uv_wet = mesh.uv_layers.new(name="UVWetRock")
+    for poly in mesh.polygons:
+        for loop_idx in poly.loop_indices:
+            vi = mesh.loops[loop_idx].vertex_index
+            vx, vy, vz = verts[vi]
+            # u: world-X tile at coarser scale (moisture texture)
+            u_wet = vx * 0.25
+            # v: height-proximity ramp — 1.0 at ceiling, ~0.3 at floor
+            height_frac = max(0.0, min(1.0, vz / max(h_float, 1e-6)))
+            v_wet = 0.3 + 0.7 * height_frac
+            uv_wet.data[loop_idx].uv = (u_wet, v_wet)
+
+    # --- Custom split normals (per-face flat shading) ---
     mesh.use_auto_smooth = True
     custom_normals = []
     for pi, poly in enumerate(mesh.polygons):
@@ -2753,12 +2843,12 @@ def handle_generate_cave(params: dict) -> dict:
             width=chamber_w,
             depth=chamber_d,
             wall_height=wall_height,
-            radial_segments=8,
-            height_rings=4,
-            floor_noise_amplitude=0.25,
+            radial_segments=16,   # AAA: 16 segments for smooth silhouette
+            height_rings=6,       # AAA: 6 rings for richer vault curvature
+            floor_noise_amplitude=0.28,
             seed=seed,
-            stalactite_count=4,
-            stalagmite_count=3,
+            stalactite_count=6,
+            stalagmite_count=4,
             uv_scale=0.5,
         )
 
@@ -2874,8 +2964,15 @@ def handle_generate_cave(params: dict) -> dict:
             meshes.append(tunnel_mesh_spec)
         meshes.extend(entrance_specs)
 
+        # Bundle status is extracted before serialisation; the PassResult object
+        # itself is NOT included in meta because it contains numpy arrays and
+        # non-serialisable internal state that would break JSON export / MCP
+        # transport.  Callers that need the raw bundle should invoke pass_caves
+        # directly via the pipeline state API.
+        bundle_status = "ok" if getattr(bundle, "status", "ok") != "failed" else "error"
+
         return {
-            "status": "ok" if getattr(bundle, "status", "ok") != "failed" else "error",
+            "status": bundle_status,
             "name": chamber_name,
             "meshes": meshes,
             "meta": {
@@ -2883,7 +2980,7 @@ def handle_generate_cave(params: dict) -> dict:
                 "chamber_mesh_spec": chamber_mesh_spec,
                 "entrance_specs": entrance_specs,
                 "tunnel_spec": tunnel_mesh_spec,
-                "bundle": bundle,
+                "bundle_status": bundle_status,
                 "cave_count": cave_count,
                 "wall_height": wall_height,
                 "floor_area": floor_area,

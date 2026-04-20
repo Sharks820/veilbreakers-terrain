@@ -128,11 +128,14 @@ def detect_destructibility_patches(
                 avg_w = float(wetness[r0:r1, c0:c1].mean())
                 hp = max(5.0, 10.0 + 190.0 * avg_h) * max(0.3, 1.0 - avg_w * 0.5)
                 debris = "mud" if avg_w > 0.5 else ("gravel" if avg_h < 0.3 else "rock_chunk")
-                material_id = (
-                    int(stack.biome_id[r0:r1, c0:c1].reshape(-1)[0])
-                    if stack.biome_id is not None
-                    else 0
-                )
+                if stack.biome_id is not None:
+                    # Use dominant biome in the block (mode), not the first cell,
+                    # so mixed-biome blocks get the correct material_id.
+                    block = stack.biome_id[r0:r1, c0:c1].ravel().astype(np.int64)
+                    counts = np.bincount(block - block.min(), minlength=1)
+                    material_id = int(block.min() + int(counts.argmax()))
+                else:
+                    material_id = 0
                 patches.append(
                     DestructibilityPatch(
                         bounds=BBox(
