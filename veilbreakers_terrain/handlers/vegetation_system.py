@@ -293,13 +293,28 @@ def compute_vegetation_placement(
     exclusion_zones: list[dict] | None = None,
     moisture_map: Any | None = None,
     competition_radius: float = 0.0,
+    lod_distances: list[float] | None = None,
+    camera_position: tuple[float, float, float] | None = None,
+    adjacent_biome_entries: list[tuple[str, dict[str, Any]]] | None = None,
+    ecotone_alpha_fn: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Compute vegetation placements for a biome on terrain geometry.
 
     Pure-logic function -- no Blender dependency.
 
-    Uses Bridson Poisson-disk sampling for blue-noise base distribution,
-    then applies per-candidate filters in order:
+    Uses Bridson Poisson-disk sampling for blue-noise base distribution with
+    3-tier hierarchical LOD density modulation:
+      - Near-field  (< lod_distances[0]): dense sampling (0.6× min_distance)
+        for full-detail individual plant placements.
+      - Mid-field   (< lod_distances[1]): base sampling (1.0× min_distance)
+        for cluster-level placements.
+      - Far-field   (>= lod_distances[1]): coarse sampling (1.8× min_distance)
+        for impostor/billboard placements.
+
+    Each placement is tagged with a ``lod_hint`` field (0/1/2) so
+    ``build_vegetation_placement_spec`` can use it as a distance tiebreaker.
+
+    Per-candidate filters are applied in order:
       1. Exclusion zones (buildings, roads).
       2. Water-level rejection (below normalised water height).
       3. Moisture filter: each species has optional ``min_moisture`` /
@@ -313,7 +328,7 @@ def compute_vegetation_placement(
          instances of a different species within that radius suppress a new
          placement.  This creates ecologically plausible species clusters and
          avoids unnatural interleaving.
-      7. Density probability roll.
+      7. Density probability roll (modulated by LOD tier density factor).
 
     Parameters
     ----------
@@ -343,12 +358,26 @@ def compute_vegetation_placement(
         If > 0, a new instance is suppressed when an already-placed instance of a
         *different* species exists within this radius.  Set to 0 (default) to
         disable competition.  Typical value: ``min_distance * 1.5``.
+    lod_distances : list of float or None
+        [near_m, mid_m] LOD boundary distances from ``camera_position``.
+        Defaults to [30.0, 80.0] — matching a typical AAA outdoor scene where
+        full-density near-field extends 30 m and cluster mid-field to 80 m.
+    camera_position : (x, y, z) or None
+        Reference camera / player position for LOD tier assignment.
+        When None, defaults to the geometric centre of area_bounds.
+    adjacent_biome_entries : list of (category, entry_dict) or None
+        Pre-built entry list from a neighbouring biome for ecotone mixing.
+        Passed in by ``scatter_biome_vegetation`` when ecotone mode is active.
+    ecotone_alpha_fn : callable(wx, wy) -> float or None
+        Function returning [0.0, 1.0] primary-biome weight at world position.
+        0.0 = entirely adjacent biome; 1.0 = entirely primary biome.
+        Passed in by ``scatter_biome_vegetation`` when ecotone mode is active.
 
     Returns
     -------
     list of dict
         Each dict has: position (x, y, z), type, style, scale, rotation,
-        category, moisture.
+        category, moisture, lod_hint.
     """
     if biome_name not in BIOME_VEGETATION_SETS:
         raise ValueError(
@@ -441,23 +470,51 @@ def compute_vegetation_placement(
         return norm_height, slope_deg, moisture
 
     # ------------------------------------------------------------------
-    # Poisson-disk sample points
+    # LOD tier boundaries — AAA hierarchical density control
+    # Near-field: dense individual plants (0.6× spacing)
+    # Mid-field:  cluster-level base density (1.0× spacing)
+    # Far-field:  sparse impostor/billboard pass (1.8× spacing)
     # ------------------------------------------------------------------
     from ._scatter_engine import poisson_disk_sample
-    raw_points = poisson_disk_sample(width, depth, min_distance, seed=seed)
+
+    _lod_d = list(lod_distances) if lod_distances else [30.0, 80.0]
+    _lod_d = _lod_d + [80.0] * max(0, 2 - len(_lod_d))
+    lod_near_m = float(_lod_d[0])
+    lod_mid_m  = float(_lod_d[1])
+
+    # Camera reference for LOD distance calc; default to area centre.
+    if camera_position is not None:
+        cam_x = float(camera_position[0])
+        cam_y = float(camera_position[1])
+    else:
+        cam_x = min_x + width * 0.5
+        cam_y = min_y + depth * 0.5
+
+    # LOD tier definitions: (lod_hint, min_distance_multiplier, density_factor)
+    # density_factor > 1.0 means more attempts/denser; < 1.0 means sparser.
+    _LOD_TIERS: list[tuple[int, float, float]] = [
+        (0, 0.6, 1.4),   # near-field: tight spacing, high density — individual plants
+        (1, 1.0, 1.0),   # mid-field:  base spacing, base density — clusters
+        (2, 1.8, 0.55),  # far-field:  loose spacing, low density — impostors
+    ]
 
     # ------------------------------------------------------------------
-    # Build weighted entry list for density-based selection
+    # Build weighted entry list for density-based selection.
+    # Merge adjacent biome entries when ecotone mode is active.
     # ------------------------------------------------------------------
-    all_entries: list[tuple[str, dict[str, Any]]] = []
+    primary_entries: list[tuple[str, dict[str, Any]]] = []
     for category in ("trees", "ground_cover", "rocks"):
         for entry in biome.get(category, []):
-            all_entries.append((category, entry))
+            primary_entries.append((category, entry))
 
-    if not all_entries:
+    if not primary_entries:
         return []
 
-    total_density = sum(e["density"] for _, e in all_entries)
+    # Adjacent biome entries (ecotone mixing) — provided by scatter_biome_vegetation
+    adj_entries: list[tuple[str, dict[str, Any]]] = list(adjacent_biome_entries) if adjacent_biome_entries else []
+
+    total_primary_density = sum(e["density"] for _, e in primary_entries)
+    total_adj_density = sum(e["density"] for _, e in adj_entries) if adj_entries else 0.0
 
     # ------------------------------------------------------------------
     # Competition grid: coarse spatial hash of placed instance species.
@@ -487,93 +544,143 @@ def compute_vegetation_placement(
         placed_species.setdefault((ci, cj), []).append((species_type, wx, wy))
 
     # ------------------------------------------------------------------
-    # Main placement loop
+    # AAA 3-tier hierarchical placement loop.
+    # Each LOD tier generates its own Poisson-disk point set with
+    # tier-specific spacing so near-field detail tapers gracefully into
+    # far-field impostors without any hard density step.
     # ------------------------------------------------------------------
     placements: list[dict[str, Any]] = []
 
-    for rx_pt, ry_pt in raw_points:
-        wx = rx_pt + min_x
-        wy = ry_pt + min_y
+    for lod_hint, sep_mult, density_factor in _LOD_TIERS:
+        tier_min_dist = min_distance * sep_mult
+        tier_seed = seed + lod_hint * 1000  # distinct seed per tier for blue-noise variety
+        raw_points = poisson_disk_sample(width, depth, tier_min_dist, seed=tier_seed)
 
-        norm_h, slope_deg, moisture = _sample_terrain(wx, wy)
+        for rx_pt, ry_pt in raw_points:
+            wx = rx_pt + min_x
+            wy = ry_pt + min_y
 
-        # 1. Exclusion zones
-        if exclusion_zones:
-            in_exclusion = False
-            for ez in exclusion_zones:
-                if (ez.get("min_x", -1e9) <= wx <= ez.get("max_x", 1e9)
-                        and ez.get("min_y", -1e9) <= wy <= ez.get("max_y", 1e9)):
-                    in_exclusion = True
-                    break
-            if in_exclusion:
+            # Assign point to a LOD tier by distance from camera.
+            # Only process points that belong to *this* tier.
+            cam_dist = math.sqrt((wx - cam_x) ** 2 + (wy - cam_y) ** 2)
+            if lod_hint == 0 and cam_dist >= lod_near_m:
+                continue
+            if lod_hint == 1 and not (lod_near_m <= cam_dist < lod_mid_m):
+                continue
+            if lod_hint == 2 and cam_dist < lod_mid_m:
                 continue
 
-        # 2. Water level filter
-        if has_height_variation and norm_h < water_level:
-            continue
+            norm_h, slope_deg, moisture = _sample_terrain(wx, wy)
 
-        # 3. Species selection with density weights
-        roll = rng.uniform(0.0, total_density)
-        cumulative = 0.0
-        selected_cat: str | None = None
-        selected_entry: dict[str, Any] | None = None
+            # 1. Exclusion zones
+            if exclusion_zones:
+                in_exclusion = False
+                for ez in exclusion_zones:
+                    if (ez.get("min_x", -1e9) <= wx <= ez.get("max_x", 1e9)
+                            and ez.get("min_y", -1e9) <= wy <= ez.get("max_y", 1e9)):
+                        in_exclusion = True
+                        break
+                if in_exclusion:
+                    continue
 
-        for cat, entry in all_entries:
-            cumulative += entry["density"]
-            if roll <= cumulative:
-                selected_cat = cat
-                selected_entry = entry
-                break
+            # 2. Water level filter
+            if has_height_variation and norm_h < water_level:
+                continue
 
-        if selected_entry is None:
-            selected_cat, selected_entry = all_entries[-1]
+            # 3. Ecotone alpha: determine whether this position should draw
+            # from primary biome entries, adjacent biome entries, or both.
+            # ecotone_alpha_fn returns primary-biome weight [0,1].
+            # 0.0 = full adjacent, 1.0 = full primary.
+            use_ecotone = adj_entries and ecotone_alpha_fn is not None
+            if use_ecotone:
+                primary_alpha = float(ecotone_alpha_fn(wx, wy))
+                primary_alpha = max(0.0, min(1.0, primary_alpha))
+            else:
+                primary_alpha = 1.0
 
-        assert selected_cat is not None  # for type checker
+            # Blend entry pools: if primary_alpha < 0.5 draw from adjacent, else primary.
+            # In the blend zone (0.2–0.8) we probabilistically mix both pools.
+            if use_ecotone and primary_alpha < 0.2:
+                active_entries = adj_entries
+                active_total = total_adj_density if total_adj_density > 0 else 1.0
+            elif use_ecotone and primary_alpha < 0.8:
+                # Ecotone blend zone: randomly pick which pool to sample from
+                if rng.random() < primary_alpha:
+                    active_entries = primary_entries
+                    active_total = total_primary_density
+                else:
+                    active_entries = adj_entries
+                    active_total = total_adj_density if total_adj_density > 0 else 1.0
+            else:
+                active_entries = primary_entries
+                active_total = total_primary_density
 
-        # 4. Altitude filter (optional per-entry bounds)
-        alt_min = selected_entry.get("min_altitude", 0.0)
-        alt_max = selected_entry.get("max_altitude", 1.0)
-        if not (alt_min <= norm_h <= alt_max):
-            continue
+            # 4. Species selection with density weights
+            roll = rng.uniform(0.0, active_total)
+            cumulative = 0.0
+            selected_cat: str | None = None
+            selected_entry: dict[str, Any] | None = None
 
-        # 5. Moisture filter (optional per-entry bounds)
-        moist_min = selected_entry.get("min_moisture", 0.0)
-        moist_max = selected_entry.get("max_moisture", 1.0)
-        if not (moist_min <= moisture <= moist_max):
-            continue
+            for cat, entry in active_entries:
+                cumulative += entry["density"]
+                if roll <= cumulative:
+                    selected_cat = cat
+                    selected_entry = entry
+                    break
 
-        # 6. Slope filter by category
-        max_slope = _max_slope_for_category(selected_cat)
-        if slope_deg > max_slope:
-            continue
+            if selected_entry is None:
+                selected_cat, selected_entry = active_entries[-1]
 
-        # 7. Species competition — suppress if a competing species is too close
-        species_key = selected_entry.get("style", selected_entry["type"])
-        if _competition_blocked(wx, wy, species_key):
-            continue
+            assert selected_cat is not None  # for type checker
 
-        # 8. Density probability roll
-        if rng.random() > selected_entry["density"]:
-            continue
+            # 5. Altitude filter (optional per-entry bounds)
+            alt_min = selected_entry.get("min_altitude", 0.0)
+            alt_max = selected_entry.get("max_altitude", 1.0)
+            if not (alt_min <= norm_h <= alt_max):
+                continue
 
-        # Compute scale and rotation
-        scale_range = selected_entry.get("scale_range", (0.8, 1.2))
-        scale = rng.uniform(scale_range[0], scale_range[1])
-        rotation = rng.uniform(0.0, 360.0)
+            # 6. Moisture filter (optional per-entry bounds)
+            moist_min = selected_entry.get("min_moisture", 0.0)
+            moist_max = selected_entry.get("max_moisture", 1.0)
+            if not (moist_min <= moisture <= moist_max):
+                continue
 
-        wz = min_h + norm_h * height_range
+            # 7. Slope filter by category
+            max_slope = _max_slope_for_category(selected_cat)
+            if slope_deg > max_slope:
+                continue
 
-        placements.append({
-            "position": (wx, wy, wz),
-            "type": selected_entry["type"],
-            "style": selected_entry.get("style", "default"),
-            "scale": scale,
-            "rotation": rotation,
-            "category": selected_cat,
-            "moisture": moisture,
-        })
+            # 8. Species competition — suppress if a competing species is too close
+            species_key = selected_entry.get("style", selected_entry["type"])
+            if _competition_blocked(wx, wy, species_key):
+                continue
 
-        _register_placed(wx, wy, species_key)
+            # 9. Density probability roll — modulated by LOD tier density factor.
+            # Near-field points are more aggressively accepted (density_factor > 1);
+            # far-field points are thinned (density_factor < 1).
+            effective_density = min(1.0, selected_entry["density"] * density_factor)
+            if rng.random() > effective_density:
+                continue
+
+            # Compute scale and rotation
+            scale_range = selected_entry.get("scale_range", (0.8, 1.2))
+            scale = rng.uniform(scale_range[0], scale_range[1])
+            rotation = rng.uniform(0.0, 360.0)
+
+            wz = min_h + norm_h * height_range
+
+            placements.append({
+                "position": (wx, wy, wz),
+                "type": selected_entry["type"],
+                "style": selected_entry.get("style", "default"),
+                "scale": scale,
+                "rotation": rotation,
+                "category": selected_cat,
+                "moisture": moisture,
+                "lod_hint": lod_hint,
+            })
+
+            _register_placed(wx, wy, species_key)
 
     return placements
 
@@ -828,7 +935,12 @@ def build_vegetation_placement_spec(
         px, py, pz = p["position"]
         dist = math.sqrt((px - cam_x) ** 2 + (py - cam_y) ** 2 + (pz - cam_z) ** 2)
 
-        # LOD tier assignment
+        # LOD tier assignment.
+        # ``lod_hint`` (0/1/2) from compute_vegetation_placement encodes which
+        # hierarchical sampling tier produced this point.  Use it as a floor so
+        # far-field impostors (lod_hint=2) are never promoted back to LOD0 even
+        # when they happen to land close to the camera reference point.
+        lod_hint = int(p.get("lod_hint", 0))
         if dist < d0:
             lod_level = 0
         elif dist < d1:
@@ -837,6 +949,10 @@ def build_vegetation_placement_spec(
             lod_level = 2
         else:
             lod_level = 3
+        # Clamp to the minimum tier implied by the sampling pass.
+        # This prevents a coarsely-sampled far-field point from being
+        # rendered as a full LOD0 mesh just because the camera moved.
+        lod_level = max(lod_level, lod_hint)
 
         species_density[mesh_name] = species_density.get(mesh_name, 0) + 1
         lod_distribution[lod_level] = lod_distribution.get(lod_level, 0) + 1
@@ -863,7 +979,8 @@ def scatter_biome_vegetation(
     """Materialize per-biome vegetation on terrain using quality placement.
 
     Combines biome vegetation sets with Poisson disk sampling, slope/height/
-    moisture filtering, species competition zones, and LOD assignment.
+    moisture filtering, species competition zones, hierarchical LOD density,
+    and ecotone boundary blending.
 
     Params:
         terrain_name (str): Existing terrain object name.
@@ -880,14 +997,31 @@ def scatter_biome_vegetation(
             rectangular zones where no vegetation is placed.  Each dict has
             keys ``min_x``, ``min_y``, ``max_x``, ``max_y`` (world space).
         lod_distances (list of float, optional): PROP-003 -- distance
-            thresholds [LOD1_m, LOD2_m, LOD3_m] for LOD group tagging.
-            Defaults to [15.0, 35.0, 60.0].
+            thresholds [near_m, mid_m, far_m] for LOD group tagging.
+            Defaults to [30.0, 80.0, 200.0].  The first two values drive
+            hierarchical density tiers in compute_vegetation_placement; all
+            three are forwarded to build_vegetation_placement_spec.
         competition_radius (float, default 0.0): Species competition exclusion
             radius.  When > 0, suppresses a new placement when a competing
             species occupies the zone.  Typical: min_distance * 1.5.
         moisture_map: Optional 2-D array of moisture values [0,1].
+        adjacent_biome (str, optional): Name of the biome on the opposite side
+            of the ecotone boundary.  Must be a key in BIOME_VEGETATION_SETS.
+            When set, species from both biomes are blended in the transition
+            zone.
+        ecotone_blend_width (float, default 20.0): Width in world units of the
+            ecotone blend zone.  Species from both biomes are mixed within this
+            band.  Outside the band, only the primary (or adjacent) biome
+            appears.
+        ecotone_axis (str, default "x"): Axis perpendicular to the ecotone
+            boundary — "x" means the boundary runs along Y, "y" means along X.
+        ecotone_boundary (float, optional): World-space coordinate along
+            ecotone_axis where the boundary midpoint lies.  Defaults to the
+            centre of the area_bounds.
         spec_only (bool, default False): When True, skip all bpy operations and
             return the placement spec dict directly (for testing / export).
+        camera_position (list of 3 floats, optional): Reference player/camera
+            position for LOD tier distance calculations.
 
     Returns dict with: name, instance_count, vegetation_types, biome, season,
                        lod_distribution, species_density.
@@ -903,10 +1037,60 @@ def scatter_biome_vegetation(
     bake_wind_colors: bool = bool(params.get("bake_wind_colors", False))
     water_level = float(params.get("water_level", _DEFAULT_WATER_LEVEL))
     exclusion_zones: list[dict] = params.get("exclusion_zones") or []
-    lod_distances: list[float] = params.get("lod_distances") or [15.0, 35.0, 60.0]
+    lod_distances: list[float] = params.get("lod_distances") or [30.0, 80.0, 200.0]
     competition_radius = float(params.get("competition_radius", 0.0))
     moisture_map = params.get("moisture_map")
     spec_only: bool = bool(params.get("spec_only", False))
+    camera_pos_raw = params.get("camera_position")
+    camera_position: tuple[float, float, float] | None = (
+        tuple(camera_pos_raw[:3]) if camera_pos_raw else None  # type: ignore[assignment]
+    )
+
+    # ------------------------------------------------------------------
+    # Ecotone boundary blending parameters.
+    # When adjacent_biome is set we construct an ecotone_alpha_fn that
+    # returns the primary-biome weight [0,1] at any world XY position.
+    # The transition is a smooth-step ramp centred on ecotone_boundary
+    # and spanning ecotone_blend_width.
+    # ------------------------------------------------------------------
+    adjacent_biome: str | None = params.get("adjacent_biome")
+    ecotone_blend_width: float = float(params.get("ecotone_blend_width", 20.0))
+    ecotone_axis: str = str(params.get("ecotone_axis", "x")).lower()
+
+    adj_entries: list[tuple[str, dict[str, Any]]] = []
+    ecotone_alpha_fn = None
+
+    if adjacent_biome and adjacent_biome in BIOME_VEGETATION_SETS:
+        adj_biome_data = BIOME_VEGETATION_SETS[adjacent_biome]
+        for cat in ("trees", "ground_cover", "rocks"):
+            for entry in adj_biome_data.get(cat, []):
+                adj_entries.append((cat, entry))
+
+        # ecotone_boundary: midpoint coordinate along ecotone_axis.
+        # Will be resolved after we know area_bounds (see below).
+        # Store as a mutable container so the closure can capture it.
+        _ecotone_mid: list[float] = [float(params["ecotone_boundary"])] if "ecotone_boundary" in params else []
+        _half_blend = ecotone_blend_width * 0.5
+
+        def _smoothstep(t: float) -> float:
+            """Smoothstep [0,1] — eliminates visible hard boundary."""
+            t = max(0.0, min(1.0, t))
+            return t * t * (3.0 - 2.0 * t)
+
+        def ecotone_alpha_fn(wx: float, wy: float) -> float:  # type: ignore[misc]
+            """Return primary-biome weight [0,1] at world position."""
+            coord = wx if ecotone_axis == "x" else wy
+            mid = _ecotone_mid[0]
+            # Signed distance from boundary midpoint.
+            # Positive side = primary biome, negative = adjacent biome.
+            signed_dist = coord - mid
+            if signed_dist >= _half_blend:
+                return 1.0  # fully in primary biome
+            if signed_dist <= -_half_blend:
+                return 0.0  # fully in adjacent biome
+            # Normalise to [0,1] and smooth-step
+            t = (signed_dist + _half_blend) / ecotone_blend_width
+            return _smoothstep(t)
 
     # ------------------------------------------------------------------
     # Pure-logic spec mode — no Blender required
@@ -918,8 +1102,7 @@ def scatter_biome_vegetation(
         area_bounds: tuple[float, float, float, float] = params.get("area_bounds") or (0.0, 0.0, 100.0, 100.0)
 
         if not terrain_vertices:
-            # Synthesize a flat 1×1 terrain if no geometry supplied
-            area_bounds = area_bounds
+            # Synthesize a flat terrain if no geometry supplied
             terrain_vertices = [
                 (area_bounds[0], area_bounds[1], 0.0),
                 (area_bounds[2], area_bounds[1], 0.0),
@@ -928,6 +1111,13 @@ def scatter_biome_vegetation(
             ]
             terrain_normals = [(0.0, 0.0, 1.0)] * 4
             terrain_faces = [(0, 1, 2, 3)]
+
+        # Resolve ecotone boundary midpoint to area centre if not specified.
+        if adj_entries and ecotone_alpha_fn is not None:
+            if not _ecotone_mid:  # type: ignore[possibly-undefined]
+                mid_x = (area_bounds[0] + area_bounds[2]) * 0.5
+                mid_y = (area_bounds[1] + area_bounds[3]) * 0.5
+                _ecotone_mid.append(mid_x if ecotone_axis == "x" else mid_y)  # type: ignore[possibly-undefined]
 
         placements = compute_vegetation_placement(
             terrain_vertices,
@@ -941,6 +1131,10 @@ def scatter_biome_vegetation(
             exclusion_zones=exclusion_zones,
             moisture_map=moisture_map,
             competition_radius=competition_radius,
+            lod_distances=lod_distances[:2] if len(lod_distances) >= 2 else lod_distances,
+            camera_position=camera_position,
+            adjacent_biome_entries=adj_entries if adj_entries else None,
+            ecotone_alpha_fn=ecotone_alpha_fn,
         )
 
         if len(placements) > max_instances:
@@ -950,10 +1144,14 @@ def scatter_biome_vegetation(
             placements,
             biome_name=biome_name,
             lod_distances=lod_distances,
+            camera_position=camera_position,
         )
 
         if season:
             spec["season"] = season
+        if adjacent_biome:
+            spec["adjacent_biome"] = adjacent_biome
+            spec["ecotone_blend_width"] = ecotone_blend_width
 
         return spec
 
@@ -998,6 +1196,13 @@ def scatter_biome_vegetation(
         loc.y + half_y,
     )
 
+    # Resolve ecotone boundary midpoint to area centre if not specified.
+    if adj_entries and ecotone_alpha_fn is not None:
+        if not _ecotone_mid:  # type: ignore[possibly-undefined]
+            mid_x = (area_bounds[0] + area_bounds[2]) * 0.5
+            mid_y = (area_bounds[1] + area_bounds[3]) * 0.5
+            _ecotone_mid.append(mid_x if ecotone_axis == "x" else mid_y)  # type: ignore[possibly-undefined]
+
     placements = compute_vegetation_placement(
         bm_terrain_vertices,
         bm_terrain_faces,
@@ -1010,6 +1215,10 @@ def scatter_biome_vegetation(
         exclusion_zones=exclusion_zones,
         moisture_map=moisture_map,
         competition_radius=competition_radius,
+        lod_distances=lod_distances[:2] if len(lod_distances) >= 2 else lod_distances,
+        camera_position=camera_position,
+        adjacent_biome_entries=adj_entries if adj_entries else None,
+        ecotone_alpha_fn=ecotone_alpha_fn,
     )
 
     if len(placements) > max_instances:
@@ -1020,6 +1229,7 @@ def scatter_biome_vegetation(
         placements,
         biome_name=biome_name,
         lod_distances=lod_distances,
+        camera_position=camera_position,
     )
     enriched_placements = spec["placements"]
 
@@ -1101,5 +1311,8 @@ def scatter_biome_vegetation(
 
     if season:
         result["season"] = season
+    if adjacent_biome:
+        result["adjacent_biome"] = adjacent_biome
+        result["ecotone_blend_width"] = ecotone_blend_width
 
     return result

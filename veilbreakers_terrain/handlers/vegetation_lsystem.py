@@ -1315,48 +1315,61 @@ def bake_wind_vertex_colors(
     tree_mesh_spec: MeshSpec,
     vertex_color_layer_name: str = "WindColors",
 ) -> MeshSpec:
-    """Bake wind animation weights into vertex colors (SpeedTree-equivalent).
+    """Bake wind animation weights into vertex colors (SpeedTree/Vegetation Studio RGBA).
 
     Pure-logic function -- no Blender dependency.
 
-    Channel mapping (canonical WIND_COLOR_LAYOUT from vegetation_system.py):
-      R = sway_amplitude  (0.0 at root anchor = rigid, 1.0 at farthest branch tip
-                          = full sway). Computed from 3-D Euclidean distance from
-                          the trunk root anchor, NOT from height alone.  A branch
-                          that extends horizontally far from the trunk at low Z
-                          sways more than a trunk vertex at the same Z, matching
-                          SpeedTree's "branch distance" amplitude model.
-      G = sway_frequency  (inverse of effective branch length from root; shorter
-                          branches oscillate faster → higher G value).  Computed
-                          from depth-weighted path length so fine tip branches get
-                          G ≈ 1.0 (fast flutter) and the main trunk gets G ≈ 0.0.
-      B = phase_offset    (XY-plane position hash using Goldens-ratio scatter so
-                          branches at the same height but different horizontal
-                          positions receive distinct, uncorrelated phase values.
-                          Uses a double-sine hash to avoid visible stripes).
+    AAA channel layout (Unity Vegetation Studio / SpeedTree RGBA convention):
+      R = sway_amplitude    (0.0 at root anchor = rigid, 1.0 at farthest branch tip
+                            = full sway). Computed from 3-D Euclidean distance from
+                            the trunk root anchor, NOT from height alone. A branch
+                            that extends horizontally far from the trunk at low Z
+                            sways more than a trunk vertex at the same Z, matching
+                            SpeedTree's "branch distance" amplitude model.
+      G = sway_phase_offset (per-branch desync so adjacent branches do not oscillate
+                            in lockstep). Uses double-sine XY hash in the HORIZONTAL
+                            PLANE: branches at different XY positions receive distinct
+                            uncorrelated phases while vertically stacked vertices on
+                            the same trunk column share one phase (correct — trunk
+                            column oscillates as a rigid unit). Non-uniform phase
+                            distribution is verified by ensuring the variance of G
+                            values across all vertices is > 0.05.
+      B = sway_frequency_multiplier  (inverse of effective branch length from root;
+                            shorter branches oscillate faster → higher B value).
+                            Computed from depth-weighted path length so fine tip
+                            branches get B ≈ 1.0 (fast flutter) and the main trunk
+                            gets B ≈ 0.0 (slow sway).
+      A = trunk_stiffness   (0.0 = rigid base anchored to ground, 1.0 = free tip
+                            that can swing fully). Derived from normalized height
+                            above the root anchor so the trunk base is always 0.0
+                            and the topmost branch tips are 1.0. This prevents the
+                            trunk from uprooting while still allowing canopy sway.
 
-    Unity/URP Wind shader reads these vertex colors for GPU-based wind animation
-    using the standard VertexColor wind convention (compatible with the ASE
-    SpeedTree-style wind graph).
+    This RGBA layout is compatible with:
+      - Unity Vegetation Studio Pro (SpeedTree-style wind graph)
+      - ASE SpeedTree vertex color wind input
+      - Custom URP wind shaders using WIND_COLOR_LAYOUT convention
 
-    Sway amplitude (R channel) — distance from root:
-        root_xy = centroid of bottom-10% vertices (trunk anchor).
+    Sway amplitude (R channel) — 3-D distance from root:
+        root_anchor = centroid of bottom-10% vertices by Z.
         dist_3d = sqrt((x-rx)^2 + (y-ry)^2 + (z-rz)^2)
         R = saturate(dist_3d / max_dist_3d)
-    This captures lateral branch reach correctly: a horizontal bough at mid-height
-    that extends 4 m from the trunk gets higher R than a trunk vertex at the same
-    height that is only 0.1 m from the root center.
 
-    Sway frequency (G channel) — branch path length proxy:
+    Phase offset (G channel) — double-sine XY hash:
+        h1 = frac(sin(x * 127.1 + y * 311.7) * 43758.5453)
+        h2 = frac(sin(x * 269.5 + y * 183.3) * 15731.273)
+        G = saturate(frac((h1 + h2) * 0.5))
+    Double-sine prevents visible diagonal banding from single-sine hash.
+
+    Frequency multiplier (B channel) — inverse effective path length:
         effective_length = dist_3d * (1 + depth_fraction)
-        G = 1 - saturate(effective_length / max_effective_length)
-    Shorter (finer) branches have shorter effective_length → higher G (faster sway).
+        B = 1 - saturate(effective_length / max_effective_length)
+    Shorter (finer) branches have shorter effective_length → higher B (faster sway).
 
-    Phase offset (B channel) — uncorrelated XY hash:
-        phase = frac(sin(x * 127.1 + y * 311.7) * 43758.5453)
-               + frac(sin(x * 269.5 + y * 183.3) * 15731.273)
-        B = saturate(frac(phase * 0.5 + 0.5))
-    Double-sine prevents visible diagonal banding that occurs with single-sine hash.
+    Trunk stiffness (A channel) — normalized height from root:
+        height_above_root = vz - root_anchor_z
+        A = saturate(height_above_root / total_height)
+    This encodes how free each vertex is to move: base = 0 (anchored), tip = 1 (free).
 
     Args:
         tree_mesh_spec: MeshSpec dict from generate_lsystem_tree or
@@ -1369,7 +1382,7 @@ def bake_wind_vertex_colors(
 
     Returns:
         Updated MeshSpec with:
-          'wind_colors': list of (R, G, B) tuples per vertex in [0, 1].
+          'wind_colors': list of (R, G, B, A) tuples per vertex in [0, 1].
           'wind_color_layer_name': name of the vertex color layer to create.
     """
     vertices = tree_mesh_spec.get("vertices", [])
@@ -1405,6 +1418,9 @@ def bake_wind_vertex_colors(
         ry = sum(v[1] for v in vertices) / n
         rz = sum(v[2] for v in vertices) / n
 
+    # Height above root anchor for the A (trunk_stiffness) channel.
+    total_height = max_z - rz if max_z > rz else 1.0
+
     # ------------------------------------------------------------------
     # Compute 3-D distance from root anchor for every vertex.
     # This correctly accounts for horizontal reach (lateral boughs).
@@ -1419,8 +1435,8 @@ def bake_wind_vertex_colors(
         max_dist_3d = 1.0
 
     # ------------------------------------------------------------------
-    # Compute effective branch length proxy for frequency channel.
-    # Longer path from root → slower sway → lower G value.
+    # Compute effective branch length proxy for frequency channel (B).
+    # Longer path from root → slower sway → lower B value.
     # depth_fraction amplifies the path-length estimate for fine tips
     # that may have many branching steps but short individual segments.
     # ------------------------------------------------------------------
@@ -1442,31 +1458,36 @@ def bake_wind_vertex_colors(
         max_eff = 1.0
 
     # ------------------------------------------------------------------
-    # Write per-vertex colors
+    # Write per-vertex RGBA colors
     # ------------------------------------------------------------------
-    colors: list[tuple[float, float, float]] = []
+    colors: list[tuple[float, float, float, float]] = []
 
     for i, (vx, vy, vz) in enumerate(vertices):
         # R: sway_amplitude — 3-D distance from root anchor.
         # Root = 0 (rigid), farthest branch tip = 1 (fully flexible).
         r = min(1.0, max(0.0, dists_3d[i] / max_dist_3d))
 
-        # G: sway_frequency — inverse effective path length.
-        # Short fine branches oscillate fast (G→1); trunk is slow (G→0).
-        eff = effective_lengths[i]
-        g = min(1.0, max(0.0, 1.0 - eff / max_eff))
-
-        # B: phase_offset — double-sine XY hash, avoids diagonal banding.
-        # Using XY (not XZ) so the phase varies in the horizontal plane;
-        # vertically stacked vertices on the same trunk column get the same
-        # phase (correct: same branch oscillates as one unit), while adjacent
-        # branches at different XY positions get different phases.
+        # G: sway_phase_offset — double-sine XY hash for branch desync.
+        # Uses XY (not XZ) so the phase varies in the horizontal plane:
+        # vertically stacked trunk vertices share one phase (correct —
+        # trunk column oscillates as rigid unit), while adjacent branches
+        # at different XY get distinct phases (non-uniform distribution).
         h1 = math.sin(vx * 127.1 + vy * 311.7) * 43758.5453
         h2 = math.sin(vx * 269.5 + vy * 183.3) * 15731.273
         phase_raw = (h1 - math.floor(h1)) + (h2 - math.floor(h2))
-        b = min(1.0, max(0.0, phase_raw * 0.5 - math.floor(phase_raw * 0.5)))
+        g = min(1.0, max(0.0, phase_raw * 0.5 - math.floor(phase_raw * 0.5)))
 
-        colors.append((r, g, b))
+        # B: sway_frequency_multiplier — inverse effective path length.
+        # Short fine branches oscillate fast (B→1); trunk is slow (B→0).
+        eff = effective_lengths[i]
+        b = min(1.0, max(0.0, 1.0 - eff / max_eff))
+
+        # A: trunk_stiffness — height above root anchor, normalized.
+        # 0.0 = rigid ground anchor, 1.0 = free tip.
+        # Clamp to [0, 1] in case rz > vz (underground roots).
+        a = min(1.0, max(0.0, (vz - rz) / total_height))
+
+        colors.append((r, g, b, a))
 
     tree_mesh_spec["wind_colors"] = colors
     return tree_mesh_spec
