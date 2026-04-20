@@ -147,12 +147,12 @@ class TestGenerateHeightmap:
             generate_heightmap(64, 64, seed=42, terrain_type="unknown_biome")
 
     def test_custom_octaves_override(self):
-        """Custom octaves parameter overrides preset."""
+        """Custom octaves parameter overrides the preset above the AAA floor."""
         from blender_addon.handlers._terrain_noise import generate_heightmap
 
         h_default = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         h_custom = generate_heightmap(
-            64, 64, seed=42, terrain_type="mountains", octaves=2
+            64, 64, seed=42, terrain_type="mountains", octaves=12
         )
         # Different octave count should produce different result
         assert not np.array_equal(h_default, h_custom)
@@ -204,11 +204,11 @@ class TestGenerateHeightmap:
 class TestTerrainPresets:
     """Test TERRAIN_PRESETS configuration dict."""
 
-    def test_has_ten_terrain_types(self):
-        """TERRAIN_PRESETS has exactly 10 terrain types."""
+    def test_has_eleven_terrain_types(self):
+        """TERRAIN_PRESETS has the current 11 terrain types."""
         from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
 
-        assert len(TERRAIN_PRESETS) == 10
+        assert len(TERRAIN_PRESETS) == 11
 
     def test_required_terrain_types_present(self):
         """All required terrain types are present."""
@@ -225,6 +225,7 @@ class TestTerrainPresets:
             "coastal",
             "swamp",
             "chaotic",
+            "desert",
         }
         assert required == set(TERRAIN_PRESETS.keys())
 

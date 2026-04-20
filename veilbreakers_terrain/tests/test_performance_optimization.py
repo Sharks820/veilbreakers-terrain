@@ -93,12 +93,7 @@ class TestPermutationTableNoise:
 
     def test_noise_generator_scalar_matches_array(self):
         """Scalar noise2() and vectorized noise2_array() agree on the
-        permutation-table backend (fallback noise).
-
-        When opensimplex is installed, noise2() delegates to opensimplex
-        while noise2_array() uses the faster Perlin table, so they
-        intentionally differ.  This test forces the perm-table backend.
-        """
+        seeded permutation-table backend used by the fast 2-D terrain path."""
         from blender_addon.handlers._terrain_noise import _PermTableNoise
 
         gen = _PermTableNoise(seed=42)
