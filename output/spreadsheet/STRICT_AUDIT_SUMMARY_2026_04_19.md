@@ -13,49 +13,50 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Headline Numbers
 
-- Total rows processed: `1533`
+- Total rows processed: `1608`
 - Non-gradable / scope-exempt rows: `296`
-- Downgraded rows vs latest claim: `1234`
-- Low-confidence rows: `1224`
+- Downgraded rows vs latest claim: `1310`
+- Low-confidence rows: `1289`
 
 Grade distribution:
 - `SCOPE_EXEMPT`: `1`
-- `A-`: `12`
-- `B`: `92`
-- `B+`: `82`
-- `B-`: `189`
-- `C`: `128`
-- `C+`: `422`
-- `C-`: `107`
-- `D`: `43`
-- `D+`: `114`
-- `F`: `48`
+- `A-`: `36`
+- `B`: `136`
+- `B+`: `105`
+- `B-`: `201`
+- `C`: `153`
+- `C+`: `434`
+- `C-`: `106`
+- `D`: `25`
+- `D+`: `91`
+- `F`: `25`
 - `N/A (SCOPE)`: `295`
 
 Evidence buckets:
-- `historical_claim_only`: `247`
-- `live_partial`: `94`
+- `historical_claim_only`: `257`
+- `live_partial`: `95`
+- `live_verified`: `3`
 - `scope_exempt`: `296`
-- `shadowed_or_unloaded`: `648`
-- `stale_or_missing`: `248`
+- `shadowed_or_unloaded`: `683`
+- `stale_or_missing`: `274`
 
 ## Highest-Risk Files
 
-- `terrain_sculpt.py`: `72` downgraded row(s)
+- `terrain_sculpt.py`: `74` downgraded row(s)
 - `environment.py`: `68` downgraded row(s)
-- `terrain_semantics.py`: `46` downgraded row(s)
+- `terrain_semantics.py`: `54` downgraded row(s)
+- `terrain_advanced.py`: `36` downgraded row(s)
+- `terrain_pipeline.py`: `33` downgraded row(s)
 - `_terrain_noise.py`: `30` downgraded row(s)
+- `terrain_validation.py`: `29` downgraded row(s)
 - `animation_environment.py`: `29` downgraded row(s)
 - `terrain_erosion_filter.py`: `28` downgraded row(s)
+- `terrain_unity_export.py`: `27` downgraded row(s)
 - `terrain_dirty_tracking.py`: `27` downgraded row(s)
-- `terrain_advanced.py`: `26` downgraded row(s)
-- `terrain_validation.py`: `26` downgraded row(s)
 - `terrain_baked.py`: `25` downgraded row(s)
+- `_scatter_engine.py`: `23` downgraded row(s)
 - `terrain_caves.py`: `22` downgraded row(s)
 - `terrain_materials.py`: `22` downgraded row(s)
-- `environment_scatter.py`: `21` downgraded row(s)
-- `_scatter_engine.py`: `21` downgraded row(s)
-- `_water_network.py`: `19` downgraded row(s)
 
 ## Direct Failure Clusters Confirmed On 2026-04-19
 
@@ -73,22 +74,22 @@ Evidence buckets:
 - Row `297` `vegetation_system.py::compute_wind_vertex_colors` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
 - Row `299` `vegetation_system.py::_create_biome_vegetation_template` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
 - Row `294` `vegetation_system.py::BIOME_VEGETATION_SETS` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,CSV_STALE_ROW,NO_RUNTIME_REACH)
-- Row `289` `vegetation_lsystem.py::generate_roots` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
-- Row `283` `vegetation_lsystem.py::LSYSTEM_GRAMMARS` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,CSV_STALE_ROW,NO_RUNTIME_REACH)
 - Row `350` `terrain_wildlife_zones.py::_window_score` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
-- Row `1305` `terrain_water_variants.py::get_swamp_specs` `A-` -> `C-` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
-- Row `1304` `terrain_water_variants.py::get_geyser_specs` `A-` -> `C-` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
+- Row `1305` `terrain_water_variants.py::get_swamp_specs` `A-` -> `C-` (CLAIM_R9,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
+- Row `1304` `terrain_water_variants.py::get_geyser_specs` `A-` -> `C-` (CLAIM_R9,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
 - Row `1300` `terrain_water_variants.py::detect_wetlands` `B+` -> `D+` (CLAIM_R9,TEST_STRONG,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_DIRECT_BEHAVIOR,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
-- Row `1292` `terrain_water_variants.py::_as_polyline` `A` -> `C` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH)
-- Row `1266` `terrain_unity_export.py::_decals_json` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
-- Row `1263` `terrain_unity_export.py::_audio_zones_json` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
-- Row `699` `terrain_semantics.py::TerrainMaskStack.set` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,CSV_STALE_ROW,NO_RUNTIME_REACH)
+- Row `1292` `terrain_water_variants.py::_as_polyline` `A` -> `C` (CLAIM_R9,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH)
 - Row `803` `terrain_scene_read.py::get_extended_metadata` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
 - Row `1273` `terrain_readability_bands.py::_normalize_to_score` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH)
 - Row `717` `terrain_masks.py::compute_macro_saliency` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH)
 - Row `714` `terrain_masks.py::compute_convexity` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH)
 - Row `713` `terrain_masks.py::compute_concavity` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH)
 - Row `720` `terrain_mask_cache.py::MaskCache.get_or_compute` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,CSV_STALE_ROW,NO_RUNTIME_REACH)
+- Row `1383` `terrain_hierarchy.py::FeatureBudget` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH)
+- Row `318` `terrain_god_ray_hints.py::_normalize_sun_dir` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH)
+- Row `1212` `terrain_dirty_tracking.py::set_world_bounds` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
+- Row `1127` `terrain_dirty_tracking.py::DirtyTracker.dirty_area` `B+` -> `D+` (CLAIM_FINAL_ONLY,TEST_NONE,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,CSV_STALE_ROW,NO_RUNTIME_REACH)
+- Row `664` `terrain_chunking.py::compute_chunk_lod` `B+` -> `D+` (CLAIM_R9,TEST_STRONG,PIPE_DEAD_OR_SHADOWED,PUBLIC_INTERNAL_ONLY,FAIL_API_DRIFT,FAIL_TRANSITIVE_MODULE,NO_RUNTIME_REACH,LINE_DRIFT_GT_25)
 
 ## AAA Verification Bar Used
 

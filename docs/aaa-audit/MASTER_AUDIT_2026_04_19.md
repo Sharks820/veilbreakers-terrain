@@ -28,7 +28,7 @@ Status distribution:
 
 ## What Changed From The First Pass
 
-- Reclassified callables after runtime-reachability propagation: `1181`
+- Reclassified callables after runtime-reachability propagation: `1135`
 - This second pass follows command-handler wrappers, default-pass registration, master bundle registration, and transitive helper reachability.
 - It also normalizes qualified vs unqualified CSV function names so semantic matches are no longer silently missed.
 
