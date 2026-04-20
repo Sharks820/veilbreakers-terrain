@@ -720,8 +720,8 @@ def _count_by_type(placements: list[dict[str, Any]]) -> dict[str, int]:
 
 def estimate_atmosphere_performance(
     placements: list[dict[str, Any]],
-    particle_cost: float = 1.0,
-    distortion_cost: float = 2.0,
+    particle_cost: float = 0.05,
+    distortion_cost: float = 0.25,
     resolution: int = 64,
     num_samples: int = 8,
     base_fill_rate: float = 0.01,
@@ -731,7 +731,8 @@ def estimate_atmosphere_performance(
 
     Parametric cost model calibrated to GPU ray-march profile:
 
-        cost_ms per volume = resolution**2 * num_samples * density * 0.0001
+        cost_ms per volume =
+            resolution**2 * num_samples * density * opacity * base_fill_rate * 0.002
 
     Distortion volumes add a full-screen post-process surcharge.
     Particle volumes add a particle-system surcharge.
@@ -749,17 +750,16 @@ def estimate_atmosphere_performance(
     placements : list of dict
         Volume placements (from compute_atmospheric_placements or hand-built).
     particle_cost : float
-        Extra ms surcharge per particle volume (default 1.0 ms).
+        Extra ms surcharge per particle volume (default 0.05 ms).
     distortion_cost : float
-        Extra ms surcharge per distortion volume (default 2.0 ms).
+        Extra ms surcharge per distortion volume (default 0.25 ms).
     resolution : int
         Render resolution (width or height, pixels). Cost scales as resolution^2.
         Default 64.
     num_samples : int
         Number of ray-march samples per volume. Default 8.
     base_fill_rate : float
-        Legacy fill-rate constant kept for API compatibility (unused in the
-        parametric model; cost is derived from resolution/num_samples/density).
+        Relative fill-rate scale used by the parametric ray-march model.
     budget_ms : float
         Target GPU time budget in milliseconds for all atmospheric volumes
         combined. Default 2.0 ms (typical atmospheric pass budget at 60 fps).
@@ -802,8 +802,9 @@ def estimate_atmosphere_performance(
         if p.get("distortion"):
             distortion_vols += 1
 
-    # Parametric cost model: calibrated to GPU ray-march profile.
-    # cost_ms per volume = resolution**2 * num_samples * density * opacity * 0.0001
+    # Parametric cost model: calibrated to a lightweight ambient-volume pass.
+    # cost_ms per volume =
+    #   resolution**2 * num_samples * density * opacity * base_fill_rate * 0.002
     #
     # Opacity is included because opaque volumes (opacity=1.0) require full
     # ray-march depth integration whereas near-transparent volumes (opacity~0.1)
@@ -816,7 +817,14 @@ def estimate_atmosphere_performance(
         vol_def = ATMOSPHERIC_VOLUMES.get(vol_name)
         density = float(vol_def.get("density", 0.5)) if vol_def else 0.5
         opacity = float(vol_def.get("opacity", 0.5)) if vol_def else 0.5
-        cost_ms += (resolution ** 2) * num_samples * density * opacity * 0.0001
+        cost_ms += (
+            (resolution ** 2)
+            * num_samples
+            * density
+            * opacity
+            * base_fill_rate
+            * 0.002
+        )
 
     # Surcharges
     cost_ms += distortion_cost * distortion_vols

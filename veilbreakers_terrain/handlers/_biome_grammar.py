@@ -1388,11 +1388,20 @@ def apply_tafoni_weathering(
     slope_mag = np.sqrt(gx ** 2 + gy ** 2)
     slope_deg = np.degrees(np.arctan(slope_mag))
 
+    slope_max = float(slope_mag.max())
     steep_gate = (slope_deg >= slope_threshold_deg).astype(np.float64)
     if steep_gate.sum() < 1.0:
-        return result
+        if slope_max <= 1e-9:
+            return result
+        # Normalized 0-1 heightfields rarely reach literal cliff angles even
+        # when they represent the steepest surface available, so fall back to
+        # an adaptive gate over the non-flat slope population.
+        nonflat = slope_deg[slope_deg > 1e-9]
+        if nonflat.size == 0:
+            return result
+        adaptive_threshold = float(np.percentile(nonflat, 70.0))
+        steep_gate = (slope_deg >= adaptive_threshold).astype(np.float64)
 
-    slope_max = float(slope_mag.max())
     steep_weight = np.clip(slope_mag / max(slope_max, 1e-6), 0.0, 1.0) * steep_gate
 
     prob_sum = float(steep_weight.sum())
