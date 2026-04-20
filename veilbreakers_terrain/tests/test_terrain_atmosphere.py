@@ -149,6 +149,28 @@ def test_pass_horizon_lod_populates_lod_bias(state):
     assert res.metrics["target_res"] <= max(1, min(state.mask_stack.height.shape) // 64)
 
 
+def test_pass_horizon_lod_persists_horizon_channel(state, tmp_path):
+    from blender_addon.handlers.terrain_horizon_lod import pass_horizon_lod
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    res = pass_horizon_lod(state, None)
+    assert res.status == "ok"
+    assert "horizon_elevation_angles" in res.produced_channels
+    assert state.mask_stack.horizon_elevation_angles is not None
+
+    out_path = tmp_path / "horizon_stack.npz"
+    state.mask_stack.to_npz(out_path)
+    restored = TerrainMaskStack.from_npz(out_path)
+
+    assert restored.horizon_elevation_angles is not None
+    np.testing.assert_allclose(
+        np.asarray(restored.horizon_elevation_angles),
+        np.asarray(state.mask_stack.horizon_elevation_angles),
+        atol=1e-6,
+    )
+    assert restored.compute_hash() == state.mask_stack.compute_hash()
+
+
 # ---------------------------------------------------------------------------
 # 2. terrain_fog_masks
 # ---------------------------------------------------------------------------

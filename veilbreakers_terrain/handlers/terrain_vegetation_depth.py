@@ -43,7 +43,6 @@ except ImportError:  # pragma: no cover
 
 
 class VegetationLayer(enum.Enum):
-    EMERGENT = "emergent"        # tallest isolated giants above canopy (AAA layer)
     CANOPY = "canopy"
     SUB_CANOPY = "sub_canopy"    # renamed from understory for clarity; alias kept
     UNDERSTORY = "sub_canopy"    # backward-compat alias
@@ -53,22 +52,18 @@ class VegetationLayer(enum.Enum):
 
 @dataclass
 class VegetationLayers:
-    """Five-layer vertical profile density arrays, all (H, W) float32 in [0, 1].
+    """Four-layer vertical profile density arrays, all (H, W) float32 in [0, 1].
 
     Vertical profile (top → ground):
-        emergent     — isolated giant trees projecting above the main canopy
-                       (>30 m; low density, high ecological value, landmarks)
         canopy       — main closed-canopy stratum (15–30 m)
         sub_canopy   — shade-tolerant trees and tall shrubs (5–15 m)
         shrub        — woody shrubs and saplings (0.5–5 m)
         ground_cover — herbs, ferns, mosses (<0.5 m)
 
-    The emergent layer is new (AAA requirement). Legacy code that only unpacks
-    four layers can call ``as_dict()`` and read the subset it needs; the extra
-    ``emergent`` key is simply ignored.
+    ``sub_canopy`` is the canonical internal name; ``understory`` remains a
+    backward-compatibility alias for callers and persisted detail-density maps.
     """
 
-    emergent_density: np.ndarray
     canopy_density: np.ndarray
     sub_canopy_density: np.ndarray
     shrub_density: np.ndarray
@@ -81,9 +76,7 @@ class VegetationLayers:
 
     def as_dict(self) -> Dict[str, np.ndarray]:
         return {
-            "emergent": self.emergent_density,
             "canopy": self.canopy_density,
-            "sub_canopy": self.sub_canopy_density,
             "understory": self.sub_canopy_density,  # alias for legacy consumers
             "shrub": self.shrub_density,
             "ground_cover": self.ground_cover_density,
@@ -194,7 +187,7 @@ def _normalize(arr: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# 5-layer vegetation (AAA vertical profile)
+# 4-layer vegetation (AAA vertical profile)
 # ---------------------------------------------------------------------------
 
 
@@ -202,15 +195,10 @@ def compute_vegetation_layers(
     stack: TerrainMaskStack,
     biome: str = "dark_fantasy_default",
 ) -> VegetationLayers:
-    """Stratify vegetation into a full five-layer vertical profile driven by terrain signals.
+    """Stratify vegetation into a four-layer vertical profile driven by terrain signals.
 
-    Vertical profile (emergent → ground)
-    -------------------------------------
-    emergent    — isolated giant trees projecting above the main canopy.
-                  Low density (~5 % of canopy cells), confined to the flattest,
-                  most sheltered, highest-canopy-score locations.  These are
-                  landmarks: old-growth survivors, ancient oaks, sentinel pines.
-
+    Vertical profile (canopy → ground)
+    -----------------------------------
     canopy      — main closed-canopy stratum.  Low slope + mid altitude +
                   wind shelter.  Tall trees shun exposed ridges.
 
@@ -241,8 +229,8 @@ def compute_vegetation_layers(
 
     Biome multipliers
     -----------------
-    Each biome returns a 5-tuple (e_scale, c_scale, sc_scale, s_scale, g_scale)
-    that scales the corresponding layer density.  Multipliers > 1.0 boost,
+    Each biome returns a 4-tuple (c_scale, sc_scale, s_scale, g_scale) that
+    scales the corresponding layer density.  Multipliers > 1.0 boost,
     < 1.0 suppress.  Missing biomes fall back to all-1.0.
 
     Absent channels
@@ -270,16 +258,16 @@ def compute_vegetation_layers(
     else:
         wind_n = np.zeros(shape, dtype=np.float32)
 
-    # Biome scalar tweaks: (emergent, canopy, sub_canopy, shrub, ground_cover)
-    biome_scale: Dict[str, Tuple[float, float, float, float, float]] = {
-        "dark_fantasy_default": (1.0,  1.0,  1.0,  1.0,  1.0),
-        "tundra":               (0.05, 0.3,  0.4,  0.6,  0.9),
-        "swamp":                (0.6,  0.8,  1.1,  1.0,  1.2),
-        "desert":               (0.0,  0.1,  0.2,  0.3,  0.4),
-        "temperate_forest":     (0.8,  1.0,  1.0,  0.8,  1.0),
-        "boreal":               (0.4,  0.9,  0.7,  0.6,  1.0),
+    # Biome scalar tweaks: (canopy, sub_canopy, shrub, ground_cover)
+    biome_scale: Dict[str, Tuple[float, float, float, float]] = {
+        "dark_fantasy_default": (1.0,  1.0,  1.0,  1.0),
+        "tundra":               (0.3,  0.4,  0.6,  0.9),
+        "swamp":                (0.8,  1.1,  1.0,  1.2),
+        "desert":               (0.1,  0.2,  0.3,  0.4),
+        "temperate_forest":     (1.0,  1.0,  0.8,  1.0),
+        "boreal":               (0.9,  0.7,  0.6,  1.0),
     }
-    es, cs, scs, ss, gs = biome_scale.get(biome, (1.0, 1.0, 1.0, 1.0, 1.0))
+    cs, scs, ss, gs = biome_scale.get(biome, (1.0, 1.0, 1.0, 1.0))
 
     # ---- Species-specific canopy radius → Beer-Lambert extinction coefficients ---
     # Default neutral radius 6 m.  Species with larger crowns create deeper shade.
@@ -306,22 +294,6 @@ def compute_vegetation_layers(
         * (1.0 - wind_n * 0.6)
     ).clip(0.0, 1.0)
     canopy = (canopy_raw * cs).clip(0.0, 1.0).astype(np.float32)
-
-    # ---- Emergent: rarest stratum — only the highest-canopy, flattest cells -
-    # Emergent trees require:
-    #   (a) canopy_raw above the 85th percentile of the tile (very high canopy score)
-    #   (b) slope < 0.15 normalised (nearly flat)
-    #   (c) wind exposure < 0.3 (sheltered hollows and plateaux)
-    # Density is further attenuated to ~10 % of canopy density so emergent
-    # trees are genuinely rare landmarks, not a redundant duplicate of canopy.
-    canopy_threshold = float(np.percentile(canopy_raw, 85))
-    emergent_raw = (
-        ((canopy_raw - canopy_threshold) / max(1.0 - canopy_threshold, 1e-6)).clip(0.0, 1.0)
-        * (1.0 - slope_n * 6.0).clip(0.0, 1.0)   # hard cutoff at slope_n > ~0.17
-        * (1.0 - wind_n * 3.0).clip(0.0, 1.0)     # hard cutoff at wind_n > ~0.33
-    ).clip(0.0, 1.0)
-    # Scale to 10 % max density — these are isolated giants, not a closed stratum.
-    emergent = (emergent_raw * 0.10 * es).clip(0.0, 1.0).astype(np.float32)
 
     # ---- Sub-canopy: Beer-Lambert light transmission through canopy ----------
     # Light reaching sub-canopy: T_sc = exp(-k_sc * canopy_raw * canopy_radius_scale)
@@ -367,7 +339,6 @@ def compute_vegetation_layers(
     ground_cover = (ground_cover * gs).clip(0.0, 1.0).astype(np.float32)
 
     return VegetationLayers(
-        emergent_density=emergent,
         canopy_density=canopy,
         sub_canopy_density=sub_canopy,
         shrub_density=shrub,
@@ -637,6 +608,9 @@ def detect_disturbance_patches(
 
     patches: List[DisturbancePatch] = []
     rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    allowed_kinds = tuple(k for k in kinds if k in ("fire", "windthrow", "flood"))
+    if not allowed_kinds:
+        allowed_kinds = ("fire", "windthrow", "flood")
 
     max_component_cells = max(min_patch_area * 4, (rows * cols) // 10)
 
@@ -703,13 +677,15 @@ def detect_disturbance_patches(
 
             best_score = max(fire_score, flood_score, wind_score)
             if best_score < 0.05:
-                kind = str(kinds[len(patches) % len(kinds)])
+                kind = str(allowed_kinds[len(patches) % len(allowed_kinds)])
             elif fire_score >= flood_score and fire_score >= wind_score:
                 kind = "fire"
             elif flood_score >= wind_score:
                 kind = "flood"
             else:
                 kind = "windthrow"
+            if kind not in allowed_kinds:
+                kind = str(allowed_kinds[0])
 
             # Age estimation: when height_delta channel present, larger delta
             # implies more recent disturbance (less time for recovery).
@@ -1199,12 +1175,8 @@ def apply_edge_effects(
 
     boost = taper * edge_boost_factor
 
-    # Species-diversity gradient per layer (5-layer vertical profile)
+    # Species-diversity gradient per layer (4-layer vertical profile)
     return VegetationLayers(
-        # Emergent giants are even more suppressed at exposed edges.
-        emergent_density=np.clip(
-            vegetation.emergent_density - boost * 0.50, 0.0, 1.0
-        ).astype(np.float32),
         # Canopy thins at the edge — wind exposure and light competition.
         canopy_density=np.clip(
             vegetation.canopy_density - boost * 0.30, 0.0, 1.0
@@ -1283,7 +1255,6 @@ def apply_cultivated_zones(
 
     # Use float64 working arrays so scalar assignments like 0.9 survive
     # without float32 rounding (np.float32(0.9) < 0.9 in Python float space).
-    emergent = vegetation.emergent_density.astype(np.float64)
     canopy = vegetation.canopy_density.astype(np.float64)
     sub_canopy = vegetation.sub_canopy_density.astype(np.float64)
     shrub = vegetation.shrub_density.astype(np.float64)
@@ -1298,8 +1269,6 @@ def apply_cultivated_zones(
     def _apply_zone(r_sl: slice, c_sl: slice, zone_row_spacing: int, row_density: float) -> None:
         rows_in_zone = range(*r_sl.indices(shape[0]))
 
-        # (a) Clear natural vegetation; emergent giants are completely removed
-        emergent[r_sl, c_sl] = 0.0
         canopy[r_sl, c_sl] = 0.05
         sub_canopy[r_sl, c_sl] = 0.02
         shrub[r_sl, c_sl] = 0.05
@@ -1345,7 +1314,6 @@ def apply_cultivated_zones(
     else:
         # Fallback: boolean mask as single zone (full-array row slice).
         rows_count, _ = shape
-        emergent[base_mask] = 0.0
         canopy[base_mask] = 0.05
         sub_canopy[base_mask] = 0.02
         shrub[base_mask] = 0.05
@@ -1358,7 +1326,6 @@ def apply_cultivated_zones(
                 ground[row_idx, row_in_mask] = 1.0
 
     return VegetationLayers(
-        emergent_density=emergent.astype(np.float32),
         canopy_density=canopy.astype(np.float32),
         sub_canopy_density=sub_canopy.astype(np.float32),
         shrub_density=shrub.astype(np.float32),
@@ -1395,8 +1362,8 @@ def apply_allelopathic_exclusion(
     - For every OTHER species T, multiply its density by
       ``1 - suppression_weight * convolved_suppressor``.
 
-    The four VegetationLayers channels are updated in-place via the
-    ``species_density_dict`` values (canopy/understory/shrub/ground_cover).
+    The vegetation layers are updated in-place via the ``species_density_dict``
+    values (canopy/understory/shrub/ground_cover).
 
     Legacy interface
     ----------------
@@ -1429,7 +1396,6 @@ def apply_allelopathic_exclusion(
         shrub = (vegetation.shrub_density * (1.0 - suppression * 0.7)).astype(np.float32)
         ground_cover = (vegetation.ground_cover_density * (1.0 - suppression * 0.6)).astype(np.float32)
         return VegetationLayers(
-            emergent_density=vegetation.emergent_density.copy(),
             canopy_density=vegetation.canopy_density.copy(),
             sub_canopy_density=sub_canopy,
             shrub_density=shrub,
@@ -1499,18 +1465,13 @@ def apply_allelopathic_exclusion(
                 1.0,
             ).astype(np.float32)
 
-    # Write back to VegetationLayers channels (5-layer)
-    emergent = densities.get("emergent", vegetation.emergent_density.copy())
+    # Write back to VegetationLayers channels (4-layer public contract).
     canopy = densities.get("canopy", vegetation.canopy_density.copy())
-    sub_canopy = densities.get(
-        "sub_canopy",
-        densities.get("understory", vegetation.sub_canopy_density.copy()),
-    )
+    sub_canopy = densities.get("understory", vegetation.sub_canopy_density.copy())
     shrub = densities.get("shrub", vegetation.shrub_density.copy())
     ground_cover = densities.get("ground_cover", vegetation.ground_cover_density.copy())
 
     return VegetationLayers(
-        emergent_density=emergent.astype(np.float32),
         canopy_density=canopy.astype(np.float32),
         sub_canopy_density=sub_canopy.astype(np.float32),
         shrub_density=shrub.astype(np.float32),
@@ -1620,13 +1581,22 @@ def pass_vegetation_depth(
             stack, seed, intent=state.intent
         )
 
-    # Build shared detail_density dict for clearings + logs to stamp into
+    # Build shared detail_density dict for clearings + logs to stamp into.
+    # Preserve the canonical public keys only; normalize older alias names.
     existing = stack.detail_density or {}
-    merged: Dict[str, np.ndarray] = {k: np.asarray(v).copy() for k, v in existing.items()}
-    # 5-layer vertical profile: emergent > canopy > sub_canopy > shrub > ground_cover
-    keys = ("emergent", "canopy", "sub_canopy", "shrub", "ground_cover")
+    merged: Dict[str, np.ndarray] = {}
+    if "canopy" in existing:
+        merged["canopy"] = np.asarray(existing["canopy"]).copy()
+    if "understory" in existing:
+        merged["understory"] = np.asarray(existing["understory"]).copy()
+    elif "sub_canopy" in existing:
+        merged["understory"] = np.asarray(existing["sub_canopy"]).copy()
+    if "shrub" in existing:
+        merged["shrub"] = np.asarray(existing["shrub"]).copy()
+    if "ground_cover" in existing:
+        merged["ground_cover"] = np.asarray(existing["ground_cover"]).copy()
+    keys = ("canopy", "understory", "shrub", "ground_cover")
     sources = (
-        layers.emergent_density,
         layers.canopy_density,
         layers.sub_canopy_density,
         layers.shrub_density,

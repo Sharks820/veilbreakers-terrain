@@ -574,10 +574,8 @@ def compute_light_budget(
         <other>— 1.0  (fallback)
 
     Shadow surcharge (per shadowing light):
-        point  — shadow_cost * 6.0  (6 cubemap faces = 6 shadow passes)
-        spot   — shadow_cost * 1.0  (single depth map)
-        area   — shadow_cost * 2.0  (two-pass soft shadow)
-        <other>— shadow_cost * 1.5
+        Added directly once per shadowing light. The base type cost already
+        captures the relative complexity of point vs spot vs area lights.
 
     Flicker surcharge: flicker_cost per flickering light (CPU animation cost).
 
@@ -621,7 +619,6 @@ def compute_light_budget(
     """
     # Per-type base cost and shadow multiplier
     _BASE: dict[str, float] = {"point": 1.0, "spot": 0.8, "area": 1.5}
-    _SHADOW_MUL: dict[str, float] = {"point": 6.0, "spot": 1.0, "area": 2.0}
 
     # Recommendation thresholds by platform
     _THRESHOLDS: dict[str, list[tuple[float, str]]] = {
@@ -656,7 +653,7 @@ def compute_light_budget(
         light_cost = base
         if has_shadow:
             shadow_count += 1
-            light_cost += shadow_cost * _SHADOW_MUL.get(ltype, 1.5)
+            light_cost += shadow_cost
         if has_flicker:
             flicker_count += 1
             light_cost += flicker_cost

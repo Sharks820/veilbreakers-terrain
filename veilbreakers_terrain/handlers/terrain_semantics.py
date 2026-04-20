@@ -484,6 +484,8 @@ class TerrainMaskStack:
             # Road network (Phase 8)
             "road_mask",
             "road_sdf_dist",
+            # Horizon LOD / skyline sampling (Bundle L)
+            "horizon_elevation_angles",
             # Height decomposition (Fix 12.1)
             "hmap_low_freq",
             "hmap_high_freq",
