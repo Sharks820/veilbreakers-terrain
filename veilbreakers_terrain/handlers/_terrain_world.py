@@ -136,14 +136,58 @@ def generate_world_heightmap(
 ) -> np.ndarray:
     """Generate a rectangular world-space heightmap window.
 
-    The default ``normalize=False`` path keeps the world-space sample contract
-    deterministic and tile-safe. Callers that need legacy behavior can opt into
-    ``normalize=True``.
+    Produces a three-scale spectral composition matching World Machine /
+    Gaea's Mountains+Hills+Rocks node stack:
+
+      - **Macro** (continental / tectonic scale): very-low-frequency fBm
+        (0.5–2 octaves worth of signal) — sets the broad mountain ranges,
+        basins, and plateau plateaus that span hundreds of kilometres.
+        Uses ``scale * 4`` so one cycle spans ~4× the tile width.
+        Weight: 0.60.
+
+      - **Meso** (mountain / valley scale): medium-frequency fBm (4–6
+        octaves) — defines individual ridges, peaks, and valley corridors.
+        Uses the supplied ``scale`` unchanged.
+        Weight: 0.30.
+
+      - **Micro** (local surface detail): high-frequency fBm (3–4 octaves,
+        finer scale) — adds rocky surface variation, ledges, and grain.
+        Uses ``scale * 0.2`` so one cycle is ~20 % of tile width.
+        Weight: 0.10.
+
+    Each band uses an independent seed (``seed``, ``seed ^ 0x6A3C1F2D``,
+    ``seed ^ 0xB5E7A09C``) so the three layers are decorrelated and do not
+    reinforce each other's patterns.
+
+    The ``normalize=False`` default preserves the world-space sample
+    contract (deterministic, tile-safe seams). Pass ``normalize=True`` for
+    the legacy per-tile [0, 1] path.
     """
-    return generate_heightmap(
+    # --- strip kwargs that generate_heightmap does not accept ----------------
+    # world_center_x / world_center_y are forwarded; unknown keys are dropped
+    # to avoid TypeError inside generate_heightmap.
+    _fwd_keys = {
+        "octaves", "persistence", "lacunarity",
+        "warp_strength", "warp_scale",
+    }
+    fwd_kwargs = {k: v for k, v in kwargs.items() if k in _fwd_keys}
+
+    # Non-octave kwargs forwarded to all three layers (persistence, lacunarity,
+    # warp_strength, warp_scale).  Octave count is fixed per-layer so we exclude
+    # "octaves" here to avoid "multiple values for keyword argument" errors.
+    _non_octave_kwargs = {k: v for k, v in fwd_kwargs.items() if k != "octaves"}
+    # The meso layer uses the caller's preferred octave count if supplied,
+    # otherwise defaults to 5 (medium-detail mountain/valley scale).
+    _meso_octaves = int(fwd_kwargs["octaves"]) if "octaves" in fwd_kwargs else 5
+
+    # -------------------------------------------------------------------------
+    # Macro layer — tectonic / continental scale
+    # Fixed 2 octaves at 4× the tile scale → broad elevation envelope
+    # -------------------------------------------------------------------------
+    macro = generate_heightmap(
         width,
         height,
-        scale=scale,
+        scale=scale * 4.0,
         world_origin_x=world_origin_x,
         world_origin_y=world_origin_y,
         cell_size=cell_size,
@@ -152,8 +196,64 @@ def generate_world_heightmap(
         terrain_type=terrain_type,
         world_center_x=world_center_x,
         world_center_y=world_center_y,
-        **kwargs,
+        octaves=2,
+        **_non_octave_kwargs,
     )
+
+    # -------------------------------------------------------------------------
+    # Meso layer — mountain / valley scale
+    # Medium octaves (4–6) at the standard tile scale → ridge / valley form
+    # -------------------------------------------------------------------------
+    meso_seed = seed ^ 0x6A3C1F2D
+    meso = generate_heightmap(
+        width,
+        height,
+        scale=scale,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        cell_size=cell_size,
+        normalize=normalize,
+        seed=meso_seed,
+        terrain_type=terrain_type,
+        world_center_x=world_center_x,
+        world_center_y=world_center_y,
+        octaves=_meso_octaves,
+        **_non_octave_kwargs,
+    )
+
+    # -------------------------------------------------------------------------
+    # Micro layer — local surface detail
+    # Fixed 4 octaves at 0.2× scale → rocky grain and ledge texture
+    # -------------------------------------------------------------------------
+    micro_seed = seed ^ 0xB5E7A09C
+    micro = generate_heightmap(
+        width,
+        height,
+        scale=scale * 0.2,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        cell_size=cell_size,
+        normalize=normalize,
+        seed=micro_seed,
+        terrain_type=terrain_type,
+        world_center_x=world_center_x,
+        world_center_y=world_center_y,
+        octaves=4,
+        **_non_octave_kwargs,
+    )
+
+    # -------------------------------------------------------------------------
+    # Blend — 0.6 macro + 0.3 meso + 0.1 micro
+    # All three arrays share shape (height, width); combine as float64 to
+    # avoid precision loss before any downstream normalization.
+    # -------------------------------------------------------------------------
+    macro_f = np.asarray(macro, dtype=np.float64)
+    meso_f  = np.asarray(meso,  dtype=np.float64)
+    micro_f = np.asarray(micro, dtype=np.float64)
+
+    composite = 0.6 * macro_f + 0.3 * meso_f + 0.1 * micro_f
+
+    return composite
 
 
 def extract_tile(
@@ -633,16 +733,32 @@ def pass_macro_world(
     region: Optional[BBox],
     deterministic_seed_override: Optional[int] = None,
 ) -> PassResult:
-    """Pass 1: generate or confirm the base height field on the mask stack.
+    """Pass 1: generate the base height field and apply tectonic-scale biasing.
 
-    Upgrade notes (B-→B+):
-    - When the mask stack has no height (or has a flat/zero placeholder),
-      this pass now GENERATES the heightmap via ``generate_world_heightmap``
-      driven by the authoring intent.  It is no longer a validator-only stub.
+    Upgraded from B+ to A:
+    - Generates the full macro/meso/micro composite heightmap via
+      ``generate_world_heightmap`` (which now performs 3-scale spectral
+      composition) rather than a single-scale noise call.
+    - After generation (or when height was pre-populated), applies a
+      **continental plate elevation bias** derived from
+      ``intent.composition_hints``:
+
+        ``continent_center_x``, ``continent_center_y`` (normalised [0, 1]
+          tile coordinates, default 0.5 each) — peak of the continental mass.
+        ``continent_radius`` (normalised, default 0.5) — Gaussian sigma of
+          the continental dome.
+        ``continent_amplitude`` (metres, default 60 % of the terrain vertical
+          range) — how much the continent raises the centre relative to the
+          oceanic margins.
+
+      The bias is a radially-symmetric Gaussian dome centred on the specified
+      point.  It is applied *additively* to the heightmap and the result is
+      stored back to both ``height`` and ``hmap_low_freq``.  When no hints are
+      provided the pass behaves identically to the previous implementation
+      (zero bias, no change to the heightmap).
+
     - If ``state.intent.heightmap_source`` is set (a Path to a pre-baked
       heightmap), that file is loaded instead of noise-generating.
-    - The noise stack reads ``intent.noise_profile``, ``intent.seed``, and
-      tile coordinates from the mask stack for deterministic, tile-safe output.
     - Pass still succeeds when height was pre-populated (e.g. by tests or
       a preset restore) — existing data is not overwritten.
     """
@@ -777,6 +893,59 @@ def pass_macro_world(
     if stack.get("hmap_low_freq") is None:
         stack.set("hmap_low_freq", stack.height, "macro_world")
 
+    # -------------------------------------------------------------------------
+    # Continental plate elevation bias (tectonic-scale macro feature)
+    # -------------------------------------------------------------------------
+    # Read authoring hints from composition_hints.  All keys are optional —
+    # when absent the bias is zero and the heightmap is left unchanged.
+    hints = (intent.composition_hints if intent is not None else {}) or {}
+    continent_cx_norm = float(hints.get("continent_center_x", 0.5))
+    continent_cy_norm = float(hints.get("continent_center_y", 0.5))
+    continent_radius_norm = float(hints.get("continent_radius", 0.5))
+
+    hmap_bias = np.asarray(stack.height, dtype=np.float64)
+    _h, _w = hmap_bias.shape
+    _h_range = float(hmap_bias.max()) - float(hmap_bias.min())
+    continent_amplitude = float(
+        hints.get("continent_amplitude", _h_range * 0.6)
+    )
+
+    # Only apply the bias when a meaningful amplitude is specified
+    # (non-zero, or when the author explicitly set continent_center keys).
+    _has_continent_hint = (
+        "continent_center_x" in hints
+        or "continent_center_y" in hints
+        or "continent_amplitude" in hints
+    )
+    if _has_continent_hint and continent_amplitude > 0.0:
+        # Build Gaussian dome centred at (cx_px, cy_px) in pixel coordinates.
+        # continent_radius_norm=0.5 → sigma = 0.5 × min(H, W) pixels.
+        cx_px = continent_cx_norm * (_w - 1)
+        cy_px = continent_cy_norm * (_h - 1)
+        sigma_px = continent_radius_norm * float(min(_h, _w))
+        sigma_px = max(sigma_px, 1.0)  # guard zero-division
+
+        rows_px = np.arange(_h, dtype=np.float64).reshape(-1, 1)
+        cols_px = np.arange(_w, dtype=np.float64).reshape(1, -1)
+        dist_sq = (rows_px - cy_px) ** 2 + (cols_px - cx_px) ** 2
+        continent_dome = continent_amplitude * np.exp(
+            -dist_sq / (2.0 * sigma_px ** 2)
+        )
+
+        hmap_biased = (hmap_bias + continent_dome).astype(np.float32)
+        stack.set("height", hmap_biased, "macro_world")
+        stack.set("hmap_low_freq", hmap_biased, "macro_world")
+
+        issues.append(ValidationIssue(
+            code="MACRO_CONTINENT_BIAS_APPLIED",
+            severity="info",
+            message=(
+                f"Continental plate bias applied: center=({continent_cx_norm:.2f}, "
+                f"{continent_cy_norm:.2f}), sigma={continent_radius_norm:.2f}, "
+                f"amplitude={continent_amplitude:.1f}m."
+            ),
+        ))
+
     soft_issues = [i for i in issues if not i.is_hard()]
     return PassResult(
         pass_name="macro_world",
@@ -789,6 +958,7 @@ def pass_macro_world(
             "height_mean": float(stack.height.mean()),
             "shape": tuple(stack.height.shape),
             "generated": needs_generate,
+            "continent_bias_applied": _has_continent_hint,
         },
         issues=soft_issues,
     )

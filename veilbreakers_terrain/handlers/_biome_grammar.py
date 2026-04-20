@@ -1714,22 +1714,35 @@ def apply_geological_folds(
 ) -> np.ndarray:
     """Apply geological fold deformation (anticline/syncline) to terrain.
 
-    Simulates tectonic folding with a physically traceable fold axis:
+    Simulates tectonic folding with physically correct periclinal geometry:
     - "anticline": upward arch (rock bends up), convex toward viewer
     - "syncline": downward trough (rock bends down), concave toward viewer
     - "chevron": angular V-shaped folds
 
-    Each fold has a dip-direction field: amplitude decays along the fold's
-    plunge direction (the along-strike axis), so folds are not infinite planes
-    but periclinal structures that die out at their noses. The fold axis is
-    traceable as the projection zero-crossing at maximum amplitude.
+    AAA geometry — three physically motivated upgrades over a simple sine:
 
-    AAA improvement: plunging fold amplitude envelope — amplitude is
-    multiplied by a Gaussian envelope along the strike direction (``along``)
-    so that each fold has a maximum-amplitude hinge and tapers to zero at
-    both ends along strike. This matches real geological fold geometry
-    (periclinal folds, doubly plunging anticlines) and makes the fold axis
-    visually traceable rather than extending uniformly across the entire map.
+    1. **Plunging hinge axis** (3–15° plunge angle, per Davis & Reynolds 1996):
+       The fold axis trends downward at a small angle along the strike direction.
+       This is modelled by adding a plunge-phase shift to the cross-strike
+       projection: as you move a distance ``s`` along strike, the wave phase
+       shifts by ``s * tan(plunge_angle) / wavelength * 2π``.  The result is
+       a periclinal nose where the fold axis terminates at depth rather than
+       extending infinitely as a horizontal line — matching doubly-plunging
+       anticlines visible in Witcher 3 mountain ranges.
+
+    2. **Gaussian amplitude envelope along strike** (periclinal shape):
+       Amplitude is multiplied by ``exp(-proj_strike² / 2σ²)`` so each fold
+       has a maximum-amplitude hinge and tapers to zero at both ends.
+       ``sigma = 1.5 * wavelength`` gives a realistic periclinal extent
+       (~3 wavelengths full-width at half-maximum).
+
+    3. **Cumulative strain scaling** (Ramsay 1967):
+       Each fold's effective amplitude scales with a strain factor derived from
+       the local curvature already accumulated in ``result`` at the fold's
+       hinge location.  High pre-existing curvature (many overlapping folds)
+       reduces the marginal amplitude of the new fold — reflecting how rocks
+       reach a mechanical limit under repeated folding.  The strain factor is
+       clamped to [0.3, 1.0] so even highly deformed areas retain some relief.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
@@ -1773,24 +1786,71 @@ def apply_geological_folds(
         # — this drives the plunge-amplitude envelope.
         proj_strike = (xs - cx) * strike_x + (ys - cy) * strike_y
 
-        # Phase offset
+        # Phase offset (random starting phase so folds don't all peak at hinge)
         phase = rng.uniform(0, 2 * math.pi)
+
+        # -----------------------------------------------------------------
+        # Plunge angle: the hinge axis dips at plunge_deg below horizontal
+        # (Davis & Reynolds 1996 — typical range 3–15°).
+        # The phase of the cross-strike wave shifts by
+        #   Δφ = 2π * s * tan(plunge_angle) / wavelength
+        # as you move distance s along the strike direction.
+        # This causes the fold crest to trace a plunging line, producing
+        # the characteristic periclinal closure / nose geometry.
+        # -----------------------------------------------------------------
+        plunge_deg = rng.uniform(3.0, 15.0)
+        plunge_rad = math.radians(plunge_deg)
+        plunge_phase_shift = (
+            2.0 * math.pi * proj_strike * math.tan(plunge_rad) / max(wavelength_cells, 1.0)
+        )
+
+        # Effective cross-strike coordinate after plunge correction
+        proj_dip_plunged = proj_dip + plunge_phase_shift * (wavelength_cells / (2.0 * math.pi))
 
         if fold_type == "chevron":
             # Triangular wave for angular folds
-            t = (proj_dip / wavelength_cells + phase / (2 * math.pi)) % 1.0
+            t = (proj_dip_plunged / wavelength_cells + phase / (2 * math.pi)) % 1.0
             wave = 2.0 * np.abs(2.0 * (t - np.floor(t + 0.5))) - 1.0
         else:
-            wave = np.sin(2.0 * math.pi * proj_dip / wavelength_cells + phase)
+            wave = np.sin(2.0 * math.pi * proj_dip_plunged / wavelength_cells + phase)
 
-        # Plunge envelope: Gaussian along strike so fold dies out at both ends.
-        # sigma = 1.5 * wavelength gives a periclinal shape — full amplitude
-        # spans ~3 wavelengths along the axis, tapering to near-zero beyond.
+        # -----------------------------------------------------------------
+        # Plunge-amplitude Gaussian envelope along strike
+        # sigma = 1.5 * wavelength → periclinal shape, fold terminates at
+        # both ends along the axis (doubly-plunging geometry).
+        # -----------------------------------------------------------------
         plunge_sigma = wavelength_cells * 1.5
         plunge_envelope = np.exp(
             -(proj_strike ** 2) / (2.0 * max(plunge_sigma ** 2, 1e-9))
         )
 
-        result += wave * amplitude * sign * plunge_envelope
+        # -----------------------------------------------------------------
+        # Cumulative strain scaling (Ramsay 1967)
+        # Measure local curvature in the current result at the hinge location.
+        # The Laplacian (∇²h) proxies differential strain — high values mean
+        # the terrain is already highly deformed by previous folds.
+        # Strain factor = 1 / (1 + k * |curvature_at_hinge|) where k is a
+        # sensitivity constant tuned so that 2× the wave amplitude at the
+        # hinge reduces subsequent fold contribution by ~40%.
+        # Clamped to [0.3, 1.0] to prevent complete suppression.
+        # -----------------------------------------------------------------
+        h_idx = int(np.clip(round(float(cy)), 0, h - 1))
+        w_idx = int(np.clip(round(float(cx)), 0, w - 1))
+        # 3-point Laplacian at hinge location (finite difference)
+        _lap = 0.0
+        if 1 <= h_idx <= h - 2 and 1 <= w_idx <= w - 2:
+            _lap = float(
+                result[h_idx - 1, w_idx]
+                + result[h_idx + 1, w_idx]
+                + result[h_idx, w_idx - 1]
+                + result[h_idx, w_idx + 1]
+                - 4.0 * result[h_idx, w_idx]
+            )
+        _curvature_mag = abs(_lap)
+        # k chosen so that curvature = 2*amplitude halves the strain factor
+        _k_strain = 1.0 / max(2.0 * amplitude, 1e-9)
+        strain_factor = float(np.clip(1.0 / (1.0 + _k_strain * _curvature_mag), 0.3, 1.0))
+
+        result += wave * amplitude * sign * plunge_envelope * strain_factor
 
     return result

@@ -243,12 +243,33 @@ def compute_atmospheric_placements(
     water_mask: "Optional[Any]" = None,
     canopy_mask: "Optional[Any]" = None,
     cell_size: float = 1.0,
+    weather_hints: "Optional[dict[str, Any]]" = None,
 ) -> list[dict[str, Any]]:
     """Generate atmospheric volume placements appropriate for a biome.
 
-    Terrain-aware: when a heightmap is supplied, volumes are biased toward
-    ecologically meaningful locations (fog -> water/depressions, mist ->
-    ridges/waterfalls, cloud shadows -> ridge peaks at altitude).
+    Terrain-aware: when a heightmap is supplied, volumes are placed using
+    ecologically meaningful probability fields derived from terrain analysis:
+
+    - **God rays**: cluster at ridge *notches* — local minima along ridge
+      lines where gaps in canopy or rock let shafts of light through.  When
+      a canopy_mask is also supplied, canopy-gap cells (low canopy on a ridge)
+      get additional weight.  Detected as cells where the ridge_mask is above
+      a threshold but the local height is below the neighbourhood maximum
+      (saddle / notch geometry).
+
+    - **Ground fog / spore clouds**: placed at drainage-accumulation minima —
+      valley-bottom cells identified by a lightweight D8 flow-accumulation
+      pass.  High accumulation (many upstream cells draining through) marks
+      valley bottoms where cold air pools at night and mist collects.  The
+      water_mask provides additional weight when available.
+
+    - **Clouds** (``void_shimmer`` as cloud proxy, ``smoke_plume``): when
+      ``weather_hints`` contains a ``"wind_dir_deg"`` key (compass bearing,
+      0=N, 90=E), cloud placements are biased along the prevailing wind
+      direction — denser on the windward slope, sparser on the lee side.
+
+    - **Dust motes / fireflies**: ridge-proximity bias with canopy gap
+      weighting (sunbeam scatter in tree gaps).
 
     Parameters
     ----------
@@ -264,14 +285,25 @@ def compute_atmospheric_placements(
         2-D array of terrain heights (rows=Y, cols=X). When provided, Z
         positions are derived from sampled cell heights.
     ridge_mask : np.ndarray, optional
-        2-D float mask [0, 1] marking ridge cells; boosts mist placement.
+        2-D float mask [0, 1] marking ridge cells; boosts mist / god-ray
+        placement.
     water_mask : np.ndarray, optional
-        2-D float mask [0, 1] marking water/wetland cells; boosts fog placement.
+        2-D float mask [0, 1] marking water/wetland cells; boosts fog
+        placement.
     canopy_mask : np.ndarray, optional
-        2-D float mask [0, 1] marking canopy cells; reserved for future use.
+        2-D float mask [0, 1] marking canopy density (1 = dense canopy).
+        Gap cells (low canopy on ridges) attract god rays and dust motes.
     cell_size : float
         World-space size of one heightmap cell (metres). Used to convert
         heightmap indices to world coordinates (default 1.0).
+    weather_hints : dict, optional
+        Optional weather parameters that affect cloud / smoke placement.
+        Recognised keys:
+
+        ``wind_dir_deg`` (float, 0–360): compass bearing of prevailing wind
+            (0 = from N, 90 = from E).  Clouds accumulate on windward slopes.
+        ``cloud_base_m`` (float): absolute height of cloud base in metres.
+            Clouds placed below this are suppressed.
 
     Returns
     -------
@@ -292,6 +324,7 @@ def compute_atmospheric_placements(
 
     rng = random.Random(seed)
     rules = BIOME_ATMOSPHERE_RULES.get(biome_name, _DEFAULT_ATMOSPHERE)
+    _whints = weather_hints or {}
 
     min_x, min_y, max_x, max_y = area_bounds
     area_w = max_x - min_x
@@ -303,6 +336,11 @@ def compute_atmospheric_placements(
     # ------------------------------------------------------------------
     _has_numpy = _NUMPY_AVAILABLE and heightmap is not None
 
+    # Derived terrain analysis arrays (populated lazily inside _has_numpy block)
+    _notch_mask: "Optional[Any]" = None        # ridge notch / saddle cells
+    _drainage_acc: "Optional[Any]" = None      # D8 flow accumulation (valley bottoms)
+    _windward_mask: "Optional[Any]" = None     # cells on windward slope
+
     if _has_numpy:
         hm = heightmap  # shape (rows, cols)
         rows, cols = hm.shape
@@ -313,24 +351,128 @@ def compute_atmospheric_placements(
         hm_range = hm_max - hm_min if hm_max > hm_min else 1.0
         hm_norm = (hm - hm_min) / hm_range  # [0, 1], high = elevated
 
-        # Depression mask = inverse of normalised height (low areas)
-        depression_mask = 1.0 - hm_norm
+        # --- Notch / saddle detection for god rays ---------------------------
+        # A ridge notch is a ridge cell that sits below the local maximum of
+        # its neighbourhood — i.e., a saddle point along the ridge line where
+        # light can shaft through.
+        # 1. Identify ridge cells (threshold ridge_mask or top-quartile elev)
+        if ridge_mask is not None:
+            _ridge_bin = ridge_mask.astype(float) > 0.3
+        else:
+            _ridge_bin = hm_norm > 0.65  # top 35 % elevation as ridge proxy
+
+        # 2. Compute 5×5 neighbourhood maximum (box-max via rolling window)
+        _k = 5
+        _pad = _k // 2
+        _hm_pad = np.pad(hm_norm, _pad, mode="reflect")
+        _local_max = np.zeros_like(hm_norm)
+        for _dr in range(_k):
+            for _dc in range(_k):
+                _local_max = np.maximum(
+                    _local_max,
+                    _hm_pad[_dr: _dr + rows, _dc: _dc + cols],
+                )
+
+        # 3. Notch = ridge cell whose height is below the local neighbourhood
+        #    max by at least 5 % of the vertical range (it's a dip/gap).
+        _notch_raw = _ridge_bin & ((_local_max - hm_norm) > 0.05)
+        _notch_mask = _notch_raw.astype(float)
+
+        # Weight canopy gaps on notches: gap = low canopy over a ridge notch
+        if canopy_mask is not None:
+            _canopy_gap = 1.0 - canopy_mask.astype(float)  # 1 where no canopy
+            _notch_mask = _notch_mask * (0.5 + 0.5 * _canopy_gap)
+
+        # Normalise to [0, 1]
+        _notch_sum = _notch_mask.sum()
+        if _notch_sum > 0.0:
+            _notch_mask = _notch_mask / _notch_sum
+        else:
+            # Fallback: use ridge mask when no notches detected
+            if ridge_mask is not None:
+                _notch_mask = ridge_mask.astype(float)
+            else:
+                _notch_mask = hm_norm.copy()
+            _ns = _notch_mask.sum()
+            if _ns > 0.0:
+                _notch_mask = _notch_mask / _ns
+
+        # --- D8 drainage accumulation for valley-bottom fog ------------------
+        # Each cell routes to the single steepest-descent D8 neighbour.
+        # Accumulation = upstream contributing cell count; high = valley bottom.
+        _D8_ROWS = np.array([-1, -1, -1,  0,  0,  1,  1,  1], dtype=np.int32)
+        _D8_COLS = np.array([-1,  0,  1, -1,  1, -1,  0,  1], dtype=np.int32)
+        _flat_h = hm.ravel().astype(np.float64)
+        _n = rows * cols
+        _row_idx = np.repeat(np.arange(rows, dtype=np.int32), cols)
+        _col_idx = np.tile(np.arange(cols, dtype=np.int32), rows)
+        _receiver = np.arange(_n, dtype=np.int32)
+        _min_elev = _flat_h.copy()
+        for _dr, _dc in zip(_D8_ROWS, _D8_COLS):
+            _nr = _row_idx + _dr
+            _nc = _col_idx + _dc
+            _valid = (_nr >= 0) & (_nr < rows) & (_nc >= 0) & (_nc < cols)
+            _nb_flat = np.where(_valid, _nr * cols + _nc, -1)
+            _nb_elev = np.where(
+                _valid,
+                _flat_h[np.clip(_nb_flat, 0, _n - 1)],
+                np.inf,
+            )
+            _lower = _nb_elev < _min_elev
+            _receiver = np.where(_lower, _nb_flat.astype(np.int32), _receiver)
+            _min_elev = np.where(_lower, _nb_elev, _min_elev)
+
+        _sort_order = np.argsort(-_flat_h)  # high-to-low
+        _acc = np.ones(_n, dtype=np.float64)
+        for _idx in _sort_order:
+            _rcv = _receiver[_idx]
+            if _rcv != _idx:
+                _acc[_rcv] += _acc[_idx]
+
+        _log_acc = np.log1p(_acc).reshape(rows, cols)
+        _log_acc_max = _log_acc.max()
+        _drainage_acc = _log_acc / max(_log_acc_max, 1e-9)  # [0, 1], 1 = valley
+
+        # Depression mask = drainage accumulation (valley bottoms) + water mask
+        depression_mask = _drainage_acc.copy()
+        if water_mask is not None:
+            depression_mask = depression_mask + 1.5 * water_mask.astype(float)
+        _dep_sum = depression_mask.sum()
+        if _dep_sum > 0.0:
+            depression_mask = depression_mask / _dep_sum
+
+        # --- Windward bias for cloud / smoke placement -----------------------
+        wind_dir_deg = float(_whints.get("wind_dir_deg", float("nan")))
+        if not math.isnan(wind_dir_deg):
+            # Wind FROM direction → terrain faces into wind → windward
+            wind_rad = math.radians(wind_dir_deg)
+            # Wind arrives from wind_dir_deg; terrain upwind means gradient
+            # points into the wind direction.
+            wind_dx = math.sin(wind_rad)   # eastward component of wind origin
+            wind_dy = -math.cos(wind_rad)  # northward component (row = -Y)
+            _gy, _gx = np.gradient(hm_norm)
+            # Dot product: positive = slope faces the wind (windward)
+            _windward_raw = _gy * wind_dy + _gx * wind_dx
+            _windward_mask = np.clip(_windward_raw, 0.0, None)
+            _ww_sum = _windward_mask.sum()
+            if _ww_sum > 0.0:
+                _windward_mask = _windward_mask / _ww_sum
 
     # Volume-type -> affinity configuration
     # (affinity_mask_key, affinity_boost, height_offset_world)
     _AFFINITY: dict[str, tuple[str, float, float]] = {
-        # fog -> water bodies and depressions, sits at ground
-        "ground_fog":   ("fog",    2.5,  0.0),
+        # fog -> drainage-accumulation valley bottoms + water, sits at ground
+        "ground_fog":   ("fog",     2.5,  0.0),
         # spore clouds share fog logic (wetland-biased)
-        "spore_cloud":  ("fog",    1.5,  1.0),
-        # mist -> ridges and waterfall proximity
-        "dust_motes":   ("ridge",  1.2,  1.5),
-        "fireflies":    ("ridge",  0.8,  1.0),
-        # cloud shadows / god rays -> above ridge peaks
-        "god_rays":     ("ridge",  2.0, 12.0),
-        "void_shimmer": ("ridge",  1.0,  2.0),
-        # smoke -> upward from ground, no terrain bias
-        "smoke_plume":  ("none",   0.0,  0.0),
+        "spore_cloud":  ("fog",     1.5,  1.0),
+        # dust motes -> ridge / canopy-gap scatter zones
+        "dust_motes":   ("ridge",   1.2,  1.5),
+        "fireflies":    ("ridge",   0.8,  1.0),
+        # god rays -> ridge NOTCHES / tree-gap saddle points
+        "god_rays":     ("notch",   3.0, 12.0),
+        "void_shimmer": ("ridge",   1.0,  2.0),
+        # smoke / clouds -> windward slope when wind hint provided
+        "smoke_plume":  ("wind",    1.0,  0.0),
     }
 
     def _build_prob_map(vol_name: str) -> "Optional[Any]":
@@ -341,15 +483,28 @@ def compute_atmospheric_placements(
         affinity_key, boost, _ = _AFFINITY.get(vol_name, ("none", 0.0, 0.0))
 
         if affinity_key == "fog":
+            # Valley-bottom drainage accumulation; already normalised
             mask = depression_mask.copy()
-            if water_mask is not None:
-                wm = water_mask.astype(float)
-                mask = mask + boost * wm
+        elif affinity_key == "notch":
+            # Ridge saddle / tree-gap god-ray sources; already normalised
+            if _notch_mask is not None:
+                mask = _notch_mask.copy()
+            else:
+                mask = hm_norm.copy()
         elif affinity_key == "ridge":
             if ridge_mask is not None:
                 mask = 1.0 + boost * ridge_mask.astype(float)
+                # Boost canopy gaps for dust motes / fireflies
+                if canopy_mask is not None:
+                    _gap = 1.0 - canopy_mask.astype(float)
+                    mask = mask * (1.0 + 0.5 * _gap)
             else:
                 mask = hm_norm.copy()  # higher terrain proxy
+        elif affinity_key == "wind":
+            if _windward_mask is not None:
+                mask = _windward_mask.copy()
+            else:
+                mask = np.ones((rows, cols), dtype=float)
         else:
             mask = np.ones((rows, cols), dtype=float)
 
