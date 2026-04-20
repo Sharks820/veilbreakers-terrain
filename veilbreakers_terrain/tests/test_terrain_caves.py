@@ -516,6 +516,9 @@ def test_register_bundle_f_passes_adds_caves():
     assert "cave_candidate" in definition.produces_channels
     assert "wet_rock" in definition.produces_channels
     assert "cave_height_delta" in definition.produces_channels
+    assert "cave_wall_texture" in definition.produces_channels
+    assert "cave_stalactite_length" in definition.produces_channels
+    assert "cave_stalagmite_length" in definition.produces_channels
 
 
 def test_pass_caves_requires_scene_read():

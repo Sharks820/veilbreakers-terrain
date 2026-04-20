@@ -1699,7 +1699,8 @@ def pass_caves(
     Contract
     --------
     Consumes: height, slope (optional), basin (optional), wetness (optional)
-    Produces: cave_candidate, wet_rock
+    Produces: cave_candidate, wet_rock, cave_height_delta, cave_wall_texture,
+        cave_stalactite_length, cave_stalagmite_length
     Respects protected zones: yes
     Requires scene read: yes
     """
@@ -1727,6 +1728,12 @@ def pass_caves(
     if stack.get("wet_rock") is None:
         stack.set(
             "wet_rock",
+            np.zeros_like(stack.height, dtype=np.float32),
+            "caves",
+        )
+    if stack.get("cave_wall_texture") is None:
+        stack.set(
+            "cave_wall_texture",
             np.zeros_like(stack.height, dtype=np.float32),
             "caves",
         )
@@ -1892,7 +1899,14 @@ def register_bundle_f_passes() -> None:
             name="caves",
             func=pass_caves,
             requires_channels=("height",),
-            produces_channels=("cave_candidate", "wet_rock", "cave_height_delta"),
+            produces_channels=(
+                "cave_candidate",
+                "wet_rock",
+                "cave_height_delta",
+                "cave_wall_texture",
+                "cave_stalactite_length",
+                "cave_stalagmite_length",
+            ),
             seed_namespace="caves",
             requires_scene_read=True,
             may_modify_geometry=False,

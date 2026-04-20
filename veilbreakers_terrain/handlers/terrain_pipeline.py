@@ -438,6 +438,7 @@ class TerrainPassController:
                 "macro_world",
                 "terrain_labels",   # Fix 10.10 / REQ-P10-001: must be before structural_masks
                 "structural_masks",
+                "pass_hydrology",
                 "erosion",
                 "validation_minimal",
             ]

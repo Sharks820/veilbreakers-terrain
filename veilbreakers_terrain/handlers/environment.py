@@ -1761,6 +1761,7 @@ def handle_generate_terrain(params: dict) -> dict:
                 controller_scene_read["cave_candidates"] = cave_candidates
             controller_params["scene_read"] = controller_scene_read
         if erosion in ("hydraulic", "thermal", "both"):
+            pipeline.append("pass_hydrology")
             pipeline.append("erosion")
             pipeline.append("structural_masks")
             controller_params["erosion_profile"] = (
@@ -2619,7 +2620,8 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     if pipeline is None and pass_name is None:
         pipeline = ["macro_world", "structural_masks", "validation_minimal"]
         if scene_read is not None:
-            pipeline.insert(2, "erosion")
+            pipeline.insert(2, "pass_hydrology")
+            pipeline.insert(3, "erosion")
 
     if pipeline is not None:
         pipeline = list(pipeline)

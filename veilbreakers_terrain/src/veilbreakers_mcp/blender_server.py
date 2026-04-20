@@ -188,9 +188,26 @@ def dispatch(
             {"status": "error", "error": "handler_exception",
              "location": location_key, "command": <resolved_cmd>,
              "exception_type": "...", "message": "..."}
+
+        On invalid params::
+
+            {"status": "error", "error": "invalid_params",
+             "location": location_key, "message": "..."}
+
+        On handler-returned error payload::
+
+            {"status": "error", "error": "<handler_error>",
+             "location": location_key, "command": <resolved_cmd>, ...}
     """
     if params is None:
         params = {}
+    elif not isinstance(params, dict):
+        return {
+            "status": "error",
+            "error": "invalid_params",
+            "location": location_key,
+            "message": f"params must be a dict, got {type(params).__name__}",
+        }
 
     command = _LOC_HANDLERS.get(location_key)
     if command is None:
@@ -234,6 +251,13 @@ def dispatch(
             "command": command,
             "exception_type": type(exc).__name__,
             "message": str(exc),
+        }
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        return {
+            **result,
+            "location": location_key,
+            "command": command,
         }
 
     return {

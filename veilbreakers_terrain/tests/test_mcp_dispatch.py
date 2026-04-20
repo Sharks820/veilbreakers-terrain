@@ -72,6 +72,22 @@ class TestBlenderMCPServer:
         assert r["status"] == "error"
         assert r["error"] == "unknown_command"
 
+    def test_execute_command_invalid_params_returns_error_dict(self) -> None:
+        s = BlenderMCPServer()
+        r = s.execute_command("mesh_select_by_box", "not a dict")  # type: ignore[arg-type]
+        assert r["status"] == "error"
+        assert r["error"] == "invalid_params"
+
+    def test_execute_command_preserves_handler_error_payload(self) -> None:
+        def _fail_closed(params):
+            return {"status": "error", "error": "no_active_controller"}
+
+        s = BlenderMCPServer(handlers={"preview_state": _fail_closed})
+        r = s.execute_command("preview_state", {})
+        assert r["status"] == "error"
+        assert r["error"] == "no_active_controller"
+        assert r["command"] == "preview_state"
+
     def test_enqueue_rejects_non_dict(self) -> None:
         s = BlenderMCPServer()
         with pytest.raises(TypeError):
@@ -98,6 +114,22 @@ class TestBlenderMCPServer:
         assert results[1]["status"] == "ok"
         # Second drain is empty (we consumed the results).
         assert s.drain_results() == []
+
+    def test_queue_flow_preserves_handler_error_payload(self) -> None:
+        def _fail_closed(params):
+            return {"status": "error", "error": "no_active_controller"}
+
+        s = BlenderMCPServer(handlers={"preview_state": _fail_closed})
+        s.enqueue({"command": "preview_state", "params": {}})
+        s._process_commands()
+        results = s.drain_results()
+        assert results == [
+            {
+                "status": "error",
+                "error": "no_active_controller",
+                "command": "preview_state",
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +190,22 @@ class TestBlenderServerDispatch:
         r = dispatch("not_real", None)
         assert r["status"] == "error"
         assert r["error"] == "unknown_location"
+
+    def test_dispatch_invalid_params_returns_error_dict(self) -> None:
+        r = dispatch("mesh_select_box", "not a dict")  # type: ignore[arg-type]
+        assert r["status"] == "error"
+        assert r["error"] == "invalid_params"
+
+    def test_dispatch_preserves_handler_error_payload(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _fail_closed(params):
+            return {"status": "error", "error": "no_active_controller"}
+
+        monkeypatch.setitem(COMMAND_HANDLERS, "mesh_select_by_box", _fail_closed)
+        r = dispatch("mesh_select_box", {})
+        assert r["status"] == "error"
+        assert r["error"] == "no_active_controller"
+        assert r["location"] == "mesh_select_box"
+        assert r["command"] == "mesh_select_by_box"
 
 
 # ---------------------------------------------------------------------------

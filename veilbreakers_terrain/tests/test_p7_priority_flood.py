@@ -1,6 +1,9 @@
 """Tests for Priority-Flood D8 + pass_hydrology (REQ-P7-001, REQ-P7-002, Fix 7.3/7.17)."""
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -102,3 +105,53 @@ def test_register_default_passes_includes_hydrology():
     finally:
         TerrainPassController.clear_registry()
         TerrainPassController.PASS_REGISTRY.update(original)
+
+
+def test_default_pipeline_runs_hydrology_before_erosion(monkeypatch):
+    """Default controller sequencing should derive flow before erosion consumes it."""
+    from veilbreakers_terrain.handlers import _terrain_world as world_mod
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
+        TerrainPassController,
+        register_default_passes,
+    )
+    from veilbreakers_terrain.tests.test_terrain_pipeline_smoke import _build_state
+
+    def _fake_hydraulic(height, iterations, seed, hero_exclusion=None, erodibility_map=None):
+        arr = np.asarray(height, dtype=np.float64)
+        zeros = np.zeros_like(arr, dtype=np.float64)
+        return type("HydraulicResult", (), {
+            "height": arr.copy(),
+            "erosion_amount": zeros.copy(),
+            "deposition_amount": zeros.copy(),
+            "wetness": zeros.copy(),
+            "drainage": zeros.copy(),
+            "bank_instability": zeros.copy(),
+        })()
+
+    def _fake_thermal(height, iterations, talus_angle, cell_size):
+        arr = np.asarray(height, dtype=np.float64)
+        return type("ThermalResult", (), {
+            "height": arr.copy(),
+            "talus": np.zeros_like(arr, dtype=np.float64),
+        })()
+
+    monkeypatch.setattr(world_mod, "apply_hydraulic_erosion_masks", _fake_hydraulic)
+    monkeypatch.setattr(world_mod, "apply_thermal_erosion_masks", _fake_thermal)
+
+    original = dict(TerrainPassController.PASS_REGISTRY)
+    try:
+        TerrainPassController.clear_registry()
+        register_default_passes()
+        with tempfile.TemporaryDirectory() as td:
+            state = _build_state(tile_size=24)
+            controller = TerrainPassController(state, checkpoint_dir=Path(td))
+            results = controller.run_pipeline()
+    finally:
+        TerrainPassController.clear_registry()
+        TerrainPassController.PASS_REGISTRY.update(original)
+
+    pass_names = [result.pass_name for result in results]
+    assert "pass_hydrology" in pass_names
+    assert pass_names.index("pass_hydrology") < pass_names.index("erosion")
+    assert state.mask_stack.flow_direction is not None
+    assert state.mask_stack.flow_accumulation is not None

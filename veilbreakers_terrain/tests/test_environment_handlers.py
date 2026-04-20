@@ -794,6 +794,70 @@ class TestControllerTerrainPath:
         assert params["pipeline"] == ["macro_world", "structural_masks", "caves", "integrate_deltas", "cliffs", "validation_minimal"]
         assert result["cave_pipeline_deferred"] is False
 
+    def test_controller_path_inserts_hydrology_before_erosion(self):
+        from blender_addon.handlers import environment as env_mod
+        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+        height = np.zeros((3, 3), dtype=np.float64)
+        stack = TerrainMaskStack(
+            tile_size=2,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=height,
+        )
+        controller_execution = {
+            "state": SimpleNamespace(mask_stack=stack),
+            "results": [],
+            "mask_stack": stack,
+            "tile_x": 0,
+            "tile_y": 0,
+        }
+        captured: dict[str, object] = {}
+
+        def _fake_execute(params):
+            captured["params"] = dict(params)
+            return controller_execution
+
+        def _fake_create_mesh(**kwargs):
+            return {
+                "name": kwargs["name"],
+                "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
+                "cliff_overlays": 0,
+                "hero_cliff_overlays": 0,
+            }
+
+        with patch.object(env_mod, "_execute_terrain_pipeline", side_effect=_fake_execute), \
+             patch.object(env_mod, "_create_terrain_mesh_from_heightmap", side_effect=_fake_create_mesh):
+            env_mod.handle_generate_terrain(
+                {
+                    "name": "HydrologyControllerTerrain",
+                    "resolution": 3,
+                    "terrain_type": "mountains",
+                    "erosion": "hydraulic",
+                    "seed": 11,
+                    "scale": 32.0,
+                    "height_scale": 6.0,
+                    "use_controller": True,
+                    "object_location": (4.0, -2.0, 0.0),
+                    "scene_read": {
+                        "reviewer": "pytest",
+                    },
+                }
+            )
+
+        assert captured["params"]["pipeline"] == [
+            "macro_world",
+            "structural_masks",
+            "pass_hydrology",
+            "erosion",
+            "structural_masks",
+            "cliffs",
+            "validation_minimal",
+        ]
+
 
 class TestWorldTerrainGeneration:
     def test_generate_terrain_tile_writes_resume_manifest(self, tmp_path):

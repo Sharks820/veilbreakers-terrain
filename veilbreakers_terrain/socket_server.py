@@ -129,9 +129,20 @@ class BlenderMCPServer:
 
                 {"status": "error", "error": "handler_exception",
                  "exception_type": "ValueError", "message": "..."}
+
+            On handler-returned error payload::
+
+                {"status": "error", "error": "<handler_error>", "command": command, ...}
         """
         if params is None:
             params = {}
+        elif not isinstance(params, dict):
+            return {
+                "status": "error",
+                "error": "invalid_params",
+                "command": command,
+                "message": f"params must be a dict, got {type(params).__name__}",
+            }
         handlers = self._resolve_handlers()
         fn = handlers.get(command)
         if fn is None:
@@ -151,6 +162,11 @@ class BlenderMCPServer:
                 "command": command,
                 "exception_type": type(exc).__name__,
                 "message": str(exc),
+            }
+        if isinstance(result, dict) and result.get("status") == "error":
+            return {
+                **result,
+                "command": command,
             }
         return {"status": "ok", "command": command, "result": result}
 
