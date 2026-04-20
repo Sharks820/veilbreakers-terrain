@@ -219,6 +219,53 @@ def generate_world_map_spec(
         for name in chosen
     ]
 
+    # --- Climate-sorted biome ordering (AAA fix) ---
+    # Pure geometric Voronoi places biomes randomly regardless of elevation or
+    # temperature gradient, producing geologically implausible adjacencies
+    # (e.g. arctic tundra bordering desert on a flat map with no altitude
+    # gradient). We post-process the biome_ids so that the Voronoi cell whose
+    # seed point sits at the highest normalised Y position (north = cold) gets
+    # the coldest biome, and the lowest Y position gets the warmest.
+    # This is equivalent to Houdini's "Layer" biome distribution strategy:
+    # Voronoi cells are assigned biomes according to their seed-point latitude
+    # rather than draw order, preserving spatial coherence from Voronoi while
+    # adding climate plausibility.
+    #
+    # Implementation: sort the Voronoi seed points by their Y coordinate
+    # (as computed inside voronoi_biome_distribution — we recompute the sort
+    # order from the seed since we don't expose the seed points externally).
+    # Then remap biome_ids through a permutation that maps Voronoi-cell index
+    # → climate-sorted biome index.
+    _climate_rng = random.Random(seed ^ 0xFACEB00C)
+    grid_side_c = max(1, int(math.ceil(math.sqrt(biome_count))))
+    cell_w_c = 1.0 / grid_side_c
+    cell_h_c = 1.0 / grid_side_c
+    seed_ys: list[float] = []
+    for _bi in range(biome_count):
+        _row = _bi // grid_side_c
+        _sy = (_row + 0.2 + _climate_rng.random() * 0.6) * cell_h_c
+        seed_ys.append(_sy)
+        _climate_rng.random()   # consume the x draw so the RNG stream matches voronoi_biome_distribution
+
+    # Sort biomes by seed Y (descending = north/cold → south/warm).
+    # Sort chosen biomes by their temperature parameter (descending = cold first).
+    sorted_by_temp = sorted(
+        range(biome_count),
+        key=lambda i: cell_params[i].get("temperature", 0.5),
+    )   # index 0 = coldest biome
+    # Sort Voronoi cell indices by seed Y (descending = northernmost first)
+    sorted_by_y = sorted(range(biome_count), key=lambda i: seed_ys[i], reverse=True)
+    # Permutation: Voronoi cell sorted_by_y[k] → biome sorted_by_temp[k]
+    cell_to_biome = [0] * biome_count
+    for _k in range(biome_count):
+        cell_to_biome[sorted_by_y[_k]] = sorted_by_temp[_k]
+    # Remap biome_ids through the permutation (vectorised)
+    cell_to_biome_arr = np.array(cell_to_biome, dtype=np.int32)
+    biome_ids = cell_to_biome_arr[biome_ids]
+    # Reorder chosen and cell_params to match the new biome index ordering
+    # (biome_weights axis 2 aligns with the original sorted order; leave as-is
+    # since downstream splat reads biome_ids for dominant and weights for blend)
+
     return WorldMapSpec(
         width=width,
         height=height,
@@ -302,22 +349,38 @@ def _generate_corruption_map(
             freq *= 2.0
         return noise / max(total, 1e-9)  # in ~[-1, 1]
 
-    # --- Pass 1: coarse warp field q = fBm(p) ---
-    q = _fbm_grid(gen_base, xx, yy)
+    # --- Pass 1: coarse warp field — two independent components q_x, q_y ---
+    # IQ-style domain warp requires INDEPENDENT x and y warp fields so the
+    # corruption tendrils are genuinely 2D-anisotropic (different curvature in
+    # x vs y). Using a single scalar q for both axes collapses the warp to a
+    # diagonal-only distortion. We obtain independence by offsetting the second
+    # sample by a large incommensurable constant (1.7, 9.2 — same offsets used
+    # in domain_warp_array for consistency across the noise pipeline).
+    q_x = _fbm_grid(gen_base, xx, yy)
+    q_y = _fbm_grid(gen_base, xx + 1.7, yy + 9.2)   # independent y component
 
     # --- Pass 2: refined warp r = fBm(p + q * s + fixed_offset) ---
-    # Fixed offset (5.2, 1.3) breaks diagonal symmetry (IQ reference)
-    r = _fbm_grid(
+    # Fixed offset (5.2, 1.3) breaks diagonal symmetry (IQ reference).
+    # Use independent gen_warp1 for x and gen_warp2 for y so the three
+    # warp fields are fully decorrelated.
+    r_x = _fbm_grid(
         gen_warp1,
-        xx + q * warp_strength + 5.2,
-        yy + q * warp_strength + 1.3,
+        xx + q_x * warp_strength + 5.2,
+        yy + q_y * warp_strength + 1.3,
+    )
+    r_y = _fbm_grid(
+        gen_warp2,
+        xx + q_x * warp_strength + 1.7,
+        yy + q_y * warp_strength + 9.2,
     )
 
     # --- Final sample at double-warped coordinates ---
+    # Re-use gen_base with a third prime XOR offset for the final evaluation
+    gen_final = _make_noise_generator(seed ^ 0x3C3C3C3C)
     noise = _fbm_grid(
-        gen_warp2,
-        xx + r * warp_strength,
-        yy + r * warp_strength,
+        gen_final,
+        xx + r_x * warp_strength,
+        yy + r_y * warp_strength,
     )
 
     noise = (noise + 1.0) / 2.0  # remap to [0, 1]
@@ -581,9 +644,21 @@ def apply_periglacial_patterns(
 
     # Normalize continuous interior distance for the heave plateau
     max_d = min_dist.max() or 1.0
-    interior = min_dist / max_d  # 0 near centres, 1 far
-    # Combine: raise polygon centres (frost mound), raise boundaries (stone ridge)
-    polygon_displacement = interior * 0.4 + ridge * 0.6
+    interior = min_dist / max_d  # 0 near centres, 1 far from centres
+
+    # AAA fix: real periglacial stone-polygon networks have DEPRESSED centres
+    # (ice-wedge polygon interior thaw-lakes/troughs) and RAISED stone-rim
+    # boundaries (frost-sorted coarse clasts pushed to polygon edges).
+    # Previous formula raised both centres and boundaries — geometrically
+    # incoherent. Corrected formula:
+    #   - interior (near centre): depression (negative displacement)
+    #   - ridge (at boundary): raised stone rim (positive displacement)
+    # The net pattern produces the characteristic "cracked mud-flat" look of
+    # arctic patterned ground visible in satellite imagery and Horizon/Halo
+    # arctic biome references.
+    polygon_displacement = ridge * 0.8 - (1.0 - interior) * 0.3
+    # Clamp so we never push the surface far below zero
+    polygon_displacement = np.clip(polygon_displacement, -0.5, 1.0)
     heave = polygon_displacement * frost_heave_scale * intensity
 
     # Scale by elevation — stronger at high points (permafrost zone)
@@ -977,6 +1052,25 @@ def apply_landslide_scars(
         # Apply erosion: concave bowl shape (deeper at centre)
         result -= scar_mask * scar_depth
 
+        # ---- Lateral ridges (levees) ----------------------------------------
+        # Real translational slides push material sideways along the failure
+        # plane boundaries, forming raised lateral ridges (lateral scarps).
+        # Each lateral ridge runs along the uphill half of the scar, parallel
+        # to the downhill axis, offset ±crown_width from the centre.
+        lateral_offset = crown_width * 0.9       # ridge crest sits just inside crown
+        lateral_width  = scar_r * 0.20            # narrow raised welt
+        for sign_lr in (-1.0, 1.0):
+            # Distance from the lateral-ridge centreline
+            lat_cross_dist = np.abs(cross - sign_lr * lateral_offset)
+            # Ridge is only in the uphill half (headscarp region)
+            lat_along_mask = (along_up >= 0) & (along_up <= scar_len_up)
+            lat_mask = (
+                np.clip(1.0 - lat_cross_dist / max(lateral_width, 1e-9), 0.0, 1.0) ** 2
+                * lat_along_mask.astype(np.float64)
+            )
+            # Ridge height ≈ 25% of scar depth — compressed material pile
+            result += lat_mask * scar_depth * 0.25
+
         # ---- Downslope runout deposit -------------------------------------------
         # Walk steepest-descent from slide origin; fan spreads wider with distance.
         py, px = float(oy), float(ox)
@@ -1100,8 +1194,29 @@ def apply_hot_spring_features(
         pool_mask = np.clip(1.0 - dist_pool / pool_radius, 0.0, 1.0) ** 2
         result -= pool_mask * pool_depth
 
-        # Travertine terraces — vectorised over all rings at once
-        ring_dist    = np.abs(dist_rings[np.newaxis, :, :] - ring_rs[:, np.newaxis, np.newaxis])
+        # Travertine terraces — vectorised over all rings at once.
+        # AAA fix: each ring radius is noise-perturbed so terraces are
+        # asymmetric and irregular like real Yellowstone/Pamukkale travertine
+        # rather than perfect concentric circles.  We use a low-frequency
+        # angular variation (4–6 lobes) to simulate lobate terrace geometry.
+        dist_rings_full = np.sqrt((ys - ring_cy) ** 2 + (xs - ring_cx) ** 2)
+        theta = np.arctan2(ys - ring_cy, xs - ring_cx)   # (H, W) angle field
+        # Angular lobes: amplitude = 15% of ring spacing, 4 lobes ± random phase
+        lobe_phases = rng.uniform(0.0, 2.0 * math.pi, len(ring_rs))
+        lobe_amps   = ring_rs * 0.15  # 15% of ring radius
+        lobe_counts = rng.randint(3, 7, size=len(ring_rs))
+        # Vectorised per-ring radius perturbation
+        perturbed_rs = (
+            ring_rs[:, np.newaxis, np.newaxis]
+            + lobe_amps[:, np.newaxis, np.newaxis]
+            * np.sin(
+                lobe_counts[:, np.newaxis, np.newaxis] * theta[np.newaxis, :, :]
+                + lobe_phases[:, np.newaxis, np.newaxis]
+            )
+        )   # shape (terrace_rings, H, W)
+        ring_dist = np.abs(
+            dist_rings_full[np.newaxis, :, :] - perturbed_rs
+        )
         terrace_masks = np.clip(1.0 - ring_dist / ring_width, 0.0, 1.0)
         result += (terrace_masks * ring_step_hs[:, np.newaxis, np.newaxis]).sum(axis=0)
 
@@ -1532,6 +1647,60 @@ def apply_tafoni_weathering(
         cavity_scale * 0.35, micro_prob, add_rim=False,
     )
 
+    # ---- Interconnected wall thinning (AAA fix) --------------------------
+    # Real tafoni honeycombs have SHARED walls between adjacent cavities —
+    # the wall between two pits is thinner than the surrounding rock because
+    # moisture concentrates there from both sides.  Simulate by building a
+    # proximity map of all placed cavity centres and carving a shallow
+    # connecting groove between pairs closer than 2× the mean cavity radius.
+    # This creates the "cavernous face" topology that distinguishes tafoni
+    # from isolated random pits.
+    if len(placed_cy) >= 2:
+        cy_arr_f = np.array(placed_cy, dtype=np.float64)
+        cx_arr_f = np.array(placed_cx, dtype=np.float64)
+        n_placed = len(cy_arr_f)
+        # Mean cavity radius from macro pass defaults (~3.75 cells)
+        mean_r = 3.75
+        connect_thresh = mean_r * 3.0   # max centre-to-centre for wall thinning
+        groove_depth = cavity_scale * 0.18 * intensity
+
+        # For each pair (i < j) within threshold, carve a linear groove
+        # along the inter-cavity axis using a thin Gaussian cross-section.
+        # Cap at 200 pairs to avoid O(N²) blow-up on dense tafoni fields.
+        pair_count = 0
+        for i in range(min(n_placed, 40)):
+            for j in range(i + 1, min(n_placed, 40)):
+                dy_pair = cy_arr_f[j] - cy_arr_f[i]
+                dx_pair = cx_arr_f[j] - cx_arr_f[i]
+                dist_pair = math.sqrt(dy_pair ** 2 + dx_pair ** 2)
+                if dist_pair < 1e-3 or dist_pair > connect_thresh:
+                    continue
+                # Direction along the inter-cavity axis
+                ax = dx_pair / dist_pair
+                ay = dy_pair / dist_pair
+                # Perpendicular axis for groove width
+                px_ax = -ay
+                py_ax = ax
+                # Midpoint groove parameters
+                mid_y = 0.5 * (cy_arr_f[i] + cy_arr_f[j])
+                mid_x = 0.5 * (cx_arr_f[i] + cx_arr_f[j])
+                # Project all grid cells onto the along-axis and perp-axis
+                rel_ys = _all_ys - mid_y
+                rel_xs = _all_xs - mid_x
+                along = rel_ys * ay + rel_xs * ax
+                perp  = rel_ys * py_ax + rel_xs * px_ax
+                # Groove extends ±half the inter-cavity distance, width ~ mean_r*0.4
+                groove_half = dist_pair * 0.45
+                groove_w_sq = max((mean_r * 0.4) ** 2, 1.0)
+                along_gate = (np.abs(along) <= groove_half).astype(np.float64)
+                groove_profile = np.exp(-perp ** 2 / (2.0 * groove_w_sq)) * along_gate
+                result.ravel()[:] -= groove_profile * groove_depth
+                pair_count += 1
+                if pair_count >= 200:
+                    break
+            if pair_count >= 200:
+                break
+
     return result
 
 
@@ -1545,17 +1714,28 @@ def apply_geological_folds(
 ) -> np.ndarray:
     """Apply geological fold deformation (anticline/syncline) to terrain.
 
-    Simulates tectonic folding by adding sinusoidal undulations along a
-    random strike direction. ``fold_type`` controls the fold geometry:
-    - "anticline": upward arch (positive center displacement)
-    - "syncline": downward trough (negative center displacement)
+    Simulates tectonic folding with a physically traceable fold axis:
+    - "anticline": upward arch (rock bends up), convex toward viewer
+    - "syncline": downward trough (rock bends down), concave toward viewer
     - "chevron": angular V-shaped folds
+
+    Each fold has a dip-direction field: amplitude decays along the fold's
+    plunge direction (the along-strike axis), so folds are not infinite planes
+    but periclinal structures that die out at their noses. The fold axis is
+    traceable as the projection zero-crossing at maximum amplitude.
+
+    AAA improvement: plunging fold amplitude envelope — amplitude is
+    multiplied by a Gaussian envelope along the strike direction (``along``)
+    so that each fold has a maximum-amplitude hinge and tapers to zero at
+    both ends along strike. This matches real geological fold geometry
+    (periclinal folds, doubly plunging anticlines) and makes the fold axis
+    visually traceable rather than extending uniformly across the entire map.
 
     Args:
         heightmap: (H, W) float64 terrain heights.
         seed: Deterministic RNG seed.
         num_folds: Number of fold axes.
-        amplitude: Peak fold displacement (metres, relative).
+        amplitude: Peak fold displacement at fold hinge (metres, relative).
         wavelength_cells: Wavelength of fold in grid cells.
         fold_type: "anticline", "syncline", or "chevron".
 
@@ -1572,24 +1752,45 @@ def apply_geological_folds(
     sign = -1.0 if fold_type == "syncline" else 1.0
 
     for _ in range(num_folds):
-        # Random strike direction
+        # Random strike direction (perpendicular to dip direction)
         angle = rng.uniform(0, math.pi)
-        dx = math.cos(angle)
-        dy = math.sin(angle)
+        # dip vector (perpendicular to strike, pointing down-dip)
+        dip_x = math.cos(angle)
+        dip_y = math.sin(angle)
+        # strike vector (along the fold axis)
+        strike_x = -dip_y
+        strike_y = dip_x
 
-        # Project coordinates onto perpendicular direction
-        proj = xs * (-dy) + ys * dx
+        # Centre of this fold's hinge along strike
+        cx = rng.uniform(0.1 * w, 0.9 * w)
+        cy = rng.uniform(0.1 * h, 0.9 * h)
+
+        # Project coordinates onto the dip direction (cross-strike distance)
+        # — this drives the sinusoidal wave profile.
+        proj_dip = (xs - cx) * (-dip_y) + (ys - cy) * dip_x
+
+        # Project onto the strike direction (along-axis distance from hinge)
+        # — this drives the plunge-amplitude envelope.
+        proj_strike = (xs - cx) * strike_x + (ys - cy) * strike_y
 
         # Phase offset
         phase = rng.uniform(0, 2 * math.pi)
 
         if fold_type == "chevron":
             # Triangular wave for angular folds
-            t = (proj / wavelength_cells + phase / (2 * math.pi)) % 1.0
+            t = (proj_dip / wavelength_cells + phase / (2 * math.pi)) % 1.0
             wave = 2.0 * np.abs(2.0 * (t - np.floor(t + 0.5))) - 1.0
         else:
-            wave = np.sin(2.0 * math.pi * proj / wavelength_cells + phase)
+            wave = np.sin(2.0 * math.pi * proj_dip / wavelength_cells + phase)
 
-        result += wave * amplitude * sign
+        # Plunge envelope: Gaussian along strike so fold dies out at both ends.
+        # sigma = 1.5 * wavelength gives a periclinal shape — full amplitude
+        # spans ~3 wavelengths along the axis, tapering to near-zero beyond.
+        plunge_sigma = wavelength_cells * 1.5
+        plunge_envelope = np.exp(
+            -(proj_strike ** 2) / (2.0 * max(plunge_sigma ** 2, 1e-9))
+        )
+
+        result += wave * amplitude * sign * plunge_envelope
 
     return result

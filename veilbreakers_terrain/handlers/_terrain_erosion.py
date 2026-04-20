@@ -460,6 +460,14 @@ def apply_hydraulic_erosion_masks(
             py = new_py
 
             if water < 0.001:
+                # Mass conservation (Benes et al. 2006): deposit remaining
+                # sediment at the particle's final position rather than
+                # discarding it.  Without this, every evaporated particle
+                # silently destroys material, violating mass balance and
+                # producing net-negative height drift at high iteration counts.
+                if sediment > 0.0 and 1 <= ix < cols - 2 and 1 <= iy < rows - 2:
+                    _deposit(result, ix, iy, fx, fy, sediment)
+                    _deposit(deposition_amount, ix, iy, fx, fy, sediment)
                 break
 
     # drainage → log1p of droplet count

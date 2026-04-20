@@ -238,21 +238,40 @@ def erode_world_heightmap(
     seed: int = 0,
     talus_angle: float = 40.0,
     cell_size: float = 1.0,
+    snowline: float = 0.72,
+    aeolian_floor: float = 0.25,
 ) -> dict[str, Any]:
-    """Erode a world heightmap as a single region using full particle-based hydraulics.
+    """Erode a world heightmap with altitude-zoned erosion types.
+
+    Applies three geologically distinct erosion processes keyed to altitude,
+    matching World Machine's ``Erosion`` node zone-split and Houdini's
+    HeightField Erode SOP preset layers:
+
+      - **Glacial zone** (height > snowline): Thermal erosion with a low talus
+        angle (28 deg) simulating glacial plucking and freeze-thaw shattering.
+        Produces U-shaped cirque valleys and sharp arêtes.
+      - **Fluvial zone** (aeolian_floor < height ≤ snowline): Full
+        particle-based hydraulic erosion (Olsen 2004).  Produces V-shaped
+        valleys, alluvial fans, and coherent drainage networks.
+      - **Aeolian zone** (height ≤ aeolian_floor): Light thermal erosion at
+        high talus angle (50 deg) simulating wind-driven sand transport in
+        lowland basins and coastal flats.
+
+    Each zone is eroded independently on a masked copy of the heightmap, then
+    blended back using a soft linear ramp (0.05 normalised height overlap) to
+    avoid sharp zone boundaries.
+
+    Args:
+        snowline: Normalised height threshold above which glacial erosion
+            dominates.  Default 0.72 ≈ ~72% of the tile's height range,
+            matching typical high-alpine snowline position.
+        aeolian_floor: Normalised height threshold below which aeolian erosion
+            dominates.  Default 0.25.
 
     Implements Olsen (2004) particle-based hydraulic erosion at AAA quality:
     50,000 particles minimum — matching Gaea's default erosion particle count
     and sufficient to produce geologically plausible channel networks,
     alluvial fans, and sediment redistribution on a 512x512 tile.
-
-    The previous default of 1,000 iterations produced visually smooth but
-    geologically implausible output (no coherent drainage networks, no
-    ridge-to-valley sediment transport).
-
-    The erosion backends operate on arbitrary numeric ranges. This wrapper
-    keeps the full world region intact, applies erosion in the source domain,
-    and returns the eroded world heightmap plus flow metadata.
     """
     hmap = np.asarray(heightmap, dtype=np.float64)
     if hmap.ndim != 2:
@@ -292,26 +311,71 @@ def erode_world_heightmap(
             "height_range": 0.0,
         }
 
-    eroded = hmap
+    # --- Normalise to [0, 1] for zone thresholding ---
+    hmap_norm = (hmap - source_min) / height_range  # [0, 1]
 
+    # --- Zone blend weights (soft linear ramp, 0.05 overlap) ---
+    _RAMP = 0.05
+    # Glacial weight: 1.0 above snowline, 0.0 below (snowline - ramp)
+    w_glacial = np.clip((hmap_norm - (snowline - _RAMP)) / _RAMP, 0.0, 1.0)
+    # Aeolian weight: 1.0 below aeolian_floor, 0.0 above (aeolian_floor + ramp)
+    w_aeolian = np.clip(((aeolian_floor + _RAMP) - hmap_norm) / _RAMP, 0.0, 1.0)
+    # Fluvial weight: middle band, complement of glacial + aeolian
+    w_fluvial = np.clip(1.0 - w_glacial - w_aeolian, 0.0, 1.0)
+
+    # --- Glacial erosion (thermal, low talus = 28 deg) ---
+    glacial_iters = max(1, thermal_iterations) if thermal_iterations > 0 else 8
+    eroded_glacial = np.asarray(
+        apply_thermal_erosion(
+            hmap,
+            iterations=glacial_iters,
+            talus_angle=28.0,
+            cell_size=cell_size,
+        ),
+        dtype=np.float64,
+    )
+
+    # --- Fluvial erosion (full particle hydraulics) ---
     if hydraulic_iterations > 0:
-        eroded = apply_hydraulic_erosion(
-            eroded,
+        eroded_fluvial = apply_hydraulic_erosion(
+            hmap,
             iterations=hydraulic_iterations,
             seed=seed,
             height_range=height_range,
         )
+    else:
+        eroded_fluvial = hmap.copy()
 
+    # Optional thermal smoothing on fluvial output
     if thermal_iterations > 0:
-        eroded = np.asarray(
+        eroded_fluvial = np.asarray(
             apply_thermal_erosion(
-                eroded,
+                eroded_fluvial,
                 iterations=thermal_iterations,
                 talus_angle=talus_angle,
                 cell_size=cell_size,
             ),
             dtype=np.float64,
         )
+
+    # --- Aeolian erosion (thermal, high talus = 50 deg) ---
+    aeolian_iters = max(1, thermal_iterations) if thermal_iterations > 0 else 4
+    eroded_aeolian = np.asarray(
+        apply_thermal_erosion(
+            hmap,
+            iterations=aeolian_iters,
+            talus_angle=50.0,
+            cell_size=cell_size,
+        ),
+        dtype=np.float64,
+    )
+
+    # --- Blend zones ---
+    eroded = (
+        w_glacial * eroded_glacial
+        + w_fluvial * eroded_fluvial
+        + w_aeolian * eroded_aeolian
+    )
 
     # Compute flow on the eroded world-region heightfield before splitting.
     flow_map = compute_flow_map(eroded)
@@ -322,6 +386,11 @@ def erode_world_heightmap(
         "source_min": source_min,
         "source_max": source_max,
         "height_range": height_range,
+        "zone_weights": {
+            "glacial": float(w_glacial.mean()),
+            "fluvial": float(w_fluvial.mean()),
+            "aeolian": float(w_aeolian.mean()),
+        },
     }
 
 
@@ -998,6 +1067,17 @@ def pass_erosion(
     stack.set("bank_instability", bank_instability_out, "erosion")
     stack.set("talus", talus_out, "erosion")
 
+    # Sediment mass-balance metric (AAA spec): ratio of total redeposited
+    # material to total eroded material.  A healthy simulation is 0.6–0.95;
+    # below 0.1 indicates sediment is being discarded rather than redeposited
+    # (mass conservation violation); above 1.0 indicates a net deposition
+    # bias (common when analytical erosion deposits more than it removes).
+    _total_erosion = float(erosion_amount_out.sum())
+    _total_deposition = float(deposition_amount_out.sum())
+    _mass_balance_ratio = (
+        _total_deposition / _total_erosion if _total_erosion > 1e-9 else 0.0
+    )
+
     return PassResult(
         pass_name="erosion",
         status="ok",
@@ -1017,8 +1097,9 @@ def pass_erosion(
             "profile": profile,
             "hydraulic_iterations": profile_params["iterations"],
             "thermal_iterations": 6,
-            "total_erosion": float(erosion_amount_out.sum()),
-            "total_deposition": float(deposition_amount_out.sum()),
+            "total_erosion": _total_erosion,
+            "total_deposition": _total_deposition,
+            "sediment_mass_balance_ratio": _mass_balance_ratio,
             "total_talus": float(talus_out.sum()),
             "protected_cells": int(protected.sum()),
             "region_scoped": region is not None,
@@ -1033,16 +1114,30 @@ def pass_validation_minimal(
 ) -> PassResult:
     """Pass 4: emit a minimal validation report over the mask stack.
 
-    Checks:
-      - height channel is finite everywhere
-      - slope channel exists
-      - no NaN/inf in any populated channel
-    Any violation downgrades status to "failed".
+    Checks (AAA spec — matches Houdini HeightField Cook validation and
+    World Machine tile export verifier):
+
+      1. Finite check — height channel has no NaN or inf (hard failure).
+      2. Height range — the tile must have at least 0.1 % of the expected
+         world-scale range; a flat tile (range < 1e-4 of tile_size) is a
+         soft warning indicating the macro pass may not have run.
+      3. Seam-readiness — height must be defined on all four edges (no zeros
+         on the boundary for non-coastal terrain) so neighbouring tiles can
+         stitch without seam artefacts.  Emits a soft warning.
+      4. Channel NaN sweep — slope, curvature, wetness, drainage checked for
+         non-finite values (hard failure per channel).
+      5. Sediment mass balance — if both erosion_amount and deposition_amount
+         are populated, the ratio |total_deposition / total_erosion| is checked.
+         A ratio < 0.05 (< 5 % of eroded material redeposited) is a soft
+         warning indicating the erosion pass may be discarding sediment.
+
+    Any hard violation downgrades status to "failed".
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
     issues: list[ValidationIssue] = []
 
+    # 1. Finite check
     if not np.all(np.isfinite(stack.height)):
         issues.append(
             ValidationIssue(
@@ -1052,6 +1147,57 @@ def pass_validation_minimal(
             )
         )
 
+    # 2. Height range check
+    h_arr = np.asarray(stack.height, dtype=np.float64)
+    h_min = float(h_arr.min()) if h_arr.size else 0.0
+    h_max = float(h_arr.max()) if h_arr.size else 0.0
+    h_range = h_max - h_min
+    tile_size = int(stack.tile_size)
+    # Minimum meaningful range: 0.1 % of tile_size metres (or 0.001 for
+    # dimensionless normalised tiles).  A perfectly flat output means the
+    # macro heightmap pass produced no relief.
+    min_range_threshold = max(tile_size * 0.001, 1e-4)
+    if h_range < min_range_threshold:
+        issues.append(
+            ValidationIssue(
+                code="HEIGHT_RANGE_TOO_SMALL",
+                severity="soft",
+                message=(
+                    f"height range {h_range:.6f} is below minimum threshold "
+                    f"{min_range_threshold:.6f} — tile may be flat/uninitialized."
+                ),
+            )
+        )
+
+    # 3. Seam-readiness: all four border rows/cols must be finite and non-zero
+    # (zero border suggests the heightmap was not generated edge-to-edge).
+    if h_arr.ndim == 2 and h_arr.shape[0] >= 2 and h_arr.shape[1] >= 2:
+        border = np.concatenate([
+            h_arr[0, :], h_arr[-1, :],
+            h_arr[:, 0], h_arr[:, -1],
+        ])
+        if not np.all(np.isfinite(border)):
+            issues.append(
+                ValidationIssue(
+                    code="BORDER_NONFINITE",
+                    severity="hard",
+                    message="height border cells contain NaN or inf — tile seam will be corrupt.",
+                )
+            )
+        elif np.all(border == 0.0):
+            issues.append(
+                ValidationIssue(
+                    code="BORDER_ALL_ZERO",
+                    severity="soft",
+                    message=(
+                        "all four height border edges are exactly zero — "
+                        "heightmap may not have been generated edge-to-edge, "
+                        "risking seam artefacts with neighbouring tiles."
+                    ),
+                )
+            )
+
+    # 4. Channel NaN sweep
     for ch in ("slope", "curvature", "wetness", "drainage"):
         arr = stack.get(ch)
         if arr is None:
@@ -1068,7 +1214,40 @@ def pass_validation_minimal(
                 )
             )
 
+    # 5. Sediment mass balance
+    erosion_arr = stack.get("erosion_amount")
+    deposition_arr = stack.get("deposition_amount")
+    mass_balance_ratio: float | None = None
+    if erosion_arr is not None and deposition_arr is not None:
+        total_erosion = float(np.asarray(erosion_arr).sum())
+        total_deposition = float(np.asarray(deposition_arr).sum())
+        if total_erosion > 1e-9:
+            mass_balance_ratio = total_deposition / total_erosion
+            if mass_balance_ratio < 0.05:
+                issues.append(
+                    ValidationIssue(
+                        code="EROSION_MASS_BALANCE_LOW",
+                        severity="soft",
+                        message=(
+                            f"sediment mass balance ratio {mass_balance_ratio:.4f} "
+                            f"(deposition/erosion) is below 0.05 — erosion pass may "
+                            f"be discarding sediment rather than redepositing it."
+                        ),
+                    )
+                )
+
     status = "failed" if any(i.is_hard() for i in issues) else "ok"
+
+    metrics: dict[str, Any] = {
+        "populated_channels": sorted(stack.populated_by_pass.keys()),
+        "hard_issues": sum(1 for i in issues if i.is_hard()),
+        "soft_issues": sum(1 for i in issues if not i.is_hard()),
+        "height_min": h_min,
+        "height_max": h_max,
+        "height_range": h_range,
+    }
+    if mass_balance_ratio is not None:
+        metrics["sediment_mass_balance_ratio"] = mass_balance_ratio
 
     return PassResult(
         pass_name="validation_minimal",
@@ -1076,8 +1255,5 @@ def pass_validation_minimal(
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height", "slope"),
         issues=issues,
-        metrics={
-            "populated_channels": sorted(stack.populated_by_pass.keys()),
-            "hard_issues": sum(1 for i in issues if i.is_hard()),
-        },
+        metrics=metrics,
     )

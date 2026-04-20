@@ -1753,11 +1753,20 @@ def carve_river_path(
     width: int = 2,
     depth: float = 0.05,
     seed: int = 0,
+    meander_strength: float = 0.35,
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
     """Carve a river channel from source to destination on a heightmap.
 
     Uses A* pathfinding to find a path preferring downhill routes, then
     lowers the heightmap along the path to create a channel.
+
+    AAA improvement: meander probability.  After A* routing, a sinusoidal
+    lateral offset is applied to each path cell so the carved channel
+    follows a meandering line rather than the shortest downhill path.
+    Meanders are modelled after Leopold & Langbein (1962): sinusoidal bends
+    with wavelength ~10× channel width and amplitude ~2× channel width.
+    The offset is applied via a perpendicular displacement to the local path
+    tangent so the channel stays in its valley but curves naturally.
 
     Parameters
     ----------
@@ -1770,7 +1779,11 @@ def carve_river_path(
     depth : float
         Depth to carve (subtracted from heightmap values).
     seed : int
-        Random seed (reserved for future jitter).
+        Random seed for meander phase.
+    meander_strength : float
+        Amplitude of lateral meander as a fraction of channel width.
+        0 = straight channel, 1 = full Leopold amplitude (2× width).
+        Default 0.35 produces realistic low-energy meandering.
 
     Returns
     -------
@@ -1783,15 +1796,48 @@ def carve_river_path(
 
     path = _astar(result, source, dest, slope_weight=8.0, height_weight=2.0)
 
-    # Carve channel along path
+    if not path:
+        return path, result
+
+    # --- Meander displacement (Leopold & Langbein 1962) ---
+    # Wavelength = 10× channel width; amplitude = meander_strength × 2 × width.
+    meander_wavelength = max(width * 10.0, 4.0)
+    meander_amplitude = width * 2.0 * meander_strength
+    rng_m = np.random.RandomState(seed & 0x7FFFFFFF)
+    meander_phase = rng_m.uniform(0.0, 2.0 * math.pi)
+
+    # Build displacement-adjusted path centres
+    meander_path: list[tuple[float, float]] = []
+    for idx, (r, c) in enumerate(path):
+        # Path tangent from finite differences
+        if idx == 0:
+            dr_t = float(path[1][0] - path[0][0]) if len(path) > 1 else 0.0
+            dc_t = float(path[1][1] - path[0][1]) if len(path) > 1 else 1.0
+        elif idx == len(path) - 1:
+            dr_t = float(path[-1][0] - path[-2][0])
+            dc_t = float(path[-1][1] - path[-2][1])
+        else:
+            dr_t = float(path[idx + 1][0] - path[idx - 1][0])
+            dc_t = float(path[idx + 1][1] - path[idx - 1][1])
+        tang_len = math.sqrt(dr_t ** 2 + dc_t ** 2) or 1.0
+        # Perpendicular (left-hand normal)
+        perp_r = -dc_t / tang_len
+        perp_c =  dr_t / tang_len
+        # Sinusoidal offset along the path arc
+        t_arc = idx / max(len(path) - 1, 1)  # 0 → 1 along path
+        lateral = math.sin(t_arc * 2.0 * math.pi * len(path) / meander_wavelength
+                           + meander_phase) * meander_amplitude
+        meander_path.append((r + perp_r * lateral, c + perp_c * lateral))
+
+    # Carve channel along meander-adjusted path
     half_w = width // 2
-    for r, c in path:
-        for dr in range(-half_w, half_w + 1):
-            for dc in range(-half_w, half_w + 1):
-                nr, nc = r + dr, c + dc
+    for mr, mc in meander_path:
+        for dr in range(-half_w - 1, half_w + 2):
+            for dc in range(-half_w - 1, half_w + 2):
+                nr = int(round(mr)) + dr
+                nc = int(round(mc)) + dc
                 if 0 <= nr < rows and 0 <= nc < cols:
-                    # Distance-based falloff
-                    dist = math.sqrt(dr * dr + dc * dc)
+                    dist = math.sqrt((nr - mr) ** 2 + (nc - mc) ** 2)
                     if dist <= half_w + 0.5:
                         falloff = 1.0 - dist / (half_w + 1.0)
                         result[nr, nc] -= depth * falloff
@@ -2419,6 +2465,17 @@ def hydraulic_erosion(
             py = new_py
 
             if water < 0.001:
+                # AAA fix: deposit ALL remaining sediment at the particle's
+                # final position when it dies from evaporation.  The previous
+                # code simply discarded the sediment, violating mass conservation
+                # and producing systematic material loss that manifested as
+                # flat-bottomed basins (the "marble-cake" artifact).
+                # Benes et al. (2006) explicitly requires final-step deposition.
+                if sediment > 0.0 and 1 <= cx < cols - 2 and 1 <= cy < rows - 2:
+                    hmap[cy, cx]     += sediment * (1 - fx) * (1 - fy)
+                    hmap[cy, cx + 1] += sediment * fx * (1 - fy)
+                    hmap[cy + 1, cx] += sediment * (1 - fx) * fy
+                    hmap[cy + 1, cx + 1] += sediment * fx * fy
                 break
 
     return hmap
@@ -2657,12 +2714,24 @@ def voronoi_biome_distribution(
     transition_width: float = 0.1,
     seed: int = 0,
     biome_names: list[str] | None = None,
+    heightmap: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute Voronoi-based biome distribution with smooth transitions.
 
     Pure-logic function. Places biome_count seed points using a jittered
-    grid, assigns each cell to the nearest seed's biome, and computes
-    soft blend weights at Voronoi boundaries using domain-warped distances.
+    grid sorted by climate latitude (Y-axis), assigns each cell to the
+    nearest seed's biome, and computes soft blend weights at Voronoi
+    boundaries using domain-warped distances.
+
+    Climate-gradient sorting (AAA spec): seed Y-positions are sorted so
+    lower-index biomes occupy the northern (cold) half and higher-index
+    biomes occupy the southern (warm) half.  This mirrors World Machine /
+    Gaea biome layers where tundra/arctic occupies the top band and
+    tropics/lowlands occupy the bottom band.
+
+    When ``heightmap`` is supplied, seeds are altitude-biased so cold biomes
+    prefer high-elevation rows and warm biomes prefer low-elevation rows,
+    producing natural mountain-tundra and lowland-jungle placement.
 
     Args:
         width: Grid width in cells.
@@ -2673,6 +2742,9 @@ def voronoi_biome_distribution(
         seed: Random seed for reproducibility.
         biome_names: Optional list of biome name strings. If None,
             integer indices are used.
+        heightmap: Optional (height, width) float array.  When provided,
+            seeds are altitude-biased so cold biomes (low index) prefer
+            high elevations and warm biomes (high index) prefer low elevations.
 
     Returns:
         biome_ids: np.ndarray (height, width) of int biome indices [0, biome_count).
@@ -2689,14 +2761,49 @@ def voronoi_biome_distribution(
     cell_w = 1.0 / grid_side
     cell_h = 1.0 / grid_side
 
-    seed_points: list[tuple[float, float]] = []
+    seed_points_raw: list[tuple[float, float]] = []
     for i in range(biome_count):
         row = i // grid_side
         col = i % grid_side
         # Jittered position within grid cell (avoid edges)
         sx = (col + 0.2 + rng.random() * 0.6) * cell_w
         sy = (row + 0.2 + rng.random() * 0.6) * cell_h
-        seed_points.append((sx, sy))
+        seed_points_raw.append((sx, sy))
+
+    # --- Climate-gradient sorting ---
+    # Sort seed Y positions cold-to-warm (small Y = north = cold).
+    # X coords are independently shuffled for spatial variety.
+    seed_ys_sorted = sorted(sy for _sx, sy in seed_points_raw)
+    seed_xs_shuffled = [sx for sx, _sy in seed_points_raw]
+    _xs_rng = _rnd.Random(seed ^ 0xABCDEF)
+    _xs_rng.shuffle(seed_xs_shuffled)
+
+    # Altitude bias: when a heightmap is supplied, shift each seed's Y to fall
+    # in a row whose mean elevation matches the expected climate band.
+    # Cold biomes (low index) → high-altitude rows; warm biomes → low-altitude.
+    if heightmap is not None:
+        hmap_arr = np.asarray(heightmap, dtype=np.float64)
+        if hmap_arr.ndim == 2 and hmap_arr.shape[0] > 0 and hmap_arr.shape[1] > 0:
+            row_means = hmap_arr.mean(axis=1)
+            h_min = float(row_means.min())
+            h_max = float(row_means.max())
+            h_range = max(h_max - h_min, 1e-9)
+            row_alt_norm = (row_means - h_min) / h_range  # [0,1] per row
+            n_rows = hmap_arr.shape[0]
+            new_seed_ys: list[float] = []
+            for bi in range(biome_count):
+                # Target normalised altitude: 1.0 = coldest/highest, 0.0 = warmest/lowest
+                target_alt = 1.0 - bi / max(biome_count - 1, 1)
+                best_row = int(np.argmin(np.abs(row_alt_norm - target_alt)))
+                jitter = (_xs_rng.random() - 0.5) * 0.10
+                sy_biased = float(best_row) / max(n_rows - 1, 1) + jitter
+                sy_biased = max(0.05, min(0.95, sy_biased))
+                new_seed_ys.append(sy_biased)
+            seed_points: list[tuple[float, float]] = list(zip(seed_xs_shuffled, new_seed_ys))
+        else:
+            seed_points = list(zip(seed_xs_shuffled, seed_ys_sorted))
+    else:
+        seed_points = list(zip(seed_xs_shuffled, seed_ys_sorted))
 
     seed_arr = np.array(seed_points, dtype=np.float64)  # (biome_count, 2)
 
@@ -2968,10 +3075,32 @@ def auto_splat_terrain(
     splat = np.zeros((rows, cols, N_LAYERS), dtype=np.float64)
     GRASS, ROCK, CLIFF, SNOW, MUD = 0, 1, 2, 3, 4
 
+    # Biome-aware snow altitude threshold.
+    # Hard-coding 0.7 for every biome is wrong: deserts never snow at any
+    # elevation within a tile, tundra biomes snow at much lower altitudes,
+    # and alpine biomes snow lower still.  These thresholds match GeoGlyph's
+    # climate-zone layer defaults (Gaea: arctic=0.35, alpine=0.55, temperate=0.70,
+    # arid/desert=1.01 meaning never).
+    _SNOW_THRESHOLD_BY_BIOME: dict[str, float] = {
+        "arctic":    0.35,
+        "tundra":    0.40,
+        "alpine":    0.55,
+        "mountains": 0.65,
+        "default":   0.70,
+        "temperate": 0.70,
+        "coastal":   0.75,
+        "savanna":   0.88,
+        "desert":    1.01,   # effectively never
+        "arid":      1.01,
+        "volcanic":  0.80,
+        "swamp":     0.90,
+    }
+    snow_height_threshold = _SNOW_THRESHOLD_BY_BIOME.get(biome, _SNOW_THRESHOLD_BY_BIOME["default"])
+
     # Rule masks (vectorized)
     cliff_mask = slope_map > 55.0
     steep_mask = (slope_map >= 30.0) & (slope_map <= 55.0)
-    snow_mask = (heightmap > 0.7) & ~cliff_mask
+    snow_mask = (heightmap > snow_height_threshold) & ~cliff_mask
     swamp_mask = (moisture > 0.6) & (slope_map < 10.0) & ~cliff_mask & ~snow_mask
     grass_mask = ~cliff_mask & ~steep_mask & ~snow_mask & ~swamp_mask
 
