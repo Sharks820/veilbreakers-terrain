@@ -303,7 +303,9 @@ def apply_hydraulic_erosion_masks(
                 f"erodibility_map shape {erod_arr.shape} does not match "
                 f"heightmap shape {result.shape}"
             )
-        _erod_scale = erod_arr / max(float(erod_arr.mean()), 1e-12)
+        # Keep absolute hardness meaning intact: a uniformly hard tile must
+        # erode less than a uniformly soft tile, not collapse to the same mean.
+        _erod_scale = np.clip(erod_arr, 0.0, None) / 1e-3
     else:
         _erod_scale = None
 

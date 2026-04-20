@@ -65,15 +65,29 @@ def _make_pipeline_state(stack):
 
 class TestBug94WindDirection:
     def test_continuous_direction(self):
-        """Directions 30 deg and 45 deg must produce different deltas after fix."""
+        """Nearby angles that collapse under int(round) must still diverge."""
         from veilbreakers_terrain.handlers.terrain_wind_erosion import apply_wind_erosion
 
         stack = _make_stack(size=32)
-        delta_30 = apply_wind_erosion(stack, prevailing_dir_rad=math.pi / 6, intensity=0.5)
-        delta_45 = apply_wind_erosion(stack, prevailing_dir_rad=math.pi / 4, intensity=0.5)
+        delta_a = apply_wind_erosion(stack, prevailing_dir_rad=math.pi / 12, intensity=0.5)
+        delta_b = apply_wind_erosion(stack, prevailing_dir_rad=math.pi / 10, intensity=0.5)
 
-        assert not np.allclose(delta_30, delta_45, atol=1e-4), (
-            "BUG-94 not fixed: 30-degree and 45-degree wind erosion produced identical deltas"
+        assert not np.allclose(delta_a, delta_b, atol=1e-4), (
+            "BUG-94 not fixed: close wind angles collapsed to the same erosion field"
+        )
+
+    def test_continuous_direction_without_scipy(self, monkeypatch):
+        from veilbreakers_terrain.handlers import terrain_wind_erosion as wind_mod
+
+        stack = _make_stack(size=32)
+        monkeypatch.setattr(wind_mod, "_HAS_SCIPY", False)
+        monkeypatch.setattr(wind_mod, "_map_coordinates", None)
+
+        delta_a = wind_mod.apply_wind_erosion(stack, prevailing_dir_rad=math.pi / 12, intensity=0.5)
+        delta_b = wind_mod.apply_wind_erosion(stack, prevailing_dir_rad=math.pi / 10, intensity=0.5)
+
+        assert not np.allclose(delta_a, delta_b, atol=1e-4), (
+            "Fallback path must preserve fractional wind-direction differences"
         )
 
     def test_shape_preserved(self):
@@ -218,6 +232,24 @@ class TestWaterfallMistPass:
         finally:
             TerrainPassController.clear_registry()
             TerrainPassController.PASS_REGISTRY.update(original)
+
+    def test_solved_chain_mist_radius_tracks_drop_height(self):
+        from veilbreakers_terrain.handlers.terrain_waterfalls import (
+            detect_waterfall_lip_candidates,
+            solve_waterfall_from_river,
+        )
+
+        h = np.zeros((40, 40), dtype=np.float32)
+        h[:20, :] = 25.0
+        stack = _make_stack(size=40, with_mist=False)
+        stack.height = h
+
+        lips = detect_waterfall_lip_candidates(stack, min_drainage=1.0, min_drop_m=3.0)
+        assert lips, "Expected at least one lip candidate on the synthetic cliff"
+
+        chain = solve_waterfall_from_river(stack, lips[0])
+        expected = max(2.0, chain.total_drop_m * 0.3)
+        assert chain.mist_radius_m == pytest.approx(expected, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------

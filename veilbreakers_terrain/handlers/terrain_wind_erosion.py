@@ -14,6 +14,16 @@ from typing import Optional
 
 import numpy as np
 
+try:
+    from scipy.ndimage import gaussian_filter as _gaussian_filter
+    from scipy.ndimage import map_coordinates as _map_coordinates
+
+    _HAS_SCIPY = True
+except ImportError:
+    _gaussian_filter = None  # type: ignore[assignment]
+    _map_coordinates = None  # type: ignore[assignment]
+    _HAS_SCIPY = False
+
 from .terrain_pipeline import derive_pass_seed
 from .terrain_semantics import (
     BBox,
@@ -79,6 +89,42 @@ def _shift_with_edge_repeat(
     return out
 
 
+def _shift_fractional_with_edge_repeat(
+    array: np.ndarray,
+    *,
+    row_shift: float,
+    col_shift: float,
+) -> np.ndarray:
+    """Shift a heightfield by fractional cells without toroidal wraparound."""
+    src = np.asarray(array, dtype=np.float64)
+    rows, cols = src.shape
+
+    rr, cc = np.meshgrid(
+        np.arange(rows, dtype=np.float64),
+        np.arange(cols, dtype=np.float64),
+        indexing="ij",
+    )
+    sample_r = np.clip(rr - float(row_shift), 0.0, rows - 1.0)
+    sample_c = np.clip(cc - float(col_shift), 0.0, cols - 1.0)
+
+    if _HAS_SCIPY and _map_coordinates is not None:
+        coords = np.vstack((sample_r.reshape(1, -1), sample_c.reshape(1, -1)))
+        shifted = _map_coordinates(src, coords, order=1, mode="nearest")
+        return shifted.reshape(rows, cols)
+
+    r0 = np.floor(sample_r).astype(np.int32)
+    c0 = np.floor(sample_c).astype(np.int32)
+    r1 = np.clip(r0 + 1, 0, rows - 1)
+    c1 = np.clip(c0 + 1, 0, cols - 1)
+
+    fr = sample_r - r0
+    fc = sample_c - c0
+
+    top = src[r0, c0] * (1.0 - fc) + src[r0, c1] * fc
+    bottom = src[r1, c0] * (1.0 - fc) + src[r1, c1] * fc
+    return top * (1.0 - fr) + bottom * fr
+
+
 def apply_wind_erosion(
     stack: TerrainMaskStack,
     prevailing_dir_rad: float,
@@ -120,24 +166,11 @@ def apply_wind_erosion(
     dx = math.cos(prevailing_dir_rad)
     dy = math.sin(prevailing_dir_rad)
 
-    try:
-        from scipy.ndimage import shift as _shift, gaussian_filter as _gf
-        _HAS_SCIPY = True
-    except ImportError:
-        _HAS_SCIPY = False
-
     # --- Saltation: asymmetric upwind/downwind shift ---
     # Hop length = 2 cell sizes (typical saltation trajectory)
     hop = 2.0
-    if _HAS_SCIPY:
-        # Sub-pixel bilinear shift avoids integer snap artefacts
-        up = _shift(h, shift=(-dy * hop, -dx * hop), order=1, mode="nearest")
-        down = _shift(h, shift=(dy * hop, dx * hop), order=1, mode="nearest")
-    else:
-        rs = int(round(dy * hop))
-        cs_ = int(round(dx * hop))
-        up = _shift_with_edge_repeat(h, row_shift=-rs, col_shift=-cs_)
-        down = _shift_with_edge_repeat(h, row_shift=rs, col_shift=cs_)
+    up = _shift_fractional_with_edge_repeat(h, row_shift=-dy * hop, col_shift=-dx * hop)
+    down = _shift_fractional_with_edge_repeat(h, row_shift=dy * hop, col_shift=dx * hop)
 
     # Wind-direction slope (positive = windward face)
     gy, gx = np.gradient(h)
@@ -156,10 +189,14 @@ def apply_wind_erosion(
     saltation_delta = (saltation_blend - h) * intensity * (0.6 + 0.4 * bagnold)
 
     # --- Creep: downwind Gaussian roll ---
-    if _HAS_SCIPY:
-        h_crept = _gf(h, sigma=1.5)
+    if _HAS_SCIPY and _gaussian_filter is not None:
+        h_crept = _gaussian_filter(h, sigma=1.5)
         # Shift creep result slightly downwind
-        h_crept = _shift(h_crept, shift=(dy * 0.5, dx * 0.5), order=1, mode="nearest")
+        h_crept = _shift_fractional_with_edge_repeat(
+            h_crept,
+            row_shift=dy * 0.5,
+            col_shift=dx * 0.5,
+        )
     else:
         h_crept = h  # no-op without scipy
     creep_delta = (h_crept - h) * intensity * 0.25

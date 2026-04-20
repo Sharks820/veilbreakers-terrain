@@ -230,8 +230,12 @@ updates = {
     ('terrain_karst.py', 'SinkholeSpec'): 'B+|2026-04-19: upgraded C -> collapse_stage field __post_init__ validation fresh/weathered/flooded all fields populated',
     ('terrain_karst.py', 'get_sinkhole_specs'): 'B+|2026-04-19: upgraded C -> cenote=flooded large=weathered small=40fresh/60weathered full SinkholeSpec',
     # terrain_wind_erosion.py (agent a9e34cbcb70d1deed)
-    ('terrain_wind_erosion.py', 'apply_wind_erosion'): 'B+|2026-04-19: upgraded C -> Bagnold 1941 saltation q~slope_wind^3 asymmetric 0.45h+0.35upwind+0.20downwind creep gaussian+shift lee deposition',
+    ('terrain_wind_erosion.py', 'apply_wind_erosion'): 'A-|2026-04-19: upgraded C+ -> Bagnold saltation q~slope_wind^3 continuous subpixel edge-repeat shifts bilinear fallback no int-round snapping creep+lee deposition',
     ('terrain_wind_erosion.py', 'generate_dunes'): 'B+|2026-04-19: upgraded C -> McKee 1979 transverse/barchan/star by wind_variability barchan Gaussian+2horns star N_arms sinusoidal radial Gaussian',
+    ('terrain_wind_erosion.py', 'pass_wind_erosion'): 'B+|2026-04-19: upgraded C+ -> deterministic seed + optional dune layering + wind_erosion_delta metrics orchestration around continuous aeolian core',
+    ('terrain_roughness_driver.py', 'compute_roughness_from_wetness_wear'): 'A-|2026-04-19: upgraded C+ -> neutral 0.55 replace base wetness/erosion/deposition/AO blend independent of pre-existing roughness channel',
+    ('terrain_roughness_driver.py', 'pass_roughness_driver'): 'A-|2026-04-19: upgraded B -> consumed_channels aligned with wetness/erosion/deposition/AO/slope/curvature/material_zones and roughness zone overrides',
+    ('_terrain_erosion.py', 'apply_hydraulic_erosion_masks'): 'B+|2026-04-19: upgraded B- -> mask-aware droplet erosion with erodibility_map scaling hero/deposition gates wetness/drainage outputs',
     # terrain_masks.py (agent a9e34cbcb70d1deed)
     ('terrain_masks.py', 'detect_basins'): 'B+|2026-04-19: upgraded B- -> scipy watershed_ift primary numpy fallback scipy label seeds height-sorted priority-flood 8-neighbor flat-index arithmetic',
     # terrain_math.py (agent a9e34cbcb70d1deed)

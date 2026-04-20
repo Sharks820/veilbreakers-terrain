@@ -205,6 +205,47 @@ class TestComputeStreamPowerErosion:
             compute_stream_power_erosion(dem, drainage_area=bad_A, steps=1)
 
 
+class TestHydraulicErodibility:
+    def test_apply_hydraulic_erosion_masks_respects_erodibility_map(self):
+        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion_masks
+
+        dem = _make_sloped_dem(16).astype(np.float64)
+        low_erodibility = np.full_like(dem, 0.0002)
+        high_erodibility = np.full_like(dem, 0.0010)
+
+        low = apply_hydraulic_erosion_masks(
+            dem,
+            iterations=200,
+            seed=7,
+            erodibility_map=low_erodibility,
+        ).height
+        high = apply_hydraulic_erosion_masks(
+            dem,
+            iterations=200,
+            seed=7,
+            erodibility_map=high_erodibility,
+        ).height
+
+        low_loss = float((dem - low).sum())
+        high_loss = float((dem - high).sum())
+        assert high_loss > low_loss + 1e-6, (
+            "Hydraulic erosion should remove more material in high-erodibility cells"
+        )
+
+    def test_zero_erodibility_blocks_hydraulic_erosion(self):
+        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion_masks
+
+        dem = _make_sloped_dem(16).astype(np.float64)
+        result = apply_hydraulic_erosion_masks(
+            dem,
+            iterations=200,
+            seed=7,
+            erodibility_map=np.zeros_like(dem),
+        ).height
+
+        np.testing.assert_allclose(result, dem, rtol=1e-9, atol=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # Task 2 — pass_erosion integration: variable erodibility + SPL wiring
 # ---------------------------------------------------------------------------

@@ -176,7 +176,7 @@ class TestBug55:
         result = compute_roughness_from_wetness_wear(stack)
         # With additive bug: 0.9*0.2 + 0.15*0.8 = 0.30 (WRONG)
         # With replace (base=0.55, wet lerp 0.8): 0.55*(1-0.8) + 0.15*0.8 = 0.11 + 0.12 = 0.23
-        assert result.max() < 0.35, (
+        assert result.max() < 0.27, (
             "roughness must use replace semantics, not additive on existing value"
         )
 

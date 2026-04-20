@@ -180,7 +180,16 @@ def pass_roughness_driver(
         pass_name="roughness_driver",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
-        consumed_channels=("height",),
+        consumed_channels=(
+            "height",
+            "wetness",
+            "erosion_amount",
+            "deposition_amount",
+            "ambient_occlusion_bake",
+            "slope",
+            "curvature",
+            "material_zones",
+        ),
         produced_channels=("roughness_variation",),
         metrics={
             "rough_min": float(rough_f32.min()),
