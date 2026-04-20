@@ -493,6 +493,20 @@ def test_validate_strahler_ordering_detects_jump():
     assert any(i.code == "STRAHLER_JUMP" for i in issues)
 
 
+def test_validate_strahler_ordering_detects_uphill_order():
+    from blender_addon.handlers.terrain_geology_validator import (
+        validate_strahler_ordering,
+    )
+
+    net = {
+        "streams": [
+            {"order": 2, "parent_order": 1},
+        ]
+    }
+    issues = validate_strahler_ordering(net)
+    assert any(i.code == "STRAHLER_UPHILL_ORDER" for i in issues)
+
+
 def test_validate_strahler_ordering_none_safe():
     from blender_addon.handlers.terrain_geology_validator import (
         validate_strahler_ordering,

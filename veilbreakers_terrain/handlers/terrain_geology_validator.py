@@ -229,9 +229,14 @@ def validate_strahler_ordering(
             dst_order = computed.get(dst, 1)
 
             if src_order > dst_order:
+                code = (
+                    "STRAHLER_JUMP"
+                    if src_order > dst_order + 1
+                    else "STRAHLER_UPHILL_ORDER"
+                )
                 issues.append(
                     ValidationIssue(
-                        code="STRAHLER_UPHILL_ORDER",
+                        code=code,
                         severity="soft",
                         affected_feature=f"edge_{e_idx}_{src}_to_{dst}",
                         message=(
@@ -299,9 +304,14 @@ def validate_strahler_ordering(
             src_order = asserted_nx.get((u, v), computed_nx.get(u, 1))
             dst_order = computed_nx.get(v, 1)
             if src_order > dst_order:
+                code = (
+                    "STRAHLER_JUMP"
+                    if src_order > dst_order + 1
+                    else "STRAHLER_UPHILL_ORDER"
+                )
                 issues.append(
                     ValidationIssue(
-                        code="STRAHLER_UPHILL_ORDER",
+                        code=code,
                         severity="soft",
                         affected_feature=f"edge_{e_idx}_{u}_to_{v}",
                         message=(
@@ -339,18 +349,37 @@ def validate_strahler_ordering(
         parent_order = _get(s, "parent_order")
         if order is None or parent_order is None:
             continue
+        order_i = int(order)
+        parent_i = int(parent_order)
+
         # Strahler rule: a tributary's order must be <= parent order.
-        # order > parent_order is impossible (the parent receives this stream,
-        # so it must be at least as high-order).
-        if int(order) > int(parent_order):
+        # A single-step rise is still a topology violation, while a jump of
+        # more than one order indicates obviously corrupted ordering metadata.
+        if order_i > parent_i + 1:
+            issues.append(
+                ValidationIssue(
+                    code="STRAHLER_JUMP",
+                    severity="soft",
+                    affected_feature=f"stream_{idx}",
+                    message=(
+                        f"stream order {order_i} jumps more than one level above "
+                        f"parent (downstream) order {parent_i}"
+                    ),
+                    remediation=(
+                        "recompute Strahler orders from the stream network and "
+                        "verify parent/downstream links"
+                    ),
+                )
+            )
+        elif order_i > parent_i:
             issues.append(
                 ValidationIssue(
                     code="STRAHLER_UPHILL_ORDER",
                     severity="soft",
                     affected_feature=f"stream_{idx}",
                     message=(
-                        f"stream order {order} exceeds parent (downstream) "
-                        f"order {parent_order} — higher-order stream cannot "
+                        f"stream order {order_i} exceeds parent (downstream) "
+                        f"order {parent_i} — higher-order stream cannot "
                         "feed into a lower-order channel"
                     ),
                     remediation=(
