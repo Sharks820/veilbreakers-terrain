@@ -1069,25 +1069,48 @@ def _classify_face(
     normal: tuple[float, float, float],
     face_center_z: float,
     water_level: float,
+    *,
+    water_margin: float = 0.5,
+    curvature: float = 0.0,
 ) -> str:
-    """Classify a face into a terrain zone based on slope and height.
+    """Classify a face into a terrain zone based on slope, height, and curvature.
 
     Args:
         normal: Face normal as (nx, ny, nz).
         face_center_z: Average Z height of the face's vertices.
         water_level: Z height of the water surface.
+        water_margin: Vertical band above water_level classified as water_edges.
+            Callers should scale this with terrain Z range (e.g. z_range * 0.01)
+            so the band is biome-scale-independent. Default 0.5 (legacy).
+        curvature: Signed mean curvature estimate for the face [-1, 1].
+            Positive = convex (ridge / dome), negative = concave (bowl / channel).
+            Concave faces near the slope→cliff boundary are pulled toward
+            "slopes" (sheltered bowls erode to soil); convex faces are pushed
+            toward "cliffs" (exposed ridges stay bare rock). Default 0.0 (no
+            curvature modulation — preserves existing classification behaviour).
 
     Returns:
         One of "ground", "slopes", "cliffs", or "water_edges".
     """
     # Water edge check takes priority
-    if face_center_z < water_level + 0.5:
+    if face_center_z < water_level + water_margin:
         return "water_edges"
 
     angle = _face_slope_angle(normal)
-    if angle <= _FLAT_MAX_ANGLE:
+
+    # Curvature modulation: shift effective thresholds by up to ±4 degrees.
+    # Concave faces (curvature < 0) lower the cliff threshold slightly — bowl
+    # geometry accumulates soil and reads as slope even at steeper angles.
+    # Convex faces (curvature > 0) raise the ground threshold slightly — domed
+    # ridges shed soil and express bare rock sooner.
+    curvature_clamped = max(-1.0, min(1.0, curvature))
+    curv_shift = curvature_clamped * 4.0  # up to ±4 degrees
+    effective_flat_max = _FLAT_MAX_ANGLE + curv_shift
+    effective_slope_max = _SLOPE_MAX_ANGLE - curv_shift
+
+    if angle <= effective_flat_max:
         return "ground"
-    elif angle <= _SLOPE_MAX_ANGLE:
+    elif angle <= effective_slope_max:
         return "slopes"
     else:
         return "cliffs"
@@ -1097,25 +1120,23 @@ def assign_terrain_materials_by_slope(
     mesh_data: dict[str, Any],
     biome_name: str,
 ) -> list[int]:
-    """Assign material indices to faces based on slope angle, height, and geology.
+    """Assign material indices to faces based on slope, height, geology, wetness, and aspect.
 
     Pure-logic function -- no bpy dependency.
 
-    Implements a 5-tier altitudinal banding system (SpeedTree/UE5 PCG style):
-      1. water_edges  — faces at or below water_level + margin
-      2. ground       — flat faces below treeline, modulated by rock hardness
-      3. slopes       — angled faces; treeline→snowline transitions to rocky slopes
-      4. cliffs       — near-vertical; above treeline always rock/ice
-      5. snowline     — flat faces above snowline become slopes (snow-covered)
-
-    Wet/dry material variant selection: when "moisture_per_vertex" is supplied,
-    biases the material slot pick within a zone toward wet (even indices) or
-    dry (odd indices) variants. This mirrors MicroSplat's wetness-based material
-    switching without requiring separate material lists.
+    Implements a 5-factor classification matching World Creator 2 / MicroSplat / GeoGlyph:
+      1. **Slope angle** (0°-90°): primary classification into ground/slopes/cliffs.
+      2. **Altitude band**: 5-tier water/ground/treeline/snowline/cliff zoning.
+      3. **Rock hardness**: shifts slope thresholds ±10-15° (geology modulation).
+      4. **Wetness index** (moisture_per_vertex): biases wet/dry material variants.
+      5. **Aspect** (north vs south-facing): north-facing slopes gain a moisture
+         boost (less insolation → wetter soil → more vegetation), south-facing
+         slopes lose moisture (more sun → drier). Matches GeoGlyph aspect maps
+         and World Creator's solar-exposure layer.
 
     Boundary transition bias: faces within 5 degrees of a zone boundary get a
-    deterministic slot offset based on face index parity to blend zone visual
-    edge (prevents cliff-hard stripe artifacts visible in UE4-era terrain).
+    deterministic slot offset based on face index parity to dither the zone edge
+    (prevents cliff-hard stripe artifacts visible in UE4-era terrain).
 
     Args:
         mesh_data: Dict with:
@@ -1194,6 +1215,23 @@ def assign_terrain_materials_by_slope(
                 ]
                 face_moisture = sum(m_vals) / len(m_vals) if m_vals else 0.5
 
+        # ---- Factor 5: Aspect (north vs south-facing) -----------------------
+        # North-facing slopes (positive ny in Blender Y=north convention)
+        # receive less direct solar radiation → retain moisture → more vegetation.
+        # South-facing slopes shed moisture faster.  The bias is proportional
+        # to steepness (flat faces have no aspect effect) and capped at ±0.15
+        # moisture units, matching GeoGlyph's aspect-based layer blending range.
+        nx_a, ny_a, _nz_a = normal
+        horiz_len = math.sqrt(nx_a * nx_a + ny_a * ny_a)
+        if horiz_len > 1e-6:
+            north_factor = ny_a / horiz_len  # +1 = north-facing, -1 = south
+        else:
+            north_factor = 0.0
+        angle = _face_slope_angle(normal)
+        aspect_steepness = min(1.0, angle / 45.0)  # 0 at flat, 1 at 45°+
+        aspect_moisture_bias = north_factor * 0.15 * aspect_steepness
+        effective_moisture = max(0.0, min(1.0, face_moisture + aspect_moisture_bias))
+
         # rock_hardness slope transition modulation:
         # Hard rock (hardness > 0.7) shifts the flat→slope threshold up by
         # up to 15 degrees so hard-rock faces classify as "ground" at steeper
@@ -1207,8 +1245,6 @@ def assign_terrain_materials_by_slope(
         # Effective classification thresholds with hardness modulation
         effective_flat_max = _FLAT_MAX_ANGLE + hardness_offset
         effective_slope_max = _SLOPE_MAX_ANGLE + hardness_offset
-
-        angle = _face_slope_angle(normal)
 
         # ---- 5-tier altitudinal zone classification -------------------------
         if face_center_z < water_level + 0.5:
@@ -1258,16 +1294,16 @@ def assign_terrain_materials_by_slope(
         )
         boundary_offset = (fi & 1) if (near_flat_boundary or near_slope_boundary) else 0
 
-        # Wet/dry variant bias:
+        # Wet/dry variant bias using aspect-corrected effective_moisture:
         # If moisture > 0.6 → prefer even-index slots (wet variants)
         # If moisture < 0.3 → prefer odd-index slots (dry variants)
         # Otherwise → round-robin by face index
         if zone_mat_count > 1:
-            if face_moisture > 0.6:
+            if effective_moisture > 0.6:
                 # Wet: use even slots, wrapping within zone
                 wet_slots = [i for i in range(zone_mat_count) if i % 2 == 0]
                 slot = wet_slots[fi % len(wet_slots)]
-            elif face_moisture < 0.3:
+            elif effective_moisture < 0.3:
                 # Dry: use odd slots if available, else all slots
                 dry_slots = [i for i in range(zone_mat_count) if i % 2 == 1]
                 if not dry_slots:
@@ -1455,7 +1491,17 @@ def blend_terrain_vertex_colors(
             ))
             continue
 
-        # ---- Slope axis: average zone weights across adjacent faces in linear -
+        # ---- Slope axis: height-contrast blend across adjacent faces (MicroSplat) --
+        # Instead of a plain average, apply MicroSplat's height-blend formula:
+        #   blend = saturate((h_zone - h_prev + half) / half)
+        # where h_zone is the per-channel weight of the incoming zone (used as a
+        # proxy for "how tall/prominent is this material") and h_prev is the
+        # accumulated weight so far.  This lets tall materials (rock fragments,
+        # ridge stones) poke through lower ones (soil, grass) at transition faces,
+        # matching MicroSplat's "height blend" mode output.
+        _BLEND_CONTRAST = 0.5   # half-width for height transition: 0=soft, 1=hard
+        _BLEND_HALF = max(0.5 - _BLEND_CONTRAST * 0.45, 0.05)
+
         r_sum, g_sum, b_sum, a_sum = 0.0, 0.0, 0.0, 0.0
         for fi in adj:
             normal = normals[fi] if fi < len(normals) else (0.0, 0.0, 1.0)
@@ -1468,19 +1514,25 @@ def blend_terrain_vertex_colors(
 
             zone = _classify_face(normal, face_z, water_level)
             w = _ZONE_LINEAR[zone]
-            r_sum += w[0]
-            g_sum += w[1]
-            b_sum += w[2]
-            a_sum += w[3]
 
-        n_adj = len(adj)
-        r_sum /= n_adj
-        g_sum /= n_adj
-        b_sum /= n_adj
-        a_sum /= n_adj
+            # Height-blend each channel: incoming zone weight is the "height map"
+            # value; blend drives how much it overrides the running accumulation.
+            # Formula: blend = clamp((w_ch - acc_ch + half) / half, 0, 1)
+            # This is evaluated per channel so rock (high G) pokes through soil
+            # (low G) when a cliff face is adjacent to a ground face.
+            inv_half = 1.0 / _BLEND_HALF
+            def _hblend(w_ch: float, acc_ch: float) -> float:
+                raw = (w_ch - acc_ch + _BLEND_HALF) * inv_half
+                b = max(0.0, min(1.0, raw))
+                return acc_ch + (w_ch - acc_ch) * b
+
+            r_sum = _hblend(w[0], r_sum)
+            g_sum = _hblend(w[1], g_sum)
+            b_sum = _hblend(w[2], b_sum)
+            a_sum = _hblend(w[3], a_sum)
 
         # ---- Combine axes -------------------------------------------------------
-        # Apply wetness and height offsets to the slope-averaged weights.
+        # Apply wetness and height offsets to the height-blended weights.
         # a_height and a_sum both contribute to the A channel (additive, capped).
         r_combined = max(0.0, r_sum + r_moisture_offset)
         g_combined = max(0.0, g_sum)
@@ -1608,12 +1660,16 @@ def _wang_hash(n: int) -> int:
 
 
 def _simple_noise_2d(x: float, y: float, seed: int = 0) -> float:
-    """Deterministic gradient noise in [-1, 1] for biome transition irregularity.
+    """Deterministic value noise in [-1, 1] for biome transition irregularity.
 
-    Implements value noise with Wang-hash corner values and quintic (smoothstep5)
-    interpolation. The Wang hash gives better avalanche properties than the
-    original multiplicative hash, reducing visible grid artefacts in biome
-    boundary blending.
+    Implements value noise with a reproducible integer hash and quintic
+    (smoothstep5) interpolation.
+
+    Hash formula (platform-independent LCG mix):
+        h = (x * 1664525 + y * 1013904223) & 0xFFFFFFFF
+    These are the Numerical Recipes LCG constants — no floating-point trig,
+    no platform-precision variance, bit-identical results on all CPUs and GPU
+    compute shaders that implement the same 32-bit integer wrap.
 
     Pure-logic function -- no bpy dependency.
     """
@@ -1631,9 +1687,21 @@ def _simple_noise_2d(x: float, y: float, seed: int = 0) -> float:
     uy = _quintic(fy)
 
     def _hash_val(xi: int, yi: int) -> float:
-        """Wang-hash two ints + seed → float in [-1, 1]."""
-        h = _wang_hash(_wang_hash(xi & 0xFFFFFFFF) ^ (_wang_hash(yi & 0xFFFFFFFF) + seed))
-        # Map to [-1, 1] via mantissa extraction
+        """LCG integer hash → float in [-1, 1].
+
+        Uses Numerical Recipes multiplicative LCG constants for each axis,
+        XOR'd with the seed, so the same (xi, yi) with different seeds
+        produces uncorrelated sequences.
+        """
+        # Fold coordinates into a single 32-bit value via LCG constants
+        h = (xi * 1664525 + yi * 1013904223) & 0xFFFFFFFF
+        # Mix seed in to make noise instances independent
+        h = (h ^ ((seed * 1664525 + 1013904223) & 0xFFFFFFFF)) & 0xFFFFFFFF
+        # Final avalanche pass: multiply-xorshift
+        h = (h ^ (h >> 16)) & 0xFFFFFFFF
+        h = (h * 0x45D9F3B) & 0xFFFFFFFF
+        h = (h ^ (h >> 16)) & 0xFFFFFFFF
+        # Map 24-bit mantissa to [-1, 1]
         return (h & 0xFFFFFF) / float(0x800000) - 1.0
 
     n00 = _hash_val(ix, iy)
@@ -1882,20 +1950,28 @@ def height_blend(
 
 
 def _create_height_blend_group(name: str = "HeightBlend") -> Any:
-    """Create a Blender node group implementing height-based texture blending.
+    """Create a Blender node group implementing the exact MicroSplat height-blend formula.
 
     Creates a reusable node group with:
         Inputs:
-          - Height_A (float): Height value from texture A
-          - Height_B (float): Height value from texture B
-          - Mask (float): Blend mask (0=A, 1=B)
-          - Blend_Contrast (float): Transition sharpness
+          - Height_A (float): Height value from texture A (0-1, from noise/heightmap)
+          - Height_B (float): Height value from texture B (0-1, from noise/heightmap)
+          - Mask (float): Positional blend mask (0=A, 1=B, e.g. from slope angle)
+          - Blend_Contrast (float): Transition sharpness [0..1]
         Outputs:
-          - Result (float): Blended weight
+          - Result (float): Blended weight for layer B
 
-    Logic: result = clamp((Height_A - Height_B) * Blend_Contrast + 0.5) * Mask
+    Implements the exact MicroSplat height-blend formula:
+        half = max(0.5 - Blend_Contrast * 0.45, 0.05)
+        Result = saturate((Height_A - Height_B + half) / half) * Mask
 
-    This makes grass fill cracks in rock, snow sit on peaks, dirt in valleys.
+    At Blend_Contrast=0.5 (default): half=0.275, soft transition.
+    At Blend_Contrast=1.0: half=0.05, near-binary cut.
+    At Blend_Contrast=0.0: half=0.5, wide gradual crossfade.
+
+    This ensures tall rock fragments (high Height_B) poke through soil (lower
+    Height_A) before the full positional blend threshold, matching how real
+    terrain erodes: stones emerge from soil on slopes before full cliff exposure.
 
     Args:
         name: Name for the node group. Default "HeightBlend".
@@ -1918,18 +1994,20 @@ def _create_height_blend_group(name: str = "HeightBlend") -> Any:
 
     # -- Group Inputs --
     group_in = group.nodes.new("NodeGroupInput")
-    group_in.location = (-600, 0)
+    group_in.location = (-700, 0)
 
     # Create input sockets (Blender 4.0+ interface API)
-    def _new_input(name: str, socket_type: str = "NodeSocketFloat", **kwargs):
+    def _new_input(sock_name: str, socket_type: str = "NodeSocketFloat", **kwargs):
         if hasattr(group, "interface"):
-            item = group.interface.new_socket(name=name, in_out='INPUT', socket_type=socket_type)
+            item = group.interface.new_socket(
+                name=sock_name, in_out='INPUT', socket_type=socket_type
+            )
             for k, v in kwargs.items():
                 if hasattr(item, k):
                     setattr(item, k, v)
             return item
         else:  # Blender < 4.0 fallback
-            sock = group.inputs.new(socket_type, name)
+            sock = group.inputs.new(socket_type, sock_name)
             for k, v in kwargs.items():
                 if hasattr(sock, k):
                     setattr(sock, k, v)
@@ -1942,61 +2020,78 @@ def _create_height_blend_group(name: str = "HeightBlend") -> Any:
 
     # -- Group Outputs --
     group_out = group.nodes.new("NodeGroupOutput")
-    group_out.location = (400, 0)
+    group_out.location = (500, 0)
     if hasattr(group, "interface"):
         group.interface.new_socket(name="Result", in_out='OUTPUT', socket_type='NodeSocketFloat')
     else:  # Blender < 4.0 fallback
         group.outputs.new("NodeSocketFloat", "Result")
 
-    # -- Math: Height_A - Height_B --
+    # -----------------------------------------------------------------------
+    # Compute half-width: half = max(0.5 - contrast * 0.45, 0.05)
+    # -----------------------------------------------------------------------
+    # Step 1: contrast * 0.45
+    scale_c = group.nodes.new("ShaderNodeMath")
+    scale_c.operation = "MULTIPLY"
+    scale_c.location = (-530, -130)
+    scale_c.label = "Contrast * 0.45"
+    scale_c.inputs[1].default_value = 0.45
+    group.links.new(group_in.outputs["Blend_Contrast"], scale_c.inputs[0])
+
+    # Step 2: 0.5 - (contrast * 0.45)
+    sub_half = group.nodes.new("ShaderNodeMath")
+    sub_half.operation = "SUBTRACT"
+    sub_half.location = (-370, -130)
+    sub_half.label = "0.5 - scaled"
+    sub_half.inputs[0].default_value = 0.5
+    group.links.new(scale_c.outputs["Value"], sub_half.inputs[1])
+
+    # Step 3: max(result, 0.05) — floor at minimum half-width to avoid /0
+    half_node = group.nodes.new("ShaderNodeMath")
+    half_node.operation = "MAXIMUM"
+    half_node.location = (-210, -130)
+    half_node.label = "Half-width (min 0.05)"
+    half_node.inputs[1].default_value = 0.05
+    group.links.new(sub_half.outputs["Value"], half_node.inputs[0])
+
+    # -----------------------------------------------------------------------
+    # Numerator: Height_A - Height_B + half
+    # -----------------------------------------------------------------------
     subtract = group.nodes.new("ShaderNodeMath")
     subtract.operation = "SUBTRACT"
-    subtract.location = (-400, 100)
-    subtract.label = "Height Diff"
+    subtract.location = (-530, 130)
+    subtract.label = "Height_A - Height_B"
     group.links.new(group_in.outputs["Height_A"], subtract.inputs[0])
     group.links.new(group_in.outputs["Height_B"], subtract.inputs[1])
 
-    # -- Math: * Blend_Contrast (scaled to 1-20 range via multiply_add) --
-    # First scale contrast: contrast * 19 + 1
-    scale_contrast = group.nodes.new("ShaderNodeMath")
-    scale_contrast.operation = "MULTIPLY_ADD"
-    scale_contrast.location = (-400, -100)
-    scale_contrast.label = "Scale Contrast"
-    scale_contrast.inputs[1].default_value = 19.0  # multiplier
-    scale_contrast.inputs[2].default_value = 1.0   # offset
-    group.links.new(group_in.outputs["Blend_Contrast"], scale_contrast.inputs[0])
-
-    # -- Math: diff * scaled_contrast --
-    multiply = group.nodes.new("ShaderNodeMath")
-    multiply.operation = "MULTIPLY"
-    multiply.location = (-200, 50)
-    multiply.label = "Contrast Apply"
-    group.links.new(subtract.outputs["Value"], multiply.inputs[0])
-    group.links.new(scale_contrast.outputs["Value"], multiply.inputs[1])
-
-    # -- Math: + 0.5 (center the blend) --
     add_half = group.nodes.new("ShaderNodeMath")
     add_half.operation = "ADD"
-    add_half.location = (0, 50)
-    add_half.label = "Center Blend"
-    add_half.inputs[1].default_value = 0.5
-    group.links.new(multiply.outputs["Value"], add_half.inputs[0])
+    add_half.location = (-100, 80)
+    add_half.label = "diff + half"
+    group.links.new(subtract.outputs["Value"], add_half.inputs[0])
+    group.links.new(half_node.outputs["Value"], add_half.inputs[1])
 
-    # -- Clamp (0..1) --
+    # -----------------------------------------------------------------------
+    # Divide by half  →  saturate  →  multiply by Mask
+    # -----------------------------------------------------------------------
+    divide = group.nodes.new("ShaderNodeMath")
+    divide.operation = "DIVIDE"
+    divide.location = (60, 80)
+    divide.label = "(diff + half) / half"
+    group.links.new(add_half.outputs["Value"], divide.inputs[0])
+    group.links.new(half_node.outputs["Value"], divide.inputs[1])
+
     clamp_node = group.nodes.new("ShaderNodeClamp")
-    clamp_node.location = (100, 50)
-    clamp_node.label = "Clamp 0-1"
-    group.links.new(add_half.outputs["Value"], clamp_node.inputs["Value"])
+    clamp_node.location = (210, 80)
+    clamp_node.label = "Saturate"
+    group.links.new(divide.outputs["Value"], clamp_node.inputs["Value"])
 
-    # -- Math: * Mask --
     mask_mult = group.nodes.new("ShaderNodeMath")
     mask_mult.operation = "MULTIPLY"
-    mask_mult.location = (200, 0)
+    mask_mult.location = (360, 0)
     mask_mult.label = "Apply Mask"
     group.links.new(clamp_node.outputs["Result"], mask_mult.inputs[0])
     group.links.new(group_in.outputs["Mask"], mask_mult.inputs[1])
 
-    # Connect to output
     group.links.new(mask_mult.outputs["Value"], group_out.inputs["Result"])
 
     return group
@@ -2772,13 +2867,27 @@ def _resolve_special_band_policy(
 
 
 def _clamp_rgba(color: Sequence[float], scale: float = 1.0, bias: float = 0.0) -> tuple[float, float, float, float]:
-    """Scale/bias an RGBA color while keeping it in a valid shader range."""
-    alpha = float(color[3]) if len(color) >= 4 else 1.0
-    rgb = [
+    """Scale/bias all four RGBA channels while clamping to [0, 1].
+
+    All four channels (R, G, B, A) are scaled and biased uniformly so that
+    callers can darken/lighten full RGBA material colors (including alpha for
+    translucent layers such as veil_crack_zone crystal surfaces) in one call.
+
+    Args:
+        color: Sequence of 3 or 4 floats (RGB or RGBA) in linear sRGB space.
+        scale: Multiplicative scale applied to every channel. Default 1.0.
+        bias: Additive bias applied after scaling. Default 0.0.
+
+    Returns:
+        4-tuple (R, G, B, A) clamped to [0, 1].  If input has fewer than 4
+        channels, alpha defaults to 1.0 before scaling.
+    """
+    alpha_raw = float(color[3]) if len(color) >= 4 else 1.0
+    rgba = [
         max(0.0, min(1.0, float(channel) * scale + bias))
-        for channel in color[:3]
+        for channel in list(color[:3]) + [alpha_raw]
     ]
-    return (rgb[0], rgb[1], rgb[2], alpha)
+    return (rgba[0], rgba[1], rgba[2], rgba[3])
 
 
 def _build_terrain_recipe(
@@ -2888,10 +2997,39 @@ def _build_terrain_recipe(
         if rough_input is not None:
             links.new(rough_variation.outputs["Result"], rough_input)
 
-        bump = _add_node(tree, "ShaderNodeBump", 220, y - 120, f"Bump {layer_name}")
+        # Two-octave bump: macro detail (strata+voronoi) + micro surface grain.
+        # MicroSplat stone materials always composite a high-frequency grain
+        # normal over the macro fracture normal — without it stone reads as
+        # smooth plastic at close range.  The micro noise runs at 4× the base
+        # scale to capture grain-level surface texture.
+        micro_noise = _add_node(tree, "ShaderNodeTexNoise", 50, y - 230, f"Stone Micro {layer_name}")
+        _hook_vector(micro_noise)
+        micro_noise.inputs["Scale"].default_value = detail_scale * 4.0
+        micro_noise.inputs["Detail"].default_value = 2.0
+        micro_noise.inputs["Roughness"].default_value = 0.65
+
+        # Blend macro + micro: macro drives large fracture planes, micro adds grain
+        bump_combined = _add_node(tree, "ShaderNodeMath", 180, y - 195, f"Stone BumpBlend {layer_name}")
+        bump_combined.operation = "MULTIPLY_ADD"
+        bump_combined.inputs[1].default_value = 0.85   # macro weight
+        bump_combined.inputs[2].default_value = 0.0
+        links.new(strata_mix.outputs["Value"], bump_combined.inputs[0])
+
+        bump_add_micro = _add_node(tree, "ShaderNodeMath", 350, y - 195, f"Stone BumpAdd {layer_name}")
+        bump_add_micro.operation = "MULTIPLY_ADD"
+        bump_add_micro.inputs[1].default_value = 0.15   # micro weight
+        bump_add_micro.inputs[2].default_value = 0.0
+        links.new(micro_noise.outputs["Fac"], bump_add_micro.inputs[0])
+
+        bump_final = _add_node(tree, "ShaderNodeMath", 510, y - 195, f"Stone BumpFinal {layer_name}")
+        bump_final.operation = "ADD"
+        links.new(bump_combined.outputs["Value"], bump_final.inputs[0])
+        links.new(bump_add_micro.outputs["Value"], bump_final.inputs[1])
+
+        bump = _add_node(tree, "ShaderNodeBump", 510, y - 120, f"Bump {layer_name}")
         bump.inputs["Strength"].default_value = normal_strength * 0.54
         bump.inputs["Distance"].default_value = 0.0045
-        links.new(strata_mix.outputs["Value"], bump.inputs["Height"])
+        links.new(bump_final.outputs["Value"], bump.inputs["Height"])
         links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
         height_socket = macro_mix.outputs["Value"]
     elif recipe == "organic":

@@ -418,6 +418,18 @@ def erosion_filter(
         ridge_range = max(float(np.abs(ridge_map).max()), 1e-12)
     ridge_map = np.clip(ridge_map / ridge_range, -1.0, 1.0)
 
+    # Sediment budget conservation: analytical erosion is not a physics
+    # simulation so height_delta is not inherently mass-conserving.  For
+    # multi-tile / multi-pass pipelines the net mean delta should be near zero
+    # so tiles don't drift relative to each other.  Remove the DC offset (mean
+    # of height_delta) so eroded material is notionally redeposited elsewhere.
+    # This matches the "closed sediment budget" assumption used by Houdini's
+    # HeightField Erode and World Creator's hydraulic erosion presets.
+    # The adjustment is small for well-tuned configs (onset + normalization
+    # usually keeps the mean near zero) but prevents accumulating bias.
+    height_delta_mean = float(height_delta.mean())
+    height_delta = height_delta - height_delta_mean
+
     # Derived depth channels
     erosion_depth = np.maximum(-height_delta, 0.0)    # where material was removed
     deposition_depth = np.maximum(height_delta, 0.0)  # where material was added
@@ -439,10 +451,14 @@ def erosion_filter(
             "height_delta_min": float(height_delta.min()),
             "height_delta_max": float(height_delta.max()),
             "height_delta_mean": float(height_delta.mean()),
+            "height_delta_dc_removed": height_delta_mean,
             "ridge_map_min": float(ridge_map.min()),
             "ridge_map_max": float(ridge_map.max()),
             "total_erosion_depth": float(erosion_depth.sum()),
             "total_deposition_depth": float(deposition_depth.sum()),
+            "sediment_balance_ratio": (
+                float(deposition_depth.sum()) / max(float(erosion_depth.sum()), 1e-12)
+            ),
             "seed": seed,
         },
     )

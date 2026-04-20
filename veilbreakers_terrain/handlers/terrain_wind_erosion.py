@@ -216,6 +216,20 @@ def apply_wind_erosion(
         hardness = np.asarray(stack.rock_hardness, dtype=np.float64)
         delta = delta * (1.0 - 0.7 * np.clip(hardness, 0.0, 1.0))
 
+    # Sand flux conservation: total eroded mass must equal total deposited mass.
+    # Without this, wind erosion is a net height sink — every application
+    # removes material without replacing it, which accumulates to unrealistic
+    # terrain deflation over multi-pass pipelines.  Scale lee deposition up to
+    # match erosion so the field-level mass budget balances.
+    erosion_total = float(np.abs(np.minimum(delta, 0.0)).sum())
+    deposition_total = float(np.maximum(delta, 0.0).sum())
+    if deposition_total > 1e-12 and erosion_total > deposition_total:
+        # Scale all positive deltas up so they equal the erosion total
+        conservation_scale = erosion_total / deposition_total
+        # Cap at 3× to prevent runaway amplification on nearly-flat terrain
+        conservation_scale = min(conservation_scale, 3.0)
+        delta = np.where(delta > 0, delta * conservation_scale, delta)
+
     return delta
 
 
@@ -310,6 +324,7 @@ def generate_dunes(
         # Broadcast: u/v are (H, W); centres are (N,) → work in (N, H, W).
         cu = centres_u[:, np.newaxis, np.newaxis]   # (N, 1, 1)
         cv = centres_v[:, np.newaxis, np.newaxis]
+        sf = scale_factors[:, np.newaxis, np.newaxis]  # (N, 1, 1)
         u3 = u[np.newaxis, :, :]                    # (1, H, W)
         v3 = v[np.newaxis, :, :]
 
@@ -319,8 +334,15 @@ def generate_dunes(
         # Central mound Gaussian
         mound = np.exp(-(du / sigma_u) ** 2 - (dv / sigma_v) ** 2)
 
-        # Horns: two per barchan (+1 and -1 lateral), advanced downwind
-        horn_du = u3 - (cu + sigma_u * 0.5)
+        # Horns: two per barchan (+1 and -1 lateral), advanced downwind.
+        # Bagnold (1941) migration rate: c ∝ 1 / H_dune, so smaller dunes
+        # (low scale_factor) migrate faster → horns advance further relative
+        # to mound width.  Horn advance = sigma_u * (0.4 + 0.3 / sf_scalar).
+        # At sf=1.0: advance = 0.7 * sigma_u; at sf=0.7: advance = 0.83 * sigma_u.
+        # This gives the characteristic elongated horns on small barchans.
+        horn_advance = sigma_u * (0.4 + 0.3 / scale_factors)  # (N,)
+        horn_advance_3d = horn_advance[:, np.newaxis, np.newaxis]  # (N, 1, 1)
+        horn_du = u3 - (cu + horn_advance_3d)
         for horn_sign in (-1.0, 1.0):
             horn_dv = v3 - (cv + horn_sign * sigma_v * 0.7)
             horn = 0.6 * np.exp(
@@ -333,8 +355,18 @@ def generate_dunes(
         mound = np.where(du < 0, mound * 0.4, mound)
 
         # Scale each barchan by its random amplitude factor, then sum over N
-        sf = scale_factors[:, np.newaxis, np.newaxis]  # (N, 1, 1)
-        delta = (mound * sf * amplitude).sum(axis=0) * mod  # (H, W)
+        raw_delta = (mound * sf * amplitude).sum(axis=0) * mod  # (H, W)
+
+        # Sand flux conservation: subtract mean positive deposition from the
+        # stoss (upwind) side so net mass change is near zero across the field.
+        # This prevents the field from gaining infinite height over iterations.
+        pos_mass = float(np.maximum(raw_delta, 0.0).sum())
+        neg_mass = float(np.abs(np.minimum(raw_delta, 0.0)).sum())
+        if pos_mass > 1e-12:
+            conservation_scale = min(1.0, neg_mass / pos_mass) if neg_mass > 0 else 0.95
+            delta = np.where(raw_delta > 0, raw_delta * conservation_scale, raw_delta)
+        else:
+            delta = raw_delta
 
     else:
         # --- Star dunes (multi-directional) ---
