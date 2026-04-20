@@ -104,6 +104,64 @@ Updated in this pass:
 
 Historical files such as V4 remain useful as provenance, but should no longer be treated as the live branch state for Phases 12 and 14.
 
+## Follow-On Tranche: Wiring and Shared Runtime Quality
+
+After the Phase 12/14 closure pass, the next high-leverage live issues were:
+
+- runtime-primary MCP bridge handlers in [`handlers/__init__.py`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/veilbreakers_terrain/handlers/__init__.py) that were callable but still ungraded
+- wet-rock mask quality in [`_water_network_ext.py`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/veilbreakers_terrain/handlers/_water_network_ext.py)
+- shared noise helper churn in [`terrain_features.py`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/veilbreakers_terrain/handlers/terrain_features.py)
+
+### 5. MCP bridge wrappers are now evidence-backed in the grade sheet
+
+- Expanded [`test_mcp_dispatch.py`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/veilbreakers_terrain/tests/test_mcp_dispatch.py) to exercise the preview, hot-reload, addon-health, safety, mesh, vertex-paint, weathering, animation, validation, navmesh, and quality-profile bridges
+- result: `103 passed`
+- `GRADES_VERIFIED.csv` now records those runtime-primary wrappers instead of leaving them as ungraded callable holes
+
+### 6. Wet-rock masks now inherit the nearest water source strength
+
+The previous implementation multiplied a radial distance field by a global flow-weight field. That blurred source strength across unrelated cells and left the no-SciPy path with nested Python loops.
+
+Current fix:
+
+- SciPy path now uses `distance_transform_edt(..., return_indices=True)` so each cell inherits the strength of its nearest water seed
+- source strength now comes from the strongest available hydrology signal at the source cell: `flow_accumulation`, `_outflow_discharge`, or uniform fallback
+- no-SciPy fallback now uses vectorized local radial stamps instead of per-cell Python loops
+- new tests prove both high-flow amplification and fallback-path parity
+
+Validation:
+
+- `pytest veilbreakers_terrain/tests/test_water_network_upgrade.py -q`
+
+### 7. terrain_features noise helpers no longer thrash generators across seeds
+
+The previous `terrain_features` noise backbone used:
+
+- a mutable module-global singleton in `_hash_noise`
+- a fresh `_make_noise_generator(seed)` construction inside every `_fbm` call
+
+Current fix:
+
+- added cached per-seed `_get_feature_noise(...)` provider using `lru_cache(maxsize=64)`
+- `_hash_noise` and `_fbm` now both reuse the same cached generator per seed
+- `_fbm` now short-circuits cleanly for `octaves <= 0`
+- direct tests now cover mixed-seed reuse and zero-octave short-circuiting
+
+Validation:
+
+- `pytest veilbreakers_terrain/tests/test_road_coastline_terrain_features.py -q`
+- `pytest veilbreakers_terrain/tests/test_terrain_features_v2.py -q`
+
+### 8. The runtime callable audit is back in sync with the current tree
+
+- regenerated [`CALLABLE_WIRING_AUDIT_2026_04_19.csv`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/output/spreadsheet/CALLABLE_WIRING_AUDIT_2026_04_19.csv)
+- regenerated [`CALLABLE_WIRING_SUMMARY_2026_04_19.md`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/output/spreadsheet/CALLABLE_WIRING_SUMMARY_2026_04_19.md)
+- runtime-primary missing-row debt dropped to the single synthetic Quixel registrar closure that has now been replaced by a named top-level wrapper
+
+Validation:
+
+- `python scripts/scan_callable_wiring.py`
+
 ## Bottom Line
 
 The implementation-phase track is complete on the current branch. The late audit found one real hydraulic-hardness defect and one contract-fidelity issue; both were resolved. The remaining discrepancies are historical-report lag and broader repo-wide AAA-grade ambition, not open blockers inside the completed Phase 7-14 implementation sheet.

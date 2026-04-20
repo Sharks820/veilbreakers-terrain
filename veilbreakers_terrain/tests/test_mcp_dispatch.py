@@ -266,6 +266,33 @@ class TestExpandedCommandHandlers:
             "terrain_generate_lods",
             "terrain_setup_biome",
             "terrain_sculpt",
+            "terrain_preview_apply",
+            "terrain_preview_state",
+            "terrain_preview_reset",
+            "terrain_preview_diff",
+            "terrain_preview_render_thumbnail",
+            "terrain_hot_reload_start",
+            "terrain_hot_reload_check",
+            "terrain_hot_reload_stop",
+            "terrain_check_addon_health",
+            "terrain_detect_stale_addon",
+            "terrain_force_addon_reload",
+            "terrain_boolean_safety_check",
+            "terrain_convert_yup_to_zup",
+            "terrain_clamp_screenshot_size",
+            "terrain_load_quality_profile",
+            "terrain_list_quality_profiles",
+            "terrain_apply_quality_profile",
+            "mesh_select_by_sphere",
+            "mesh_select_by_plane",
+            "mesh_parse_selection_criteria",
+            "mesh_smooth_assembled",
+            "vertex_paint_compute_weights",
+            "vertex_paint_compute_weights_uv",
+            "vertex_paint_blend_colors",
+            "weathering_compute_vertex_colors",
+            "weathering_apply_structural_settling",
+            "animation_generate_env_keyframes",
         ],
     )
     def test_command_handler_registered(self, command_name: str) -> None:
@@ -341,3 +368,178 @@ class TestObservationAndSafetyDispatch:
         r = dispatch("safety_screenshot_size", {"requested": 999})
         assert r["status"] == "ok"
         assert r["result"]["clamped"] == 507
+
+    def test_preview_handler_error_contracts_without_controller(self) -> None:
+        for command_name in (
+            "terrain_preview_apply",
+            "terrain_preview_state",
+            "terrain_preview_diff",
+            "terrain_preview_render_thumbnail",
+        ):
+            result = COMMAND_HANDLERS[command_name]({})
+            assert result["status"] == "error"
+            assert result["error"] == "no_active_controller"
+
+    def test_preview_reset_handler(self) -> None:
+        result = COMMAND_HANDLERS["terrain_preview_reset"]({})
+        assert result == {"status": "ok", "reset": True}
+
+    def test_hot_reload_handlers_happy_path(self) -> None:
+        start = COMMAND_HANDLERS["terrain_hot_reload_start"]({})
+        assert start["status"] == "ok"
+        assert isinstance(start["watched"], list)
+
+        check = COMMAND_HANDLERS["terrain_hot_reload_check"]({})
+        assert check["status"] == "ok"
+        assert isinstance(check["reloaded"], list)
+
+        stop = COMMAND_HANDLERS["terrain_hot_reload_stop"]({})
+        assert stop == {"status": "ok", "stopped": True}
+
+    def test_addon_health_handlers_happy_path(self) -> None:
+        health = COMMAND_HANDLERS["terrain_check_addon_health"]({})
+        assert health["status"] == "ok"
+        assert health["loaded"] is True
+
+        stale = COMMAND_HANDLERS["terrain_detect_stale_addon"]({})
+        assert stale["status"] == "ok"
+        assert isinstance(stale["stale"], bool)
+
+        reload_result = COMMAND_HANDLERS["terrain_force_addon_reload"]({})
+        assert reload_result["status"] == "ok"
+        assert isinstance(reload_result["reloaded"], bool)
+
+    def test_safety_handlers_happy_path(self) -> None:
+        boolean_result = COMMAND_HANDLERS["terrain_boolean_safety_check"]({})
+        assert boolean_result["status"] == "ok"
+        assert "recommended_solver" in boolean_result
+
+        convert_result = COMMAND_HANDLERS["terrain_convert_yup_to_zup"](
+            {"position": [1.0, 2.0, 3.0], "orientation": [0.0, 0.0, 0.0]}
+        )
+        assert convert_result["status"] == "ok"
+        assert convert_result["position"] == [1.0, -3.0, 2.0]
+
+        clamp_result = COMMAND_HANDLERS["terrain_clamp_screenshot_size"]({"requested": 999})
+        assert clamp_result["status"] == "ok"
+        assert clamp_result["clamped"] == 507
+
+    def test_quality_profile_handlers_happy_path(self) -> None:
+        listed = COMMAND_HANDLERS["terrain_list_quality_profiles"]({})
+        assert listed["status"] == "ok"
+        assert "production" in listed["profiles"]
+
+        loaded = COMMAND_HANDLERS["terrain_load_quality_profile"]({"name": "production"})
+        assert loaded["status"] == "ok"
+        assert loaded["profile"]["name"] == "production"
+
+        applied = COMMAND_HANDLERS["terrain_apply_quality_profile"]({"name": "production"})
+        assert applied["status"] == "ok"
+        assert applied["profile"]["name"] == "production"
+
+    def test_mesh_bridge_handlers_happy_path(self) -> None:
+        verts = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)]
+        sphere = COMMAND_HANDLERS["mesh_select_by_sphere"](
+            {"verts": verts, "center": [0.0, 0.0, 0.0], "radius": 0.5}
+        )
+        assert sphere == [0]
+
+        plane = COMMAND_HANDLERS["mesh_select_by_plane"](
+            {"verts": verts, "plane_point": [0.0, 0.0, 0.0], "plane_normal": [1.0, 0.0, 0.0], "side": "above"}
+        )
+        assert 1 in plane
+
+        parsed = COMMAND_HANDLERS["mesh_parse_selection_criteria"](
+            {"criteria": {"mode": "vertex"}, "strict": False}
+        )
+        assert isinstance(parsed, dict)
+
+    def test_vertex_paint_bridge_handlers_happy_path(self) -> None:
+        weights = COMMAND_HANDLERS["vertex_paint_compute_weights"](
+            {
+                "verts": [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)],
+                "brush_center": [0.0, 0.0, 0.0],
+                "radius": 2.0,
+                "falloff_mode": "SMOOTH",
+            }
+        )
+        assert isinstance(weights, list)
+        assert weights == [(0, 1.0)]
+
+        weights_uv = COMMAND_HANDLERS["vertex_paint_compute_weights_uv"](
+            {
+                "uvs": [(0.5, 0.5), (0.9, 0.9)],
+                "brush_center_uv": [0.5, 0.5],
+                "radius": 0.3,
+                "falloff_mode": "SMOOTH",
+            }
+        )
+        assert isinstance(weights_uv, list)
+        assert weights_uv == [(0, 1.0)]
+
+        blended = COMMAND_HANDLERS["vertex_paint_blend_colors"](
+            {
+                "existing": [0.0, 0.0, 0.0, 1.0],
+                "new_color": [1.0, 0.0, 0.0, 1.0],
+                "strength": 0.5,
+                "mode": "MIX",
+            }
+        )
+        assert isinstance(blended, tuple)
+        assert blended[0] > 0.0
+
+    def test_weathering_and_animation_bridge_handlers_happy_path(self) -> None:
+        colors = COMMAND_HANDLERS["weathering_compute_vertex_colors"](
+            {
+                "mesh_data": {
+                    "vertices": [
+                        (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5),
+                        (0.5, 0.5, -0.5), (-0.5, 0.5, -0.5),
+                        (-0.5, -0.5, 0.5), (0.5, -0.5, 0.5),
+                        (0.5, 0.5, 0.5), (-0.5, 0.5, 0.5),
+                    ],
+                    "faces": [
+                        (0, 1, 2, 3), (4, 7, 6, 5),
+                        (0, 4, 5, 1), (2, 6, 7, 3),
+                        (0, 3, 7, 4), (1, 5, 6, 2),
+                    ],
+                    "face_normals": [
+                        (0, 0, -1), (0, 0, 1),
+                        (0, -1, 0), (0, 1, 0),
+                        (-1, 0, 0), (1, 0, 0),
+                    ],
+                    "vertex_normals": [
+                        (-0.577, -0.577, -0.577), (0.577, -0.577, -0.577),
+                        (0.577, 0.577, -0.577), (-0.577, 0.577, -0.577),
+                        (-0.577, -0.577, 0.577), (0.577, -0.577, 0.577),
+                        (0.577, 0.577, 0.577), (-0.577, 0.577, 0.577),
+                    ],
+                    "edges": [
+                        (0, 1), (1, 2), (2, 3), (3, 0),
+                        (4, 5), (5, 6), (6, 7), (7, 4),
+                        (0, 4), (1, 5), (2, 6), (3, 7),
+                    ],
+                },
+                "base_color": [0.5, 0.5, 0.5, 1.0],
+            }
+        )
+        assert isinstance(colors, list)
+
+        settled = COMMAND_HANDLERS["weathering_apply_structural_settling"](
+            {"verts": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)], "strength": 0.01, "seed": 42}
+        )
+        assert isinstance(settled, list)
+
+        keyframes = COMMAND_HANDLERS["animation_generate_env_keyframes"](
+            {"env_type": "fire_flicker", "frame_count": 8}
+        )
+        assert isinstance(keyframes, list)
+
+    def test_validation_and_navmesh_bridge_missing_param_contracts(self) -> None:
+        validation = COMMAND_HANDLERS["terrain_validation"]({})
+        assert validation["status"] == "error"
+        assert validation["error"] == "missing_params"
+
+        navmesh = COMMAND_HANDLERS["terrain_navmesh_export"]({})
+        assert navmesh["status"] == "error"
+        assert navmesh["error"] == "missing_params"

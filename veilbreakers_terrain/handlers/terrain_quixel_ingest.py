@@ -813,17 +813,21 @@ def pass_quixel_ingest(
         issues=issues,
     )
 
+def pass_quixel_ingest_bundle_k(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Bundle-K registered wrapper for composition-hint-driven Quixel ingest."""
+    return pass_quixel_ingest(state, region, assets=None)
+
 
 def register_bundle_k_quixel_ingest_pass() -> None:
     from .terrain_pipeline import TerrainPassController
 
-    def _pass_wrap(state, region):  # type: ignore[no-untyped-def]
-        return pass_quixel_ingest(state, region, assets=None)
-
     TerrainPassController.register_pass(
         PassDefinition(
             name="quixel_ingest",
-            func=_pass_wrap,
+            func=pass_quixel_ingest_bundle_k,
             # NOTE: produces_channels=("splatmap_weights_layer",) overlaps
             # with materials_v2. This IS intentional: quixel_ingest runs
             # AFTER materials_v2 and overrides the slope/altitude-derived
@@ -846,5 +850,6 @@ __all__ = [
     "ingest_quixel_asset",
     "apply_quixel_to_layer",
     "pass_quixel_ingest",
+    "pass_quixel_ingest_bundle_k",
     "register_bundle_k_quixel_ingest_pass",
 ]

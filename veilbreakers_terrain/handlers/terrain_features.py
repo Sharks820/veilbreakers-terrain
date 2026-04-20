@@ -11,6 +11,7 @@ Fully testable without Blender.
 
 from __future__ import annotations
 
+from functools import lru_cache
 import math
 import random
 from typing import Any
@@ -89,9 +90,18 @@ def _material_metadata(*entries: tuple[str, float, str, float]) -> dict[str, dic
 # Noise utility -- opensimplex via _terrain_noise (replaces old sin-hash)
 # ---------------------------------------------------------------------------
 
-# Cached noise generator to avoid re-creating per call
-_features_gen = None
-_features_seed = -1
+
+@lru_cache(maxsize=64)
+def _get_feature_noise(seed: int):
+    """Return a cached per-seed terrain noise generator.
+
+    The old module-global singleton was correct for serial callers but
+    thrashed between alternating seeds and relied on mutable shared state.
+    A per-seed cache keeps determinism while avoiding repeated generator
+    construction in loop-heavy feature builders such as canyon, swamp, and
+    lava flow generation.
+    """
+    return _make_noise_generator(int(seed))
 
 
 def _hash_noise(x: float, y: float, seed: int = 0) -> float:
@@ -102,11 +112,7 @@ def _hash_noise(x: float, y: float, seed: int = 0) -> float:
     table gradient fallback otherwise).  Replaces the old sin-hash that had
     visible directional banding.  Returns values in approximately [-1, 1].
     """
-    global _features_gen, _features_seed
-    if _features_gen is None or _features_seed != seed:
-        _features_gen = _make_noise_generator(seed)
-        _features_seed = seed
-    return _features_gen.noise2(x, y)
+    return _get_feature_noise(int(seed)).noise2(x, y)
 
 
 def _fbm(
@@ -145,9 +151,11 @@ def _fbm(
         geometric-series amplitude bound (sum of gain^i for i=0..octaves-1)
         so the range contract holds regardless of octave count.
     """
+    if octaves <= 0:
+        return 0.0
     # ``gain`` is the canonical parameter; accept ``persistence`` as alias.
     effective_gain = gain if gain != 0.5 or persistence == 0.5 else persistence
-    gen = _make_noise_generator(seed)
+    gen = _get_feature_noise(int(seed))
     value = 0.0
     amplitude = 1.0
     frequency = 1.0

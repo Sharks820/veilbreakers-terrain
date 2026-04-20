@@ -472,6 +472,17 @@ def test_pass_quixel_ingest_handles_missing_paths(state):
     assert any(i.code == "quixel_ingest_failure" for i in result.issues)
 
 
+def test_pass_quixel_ingest_bundle_k_uses_composition_hints(state):
+    from blender_addon.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
+
+    state.intent.composition_hints["quixel_assets"] = [
+        {"asset_path": "/definitely/not/here", "layer_id": "bad"}
+    ]
+    result = pass_quixel_ingest_bundle_k(state, None)
+    assert result.pass_name == "quixel_ingest"
+    assert any(i.code == "quixel_ingest_failure" for i in result.issues)
+
+
 # ---------------------------------------------------------------------------
 # 7. Bundle K registrar
 # ---------------------------------------------------------------------------
@@ -483,6 +494,7 @@ def test_register_bundle_k_passes():
         register_bundle_k_passes,
     )
     from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from blender_addon.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
 
     # Preserve registry
     original = dict(TerrainPassController.PASS_REGISTRY)
@@ -491,6 +503,9 @@ def test_register_bundle_k_passes():
         register_bundle_k_passes()
         for name in BUNDLE_K_PASSES:
             assert name in TerrainPassController.PASS_REGISTRY
+        registered = TerrainPassController.PASS_REGISTRY["quixel_ingest"].func
+        assert registered.__name__ == pass_quixel_ingest_bundle_k.__name__
+        assert registered.__module__ == pass_quixel_ingest_bundle_k.__module__
     finally:
         TerrainPassController.clear_registry()
         for k, v in original.items():

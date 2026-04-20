@@ -507,6 +507,69 @@ class TestCoastlineNoise:
         assert v1 == v2
 
 
+class TestTerrainFeaturesNoise:
+    """Direct tests for terrain_features noise helpers."""
+
+    def test_hash_noise_reuses_per_seed_cache_across_mixed_seeds(self, monkeypatch):
+        import blender_addon.handlers.terrain_features as tf
+
+        class _FakeNoise:
+            def __init__(self, seed: int):
+                self.seed = seed
+
+            def noise2(self, x: float, y: float) -> float:
+                return float(self.seed) / 100.0 + x * 0.0 + y * 0.0
+
+        calls = []
+
+        def _fake_make(seed: int):
+            calls.append(seed)
+            return _FakeNoise(seed)
+
+        tf._get_feature_noise.cache_clear()
+        monkeypatch.setattr(tf, "_make_noise_generator", _fake_make)
+
+        v1 = tf._hash_noise(0.3, 0.7, seed=11)
+        v2 = tf._hash_noise(0.3, 0.7, seed=29)
+        v3 = tf._hash_noise(0.9, 0.1, seed=11)
+
+        assert v1 == pytest.approx(0.11)
+        assert v2 == pytest.approx(0.29)
+        assert v3 == pytest.approx(0.11)
+        assert calls == [11, 29]
+
+    def test_fbm_reuses_same_cached_generator(self, monkeypatch):
+        import blender_addon.handlers.terrain_features as tf
+
+        class _FakeNoise:
+            def noise2(self, x: float, y: float) -> float:
+                return 0.2
+
+        calls = []
+
+        def _fake_make(seed: int):
+            calls.append(seed)
+            return _FakeNoise()
+
+        tf._get_feature_noise.cache_clear()
+        monkeypatch.setattr(tf, "_make_noise_generator", _fake_make)
+
+        assert tf._hash_noise(0.1, 0.2, seed=7) == pytest.approx(0.2)
+        assert tf._fbm(0.1, 0.2, seed=7, octaves=3, gain=0.5) == pytest.approx(0.2)
+        assert calls == [7]
+
+    def test_fbm_zero_octaves_short_circuits_without_generator(self, monkeypatch):
+        import blender_addon.handlers.terrain_features as tf
+
+        def _boom(seed: int):
+            raise AssertionError("generator should not be constructed for zero octaves")
+
+        tf._get_feature_noise.cache_clear()
+        monkeypatch.setattr(tf, "_make_noise_generator", _boom)
+
+        assert tf._fbm(0.1, 0.2, seed=7, octaves=0) == 0.0
+
+
 # ===================================================================
 # Terrain Features: Canyon Tests
 # ===================================================================

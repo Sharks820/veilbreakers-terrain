@@ -150,6 +150,45 @@ def test_compute_wet_rock_mask_decays_with_distance():
     assert mask[0, 0] == 0.0
 
 
+def test_compute_wet_rock_mask_boosts_adjacent_cells_for_high_flow_sources():
+    from blender_addon.handlers._water_network_ext import compute_wet_rock_mask
+
+    stack = _build_stack(size=30)
+    stack.flow_accumulation = np.ones_like(stack.height)
+    stack.flow_accumulation[10, 10] = 100.0
+    stack.flow_accumulation[20, 20] = 5.0
+
+    net = _FakeNetwork()
+    net.nodes[0] = _FakeNode(node_id=0, world_x=10.0, world_y=10.0, world_z=0.0)
+    net.nodes[1] = _FakeNode(node_id=1, world_x=20.0, world_y=20.0, world_z=0.0)
+
+    mask = compute_wet_rock_mask(stack, net, radius_m=4.0)
+
+    # Source cells clamp to fully wet, so compare adjacent splash cells.
+    assert mask[10, 11] > mask[20, 21]
+
+
+def test_compute_wet_rock_mask_fallback_keeps_seed_strength(monkeypatch: pytest.MonkeyPatch):
+    import blender_addon.handlers._water_network_ext as water_ext
+
+    stack = _build_stack(size=30)
+    stack.flow_accumulation = np.ones_like(stack.height)
+    stack.flow_accumulation[12, 12] = 80.0
+    stack.flow_accumulation[18, 18] = 4.0
+
+    net = _FakeNetwork()
+    net.nodes[0] = _FakeNode(node_id=0, world_x=12.0, world_y=12.0, world_z=0.0)
+    net.nodes[1] = _FakeNode(node_id=1, world_x=18.0, world_y=18.0, world_z=0.0)
+
+    monkeypatch.setattr(water_ext, "_HAS_SCIPY", False)
+    monkeypatch.setattr(water_ext, "_distance_transform_edt", None)
+
+    mask = water_ext.compute_wet_rock_mask(stack, net, radius_m=4.0)
+
+    assert mask[12, 13] > mask[18, 19]
+    assert mask[0, 0] == 0.0
+
+
 def test_compute_foam_mask_peaks_at_pool():
     from blender_addon.handlers._water_network_ext import compute_foam_mask
     from blender_addon.handlers.terrain_waterfalls import (

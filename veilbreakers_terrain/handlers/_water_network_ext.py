@@ -23,6 +23,14 @@ import numpy as np
 
 from .terrain_semantics import TerrainMaskStack
 
+try:
+    from scipy.ndimage import distance_transform_edt as _distance_transform_edt
+
+    _HAS_SCIPY = True
+except ImportError:  # pragma: no cover - exercised via fallback tests
+    _distance_transform_edt = None
+    _HAS_SCIPY = False
+
 if TYPE_CHECKING:  # pragma: no cover
     from .terrain_waterfalls import ImpactPool, WaterfallChain
 
@@ -475,19 +483,23 @@ def compute_wet_rock_mask(
 ) -> np.ndarray:
     """Build a wet-rock mask around water surfaces.
 
-    Uses ``scipy.ndimage.distance_transform_edt`` on a seed mask for an
-    accurate Euclidean distance falloff weighted by flow accumulation, then
-    normalises to [0, 1].  Falls back to the manual per-seed radial stamp
-    when scipy is unavailable.
+    Uses ``scipy.ndimage.distance_transform_edt(..., return_indices=True)``
+    so each cell inherits the strength of its nearest water seed rather than
+    multiplying against a global flow field.  That preserves physically
+    important differences between a weak seep and a high-discharge plunge
+    pool.  The no-SciPy fallback keeps the same per-seed strength model with
+    vectorized local radial stamps.
 
-    Wetness formula (with flow accumulation):
-        base   = 1 - clip(dist / radius_m, 0, 1)
-        weight = clip(flow_accumulation / fa_max, 0, 1) * 0.5 + 0.5
-        wet    = clip(base * weight * seasonal_wetness, 0, 1)
+    Wetness formula:
+        edge_strength = 0.55 + 0.45 * normalized_source_strength
+        falloff_t     = clip(dist / radius_m, 0, 1)
+        base          = 1 - smoothstep(falloff_t)
+        wet           = max(seed_mask, base * edge_strength * seasonal_wetness)
 
-    The weight term boosts cells adjacent to high-discharge channels by up
-    to 50 % while guaranteeing a 50 % baseline for low-flow seed cells.
-    When ``flow_accumulation`` is absent the weight is omitted (uniform 1.0).
+    Source strength is derived from the best available hydrology signal:
+        - local ``flow_accumulation`` on the stack
+        - per-cell discharge hints from ``water_network._outflow_discharge``
+        - or a uniform strength when those channels are absent
 
     Seeds are drawn from:
         - The ``water_surface`` channel on the stack (cells > 0.01).
@@ -509,14 +521,64 @@ def compute_wet_rock_mask(
     cs = float(stack.cell_size)
     radius_cells = max(1, int(math.ceil(radius_m / cs)))
 
-    # Build boolean seed mask
+    def _smoothstep01(t: np.ndarray) -> np.ndarray:
+        return t * t * (3.0 - 2.0 * t)
+
+    # Build boolean seed mask + per-seed source-strength field.
     seed_mask = np.zeros((rows, cols), dtype=bool)
+    seed_strength = np.zeros((rows, cols), dtype=np.float64)
+
+    fa_norm = None
+    fa = getattr(stack, "flow_accumulation", None)
+    if fa is not None:
+        fa_arr = np.asarray(fa, dtype=np.float64)
+        if fa_arr.shape == h.shape:
+            fa_max = float(fa_arr.max())
+            if fa_max > 1e-9:
+                fa_norm = np.clip(fa_arr / fa_max, 0.0, 1.0)
+
+    discharge_map = {}
+    discharge_max = 0.0
+    if water_network is not None:
+        discharge_map = getattr(water_network, "_outflow_discharge", {}) or {}
+        if discharge_map:
+            discharge_max = max(float(v) for v in discharge_map.values())
+
+    def _source_strength_at(r: int, c: int, explicit_value: float | None = None) -> float:
+        if explicit_value is not None:
+            norm = max(0.0, min(1.0, float(explicit_value)))
+            return 0.55 + 0.45 * norm
+        norm_candidates: list[float] = []
+        if fa_norm is not None:
+            norm_candidates.append(float(fa_norm[r, c]))
+        if discharge_map and discharge_max > 1e-9:
+            norm_candidates.append(
+                max(
+                    0.0,
+                    min(1.0, float(discharge_map.get((r, c), 0.0)) / discharge_max),
+                )
+            )
+        if not norm_candidates:
+            return 1.0
+        return 0.55 + 0.45 * max(norm_candidates)
 
     surface = stack.water_surface
     if surface is not None:
         surface_arr = np.asarray(surface)
         if surface_arr.shape == h.shape:
-            seed_mask |= surface_arr > 0.01
+            water_cells = surface_arr > 0.01
+            seed_mask |= water_cells
+            if fa_norm is not None:
+                surface_strength = 0.55 + 0.45 * fa_norm
+                seed_strength = np.maximum(
+                    seed_strength,
+                    np.where(water_cells, surface_strength, 0.0),
+                )
+            else:
+                seed_strength = np.maximum(
+                    seed_strength,
+                    np.where(water_cells, 1.0, 0.0),
+                )
 
     if water_network is not None:
         nodes = getattr(water_network, "nodes", {}) or {}
@@ -527,31 +589,31 @@ def compute_wet_rock_mask(
                 continue
             nr, nc = _world_to_grid(stack, float(wx), float(wy))
             seed_mask[nr, nc] = True
+            seed_strength[nr, nc] = max(seed_strength[nr, nc], _source_strength_at(nr, nc))
 
     if not seed_mask.any():
         return np.zeros((rows, cols), dtype=np.float32)
 
-    # Flow accumulation weight: high-discharge channels stay wetter
-    fa_weight = np.ones((rows, cols), dtype=np.float64)
-    fa = getattr(stack, "flow_accumulation", None)
-    if fa is not None:
-        fa_arr = np.asarray(fa, dtype=np.float64)
-        if fa_arr.shape == h.shape:
-            fa_max = float(fa_arr.max())
-            if fa_max > 1e-9:
-                fa_weight = np.clip(fa_arr / fa_max, 0.0, 1.0) * 0.5 + 0.5
-
     # --- scipy path (preferred) -------------------------------------------
-    try:
-        from scipy.ndimage import distance_transform_edt  # type: ignore
-        dist = distance_transform_edt(~seed_mask, sampling=cs)
-        base = 1.0 - np.clip(dist / max(radius_m, 1e-6), 0.0, 1.0)
-        wet = np.clip(base * fa_weight * float(seasonal_wetness), 0.0, 1.0)
+    if _HAS_SCIPY and _distance_transform_edt is not None:
+        dist, nearest = _distance_transform_edt(
+            ~seed_mask,
+            sampling=cs,
+            return_indices=True,
+        )
+        nearest_strength = seed_strength[tuple(nearest)]
+        falloff_t = np.clip(dist / max(radius_m, 1e-6), 0.0, 1.0)
+        base = 1.0 - _smoothstep01(falloff_t)
+        wet = np.clip(
+            base * nearest_strength * float(seasonal_wetness),
+            0.0,
+            1.0,
+        )
+        wet = np.where(seed_mask, 1.0, wet)
+        wet[dist > radius_m] = 0.0
         return wet.astype(np.float32)
-    except ImportError:
-        pass
 
-    # --- Fallback: manual per-seed radial stamp ---------------------------
+    # --- Fallback: vectorized per-seed radial stamp -----------------------
     wet = np.zeros((rows, cols), dtype=np.float32)
     seed_coords = list(zip(*np.where(seed_mask)))
     for (r, c) in seed_coords:
@@ -559,19 +621,21 @@ def compute_wet_rock_mask(
         r1 = min(rows, r + radius_cells + 1)
         c0 = max(0, c - radius_cells)
         c1 = min(cols, c + radius_cells + 1)
-        for rr in range(r0, r1):
-            for cc in range(c0, c1):
-                dr = rr - r
-                dc = cc - c
-                dist_m = math.sqrt(dr * dr + dc * dc) * cs
-                if dist_m > radius_m:
-                    continue
-                base_val = max(0.0, 1.0 - dist_m / max(radius_m, 1e-6))
-                val = float(
-                    max(0.0, min(1.0, base_val * fa_weight[rr, cc] * float(seasonal_wetness)))
-                )
-                if val > wet[rr, cc]:
-                    wet[rr, cc] = val
+        rr, cc = np.ogrid[r0:r1, c0:c1]
+        dist_m = np.hypot(rr - r, cc - c) * cs
+        falloff_t = np.clip(dist_m / max(radius_m, 1e-6), 0.0, 1.0)
+        base = 1.0 - _smoothstep01(falloff_t)
+        local = np.where(
+            dist_m <= radius_m,
+            np.clip(
+                base * float(seed_strength[r, c]) * float(seasonal_wetness),
+                0.0,
+                1.0,
+            ),
+            0.0,
+        )
+        wet[r0:r1, c0:c1] = np.maximum(wet[r0:r1, c0:c1], local.astype(np.float32))
+    wet[seed_mask] = 1.0
     return wet
 
 
