@@ -1889,9 +1889,13 @@ def generate_swamp_terrain(
             elif avg_z < water_z:
                 mat_indices.append(1)   # shallow_water
                 water_face_count += 1
-            elif avg_z < water_z + 0.5:
+            elif avg_z < water_z + 0.3:
+                mat_indices.append(6)   # wet_transition (waterlogged margin)
+            elif avg_z < water_z + 0.8:
                 mat_indices.append(0)   # swamp_mud
-            elif avg_z < water_z + 1.5:
+            elif avg_z < water_z + 1.8:
+                mat_indices.append(5)   # sedge_mound (raised hummock top)
+            elif avg_z < water_z + 2.5:
                 mat_indices.append(3)   # moss_ground
             else:
                 mat_indices.append(4)   # dead_vegetation
@@ -2054,6 +2058,8 @@ def generate_swamp_terrain(
             ("deep_water",      0.05, "water",        0.0),
             ("moss_ground",     0.88, "organic",      0.0),
             ("dead_vegetation", 0.95, "organic",      0.0),
+            ("sedge_mound",     0.85, "organic",      0.0),
+            ("wet_transition",  0.78, "mud",          0.0),
         ),
         "dimensions": {
             "size": size,
@@ -2392,7 +2398,65 @@ def generate_natural_arch(
                 mat_indices.append(1)  # rock_mass
 
     # ------------------------------------------------------------------
-    # 4. Compute arch apex, opening clearance, keystone spec, and UVs
+    # 4. Undercut base geometry — each arch leg base has an erosion notch
+    #    carved into the bottom inner face, giving the arch that characteristic
+    #    underhung "pedestal" look seen in Delicate Arch and Rainbow Bridge.
+    #    Geometry: a thin inset ring of triangles along the base of each leg,
+    #    set back ~30% of thickness from the outer face, at z=0..undercut_h.
+    # ------------------------------------------------------------------
+    undercut_h = min(arch_height * 0.18, thickness * 0.55)   # notch height
+    undercut_depth = thickness * 0.30                          # how far it recesses
+    undercut_segs = max(6, int(eff_depth * 1.2))
+
+    # Materials 5=undercut_notch added inline (material list updated below)
+    materials.append("undercut_notch")
+
+    for leg_cx in (-half_span, half_span):
+        # Inner edge of the notch (recessed) and outer edge (flush with outer face)
+        notch_inner_x = leg_cx + (undercut_depth if leg_cx < 0 else -undercut_depth)
+        notch_outer_x = leg_cx
+
+        uc_inner_start = len(vertices)
+        for ud in range(undercut_segs + 1):
+            udt = ud / max(undercut_segs, 1)
+            y_uc = -half_depth + udt * eff_depth
+            # Inner bottom edge (recessed, at z=0)
+            noise_uc = _hash_noise(notch_inner_x * 0.3, y_uc * 0.2, seed + 900) * 0.08
+            vertices.append((notch_inner_x + noise_uc, y_uc, noise_uc * 0.3))
+        uc_outer_start = len(vertices)
+        for ud in range(undercut_segs + 1):
+            udt = ud / max(undercut_segs, 1)
+            y_uc = -half_depth + udt * eff_depth
+            # Outer bottom edge (flush with leg outer face, at z=undercut_h)
+            noise_uc = _hash_noise(notch_outer_x * 0.3, y_uc * 0.2, seed + 901) * 0.06
+            vertices.append((notch_outer_x + noise_uc, y_uc, undercut_h + noise_uc * 0.4))
+
+        for ud in range(undercut_segs):
+            v0 = uc_inner_start + ud
+            v1 = uc_inner_start + ud + 1
+            v2 = uc_outer_start + ud + 1
+            v3 = uc_outer_start + ud
+            if leg_cx < 0:
+                faces.append((v0, v1, v2, v3))
+            else:
+                faces.append((v0, v3, v2, v1))
+            mat_indices.append(5)   # undercut_notch
+
+    # ------------------------------------------------------------------
+    # 4b. Span-to-rise ratio validation
+    #     Natural arches: span/rise typically 1.5–6.0 (Arches NP data).
+    #     Flag extreme values in dimensions so downstream code can warn.
+    # ------------------------------------------------------------------
+    span_to_rise = span_width / max(arch_height, 1e-6)
+    span_rise_valid = 1.2 <= span_to_rise <= 7.0
+    span_rise_note = (
+        "within natural arch range" if span_rise_valid
+        else f"{'too narrow' if span_to_rise < 1.2 else 'too flat'} "
+             f"(span/rise={span_to_rise:.2f}; natural range 1.2–7.0)"
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Compute arch apex, opening clearance, keystone spec, and UVs
     # ------------------------------------------------------------------
     arch_apex: Vec3 = (0.0, 0.0, arch_height)
     opening_clearance = _arch_inner_z(0.0, _tapered_thickness(0.0))  # soffit height at keystone
@@ -2429,6 +2493,7 @@ def generate_natural_arch(
             ("moss",            0.93, "organic",     0.0),
             ("weathered_rock",  0.70, "soft_rock",   0.0),
             ("strata_line",     0.65, "sediment",    0.0),
+            ("undercut_notch",  0.60, "soft_rock",   0.0),
         ),
         "dimensions": {
             "span_width": span_width,
@@ -2436,6 +2501,11 @@ def generate_natural_arch(
             "thickness": thickness,
             "arch_depth": eff_depth,
             "catenary_a": _cat_a,
+            "span_to_rise": span_to_rise,
+            "span_rise_valid": span_rise_valid,
+            "span_rise_note": span_rise_note,
+            "undercut_height": undercut_h,
+            "undercut_depth": undercut_depth,
             "lod": {
                 "LOD_0": len(faces),
                 "LOD_1": _lod1_faces(faces),
@@ -2532,9 +2602,9 @@ def generate_geyser(
     mat_indices: list[int] = []
 
     # Materials: 0=mineral_deposit, 1=pool_water, 2=vent_rock, 3=sulfur_crust,
-    #            4=travertine, 5=crater_rim
+    #            4=travertine, 5=crater_rim, 6=sinter_cone, 7=vent_lip
     materials = ["mineral_deposit", "pool_water", "vent_rock", "sulfur_crust",
-                 "travertine", "crater_rim"]
+                 "travertine", "crater_rim", "sinter_cone", "vent_lip"]
 
     # Auto-defaults
     eff_vent_diam = vent_diameter if vent_diameter > 0.0 else pool_radius * 0.35
@@ -2603,6 +2673,89 @@ def generate_geyser(
         faces.append((vent_bot_ring_start + vi, vent_bot_idx,
                       vent_bot_ring_start + vi_next))
         mat_indices.append(2)
+
+    # ------------------------------------------------------------------
+    # 2b. Silica sinter cone — a gently tapered mound of white/cream silica
+    #     built up around the vent mouth by years of mineral precipitation.
+    #     The cone rises from ground level at radius=sinter_base_r to a
+    #     peak at the vent lip, then drops into the vent opening.
+    # ------------------------------------------------------------------
+    sinter_base_r = eff_vent_diam * 2.8    # cone base radius (~3× vent opening)
+    sinter_peak_h = rim_height * 0.8       # cone apex height above ground
+    sinter_rings = max(4, int(sinter_base_r * 3))
+    sinter_ring_res = max(16, vent_res)
+    sinter_start = len(vertices)
+
+    for sk in range(sinter_rings + 1):
+        skt = sk / max(sinter_rings, 1)    # 0=base outer edge, 1=vent lip
+        # Radius tapers linearly from sinter_base_r to vent_base_r
+        sr = sinter_base_r + skt * (vent_base_r - sinter_base_r)
+        # Height rises with smoothstep curve toward apex at vent lip
+        sh = sinter_peak_h * (3.0 * skt ** 2 - 2.0 * skt ** 3)
+        for si in range(sinter_ring_res):
+            sa = 2.0 * math.pi * si / sinter_ring_res
+            # fBm lumpy surface — sinter deposits are uneven knobs
+            s_r_noise = _fbm(
+                math.cos(sa) * (skt * 3.0 + 1.5),
+                math.sin(sa) * (skt * 3.0 + 1.5),
+                seed + 700 + sk, octaves=3, lacunarity=2.1, gain=0.48,
+            ) * sr * 0.10 * (1.0 - skt * 0.6)
+            s_z_noise = _hash_noise(math.cos(sa) * 4.0, float(sk), seed + 701) * 0.04
+            vertices.append((
+                math.cos(sa) * (sr + s_r_noise),
+                math.sin(sa) * (sr + s_r_noise),
+                sh + s_z_noise,
+            ))
+
+    for sk in range(sinter_rings):
+        for si in range(sinter_ring_res):
+            si_next = (si + 1) % sinter_ring_res
+            v0 = sinter_start + sk * sinter_ring_res + si
+            v1 = sinter_start + sk * sinter_ring_res + si_next
+            v2 = sinter_start + (sk + 1) * sinter_ring_res + si_next
+            v3 = sinter_start + (sk + 1) * sinter_ring_res + si
+            faces.append((v0, v1, v2, v3))
+            mat_indices.append(6)  # sinter_cone
+
+    # ------------------------------------------------------------------
+    # 2c. Steam vent lip — a raised annular ridge at the vent opening with
+    #     an outward-flared outer edge and a sharp inner rim, giving the
+    #     classic geyser "nozzle" look.  Placed at the top of the sinter cone.
+    # ------------------------------------------------------------------
+    lip_inner_r = vent_base_r * 1.05
+    lip_outer_r = vent_base_r * 1.55
+    lip_height = sinter_peak_h + rim_height * 0.25   # raised above cone peak
+    lip_res = sinter_ring_res
+    lip_inner_start = len(vertices)
+
+    for li in range(lip_res):
+        la = 2.0 * math.pi * li / lip_res
+        l_noise = _hash_noise(math.cos(la) * 5.0, math.sin(la) * 5.0, seed + 800) * 0.05
+        vertices.append((
+            math.cos(la) * (lip_inner_r + l_noise),
+            math.sin(la) * (lip_inner_r + l_noise),
+            lip_height,
+        ))
+
+    lip_outer_start = len(vertices)
+    for li in range(lip_res):
+        la = 2.0 * math.pi * li / lip_res
+        # Outer edge flares slightly lower than inner rim
+        l_noise = _hash_noise(math.cos(la) * 4.5, math.sin(la) * 4.5, seed + 801) * 0.06
+        vertices.append((
+            math.cos(la) * (lip_outer_r + l_noise),
+            math.sin(la) * (lip_outer_r + l_noise),
+            lip_height - rim_height * 0.12,
+        ))
+
+    for li in range(lip_res):
+        li_next = (li + 1) % lip_res
+        v0 = lip_inner_start + li
+        v1 = lip_inner_start + li_next
+        v2 = lip_outer_start + li_next
+        v3 = lip_outer_start + li
+        faces.append((v0, v1, v2, v3))
+        mat_indices.append(7)  # vent_lip
 
     # ------------------------------------------------------------------
     # 3. Crater rim ring at eff_crater_r, height = rim_height
@@ -2811,6 +2964,8 @@ def generate_geyser(
             ("sulfur_crust",    0.55, "mineral",     0.08),
             ("travertine",      0.65, "mineral",     0.0),
             ("crater_rim",      0.75, "hard_rock",   0.0),
+            ("sinter_cone",     0.55, "mineral",     0.0),
+            ("vent_lip",        0.50, "mineral",     0.04),
         ),
         "dimensions": {
             "pool_radius": pool_radius,
@@ -2888,8 +3043,10 @@ def generate_sinkhole(
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
 
-    # Materials: 0=dirt_wall, 1=exposed_rock, 2=rubble, 3=cave_entrance, 4=rim_ground
-    materials = ["dirt_wall", "exposed_rock", "rubble", "cave_entrance", "rim_ground"]
+    # Materials: 0=dirt_wall, 1=exposed_rock, 2=rubble, 3=cave_entrance,
+    #            4=rim_ground, 5=cave_ceiling, 6=debris_rim
+    materials = ["dirt_wall", "exposed_rock", "rubble", "cave_entrance",
+                 "rim_ground", "cave_ceiling", "debris_rim"]
 
     radial_res = max(20, int(radius * 4))
     depth_res = max(8, int(depth * 2))
@@ -3062,7 +3219,45 @@ def generate_sinkhole(
             mat_indices.append(2)
 
     # ------------------------------------------------------------------
-    # 5. Optional bottom cave
+    # 4b. Collapse debris ring — angular chunks at the rim edge where the
+    #     ground fractured and slid inward.  These are irregular box shards
+    #     placed in a ring just inside the rim, distinct from floor rubble.
+    # ------------------------------------------------------------------
+    debris_ring_count = max(6, int(radial_res * 0.6))
+    for di in range(debris_ring_count):
+        d_angle = 2.0 * math.pi * di / debris_ring_count
+        d_angle += rng.uniform(-0.18, 0.18)   # break perfect ring symmetry
+        d_r = radius * rng.uniform(0.88, 1.05)  # straddle the rim edge
+        dx = math.cos(d_angle) * d_r
+        dy = math.sin(d_angle) * d_r
+        dz = _hash_noise(dx * 0.5, dy * 0.5, seed + 200 + di) * 0.35  # rim-level z
+        d_size = rng.uniform(0.15, 0.55)
+        d_yaw = rng.uniform(0.0, 2.0 * math.pi)
+        d_pitch = rng.uniform(-0.4, 0.4)   # tip toward or away from hole
+        cos_dy = math.cos(d_yaw); sin_dy = math.sin(d_yaw)
+        cos_dp = math.cos(d_pitch); sin_dp = math.sin(d_pitch)
+        db_start = len(vertices)
+        hs = d_size / 2.0
+        for ddx, ddy, ddz in [
+            (-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0),
+            (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1),
+        ]:
+            # Apply yaw then pitch (rotation around world Z then local X)
+            lx = ddx * hs
+            ly = ddy * hs
+            lz = ddz * hs
+            rx2 = lx * cos_dy - ly * sin_dy
+            ry2 = lx * sin_dy + ly * cos_dy
+            rz2 = lz * cos_dp - ry2 * sin_dp
+            ry3 = ry2 * cos_dp + lz * sin_dp
+            nd = _hash_noise(dx + ddx, dy + ddy, seed + 300 + di) * d_size * 0.22
+            vertices.append((dx + rx2 + nd, dy + ry3 + nd, dz + rz2 + abs(nd) * 0.2))
+        for bf in [(0,1,2,3),(4,7,6,5),(0,4,5,1),(2,6,7,3),(0,3,7,4),(1,5,6,2)]:
+            faces.append((db_start+bf[0], db_start+bf[1], db_start+bf[2], db_start+bf[3]))
+            mat_indices.append(6)  # debris_rim
+
+    # ------------------------------------------------------------------
+    # 5. Optional bottom cave — exposed cave roof geometry above the entrance
     # ------------------------------------------------------------------
     cave_info: dict[str, Any] | None = None
     if has_bottom_cave:
@@ -3080,6 +3275,31 @@ def generate_sinkhole(
             "height": cave_height,
             "depth": cave_depth_val,
         }
+
+        # Exposed cave ceiling — a rough horizontal quad patch above the cave
+        # entrance showing the underside of dissolved limestone.
+        # Placed at base_z + cave_height (roof of the cave mouth).
+        cos_ca = math.cos(cave_angle)
+        sin_ca = math.sin(cave_angle)
+        ceil_cx = cos_ca * cave_r
+        ceil_cy = sin_ca * cave_r
+        ceil_z = base_z + cave_height
+        ceil_hw = cave_width * 0.65    # half-width of ceiling patch
+        ceil_hd = cave_width * 0.55    # half-depth along cave axis
+        # Four corners of ceiling patch, displaced with fBm
+        ceil_corners: list[Vec3] = []
+        for su, sv in [(-1, -1), (1, -1), (1, 1), (-1, 1)]:
+            cx_off = cos_ca * sv * ceil_hd - sin_ca * su * ceil_hw
+            cy_off = sin_ca * sv * ceil_hd + cos_ca * su * ceil_hw
+            cnoise = _fbm(ceil_cx + cx_off, ceil_cy + cy_off, seed + 400,
+                          octaves=3, lacunarity=2.1, gain=0.5) * 0.18
+            ceil_corners.append((ceil_cx + cx_off,
+                                  ceil_cy + cy_off,
+                                  ceil_z + cnoise))
+        cc_start = len(vertices)
+        vertices.extend(ceil_corners)
+        faces.append((cc_start, cc_start+1, cc_start+2, cc_start+3))
+        mat_indices.append(5)  # cave_ceiling
 
     # ------------------------------------------------------------------
     # 6. Limestone layer specification — progressive depth profile showing
@@ -3147,6 +3367,8 @@ def generate_sinkhole(
             ("rubble",         0.85, "sediment",  0.0),
             ("cave_entrance",  0.80, "hard_rock", 0.0),
             ("rim_ground",     0.88, "sediment",  0.0),
+            ("cave_ceiling",   0.60, "limestone", 0.0),
+            ("debris_rim",     0.88, "sediment",  0.0),
         ),
         "dimensions": {
             "radius": radius,
@@ -3520,9 +3742,11 @@ def generate_ice_formation(
     mat_indices: list[int] = []
 
     # Materials: 0=clear_ice, 1=frosted_ice, 2=blue_ice, 3=ice_wall_refraction,
-    #            4=icicle_tip, 5=ice_crack
+    #            4=icicle_tip, 5=ice_crack, 6=deep_blue_green
+    # deep_blue_green: oldest/densest ice, strongly absorbs red — deep teal subsurface.
+    # Assigned to the lowest ~20% of columns and wall faces near the base.
     materials = ["clear_ice", "frosted_ice", "blue_ice", "ice_wall_refraction",
-                 "icicle_tip", "ice_crack"]
+                 "icicle_tip", "ice_crack", "deep_blue_green"]
 
     half_w = width / 2.0
     half_d = depth / 2.0
@@ -3562,7 +3786,11 @@ def generate_ice_formation(
                 vertices.append((vx, vy, ring_z))
                 uvs.append((s / HEX_SEGS, kt))
 
-        # Side faces — flat quad panels
+        # Side faces — flat quad panels with 4-zone depth colour:
+        #   0.00–0.18 → deep_blue_green (ancient compressed ice, teal SSS)
+        #   0.18–0.40 → frosted_ice     (surface re-crystallisation)
+        #   0.40–0.72 → clear_ice       (transparent mid-column)
+        #   0.72–1.00 → blue_ice        (dense upper crystal bands)
         for k in range(col_rings):
             for s in range(HEX_SEGS):
                 s_next = (s + 1) % HEX_SEGS
@@ -3572,12 +3800,14 @@ def generate_ice_formation(
                 v3 = col_start + (k + 1) * HEX_SEGS + s
                 faces.append((v0, v1, v2, v3))
                 kt_f = (k + 0.5) / max(col_rings, 1)
-                if kt_f < 0.25:
-                    mat_indices.append(1)
-                elif kt_f > 0.75:
-                    mat_indices.append(2)
+                if kt_f < 0.18:
+                    mat_indices.append(6)   # deep_blue_green — basal compressed ice
+                elif kt_f < 0.40:
+                    mat_indices.append(1)   # frosted_ice
+                elif kt_f < 0.72:
+                    mat_indices.append(0)   # clear_ice
                 else:
-                    mat_indices.append(0)
+                    mat_indices.append(2)   # blue_ice
 
         # Top cap: angular flat facets — 6 triangles meeting at a raised peak.
         # Each facet is hard-edged (separate triangle) for angular ice refraction look.
@@ -3759,8 +3989,16 @@ def generate_ice_formation(
                 faces.append((v0, v1, v2, v3))
                 x_center = -half_w + (ix + 0.5) / max(wall_res_x - 1, 1) * width
                 z_center = (k + 0.5) / max(wall_res_z - 1, 1) * height
+                zt_wall = z_center / max(height, 1e-6)
                 curvature = abs(_fbm(x_center * 0.5, z_center * 0.5, seed + 60, octaves=2))
-                mat_indices.append(3 if curvature > 0.3 else 2)
+                # 3-zone depth colour for wall: base=deep_blue_green, mid=blue_ice
+                # or ice_wall_refraction (where curvature high), upper=clear_ice/refraction
+                if zt_wall < 0.20:
+                    mat_indices.append(6)   # deep_blue_green basal band
+                elif zt_wall < 0.55:
+                    mat_indices.append(3 if curvature > 0.3 else 2)  # refraction / blue_ice
+                else:
+                    mat_indices.append(3 if curvature > 0.3 else 0)  # refraction / clear_ice
 
         num_zones = rng.randint(2, 5)
         for zi in range(num_zones):
@@ -3796,7 +4034,9 @@ def generate_ice_formation(
             "depth_fraction": _vcr.uniform(0.02, 0.10),
         })
 
-    # Translucency metadata — per-material IOR and scattering hints
+    # Translucency metadata — per-material IOR and scattering hints.
+    # deep_blue_green: ancient compressed ice strongly absorbs red/green wavelengths,
+    # leaving a teal-blue transmission.  High scatter_depth drives SSS teal glow.
     translucency_metadata = {
         "clear_ice":          {"ior": 1.31, "absorption": 0.08, "scatter_depth": 0.4},
         "frosted_ice":        {"ior": 1.31, "absorption": 0.20, "scatter_depth": 0.1},
@@ -3804,6 +4044,8 @@ def generate_ice_formation(
         "ice_wall_refraction":{"ior": 1.31, "absorption": 0.12, "scatter_depth": 0.6},
         "icicle_tip":         {"ior": 1.31, "absorption": 0.03, "scatter_depth": 1.2},
         "ice_crack":          {"ior": 1.00, "absorption": 0.80, "scatter_depth": 0.0},
+        "deep_blue_green":    {"ior": 1.31, "absorption": 0.02, "scatter_depth": 1.8,
+                               "color_hint": (0.05, 0.45, 0.55)},
     }
 
     _ice_normals = _compute_face_normals(vertices, faces)
@@ -3824,6 +4066,7 @@ def generate_ice_formation(
             ("ice_wall_refraction", 0.10, "ice",    0.0),
             ("icicle_tip",          0.03, "ice",    0.0),
             ("ice_crack",           0.70, "ice",    0.0),
+            ("deep_blue_green",     0.04, "ice",    0.0),
         ),
         "dimensions": {
             "width": width,
@@ -3852,6 +4095,7 @@ def generate_lava_flow(
     flow_segments: int = 20,
     seed: int = 42,
     slope_angle_deg: float = 5.0,
+    flow_type: str = "pahoehoe",
 ) -> dict[str, Any]:
     """Generate a lava flow that follows terrain gradient with lobate flow-front,
     ropy pahoehoe surface texture, and levee walls along both sides.
@@ -3901,9 +4145,15 @@ def generate_lava_flow(
     mat_indices: list[int] = []
 
     # Materials: 0=hot_lava, 1=cooling_crust, 2=solid_rock, 3=ember_glow,
-    #            4=levee_crust, 5=flow_front
+    #            4=levee_crust, 5=flow_front, 6=aa_clinker, 7=embankment_face
+    # aa_clinker: spiny clinker surface unique to aa flows (rough, angular, dark).
+    # embankment_face: vertical step-drop at flow edge where lava overrode the ground.
     materials = ["hot_lava", "cooling_crust", "solid_rock", "ember_glow",
-                 "levee_crust", "flow_front"]
+                 "levee_crust", "flow_front", "aa_clinker", "embankment_face"]
+
+    # Aa lava: high-amplitude jagged clinker surface, no ropy ridges.
+    # Pahoehoe lava: smooth ropy fBm ridges across the channel.
+    _is_aa = flow_type.lower().startswith("aa")
 
     slope_rad = math.radians(slope_angle_deg)
     total_width = width + 2.0 * edge_crust_width
@@ -3993,15 +4243,27 @@ def generate_lava_flow(
                 # Solid rock: flat at ground level
                 z_profile = 0.0
 
-            # Pahoehoe ropy texture: fBm bumps across the channel surface
-            if dist < half_w + edge_crust_width:
-                ropy = _fbm(
-                    cx * 0.15 + offset * 0.4,
-                    offset * 0.6 + float(i) * 0.2,
-                    seed + 20, octaves=4, lacunarity=2.2, gain=0.55,
-                ) * 0.10
+            # Surface texture: pahoehoe = ropy fBm ridges; aa = jagged clinker
+            if _is_aa:
+                if dist < half_w + edge_crust_width:
+                    # Aa clinker: high-freq, high-amplitude jagged noise
+                    ropy = (
+                        _fbm(cx * 0.35 + offset * 1.2, offset * 1.5 + float(i) * 0.5,
+                             seed + 20, octaves=5, lacunarity=2.5, gain=0.60) * 0.28
+                        + _hash_noise(cx * 0.8 + offset * 2.0, float(i) * 1.2, seed + 22) * 0.12
+                    )
+                else:
+                    ropy = _hash_noise(cx * 0.2 + offset * 0.3, offset * 0.2, seed + 21) * 0.06
             else:
-                ropy = _hash_noise(cx * 0.2 + offset * 0.3, offset * 0.2, seed + 21) * 0.06
+                if dist < half_w + edge_crust_width:
+                    # Pahoehoe ropy texture: smooth fBm ridges
+                    ropy = _fbm(
+                        cx * 0.15 + offset * 0.4,
+                        offset * 0.6 + float(i) * 0.2,
+                        seed + 20, octaves=4, lacunarity=2.2, gain=0.55,
+                    ) * 0.10
+                else:
+                    ropy = _hash_noise(cx * 0.2 + offset * 0.3, offset * 0.2, seed + 21) * 0.06
 
             vx = cx + perp_x * offset
             vy = cy + perp_y * offset
@@ -4029,7 +4291,8 @@ def generate_lava_flow(
             elif d_mid < hw + levee_width:
                 mat_indices.append(4)   # levee_crust
             elif d_mid < hw + levee_width + edge_crust_width:
-                mat_indices.append(1)   # cooling_crust
+                # Aa: clinker surface; pahoehoe: cooling crust
+                mat_indices.append(6 if _is_aa else 1)
             else:
                 mat_indices.append(2)   # solid_rock
 
@@ -4105,6 +4368,58 @@ def generate_lava_flow(
         v3 = front_start + fi
         faces.append((v0, v1, v2, v3))
         mat_indices.append(5)   # flow_front
+
+    # ------------------------------------------------------------------
+    # 3b. Flow edge embankment discontinuity — vertical step-drop faces at
+    #     both sides of the flow where the lava overrode the surrounding ground.
+    #     Aa flows have sharp near-vertical embankment edges (~60–80°); pahoehoe
+    #     edges are slightly less steep but still distinctly discontinuous.
+    #     Geometry: one quad strip per side, spanning the full flow length,
+    #     dropping from the outer levee base height to ground level (z=0).
+    # ------------------------------------------------------------------
+    embankment_drop_h = levee_height + 0.25   # total drop of the embankment face
+    embank_slope_frac = 0.15 if _is_aa else 0.35  # aa=near-vertical, paho=gentler
+
+    for emb_sign in (-1.0, 1.0):
+        emb_start = len(vertices)
+        # Two rows: top row (outer levee base height) and bottom row (ground)
+        for row in range(2):
+            row_z_frac = 0.0 if row == 0 else -embankment_drop_h
+            for i, (cx, cy, cz) in enumerate(cl_points):
+                # Perpendicular direction at this cross-section
+                if i < flow_segments:
+                    nx2, ny2, _ = cl_points[i + 1]
+                else:
+                    nx2, ny2 = cx + (cx - cl_points[i-1][0]), cy + (cy - cl_points[i-1][1])
+                tdx_e2 = nx2 - cx
+                tdy_e2 = ny2 - cy
+                tlen_e2 = math.sqrt(tdx_e2**2 + tdy_e2**2)
+                if tlen_e2 > 1e-9:
+                    px_e = -tdy_e2 / tlen_e2
+                    py_e = tdx_e2 / tlen_e2
+                else:
+                    px_e, py_e = 0.0, 1.0
+
+                emb_r = rock_edge_outer + emb_sign * embank_slope_frac * row
+                emb_x = cx + emb_sign * px_e * emb_r
+                emb_y = cy + emb_sign * py_e * emb_r
+                emb_z = cz + row_z_frac
+                noise_emb = _hash_noise(emb_x * 0.2, emb_z * 0.3, seed + 500) * 0.04
+                vertices.append((emb_x + noise_emb, emb_y + noise_emb, emb_z))
+
+        # Faces: top_row=rows 0..(flow_segments), bot_row=rows (fs+1)..(2*fs+1)
+        top_start = emb_start
+        bot_start = emb_start + (flow_segments + 1)
+        for i in range(flow_segments):
+            v0 = top_start + i
+            v1 = top_start + i + 1
+            v2 = bot_start + i + 1
+            v3 = bot_start + i
+            if emb_sign > 0:
+                faces.append((v0, v1, v2, v3))
+            else:
+                faces.append((v0, v3, v2, v1))
+            mat_indices.append(7)   # embankment_face
 
     # ------------------------------------------------------------------
     # 4. Levee specs — metadata for the two raised ridges along flow sides
@@ -4204,12 +4519,14 @@ def generate_lava_flow(
         "materials": materials,
         "material_indices": mat_indices,
         "material_metadata": _material_metadata(
-            ("hot_lava",      0.10, "lava",        1.00),
-            ("cooling_crust", 0.70, "lava_crust",  0.20),
-            ("solid_rock",    0.88, "basalt",      0.00),
-            ("ember_glow",    0.15, "lava",        0.60),
-            ("levee_crust",   0.75, "lava_crust",  0.10),
-            ("flow_front",    0.40, "lava_crust",  0.35),
+            ("hot_lava",         0.10, "lava",        1.00),
+            ("cooling_crust",    0.70, "lava_crust",  0.20),
+            ("solid_rock",       0.88, "basalt",      0.00),
+            ("ember_glow",       0.15, "lava",        0.60),
+            ("levee_crust",      0.75, "lava_crust",  0.10),
+            ("flow_front",       0.40, "lava_crust",  0.35),
+            ("aa_clinker",       0.92, "basalt",      0.00),
+            ("embankment_face",  0.80, "basalt",      0.00),
         ),
         "dimensions": {
             "length": length,
@@ -4218,6 +4535,7 @@ def generate_lava_flow(
             "flow_segments": flow_segments,
             "slope_angle_deg": slope_angle_deg,
             "levee_height": levee_height,
+            "flow_type": flow_type,
             "lod": {
                 "LOD_0": len(faces),
                 "LOD_1": _lod1_faces(faces),
