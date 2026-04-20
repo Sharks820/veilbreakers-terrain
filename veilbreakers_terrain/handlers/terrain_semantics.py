@@ -266,6 +266,9 @@ class TerrainMaskStack:
     cave_wall_texture: Optional[np.ndarray] = None
     cave_stalactite_length: Optional[np.ndarray] = None
     cave_stalagmite_length: Optional[np.ndarray] = None
+    cave_depth_hint: Optional[np.ndarray] = None
+    cave_underground_depth: Optional[np.ndarray] = None
+    cave_chambers: Optional[np.ndarray] = None
     waterfall_lip_candidate: Optional[np.ndarray] = None
     waterfall_pool_delta: Optional[np.ndarray] = None
     hero_exclusion: Optional[np.ndarray] = None
@@ -505,6 +508,10 @@ class TerrainMaskStack:
             "intrusion_mask",
             "albedo_shift_rgb",
             "strata_cross_section",
+            # Bundle F AAA cave depth channels (cave system upgrade)
+            "cave_depth_hint",
+            "cave_underground_depth",
+            "cave_chambers",
         ),
     )
 
