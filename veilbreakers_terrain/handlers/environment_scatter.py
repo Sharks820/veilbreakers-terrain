@@ -352,9 +352,14 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
     origin_y = float(terrain_obj.location.y)
 
     def _sample(world_x: float, world_y: float) -> float:
-        return _sample_heightmap_world(
+        # heightmap is normalised [0, 1] via (z - height_min) / height_range.
+        # _sample_heightmap_world multiplies by height_scale, so we pass
+        # height_range — then add height_min back to reconstruct true world Z.
+        # Previously height_max was passed, which is wrong for any terrain whose
+        # minimum elevation is non-zero (BUG-R8-A4-001 fix).
+        normalised_z = _sample_heightmap_world(
             heightmap,
-            height_scale=height_max,
+            height_scale=height_range,
             world_x=world_x,
             world_y=world_y,
             terrain_width=terrain_width,
@@ -362,6 +367,7 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
             terrain_origin_x=origin_x,
             terrain_origin_y=origin_y,
         )
+        return normalised_z + height_min
 
     return _sample
 
@@ -1090,6 +1096,7 @@ def _add_leaf_card_canopy(
     canopy_radius: float,
     num_planes: int,
     rng: random.Random,
+    species_row: int = 0,
 ) -> None:
     """Add 6-12 intersecting leaf card planes to a bmesh for a tree canopy.
 
@@ -1100,10 +1107,20 @@ def _add_leaf_card_canopy(
     Each plane is sized to canopy_radius and given a small random offset
     (0-0.3m) for organic variety.
 
-    UV mapping: Each quad is mapped to a cell in a 4x4 leaf atlas (16 cells).
-    Vertical planes use world-up normals (they hang from above the canopy);
-    angled fill planes use mixed facing for silhouette variety.  Both use
-    atlas-cell UVs so an alpha-tested leaf texture sheet drives the alpha mask.
+    UV atlas layout (Ghost of Tsushima / Horizon ZD leaf card standard):
+        4×4 atlas where ROWS = species variants (broadleaf, needle, palm, fern…)
+        and COLS = age/seasonal variants (spring, summer, autumn, dead).
+        ``species_row`` pins the row; column is randomly sampled per card so each
+        card on the same tree can show a different age state for organic variety.
+        Both the front face and its mirrored backface duplicate share the same UV
+        cell so the alpha mask is consistent on both sides.
+
+    Backface normal flipping:
+        Each quad is emitted twice — the front face with the natural winding and
+        an exact duplicate with reversed winding (BL/BR/TR/TL → TL/TR/BR/BL).
+        This gives correct per-face normals on both sides without relying on
+        a "two-sided" material flag, matching Ghost of Tsushima and SpeedTree's
+        approach for LOD-level leaf cards that must be visible from any angle.
 
     Wind vertex colors follow the canonical AAA RGBA layout (SpeedTree /
     Vegetation Studio convention — same as bake_wind_vertex_colors):
@@ -1128,26 +1145,83 @@ def _add_leaf_card_canopy(
     if uv_layer is None:
         uv_layer = bm.loops.layers.uv.new("UVMap")
 
-    # Leaf atlas: 4×4 grid of leaf variants. Each card picks one cell.
+    # Leaf atlas: 4×4 grid.
+    #   ROWS (V axis) = species variants: row 0=broadleaf, 1=needle, 2=palm, 3=fern/other
+    #   COLS (U axis) = age/seasonal variants: col 0=spring, 1=summer, 2=autumn, 3=dead
+    # This matches the Ghost of Tsushima / Horizon ZD leaf card atlas convention so
+    # a single atlas texture can serve all tree types and seasonal states.
     _ATLAS_COLS = 4
-    _ATLAS_CELL = 1.0 / _ATLAS_COLS
+    _ATLAS_ROWS = 4
+    _ATLAS_CELL_U = 1.0 / _ATLAS_COLS
+    _ATLAS_CELL_V = 1.0 / _ATLAS_ROWS
+    _species = max(0, min(_ATLAS_ROWS - 1, species_row))
 
-    def _atlas_uv(cell_idx: int) -> tuple[tuple, tuple, tuple, tuple]:
-        """Return 4 UV corners (bl, br, tr, tl) for atlas cell cell_idx."""
-        col = cell_idx % _ATLAS_COLS
-        row = cell_idx // _ATLAS_COLS
-        u0 = col * _ATLAS_CELL
-        u1 = u0 + _ATLAS_CELL
-        v0 = row * _ATLAS_CELL
-        v1 = v0 + _ATLAS_CELL
-        # UV corners matching quad vertex order: BL, BR, TR, TL
+    def _atlas_uv(age_col: int) -> tuple[tuple, tuple, tuple, tuple]:
+        """Return 4 UV corners (BL, BR, TR, TL) for (species_row, age_col) cell."""
+        _age = max(0, min(_ATLAS_COLS - 1, age_col))
+        u0 = _age * _ATLAS_CELL_U
+        u1 = u0 + _ATLAS_CELL_U
+        v0 = _species * _ATLAS_CELL_V
+        v1 = v0 + _ATLAS_CELL_V
         return (u0, v0), (u1, v0), (u1, v1), (u0, v1)
+
+    def _atlas_uv_flipped(age_col: int) -> tuple[tuple, tuple, tuple, tuple]:
+        """Return UV corners for the backface duplicate (winding BL↔BR swapped → U mirrored)."""
+        _age = max(0, min(_ATLAS_COLS - 1, age_col))
+        u0 = _age * _ATLAS_CELL_U
+        u1 = u0 + _ATLAS_CELL_U
+        v0 = _species * _ATLAS_CELL_V
+        v1 = v0 + _ATLAS_CELL_V
+        # Mirror U so the backface texture reads correctly (not reversed)
+        return (u1, v0), (u0, v0), (u0, v1), (u1, v1)
+
+    def _add_card(corners: list[tuple[float, float, float]], phase: float, age_col: int) -> None:
+        """Emit a front-face quad and its backface duplicate with matching wind colors."""
+        # --- Front face ---
+        front_verts = [bm.verts.new(c) for c in corners]
+        for vi, v in enumerate(front_verts):
+            height_t = float(vi // 2)           # 0.0 bottom row, 1.0 top row
+            v[wind_layer] = (
+                height_t,                       # R: amplitude 0→1 bottom to top
+                phase,                          # G: phase constant per card cluster
+                0.5 + height_t * 0.5,           # B: frequency 0.5→1.0
+                0.75 + height_t * 0.2,          # A: stiffness 0.75→0.95 (free foliage)
+            )
+        try:
+            face = bm.faces.new(front_verts)
+            uv_corners = _atlas_uv(age_col)
+            for loop, uv in zip(face.loops, uv_corners):
+                loop[uv_layer].uv = uv
+        except ValueError:
+            return
+
+        # --- Backface duplicate (reversed winding: TL, TR, BR, BL) ---
+        # Sharing vertices with the front face would collapse normals; duplicate
+        # the geometry so each face has its own independent normal direction.
+        back_verts = [bm.verts.new(c) for c in reversed(corners)]
+        for vi, v in enumerate(back_verts):
+            # reversed() gives TL, TR, BR, BL — height_t is the same value as
+            # the corresponding front vert (index mapping: 0→TL=top, 1→TR=top,
+            # 2→BR=bottom, 3→BL=bottom), so recompute from Z directly.
+            height_t = 1.0 if vi < 2 else 0.0
+            v[wind_layer] = (
+                height_t,
+                phase,
+                0.5 + height_t * 0.5,
+                0.75 + height_t * 0.2,
+            )
+        try:
+            back_face = bm.faces.new(back_verts)
+            uv_corners_back = _atlas_uv_flipped(age_col)
+            for loop, uv in zip(back_face.loops, uv_corners_back):
+                loop[uv_layer].uv = uv
+        except ValueError:
+            pass
 
     planes_added = 0
 
     # 3 vertical planes at 60-degree intervals — spine of the canopy.
-    # These use world-up normals: they are vertical cross-planes that
-    # form the visible silhouette when viewed from the side.
+    # These form the visible silhouette when viewed from the side.
     for i in range(3):
         angle = math.radians(i * 60.0)
         offset_x = rng.uniform(-0.3, 0.3)
@@ -1155,46 +1229,19 @@ def _add_leaf_card_canopy(
         px = cx + offset_x
         py = cy + offset_y
 
-        # Plane normal is horizontal (perpendicular to rotation angle)
-        nx = math.sin(angle)
-        ny = math.cos(angle)
-
-        # 4 corners of the plane: half-width along tangent, half-height along Z
-        tx = -ny
-        ty = nx
+        tx = -math.cos(angle)   # tangent along the card width
+        ty = math.sin(angle)
         corners = [
             (px + tx * r,  py + ty * r,  cz - r * 0.5),   # BL
             (px - tx * r,  py - ty * r,  cz - r * 0.5),   # BR
             (px - tx * r,  py - ty * r,  cz + r * 0.8),   # TR
             (px + tx * r,  py + ty * r,  cz + r * 0.8),   # TL
         ]
-        verts = [bm.verts.new(c) for c in corners]
-
-        # Wind colors: R=amplitude (height-driven), G=phase (per-cluster random),
-        # B=frequency (tip faster), A=trunk_stiffness (canopy = 0.85 free-swing)
-        phase = rng.random()
-        for vi, v in enumerate(verts):
-            height_t = float(vi // 2)          # 0.0 bottom row, 1.0 top row
-            amplitude = height_t               # R: 0 at base, 1 at tip
-            phase_g = phase                    # G: constant per cluster for unit sway
-            frequency = 0.5 + height_t * 0.5  # B: 0.5 base → 1.0 tip
-            stiffness = 0.75 + height_t * 0.2  # A: canopy leaves are near-free (0.75–0.95)
-            v[wind_layer] = (amplitude, phase_g, frequency, stiffness)
-
-        try:
-            face = bm.faces.new(verts)
-            # Assign atlas UV: pick a random atlas cell for this card
-            atlas_cell = rng.randint(0, _ATLAS_COLS * _ATLAS_COLS - 1)
-            uv_corners = _atlas_uv(atlas_cell)
-            for loop, uv in zip(face.loops, uv_corners):
-                loop[uv_layer].uv = uv
-        except ValueError:
-            pass
+        age_col = rng.randint(0, _ATLAS_COLS - 1)
+        _add_card(corners, rng.random(), age_col)
         planes_added += 1
 
     # Angled planes at 30-45 degrees from vertical — volumetric canopy fill.
-    # These provide the overhead silhouette when viewed from above and add
-    # depth to the canopy volume.
     remaining = num_planes - 3
     for i in range(remaining):
         angle = math.radians(i * (360.0 / max(remaining, 1)) + 15.0)
@@ -1204,10 +1251,8 @@ def _add_leaf_card_canopy(
         px = cx + offset_x
         py = cy + offset_y
 
-        # Tangent direction for the plane width
         tx = math.cos(angle)
         ty = math.sin(angle)
-        # Z contribution of tilt
         tz_scale = math.cos(tilt)
         plane_h = r * math.sin(tilt)
 
@@ -1217,26 +1262,8 @@ def _add_leaf_card_canopy(
             (px - tx * r * tz_scale, py - ty * r * tz_scale, cz + plane_h * 0.8),  # TR
             (px + tx * r * tz_scale, py + ty * r * tz_scale, cz + plane_h * 0.8),  # TL
         ]
-        verts = [bm.verts.new(c) for c in corners]
-
-        # Wind colors: same RGBA convention as vertical planes above.
-        phase = rng.random()
-        for vi, v in enumerate(verts):
-            height_t = float(vi // 2)
-            amplitude = height_t
-            phase_g = phase
-            frequency = 0.5 + height_t * 0.5
-            stiffness = 0.75 + height_t * 0.2
-            v[wind_layer] = (amplitude, phase_g, frequency, stiffness)
-
-        try:
-            face = bm.faces.new(verts)
-            atlas_cell = rng.randint(0, _ATLAS_COLS * _ATLAS_COLS - 1)
-            uv_corners = _atlas_uv(atlas_cell)
-            for loop, uv in zip(face.loops, uv_corners):
-                loop[uv_layer].uv = uv
-        except ValueError:
-            pass
+        age_col = rng.randint(0, _ATLAS_COLS - 1)
+        _add_card(corners, rng.random(), age_col)
         planes_added += 1
 
 
@@ -1246,12 +1273,38 @@ def create_leaf_card_tree(
     canopy_radius: float = 2.5,
     num_planes: int = 8,
     seed: int = 42,
+    species_variant: int = 0,
 ) -> "bpy.types.Object":
-    """Create a tree with a leaf card canopy (SpeedTree-style).
+    """Create a tree with a leaf card canopy (SpeedTree / Ghost of Tsushima style).
 
-    Replaces the UV sphere blob with 6-12 intersecting alpha planes.
+    Geometry:
+        - Trunk: 6-segment tapered cylinder, 0.7× taper at crown height.
+        - Canopy: 6–12 intersecting leaf card quads (``num_planes`` clamped to
+          that range) with front+backface duplicate geometry so cards render
+          correctly from any angle without a two-sided material flag.
 
-    Returns the created Blender object.
+    UV atlas (4×4, rows=species, cols=age/season):
+        ``species_variant`` selects the atlas row (0=broadleaf, 1=needle,
+        2=palm, 3=fern).  Each card independently samples a random column so
+        the same tree shows multiple age/seasonal states for organic variety —
+        matching the Ghost of Tsushima / Horizon ZD leaf card atlas convention.
+
+    Wind vertex colors follow the SpeedTree RGBA packing:
+        R = sway_amplitude  (0 at base → 1 at tip)
+        G = sway_phase      (random per card cluster, constant across card)
+        B = sway_frequency  (0.5 at base → 1.0 at tip)
+        A = trunk_stiffness (0.0 trunk → 0.75–0.95 free canopy foliage)
+
+    Args:
+        position: World-space (x, y, z) base of the trunk.
+        height: Total tree height in metres.
+        canopy_radius: Leaf card half-extent in metres.
+        num_planes: Number of leaf card planes (clamped to [6, 12]).
+        seed: RNG seed for reproducible variation.
+        species_variant: Atlas row index selecting the leaf species (0–3).
+
+    Returns:
+        The created ``bpy.types.Object`` linked into the active collection.
     """
     rng = random.Random(seed)
     name = f"LeafCardTree_{seed}"
@@ -1259,7 +1312,7 @@ def create_leaf_card_tree(
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
 
-    # Trunk: simple tapered cylinder approximated as extruded polygon
+    # Trunk: 6-segment tapered cylinder
     trunk_radius = height * 0.06
     trunk_segments = 6
     trunk_verts_bottom = []
@@ -1275,20 +1328,18 @@ def create_leaf_card_tree(
             position[2] + height * 0.55,
         )))
 
-    # Trunk wind vertex colors — SpeedTree packing: R=phase, G=amplitude, B=frequency, A=0
-    # Trunk base: no movement (amplitude=0, frequency=0.5 neutral).
-    # Trunk top: low trunk sway amplitude (0.2), moderate frequency (0.6).
+    # Trunk wind vertex colors (SpeedTree packing):
     # WORLD-006: guard against duplicate layer creation
     wind_layer = bm.verts.layers.float_color.get("wind_vc")
     if wind_layer is None:
         wind_layer = bm.verts.layers.float_color.new("wind_vc")
-    trunk_phase = 0.0  # trunk phase = 0; canopy cards get their own random phase
+    trunk_phase = 0.0
     for v in trunk_verts_bottom:
-        v[wind_layer] = (trunk_phase, 0.0, 0.5, 0.0)  # base: stationary
+        v[wind_layer] = (trunk_phase, 0.0, 0.5, 0.0)   # base: stationary
     for v in trunk_verts_top:
-        v[wind_layer] = (trunk_phase, 0.2, 0.6, 0.0)  # top: gentle trunk sway
+        v[wind_layer] = (trunk_phase, 0.2, 0.6, 0.0)   # top: gentle sway
 
-    # Create trunk faces
+    # Trunk faces
     for i in range(trunk_segments):
         j = (i + 1) % trunk_segments
         try:
@@ -1301,20 +1352,62 @@ def create_leaf_card_tree(
         except ValueError:
             pass
 
-    # Canopy: leaf card planes
+    # Canopy: leaf card planes with backface duplicates and species/age atlas UVs
     canopy_center = (
         position[0],
         position[1],
         position[2] + height * 0.65,
     )
     num_planes_clamped = max(6, min(12, num_planes))
-    _add_leaf_card_canopy(bm, canopy_center, canopy_radius, num_planes_clamped, rng)
+    _add_leaf_card_canopy(
+        bm,
+        canopy_center,
+        canopy_radius,
+        num_planes_clamped,
+        rng,
+        species_row=species_variant,
+    )
 
     bm.to_mesh(mesh)
     bm.free()
 
     for poly in mesh.polygons:
         poly.use_smooth = True
+
+    # Alpha-cutout leaf material — shared across all trees of the same species
+    # so Blender batches draw calls on instanced foliage (Horizon ZD strategy).
+    leaf_mat_name = f"mat_leaf_card_species{species_variant}"
+    leaf_mat = bpy.data.materials.get(leaf_mat_name)
+    if leaf_mat is None:
+        leaf_mat = bpy.data.materials.new(name=leaf_mat_name)
+        leaf_mat.use_nodes = True
+        leaf_mat.blend_method = "CLIP"          # alpha cutout (no sorting artifacts)
+        leaf_mat.shadow_method = "CLIP"
+        leaf_mat.use_backface_culling = False    # backface duplicate handles normals;
+                                                # disable culling so shader is clean
+        if leaf_mat.node_tree:
+            bsdf = leaf_mat.node_tree.nodes.get("Principled BSDF")
+            if bsdf:
+                # Leaf green tinted by species: broadleaf bright, needle darker
+                _species_tint = [
+                    (0.18, 0.38, 0.12, 1.0),   # 0 broadleaf — mid green
+                    (0.10, 0.25, 0.08, 1.0),   # 1 needle — dark green
+                    (0.45, 0.55, 0.20, 1.0),   # 2 palm — yellow-green
+                    (0.22, 0.45, 0.15, 1.0),   # 3 fern/other
+                ]
+                tint = _species_tint[max(0, min(3, species_variant))]
+                bsdf.inputs["Base Color"].default_value = tint
+                if "Roughness" in bsdf.inputs:
+                    bsdf.inputs["Roughness"].default_value = 0.78
+                if "Subsurface Weight" in bsdf.inputs:
+                    bsdf.inputs["Subsurface Weight"].default_value = 0.15
+                elif "Subsurface" in bsdf.inputs:
+                    bsdf.inputs["Subsurface"].default_value = 0.15
+
+    # Slot 0: leaf card material; slot 1 would be bark (trunk)
+    # Both slots reference the same mesh — face material indices not split here
+    # since trunk and canopy share one mesh object for scatter-instance efficiency.
+    mesh.materials.append(leaf_mat)
 
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(obj)

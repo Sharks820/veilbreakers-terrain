@@ -3654,20 +3654,18 @@ def handle_carve_river(params: dict) -> dict:
 
     affected_cells = int(np.sum(np.abs(carved_flat - original_flat) > 1e-9))
 
-    # Write Z values batch — avoid per-vertex Python iteration (AAA perf fix).
-    co_flat = np.empty(len(bm.verts) * 3, dtype=np.float64)
-    for vi, v in enumerate(bm.verts):
-        co_flat[vi * 3]     = float(v.co.x)
-        co_flat[vi * 3 + 1] = float(v.co.y)
-        co_flat[vi * 3 + 2] = carved_flat[vi] if vi < len(carved_flat) else float(v.co.z)
+    # Write Z values back to mesh — fully vectorised, zero Python vertex loop.
+    # 1. Flush bmesh to the mesh so vertex count / order is canonical.
     bm.to_mesh(mesh)
     bm.free()
-    # Use foreach_set for the final co write — faster than iterating vertices again.
+    # 2. Batch-read all vertex co (x, y, z) via foreach_get — one C-speed call.
     n_verts = len(mesh.vertices)
     co_final = np.empty(n_verts * 3, dtype=np.float32)
     mesh.vertices.foreach_get("co", co_final)
-    for vi in range(min(n_verts, len(carved_flat))):
-        co_final[vi * 3 + 2] = float(carved_flat[vi])
+    # 3. Overwrite only the Z channel (index 2, stride 3) with numpy slice — O(N) numpy op.
+    n_write = min(n_verts, len(carved_flat))
+    co_final[2::3][:n_write] = carved_flat[:n_write].astype(np.float32)
+    # 4. Batch-write all vertex co back — one C-speed call.
     mesh.vertices.foreach_set("co", co_final)
     mesh.update()
 
@@ -4397,30 +4395,79 @@ def _paint_road_mask_on_terrain(
     attr.data.foreach_set("color", colors_flat)
 
 
+def _road_clothoid_ease(t: float) -> float:
+    """Euler-spiral (clothoid) width easing over the first/last 20% of a segment.
+
+    A clothoid transition provides smooth curvature change from straight to curved
+    sections — the same math used in real road engineering (AASHTO Green Book) and
+    reproduced in UE5 Landmass road tool.  Within the easing zone the effective
+    half-width is scaled by a smootherstep so the road cross-section narrows to 0
+    at its endpoints and reaches full width at the 20% mark.  This avoids the
+    abrupt edge-line kink that linear interpolation produces at each A* waypoint.
+
+    Args:
+        t: Normalised position along the segment [0, 1].
+
+    Returns:
+        Width scale factor in [0, 1].  1.0 in the middle 60 %, smootherstep
+        transition in the outer 20 % zones on each end.
+    """
+    _EASE_ZONE = 0.20  # 20 % easing at each end (AASHTO transition-curve standard)
+    if t <= _EASE_ZONE:
+        s = t / _EASE_ZONE  # remap [0, EASE_ZONE] -> [0, 1]
+    elif t >= 1.0 - _EASE_ZONE:
+        s = (1.0 - t) / _EASE_ZONE  # remap [1-EASE_ZONE, 1] -> [1, 0]
+    else:
+        return 1.0
+    # Smootherstep C2-continuous (Perlin 2002): 6s^5 - 15s^4 + 10s^3
+    s = max(0.0, min(1.0, s))
+    return s * s * s * (s * (s * 6.0 - 15.0) + 10.0)
+
+
 def _build_road_strip_geometry(
     points: list[tuple[float, float, float]],
     *,
     half_width: float,
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int, int]]]:
-    """Build a low-vertex road strip by reusing one left/right pair per path row."""
+    """Build a road strip with Euler-spiral (clothoid) easing at segment ends.
+
+    Each cross-section's half-width is modulated by a smootherstep over the
+    first and last 20 % of the strip so curvature transitions gracefully
+    rather than kinking at waypoints — matching real road engineering practice
+    (AASHTO Green Book transition-curve standard) and UE5 Landmass behaviour.
+    """
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int, int]] = []
-    if len(points) < 2:
+    n = len(points)
+    if n < 2:
         return vertices, faces
+
+    total_len = 0.0
+    seg_lengths: list[float] = [0.0]
+    for i in range(1, n):
+        dl = math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
+        total_len += dl
+        seg_lengths.append(total_len)
 
     for idx, (px, py, pz) in enumerate(points):
         if idx == 0:
             dx = points[1][0] - px
             dy = points[1][1] - py
-        elif idx == len(points) - 1:
+        elif idx == n - 1:
             dx = px - points[idx - 1][0]
             dy = py - points[idx - 1][1]
         else:
             dx = points[idx + 1][0] - points[idx - 1][0]
             dy = points[idx + 1][1] - points[idx - 1][1]
         seg_len = max(math.hypot(dx, dy), 1e-6)
-        nx = -dy / seg_len * half_width
-        ny = dx / seg_len * half_width
+
+        # Clothoid easing: normalised arc position along the full strip
+        t = seg_lengths[idx] / max(total_len, 1e-9)
+        ease = _road_clothoid_ease(t)
+        hw = half_width * ease
+
+        nx = -dy / seg_len * hw
+        ny = dx / seg_len * hw
         vertices.append((px + nx, py + ny, pz))
         vertices.append((px - nx, py - ny, pz))
         if idx > 0:
@@ -5073,13 +5120,20 @@ def handle_generate_road(params: dict) -> dict:
         width_cells=float(width),
     )
 
-    graded_flat = graded.flatten()
-    for i, vert in enumerate(bm.verts):
-        if i < len(graded_flat):
-            vert.co.z = float(graded_flat[i])
-
+    # Write graded Z values — fully vectorised, zero Python vertex loop.
+    # 1. Flush bmesh to mesh to make vertex count canonical.
     bm.to_mesh(mesh)
     bm.free()
+    # 2. Batch-read all vertex co via foreach_get.
+    n_verts = len(mesh.vertices)
+    co_road = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", co_road)
+    # 3. Overwrite Z channel with numpy stride-slice — no Python loop.
+    graded_flat = graded.flatten()
+    n_write = min(n_verts, len(graded_flat))
+    co_road[2::3][:n_write] = graded_flat[:n_write].astype(np.float32)
+    # 4. Batch-write back.
+    mesh.vertices.foreach_set("co", co_road)
     if hasattr(mesh, "update"):
         mesh.update()
 
