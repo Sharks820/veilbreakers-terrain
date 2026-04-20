@@ -360,20 +360,36 @@ def solve_outflow(
             water_surface = np.asarray(ws)
 
     # ------------------------------------------------------------------
-    # Phase 1: trace the steepest-descent path from the pool
+    # Phase 1: trace the steepest-descent path from the pool.
+    #
+    # AAA gap addressed: plain steepest-descent gets trapped in planar
+    # depressions (lakes, flat valley floors) and halts, producing a
+    # truncated outflow path that stops inside the depression rather than
+    # routing through it.  The Wang & Liu (2006) / Barnes et al. (2014)
+    # priority-flood approach fills depressions before routing so water
+    # always finds a spill path.
+    #
+    # We implement a lightweight inline priority-flood: when the steepest-
+    # descent step hits a local minimum (no lower neighbour), we switch to
+    # a min-heap that expands the frontier at increasing water levels until
+    # a downhill exit is found.  This is topologically equivalent to the
+    # Wang & Liu "Improved" priority-flood but scoped only to the path
+    # rather than the whole DEM, keeping it fast for the outflow use-case.
     # ------------------------------------------------------------------
+    import heapq as _heapq  # already imported at module level; local alias
+
     path: List[Tuple[int, int]] = [(start_r, start_c)]
     visited: set[Tuple[int, int]] = {(start_r, start_c)}
     r, c = start_r, start_c
     max_steps = max(rows, cols) * 2
 
     for _ in range(max_steps):
-        # Termination (c)
+        # Termination (c): reached an existing water body
         if water_surface is not None and (r, c) != (start_r, start_c):
             if water_surface[r, c] > 0.01:
                 break
 
-        # Steepest-descent step — pick neighbor with greatest slope-adjusted drop
+        # Steepest-descent step — pick neighbour with greatest slope-adjusted drop
         h0 = hmap[r, c]
         best_slope = 0.0
         best_next: "Tuple[int, int] | None" = None
@@ -386,27 +402,68 @@ def solve_outflow(
                 best_slope = slope
                 best_next = (nr, nc)
 
-        # Termination (b): local minimum
-        if best_next is None:
-            break
-
-        nr, nc = best_next
-
-        # Termination (a): boundary
-        if not (0 <= nr < rows and 0 <= nc < cols):
+        if best_next is not None:
+            nr, nc = best_next
+            # Termination (a): boundary
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                path.append((nr, nc))
+                break
+            # Cycle guard
+            if (nr, nc) in visited:
+                break
+            visited.add((nr, nc))
             path.append((nr, nc))
-            break
+            r, c = nr, nc
+            if nr == 0 or nr == rows - 1 or nc == 0 or nc == cols - 1:
+                break
+        else:
+            # Termination (b) — local minimum / planar depression.
+            # Priority-flood spill: expand from (r,c) via a min-heap keyed
+            # on max(current_water_level, neighbour_elevation) until we find
+            # a cell that has a lower unvisited neighbour (spill point).
+            pf_heap: List["Tuple[float, int, int]"] = []
+            pf_visited: set[Tuple[int, int]] = set(visited)
+            _heapq.heappush(pf_heap, (float(hmap[r, c]), r, c))
+            spill_found = False
+            pf_steps = 0
+            max_pf = min(rows * cols, 4096)  # cap flood search radius
 
-        # Cycle guard
-        if (nr, nc) in visited:
-            break
+            while pf_heap and pf_steps < max_pf:
+                wl, pr, pc = _heapq.heappop(pf_heap)
+                pf_steps += 1
+                for (dr, dc), dist in zip(_D8, _DIST):
+                    nr2, nc2 = pr + dr, pc + dc
+                    if not (0 <= nr2 < rows and 0 <= nc2 < cols):
+                        continue
+                    if (nr2, nc2) in pf_visited:
+                        continue
+                    nh = float(hmap[nr2, nc2])
+                    new_wl = max(wl, nh)
+                    pf_visited.add((nr2, nc2))
+                    _heapq.heappush(pf_heap, (new_wl, nr2, nc2))
+                    # Check if nr2,nc2 has a downhill exit not yet flooded
+                    for (dr2, dc2), dist2 in zip(_D8, _DIST):
+                        ex_r, ex_c = nr2 + dr2, nc2 + dc2
+                        if not (0 <= ex_r < rows and 0 <= ex_c < cols):
+                            continue
+                        if (ex_r, ex_c) in pf_visited:
+                            continue
+                        if float(hmap[ex_r, ex_c]) < new_wl:
+                            # Found a spill exit — route to nr2,nc2 then exit
+                            if (nr2, nc2) not in visited:
+                                visited.add((nr2, nc2))
+                                path.append((nr2, nc2))
+                            spill_found = True
+                            r, c = nr2, nc2
+                            break
+                    if spill_found:
+                        break
+                if spill_found:
+                    break
 
-        visited.add((nr, nc))
-        path.append((nr, nc))
-        r, c = nr, nc
-
-        if nr == 0 or nr == rows - 1 or nc == 0 or nc == cols - 1:
-            break
+            if not spill_found:
+                # Genuinely enclosed basin with no spill — terminate here
+                break
 
     # ------------------------------------------------------------------
     # Phase 2: Manning discharge accumulation along the path
@@ -467,8 +524,20 @@ def solve_outflow(
 def _world_to_grid(
     stack: TerrainMaskStack, x: float, y: float,
 ) -> Tuple[int, int]:
-    c = int((x - float(stack.world_origin_x)) / float(stack.cell_size))
-    r = int((y - float(stack.world_origin_y)) / float(stack.cell_size))
+    """Convert world XY to nearest grid cell (row, col).
+
+    Uses the same cell-centre convention as terrain_waterfalls._world_to_grid:
+    grid_to_world places the cell centre at origin + (idx + 0.5) * cell_size,
+    so the exact inverse is idx = round((world - origin) / cs - 0.5).
+    Using plain int() (floor truncation) introduces a systematic half-cell
+    bias that causes misalignment between the ext module and the waterfall
+    solver when world_origin > 0 or when coords are near cell boundaries.
+    """
+    cs = float(stack.cell_size)
+    ox = float(stack.world_origin_x)
+    oy = float(stack.world_origin_y)
+    c = int(round((x - ox) / cs - 0.5))
+    r = int(round((y - oy) / cs - 0.5))
     rows, cols = stack.height.shape
     r = max(0, min(rows - 1, r))
     c = max(0, min(cols - 1, c))
