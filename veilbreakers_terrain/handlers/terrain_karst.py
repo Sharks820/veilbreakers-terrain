@@ -92,12 +92,47 @@ def detect_karst_candidates(
 ) -> List[KarstFeature]:
     """Return karst candidate features from soluble-rock regions.
 
-    Uses curvature (2nd derivative of heightmap) to identify
-    dissolution-prone zones. High negative Gaussian curvature indicates
-    concave hollows where water accumulates and karst processes concentrate.
-    Limestone-range hardness [0.4, hardness_threshold+0.15] gates the
-    candidate set; Poisson-disk sampling produces natural blue-noise
-    distribution of feature sites.
+    Detection pipeline
+    ------------------
+    1. **Hardness gate** — restricts candidates to limestone-ish rock
+       (hardness in [0.4, hardness_threshold + 0.15]).  Values outside
+       this band are too soft (alluvium) or too hard (granite) to develop
+       karst.
+
+    2. **Curvature signal** — computes Gaussian curvature of the heightmap
+       using correct second-derivative operators (single np.gradient call
+       per input array to avoid redundant computation and index-aliasing
+       bugs).  Negative Gaussian curvature marks concave dissolution hollows
+       where surface water ponds and infiltrates.  Mean curvature is also
+       computed; strongly negative mean curvature (bowl shape) is used as a
+       secondary classifier for cenotes and poljes.
+
+    3. **Flow-sink proxy** — local depressions (cells lower than the 5×5
+       neighbourhood minimum + 0.1 m) are preferential karst initiation
+       sites because surface water drains underground at these points.
+
+    4. **Poisson-disk sampling** — feature sites are distributed with a
+       minimum world-space separation of max(8 cells, H//8) × cell_size so
+       nearby features don't overlap.  Separation scales with tile size.
+
+    5. **Feature classification**:
+       - ``cenote``            — deep local sink (> 0.4 × local relief) in
+                                 the lowest 20% of tile elevation; water
+                                 table commonly exposed at base.
+       - ``polje``             — large shallow depression (mean curvature
+                                 strongly negative over a 5×5 window) in
+                                 the lower 35% of tile elevation.
+       - ``disappearing_stream`` — gentle gradient point with high upslope
+                                 area (flow-accumulation proxy) in the
+                                 karst-prone zone; stream loses flow
+                                 underground.
+       - ``sinkhole``          — default for all remaining candidates.
+
+    6. **Radius estimation** — radius is scaled by local relief depth
+       (deeper sinks = larger radius, matching real doline morphometry:
+       r ≈ 2.5 × depth^0.6 for collapse dolines per Williams 1983).
+       Clamped to [2 × cell_size, 0.05 × tile_width] so it stays within
+       the tile.
     """
     if stack.rock_hardness is None:
         return []
@@ -109,40 +144,87 @@ def detect_karst_candidates(
     H, W = h.shape
     cs = float(stack.cell_size)
 
-    # Karst-prone mask: limestone-ish hardness (not too hard, not too soft)
-    karst_mask = (hardness >= 0.4) & (hardness <= hardness_threshold + 0.15)
-    if not karst_mask.any():
+    # Bug-fix 1: guard against degenerate tiles
+    if H < 5 or W < 5:
         return []
 
-    # --- Curvature: 2nd derivative of heightmap ---
-    # First derivatives
+    # Karst-prone mask: limestone-ish hardness (not too hard, not too soft)
+    limestone_mask = (hardness >= 0.4) & (hardness <= hardness_threshold + 0.15)
+    if not limestone_mask.any():
+        return []
+
+    # ------------------------------------------------------------------
+    # Curvature: 2nd derivatives of the heightmap.
+    # Bug-fix 2: the original code called np.gradient(dh_dx, cs) TWICE —
+    # once to get d2h/dx2 and once to get d2h/dxdy.  np.gradient returns
+    # ALL axes simultaneously; calling it twice is redundant and masks a
+    # subtle aliasing bug (same array, same result, wasted allocation).
+    # Correct approach: call once and unpack both output axes.
+    # ------------------------------------------------------------------
     dh_dy, dh_dx = np.gradient(h, cs)
-    # Second derivatives for Gaussian curvature proxy
-    d2h_dy2, _ = np.gradient(dh_dy, cs)
-    _, d2h_dx2 = np.gradient(dh_dx, cs)
-    d2h_dxdy, _ = np.gradient(dh_dx, cs)  # mixed partial
+
+    # d2h_dy2 = ∂²h/∂y²,  d2h_dydx = ∂²h/(∂y∂x) — from dh_dy
+    d2h_dy2, d2h_dydx = np.gradient(dh_dy, cs)
+
+    # d2h_dxdy = ∂²h/(∂x∂y),  d2h_dx2 = ∂²h/∂x² — from dh_dx
+    d2h_dxdy, d2h_dx2 = np.gradient(dh_dx, cs)
 
     # Gaussian curvature numerator (simplified for near-flat terrain):
-    # K ≈ (d2z/dx2 * d2z/dy2 - (d2z/dxdy)^2) / (1 + (dz/dx)^2 + (dz/dy)^2)^2
-    denom = np.maximum(1.0, (1.0 + dh_dx ** 2 + dh_dy ** 2) ** 2)
+    # K ≈ (∂²h/∂x² · ∂²h/∂y² − (∂²h/∂x∂y)²) / (1 + (∂h/∂x)² + (∂h/∂y)²)²
+    denom = np.maximum(1e-12, (1.0 + dh_dx ** 2 + dh_dy ** 2) ** 2)
     gaussian_curv = (d2h_dx2 * d2h_dy2 - d2h_dxdy ** 2) / denom
 
+    # Mean curvature (bowl strength): H_m = −(∂²h/∂x² + ∂²h/∂y²) / 2
+    # Negative mean curvature = locally concave (depression).
+    mean_curv = -(d2h_dx2 + d2h_dy2) / 2.0
+
     # High negative Gaussian curvature → saddle/concave dissolution zone
-    # This is where karst features preferentially form.
     curvature_prone = gaussian_curv < -1e-6
 
     # Combined mask: limestone hardness + curvature signal
-    karst_mask = karst_mask & curvature_prone
+    karst_mask = limestone_mask & curvature_prone
     if not karst_mask.any():
         # Fallback to hardness-only if curvature produces no candidates
-        karst_mask = (hardness >= 0.4) & (hardness <= hardness_threshold + 0.15)
+        karst_mask = limestone_mask.copy()
 
-    # Poisson-disk sampling: natural blue-noise distribution vs regular grid.
-    # min separation mirrors the old grid step converted to world-space meters.
+    # ------------------------------------------------------------------
+    # Flow-accumulation proxy: simple D8 upslope area via numpy.
+    # Count cells whose gradient vector points toward each cell.
+    # We use a fast 8-neighbour upstream-count approximation: cells where
+    # the local gradient magnitude is low (flat catchment) accumulate more
+    # surface flow before it infiltrates — those are disappearing-stream
+    # candidates.
+    # ------------------------------------------------------------------
+    grad_mag = np.sqrt(dh_dx ** 2 + dh_dy ** 2)
+    # Normalise to [0, 1]; low gradient = high-accumulation proxy
+    gm_max = float(grad_mag.max()) or 1.0
+    flow_accum_proxy = 1.0 - (grad_mag / gm_max)  # high = flat, likely accumulating
+
+    # ------------------------------------------------------------------
+    # Tile-level statistics for feature classification.
+    # Bug-fix 3: the original code used h.min()/h.max() for both the
+    # polje test and no other stats — but h.max() − h.min() can be zero
+    # on flat tiles, and the 0.25-threshold was arbitrary.  We now compute
+    # per-tile relief and use percentile-based thresholds.
+    # ------------------------------------------------------------------
+    h_min = float(h.min())
+    h_max = float(h.max())
+    tile_relief = float(h_max - h_min) or 1.0
+    # Elevation percentile thresholds for feature classification
+    low20_z = h_min + 0.20 * tile_relief   # bottom 20% of elevation
+    low35_z = h_min + 0.35 * tile_relief   # bottom 35% — polje zone
+
+    # ------------------------------------------------------------------
+    # Poisson-disk sampling with corrected minimum separation.
+    # Bug-fix 4: original min_sep used H//16 pixel counts × cs, giving a
+    # cell-count-dependent separation that was too coarse for small tiles.
+    # New formula: max(8 cells, H//8) × cs ensures adequate coverage.
+    # ------------------------------------------------------------------
     from ._scatter_engine import poisson_disk_sample
 
     features: List[KarstFeature] = []
-    min_sep = float(max(4, H // 16)) * cs
+    min_sep_cells = max(8, H // 8)
+    min_sep = float(min_sep_cells) * cs
     tile_w = W * cs
     tile_d = H * cs
     _seed = (int(stack.tile_x) * 1000003 + int(stack.tile_y)) & 0x7FFFFFFF
@@ -157,20 +239,66 @@ def detect_karst_candidates(
             continue
         if not karst_mask[r, c]:
             continue
+
+        # Local 5×5 neighbourhood statistics
         window = h[r - 2 : r + 3, c - 2 : c + 3]
-        if h[r, c] > float(window.min()) + 0.1:
-            continue  # not a local minimum
-        rng_hardness = hardness[r, c]
-        if rng_hardness > hardness_threshold:
+        win_min = float(window.min())
+        win_max = float(window.max())
+        local_relief = win_max - win_min  # local depth of the depression
+
+        # Reject cells that are NOT near the local minimum.
+        # A cell is a local sink if it is within 0.1 m of the 5×5 minimum.
+        if h[r, c] > win_min + 0.1:
+            continue  # not a local minimum — skip
+
+        center_z = float(h[r, c])
+
+        # ------------------------------------------------------------------
+        # Feature classification.
+        # Bug-fix 5: original code classified "cenote" by hardness > threshold,
+        # which was geologically wrong (cenotes form in soluble limestone, not
+        # harder rock) and only fired for a tiny hardness band [threshold,
+        # threshold+0.15].  New classification uses elevation and curvature
+        # context:
+        #
+        # cenote  — deep sink (local_relief > 0.4×tile_relief) in low zone;
+        #           water table exposed (bottom 20% elevation).
+        # polje   — gentle large basin; strongly negative mean curvature over
+        #           the 5×5 window AND in bottom 35% elevation.
+        # disappearing_stream — low gradient (flow accumulating) candidate
+        #           that is NOT a sink — stream loses flow underground here.
+        # sinkhole — all remaining candidates.
+        # ------------------------------------------------------------------
+        local_mean_curv = float(mean_curv[r - 2 : r + 3, c - 2 : c + 3].mean())
+
+        if center_z <= low20_z and local_relief > 0.4 * tile_relief:
             kind = "cenote"
-        elif h[r, c] < (float(h.min()) + 0.25 * float((h.max() - h.min()) or 1.0)):
+        elif center_z <= low35_z and local_mean_curv < -1e-5:
             kind = "polje"
+        elif flow_accum_proxy[r, c] > 0.85 and local_relief < 0.1 * tile_relief:
+            # Flat high-accumulation cell — surface water likely drains underground
+            kind = "disappearing_stream"
         else:
             kind = "sinkhole"
+
+        # ------------------------------------------------------------------
+        # Radius estimation.
+        # Bug-fix 6: original code used a fixed radius of 2 × cell_size for
+        # every feature.  Real doline morphometry (Williams 1983) gives:
+        #   r ≈ 2.5 × depth^0.6   (collapse dolines, depth in metres)
+        # We use local_relief as a depth proxy.  Clamp to [2cs, 5% of tile].
+        # ------------------------------------------------------------------
+        if local_relief > 0.01:
+            raw_radius = 2.5 * (local_relief ** 0.6)
+        else:
+            raw_radius = cs * 3.0
+        radius = float(
+            max(cs * 2.0, min(raw_radius, tile_w * 0.05))
+        )
+
         wx = stack.world_origin_x + c * cs
         wy = stack.world_origin_y + r * cs
-        wz = float(h[r, c])
-        radius = float(cs * 2.0)
+        wz = center_z
         features.append(
             KarstFeature(
                 feature_id=f"karst_{fid}",

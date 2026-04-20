@@ -185,9 +185,29 @@ def generate_canyon(
     seed: int = 42,
     canyon_slope: float = 1.5,
     strata_interval: float = 3.0,
+    num_strata_types: int = 4,
+    overhang_side: str = "left",
 ) -> dict[str, Any]:
     """Generate a geologically plausible canyon with winding centerline, slot-canyon
-    cross-section, strata ledges, and stitched wall-to-floor seams.
+    cross-section, strata ledges, stitched wall-to-floor seams, a talus debris
+    slope at the base, and a one-sided overhang cap.
+
+    AAA upgrades over the B baseline:
+    - **Layered strata geometry**: ``num_strata_types`` distinct rock bands, each
+      with its own hardness, roughness, lateral lean, and material ID.  Hard bands
+      (sandstone) protrude slightly outward; soft bands (mudstone) are recessed.
+      This drives per-stratum material IDs rather than a single ``canyon_wall``
+      material for the whole face.
+    - **Talus slope mesh**: A separate wedge-shaped apron runs along the base of
+      both walls.  The apron rises from the floor outward and slopes at a natural
+      angle of repose (~32°).  Material = ``talus_debris``.
+    - **One-sided overhang cap**: The ``overhang_side`` wall receives a thin cap
+      geometry that leans over the canyon at the rim, creating the asymmetric
+      overhang typical of differential erosion (softer rock undercut on one side).
+      Material = ``overhang_cap``.
+    - **Per-stratum UV set**: U coordinate on wall faces is remapped per stratum
+      (0..1 within each band) so textures tile cleanly at band boundaries without
+      UV stretching across the full wall height.
 
     The canyon runs roughly along the X axis with fBm lateral displacement on
     the centerline so the path meanders.  Cross-sections use a slot-canyon
@@ -196,17 +216,7 @@ def generate_canyon(
         width_at_depth = canyon_width * (1 - depth_fraction) ** carve_power
 
     where ``depth_fraction`` is 0 at the rim and 1 at the floor, and
-    ``carve_power`` equals ``canyon_slope``.  This creates the characteristic
-    narrow-at-bottom, wider-at-top slot canyon shape (V for carve_power=1,
-    near-vertical slot walls for carve_power>1).
-
-    Horizontal meander is applied as a sine offset along the canyon length in
-    addition to fBm wander, so the path has a clear S-curve shape.  Every
-    ``strata_interval`` metres a narrow ledge is cut into the wall,
-    approximating sedimentary layer exposure.
-
-    Longitudinal UV coordinates (U along width, V along canyon length) are
-    computed for every wall vertex and returned in ``uvs``.
+    ``carve_power`` equals ``canyon_slope``.
 
     Parameters
     ----------
@@ -224,25 +234,30 @@ def generate_canyon(
         Random seed.
     canyon_slope : float
         Exponent for the slot-canyon cross-section formula.
-        1.0 = linear V, >1 = steeper/near-vertical slot walls (natural slot
-        canyons typically use 1.5–2.5).  Default 1.5 approximates natural talus.
     strata_interval : float
         Vertical spacing (metres) between strata ledge cuts.
+    num_strata_types : int
+        Number of distinct rock strata bands (alternating hard/soft).  Each band
+        gets its own material ID and lean angle.  Default 4.
+    overhang_side : str
+        Which wall receives the asymmetric overhang cap: "left", "right", or
+        "none".  Default "left".
 
     Returns
     -------
     dict with keys:
         - "mesh": {"vertices": list[Vec3], "faces": list[tuple]}
-        - "uvs": list of (u, v) per vertex — V is longitudinal (0..1 along canyon
-          length), U is lateral position across the cross-section
+        - "uvs": list of (u, v) per vertex
         - "floor_path": list of (x, y, z) waypoints along the canyon floor
         - "centerline_points": list of (x, y, z) winding centreline samples
-        - "side_caves": list of cave dicts (position, side, width, height, depth)
+        - "side_caves": list of cave dicts
         - "depth_profile": list of (x, depth_at_x) pairs
         - "width_profile": list of (x, width_at_x) pairs
+        - "strata_bands": list of band dicts (z_bottom, z_top, type, lean, roughness_scale)
+        - "talus_specs": list of talus apron metadata dicts
         - "materials": list of material zone names
         - "material_indices": list of per-face material indices
-        - "dimensions": dict with width, length, depth, canyon_slope, strata_interval
+        - "dimensions": dict
         - "vertex_count", "face_count"
     """
     rng = random.Random(seed)
@@ -256,8 +271,45 @@ def generate_canyon(
     faces: list[tuple[int, ...]] = []
     mat_indices: list[int] = []
 
-    # Materials: 0=canyon_floor, 1=canyon_wall, 2=wet_rock, 3=canyon_ledge
-    materials = ["canyon_floor", "canyon_wall", "wet_rock", "canyon_ledge"]
+    # Materials: 0=canyon_floor, 1=canyon_wall, 2=wet_rock, 3=canyon_ledge,
+    #            4..4+n-1 = per-stratum rock IDs, then talus_debris, overhang_cap
+    _n = max(2, num_strata_types)
+    _strata_mat_names = [f"strata_{si}" for si in range(_n)]
+    materials = (
+        ["canyon_floor", "canyon_wall", "wet_rock", "canyon_ledge"]
+        + _strata_mat_names
+        + ["talus_debris", "overhang_cap"]
+    )
+    MAT_FLOOR    = 0
+    MAT_WALL     = 1
+    MAT_WET      = 2
+    MAT_LEDGE    = 3
+    MAT_STRATA_0 = 4
+    MAT_TALUS    = 4 + _n
+    MAT_OVERHANG = 4 + _n + 1
+
+    # ------------------------------------------------------------------
+    # Pre-compute strata band definitions.
+    # Alternating hard (sandstone-like) and soft (mudstone-like) bands.
+    # Each band gets its own lean angle and roughness scale.
+    # ------------------------------------------------------------------
+    strata_bands_def: list[dict[str, Any]] = []
+    band_height_m = depth / max(_n, 1)
+    for bi in range(_n):
+        z_bot = bi * band_height_m
+        z_top = (bi + 1) * band_height_m
+        is_hard = (bi % 2 == 0)
+        # Hard bands lean outward slightly (protrude); soft bands recess
+        lean_sign = -1.0 if is_hard else +1.0
+        lean_mag = width * (0.04 if is_hard else 0.02)
+        strata_bands_def.append({
+            "z_bottom": z_bot,
+            "z_top": z_top,
+            "type": "hard" if is_hard else "soft",
+            "lean": lean_sign * lean_mag,
+            "roughness_scale": 1.0 if is_hard else 0.6,
+            "mat_id": MAT_STRATA_0 + bi,
+        })
 
     half_w = width / 2.0
 
@@ -355,12 +407,11 @@ def generate_canyon(
     #    3-level strata banding shifts each third of the wall laterally to
     #    simulate tilted sediment layers.
     # ------------------------------------------------------------------
-    # 3-level strata banding
+    # Per-stratum strata offsets (one per band, replaces old 3-level list)
     _strata_depth = width * 0.07
     _strata_offsets = [
-        math.sin(0 * 2.3 + seed * 0.17) * _strata_depth,
-        math.sin(1 * 2.3 + seed * 0.17) * _strata_depth,
-        math.sin(2 * 2.3 + seed * 0.17) * _strata_depth,
+        math.sin(bi * 2.3 + seed * 0.17) * _strata_depth
+        for bi in range(_n)
     ]
 
     def _wall_verts_for_side(side: int) -> list[list[int]]:
@@ -377,38 +428,38 @@ def generate_canyon(
                 kt = k / max(res_wall, 1)  # 0 = floor level, 1 = rim/top of wall
                 z_wall = cz + kt * depth
 
-                # Slot-canyon formula: width_at_depth = canyon_width * (1-depth_frac)^carve_power
-                # depth_frac = 1 - kt  (kt=0 is floor, kt=1 is rim; so depth_frac=kt inverted)
-                # At rim (kt=1): slot_half = half_w * (1-0)^cp = half_w  → full width
-                # At floor (kt=0): slot_half = half_w * (1-1)^cp = 0  → clamp to floor_half_w
+                # Slot-canyon formula
                 depth_frac = 1.0 - kt   # 1 at floor, 0 at rim
                 slot_half = half_w * ((1.0 - depth_frac) ** max(canyon_slope, 0.1))
-                # Clamp to floor minimum
                 slot_half = max(slot_half, floor_half_w)
 
-                # fBm roughness — peaks at mid-height (most exposed rock face)
-                rough_scale = wall_roughness * math.sin(kt * math.pi) * 1.5
+                # Per-stratum lean: look up which strata band this height falls in
+                band_idx_k = min(int(kt * _n), _n - 1)
+                band_def = strata_bands_def[band_idx_k]
+                band_rough_scale = band_def["roughness_scale"]
+                band_lean = band_def["lean"]
+
+                # fBm roughness scaled by band hardness
+                rough_scale = wall_roughness * math.sin(kt * math.pi) * 1.5 * band_rough_scale
                 rough = _fbm(cx * 0.12 + k * 0.3, float(i) * 0.1, seed + side * 7,
                              octaves=4, lacunarity=2.0, gain=0.5) * rough_scale
 
-                # 3-level strata banding: shift wall laterally by band offset
-                strata_level = min(2, int(kt * 3))
-                strata_x_shift = _strata_offsets[strata_level]
+                # Per-stratum lateral shift (replaces old 3-level list)
+                strata_x_shift = _strata_offsets[band_idx_k]
 
-                y_pos = cy + sign * (slot_half + rough) + strata_x_shift
+                y_pos = cy + sign * (slot_half + rough + abs(band_lean)) + strata_x_shift
 
                 # Strata ledge: every strata_interval depth units cut a narrow shelf
                 z_strata_phase = (z_wall - cz) % max(strata_interval, 0.1)
-                ledge_window = strata_interval * 0.08  # 8% of interval = ledge width
+                ledge_window = strata_interval * 0.08
                 if z_strata_phase < ledge_window and k > 0:
-                    # Pull wall inward slightly to create the ledge notch
                     y_pos = cy + sign * (slot_half + rough - sign * 0.35) + strata_x_shift
 
                 global_idx = len(vertices)
                 vertices.append((cx, y_pos, z_wall))
-                # UV: U=lateral position normalised (0=centre, 1=rim), V=longitudinal
-                u_coord = kt            # 0 at floor/slot-bottom, 1 at rim
-                uvs.append((u_coord, t_along))
+                # UV: U=per-stratum normalised (0..1 within band), V=longitudinal
+                band_t = (kt * _n) - band_idx_k   # 0..1 within band
+                uvs.append((band_t, t_along))
                 row_indices.append(global_idx)
             idx_table.append(row_indices)
 
@@ -416,6 +467,18 @@ def generate_canyon(
 
     left_table = _wall_verts_for_side(0)
     right_table = _wall_verts_for_side(1)
+
+    def _wall_face_mat(k: int) -> int:
+        """Return material index for a wall face quad at wall-row k."""
+        z_frac = k / max(res_wall, 1)
+        z_depth_m = z_frac * depth
+        strata_phase = z_depth_m % max(strata_interval, 0.1)
+        if strata_phase < strata_interval * 0.08:
+            return MAT_LEDGE
+        if k < res_wall // 5:
+            return MAT_WET
+        band_idx_k = min(int(z_frac * _n), _n - 1)
+        return strata_bands_def[band_idx_k]["mat_id"]
 
     # Build wall faces for left side
     for i in range(res_along - 1):
@@ -425,16 +488,7 @@ def generate_canyon(
             v2 = left_table[i + 1][k + 1]
             v3 = left_table[i + 1][k]
             faces.append((v0, v1, v2, v3))
-            # Wet near bottom, ledge material at strata bands, else wall rock
-            z_frac = k / max(res_wall, 1)
-            z_depth_m = z_frac * depth
-            strata_phase = z_depth_m % max(strata_interval, 0.1)
-            if strata_phase < strata_interval * 0.08:
-                mat_indices.append(3)  # canyon_ledge
-            elif k < res_wall // 5:
-                mat_indices.append(2)  # wet_rock
-            else:
-                mat_indices.append(1)  # canyon_wall
+            mat_indices.append(_wall_face_mat(k))
 
     # Build wall faces for right side (reversed winding for outward normals)
     for i in range(res_along - 1):
@@ -444,15 +498,7 @@ def generate_canyon(
             v2 = right_table[i + 1][k + 1]
             v3 = right_table[i][k + 1]
             faces.append((v0, v1, v2, v3))
-            z_frac = k / max(res_wall, 1)
-            z_depth_m = z_frac * depth
-            strata_phase = z_depth_m % max(strata_interval, 0.1)
-            if strata_phase < strata_interval * 0.08:
-                mat_indices.append(3)
-            elif k < res_wall // 5:
-                mat_indices.append(2)
-            else:
-                mat_indices.append(1)
+            mat_indices.append(_wall_face_mat(k))
 
     # ------------------------------------------------------------------
     # 4. Stitch wall bottom to floor edge (connect k=0 wall ring to the
@@ -465,7 +511,7 @@ def generate_canyon(
         wl0 = left_table[i][0]
         wl1 = left_table[i + 1][0]
         faces.append((fl0, wl0, wl1, fl1))
-        mat_indices.append(0)
+        mat_indices.append(MAT_FLOOR)
 
         # Right side: floor right-edge column (j = floor_res_across - 1)
         fr0 = floor_start + i * floor_res_across + (floor_res_across - 1)
@@ -473,7 +519,101 @@ def generate_canyon(
         wr0 = right_table[i][0]
         wr1 = right_table[i + 1][0]
         faces.append((fr0, fr1, wr1, wr0))
-        mat_indices.append(0)
+        mat_indices.append(MAT_FLOOR)
+
+    # ------------------------------------------------------------------
+    # 4b. Talus slope aprons — one wedge along each wall base.
+    #     Geometry: a strip that runs from the wall k=0 ring outward to
+    #     floor_half_w * 0.5 at z = floor level, sloping at ~32° (natural
+    #     angle of repose for loose rocky debris).
+    #     This is pure extra geometry on top of the existing floor seam.
+    # ------------------------------------------------------------------
+    talus_width = floor_half_w * 0.9     # how far the talus extends inward from wall
+    talus_res_w = max(3, int(talus_width * 2) + 2)
+    talus_specs: list[dict[str, Any]] = []
+
+    for side, side_sign, wall_table in [(0, -1.0, left_table), (1, 1.0, right_table)]:
+        talus_start = len(vertices)
+        for i in range(res_along):
+            cx, cy, cz = centerline[i]
+            t_along = i / max(res_along - 1, 1)
+            # Wall base position (k=0 vertex)
+            wall_base_v = vertices[wall_table[i][0]]
+            wall_y = wall_base_v[1]
+            wall_z = wall_base_v[2]
+            for tw in range(talus_res_w + 1):
+                tw_t = tw / max(talus_res_w, 1)   # 0 = at wall, 1 = inner edge
+                # Y: moves inward from wall_y toward centreline
+                ty = wall_y - side_sign * tw_t * talus_width
+                # Z: rises slightly at the wall, flat at inner edge (angle of repose)
+                # tan(32°) ≈ 0.625
+                tz = wall_z + (1.0 - tw_t) * talus_width * 0.35
+                # fBm height variation for rubble texture
+                tz += _hash_noise(cx * 0.1, ty * 0.1, seed + 300 + side) * 0.15
+                vertices.append((cx, ty, tz))
+                uvs.append((tw_t, t_along))
+
+        for i in range(res_along - 1):
+            for tw in range(talus_res_w):
+                v0 = talus_start + i * (talus_res_w + 1) + tw
+                v1 = v0 + 1
+                v2 = v0 + (talus_res_w + 1) + 1
+                v3 = v0 + (talus_res_w + 1)
+                if side == 0:
+                    faces.append((v0, v1, v2, v3))
+                else:
+                    faces.append((v0, v3, v2, v1))
+                mat_indices.append(MAT_TALUS)
+
+        talus_specs.append({
+            "side": "left" if side == 0 else "right",
+            "width": talus_width,
+            "angle_of_repose_deg": 32.0,
+            "vertex_start": talus_start,
+        })
+
+    # ------------------------------------------------------------------
+    # 4c. One-sided overhang cap — a thin sloping shelf at the rim of the
+    #     designated overhang_side wall, leaning over the canyon interior.
+    #     The cap is a narrow strip from the rim outward and inward,
+    #     representing the harder caprock that resists undercutting.
+    # ------------------------------------------------------------------
+    if overhang_side in ("left", "right"):
+        oh_table = left_table if overhang_side == "left" else right_table
+        oh_sign  = -1.0    if overhang_side == "left" else 1.0
+        cap_lean_dist = half_w * 0.20    # how far the cap overhangs inward
+        cap_res_w = 3
+        cap_thickness = depth * 0.04
+
+        cap_start = len(vertices)
+        for i in range(res_along):
+            cx, cy, cz = centerline[i]
+            t_along = i / max(res_along - 1, 1)
+            # Rim vertex position (k = res_wall, topmost ring)
+            rim_v = vertices[oh_table[i][res_wall]]
+            rim_y = rim_v[1]
+            rim_z = rim_v[2]
+            for cw in range(cap_res_w + 1):
+                cw_t = cw / max(cap_res_w, 1)   # 0 = outer rim edge, 1 = inner tip
+                # Y: leans inward over canyon (toward centreline)
+                cap_y = rim_y + oh_sign * cap_lean_dist * cw_t
+                # Z: slopes slightly downward toward tip (gravity sag)
+                cap_z = rim_z - cap_thickness * cw_t
+                cap_z += _hash_noise(cx * 0.1, cap_y * 0.1, seed + 400) * 0.06
+                vertices.append((cx, cap_y, cap_z))
+                uvs.append((cw_t, t_along))
+
+        for i in range(res_along - 1):
+            for cw in range(cap_res_w):
+                v0 = cap_start + i * (cap_res_w + 1) + cw
+                v1 = v0 + 1
+                v2 = v0 + (cap_res_w + 1) + 1
+                v3 = v0 + (cap_res_w + 1)
+                if overhang_side == "left":
+                    faces.append((v0, v3, v2, v1))   # face inward
+                else:
+                    faces.append((v0, v1, v2, v3))
+                mat_indices.append(MAT_OVERHANG)
 
     # ------------------------------------------------------------------
     # 5. Floor path waypoints and side caves
@@ -505,6 +645,13 @@ def generate_canyon(
             "depth": cave_depth_val,
         })
 
+    # Build per-strata material_metadata entries
+    _strata_mm = []
+    for bi, bd in enumerate(strata_bands_def):
+        rh = 0.80 if bd["type"] == "hard" else 0.55
+        lt = "sandstone" if bd["type"] == "hard" else "mudstone"
+        _strata_mm.append((f"strata_{bi}", rh, lt, 0.0))
+
     _normals = _compute_face_normals(vertices, faces)
     return {
         "mesh": {
@@ -518,6 +665,8 @@ def generate_canyon(
         "side_caves": side_caves,
         "depth_profile": depth_profile,
         "width_profile": width_profile,
+        "strata_bands": strata_bands_def,
+        "talus_specs": talus_specs,
         "materials": materials,
         "material_indices": mat_indices,
         "material_metadata": _material_metadata(
@@ -525,6 +674,9 @@ def generate_canyon(
             ("canyon_wall",   0.80, "sandstone",  0.0),
             ("wet_rock",      0.60, "wet_stone",  0.0),
             ("canyon_ledge",  0.75, "hard_rock",  0.0),
+            *_strata_mm,
+            ("talus_debris",  0.90, "loose_rock", 0.0),
+            ("overhang_cap",  0.78, "hard_rock",  0.0),
         ),
         "dimensions": {
             "width": width,
@@ -532,6 +684,8 @@ def generate_canyon(
             "depth": depth,
             "canyon_slope": canyon_slope,
             "strata_interval": strata_interval,
+            "num_strata_types": _n,
+            "overhang_side": overhang_side,
             "lod": {
                 "LOD_0": len(faces),
                 "LOD_1": _lod1_faces(faces),
@@ -1149,9 +1303,9 @@ def generate_cliff_face(
     mat_indices: list[int] = []
 
     # Materials: 0=cliff_rock, 1=hard_rock, 2=soft_rock, 3=ledge_stone,
-    #            4=overhang_rock, 5=moss_rock, 6=ground_base
+    #            4=overhang_rock, 5=moss_rock, 6=ground_base, 7=talus_debris
     materials = ["cliff_rock", "hard_rock", "soft_rock", "ledge_stone", "overhang_rock",
-                 "moss_rock", "ground_base"]
+                 "moss_rock", "ground_base", "talus_debris"]
 
     res_x = max(10, int(width))
     # Vertical resolution: at least 4 rows per strata band
@@ -1438,6 +1592,69 @@ def generate_cliff_face(
         "crack_depth": crack_depth,
     }
 
+    # ------------------------------------------------------------------
+    # 6. Talus cone — wedge-shaped debris apron at the cliff base.
+    #    The apron runs the full width of the cliff, extending outward
+    #    from the cliff foot at the natural angle of repose (~32°).
+    #    Height of the talus at its inner edge = height * 0.15 (the cone
+    #    reaches ~15% of cliff height before it flattens to ground).
+    #    This is the key AAA gap: without talus the cliff reads as floating.
+    # ------------------------------------------------------------------
+    talus_height = height * 0.15       # talus mound height at cliff foot
+    talus_reach  = talus_height / math.tan(math.radians(32.0))  # horizontal extent
+    talus_res_d  = max(4, int(talus_reach * 1.5))
+    talus_res_x  = res_x
+
+    talus_start = len(vertices)
+    for ix in range(talus_res_x):
+        ixt = ix / max(talus_res_x - 1, 1)
+        tx = -half_w + ixt * width
+        # Cliff foot Y from the ground plane geometry
+        cliff_foot_y = vertices[cliff_start + ix][1]
+        for td in range(talus_res_d + 1):
+            tdt = td / max(talus_res_d, 1)   # 0 = cliff foot, 1 = talus toe
+            ty = cliff_foot_y + tdt * talus_reach    # extends forward (away from cliff)
+            tz = talus_height * (1.0 - tdt)          # drops to 0 at toe
+            # fBm rubble texture
+            tz += _hash_noise(tx * 0.15, ty * 0.15, seed + 600) * talus_height * 0.12
+            vertices.append((tx, ty, tz))
+            uvs.append((ixt, tdt))
+
+    for ix in range(talus_res_x - 1):
+        for td in range(talus_res_d):
+            v0 = talus_start + ix * (talus_res_d + 1) + td
+            v1 = v0 + 1
+            v2 = v0 + (talus_res_d + 1) + 1
+            v3 = v0 + (talus_res_d + 1)
+            faces.append((v0, v1, v2, v3))
+            mat_indices.append(6)  # talus_debris
+
+    talus_spec = {
+        "height": talus_height,
+        "reach": talus_reach,
+        "angle_of_repose_deg": 32.0,
+        "vertex_start": talus_start,
+    }
+
+    # ------------------------------------------------------------------
+    # 7. Varying setback angle along height — metadata for the main face.
+    #    The existing lean logic bakes this into vertex positions, but we
+    #    also expose it as a per-band setback_angle for downstream tools.
+    # ------------------------------------------------------------------
+    for band in strata_bands:
+        z_mid = (band["z_bottom"] + band["z_top"]) * 0.5
+        kt_mid = z_mid / max(height, 1e-6)
+        # Global overhang lean at this height (same formula as vertex builder)
+        if kt_mid > 0.75:
+            global_l = -overhang * ((kt_mid - 0.75) / 0.25)
+        else:
+            global_l = 0.0
+        # Band local lean
+        local_l = -0.6 * 0.5 if band["type"] == "hard" else 0.4 * 0.5
+        total_lean = global_l + local_l
+        # Convert lean distance to approximate angle from vertical (degrees)
+        band["setback_angle_deg"] = math.degrees(math.atan2(abs(total_lean), height * 0.1))
+
     _cf_normals = _compute_face_normals(vertices, faces)
     return {
         "mesh": {"vertices": vertices, "faces": faces, "normals": _cf_normals},
@@ -1448,6 +1665,7 @@ def generate_cliff_face(
         "overhang_faces": overhang_face_indices,
         "strata_bands": strata_bands,
         "fracture_spec": fracture_spec,
+        "talus_spec": talus_spec,
         "materials": materials,
         "material_indices": mat_indices,
         "material_metadata": _material_metadata(
@@ -1458,12 +1676,15 @@ def generate_cliff_face(
             ("overhang_rock",  0.78, "hard_rock",   0.0),
             ("moss_rock",      0.92, "organic",     0.0),
             ("ground_base",    0.88, "sediment",    0.0),
+            ("talus_debris",   0.92, "loose_rock",  0.0),
         ),
         "dimensions": {
             "width": width,
             "height": height,
             "overhang": overhang,
             "num_strata": num_strata,
+            "talus_height": talus_height,
+            "talus_reach": talus_reach,
             "lod": {
                 "LOD_0": len(faces),
                 "LOD_1": _lod1_faces(faces),
@@ -1531,12 +1752,13 @@ def generate_swamp_terrain(
     half_size = size / 2.0
 
     # Materials: 0=swamp_mud, 1=shallow_water, 2=deep_water, 3=moss_ground,
-    #            4=dead_vegetation
+    #            4=dead_vegetation, 5=sedge_mound, 6=wet_transition
     materials = ["swamp_mud", "shallow_water", "deep_water", "moss_ground",
-                 "dead_vegetation"]
+                 "dead_vegetation", "sedge_mound", "wet_transition"]
 
     # ------------------------------------------------------------------
-    # 1. Base heightmap — very flat with low-frequency undulation
+    # 1. Base heightmap — 3-octave microtopography: macro undulation +
+    #    hummock-scale roughness + micro peat-crack detail
     # ------------------------------------------------------------------
     heights: list[list[float]] = []
     for i in range(resolution):
@@ -1544,39 +1766,48 @@ def generate_swamp_terrain(
         for j in range(resolution):
             gx = -half_size + (j / max(resolution - 1, 1)) * size
             gy = -half_size + (i / max(resolution - 1, 1)) * size
-            h = 0.2 + _fbm(gx * 0.02, gy * 0.02, seed, octaves=3,
-                            lacunarity=2.0, gain=0.5) * 0.15
-            h += _hash_noise(gx * 0.1, gy * 0.1, seed + 1) * 0.03
+            # Macro: broad swamp basin (~10 m wavelength)
+            h_macro = _fbm(gx * 0.02, gy * 0.02, seed, octaves=3,
+                           lacunarity=2.0, gain=0.5) * 0.15
+            # Meso: hummock-scale undulation (~2 m wavelength)
+            h_meso = _fbm(gx * 0.12, gy * 0.12, seed + 7, octaves=2,
+                          lacunarity=1.8, gain=0.45) * 0.06
+            # Micro: peat surface cracking (~0.3 m wavelength)
+            h_micro = _hash_noise(gx * 0.5, gy * 0.5, seed + 3) * 0.02
+            h = 0.2 + h_macro + h_meso + h_micro
             row.append(h)
         heights.append(row)
 
     # ------------------------------------------------------------------
-    # 1b. Meandering channel — carve a winding depression into the heightmap
-    #     that runs roughly from one edge to the other with a sinusoidal
-    #     lateral wander.  The channel floor is below water_level so it
-    #     always appears as deep water.
+    # 1b. Three meandering channels — main + left tributary + right tributary
+    #     Each runs roughly from one edge to the other with sinusoidal
+    #     lateral wander.  Channel floor below water_level → deep water.
     # ------------------------------------------------------------------
-    channel_width = size * 0.06          # channel width as fraction of terrain
-    channel_depth_drop = 0.18            # height units carved below surroundings
-    channel_meander_amp = size * 0.14    # lateral swing amplitude
-    channel_meander_freq = 2.8 * math.pi / max(size, 1.0)
-    channel_phase = (seed % 500) * 0.01257  # deterministic phase
-
-    for i in range(resolution):
-        for j in range(resolution):
-            gx = -half_size + (j / max(resolution - 1, 1)) * size
-            gy = -half_size + (i / max(resolution - 1, 1)) * size
-            # Channel runs along Y; its centreline in X meanders with gx
-            channel_cx = channel_meander_amp * math.sin(gy * channel_meander_freq + channel_phase)
-            dist_from_channel = abs(gx - channel_cx)
-            if dist_from_channel < channel_width:
-                # Smooth trough using cosine falloff
-                channel_t = dist_from_channel / channel_width
-                carve = channel_depth_drop * (0.5 + 0.5 * math.cos(math.pi * channel_t))
-                heights[i][j] -= carve
+    channel_defs = [
+        # (meander_amp_frac, meander_freq_mult, width_frac, depth_drop, phase_offset)
+        (0.14, 2.8, 0.06, 0.18, 0.0),       # main channel
+        (0.07, 3.4, 0.035, 0.12, 1.1),      # left tributary
+        (0.08, 3.1, 0.032, 0.11, 2.3),      # right tributary
+    ]
+    for (ma_frac, mf_mult, cw_frac, cdrop, c_phase_off) in channel_defs:
+        cw = size * cw_frac
+        c_amp = size * ma_frac
+        c_freq = mf_mult * math.pi / max(size, 1.0)
+        c_phase = (seed % 500) * 0.01257 + c_phase_off
+        for i in range(resolution):
+            for j in range(resolution):
+                gx = -half_size + (j / max(resolution - 1, 1)) * size
+                gy = -half_size + (i / max(resolution - 1, 1)) * size
+                ch_cx = c_amp * math.sin(gy * c_freq + c_phase)
+                dist_ch = abs(gx - ch_cx)
+                if dist_ch < cw:
+                    t_ch = dist_ch / cw
+                    carve = cdrop * (0.5 + 0.5 * math.cos(math.pi * t_ch))
+                    heights[i][j] -= carve
 
     # ------------------------------------------------------------------
-    # 2. Hummocks — small raised mounds above water line
+    # 2. Hummocks — raised sedge mounds with a wet transition ring dip
+    #    just outside the mound edge, mimicking pooling at hummock margins.
     # ------------------------------------------------------------------
     hummocks: list[dict[str, Any]] = []
     for hi in range(hummock_count):
@@ -1585,7 +1816,10 @@ def generate_swamp_terrain(
         h_radius = rng.uniform(1.5, 4.0)
         # Height guaranteed above water so hummock is always dry land
         h_height = rng.uniform(0.25, 0.65)
+        # Transition zone dip: ring of water just outside hummock edge
+        transition_radius = h_radius * 1.45
         hummocks.append({"position": (hx, hy, 0.0), "radius": h_radius,
+                         "transition_radius": transition_radius,
                          "height": h_height})
         for i in range(resolution):
             for j in range(resolution):
@@ -1593,8 +1827,14 @@ def generate_swamp_terrain(
                 gy = -half_size + (i / max(resolution - 1, 1)) * size
                 dist = math.sqrt((gx - hx) ** 2 + (gy - hy) ** 2)
                 if dist < h_radius:
+                    # Core mound with smooth falloff
                     falloff = 1.0 - (dist / h_radius) ** 2
                     heights[i][j] += h_height * falloff
+                elif dist < transition_radius:
+                    # Wet moat ring dips ~40% of mound height below surroundings
+                    ring_t = (dist - h_radius) / (transition_radius - h_radius)
+                    dip = h_height * 0.4 * math.sin(math.pi * ring_t)
+                    heights[i][j] -= dip
 
     # ------------------------------------------------------------------
     # 3. Islands — larger dry platforms
@@ -3111,38 +3351,92 @@ def generate_floating_rocks(
             },
         })
 
-        # -- Chain links --
+        # -- Chain links: proper interlocking torus geometry --
+        # Each link is a torus with major radius R (ring centre-to-centre) and
+        # minor radius r (tube cross-section).  Adjacent links are rotated 90°
+        # around the chain axis so they interlock — this is the defining
+        # property of a real chain: even links lie in the XZ plane, odd links
+        # lie in the YZ plane.
+        #
+        # Torus parametric form for a link centred at (cx, cy, cz) oriented
+        # along its axis direction:
+        #   For an axis-aligned torus:
+        #     x(u, v) = (R + r·cos v) · cos u
+        #     y(u, v) = (R + r·cos v) · sin u
+        #     z(u, v) = r · sin v
+        #   Rotating 90° around Z swaps x↔y, giving a torus in the XZ plane:
+        #     x(u, v) = r · sin v
+        #     y(u, v) = (R + r·cos v) · sin u   [same sin-u factor]
+        #     z(u, v) = (R + r·cos v) · cos u
+        #
+        # Link spacing: link centres step by 2·R along the chain so the
+        # inner edges of adjacent links just touch.
         if chain_links > 0:
             anchor_x = rock_x + rng.uniform(-0.4, 0.4)
             anchor_y = rock_y + rng.uniform(-0.4, 0.4)
             anchor_z = 0.0
             attach_z = rock_z - rock_half
 
+            chain_span = attach_z - anchor_z
+            # Torus geometry parameters
+            # Major radius R: half of the link outer diameter.
+            # Choose R so chain_links × (2·R) ≈ chain_span.
+            torus_R = max(0.06, chain_span / max(chain_links * 2, 1))
+            torus_r = torus_R * 0.30   # tube radius = 30% of ring radius
+            # Resolution: 8 segments around the tube (v), 12 around the ring (u)
+            TORUS_U = 12  # segments around the ring (u-loop)
+            TORUS_V = 8   # segments around the tube cross-section (v-loop)
+
             chain_link_list: list[dict[str, Any]] = []
-            link_height = (attach_z - anchor_z) / max(chain_links, 1)
-            link_radius = 0.07
 
             for li in range(chain_links):
-                lz_bot = anchor_z + li * link_height
-                lz_top = lz_bot + link_height
+                # Centre Z of this link
+                lz_center = anchor_z + (li + 0.5) * (chain_span / max(chain_links, 1))
                 link_start = len(vertices)
-                for end_z in (lz_bot, lz_top):
-                    for ci in range(4):
-                        ca = 2.0 * math.pi * ci / 4
-                        vertices.append((anchor_x + math.cos(ca) * link_radius,
-                                         anchor_y + math.sin(ca) * link_radius,
-                                         end_z))
-                for ci in range(4):
-                    ci_next = (ci + 1) % 4
-                    v0 = link_start + ci
-                    v1 = link_start + ci_next
-                    v2 = link_start + 4 + ci_next
-                    v3 = link_start + 4 + ci
-                    faces.append((v0, v1, v2, v3))
-                    mat_indices.append(3)  # chain_metal
+
+                # Alternate orientation: even links lie in XY plane (axis = Z),
+                # odd links lie in XZ plane (axis = Y) — produces 90° alternation
+                # that is the visual signature of interlocking chain links.
+                axis_is_z = (li % 2 == 0)
+
+                for ui in range(TORUS_U):
+                    u = 2.0 * math.pi * ui / TORUS_U
+                    cos_u = math.cos(u)
+                    sin_u = math.sin(u)
+                    for vi in range(TORUS_V):
+                        v = 2.0 * math.pi * vi / TORUS_V
+                        cos_v = math.cos(v)
+                        sin_v = math.sin(v)
+                        ring_r = torus_R + torus_r * cos_v
+                        if axis_is_z:
+                            # Torus ring lies in XY plane, tube cross-section in XY+Z
+                            vx = anchor_x + ring_r * cos_u
+                            vy = anchor_y + ring_r * sin_u
+                            vz = lz_center + torus_r * sin_v
+                        else:
+                            # Torus ring lies in XZ plane, tube cross-section in XZ+Y
+                            vx = anchor_x + ring_r * cos_u
+                            vy = anchor_y + torus_r * sin_v
+                            vz = lz_center + ring_r * sin_u
+                        vertices.append((vx, vy, vz))
+
+                # Build quad faces for the torus surface
+                for ui in range(TORUS_U):
+                    ui_next = (ui + 1) % TORUS_U
+                    for vi in range(TORUS_V):
+                        vi_next = (vi + 1) % TORUS_V
+                        v0 = link_start + ui * TORUS_V + vi
+                        v1 = link_start + ui * TORUS_V + vi_next
+                        v2 = link_start + ui_next * TORUS_V + vi_next
+                        v3 = link_start + ui_next * TORUS_V + vi
+                        faces.append((v0, v1, v2, v3))
+                        mat_indices.append(3)  # chain_metal
+
                 chain_link_list.append({
-                    "position": (anchor_x, anchor_y, (lz_bot + lz_top) / 2.0),
-                    "height": link_height,
+                    "position": (anchor_x, anchor_y, lz_center),
+                    "torus_R": torus_R,
+                    "torus_r": torus_r,
+                    "axis": "z" if axis_is_z else "y",
                 })
 
             chains.append({
