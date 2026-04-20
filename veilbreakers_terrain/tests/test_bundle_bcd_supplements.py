@@ -93,7 +93,7 @@ def test_material_channel_ext_override():
 
 
 def test_texel_density_coherent_ok():
-    chans = [_ch("a", texel_density_m=64.0), _ch("b", texel_density_m=96.0)]
+    chans = [_ch("a", texel_density_m=256.0), _ch("b", texel_density_m=384.0)]
     issues = validate_texel_density_coherency(chans, max_ratio=2.0)
     assert issues == []
 
@@ -114,7 +114,15 @@ def test_texel_density_rejects_nonpositive():
 
 
 def test_texel_density_single_channel_ok():
-    issues = validate_texel_density_coherency([_ch("only")])
+    issues = validate_texel_density_coherency([_ch("only", texel_density_m=256.0)])
+    assert issues == []
+
+
+def test_texel_density_single_channel_default_coherency_only_ok():
+    issues = validate_texel_density_coherency(
+        [_ch("only")],
+        check_aaa_tiers=False,
+    )
     assert issues == []
 
 

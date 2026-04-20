@@ -859,11 +859,12 @@ def pass_erosion(
     )
 
     # BUG-99: Apply rock_hardness K modifier to analytical erosion delta.
-    # Only active when stratigraphy has run (strat_erosion_delta present) —
-    # preserves backward compat for tests that invoke pass_erosion in isolation
-    # without a preceding pass_stratigraphy.
+    # The hardness channel is itself sufficient to modulate erosion; gating
+    # this on stratigraphy made the channel inert in isolated pass_erosion
+    # runs and broke the intended contract for callers that provide hardness
+    # without the optional stratigraphy pre-pass.
     analytical_delta = analytical_result.height_delta
-    if rock_hardness is not None and stack.get("strat_erosion_delta") is not None:
+    if rock_hardness is not None:
         k_mod = 1.0 - 0.7 * np.clip(
             np.asarray(rock_hardness, dtype=np.float64)[
                 :analytical_delta.shape[0], :analytical_delta.shape[1]

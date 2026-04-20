@@ -116,7 +116,11 @@ def test_composite_equals_weighted_sum_of_bands():
 
     bands = _gen(seed=99)
     weights = BAND_WEIGHTS[bands.metadata["biome"]]
-    expected = compose_banded_heightmap(bands, weights) * bands.metadata["vertical_scale_m"]
+    expected = compose_banded_heightmap(
+        bands,
+        weights,
+        apply_geological_constraints=True,
+    ) * bands.metadata["vertical_scale_m"]
     np.testing.assert_allclose(bands.composite, expected, atol=1e-10)
 
 

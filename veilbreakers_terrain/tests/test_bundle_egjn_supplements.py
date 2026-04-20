@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from blender_addon.handlers.terrain_asset_metadata import (
+    AABB,
     LOCATION_TAGS,
     ROLE_TAGS,
     SIZE_TAGS,
@@ -103,6 +104,7 @@ class TestAssetMetadataTaxonomy:
             role_tag="hero",
             size_tag="large",
             context_tags=("silhouette_critical",),
+            bounds=AABB(-1.0, -1.0, 0.0, 1.0, 1.0, 2.0),
         )
         assert validate_asset_metadata(meta) == []
 
@@ -112,6 +114,7 @@ class TestAssetMetadataTaxonomy:
             role_tag="hero",
             size_tag="large",
             context_tags=("silhouette_critical",),
+            bounds=AABB(-1.0, -1.0, 0.0, 1.0, 1.0, 2.0),
         )
         issues = validate_asset_metadata(meta)
         codes = [i.code for i in issues]
@@ -272,8 +275,15 @@ class TestSemanticReadability:
 
     def test_good_cliff_passes(self):
         stack = _tiny_stack(size=32)
-        stack.cliff_candidate = np.ones((32, 32), dtype=np.float32)
-        stack.slope = np.full((32, 32), 1.2, dtype=np.float32)
+        h = np.zeros((32, 32), dtype=np.float32)
+        h[:, 16:] = 12.0
+        cliff = np.zeros((32, 32), dtype=np.float32)
+        cliff[:, 15:17] = 1.0
+        slope = np.zeros((32, 32), dtype=np.float32)
+        slope[:, 15:17] = 1.2
+        stack.height = h
+        stack.cliff_candidate = cliff
+        stack.slope = slope
         assert check_cliff_silhouette_readability(stack) == []
 
     def test_waterfall_chain_complete(self):

@@ -222,8 +222,9 @@ def compute_feature_density(
     if _SCIPY_STATS and len(peaks) >= 2:
         peak_rows = np.array([float(r) for r, c, v in peaks])
         peak_cols = np.array([float(c) for r, c, v in peaks])
-        weights = np.array([float(v) for r, c, v in peaks])
-        weights /= weights.sum()  # normalise weights to sum to 1
+        peak_weights = np.array([float(v) for r, c, v in peaks], dtype=np.float64)
+        total_feature_mass = max(float(peak_weights.sum()), 1e-9)
+        weights = peak_weights / total_feature_mass  # relative weighting for KDE fit
 
         # KDE expects shape (2, N): (col, row) so x=col, y=row
         samples = np.vstack([peak_cols, peak_rows])
@@ -249,7 +250,9 @@ def compute_feature_density(
 
             # Integrate (trapezoidal) in cell units, convert to m²
             cell_area = float(stride) * float(stride) * cell_size * cell_size
-            kde_mass = float(kde_vals.sum()) * cell_area
+            # gaussian_kde integrates to 1.0 regardless of sample count, so
+            # rescale by total weighted peak mass to preserve feature count.
+            kde_mass = float(kde_vals.sum()) * cell_area * total_feature_mass
             return kde_mass / (area_m2 / 1000.0)
 
     # --- Fallback: hand-rolled unnormalised Gaussian KDE ---

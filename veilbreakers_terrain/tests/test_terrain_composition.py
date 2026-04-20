@@ -135,8 +135,11 @@ class TestSaliency:
         before = stack.saliency_macro.copy()
         result = pass_saliency_refine(state, None)
         assert result.status == "ok"
-        assert result.metrics.get("noop") is True
-        np.testing.assert_array_equal(stack.saliency_macro, before)
+        assert result.metrics["vantage_count"] == 0
+        assert result.metrics["scoring_factors"] == 8
+        assert not np.allclose(stack.saliency_macro, before)
+        assert stack.saliency_macro.max() <= 1.0
+        assert stack.saliency_macro.min() >= 0.0
 
     def test_pass_saliency_refine_changes_with_vantages(self):
         from blender_addon.handlers.terrain_saliency import pass_saliency_refine

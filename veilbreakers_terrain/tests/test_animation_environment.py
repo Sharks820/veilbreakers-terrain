@@ -95,8 +95,15 @@ class TestInteractables:
         assert any(abs(v) > 1.5 for v in final)  # ~110 degrees
 
     def test_trap_trigger_fast(self):
+        import math
+
         kfs = generate_trap_trigger_keyframes(frame_count=12)
-        assert len(kfs) == 13  # 0..12 inclusive
+        assert len(kfs) == 4  # sparse analytical keys: start, snap, overshoot, settle
+        assert [kf.frame for kf in kfs] == sorted(kf.frame for kf in kfs)
+        assert kfs[0].frame == 0
+        assert kfs[1].value == pytest.approx(math.radians(45.0))
+        assert kfs[2].value > kfs[1].value
+        assert kfs[-1].frame == 12
 
 
 class TestAmbient:

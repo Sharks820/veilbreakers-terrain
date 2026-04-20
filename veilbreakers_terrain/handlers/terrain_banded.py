@@ -221,8 +221,14 @@ def _band_sdf_normalize(arr: np.ndarray) -> np.ndarray:
 
     sdf_std = float(sdf.std())
     if sdf_std < 1e-12:
-        return sdf
-    return sdf / sdf_std
+        return sdf - float(sdf.mean())
+
+    normalized = sdf / sdf_std
+    normalized = normalized - float(normalized.mean())
+    normalized_std = float(normalized.std())
+    if normalized_std < 1e-12:
+        return normalized
+    return normalized / normalized_std
 
 
 # Keep the old name as an alias; internal callers now use _band_sdf_normalize.
@@ -636,10 +642,12 @@ def _generate_strata_band(
     # Biome-dependent strata parameters
     _BIOME_STRATA: Dict[str, Tuple] = {
         # (n_layers, dip_deg_base, sharpness_exp, period_mult, wobble_strength)
+        # Wobble is applied as a low-frequency phase offset, not additive
+        # isotropic noise, so layers stay vertically legible.
         "canyon":              (10, 6.0, 4.0, 1.6, 0.08),
-        "mountains":           (8,  9.0, 3.0, 1.2, 0.12),
-        "plains":              (5,  1.0, 1.2, 0.7, 0.20),
-        "dark_fantasy_default":(7,  3.0, 2.5, 1.0, 0.14),
+        "mountains":           (8,  9.0, 3.0, 1.2, 0.10),
+        "plains":              (5,  1.0, 1.2, 0.7, 0.05),
+        "dark_fantasy_default":(7,  3.0, 2.5, 1.0, 0.06),
     }
     params = None
     for k, v in _BIOME_STRATA.items():
@@ -656,11 +664,19 @@ def _generate_strata_band(
     xx, yy = np.meshgrid(x_coords, y_coords)
 
     # Geological dip: rotate depth axis so layers tilt slightly.
-    # Dip jitter ±30% per seed keeps tiles varied but coherent at tile boundaries.
-    dip_deg = dip_deg_base * float(rng.uniform(0.7, 1.3))
+    # Keep jitter modest so the strata still read primarily along world-Y.
+    dip_deg = dip_deg_base * float(rng.uniform(0.85, 1.15))
     dip_rad = np.radians(dip_deg)
     dip_cos, dip_sin = float(np.cos(dip_rad)), float(np.sin(dip_rad))
-    depth_coord = yy * dip_cos + xx * dip_sin  # metres along dip-normal axis
+    lateral_drift_scale = 0.25
+    depth_coord = yy * dip_cos + xx * dip_sin * lateral_drift_scale
+
+    # Low-frequency vertical wobble offsets the layer phase without injecting
+    # isotropic output noise that destroys the sedimentary read.
+    mod_period = period * 4.0
+    mxs, mys = np.meshgrid(x_coords / mod_period, y_coords / (mod_period * 2.0))
+    wobble = _fbm_array(mxs, mys, octaves=3, persistence=0.5, lacunarity=2.0, seed=strata_seed)
+    depth_coord = depth_coord + wobble * (period * wobble_str * lateral_drift_scale)
 
     # Variable layer thickness: log-normal so some beds are 2–3× thicker than others.
     thicknesses = rng.lognormal(mean=0.0, sigma=0.45, size=n_layers).astype(np.float64)
@@ -681,16 +697,12 @@ def _generate_strata_band(
         t = np.where(layer_mask, (depth_norm - lo) / span * np.pi, 0.0)
         phase += t * layer_mask
 
-    # Hardness-modulated sharpness: cos(phase)^n — large n → hard cliff-like boundaries.
-    sharp_layers = np.cos(phase) ** sharpness_exp
+    # Hardness-modulated sharpness: use sign-preserving power so non-integer
+    # exponents do not produce NaNs when cosine enters the negative half-cycle.
+    cos_phase = np.cos(phase)
+    sharp_layers = np.sign(cos_phase) * np.power(np.abs(cos_phase), sharpness_exp)
 
-    # fBm wobble: breaks ruler-straight layer horizons.
-    mod_period = period * 4.0
-    mxs, mys = np.meshgrid(x_coords / mod_period, y_coords / mod_period)
-    wobble = _fbm_array(mxs, mys, octaves=3, persistence=0.5, lacunarity=2.0, seed=strata_seed)
-    layered = sharp_layers + wobble_str * wobble
-
-    return _band_sdf_normalize(layered)
+    return _band_sdf_normalize(sharp_layers)
 
 
 def _generate_warp_field(
@@ -839,7 +851,11 @@ def generate_banded_heightmap(
             "band_periods_m": dict(_BAND_PERIOD_M),
         },
     )
-    bands.composite = compose_banded_heightmap(bands, weights) * vertical_scale_m
+    bands.composite = compose_banded_heightmap(
+        bands,
+        weights,
+        apply_geological_constraints=True,
+    ) * vertical_scale_m
     return bands
 
 
@@ -847,18 +863,17 @@ def compose_banded_heightmap(
     bands: BandedHeightmap,
     weights: Tuple[float, float, float, float],
     *,
-    apply_geological_constraints: bool = True,
+    apply_geological_constraints: bool = False,
     river_valley_sink: float = 0.08,
     ridge_rise: float = 0.06,
     cell_size: float = 1.0,
 ) -> np.ndarray:
     """Re-composite a heightmap from bands with new weights (macro, meso, micro, strata).
 
-    Applies geological plausibility constraints after blending to eliminate
-    marble-cake artifacts: river valleys sink, ridges rise.  These constraints
-    are derived from the Laplacian of the composite (same approach as
-    ``_apply_geological_constraints`` in _terrain_noise.py) and operate on
-    the dimensionless composite before the vertical-scale multiplier is applied.
+    By default this returns the raw weighted sum so callers can reason about
+    band deltas directly. Geological plausibility constraints are opt-in and
+    operate on the dimensionless composite before the vertical-scale
+    multiplier is applied.
 
     Parameters
     ----------
@@ -867,9 +882,9 @@ def compose_banded_heightmap(
     weights : tuple of 4 floats
         (macro, meso, micro, strata) blend weights.
     apply_geological_constraints : bool
-        If True (default), apply Laplacian-based ridge-rise / valley-sink
-        to eliminate marble-cake banding.  Set False to get the raw weighted
-        sum for debugging or when constraints are applied externally.
+        If True, apply Laplacian-based ridge-rise / valley-sink to eliminate
+        marble-cake banding. Set False (default) to get the raw weighted
+        sum for debugging, analysis, or external post-processing.
     river_valley_sink : float
         Fraction of height range by which valley cells are deepened (default 0.08).
     ridge_rise : float

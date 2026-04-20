@@ -528,7 +528,7 @@ class TestWorldSplatmapWeights:
     def test_larger_cell_size_keeps_same_height_delta_less_cliff_like(self):
         from blender_addon.handlers.terrain_materials import compute_world_splatmap_weights
 
-        hmap = np.tile(np.linspace(0.0, 1.0, 5), (5, 1))
+        hmap = np.tile(np.linspace(0.0, 3.0, 5), (5, 1))
         fine = compute_world_splatmap_weights(
             hmap,
             biome_name="thornwood_forest",
