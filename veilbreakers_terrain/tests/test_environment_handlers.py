@@ -311,6 +311,21 @@ class TestRoadTerrainProfiling:
         assert profiled[1, 4] < 0.0
         assert profiled[0, 0] == pytest.approx(0.0)
 
+    def test_build_road_mask_and_sdf_marks_centerline(self):
+        from blender_addon.handlers.environment import _build_road_mask_and_sdf
+
+        road_mask, road_sdf = _build_road_mask_and_sdf(
+            [(4, 1), (4, 7)],
+            shape=(9, 9),
+            width_cells=3.0,
+        )
+
+        assert road_mask.dtype == np.uint8
+        assert road_sdf.dtype == np.float32
+        assert road_mask[4, 4] == 1
+        assert road_sdf[4, 4] == pytest.approx(0.0)
+        assert road_sdf[0, 0] > 0.0
+
     def test_sample_path_indices_preserves_forced_boundaries(self):
         from blender_addon.handlers.environment import _sample_path_indices
 
@@ -346,6 +361,202 @@ class TestRoadTerrainProfiling:
         assert spans[0]["end_index"] > 5
         assert spans[0]["style"] == "rope"
         assert spans[0]["start_pos"][2] > 0.0
+
+
+class TestRoadHandlerTerrainAwareRouting:
+    def test_handle_generate_road_threads_derived_cost_map_to_solver(self):
+        from blender_addon.handlers import environment as env_mod
+        from blender_addon.handlers.terrain_twelve_step import _build_road_cost_map
+
+        captured: dict[str, object] = {}
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    SimpleNamespace(co=SimpleNamespace(z=float(z)))
+                    for z in (0.0, 0.1, 0.2, 0.3)
+                )
+
+            def from_mesh(self, mesh):
+                return None
+
+            def to_mesh(self, mesh):
+                return None
+
+            def free(self):
+                return None
+
+        class _Mesh:
+            def update(self):
+                return None
+
+        terrain_obj = SimpleNamespace(
+            data=_Mesh(),
+            dimensions=SimpleNamespace(x=4.0, y=4.0),
+            location=SimpleNamespace(x=0.0, y=0.0),
+        )
+
+        def _fake_run_height_solver(heightmap, solver, /, **solver_kwargs):
+            captured["cost_map"] = solver_kwargs.get("cost_map")
+            return [(0, 0), (1, 1)], np.asarray(heightmap, dtype=np.float64).copy(), SimpleNamespace()
+
+        rock_hardness = np.array([[0.0, 0.8], [0.0, 0.0]], dtype=np.float32)
+        water_surface = np.array([[0.0, 0.0], [0.2, 0.0]], dtype=np.float32)
+        expected_cost = _build_road_cost_map(
+            np.array([[0.0, 0.1], [0.2, 0.3]], dtype=np.float64),
+            rock_hardness=rock_hardness,
+            water_surface=water_surface,
+        )
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            result = env_mod.handle_generate_road(
+                {
+                    "terrain_name": "Terrain",
+                    "waypoints": [(0, 0), (1, 1)],
+                    "surface": "dirt",
+                    "rock_hardness": rock_hardness,
+                    "water_surface": water_surface,
+                }
+            )
+
+        np.testing.assert_allclose(captured["cost_map"], expected_cost)
+        assert result["terrain_cost_context_used"] is True
+        assert result["terrain_cost_source"] == "rock_hardness+water_surface"
+        assert result["road_mask_shape"] == [2, 2]
+        assert result["road_mask_nonzero"] > 0
+
+    def test_handle_generate_road_prefers_explicit_cost_map(self):
+        from blender_addon.handlers import environment as env_mod
+
+        captured: dict[str, object] = {}
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    SimpleNamespace(co=SimpleNamespace(z=float(z)))
+                    for z in (0.0, 0.1, 0.2, 0.3)
+                )
+
+            def from_mesh(self, mesh):
+                return None
+
+            def to_mesh(self, mesh):
+                return None
+
+            def free(self):
+                return None
+
+        class _Mesh:
+            def update(self):
+                return None
+
+        terrain_obj = SimpleNamespace(
+            data=_Mesh(),
+            dimensions=SimpleNamespace(x=4.0, y=4.0),
+            location=SimpleNamespace(x=0.0, y=0.0),
+        )
+
+        def _fake_run_height_solver(heightmap, solver, /, **solver_kwargs):
+            captured["cost_map"] = solver_kwargs.get("cost_map")
+            return [(0, 0), (1, 1)], np.asarray(heightmap, dtype=np.float64).copy(), SimpleNamespace()
+
+        explicit_cost_map = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            result = env_mod.handle_generate_road(
+                {
+                    "terrain_name": "Terrain",
+                    "waypoints": [(0, 0), (1, 1)],
+                    "surface": "dirt",
+                    "road_cost_map": explicit_cost_map,
+                    "rock_hardness": np.ones((2, 2), dtype=np.float32),
+                    "water_surface": np.ones((2, 2), dtype=np.float32),
+                }
+            )
+
+        np.testing.assert_array_equal(captured["cost_map"], explicit_cost_map)
+        assert result["terrain_cost_context_used"] is True
+        assert result["terrain_cost_source"] == "explicit_cost_map"
+
+    def test_handle_generate_road_can_return_road_channels(self):
+        from blender_addon.handlers import environment as env_mod
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    SimpleNamespace(co=SimpleNamespace(z=float(z)))
+                    for z in (0.0, 0.1, 0.2, 0.3)
+                )
+
+            def from_mesh(self, mesh):
+                return None
+
+            def to_mesh(self, mesh):
+                return None
+
+            def free(self):
+                return None
+
+        class _Mesh:
+            def update(self):
+                return None
+
+        terrain_obj = SimpleNamespace(
+            data=_Mesh(),
+            dimensions=SimpleNamespace(x=4.0, y=4.0),
+            location=SimpleNamespace(x=0.0, y=0.0),
+        )
+
+        def _fake_run_height_solver(heightmap, solver, /, **solver_kwargs):
+            return [(0, 0), (1, 1)], np.asarray(heightmap, dtype=np.float64).copy(), SimpleNamespace()
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            result = env_mod.handle_generate_road(
+                {
+                    "terrain_name": "Terrain",
+                    "waypoints": [(0, 0), (1, 1)],
+                    "surface": "dirt",
+                    "return_road_channels": True,
+                }
+            )
+
+        assert result["road_mask_shape"] == [2, 2]
+        assert result["road_mask_nonzero"] > 0
+        assert result["road_mask"][0][0] in (0, 1)
+        assert result["road_sdf_dist"][0][0] >= 0.0
 
 
 # ---------------------------------------------------------------------------

@@ -1810,6 +1810,7 @@ def generate_road_path_grid(
     width: int = 3,
     grade_strength: float = 0.8,
     seed: int = 0,
+    cost_map: np.ndarray | None = None,
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
     """Generate a road path between grid-space waypoints with terrain grading.
 
@@ -1832,6 +1833,10 @@ def generate_road_path_grid(
         How aggressively to flatten terrain (0=none, 1=full).
     seed : int
         Random seed (reserved for future jitter).
+    cost_map : np.ndarray, optional
+        Terrain routing cost overlay aligned to ``heightmap``. Higher values
+        discourage the A* solver from crossing difficult cells such as water
+        or hard rock.
 
     Returns
     -------
@@ -1856,6 +1861,7 @@ def generate_road_path_grid(
             waypoints[i + 1],
             slope_weight=10.0,
             height_weight=0.5,
+            cost_map=cost_map,
         )
         if full_path and segment:
             # Avoid duplicate at junction

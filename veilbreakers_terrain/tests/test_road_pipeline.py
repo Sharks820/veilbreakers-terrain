@@ -158,6 +158,36 @@ def _make_intent(waypoints=None, anchors=()):
 
 
 class TestPipelineUnification:
+    def test_generate_road_path_grid_threads_cost_map_to_astar(self, monkeypatch):
+        from veilbreakers_terrain.handlers import _terrain_noise as noise_mod
+
+        captured: dict[str, np.ndarray | None] = {"cost_map": None}
+
+        def _fake_astar(
+            heightmap,
+            source,
+            dest,
+            slope_weight=5.0,
+            height_weight=1.0,
+            cost_map=None,
+        ):
+            captured["cost_map"] = cost_map
+            return [source, dest]
+
+        monkeypatch.setattr(noise_mod, "_astar", _fake_astar)
+        hmap = np.zeros((8, 8), dtype=np.float64)
+        cost_map = np.full((8, 8), 2.5, dtype=np.float32)
+
+        path, carved = noise_mod.generate_road_path_grid(
+            hmap,
+            [(0, 0), (7, 7)],
+            cost_map=cost_map,
+        )
+
+        assert path == [(0, 0), (7, 7)]
+        np.testing.assert_array_equal(captured["cost_map"], cost_map)
+        assert carved.shape == hmap.shape
+
     def test_two_waypoints_returns_4tuple(self):
         from veilbreakers_terrain.handlers.terrain_twelve_step import _generate_road_mesh_specs
         hmap = np.random.RandomState(1).rand(32, 32).astype(np.float64)

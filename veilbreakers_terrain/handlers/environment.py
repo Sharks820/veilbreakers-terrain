@@ -255,6 +255,62 @@ def _run_height_solver_in_world_space(
     return path, restored, transform
 
 
+def _coerce_optional_grid_channel(
+    value: Any,
+    *,
+    expected_shape: tuple[int, int],
+) -> np.ndarray | None:
+    """Return an optional 2-D float32 channel when it matches the terrain grid."""
+    if value is None:
+        return None
+    arr = np.asarray(value, dtype=np.float32)
+    if arr.ndim != 2 or tuple(arr.shape) != tuple(expected_shape):
+        return None
+    return arr
+
+
+def _resolve_road_cost_context(
+    params: dict,
+    *,
+    heightmap: np.ndarray,
+) -> tuple[np.ndarray | None, str | None]:
+    """Resolve the cost context used by the public road handler."""
+    explicit_cost_map = _coerce_optional_grid_channel(
+        params.get("road_cost_map", params.get("cost_map")),
+        expected_shape=heightmap.shape,
+    )
+    if explicit_cost_map is not None:
+        return explicit_cost_map.astype(np.float32, copy=False), "explicit_cost_map"
+
+    rock_hardness = _coerce_optional_grid_channel(
+        params.get("rock_hardness"),
+        expected_shape=heightmap.shape,
+    )
+    water_surface = _coerce_optional_grid_channel(
+        params.get("water_surface"),
+        expected_shape=heightmap.shape,
+    )
+    if rock_hardness is None and water_surface is None:
+        return None, None
+
+    # Reuse the same road-cost synthesis as the canonical tiled world path.
+    from .terrain_twelve_step import _build_road_cost_map
+
+    sources: list[str] = []
+    if rock_hardness is not None:
+        sources.append("rock_hardness")
+    if water_surface is not None:
+        sources.append("water_surface")
+    return (
+        _build_road_cost_map(
+            heightmap,
+            rock_hardness=rock_hardness,
+            water_surface=water_surface,
+        ),
+        "+".join(sources),
+    )
+
+
 def _normalize_altitude_for_rule_range(
     altitude_z: float,
     *,
@@ -3796,6 +3852,73 @@ def _apply_road_profile_to_heightmap(
     return result
 
 
+def _build_road_mask_and_sdf(
+    path: list[tuple[int, int]],
+    *,
+    shape: tuple[int, int],
+    width_cells: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the road surface mask and road-distance field for a solved path."""
+    def _fill_gaps(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        if len(points) < 2:
+            return points
+        filled = [points[0]]
+        for r1, c1 in points[1:]:
+            while abs(r1 - filled[-1][0]) > 1 or abs(c1 - filled[-1][1]) > 1:
+                r0, c0 = filled[-1]
+                step_r = 0 if r1 == r0 else (1 if r1 > r0 else -1)
+                step_c = 0 if c1 == c0 else (1 if c1 > c0 else -1)
+                filled.append((r0 + step_r, c0 + step_c))
+            filled.append((r1, c1))
+        return filled
+
+    rows, cols = shape
+    road_mask = np.zeros((rows, cols), dtype=np.uint8)
+    road_sdf = np.zeros((rows, cols), dtype=np.float32)
+    if not path:
+        return road_mask, road_sdf
+
+    filled_path = _fill_gaps(path)
+    path_arr = np.array(
+        [(r, c) for r, c in filled_path if 0 <= r < rows and 0 <= c < cols],
+        dtype=np.float64,
+    )
+    if len(path_arr) == 0:
+        return road_mask, road_sdf
+
+    rr, cc = np.mgrid[0:rows, 0:cols]
+    query_pts = np.stack([rr.ravel(), cc.ravel()], axis=1).astype(np.float64)
+    road_half_width = max(float(width_cells) * 0.5, 0.75)
+
+    try:
+        from scipy.ndimage import distance_transform_edt
+        try:
+            from scipy.spatial import cKDTree as _KDTree
+        except ImportError:
+            from scipy.spatial import KDTree as _KDTree  # type: ignore[assignment]
+
+        tree = _KDTree(path_arr)
+        dist_flat, _ = tree.query(query_pts, k=1)
+        dist_map = dist_flat.reshape(rows, cols)
+        road_mask = (dist_map <= road_half_width).astype(np.uint8)
+        road_sdf = distance_transform_edt((1 - road_mask).astype(np.uint8)).astype(np.float32)
+        return road_mask, road_sdf
+    except ImportError:
+        dist_map = np.full((rows, cols), np.inf, dtype=np.float64)
+        for pr, pc in path_arr:
+            dist_map = np.minimum(dist_map, np.hypot(rr - pr, cc - pc))
+        road_mask = (dist_map <= road_half_width).astype(np.uint8)
+
+        road_cells = np.argwhere(road_mask > 0)
+        if road_cells.size == 0:
+            return road_mask, road_sdf
+
+        road_sdf_float = np.full((rows, cols), np.inf, dtype=np.float64)
+        for pr, pc in road_cells:
+            road_sdf_float = np.minimum(road_sdf_float, np.hypot(rr - pr, cc - pc))
+        return road_mask, road_sdf_float.astype(np.float32)
+
+
 def _apply_river_profile_to_heightmap(
     *,
     base_heightmap: np.ndarray,
@@ -4826,6 +4949,9 @@ def handle_generate_road(params: dict) -> dict:
         width (int, default 3): Road width in cells.
         grade_strength (float, default 0.8): Flattening intensity.
         seed (int, default 0): Random seed.
+        rock_hardness (2D array): Optional normalized hard-rock channel.
+        water_surface (2D array): Optional normalized water channel.
+        road_cost_map/cost_map (2D array): Optional explicit routing cost grid.
 
     Returns dict with: name, path_length, width.
     """
@@ -4879,6 +5005,11 @@ def handle_generate_road(params: dict) -> dict:
     if width > 10:  # likely specified in meters, not cells
         width = max(1, int(width / cell_size))
 
+    road_cost_map, road_cost_source = _resolve_road_cost_context(
+        params,
+        heightmap=heightmap,
+    )
+
     # ------------------------------------------------------------------
     # Protected zone mask (grid-space, for _apply_road_profile_to_heightmap)
     # ------------------------------------------------------------------
@@ -4906,6 +5037,7 @@ def handle_generate_road(params: dict) -> dict:
         generate_road_path_grid,
         waypoints=waypoints,
         width=width, grade_strength=grade_strength, seed=seed,
+        cost_map=road_cost_map,
     )
 
     water_level_raw = params.get("water_level")
@@ -4935,6 +5067,11 @@ def handle_generate_road(params: dict) -> dict:
     )
     if road_pz_mask.any():
         protected_cells_skipped = int((road_pz_mask & (graded != graded_pre)).sum())
+    road_mask, road_sdf_dist = _build_road_mask_and_sdf(
+        path,
+        shape=heightmap.shape,
+        width_cells=float(width),
+    )
 
     graded_flat = graded.flatten()
     for i, vert in enumerate(bm.verts):
@@ -5016,7 +5153,7 @@ def handle_generate_road(params: dict) -> dict:
 
     if requested_surface in terrain_only_surfaces and not bool(params.get("force_mesh_overlay", False)):
         _duration = time.perf_counter() - _t0
-        return {
+        result = {
             "name": terrain_name,
             "road_mesh_name": None,
             "path_length": len(path),
@@ -5027,11 +5164,19 @@ def handle_generate_road(params: dict) -> dict:
             "surface_mode": "terrain_only",
             "bridge_count": 0,
             "bridge_object_names": [],
+            "road_mask_shape": list(road_mask.shape),
+            "road_mask_nonzero": int(road_mask.sum()),
+            "terrain_cost_context_used": road_cost_map is not None,
+            "terrain_cost_source": road_cost_source,
             "protected_cells_skipped": protected_cells_skipped,
             "affected_cells": len(path),
             "duration_seconds": round(_duration, 4),
             "pass_name": "generate_road",
         }
+        if bool(params.get("return_road_channels", False)):
+            result["road_mask"] = road_mask.tolist()
+            result["road_sdf_dist"] = road_sdf_dist.tolist()
+        return result
 
     chunks: list[list[int]] = []
     current_chunk: list[int] = []
@@ -5116,7 +5261,7 @@ def handle_generate_road(params: dict) -> dict:
                 bridge_object_names.append(bridge_obj.name)
 
     _duration = time.perf_counter() - _t0
-    return {
+    result = {
         "name": terrain_name,
         "road_mesh_name": road_obj.name,
         "path_length": len(path),
@@ -5127,11 +5272,19 @@ def handle_generate_road(params: dict) -> dict:
         "bridge_count": len(bridge_object_names),
         "bridge_object_names": bridge_object_names,
         "splatmap_layer": "VB_TerrainSplatmap",
+        "road_mask_shape": list(road_mask.shape),
+        "road_mask_nonzero": int(road_mask.sum()),
+        "terrain_cost_context_used": road_cost_map is not None,
+        "terrain_cost_source": road_cost_source,
         "protected_cells_skipped": protected_cells_skipped,
         "affected_cells": len(path),
         "duration_seconds": round(_duration, 4),
         "pass_name": "generate_road",
     }
+    if bool(params.get("return_road_channels", False)):
+        result["road_mask"] = road_mask.tolist()
+        result["road_sdf_dist"] = road_sdf_dist.tolist()
+    return result
 
 
 def _ensure_water_material(
