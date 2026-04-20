@@ -156,7 +156,11 @@ Validation:
 
 - regenerated [`CALLABLE_WIRING_AUDIT_2026_04_19.csv`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/output/spreadsheet/CALLABLE_WIRING_AUDIT_2026_04_19.csv)
 - regenerated [`CALLABLE_WIRING_SUMMARY_2026_04_19.md`](/C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/output/spreadsheet/CALLABLE_WIRING_SUMMARY_2026_04_19.md)
-- runtime-primary missing-row debt dropped to the single synthetic Quixel registrar closure that has now been replaced by a named top-level wrapper
+- runtime-primary missing-row debt dropped to the single synthetic Quixel registrar closure and was then eliminated by replacing it with a named top-level wrapper
+- current runtime-primary audit state:
+  - `runtime_primary = 179`
+  - `missing_runtime_rows = 0`
+  - `missing_runtime_r9 = 0`
 
 Validation:
 
