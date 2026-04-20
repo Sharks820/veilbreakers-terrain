@@ -7,6 +7,9 @@ pass_integrate_deltas. Each test FAILS if deltas are not applied.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -326,3 +329,80 @@ class TestDeltaIntegratorProtectedZones:
                 )
         # Middle cells should have delta applied
         assert stack.height[6, 6] == pytest.approx(h_before[6, 6] - 3.0)
+
+
+class TestDeltaIntegratorPipelineSequencing:
+    """Controller pipelines should normalize integrate_deltas after delta writers."""
+
+    def test_run_pipeline_auto_inserts_integrator_after_delta_producer(self):
+        from blender_addon.handlers.terrain_delta_integrator import register_integrator_pass
+        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+        from blender_addon.handlers.terrain_semantics import PassDefinition, PassResult
+
+        def _produce_delta(state, region):
+            delta = np.zeros_like(state.mask_stack.height, dtype=np.float32)
+            delta[3, 3] = -4.0
+            state.mask_stack.set("karst_delta", delta, "delta_producer")
+            return PassResult(
+                pass_name="delta_producer",
+                status="ok",
+                duration_seconds=0.0,
+                consumed_channels=("height",),
+                produced_channels=("karst_delta",),
+                metrics={},
+            )
+
+        def _final_consumer(state, region):
+            return PassResult(
+                pass_name="final_consumer",
+                status="ok",
+                duration_seconds=0.0,
+                consumed_channels=("height",),
+                produced_channels=(),
+                metrics={"height_3_3": float(state.mask_stack.height[3, 3])},
+            )
+
+        original = dict(TerrainPassController.PASS_REGISTRY)
+        try:
+            TerrainPassController.clear_registry()
+            register_integrator_pass()
+            TerrainPassController.register_pass(
+                PassDefinition(
+                    name="delta_producer",
+                    func=_produce_delta,
+                    requires_channels=("height",),
+                    produces_channels=("karst_delta",),
+                    seed_namespace="delta_producer",
+                    requires_scene_read=False,
+                )
+            )
+            TerrainPassController.register_pass(
+                PassDefinition(
+                    name="final_consumer",
+                    func=_final_consumer,
+                    requires_channels=("height",),
+                    produces_channels=(),
+                    seed_namespace="final_consumer",
+                    requires_scene_read=False,
+                )
+            )
+
+            stack = _make_stack()
+            state = _make_state(stack)
+            with tempfile.TemporaryDirectory() as td:
+                controller = TerrainPassController(state, checkpoint_dir=Path(td))
+                results = controller.run_pipeline(
+                    pass_sequence=["delta_producer", "final_consumer"],
+                    checkpoint=False,
+                )
+        finally:
+            TerrainPassController.clear_registry()
+            TerrainPassController.PASS_REGISTRY.update(original)
+
+        assert [result.pass_name for result in results] == [
+            "delta_producer",
+            "integrate_deltas",
+            "final_consumer",
+        ]
+        assert state.mask_stack.height[3, 3] == pytest.approx(96.0)
+        assert results[-1].metrics["height_3_3"] == pytest.approx(96.0)

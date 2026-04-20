@@ -83,6 +83,40 @@ def derive_pass_seed(
     return int.from_bytes(digest[:4], "big") & 0xFFFFFFFF
 
 
+def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]:
+    """Ensure ``integrate_deltas`` runs after the last delta-producing pass.
+
+    Several terrain bundles publish deferred ``*_delta`` channels instead of
+    mutating ``height`` directly. Downstream validation/export consumers need
+    the composed heightfield, so controller sequencing normalizes the
+    integrator placement instead of relying on every caller to insert it
+    manually.
+    """
+    seq = list(pass_sequence)
+    if not seq or "integrate_deltas" not in TerrainPassController.PASS_REGISTRY:
+        return seq
+
+    from .terrain_delta_integrator import _DELTA_CHANNELS
+
+    delta_channels = set(_DELTA_CHANNELS)
+    seq_without_integrator = [name for name in seq if name != "integrate_deltas"]
+    producer_indexes = [
+        idx
+        for idx, name in enumerate(seq_without_integrator)
+        if name in TerrainPassController.PASS_REGISTRY
+        and delta_channels.intersection(
+            TerrainPassController.PASS_REGISTRY[name].produces_channels
+        )
+    ]
+    if not producer_indexes:
+        return seq
+
+    insert_at = producer_indexes[-1] + 1
+    normalized = list(seq_without_integrator)
+    normalized.insert(insert_at, "integrate_deltas")
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # TerrainPassController (§5.10)
 # ---------------------------------------------------------------------------
@@ -442,6 +476,10 @@ class TerrainPassController:
                 "erosion",
                 "validation_minimal",
             ]
+        else:
+            pass_sequence = list(pass_sequence)
+
+        pass_sequence = _normalize_delta_integration_sequence(pass_sequence)
 
         # ------------------------------------------------------------------
         # resume_from_checkpoint: restore state before sequencing
