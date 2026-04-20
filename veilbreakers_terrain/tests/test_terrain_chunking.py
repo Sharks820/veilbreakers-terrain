@@ -292,6 +292,21 @@ class TestSeamContracts:
         assert mismatch
         assert {"tile_x": 0, "tile_y": 1} in manifest["frontier_tiles"]
 
+    def test_tile_batch_manifest_frontier_includes_missing_north_and_west_neighbors(self):
+        contract = build_tile_seam_contract(
+            [[1.0, 2.0], [3.0, 4.0]],
+            tile_x=1,
+            tile_y=1,
+            cell_size=1.0,
+            world_origin_x=1.0,
+            world_origin_y=1.0,
+        )
+
+        manifest = build_tile_batch_manifest([contract], world_id="world_a")
+
+        assert {"tile_x": 1, "tile_y": 0} in manifest["frontier_tiles"]
+        assert {"tile_x": 0, "tile_y": 1} in manifest["frontier_tiles"]
+
 
 class TestValidateTileSeams:
     def test_east_west_tiles_match(self):

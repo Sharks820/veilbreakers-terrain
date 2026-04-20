@@ -1172,6 +1172,17 @@ def _write_json_manifest(path: str | Path, payload: dict[str, Any]) -> str:
     return str(target)
 
 
+def _cleanup_written_artifacts(paths: list[str | Path | None]) -> None:
+    """Best-effort cleanup for partially exported tile/world artifacts."""
+    for path in paths:
+        if not path:
+            continue
+        try:
+            Path(path).unlink(missing_ok=True)
+        except Exception:
+            logger.debug("artifact cleanup skipped for %s", path, exc_info=True)
+
+
 def _resolve_height_range(
     params: dict,
     heightmap: np.ndarray,
@@ -2200,7 +2211,17 @@ def handle_generate_terrain_tile(params: dict) -> dict:
     }
     tile_manifest_path = export_root / f"{name}_tile_manifest.json"
     result["seam_contract"] = seam_contract
-    result["tile_manifest_path"] = _write_json_manifest(tile_manifest_path, tile_manifest)
+    try:
+        result["tile_manifest_path"] = _write_json_manifest(tile_manifest_path, tile_manifest)
+    except Exception:
+        _cleanup_written_artifacts(
+            [
+                result.get("heightmap_path"),
+                result.get("alphamap_path"),
+                tile_manifest_path,
+            ]
+        )
+        raise
     return result
 
 
@@ -2242,6 +2263,20 @@ def handle_generate_world_terrain(params: dict) -> dict:
             f"{base_name}_{start_tile_x}_{start_tile_y}_{tiles_x}x{tiles_y}",
         )
     )
+    first_tile = _resolve_terrain_tile_params(
+        {
+            **params,
+            "tile_x": start_tile_x,
+            "tile_y": start_tile_y,
+        }
+    )
+    terrain_size = float(first_tile["terrain_size"])
+    requested_world_bounds = {
+        "min_x": float(first_tile["world_origin_x"]),
+        "min_y": float(first_tile["world_origin_y"]),
+        "max_x": float(first_tile["world_origin_x"]) + terrain_size * tiles_x,
+        "max_y": float(first_tile["world_origin_y"]) + terrain_size * tiles_y,
+    }
 
     tile_results: list[dict[str, Any]] = []
     failed_tiles: list[dict[str, Any]] = []
@@ -2278,12 +2313,12 @@ def handle_generate_world_terrain(params: dict) -> dict:
                 })
 
     # Compute world bounds from successful tiles
-    world_bounds: dict[str, float] | None = None
+    successful_world_bounds: dict[str, float] | None = None
     if tile_results:
         all_x_origins = [float(t.get("world_origin_x", 0.0)) for t in tile_results]
         all_y_origins = [float(t.get("world_origin_y", 0.0)) for t in tile_results]
         tile_sizes = [float(t.get("terrain_size", t.get("tile_size", 256))) for t in tile_results]
-        world_bounds = {
+        successful_world_bounds = {
             "min_x": min(all_x_origins),
             "min_y": min(all_y_origins),
             "max_x": max(ox + ts for ox, ts in zip(all_x_origins, tile_sizes)),
@@ -2292,6 +2327,7 @@ def handle_generate_world_terrain(params: dict) -> dict:
 
     batch_manifest_path: str | None = None
     frontier_tiles: list[dict[str, int]] = []
+    batch_manifest_error: str | None = None
     if tile_results:
         from .terrain_chunking import build_tile_batch_manifest
 
@@ -2308,16 +2344,42 @@ def handle_generate_world_terrain(params: dict) -> dict:
                 world_id=world_id,
                 batch_id=batch_id,
             )
-            frontier_tiles = list(batch_manifest.get("frontier_tiles", ()))
+            frontier_set = {
+                (int(tile["tile_x"]), int(tile["tile_y"]))
+                for tile in batch_manifest.get("frontier_tiles", ())
+            }
+            frontier_set.update(
+                (int(tile["tile_x"]), int(tile["tile_y"]))
+                for tile in failed_tiles
+            )
+            frontier_tiles = [
+                {"tile_x": coords[0], "tile_y": coords[1]}
+                for coords in sorted(frontier_set, key=lambda item: (item[1], item[0]))
+            ]
+            batch_manifest["frontier_tiles"] = frontier_tiles
             batch_export_root = Path(
                 params.get("export_dir")
                 or params.get("output_dir")
                 or Path("Temp") / "VB_TerrainExports" / base_name
             )
-            batch_manifest_path = _write_json_manifest(
-                batch_export_root / "world_batch_manifest.json",
-                batch_manifest,
-            )
+            batch_manifest_target = batch_export_root / "world_batch_manifest.json"
+            try:
+                batch_manifest_path = _write_json_manifest(
+                    batch_manifest_target,
+                    batch_manifest,
+                )
+            except Exception as exc:
+                batch_manifest_error = str(exc)
+                _cleanup_written_artifacts([batch_manifest_target])
+                logger.warning(
+                    "handle_generate_world_terrain: batch manifest write failed: %s",
+                    exc,
+                )
+    elif failed_tiles:
+        frontier_tiles = [
+            {"tile_x": int(tile["tile_x"]), "tile_y": int(tile["tile_y"])}
+            for tile in failed_tiles
+        ]
 
     _duration = time.perf_counter() - _t0
 
@@ -2325,7 +2387,7 @@ def handle_generate_world_terrain(params: dict) -> dict:
         result = dict(tile_results[0])
         result["compatibility_mode"] = "world_to_tile_wrapper"
         result["deprecated_command"] = True
-        result["ok"] = True
+        result["ok"] = batch_manifest_error is None
         result["failed_tile_count"] = 0
         result.setdefault("affected_cells", total_affected_cells)
         result.setdefault("duration_seconds", round(_duration, 4))
@@ -2333,7 +2395,10 @@ def handle_generate_world_terrain(params: dict) -> dict:
         result["world_id"] = world_id
         result["batch_id"] = batch_id
         result["batch_manifest_path"] = batch_manifest_path
+        result["batch_manifest_error"] = batch_manifest_error
         result["frontier_tiles"] = frontier_tiles
+        result["world_bounds"] = requested_world_bounds
+        result["successful_world_bounds"] = successful_world_bounds
         return result
 
     return {
@@ -2346,12 +2411,14 @@ def handle_generate_world_terrain(params: dict) -> dict:
         "tiles_x": tiles_x,
         "tiles_y": tiles_y,
         "tiles": tile_results,
-        "ok": len(failed_tiles) == 0,
+        "ok": len(failed_tiles) == 0 and batch_manifest_error is None,
         "failed_tile_count": len(failed_tiles),
         "failed_tiles": failed_tiles,
         "total_vertex_count": total_vertex_count,
-        "world_bounds": world_bounds,
+        "world_bounds": requested_world_bounds,
+        "successful_world_bounds": successful_world_bounds,
         "batch_manifest_path": batch_manifest_path,
+        "batch_manifest_error": batch_manifest_error,
         "frontier_tiles": frontier_tiles,
         # AAA metrics
         "affected_cells": total_affected_cells,

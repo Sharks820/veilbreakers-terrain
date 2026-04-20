@@ -980,6 +980,176 @@ class TestWorldTerrainGeneration:
         assert batch_manifest["frontier_tiles"]
         assert {"tile_x": 2, "tile_y": 0} in batch_manifest["frontier_tiles"]
 
+    def test_generate_terrain_tile_manifest_failure_cleans_export_artifacts(self, tmp_path):
+        from blender_addon.handlers import environment as env_mod
+
+        heightmap = np.array(
+            [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
+            dtype=np.float64,
+        )
+        mesh_result = {
+            "name": "TileFail",
+            "vertex_count": 9,
+            "cliff_overlays": [],
+            "object_location": (1.0, 1.0, 0.0),
+        }
+
+        def _fake_export_world_tile_artifacts(**kwargs):
+            height_path = tmp_path / "TileFail_heightmap.raw"
+            alpha_path = tmp_path / "TileFail_alphamap.raw"
+            height_path.write_bytes(b"height")
+            alpha_path.write_bytes(b"alpha")
+            return {
+                "heightmap_path": str(height_path),
+                "alphamap_path": str(alpha_path),
+            }
+
+        def _fake_write_json_manifest(path, payload):
+            if str(path).endswith("TileFail_tile_manifest.json"):
+                raise OSError("disk full")
+            return _original_write_json_manifest(path, payload)
+
+        _original_write_json_manifest = env_mod._write_json_manifest
+
+        with patch.object(env_mod, "generate_world_heightmap", return_value=heightmap), \
+             patch.object(env_mod, "_create_terrain_mesh_from_heightmap", return_value=mesh_result), \
+             patch.object(env_mod, "_export_world_tile_artifacts", side_effect=_fake_export_world_tile_artifacts), \
+             patch.object(env_mod, "_write_json_manifest", side_effect=_fake_write_json_manifest):
+            with pytest.raises(OSError, match="disk full"):
+                env_mod.handle_generate_terrain_tile(
+                    {
+                        "name": "TileFail",
+                        "tile_x": 0,
+                        "tile_y": 0,
+                        "tile_size": 2,
+                        "resolution": 3,
+                        "cell_size": 2.0,
+                        "terrain_type": "mountains",
+                        "export_splatmaps": True,
+                        "export_dir": str(tmp_path),
+                        "seed": 17,
+                    }
+                )
+
+        assert not (tmp_path / "TileFail_heightmap.raw").exists()
+        assert not (tmp_path / "TileFail_alphamap.raw").exists()
+        assert not (tmp_path / "TileFail_tile_manifest.json").exists()
+
+    def test_world_terrain_manifest_write_failure_isolated(self, tmp_path):
+        from blender_addon.handlers import environment as env_mod
+        from blender_addon.handlers.terrain_chunking import build_tile_seam_contract
+
+        def _fake_tile(params):
+            tile_x = params["tile_x"]
+            tile_y = params["tile_y"]
+            terrain_size = float(params.get("tile_size", 64)) * float(params.get("cell_size", 1.0))
+            seam_contract = build_tile_seam_contract(
+                [[tile_x, tile_x + 1], [tile_y, tile_y + 1]],
+                tile_x=tile_x,
+                tile_y=tile_y,
+                cell_size=float(params.get("cell_size", 1.0)),
+                world_origin_x=float(tile_x) * terrain_size,
+                world_origin_y=float(tile_y) * terrain_size,
+                world_id="World",
+                batch_id="World_0_0_2x2",
+            )
+            return {
+                "name": params["name"],
+                "tile_x": tile_x,
+                "tile_y": tile_y,
+                "terrain_size": terrain_size,
+                "world_origin_x": float(tile_x) * terrain_size,
+                "world_origin_y": float(tile_y) * terrain_size,
+                "vertex_count": 4,
+                "seam_contract": seam_contract,
+                "tile_manifest_path": str(tmp_path / f"{params['name']}.json"),
+            }
+
+        def _fake_write_json_manifest(path, payload):
+            if str(path).endswith("world_batch_manifest.json"):
+                raise OSError("manifest write failed")
+            return _original_write_json_manifest(path, payload)
+
+        _original_write_json_manifest = env_mod._write_json_manifest
+
+        with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=_fake_tile), \
+             patch.object(env_mod, "_write_json_manifest", side_effect=_fake_write_json_manifest):
+            result = env_mod.handle_generate_world_terrain(
+                {
+                    "name": "World",
+                    "tiles_x": 2,
+                    "tiles_y": 2,
+                    "tile_size": 64,
+                    "cell_size": 1.0,
+                    "export_dir": str(tmp_path),
+                }
+            )
+
+        assert result["ok"] is False
+        assert result["batch_manifest_path"] is None
+        assert "manifest write failed" in result["batch_manifest_error"]
+
+    def test_world_terrain_partial_failure_preserves_requested_bounds_and_frontier(self, tmp_path):
+        from blender_addon.handlers import environment as env_mod
+        from blender_addon.handlers.terrain_chunking import build_tile_seam_contract
+
+        def _fake_tile(params):
+            tile_x = params["tile_x"]
+            tile_y = params["tile_y"]
+            if (tile_x, tile_y) == (2, 0):
+                raise RuntimeError("tile exploded")
+            terrain_size = float(params.get("tile_size", 64)) * float(params.get("cell_size", 1.0))
+            seam_contract = build_tile_seam_contract(
+                [[tile_x, tile_x + 1], [tile_y, tile_y + 1]],
+                tile_x=tile_x,
+                tile_y=tile_y,
+                cell_size=float(params.get("cell_size", 1.0)),
+                world_origin_x=float(tile_x) * terrain_size,
+                world_origin_y=float(tile_y) * terrain_size,
+                world_id="World",
+                batch_id="World_0_0_2x2",
+            )
+            return {
+                "name": params["name"],
+                "tile_x": tile_x,
+                "tile_y": tile_y,
+                "terrain_size": terrain_size,
+                "world_origin_x": float(tile_x) * terrain_size,
+                "world_origin_y": float(tile_y) * terrain_size,
+                "vertex_count": 4,
+                "seam_contract": seam_contract,
+                "tile_manifest_path": str(tmp_path / f"{params['name']}.json"),
+            }
+
+        with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=_fake_tile):
+            result = env_mod.handle_generate_world_terrain(
+                {
+                    "name": "World",
+                    "tiles_x": 3,
+                    "tiles_y": 1,
+                    "tile_size": 64,
+                    "cell_size": 1.0,
+                    "export_dir": str(tmp_path),
+                }
+            )
+
+        assert result["ok"] is False
+        assert result["failed_tile_count"] == 1
+        assert result["failed_tiles"] == [{"tile_x": 2, "tile_y": 0, "error": "tile exploded"}]
+        assert result["world_bounds"] == {
+            "min_x": 0.0,
+            "min_y": 0.0,
+            "max_x": 192.0,
+            "max_y": 64.0,
+        }
+        assert result["successful_world_bounds"] == {
+            "min_x": 0.0,
+            "min_y": 0.0,
+            "max_x": 128.0,
+            "max_y": 64.0,
+        }
+        assert {"tile_x": 2, "tile_y": 0} in result["frontier_tiles"]
+
 
 def test_execute_terrain_pipeline_wires_water_network_and_spec():
     from blender_addon.handlers import environment as env_mod

@@ -609,6 +609,13 @@ def build_tile_batch_manifest(
         tx, ty = coords
         neighbors = contract.get("neighbor_tiles", {})
         edge_contracts = contract.get("edge_contracts", {})
+        for direction in ("north", "south", "west", "east"):
+            neighbor_raw = neighbors.get(direction)
+            if neighbor_raw is None:
+                continue
+            neighbor_coords = (int(neighbor_raw[0]), int(neighbor_raw[1]))
+            if neighbor_coords not in by_coords:
+                frontier.add(neighbor_coords)
         for direction, delta in (
             ("east", (1, 0, "west")),
             ("south", (0, 1, "north")),
@@ -619,7 +626,6 @@ def build_tile_batch_manifest(
             neighbor_coords = (int(neighbor_raw[0]), int(neighbor_raw[1]))
             neighbor_contract = by_coords.get(neighbor_coords)
             if neighbor_contract is None:
-                frontier.add(neighbor_coords)
                 adjacency.append(
                     {
                         "tile_a": [tx, ty],
