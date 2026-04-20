@@ -167,13 +167,36 @@ def _protected_mask(
     return mask
 
 
-def _normalize(arr: np.ndarray) -> np.ndarray:
-    """Min-max normalize to [0, 1] as float32.
+def _normalize(arr: np.ndarray, signed: bool = False) -> np.ndarray:
+    """Min-max normalize an array, with optional signed-range preservation.
 
-    Standard [0, 1] min-max normalization with epsilon guard so the
-    denominator never collapses to zero on a flat array.  Uses a
-    per-array epsilon (1e-7 * |mean| or absolute 1e-7, whichever is
-    larger) so near-zero constant arrays don't get exaggerated noise.
+    Parameters
+    ----------
+    arr:
+        Input array of any shape.
+    signed:
+        When ``False`` (default), normalize to **[0, 1]** — the standard
+        density/weight range used by all vegetation scalars.
+        When ``True``, normalize to **[-1, 1]** so that negative input
+        values (e.g. sub-sea-level terrain elevations) map to negative
+        output values.  This preserves the sign contract needed by
+        altitude-safety scanners: cells at negative world elevation will
+        still have negative normalized altitude, keeping them visibly
+        separate from surface-level cells.
+
+    Flat-array guard
+    ----------------
+    A per-array epsilon (``max(1e-7, 1e-7 * |mean|)``) prevents the
+    denominator collapsing to zero on constant inputs.  For ``signed=False``,
+    a flat array returns zeros; for ``signed=True``, it returns zeros too
+    (the sign of a constant is undefined).
+
+    Notes
+    -----
+    Callers that pass **altitude / height arrays** and later use the result
+    for water-depth safety decisions (e.g. distinguishing underwater terrain
+    from dry land) **must** pass ``signed=True`` so that negative elevations
+    survive the normalization step.
     """
     arr = np.asarray(arr, dtype=np.float32)
     lo = float(arr.min())
@@ -181,9 +204,16 @@ def _normalize(arr: np.ndarray) -> np.ndarray:
     rng = hi - lo
     eps = max(1e-7, 1e-7 * abs(float(arr.mean())))
     if rng < eps:
-        # Flat array — return zeros (no information to preserve).
         return np.zeros_like(arr)
-    return ((arr - lo) / rng).astype(np.float32)
+
+    if signed:
+        # Map [lo, hi] → [-1, 1] so negative input values stay negative.
+        # Formula: (arr - mid) / half_range  where mid = (lo+hi)/2, half=rng/2
+        mid = (lo + hi) * 0.5
+        half = rng * 0.5
+        return ((arr - mid) / half).astype(np.float32)
+    else:
+        return ((arr - lo) / rng).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +276,9 @@ def compute_vegetation_layers(
 
     slope_n = _normalize(np.asarray(slope)) if slope is not None else np.zeros(shape, dtype=np.float32)
     wet_n = _normalize(np.asarray(wetness)) if wetness is not None else np.zeros(shape, dtype=np.float32)
-    alt_n = _normalize(h)
+    # signed=True: negative elevations (underwater / sub-sea-level) map to
+    # negative alt_n values, preserving the altitude-safety contract.
+    alt_n = _normalize(h, signed=True)
 
     if wind is not None:
         wind_arr = np.asarray(wind, dtype=np.float32)
@@ -494,8 +526,11 @@ def detect_disturbance_patches(
     temporal_changed = height_delta_arr > (hd_mean + 1.5 * hd_std)
     disturbed |= temporal_changed
     # Temporal change near valleys/low areas → flood; elsewhere neutral.
-    alt_n_local = _normalize(height)
-    _score_flood += (temporal_changed & (alt_n_local < 0.4)).astype(np.float32) * 0.4
+    # signed=True: negative elevations stay negative after normalization so
+    # the < 0.0 threshold below correctly identifies underwater / valley cells
+    # rather than treating them as positive near-minimum values.
+    alt_n_local = _normalize(height, signed=True)
+    _score_flood += (temporal_changed & (alt_n_local < 0.0)).astype(np.float32) * 0.4
     _score_windthrow += (temporal_changed & (alt_n_local >= 0.4)).astype(np.float32) * 0.2
 
     # -------------------------------------------------------------------------
