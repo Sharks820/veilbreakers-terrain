@@ -22,9 +22,11 @@ def register_bundle_o_passes() -> None:
     Registers:
         - ``water_variants`` (produces water_surface, wetness)
         - ``vegetation_depth`` (populates stack.detail_density dict)
+        - ``emergent_grass`` (derives grass_density_map from splatmap; Fix 9.9)
     """
     terrain_water_variants.register_water_variants_pass()
     terrain_vegetation_depth.register_vegetation_depth_pass()
+    terrain_vegetation_depth.register_emergent_grass_pass()
 
 
 __all__ = [

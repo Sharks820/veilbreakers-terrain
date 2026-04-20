@@ -1785,6 +1785,21 @@ def pass_emergent_grass(
     )
 
 
+def register_emergent_grass_pass() -> None:
+    """Register the emergent_grass pass on TerrainPassController (Fix 9.9)."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="emergent_grass",
+            func=pass_emergent_grass,
+            requires_channels=("splatmap_weights_layer",),
+            produces_channels=("grass_density_map",),
+            seed_namespace="emergent_grass",
+            requires_scene_read=False,
+            description="Bundle O — derive grass density map from splatmap ground weight (Fix 9.9).",
+        )
+    )
+
+
 __all__ = [
     "VegetationLayer",
     "VegetationLayers",
@@ -1804,4 +1819,5 @@ __all__ = [
     "GRASS_DENSITY_SCALE",
     "compute_emergent_grass_density",
     "pass_emergent_grass",
+    "register_emergent_grass_pass",
 ]

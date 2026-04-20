@@ -273,9 +273,32 @@ def _build_command_handlers() -> Dict[str, Callable]:
         def _handle_light_budget(params: dict) -> dict:
             return _li.compute_light_budget(params.get("lights", []))
 
+        def _handle_compute_probe_placements(params: dict) -> list:
+            import numpy as _np
+            height_raw = params.get("height")
+            if height_raw is None:
+                return []
+            height = _np.asarray(height_raw, dtype=_np.float64)
+            water_raw = params.get("water_surface")
+            water = _np.asarray(water_raw, dtype=_np.float64) if water_raw is not None else None
+            return _li.compute_probe_placements(
+                height,
+                cell_size=float(params.get("cell_size", 1.0)),
+                world_origin_x=float(params.get("world_origin_x", 0.0)),
+                world_origin_y=float(params.get("world_origin_y", 0.0)),
+                water_surface=water,
+                feature_positions=params.get("feature_positions"),
+                max_probes=int(params.get("max_probes", 16)),
+                min_probe_spacing_m=float(params.get("min_probe_spacing_m", 20.0)),
+                height_weight=float(params.get("height_weight", 1.0)),
+                water_weight=float(params.get("water_weight", 1.5)),
+                feature_weight=float(params.get("feature_weight", 2.0)),
+            )
+
         handlers["env_compute_light_placements"] = _handle_compute_light_placements
         handlers["env_merge_lights"] = _handle_merge_lights
         handlers["env_light_budget"] = _handle_light_budget
+        handlers["env_compute_probe_placements"] = _handle_compute_probe_placements
     except Exception as exc:  # noqa: BLE001
         _log.warning("COMMAND_HANDLERS: failed to register light_integration handlers: %r", exc)
 
@@ -1026,6 +1049,7 @@ def __getattr__(name: str):  # noqa: N807
     })
     _LIGHT_EXPORTS = frozenset({
         "compute_light_placements", "merge_nearby_lights", "compute_light_budget",
+        "compute_probe_placements",
         "LIGHT_PROP_MAP", "FLICKER_PRESETS",
     })
     _ATMO_EXPORTS = frozenset({
@@ -1056,6 +1080,7 @@ __all__ = [
     "STORYTELLING_PATTERNS",
     # light_integration
     "compute_light_placements", "merge_nearby_lights", "compute_light_budget",
+    "compute_probe_placements",
     "LIGHT_PROP_MAP", "FLICKER_PRESETS",
     # atmospheric_volumes
     "ATMOSPHERIC_VOLUMES", "BIOME_ATMOSPHERE_RULES", "compute_atmospheric_placements",
