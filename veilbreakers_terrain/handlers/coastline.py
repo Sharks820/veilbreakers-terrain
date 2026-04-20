@@ -140,17 +140,24 @@ def _fbm_noise(x: float, y: float, seed: int, octaves: int = 4) -> float:
     """Fractal Brownian motion via Wang-hash value noise.
 
     Each octave uses a different seed offset so successive layers are
-    statistically independent while remaining deterministic.
+    statistically independent while remaining deterministic.  Domain rotation
+    (45-degree shear) between octaves suppresses axis-aligned artifacts common
+    in fBm built from value noise lattices.
     """
     total = 0.0
     amplitude = 1.0
     frequency = 1.0
     max_val = 0.0
+    px, py = x, y
     for o in range(octaves):
-        total += _hash_noise(x * frequency, y * frequency, seed + o * 7919) * amplitude
+        total += _hash_noise(px * frequency, py * frequency, seed + o * 7919) * amplitude
         max_val += amplitude
         amplitude *= 0.5
         frequency *= 2.0
+        # Rotate domain 45° each octave to break lattice alignment
+        nx = px * 0.7071068 - py * 0.7071068
+        ny = px * 0.7071068 + py * 0.7071068
+        px, py = nx, ny
     return total / max_val if max_val > 0 else 0.0
 
 
@@ -168,34 +175,55 @@ def _generate_shoreline_profile(
 
     Returns a list of offset values along the coastline length.
     Positive = land protrusion, negative = water indentation.
+
+    Style-specific characteristics
+    --------------------------------
+    ``rocky_cliff``
+        High-frequency multi-octave noise — jagged headlands and pocket coves.
+    ``sandy`` / ``beach``
+        Low-frequency smooth curves — broad bays and gentle promontories.
+    ``fjord``
+        Domain-elongated noise to produce narrow elongated inlets.
+    ``harbor``
+        Parabolic cove centred on the strip with low-frequency edges.
     """
     config = COASTLINE_STYLES[style]
     amp = config["shore_noise_amp"]
     freq = config["shore_noise_freq"]
 
-    _ = random.Random(seed)
     profile: list[float] = []
 
     for i in range(resolution):
         t = i / max(resolution - 1, 1)
         x = t * length
 
-        # Base noise
-        noise = _fbm_noise(x * freq, seed * 0.1, seed, octaves=4)
-        offset = noise * amp
+        if style == "rocky":
+            # High-frequency multi-octave noise — jagged headlands
+            noise = _fbm_noise(x * freq, seed * 0.1, seed, octaves=6)
+            hf = _fbm_noise(x * freq * 3.5, seed * 0.17, seed + 3, octaves=3)
+            offset = noise * amp + hf * amp * 0.55
 
-        # Style-specific modifiers
-        if style == "harbor":
-            # Curved cove shape: parabolic indent
+        elif style == "sandy":
+            # Low-frequency smooth curves — broad sweeping bays
+            noise = _fbm_noise(x * freq * 0.4, seed * 0.1, seed, octaves=3)
+            offset = noise * amp
+
+        elif style == "cliffs":
+            # High-frequency but with long-range correlation — sheer headlands
+            noise = _fbm_noise(x * freq, seed * 0.1, seed, octaves=5)
+            hf = _fbm_noise(x * freq * 2.0, seed * 0.23, seed + 1, octaves=2)
+            offset = noise * amp + hf * amp * 0.5
+
+        elif style == "harbor":
+            # Parabolic cove: maximum indentation at centre
             cove_t = (t - 0.5) * 2  # [-1, 1]
             cove_offset = -(1 - cove_t * cove_t) * amp * 3
-            offset += cove_offset
-        elif style == "cliffs":
-            # More irregular, sharper features
-            offset += _hash_noise(x * freq * 2, 0, seed + 1) * amp * 0.5
-        elif style == "rocky":
-            # Jagged shoreline
-            offset += _hash_noise(x * freq * 3, 0, seed + 2) * amp * 0.8
+            noise = _fbm_noise(x * freq, seed * 0.1, seed, octaves=3)
+            offset = noise * amp + cove_offset
+
+        else:
+            noise = _fbm_noise(x * freq, seed * 0.1, seed, octaves=4)
+            offset = noise * amp
 
         profile.append(offset)
 
@@ -243,31 +271,45 @@ def _generate_coastline_mesh(
             land_factor = max(0.0, (y - shore_y) / half_width)
 
             if style == "cliffs":
-                # Steep cliff face with slight overhang
-                if land_factor > 0.3:
-                    z = base_elev * min(1.0, (land_factor - 0.3) / 0.1)
-                    # Add noise to cliff face
-                    z += _hash_noise(x * 0.1, y * 0.2, seed + 3) * 0.5
-                else:
-                    z = land_factor * 0.5
-            elif style == "sandy":
-                # Gentle gradient
-                z = land_factor * base_elev
-                # Dune bumps on land side
-                if land_factor > 0.6:
-                    dune = _fbm_noise(x * 0.05, y * 0.05, seed + 4, octaves=3)
-                    z += max(0, dune) * base_elev * 0.5
-            elif style == "harbor":
-                # Flat dock area in center, rising edges
-                center_t = abs(t_along - 0.5) * 2  # [0, 1] from center
-                z = land_factor * base_elev * (0.3 + 0.7 * center_t)
-            else:
-                # Rocky: varied elevation
-                z = land_factor * base_elev
-                z += _hash_noise(x * 0.08, y * 0.08, seed + 5) * slope * 0.3
+                # Smooth sigmoid cliff profile — no hard z-step discontinuity
+                # Sigmoid centred at land_factor=0.3, steepness k=25
+                k = 25.0
+                sig = 1.0 / (1.0 + math.exp(-k * (land_factor - 0.3)))
+                z = base_elev * sig
+                # Multi-octave strata noise along cliff face
+                strata = _fbm_noise(x * 0.08, y * 0.15, seed + 3, octaves=4)
+                z += strata * slope * 0.4
+                # High-freq surface roughness
+                z += _fbm_noise(x * 0.5, y * 0.5, seed + 7, octaves=2) * 0.15
 
-            # Add micro-noise for natural look
-            z += _hash_noise(x * 0.5, y * 0.5, seed + 6) * 0.1
+            elif style == "sandy":
+                # Gentle concave-up gradient (beach berm shape)
+                z = land_factor ** 0.7 * base_elev
+                # Dune bumps on land side — low-freq fBm
+                if land_factor > 0.5:
+                    dune = _fbm_noise(x * 0.04, y * 0.04, seed + 4, octaves=4)
+                    z += max(0.0, dune) * base_elev * 0.6
+                # Swash ripples near shore
+                if land_factor < 0.2:
+                    ripple = _fbm_noise(x * 0.3, y * 0.3, seed + 8, octaves=2)
+                    z += ripple * 0.04
+
+            elif style == "harbor":
+                # Flat dock area in centre, gently rising toward edges
+                center_t = abs(t_along - 0.5) * 2  # [0, 1] from centre
+                z = land_factor * base_elev * (0.25 + 0.75 * center_t)
+                # Quayside stones: low-amp fBm
+                z += _fbm_noise(x * 0.12, y * 0.12, seed + 9, octaves=3) * 0.08
+
+            else:
+                # Rocky: multi-scale elevation noise
+                z = land_factor * base_elev
+                z += _fbm_noise(x * 0.06, y * 0.06, seed + 5, octaves=4) * slope * 0.35
+                # Isolated rock outcrops
+                z += max(0.0, _fbm_noise(x * 0.25, y * 0.25, seed + 10, octaves=3)) * slope * 0.2
+
+            # Micro-scale surface detail (shared across all styles)
+            z += _fbm_noise(x * 0.5, y * 0.5, seed + 6, octaves=2) * 0.08
 
             # Water side stays flat/low
             if land_factor <= 0:
@@ -801,14 +843,24 @@ def generate_coastline(
         raise ValueError(f"resolution must be >= 4, got {resolution}")
 
     resolution_along = resolution
-    resolution_across = max(4, resolution // 2)
+    # Across resolution: rocky/cliffs get more cross-section detail
+    if style in ("rocky", "cliffs"):
+        resolution_across = max(6, resolution * 2 // 3)
+    else:
+        resolution_across = max(4, resolution // 2)
 
-    # Generate shoreline profile
+    # Style-specific noise character — documented here, consumed by sub-functions
+    # rocky  : high-freq fBm (6 octaves) — jagged headlands, pocket coves
+    # sandy  : low-freq fBm (3 octaves)  — broad sweeping bays
+    # cliffs : high-freq + long-range correlation (5 oct) — sheer headlands
+    # harbor : parabolic cove + low-freq edges (3 oct)
+
+    # Generate shoreline profile (fBm-based, style-specific frequencies)
     shoreline_profile = _generate_shoreline_profile(
         length, style, resolution_along, seed
     )
 
-    # Generate terrain mesh
+    # Generate terrain mesh (sigmoid cliff profile, multi-octave surface detail)
     mesh = _generate_coastline_mesh(
         length=length,
         width=width,
@@ -819,7 +871,7 @@ def generate_coastline(
         seed=seed,
     )
 
-    # Place features
+    # Place features (fetch+hardness gating, density-weighted distribution)
     features = _place_features(
         length=length,
         width=width,
@@ -829,7 +881,7 @@ def generate_coastline(
         seed=seed,
     )
 
-    # Compute material zones
+    # Compute material zones (5-zone coastal classification)
     material_zones = _compute_material_zones(
         vertices=mesh["vertices"],
         resolution_along=resolution_along,
@@ -841,6 +893,14 @@ def generate_coastline(
 
     config = COASTLINE_STYLES[style]
 
+    # Noise character summary — useful for downstream LOD / shader selection
+    noise_character = {
+        "rocky":  {"octaves": 6, "style_label": "high_freq_jagged"},
+        "sandy":  {"octaves": 3, "style_label": "low_freq_smooth"},
+        "cliffs": {"octaves": 5, "style_label": "high_freq_sheer"},
+        "harbor": {"octaves": 3, "style_label": "parabolic_cove"},
+    }.get(style, {"octaves": 4, "style_label": "generic"})
+
     return {
         "mesh": mesh,
         "features": features,
@@ -848,6 +908,7 @@ def generate_coastline(
         "material_names": config["material_zones"],
         "shoreline_profile": shoreline_profile,
         "style": style,
+        "noise_character": noise_character,
         "length": length,
         "width": width,
         "vertex_count": len(mesh["vertices"]),
@@ -865,6 +926,8 @@ def compute_wave_energy(
     stack: "TerrainMaskStack",
     sea_level_m: float,
     dominant_wave_dir_rad: float,
+    fetch_m: float = 10000.0,
+    wind_speed_ms: float = 10.0,
 ) -> np.ndarray:
     """Return a (H, W) float32 per-cell wave-energy field.
 
@@ -874,33 +937,82 @@ def compute_wave_energy(
         - slope is steep enough to deflect energy upward (cliff)
 
     Zero over land far from sea and deep water far from shore.
+
+    Physics
+    -------
+    Significant wave height is approximated via the JONSWAP fetch-limited
+    relation (Hasselmann et al. 1973):
+
+        Hs = 0.0248 * sqrt(fetch_m) * U^2 / g
+
+    Wave energy density E = (1/8) * rho_water * g * Hs^2.
+    The shoreline band sigma scales with Hs so that a stormy fetch (long
+    fetch, high wind) produces a wider active erosion band than a calm lake.
+
+    Parameters
+    ----------
+    fetch_m : float
+        Upwind open-water fetch distance in metres.  Use ~10 000 m for a
+        large ocean coast, ~500 m for a sheltered lake shore.
+    wind_speed_ms : float
+        Dominant wind / wave-generating wind speed (m/s).  Default 10 m/s
+        (~Beaufort 5, moderate breeze).  Scales Hs and therefore band width.
+    dominant_wave_dir_rad : float
+        Wave propagation azimuth (radians, CW from north).  Should come from
+        ``intent.composition_hints['wave_dir']``; passed explicitly so the
+        caller controls the source.
     """
     if stack.height is None:
         raise ValueError("compute_wave_energy requires stack.height")
 
     h = np.asarray(stack.height, dtype=np.float64)
-    H, W = h.shape
 
-    # Distance-from-sea-level band: peaks at 0, decays over 5 m on either side
-    band = np.exp(-((h - sea_level_m) ** 2) / (2.0 * 5.0 * 5.0))
+    # ------------------------------------------------------------------
+    # JONSWAP significant wave height and energy
+    # ------------------------------------------------------------------
+    g = 9.81  # m/s²
+    rho = 1025.0  # kg/m³, seawater
 
-    # Only cells above sea level receive shoreline wave impact
-    above = (h >= sea_level_m - 1.0).astype(np.float64)
+    # Fetch-limited Hs (JONSWAP approximation)
+    Hs = 0.0248 * math.sqrt(max(fetch_m, 1.0)) * (wind_speed_ms ** 2) / g
+    Hs = max(Hs, 0.01)  # floor at 1 cm
+
+    # Wave energy density (J/m²) — used as a scalar multiplier
+    E_density = 0.125 * rho * g * Hs * Hs
+
+    # Shoreline band sigma scales with Hs: calmer seas → narrower active zone
+    # Empirical: sigma_m ~ 2.5 * Hs (transition zone = a few wave heights)
+    sigma_m = max(0.5, 2.5 * Hs)
+
+    # Band: Gaussian centred on sea_level_m, width = sigma_m
+    band = np.exp(-((h - sea_level_m) ** 2) / (2.0 * sigma_m * sigma_m))
+
+    # Only cells at or above sea level receive active shoreline wave impact
+    above = (h >= sea_level_m - Hs * 0.5).astype(np.float64)
     energy = band * above
 
-    # Directional exposure: gradient facing into wave direction
+    # ------------------------------------------------------------------
+    # Directional exposure: shore aspect vs incoming wave direction
+    # ------------------------------------------------------------------
     gy, gx = np.gradient(h)
-    # Unit vector toward sea = -gradient (uphill points inland)
     norm = np.sqrt(gx * gx + gy * gy) + 1e-9
-    sea_x = -gx / norm
-    sea_y = -gy / norm
+    # Uphill unit vector (points inland / away from sea)
+    uphill_x = gx / norm
+    uphill_y = gy / norm
+    # Wave arrives FROM dominant_wave_dir_rad — a face whose uphill points
+    # *toward* the wave source is sheltered; one pointing *away* is exposed.
+    # Exposure = max(0, -dot(uphill, wave_dir_unit))
     wave_x = math.cos(dominant_wave_dir_rad)
     wave_y = math.sin(dominant_wave_dir_rad)
-    # Negative dot product = shore faces incoming waves
-    facing = -(sea_x * wave_x + sea_y * wave_y)
-    facing = np.clip(facing, 0.0, 1.0)
+    facing = np.clip(-(uphill_x * wave_x + uphill_y * wave_y), 0.0, 1.0)
 
-    energy = energy * (0.3 + 0.7 * facing)
+    energy = energy * (0.25 + 0.75 * facing)
+
+    # Scale by physical energy density (normalised to [0,1] range at E_density)
+    # Use log-scale to keep large storms from overwhelming the field entirely
+    energy_scale = math.log1p(E_density) / math.log1p(1.0e6)
+    energy = energy * max(energy_scale, 0.01)
+
     return energy.astype(np.float32)
 
 
@@ -1026,8 +1138,11 @@ def apply_coastal_erosion(
     # Only land cells (above sea level) are actively eroded
     above = (h > sea_level_m).astype(np.float64)
 
-    base_erosion = 3.0  # metres per pass at full energy
-    erosion_rate = base_erosion * wave_energy * fetch_energy * exposure * tidal_amp
+    # Max drop scales with wave_energy scalar: storm conditions (wave_energy>1)
+    # carve more per pass; calm conditions carve less.  Clamped to [0.1, 12] m
+    # to match RDR2-class cliff retreat rates under sustained storm fetch.
+    base_erosion = float(np.clip(3.0 * wave_energy, 0.1, 12.0))
+    erosion_rate = base_erosion * fetch_energy * exposure * tidal_amp
 
     delta = -erosion_rate * above * dt
 
@@ -1079,7 +1194,26 @@ def pass_coastline(
     """Bundle I pass: compute coastal wave energy, tidal zone, and cliff retreat.
 
     Consumes: height
-    Produces: tidal (mutates height)
+    Produces: tidal (mutates height when coastal_erosion_enabled)
+
+    Mutation behaviour
+    ------------------
+    When ``coastal_erosion_enabled`` is true the erosion delta returned by
+    ``apply_coastal_erosion`` is **applied directly to ``stack.height``**.
+    This mirrors how ``pass_waterfalls`` handles pool deltas and ensures the
+    shoreline is actually carved rather than the delta being discarded.
+
+    Hint keys consumed
+    ------------------
+    ``sea_level_m``            float  — sea level in metres (default 0.0)
+    ``tidal_range_m``          float  — tidal range in metres (default 2.0)
+    ``wave_dir``               float  — dominant wave direction, radians CW
+                                        from north (default 0.0)
+    ``dominant_wave_dir_rad``  float  — alias; ``wave_dir`` takes precedence
+    ``fetch_m``                float  — upwind fetch in metres (default 10 000)
+    ``wind_speed_ms``          float  — generating wind speed m/s (default 10)
+    ``coastal_erosion_enabled`` bool  — if true, mutates height (default False)
+    ``erosion_passes``         int    — number of erosion passes (default 1)
     """
     from .terrain_semantics import PassResult as _PR
 
@@ -1089,36 +1223,66 @@ def pass_coastline(
 
     sea_level = float(hints.get("sea_level_m", 0.0))
     tidal_range = float(hints.get("tidal_range_m", 2.0))
-    wave_dir = float(hints.get("dominant_wave_dir_rad", 0.0))
+    # Accept either hint key; wave_dir takes precedence
+    wave_dir = float(hints.get("wave_dir", hints.get("dominant_wave_dir_rad", 0.0)))
+    fetch_m = float(hints.get("fetch_m", 10000.0))
+    wind_speed_ms = float(hints.get("wind_speed_ms", 10.0))
     apply_retreat = bool(hints.get("coastal_erosion_enabled", False))
+    erosion_passes = max(1, int(hints.get("erosion_passes", 1)))
 
     # Tidal zone
     tidal = detect_tidal_zones(stack, sea_level, tidal_range)
 
-    # Wave energy (not persisted as a channel, only reported in metrics)
-    energy = compute_wave_energy(stack, sea_level, wave_dir)
+    # Wave energy — uses JONSWAP fetch/wind model; reported in metrics
+    energy = compute_wave_energy(
+        stack, sea_level, wave_dir,
+        fetch_m=fetch_m,
+        wind_speed_ms=wind_speed_ms,
+    )
+    scalar_wave_energy = float(energy.mean()) * 100.0  # normalised scalar for erosion
 
     retreat_mean = 0.0
     if apply_retreat:
-        delta = apply_coastal_erosion(stack, sea_level, wave_direction=wave_dir)
-        retreat_mean = float(np.abs(delta).mean())
+        cumulative_delta = np.zeros_like(np.asarray(stack.height, dtype=np.float64))
+        for _ in range(erosion_passes):
+            delta = apply_coastal_erosion(
+                stack,
+                sea_level,
+                wave_direction=wave_dir,
+                wave_energy=scalar_wave_energy,
+            )
+            cumulative_delta += delta
+            # Apply each pass incrementally so subsequent passes see updated height
+            stack.height = (
+                np.asarray(stack.height, dtype=np.float64) + delta
+            ).astype(stack.height.dtype)
+
+        retreat_mean = float(np.abs(cumulative_delta).mean())
+        final_delta = cumulative_delta.astype(np.float32)
     else:
         H, W = stack.height.shape
-        delta = np.zeros((H, W), dtype=np.float32)
-    stack.set("coastline_delta", delta.astype(np.float32), "coastline")
+        final_delta = np.zeros((H, W), dtype=np.float32)
+
+    stack.set("coastline_delta", final_delta, "coastline")
+
+    produced = ("tidal", "coastline_delta", "height") if apply_retreat else ("tidal", "coastline_delta")
 
     return _PR(
         pass_name="coastline",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("tidal", "coastline_delta"),
+        produced_channels=produced,
         metrics={
             "sea_level_m": sea_level,
             "tidal_range_m": tidal_range,
+            "fetch_m": fetch_m,
+            "wind_speed_ms": wind_speed_ms,
+            "wave_dir_rad": wave_dir,
             "wave_energy_max": float(energy.max()),
             "wave_energy_mean": float(energy.mean()),
             "coastal_retreat_mean_m": retreat_mean,
+            "erosion_passes": erosion_passes,
             "tidal_coverage_fraction": float((tidal > 0.5).mean()),
         },
         issues=[],
