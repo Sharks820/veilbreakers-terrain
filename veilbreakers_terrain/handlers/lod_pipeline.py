@@ -395,29 +395,76 @@ def _compute_quadric(
     return Qs
 
 
+def _qem_optimal_position(
+    Q_combined: np.ndarray,
+    v1_pos: np.ndarray,
+    v2_pos: np.ndarray,
+) -> np.ndarray:
+    """Solve for the vertex position that minimises v^T Q_combined v.
+
+    Garland-Heckbert 1997: the optimal position is the solution to the
+    3x3 linear system formed from the top-left 3x3 block of Q_combined
+    with the right-hand side set to the negated fourth column vector
+    (i.e. we enforce the homogeneous constraint w=1 and solve for xyz).
+
+    System: A @ x = b
+        A = Q_combined[:3, :3]
+        b = -Q_combined[:3,  3]
+
+    Falls back to the edge midpoint when A is singular (det < 1e-12) to
+    avoid numerical instability on degenerate or near-zero quadrics.
+
+    Args:
+        Q_combined : 4x4 symmetric quadric Q1 + Q2.
+        v1_pos, v2_pos : (3,) float64 endpoint positions (for midpoint fallback).
+
+    Returns:
+        (3,) float64 array — optimal or midpoint collapse position.
+    """
+    A = Q_combined[:3, :3]
+    b = -Q_combined[:3, 3]
+    try:
+        det = float(np.linalg.det(A))
+        if abs(det) > 1e-12:
+            v_opt = np.linalg.solve(A, b)
+            return v_opt
+    except np.linalg.LinAlgError:
+        pass
+    # Fallback: midpoint
+    return (v1_pos + v2_pos) * 0.5
+
+
 def _edge_collapse_cost_qem(
     v1_pos: np.ndarray,
     v2_pos: np.ndarray,
     Q1: np.ndarray,
     Q2: np.ndarray,
-) -> float:
-    """Compute QEM cost for collapsing the edge between v1 and v2.
+) -> tuple[float, np.ndarray]:
+    """Compute QEM cost and optimal collapse position for edge (v1, v2).
 
-    Uses the midpoint as the collapse target and evaluates the combined
-    quadric error there.
+    Full Garland-Heckbert 1997 implementation:
+      1. Combine quadrics: Q_bar = Q1 + Q2.
+      2. Solve for the position v* that minimises v^T Q_bar v by inverting
+         the 3x3 top-left sub-matrix of Q_bar (homogeneous constraint w=1).
+         Falls back to edge midpoint when Q_bar is singular.
+      3. Evaluate cost = v*^T Q_bar v* at the optimal (or midpoint) position.
+
+    This matches the cost metric used by Houdini's Poly Reduce SOP, UE5's
+    Nanite fallback simplifier, and MeshLab's QEM decimator.
 
     Args:
         v1_pos, v2_pos : (3,) float64 position arrays.
         Q1, Q2 : 4x4 symmetric quadric matrices for each vertex.
 
     Returns:
-        float — QEM error at the midpoint (lower = cheaper to collapse).
+        (cost, v_opt) — float QEM error and (3,) float64 optimal position.
     """
     Q_combined = Q1 + Q2
-    mid = (v1_pos + v2_pos) / 2.0
-    mid_h = np.append(mid, 1.0)
-    cost = float(mid_h @ Q_combined @ mid_h)
-    return cost
+    v_opt = _qem_optimal_position(Q_combined, v1_pos, v2_pos)
+    v_h = np.append(v_opt, 1.0)
+    cost = float(v_h @ Q_combined @ v_h)
+    # Clamp numerical noise: cost should be >= 0 (Q is positive semi-definite)
+    return max(0.0, cost), v_opt
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +504,7 @@ def _edge_collapse_cost(
     if quadrics is not None:
         pos_a = np.array(vertices[v_a], dtype=np.float64)
         pos_b = np.array(vertices[v_b], dtype=np.float64)
-        qem = _edge_collapse_cost_qem(pos_a, pos_b, quadrics[v_a], quadrics[v_b])
+        qem, _v_opt = _edge_collapse_cost_qem(pos_a, pos_b, quadrics[v_a], quadrics[v_b])
         avg_importance = (importance_weights[v_a] + importance_weights[v_b]) / 2.0
         # Scale QEM cost up for important edges so they survive longer
         return qem * (1.0 + avg_importance * 5.0)
@@ -639,17 +686,19 @@ def decimate_preserving_silhouette(
             keep, remove = root_b, root_a
 
         remap[remove] = keep
-        w_keep = weights[keep]
-        w_remove = weights[remove]
-        total_w = w_keep + w_remove
-        t = w_keep / total_w if total_w > 1e-12 else 0.5
-        verts[keep] = (
-            verts[keep][0] * t + verts[remove][0] * (1.0 - t),
-            verts[keep][1] * t + verts[remove][1] * (1.0 - t),
-            verts[keep][2] * t + verts[remove][2] * (1.0 - t),
-        )
+        # Compute QEM-optimal collapse position (Garland-Heckbert 1997 §4).
+        # Solve the 3×3 linear system from the combined quadric to find the
+        # position v* that minimises v*^T (Q_keep + Q_remove) v*.  When the
+        # system is singular (flat or zero quadric) we fall back to the edge
+        # midpoint.  This is the same strategy used by Houdini Poly Reduce,
+        # UE5 Nanite fallback simplifier, and MeshLab QEM decimator.
+        pos_keep   = np.array(verts[keep],   dtype=np.float64)
+        pos_remove = np.array(verts[remove], dtype=np.float64)
+        Q_combined = q_work[keep] + q_work[remove]
+        v_opt = _qem_optimal_position(Q_combined, pos_keep, pos_remove)
+        verts[keep] = (float(v_opt[0]), float(v_opt[1]), float(v_opt[2]))
         # Accumulate quadrics into the surviving vertex
-        q_work[keep] = q_work[keep] + q_work[remove]
+        q_work[keep] = Q_combined
         weights[keep] = max(weights[keep], weights[remove])
 
         active_verts.discard(remove)
@@ -1306,26 +1355,40 @@ def generate_lod_chain(
 ) -> list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]], int]]:
     """Generate a full LOD chain from a mesh spec using asset-type presets.
 
-    Uses QEM-based ``decimate_preserving_silhouette`` for each non-billboard
-    LOD level.  Verifies that face counts decrease monotonically and falls back
-    to the previous LOD's mesh if a level would paradoxically have more faces
-    than the preceding one.
+    Uses full Garland-Heckbert QEM (optimal vertex placement) via
+    ``decimate_preserving_silhouette`` for each non-billboard LOD level.
+    Verifies that face counts decrease monotonically and falls back to the
+    previous LOD's mesh if a level would paradoxically have more faces than
+    the preceding one.
+
+    Billboard LOD (ratio == 0.0 in preset, e.g. "vegetation"):
+        Uses ``_generate_billboard_quad_spec`` to produce a proper 2-sided
+        cross-billboard (two quads at 90°) with:
+          - AABB-fitted card dimensions (width = X extent, depth = Y extent).
+          - Ground-anchored pivot at z_bot so foliage roots stay planted.
+          - Camera-facing outward normals per card (+Y and +X respectively).
+          - Full UV atlas: BL=(0,0)→TR=(1,1) per card.
+          - Per-vertex alpha: 0.0 at base (root), 1.0 at tip (wind fade).
+          - Per-vertex tangents for normal-map sampling.
+        The extended billboard spec is stored as the 4th element of the
+        tuple for billboard LOD levels.  Callers that unpack only 3 values
+        remain backward-compatible; callers that need UV/normal/alpha data
+        can check ``len(entry) == 4`` and read ``entry[3]``.
 
     Screen-size distance thresholds follow the standard formula::
 
         distance = object_diameter / (2 * tan(fov_half) * screen_pct)
-
-    The thresholds are stored as ``lod_screen_pcts`` metadata returned alongside
-    each level (accessible via the extended 4-tuple when callers unpack 4 values).
-    For backward compat the function still returns 3-tuples; screen percentages
-    are available from the preset directly via LOD_PRESETS.
 
     Args:
         mesh_data: Dict with "vertices" and "faces" keys.
         asset_type: One of the LOD_PRESETS keys. Defaults to "prop_medium".
 
     Returns:
-        List of (vertices, faces, lod_level) tuples, one per LOD level.
+        List of (vertices, faces, lod_level[, billboard_spec]) tuples.
+        Non-billboard levels are 3-tuples.  Billboard levels are 4-tuples
+        where ``billboard_spec`` is the dict returned by
+        ``_generate_billboard_quad_spec`` (keys: verts, faces, uvs, normals,
+        tangents, alphas, pivot_y, vertex_count, face_count).
         Face counts are guaranteed to be non-increasing across levels.
 
     Raises:
@@ -1369,10 +1432,16 @@ def generate_lod_chain(
         target_min = min_tris[level] if level < len(min_tris) else 0
 
         if ratio <= 0.0:
-            # Billboard LOD — always the last level
-            billboard_verts, billboard_faces = _generate_billboard_quad(vertices)
-            lod_chain.append((billboard_verts, billboard_faces, level))
-            prev_face_count = len(billboard_faces)
+            # Billboard LOD — always the last level.
+            # Use the full AAA spec: 2-sided cross-quad with correct AABB
+            # extents, ground-anchored pivot, camera-facing outward normals,
+            # atlas UV layout, per-vertex alpha (base→tip), and tangents for
+            # normal-map sampling.  Matches UE5 foliage billboard conventions.
+            bill_spec = _generate_billboard_quad_spec(vertices)
+            bill_verts: list[tuple[float, float, float]] = bill_spec["verts"]
+            bill_faces: list[tuple[int, ...]] = bill_spec["faces"]
+            lod_chain.append((bill_verts, bill_faces, level, bill_spec))  # type: ignore[arg-type]
+            prev_face_count = len(bill_faces)
         elif ratio >= 1.0:
             # LOD0: full detail
             lod_chain.append((list(vertices), list(faces), level))

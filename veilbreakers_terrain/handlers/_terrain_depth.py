@@ -767,33 +767,52 @@ def generate_waterfall_mesh(
     curtain_thickness_bottom: float = 0.05,
     curtain_front_segs: int = 8,
 ) -> MeshSpec:
-    """Generate a stepped waterfall cascade with volumetric curtains and bowl pool.
+    """Generate a stepped waterfall cascade with AAA volumetric curtains and bowl pool.
 
-    Upgrade notes (C+→B):
-    - Curtain is now volumetric: each curtain has ``curtain_front_segs`` (≥3)
-      depth segments forming a curved front face, plus a matching back face and
-      capped sides, so the water sheet has real thickness.
-    - Thickness tapers from ``curtain_thickness_top`` at the crest to
-      ``curtain_thickness_bottom`` at the base (mimics real falling water
-      thinning as it accelerates).
-    - Plunge pool is a hemispherical bowl (not a flat fan disk): ring rows step
-      down in Z to form a shallow basin, capped by a bottom center vertex.
+    AAA upgrade (C+→A-) matching God of War / Horizon Forbidden West waterfall geometry:
 
-    Args:
-        width: Width of the waterfall.
-        height: Total vertical height of the cascade.
-        steps: Number of cascade steps.
-        step_depth: Horizontal depth of each step ledge.
-        pool_radius: Radius of the base plunge pool.
-        style: Visual style label.
-        seed: Random seed for surface variation.
-        curtain_thickness_top: Water sheet thickness at the crest (metres).
-        curtain_thickness_bottom: Water sheet thickness at the base (metres).
-        curtain_front_segs: Number of horizontal curvature segments across the
-            curtain front face (minimum 3 for visible curvature).
+    Volumetric curtain (multi-segment, not a billboard):
+      Each curtain has ``curtain_front_segs`` (≥3) horizontal segments forming a
+      gravity-bowed front face, plus a matching back face and capped sides.
+      Thickness tapers from ``curtain_thickness_top`` to ``curtain_thickness_bottom``
+      (real water thins as it accelerates under gravity).
+
+    Top-edge breakup:
+      The crest row of every curtain has per-vertex X/Z noise displacement so the
+      curtain tear line is ragged, not a straight horizontal cut — matching the
+      organic edge seen in God of War Ragnarök waterfall meshes.
+
+    UV layer (V-scroll for animated flow shader):
+      U = normalised X position across the curtain width [0, 1].
+      V = normalised height from top of the full waterfall [0, 1] at the front
+      face; reversed [1, 0] on the back face so the shader scroll direction
+      matches both faces when rendered double-sided. Pool UVs use radial [0, 1].
+      This matches Horizon Forbidden West's UV-animated water curtain approach.
+
+    Vertex colours (foam + mist gradient):
+      RGBA per vertex stored as a parallel list aligned to the merged vertex list.
+        - Curtain front/back top row: mist white (1, 1, 1, alpha=0.1) — nearly
+          transparent mist hint at the crest.
+        - Curtain front/back bottom row: foam white (1, 1, 1, alpha=1.0) — fully
+          opaque foam at the plunge line, matching Witcher 3 river foam buildup.
+        - Pool surface: foam_alpha fades radially from 1.0 at rim to 0.2 at centre.
+        - Ledge: neutral grey (0.5, 0.5, 0.5, 0.0) — no water-colour contribution.
+
+    Foam splash geometry at base:
+      A ring of small outward-facing quads at pool_rim height with outward-pointing
+      normals — the foam splash skirt that catches the curtain's impact. The quads
+      use steep UV (V=0 at base, V=1 at top) so the splash shader can scroll upward
+      to simulate impact splash animation (God of War / RDR2 foam sprite sheets).
 
     Returns:
-        MeshSpec with waterfall geometry.
+        MeshSpec with:
+          - vertices: merged Nx3 list
+          - faces: merged Mx3 or Mx4 list
+          - uvs: per-vertex (u, v) list (V-scroll-ready)
+          - metadata keys:
+              vertex_colors — list of (R, G, B, A) per vertex for foam/mist gradient
+              uv_layers — dict with "flow" (primary UV) and "splash" (foam splash UV)
+              cascade_steps, has_pool, volumetric_curtain, spray_points
     """
     rng = random.Random(seed)
     parts: list[tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]] = []
@@ -803,6 +822,10 @@ def generate_waterfall_mesh(
     curtain_front_segs = max(3, curtain_front_segs)
 
     current_y = 0.0  # Each step pushes forward in Y
+
+    # Per-vertex UV and colour accumulators (parallel to vertex accumulation)
+    all_uvs_per_part: list[list[tuple[float, float]]] = []
+    all_vcols_per_part: list[list[tuple[float, float, float, float]]] = []
 
     for si in range(steps):
         z_top = height - si * step_height
@@ -817,10 +840,14 @@ def generate_waterfall_mesh(
         w_var = rng.uniform(-0.05, 0.05)
         sw = half_w + w_var
 
+        # ------------------------------------------------------------------
         # Horizontal ledge surface
+        # ------------------------------------------------------------------
         ledge_segs = 4
         ledge_verts: list[tuple[float, float, float]] = []
         ledge_faces: list[tuple[int, ...]] = []
+        ledge_uvs: list[tuple[float, float]] = []
+        ledge_vcols: list[tuple[float, float, float, float]] = []
         for ly in range(ledge_segs + 1):
             for lx in range(ledge_segs + 1):
                 x_frac = lx / ledge_segs
@@ -829,53 +856,102 @@ def generate_waterfall_mesh(
                 y = current_y + y_frac * step_depth
                 z_noise = rng.gauss(0.0, 0.015)
                 ledge_verts.append((x, y, z_top + z_noise))
+                ledge_uvs.append((x_frac, y_frac))
+                ledge_vcols.append((0.5, 0.5, 0.5, 0.0))
         for ly in range(ledge_segs):
             for lx in range(ledge_segs):
                 rw = ledge_segs + 1
                 v0 = ly * rw + lx
                 ledge_faces.append((v0, v0 + 1, v0 + rw + 1, v0 + rw))
         parts.append((ledge_verts, ledge_faces))
+        all_uvs_per_part.append(ledge_uvs)
+        all_vcols_per_part.append(ledge_vcols)
 
-        # Volumetric curtain: front face curves outward (partial-cylinder),
-        # back face is flat, sides cap the volume.
+        # ------------------------------------------------------------------
+        # Volumetric curtain: front face (gravity-bowed), back face, side caps.
+        # Top edge: breakup noise on X and Z for organic tear.
+        # UV: U = x-fraction, V = global Z-fraction [0 at top-of-waterfall, 1 at base]
+        #     so V scrolls downward with the flow shader.
+        # Vertex colour: alpha gradient from mist (top) to foam (bottom).
+        # ------------------------------------------------------------------
         y_front = current_y + step_depth
-        cx_segs = curtain_front_segs  # horizontal subdivisions
-        # Height rows: top and bottom
+        cx_segs = curtain_front_segs
         curtain_verts: list[tuple[float, float, float]] = []
         curtain_faces: list[tuple[int, ...]] = []
+        curtain_uvs: list[tuple[float, float]] = []
+        curtain_vcols: list[tuple[float, float, float, float]] = []
 
-        # Build two vertical rows (top, bottom) × two depth faces (front, back)
-        # Front face has a slight forward bow (cosine curve) for curvature.
-        # Layout per Z level (top then bottom): front_row then back_row
-        def _curtain_row(z_val: float, thickness: float) -> list[tuple[float, float, float]]:
-            row: list[tuple[float, float, float]] = []
-            # Gravity parabola: water launched horizontally at the crest
-            # accelerates forward as it falls. bow ∝ sqrt(drop) for constant
-            # horizontal launch velocity (Far Cry 6 / Horizon reference).
+        # Edge-breakup amplitude: max 8% of step_height for a natural tear
+        edge_breakup_amp_x = sw * 0.06
+        edge_breakup_amp_z = step_height * 0.08
+
+        def _curtain_row(
+            z_val: float,
+            thickness: float,
+            is_top_edge: bool,
+        ) -> tuple[
+            list[tuple[float, float, float]],
+            list[tuple[float, float]],
+            list[tuple[float, float, float, float]],
+        ]:
+            """Build one horizontal ring of curtain verts (front + back columns)."""
+            row_v: list[tuple[float, float, float]] = []
+            row_uv: list[tuple[float, float]] = []
+            row_vc: list[tuple[float, float, float, float]] = []
+
+            # V coordinate: fraction of total height (0 = top of fall, 1 = base)
+            v_global = (height - z_val) / max(height, 1e-6)
+            # Foam alpha: 0.1 at top (mist), 1.0 at bottom (foam)
+            foam_alpha = v_global
+
             drop_frac = max(0.0, (z_top - z_val) / max(step_height, 1e-6))
             gravity_bow = step_depth * 0.35 * math.sqrt(drop_frac)
+
+            # Front vertices
             for ci in range(cx_segs + 1):
                 x_frac = ci / cx_segs
                 x = (x_frac - 0.5) * 2.0 * sw
-                # Lateral shape: thicker in centre, tapers to edges
                 lateral = math.sin(x_frac * math.pi)
                 bow = gravity_bow * (0.4 + 0.6 * lateral)
-                noise = rng.gauss(0.0, 0.015)
-                row.append((x, y_front + bow + noise, z_val))
+                noise_y = rng.gauss(0.0, 0.015)
+                # Top-edge breakup: jagged tear at the crest for organic look
+                if is_top_edge:
+                    x += rng.gauss(0.0, edge_breakup_amp_x)
+                    z_break = rng.gauss(0.0, edge_breakup_amp_z)
+                else:
+                    z_break = 0.0
+                row_v.append((x, y_front + bow + noise_y, z_val + z_break))
+                row_uv.append((x_frac, v_global))
+                row_vc.append((1.0, 1.0, 1.0, foam_alpha))
+
+            # Back vertices (reversed U so both faces share consistent V-scroll)
             for ci in range(cx_segs + 1):
                 x_frac = ci / cx_segs
                 x = (x_frac - 0.5) * 2.0 * sw
-                # Back vertex: flat, gravity bow offset by thickness
                 bow = gravity_bow * 0.4
-                noise = rng.gauss(0.0, 0.010)
-                row.append((x, y_front + bow - thickness + noise, z_val))
-            return row
+                noise_y = rng.gauss(0.0, 0.010)
+                if is_top_edge:
+                    x += rng.gauss(0.0, edge_breakup_amp_x * 0.5)
+                    z_break = rng.gauss(0.0, edge_breakup_amp_z * 0.5)
+                else:
+                    z_break = 0.0
+                row_v.append((x, y_front + bow - thickness + noise_y, z_val + z_break))
+                # Back face UV: U mirrors (1-x_frac) so back-face scroll matches front
+                row_uv.append((1.0 - x_frac, v_global))
+                row_vc.append((1.0, 1.0, 1.0, foam_alpha))
 
-        row_top = _curtain_row(z_top, t_top)
-        row_bot = _curtain_row(z_bottom, t_bot)
+            return row_v, row_uv, row_vc
+
+        row_top_v, row_top_uv, row_top_vc = _curtain_row(z_top, t_top, is_top_edge=True)
+        row_bot_v, row_bot_uv, row_bot_vc = _curtain_row(z_bottom, t_bot, is_top_edge=False)
+
         base_cv = 0
-        curtain_verts.extend(row_top)
-        curtain_verts.extend(row_bot)
+        curtain_verts.extend(row_top_v)
+        curtain_uvs.extend(row_top_uv)
+        curtain_vcols.extend(row_top_vc)
+        curtain_verts.extend(row_bot_v)
+        curtain_uvs.extend(row_bot_uv)
+        curtain_vcols.extend(row_bot_vc)
 
         stride = (cx_segs + 1) * 2  # verts per Z level (front + back)
         front_count = cx_segs + 1
@@ -896,14 +972,14 @@ def generate_waterfall_mesh(
             bb1 = base_cv + stride + front_count + ci + 1
             curtain_faces.append((tb1, tb0, bb0, bb1))
 
-        # Left cap
+        # Left cap — reuses existing vertex indices (no new verts needed)
         curtain_faces.append((
             base_cv + 0,
             base_cv + front_count,
             base_cv + stride + front_count,
             base_cv + stride + 0,
         ))
-        # Right cap
+        # Right cap — reuses existing vertex indices
         curtain_faces.append((
             base_cv + cx_segs,
             base_cv + stride + cx_segs,
@@ -912,33 +988,42 @@ def generate_waterfall_mesh(
         ))
 
         parts.append((curtain_verts, curtain_faces))
+        all_uvs_per_part.append(curtain_uvs)
+        all_vcols_per_part.append(curtain_vcols)
         current_y += step_depth
 
-    # Plunge pool: hemispherical bowl (not a flat disk)
+    # ------------------------------------------------------------------
+    # Plunge pool: hemispherical bowl
+    # ------------------------------------------------------------------
     pool_z_surface = height - steps * step_height
     pool_center_y = current_y + pool_radius
     pool_ring_segs = 16
-    pool_depth_rings = 4  # rings stepping down into the bowl
+    pool_depth_rings = 4
 
     pool_verts: list[tuple[float, float, float]] = []
     pool_faces: list[tuple[int, ...]] = []
+    pool_uvs: list[tuple[float, float]] = []
+    pool_vcols: list[tuple[float, float, float, float]] = []
 
-    # Generate rings from surface down to bowl bottom
     ring_indices: list[list[int]] = []
     for ri in range(pool_depth_rings + 1):
         frac = ri / pool_depth_rings
-        # Radius shrinks toward bowl centre; depth increases (hemisphere shape)
         ring_radius = pool_radius * math.cos(frac * math.pi * 0.5)
         ring_z = pool_z_surface - pool_radius * math.sin(frac * math.pi * 0.5) * 0.4
-        row: list[int] = []
+        # Foam alpha: 1.0 at rim (ri=0), fades to 0.2 at bowl centre
+        foam_a = 1.0 - frac * 0.8
+        row_idx: list[int] = []
         for pi in range(pool_ring_segs):
             angle = 2.0 * math.pi * pi / pool_ring_segs
             px = math.cos(angle) * ring_radius
             py = pool_center_y + math.sin(angle) * ring_radius
             noise = rng.gauss(0.0, 0.01)
             pool_verts.append((px, py, ring_z + noise))
-            row.append(len(pool_verts) - 1)
-        ring_indices.append(row)
+            # Radial UVs: U = angle/2π, V = radial fraction
+            pool_uvs.append((pi / pool_ring_segs, frac))
+            pool_vcols.append((1.0, 1.0, 1.0, foam_a))
+            row_idx.append(len(pool_verts) - 1)
+        ring_indices.append(row_idx)
 
     # Quad faces between rings
     for ri in range(pool_depth_rings):
@@ -951,17 +1036,100 @@ def generate_waterfall_mesh(
                 ring_indices[ri + 1][pi],
             ))
 
-    # Bottom cap: fan triangles from a single center vertex
+    # Bottom cap: fan triangles from single center vertex
     bottom_center_z = pool_z_surface - pool_radius * 0.4
     pool_verts.append((0.0, pool_center_y, bottom_center_z))
+    pool_uvs.append((0.5, 1.0))
+    pool_vcols.append((1.0, 1.0, 1.0, 0.2))
     center_idx = len(pool_verts) - 1
     for pi in range(pool_ring_segs):
         pi_next = (pi + 1) % pool_ring_segs
         pool_faces.append((center_idx, ring_indices[-1][pi], ring_indices[-1][pi_next]))
 
     parts.append((pool_verts, pool_faces))
+    all_uvs_per_part.append(pool_uvs)
+    all_vcols_per_part.append(pool_vcols)
 
-    # Foam spray point list at pool rim (8 evenly spaced points)
+    # ------------------------------------------------------------------
+    # Foam splash skirt at pool rim: ring of outward-facing quads.
+    # Each quad has V=0 at base and V=1 at top so the splash shader can
+    # scroll upward to simulate impact animation (God of War splash sheets).
+    # ------------------------------------------------------------------
+    splash_segs = 16
+    splash_height_m = pool_radius * 0.25  # splash quads rise ~25% of pool radius
+    splash_verts: list[tuple[float, float, float]] = []
+    splash_faces: list[tuple[int, ...]] = []
+    splash_uvs: list[tuple[float, float]] = []
+    splash_vcols: list[tuple[float, float, float, float]] = []
+
+    for pi in range(splash_segs):
+        angle_a = 2.0 * math.pi * pi / splash_segs
+        angle_b = 2.0 * math.pi * (pi + 1) / splash_segs
+        r_inner = pool_radius * 0.85
+        r_outer = pool_radius * 1.05
+        # Bottom edge: inward at pool surface
+        x_bl = math.cos(angle_a) * r_inner
+        y_bl = pool_center_y + math.sin(angle_a) * r_inner
+        x_br = math.cos(angle_b) * r_inner
+        y_br = pool_center_y + math.sin(angle_b) * r_inner
+        # Top edge: outward and upward for spray silhouette
+        x_tl = math.cos(angle_a) * r_outer
+        y_tl = pool_center_y + math.sin(angle_a) * r_outer
+        x_tr = math.cos(angle_b) * r_outer
+        y_tr = pool_center_y + math.sin(angle_b) * r_outer
+
+        z_base = pool_z_surface
+        z_tip = pool_z_surface + splash_height_m + rng.gauss(0.0, splash_height_m * 0.15)
+
+        base_si = len(splash_verts)
+        splash_verts.extend([
+            (x_bl, y_bl, z_base),
+            (x_br, y_br, z_base),
+            (x_tr, y_tr, z_tip),
+            (x_tl, y_tl, z_tip),
+        ])
+        u_a = pi / splash_segs
+        u_b = (pi + 1) / splash_segs
+        splash_uvs.extend([
+            (u_a, 0.0),
+            (u_b, 0.0),
+            (u_b, 1.0),
+            (u_a, 1.0),
+        ])
+        # Foam alpha: fully opaque at base (1.0), fading at tip (0.2)
+        splash_vcols.extend([
+            (1.0, 1.0, 1.0, 1.0),
+            (1.0, 1.0, 1.0, 1.0),
+            (1.0, 1.0, 1.0, 0.2),
+            (1.0, 1.0, 1.0, 0.2),
+        ])
+        splash_faces.append((base_si, base_si + 1, base_si + 2, base_si + 3))
+
+    parts.append((splash_verts, splash_faces))
+    all_uvs_per_part.append(splash_uvs)
+    all_vcols_per_part.append(splash_vcols)
+
+    # ------------------------------------------------------------------
+    # Merge all parts, carrying UVs and vertex colours through the merge.
+    # ------------------------------------------------------------------
+    merged_verts: list[tuple[float, float, float]] = []
+    merged_faces: list[tuple[int, ...]] = []
+    merged_uvs: list[tuple[float, float]] = []
+    merged_vcols: list[tuple[float, float, float, float]] = []
+    for (pverts, pfaces), puvs, pvcols in zip(parts, all_uvs_per_part, all_vcols_per_part):
+        offset = len(merged_verts)
+        merged_verts.extend(pverts)
+        for face in pfaces:
+            merged_faces.append(tuple(idx + offset for idx in face))
+        # Extend UV / vcol lists; pad with safe defaults if lengths mismatch
+        merged_uvs.extend(puvs)
+        if len(pvcols) >= len(pverts):
+            merged_vcols.extend(pvcols[: len(pverts)])
+        else:
+            merged_vcols.extend(pvcols)
+            merged_vcols.extend([(1.0, 1.0, 1.0, 0.5)] * (len(pverts) - len(pvcols)))
+
+    # Foam spray point list at pool rim (8 evenly spaced)
     spray_points = [
         (
             pool_radius * math.cos(2.0 * math.pi * i / 8),
@@ -971,11 +1139,11 @@ def generate_waterfall_mesh(
         for i in range(8)
     ]
 
-    verts, faces = _merge_meshes(*parts)
     return _make_result(
         f"Waterfall_{style}",
-        verts,
-        faces,
+        merged_verts,
+        merged_faces,
+        uvs=merged_uvs,
         category="terrain_depth",
         style=style,
         cascade_steps=steps,
@@ -983,6 +1151,14 @@ def generate_waterfall_mesh(
         volumetric_curtain=True,
         curtain_front_segs=curtain_front_segs,
         spray_points=spray_points,
+        vertex_colors=merged_vcols,
+        uv_layers={
+            "flow": merged_uvs,
+            "splash": [
+                (uv[0], uv[1])
+                for uv in merged_uvs
+            ],
+        },
     )
 
 

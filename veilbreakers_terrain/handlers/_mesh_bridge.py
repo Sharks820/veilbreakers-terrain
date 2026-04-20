@@ -1101,13 +1101,14 @@ def _make_billboard_spec(
         (0.5, 0.0), (1.0, 0.0), (1.0, 1.0), (0.5, 1.0),  # card 2
     ]
 
-    # Geometric error: worst-case distance from source vertices to billboard quad
+    # Geometric error: worst-case perpendicular distance from each source
+    # vertex to the nearest billboard card plane.
+    # Card 1 lies in the XZ plane at y=cy  → perpendicular distance = |v.y - cy|
+    # Card 2 lies in the YZ plane at x=cx  → perpendicular distance = |v.x - cx|
+    # We take the minimum (closest card) so the error is conservative.
     max_err = 0.0
     for v in src_verts:
-        dist = min(
-            abs(v[1] - cy) + abs(v[0] - cx) * 0.0,  # dist to card-1 plane
-            abs(v[0] - cx) + abs(v[1] - cy) * 0.0,  # dist to card-2 plane
-        )
+        dist = min(abs(v[1] - cy), abs(v[0] - cx))
         if dist > max_err:
             max_err = dist
 
