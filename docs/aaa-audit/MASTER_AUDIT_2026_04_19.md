@@ -8,33 +8,32 @@ Second-pass audit over every live callable in `veilbreakers_terrain/handlers`, m
 
 ## Totals
 
-- Live handler callables scanned: `1597`
-- Runtime-primary callables: `121`
-- Runtime-transitive callables: `495`
-- Hard wiring risks (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `317`
-- Callables with no exact or semantic CSV match: `563`
-- Callables with no matching R9 coverage: `1070`
+- Live handler callables scanned: `1611`
+- Runtime-primary callables: `178`
+- Runtime-transitive callables: `609`
+- Hard wiring risks (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `276`
+- Callables with no exact or semantic CSV match: `577`
+- Callables with no matching R9 coverage: `1084`
 
 Status distribution:
 - `cross_module_helper`: `28`
-- `module_local_helper`: `459`
+- `module_local_helper`: `361`
 - `orphan_candidate`: `271`
 - `public_handle_unwired`: `2`
-- `registrar_declared_only`: `22`
-- `runtime_primary`: `121`
-- `runtime_transitive`: `495`
-- `test_only_or_unwired`: `177`
-- `uninvoked_registrar`: `22`
+- `registrar_declared_only`: `1`
+- `runtime_primary`: `178`
+- `runtime_transitive`: `609`
+- `test_only_or_unwired`: `159`
+- `uninvoked_registrar`: `2`
 
 ## What Changed From The First Pass
 
-- Reclassified callables after runtime-reachability propagation: `1142`
+- Reclassified callables after runtime-reachability propagation: `1181`
 - This second pass follows command-handler wrappers, default-pass registration, master bundle registration, and transitive helper reachability.
 - It also normalizes qualified vs unqualified CSV function names so semantic matches are no longer silently missed.
 
 ## Strongest Verified Gaps
 
-- `__init__.py::register_all` -> `uninvoked_registrar` (runtime=`none`, callers=`none`)
 - `__init__.py::_handler` -> `orphan_candidate` (runtime=`none`, callers=`none`)
 - `_biome_grammar.py::apply_desert_pavement` -> `orphan_candidate` (runtime=`none`, callers=`none`)
 - `_biome_grammar.py::compute_spring_line_mask` -> `orphan_candidate` (runtime=`none`, callers=`none`)
@@ -59,6 +58,7 @@ Status distribution:
 - `_terrain_noise.py::_OpenSimplexWrapper.noise3_array` -> `orphan_candidate` (runtime=`none`, callers=`none`)
 - `_terrain_noise.py::_OpenSimplexWrapper.noise4_array` -> `orphan_candidate` (runtime=`none`, callers=`none`)
 - `_terrain_noise.py::hydraulic_erosion` -> `orphan_candidate` (runtime=`none`, callers=`none`)
+- `_terrain_noise.py::ridged_multifractal` -> `orphan_candidate` (runtime=`none`, callers=`none`)
 
 ## Runtime Surfaces Missing Adequate Grade Coverage
 

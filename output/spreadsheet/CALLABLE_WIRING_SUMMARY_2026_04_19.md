@@ -7,16 +7,15 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Totals
 
-- Live handler callables scanned: `1597`
-- Callables missing from the grade sheet: `648`
-- Callables without any R9 grade attached via matching CSV row: `1117`
+- Live handler callables scanned: `1611`
+- Callables missing from the grade sheet: `662`
+- Callables without any R9 grade attached via matching CSV row: `1131`
 
 Status distribution:
-- `helper_reachable`: `1072`
-- `orphan_candidate`: `150`
-- `registrar_declared_only`: `23`
-- `runtime_primary`: `122`
-- `test_only_or_unwired`: `228`
+- `helper_reachable`: `1065`
+- `orphan_candidate`: `149`
+- `runtime_primary`: `179`
+- `test_only_or_unwired`: `216`
 - `uninvoked_registrar`: `2`
 
 ## Highest-Risk Files
@@ -28,19 +27,19 @@ Status distribution:
 - `terrain_semantics.py`: `14` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_dirty_tracking.py`: `12` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_asset_metadata.py`: `10` callable(s) flagged as orphaned, registrar-only, or test-only
-- `terrain_blender_safety.py`: `10` callable(s) flagged as orphaned, registrar-only, or test-only
 - `_terrain_world.py`: `9` callable(s) flagged as orphaned, registrar-only, or test-only
 - `environment_scatter.py`: `9` callable(s) flagged as orphaned, registrar-only, or test-only
 - `_biome_grammar.py`: `8` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_checkpoints_ext.py`: `8` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_waterfalls_volumetric.py`: `8` callable(s) flagged as orphaned, registrar-only, or test-only
-- `_water_network.py`: `7` callable(s) flagged as orphaned, registrar-only, or test-only
 - `environment.py`: `7` callable(s) flagged as orphaned, registrar-only, or test-only
 - `procedural_materials.py`: `7` callable(s) flagged as orphaned, registrar-only, or test-only
-- `terrain_live_preview.py`: `6` callable(s) flagged as orphaned, registrar-only, or test-only
+- `_water_network.py`: `6` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_math.py`: `6` callable(s) flagged as orphaned, registrar-only, or test-only
-- `terrain_water_variants.py`: `6` callable(s) flagged as orphaned, registrar-only, or test-only
 - `_water_network_ext.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
+- `terrain_blender_safety.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
+- `terrain_checkpoints.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
+- `terrain_hot_reload.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
 
 ## Interpretation
 

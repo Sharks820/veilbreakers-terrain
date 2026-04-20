@@ -16,6 +16,7 @@ vectorized splatmap, direction-aware waterfall) behave correctly.
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -103,7 +104,31 @@ def _fresh_controller():
 # ---------------------------------------------------------------------------
 
 
-def test_wiring_bundle_a_default_pipeline_runs():
+def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
+    from blender_addon.handlers import _terrain_world as world_mod
+
+    def _fake_hydraulic(height, iterations, seed, hero_exclusion=None, erodibility_map=None):
+        arr = np.asarray(height, dtype=np.float64)
+        zeros = np.zeros_like(arr, dtype=np.float64)
+        return SimpleNamespace(
+            height=arr.copy(),
+            erosion_amount=zeros.copy(),
+            deposition_amount=zeros.copy(),
+            wetness=zeros.copy(),
+            drainage=zeros.copy(),
+            bank_instability=zeros.copy(),
+        )
+
+    def _fake_thermal(height, iterations, talus_angle, cell_size):
+        arr = np.asarray(height, dtype=np.float64)
+        return SimpleNamespace(
+            height=arr.copy(),
+            talus=np.zeros_like(arr, dtype=np.float64),
+        )
+
+    monkeypatch.setattr(world_mod, "apply_hydraulic_erosion_masks", _fake_hydraulic)
+    monkeypatch.setattr(world_mod, "apply_thermal_erosion_masks", _fake_thermal)
+
     controller = _fresh_controller()
     results = controller.run_pipeline(
         pass_sequence=[

@@ -171,6 +171,25 @@ def parse_module(path: Path) -> ast.AST:
     return ast.parse(read_text(path), filename=str(path))
 
 
+def to_handler_file(module_name: str) -> Optional[str]:
+    module_name = (module_name or "").strip()
+    if not module_name:
+        return None
+    if module_name in {"handlers", ".handlers", "veilbreakers_terrain.handlers", "blender_addon.handlers"}:
+        return "__init__.py"
+    if module_name.endswith(".handlers"):
+        return "__init__.py"
+    if module_name.startswith("."):
+        tail = module_name.lstrip(".")
+        if tail == "handlers":
+            return "__init__.py"
+        return Path(tail.replace(".", "/") + ".py").name
+    if module_name.startswith("veilbreakers_terrain.handlers.") or module_name.startswith("blender_addon.handlers."):
+        tail = module_name.split(".")[-1]
+        return "__init__.py" if tail == "handlers" else f"{tail}.py"
+    return f"{module_name.split('.')[-1]}.py"
+
+
 def extract_constant_string(node: ast.AST) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -219,19 +238,7 @@ def collect_resolved_usages(
         file_name = path.relative_to(REPO_ROOT).as_posix()
         tree = parse_module(path)
         aliases = import_alias_map(tree)
-        module_aliases: Dict[str, str] = {}
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Call)
-                and extract_name(node.value.func) == "import_module"
-                and node.value.args
-            ):
-                module_hint = extract_constant_string(node.value.args[0])
-                target_file = Path(module_hint.lstrip(".").split(".")[-1] + ".py").name
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        module_aliases[target.id] = target_file
+        module_aliases = import_module_alias_map(tree)
         visitor = ResolvedUsageVisitor(
             file_name=file_name.split("/")[-1] if "/handlers/" in file_name else file_name,
             defs_by_file=defs_by_file,
@@ -246,30 +253,67 @@ def collect_resolved_usages(
 
 def import_alias_map(tree: ast.AST) -> Dict[str, Tuple[str, str]]:
     aliases: Dict[str, Tuple[str, str]] = {}
-    module_aliases: Dict[str, str] = {}
 
     def bind_alias(local_name: str, target_file: str, symbol: str) -> None:
         aliases[local_name] = (target_file, symbol)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if not node.module or not node.module.startswith("."):
+            if node.module is None and node.level:
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    target_file = to_handler_file(alias.name)
+                    if target_file:
+                        continue
                 continue
-            module_path = node.module.lstrip(".").replace(".", "/") + ".py"
-            target_file = Path(module_path).name
+            target_file = to_handler_file(node.module or "")
+            if not target_file:
+                continue
             for alias in node.names:
+                if alias.name == "*":
+                    continue
                 local_name = alias.asname or alias.name
-                bind_alias(local_name, target_file, alias.name)
+                if not ((target_file == "__init__.py" and alias.name == "handlers") or target_file == f"{alias.name}.py"):
+                    bind_alias(local_name, target_file, alias.name)
+
+    return aliases
+
+
+def import_module_alias_map(tree: ast.AST) -> Dict[str, str]:
+    module_aliases: Dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module is None and node.level:
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    target_file = to_handler_file(alias.name)
+                    if target_file:
+                        module_aliases[alias.asname or alias.name] = target_file
+                continue
+            target_file = to_handler_file(node.module or "")
+            if not target_file:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                local_name = alias.asname or alias.name
+                if (target_file == "__init__.py" and alias.name == "handlers") or target_file == f"{alias.name}.py":
+                    module_aliases[local_name] = target_file
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                target_file = to_handler_file(alias.name)
+                if target_file:
+                    module_aliases[alias.asname or alias.name.split(".")[-1]] = target_file
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if not isinstance(target, ast.Name):
                     continue
                 if isinstance(node.value, ast.Call) and extract_name(node.value.func) == "import_module" and node.value.args:
                     module_hint = extract_constant_string(node.value.args[0])
-                    target_file = Path(module_hint.lstrip(".").split(".")[-1] + ".py").name
+                    target_file = to_handler_file(module_hint) or Path(module_hint.lstrip(".").split(".")[-1] + ".py").name
                     module_aliases[target.id] = target_file
-
-    for node in ast.walk(tree):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Attribute):
             continue
         if not isinstance(node.value.value, ast.Name):
@@ -280,8 +324,8 @@ def import_alias_map(tree: ast.AST) -> Dict[str, Tuple[str, str]]:
         target_file = module_aliases[base]
         for target in node.targets:
             if isinstance(target, ast.Name):
-                bind_alias(target.id, target_file, node.value.attr)
-    return aliases
+                module_aliases[target.id] = target_file
+    return module_aliases
 
 
 def extract_name(node: ast.AST) -> Optional[str]:
@@ -299,6 +343,23 @@ def resolve_symbol(file_name: str, name: str, alias_map: Dict[str, Tuple[str, st
         if record.name == name or record.qualified_name == name:
             return (file_name, record.qualified_name)
     return None
+
+
+def resolve_call_target(
+    file_name: str,
+    node: ast.AST,
+    alias_map: Dict[str, Tuple[str, str]],
+    module_aliases: Dict[str, str],
+    defs_by_file: Dict[str, List[CallableDef]],
+) -> Optional[Tuple[str, str]]:
+    if isinstance(node, ast.Name):
+        return resolve_symbol(file_name, node.id, alias_map, defs_by_file)
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        base = node.value.id
+        if base in module_aliases:
+            return resolve_symbol(module_aliases[base], node.attr, {}, defs_by_file)
+        return resolve_symbol(file_name, node.attr, alias_map, defs_by_file)
+    return resolve_symbol(file_name, extract_name(node) or "", alias_map, defs_by_file)
 
 
 def collect_module_exports(path: Path) -> set[str]:
@@ -332,6 +393,7 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
     for path in sorted(HANDLERS_DIR.glob("*.py")):
         tree = parse_module(path)
         aliases = import_alias_map(tree)
+        module_aliases = import_module_alias_map(tree)
         file_name = path.name
         for node in ast.walk(tree):
             is_registrar = (
@@ -355,7 +417,7 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
                                 targets.append(target)
                         continue
                     if isinstance(child, ast.Call):
-                        callee = resolve_symbol(file_name, extract_name(child.func) or "", aliases, defs_by_file)
+                        callee = resolve_call_target(file_name, child.func, aliases, module_aliases, defs_by_file)
                         if callee and (callee[1].startswith("register_") or callee == ("terrain_pipeline.py", "register_default_passes")):
                             registrar_calls[(file_name, node.name)].append(callee)
                 registrar_targets[(file_name, node.name)] = targets

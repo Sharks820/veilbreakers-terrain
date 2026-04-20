@@ -75,6 +75,32 @@ def normalize_function_name(name: str) -> str:
     return raw.split(".")[-1]
 
 
+def to_handler_file(module_name: str, defs_by_file: Dict[str, List["CallableDef"]]) -> Optional[str]:
+    module_name = (module_name or "").strip()
+    if not module_name:
+        return None
+    if module_name in {"handlers", ".handlers", "veilbreakers_terrain.handlers", "blender_addon.handlers"}:
+        return "__init__.py"
+    if module_name.endswith(".handlers"):
+        return "__init__.py"
+    if module_name.startswith("."):
+        tail = module_name.lstrip(".")
+        if tail == "handlers":
+            return "__init__.py"
+        candidate = f"{tail.split('.')[-1]}.py"
+        return candidate if candidate in defs_by_file else None
+    if module_name.startswith("veilbreakers_terrain.handlers.") or module_name.startswith("blender_addon.handlers."):
+        tail = module_name.split(".")[-1]
+        if tail == "handlers":
+            return "__init__.py"
+        candidate = f"{tail}.py"
+        return candidate if candidate in defs_by_file else None
+    candidate = f"{module_name.split('.')[-1]}.py"
+    if candidate in defs_by_file:
+        return candidate
+    return None
+
+
 def extract_constant_string(node: ast.AST) -> str:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -232,19 +258,6 @@ def import_maps(tree: ast.AST, file_name: str, defs_by_file: Dict[str, List[Call
     alias_functions: Dict[str, Tuple[str, str]] = {}
     alias_modules: Dict[str, str] = {}
 
-    def to_handler_file(module_name: str) -> Optional[str]:
-        if not module_name:
-            return None
-        if module_name.startswith("."):
-            return f"{module_name.lstrip('.').split('.')[-1]}.py"
-        if module_name.startswith("veilbreakers_terrain.handlers.") or module_name.startswith("blender_addon.handlers."):
-            return f"{module_name.split('.')[-1]}.py"
-        tail = module_name.lstrip(".").split(".")[-1]
-        candidate = f"{tail}.py"
-        if candidate in defs_by_file:
-            return candidate
-        return None
-
     def bind_alias(local_name: str, target_file: str, symbol: str) -> None:
         for record in defs_by_file.get(target_file, []):
             if record.name == symbol or record.qualified_name == symbol:
@@ -253,17 +266,31 @@ def import_maps(tree: ast.AST, file_name: str, defs_by_file: Dict[str, List[Call
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            target_file = to_handler_file(node.module or "")
-            if not target_file and node.module and node.module.startswith("."):
-                target_file = f"{node.module.lstrip('.').split('.')[-1]}.py"
+            if node.module is None and node.level:
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    local = alias.asname or alias.name
+                    target_file = to_handler_file(alias.name, defs_by_file)
+                    if target_file:
+                        alias_modules[local] = target_file
+                continue
+            target_file = to_handler_file(node.module or "", defs_by_file)
             if not target_file:
                 continue
             for alias in node.names:
+                if alias.name == "*":
+                    continue
                 local = alias.asname or alias.name
-                bind_alias(local, target_file, alias.name)
+                if target_file == "__init__.py" and alias.name == "handlers":
+                    alias_modules[local] = target_file
+                elif target_file == f"{alias.name}.py":
+                    alias_modules[local] = target_file
+                else:
+                    bind_alias(local, target_file, alias.name)
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                target_file = to_handler_file(alias.name)
+                target_file = to_handler_file(alias.name, defs_by_file)
                 if target_file:
                     alias_modules[alias.asname or alias.name.split(".")[-1]] = target_file
         elif isinstance(node, ast.Assign):
@@ -271,7 +298,7 @@ def import_maps(tree: ast.AST, file_name: str, defs_by_file: Dict[str, List[Call
                 if not isinstance(target, ast.Name):
                     continue
                 if isinstance(node.value, ast.Call) and extract_name(node.value.func) == "import_module" and node.value.args:
-                    target_file = to_handler_file(extract_constant_string(node.value.args[0]))
+                    target_file = to_handler_file(extract_constant_string(node.value.args[0]), defs_by_file)
                     if target_file:
                         alias_modules[target.id] = target_file
 
@@ -304,6 +331,23 @@ def resolve_symbol(
         if record.name == symbol or record.qualified_name == symbol:
             return (file_name, record.qualified_name)
     return None
+
+
+def resolve_call_target(
+    file_name: str,
+    node: ast.AST,
+    alias_functions: Dict[str, Tuple[str, str]],
+    alias_modules: Dict[str, str],
+    defs_by_file: Dict[str, List[CallableDef]],
+) -> Optional[Tuple[str, str]]:
+    if isinstance(node, ast.Name):
+        return resolve_symbol(file_name, node.id, alias_functions, defs_by_file)
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        base = node.value.id
+        if base in alias_modules:
+            return resolve_symbol(alias_modules[base], node.attr, {}, defs_by_file)
+        return resolve_symbol(file_name, node.attr, alias_functions, defs_by_file)
+    return resolve_symbol(file_name, extract_name(node) or "", alias_functions, defs_by_file)
 
 
 def collect_module_exports(path: Path) -> set[str]:
@@ -364,7 +408,7 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
     # Collect registrar-owned pass targets and registrar -> sub-registrar calls.
     for path in sorted(HANDLERS_DIR.glob("*.py")):
         tree = parse_module(path)
-        aliases, _module_aliases = import_maps(tree, path.name, defs_by_file)
+        aliases, module_aliases = import_maps(tree, path.name, defs_by_file)
         for node in ast.walk(tree):
             is_registrar = (
                 isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -388,8 +432,7 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
                         exposure[target].append("module_registrar")
                     continue
                 if isinstance(child, ast.Call):
-                    callee_name = extract_name(child.func) or ""
-                    callee = resolve_symbol(path.name, callee_name, aliases, defs_by_file)
+                    callee = resolve_call_target(path.name, child.func, aliases, module_aliases, defs_by_file)
                     if callee and (callee[1].startswith("register_") or callee == ("terrain_pipeline.py", "register_default_passes")):
                         registrar_calls[reg_key].append(callee)
 
