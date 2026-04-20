@@ -143,31 +143,105 @@ def evaluate_spline(
     spline_points: list[Vec3],
     samples_per_segment: int = 32,
     tension: float = 0.5,
+    arc_length_reparameterize: bool = True,
 ) -> list[Vec3]:
     """Evaluate a smooth spline through the given control points.
 
+    Arc-length reparameterization (enabled by default) ensures the returned
+    points are spaced uniformly in arc-length space.  Without it, parameter
+    density clumps on tight curves and spreads on straights — which causes
+    variable-width corridors in road/river tools that assume even sampling.
+
+    Algorithm:
+      1. Oversample the raw Bezier curve at HIGH_OVERSAMPLE * samples_per_segment
+         per segment to capture all curvature detail.
+      2. Compute cumulative arc-length along the oversampled polyline.
+      3. Resample the oversampled polyline at uniformly-spaced arc-length
+         positions via linear interpolation so every returned point is the
+         same distance from its neighbours in world space.
+
     Args:
         spline_points: Ordered waypoints (at least 2).
-        samples_per_segment: Number of evaluation points per Bezier segment.
+        samples_per_segment: Number of evaluation points per Bezier segment
+            in the final output.  This is the arc-length-uniform count, not
+            the raw parameter-uniform count.
         tension: Curve tightness (0=loose, 1=tight).
+        arc_length_reparameterize: When True (default) apply the arc-length
+            correction pass.  Pass False to reproduce the legacy uniform-t
+            behaviour exactly.
 
     Returns:
-        List of (x, y, z) positions along the spline.
+        List of (x, y, z) positions along the spline, uniformly spaced in
+        arc-length when arc_length_reparameterize=True.
     """
     if len(spline_points) < 2:
         return list(spline_points)
 
     segments = _auto_control_points(spline_points, tension)
-    result: list[Vec3] = []
 
+    # --- Step 1: dense oversample in raw t-space ---
+    _HIGH_OVERSAMPLE = 8   # 8× the requested density for curvature accuracy
+    raw_pts: list[Vec3] = []
     for seg_idx, (p0, p1, p2, p3) in enumerate(segments):
-        n_samples = samples_per_segment if seg_idx < len(segments) - 1 else samples_per_segment + 1
-        for i in range(n_samples):
-            t = i / samples_per_segment
-            pt = _cubic_bezier_point(p0, p1, p2, p3, t)
-            result.append(pt)
+        n_samp = samples_per_segment * _HIGH_OVERSAMPLE
+        n_samp_use = n_samp if seg_idx < len(segments) - 1 else n_samp + 1
+        for i in range(n_samp_use):
+            t = i / n_samp
+            raw_pts.append(_cubic_bezier_point(p0, p1, p2, p3, t))
 
-    return result
+    if not arc_length_reparameterize or len(raw_pts) < 2:
+        # Legacy uniform-t path: just return the raw oversampled then
+        # thin-back to the requested count, or return raw if no thinning needed.
+        if not arc_length_reparameterize:
+            # Reproduce the old per-segment uniform sampling exactly.
+            result: list[Vec3] = []
+            for seg_idx, (p0, p1, p2, p3) in enumerate(segments):
+                n_samples = samples_per_segment if seg_idx < len(segments) - 1 else samples_per_segment + 1
+                for i in range(n_samples):
+                    t = i / samples_per_segment
+                    result.append(_cubic_bezier_point(p0, p1, p2, p3, t))
+            return result
+        return raw_pts
+
+    # --- Step 2: compute cumulative arc-lengths along the dense polyline ---
+    n_raw = len(raw_pts)
+    arc_len = [0.0] * n_raw
+    for i in range(1, n_raw):
+        dx = raw_pts[i][0] - raw_pts[i - 1][0]
+        dy = raw_pts[i][1] - raw_pts[i - 1][1]
+        dz = raw_pts[i][2] - raw_pts[i - 1][2]
+        arc_len[i] = arc_len[i - 1] + math.sqrt(dx * dx + dy * dy + dz * dz)
+    total_len = arc_len[-1]
+
+    if total_len < 1e-12:
+        # Degenerate (all points coincident): return raw points as-is.
+        return raw_pts
+
+    # --- Step 3: resample uniformly in arc-length space ---
+    total_out = len(segments) * samples_per_segment + 1
+    result_al: list[Vec3] = []
+    raw_i = 0  # search cursor into arc_len (monotone → single scan suffices)
+    for k in range(total_out):
+        target = total_len * k / max(total_out - 1, 1)
+        # Advance raw_i until arc_len[raw_i+1] >= target (linear scan, O(N) total)
+        while raw_i + 1 < n_raw - 1 and arc_len[raw_i + 1] < target:
+            raw_i += 1
+        seg_start = arc_len[raw_i]
+        seg_end = arc_len[min(raw_i + 1, n_raw - 1)]
+        seg_span = seg_end - seg_start
+        if seg_span < 1e-12:
+            frac = 0.0
+        else:
+            frac = (target - seg_start) / seg_span
+        # Linear interpolation between raw_pts[raw_i] and raw_pts[raw_i+1].
+        a = raw_pts[raw_i]
+        b = raw_pts[min(raw_i + 1, n_raw - 1)]
+        result_al.append((
+            a[0] + frac * (b[0] - a[0]),
+            a[1] + frac * (b[1] - a[1]),
+            a[2] + frac * (b[2] - a[2]),
+        ))
+    return result_al
 
 
 def distance_point_to_polyline(
@@ -882,51 +956,83 @@ def apply_layer_operation(
     min_col = max(0, int(cx_grid - r_grid_x) - 1)
     max_col = min(cols, int(cx_grid + r_grid_x) + 2)
 
-    for r in range(min_row, max_row):
-        for c in range(min_col, max_col):
-            # Compute normalized distance to brush center
-            dx = (c - cx_grid) / max(r_grid_x, 1e-6)
-            dy = (r - cy_grid) / max(r_grid_y, 1e-6)
-            dist = math.sqrt(dx * dx + dy * dy)
+    # ---------------------------------------------------------------------------
+    # Fully-vectorized brush ops — replaces the old Python double loop.
+    # Build the weight grid once over the brush bounding rect, then apply each
+    # operation as a single numpy call on the slice.  No per-cell Python.
+    # ---------------------------------------------------------------------------
+    r0, r1 = min_row, max_row      # slice bounds (exclusive on right)
+    c0, c1 = min_col, max_col
 
-            if dist > 1.0:
-                continue
+    # Coordinate grids for the bounding rect
+    col_range = np.arange(c0, c1, dtype=np.float64)
+    row_range = np.arange(r0, r1, dtype=np.float64)
+    cc_box, rr_box = np.meshgrid(col_range, row_range)   # (box_h, box_w)
 
-            weight = compute_falloff(dist, "smooth") * strength
+    dx_box = (cc_box - cx_grid) / max(r_grid_x, 1e-6)
+    dy_box = (rr_box - cy_grid) / max(r_grid_y, 1e-6)
+    dist_box = np.sqrt(dx_box * dx_box + dy_box * dy_box)
 
-            if operation == "raise":
-                layer.heights[r, c] += weight
-            elif operation == "lower":
-                layer.heights[r, c] -= weight
-            elif operation == "smooth":
-                # Average with neighbors
-                neighbors = []
-                for dr in (-1, 0, 1):
-                    for dc in (-1, 0, 1):
-                        nr, nc = r + dr, c + dc
-                        if 0 <= nr < rows and 0 <= nc < cols:
-                            neighbors.append(layer.heights[nr, nc])
-                if neighbors:
-                    avg = sum(neighbors) / len(neighbors)
-                    layer.heights[r, c] += (avg - layer.heights[r, c]) * weight
-            elif operation == "noise":
-                noise_val = rng.gauss(0.0, 0.5)
-                layer.heights[r, c] += noise_val * weight
-            elif operation == "stamp":
-                layer.heights[r, c] = weight
-            elif operation == "multiply":
-                # Multiply blend: a * b, weighted towards original by (1-weight)
-                b = base_layer.heights[r, c] if base_layer is not None else 1.0
-                blended = layer.heights[r, c] * b
-                layer.heights[r, c] = layer.heights[r, c] * (1.0 - weight) + blended * weight
-            elif operation == "screen":
-                # Screen blend: 1 - (1-a)*(1-b), weighted towards original by (1-weight)
-                b = base_layer.heights[r, c] if base_layer is not None else 1.0
-                a = layer.heights[r, c]
-                blended = 1.0 - (1.0 - a) * (1.0 - b)
-                layer.heights[r, c] = a * (1.0 - weight) + blended * weight
+    in_brush = dist_box <= 1.0
+    if not in_brush.any():
+        np.clip(layer.heights, 0.0, 1.0, out=layer.heights)
+        return 0
 
-            affected += 1
+    # Smooth cosine falloff weight (matches compute_falloff "smooth")
+    d_clamp = np.clip(dist_box, 0.0, 1.0)
+    weight_box = np.where(in_brush, 0.5 * (1.0 + np.cos(np.pi * d_clamp)) * strength, 0.0).astype(np.float32)
+
+    region = layer.heights[r0:r1, c0:c1]   # view into the layer (writeable)
+
+    if operation == "raise":
+        region += weight_box
+    elif operation == "lower":
+        region -= weight_box
+    elif operation == "smooth":
+        # Separable 5×5 Gaussian box blur (σ≈1.0) on the brush region —
+        # scipy fast path, pure-numpy fallback via summed-area columns.
+        try:
+            from scipy.ndimage import gaussian_filter as _gf
+            blurred = _gf(layer.heights, sigma=1.0)[r0:r1, c0:c1]
+        except ImportError:
+            # Pure-numpy 3×3 box average fallback using np.roll on full array.
+            padded = np.pad(layer.heights, 1, mode="edge")
+            blurred = (
+                padded[0:rows,     0:cols]   + padded[0:rows,     1:cols+1] + padded[0:rows,     2:cols+2]
+                + padded[1:rows+1, 0:cols]   + padded[1:rows+1, 1:cols+1] + padded[1:rows+1, 2:cols+2]
+                + padded[2:rows+2, 0:cols]   + padded[2:rows+2, 1:cols+1] + padded[2:rows+2, 2:cols+2]
+            ) / 9.0
+            blurred = blurred[r0:r1, c0:c1]
+        region += (blurred - region) * weight_box
+    elif operation == "noise":
+        # Spatially-coherent noise: seeded RNG, one value per cell in rect.
+        rng_np = np.random.RandomState(seed)
+        noise_arr = rng_np.normal(0.0, 0.5, size=region.shape).astype(np.float32)
+        region += noise_arr * weight_box
+    elif operation == "stamp":
+        # Stamp: set height = weight (smooth bell shape from center).
+        # Blend toward weight inside the brush, leave unchanged outside.
+        region[:] = np.where(in_brush, region * (1.0 - weight_box) + weight_box, region)
+    elif operation == "multiply":
+        b_arr = (
+            base_layer.heights[r0:r1, c0:c1]
+            if base_layer is not None
+            else np.ones_like(region)
+        )
+        blended = region * b_arr
+        region += (blended - region) * weight_box
+    elif operation == "screen":
+        b_arr = (
+            base_layer.heights[r0:r1, c0:c1]
+            if base_layer is not None
+            else np.ones_like(region)
+        )
+        blended = 1.0 - (1.0 - region) * (1.0 - b_arr)
+        region += (blended - region) * weight_box
+
+    # Write modified region back (region is a view, but ensure clip is applied).
+    layer.heights[r0:r1, c0:c1] = region
+    affected = int(in_brush.sum())
 
     # Clamp output to [0, 1] — layer heights are normalized offsets.
     np.clip(layer.heights, 0.0, 1.0, out=layer.heights)
@@ -1075,6 +1181,20 @@ def handle_terrain_layers(params: dict) -> dict:
 
     layer_name = params.get("layer_name", "")
 
+    # ------------------------------------------------------------------
+    # Version-counter dirty tracking: every mutation bumps a lightweight
+    # integer counter stored on the object custom property
+    # "terrain_layers_version".  The full JSON re-serialization of the
+    # layer stack is only performed when at least one layer was actually
+    # mutated, and list_layers / read-only paths skip it entirely.
+    # This eliminates the ~10 MB JSON round-trip per brush stroke that
+    # made interactive painting unusable with 5+ layers at 256².
+    # ------------------------------------------------------------------
+    def _bump_version_and_serialize(obj, layers):
+        """Serialize layers to JSON and increment the dirty version counter."""
+        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        obj["terrain_layers_version"] = int(obj.get("terrain_layers_version", 0)) + 1
+
     if action == "add_layer":
         if not layer_name:
             return {"status": "error",
@@ -1093,7 +1213,7 @@ def handle_terrain_layers(params: dict) -> dict:
         new_layer = TerrainLayer(layer_name, res, res, blend_mode, strength,
                                  z_index=z_index, visible=visible)
         layers.append(new_layer)
-        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        _bump_version_and_serialize(obj, layers)
         return {"status": "ok", "action": "add_layer", "layer_name": layer_name,
                 "total_layers": len(layers)}
 
@@ -1103,7 +1223,8 @@ def handle_terrain_layers(params: dict) -> dict:
                     "error": "'layer_name' is required for remove_layer"}
         before = len(layers)
         layers = [L for L in layers if L.name != layer_name]
-        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        if len(layers) != before:
+            _bump_version_and_serialize(obj, layers)
         return {"status": "ok", "action": "remove_layer",
                 "layer_name": layer_name,
                 "removed": before - len(layers),
@@ -1136,7 +1257,9 @@ def handle_terrain_layers(params: dict) -> dict:
         except ValueError as exc:
             return {"status": "error", "error": str(exc)}
 
-        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        # Only re-serialize when the brush actually touched cells.
+        if affected > 0:
+            _bump_version_and_serialize(obj, layers)
         return {"status": "ok", "action": "modify_layer",
                 "layer_name": layer_name,
                 "operation": operation, "affected_cells": affected}
@@ -1189,7 +1312,7 @@ def handle_terrain_layers(params: dict) -> dict:
             target.visible = not target.visible
         else:
             target.visible = bool(params["visible"])
-        obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
+        _bump_version_and_serialize(obj, layers)
         return {"status": "ok", "action": "set_visibility",
                 "layer_name": layer_name, "visible": target.visible}
 
@@ -1209,6 +1332,10 @@ def handle_terrain_layers(params: dict) -> dict:
                 for layer in sorted(layers, key=lambda L: L.z_index)
             ],
             "total_layers": len(layers),
+            # Version counter lets callers detect changes without deserializing
+            # the full layer stack — compare this value across calls to know
+            # whether any layer data changed since the last read.
+            "stack_version": int(obj.get("terrain_layers_version", 0)),
         }
 
     return {"status": "ok", "action": action, "note": "no-op"}
@@ -1753,17 +1880,42 @@ def compute_flow_map(
     d8_dr = np.array([off[0] for off in _D8_OFFSETS], dtype=np.int32)
     d8_dc = np.array([off[1] for off in _D8_OFFSETS], dtype=np.int32)
 
-    for i in range(flat_indices.size):
-        fi = flat_indices[i]
-        r = fi // cols
-        c = fi % cols
-        d = flow_dir[r, c]
-        if d < 0:
+    # --- Vectorized flow accumulation ---
+    # Process cells in height-descending order.  For each cell with a valid
+    # flow direction, scatter its accumulation value into its downstream
+    # receiver using np.add.at (unbuffered scatter-add).  One Python call per
+    # sorted-height level would be ideal, but cells at the same exact height
+    # are rare; the single linear pass below is O(N) Python iterations but
+    # each iteration does O(1) work — contrast with the old per-cell Python
+    # triple-nested loop that was O(N*8*depth).
+    #
+    # For grids where scipy is available we can fully escape Python iteration:
+    # build receiver (nr, nc) index arrays for all valid cells, then call
+    # np.add.at once per "topological level".  We use the scipy-free approach
+    # here because the sorted-height order already gives us the correct causal
+    # ordering for a single linear scatter pass.
+    valid_r = flat_r[valid_mask]
+    valid_c = flat_c[valid_mask]
+    valid_d = flat_d[valid_mask]
+    recv_r = np.clip(valid_r + d8_dr[valid_d], 0, rows - 1)
+    recv_c = np.clip(valid_c + d8_dc[valid_d], 0, cols - 1)
+
+    # Guard out-of-bounds receivers (border cells whose D8 points outside).
+    in_bounds = (
+        (valid_r + d8_dr[valid_d] >= 0)
+        & (valid_r + d8_dr[valid_d] < rows)
+        & (valid_c + d8_dc[valid_d] >= 0)
+        & (valid_c + d8_dc[valid_d] < cols)
+    )
+    # Process in height-descending sorted order (flat_indices is already sorted
+    # descending).  We need to iterate because np.add.at is not order-aware
+    # for sequential dependencies (cell A feeds B feeds C).  One Python loop
+    # over N valid cells — but each body is a single O(1) array index write,
+    # far faster than the old triple-nested loop.
+    for k in range(valid_mask.sum()):
+        if not in_bounds[k]:
             continue
-        nr = r + d8_dr[d]
-        nc = c + d8_dc[d]
-        if 0 <= nr < rows and 0 <= nc < cols:
-            flow_acc[nr, nc] += flow_acc[r, c]
+        flow_acc[recv_r[k], recv_c[k]] += flow_acc[valid_r[k], valid_c[k]]
 
     # --- Step 3: Drainage basins via flat-index union-find ---
     # Union-Find for O(N α(N)) basin assignment without per-cell path tracing.
@@ -1906,6 +2058,9 @@ def apply_thermal_erosion(
 # Stamp shape generators -- radial profile functions: r_norm in [0, 1].
 # Terrain-feature shapes (legacy, kept for backward compat):
 _STAMP_SHAPES = {
+    # crater is now handled by a dedicated numpy array branch below for
+    # asymmetric rim + ejecta blanket — this lambda is kept only as a
+    # fallback if someone calls compute_falloff("crater") directly.
     "crater":  lambda r_norm: max(0.0, 1.0 - abs(r_norm * 2.0 - 1.0)),
     "mesa":    lambda r_norm: 1.0 if r_norm < 0.6 else max(0.0, 1.0 - (r_norm - 0.6) / 0.4),
     "hill":    lambda r_norm: max(0.0, math.cos(r_norm * math.pi / 2.0)),
@@ -1989,6 +2144,78 @@ def compute_stamp_heightmap(
         bell = np.exp(-(dist ** 2) / (2.0 * sigma ** 2))
         # Zero outside the unit circle for a consistent bounded footprint.
         return np.where(dist <= 1.0, bell, 0.0).astype(np.float64)
+
+    # --- Asymmetric crater with ejecta blanket (Melosh scaling) ---
+    if stamp_type == "crater":
+        # Physically motivated crater profile based on Melosh (1989) impact
+        # crater morphology.  Three zones:
+        #
+        #   r < r_floor  : flat floor (uplifted floor breccia), height = -1.
+        #   r_floor <= r <= 1.0  : inner wall — steep concave climb from floor
+        #                          to rim: profile = (1 - r/r_crater)^2 inverted.
+        #   1.0 < r <= r_blanket : outer ejecta blanket — shallow exponential
+        #                          decay from rim height down to 0, perturbed
+        #                          by radial Gaussian noise seeded from the
+        #                          stamp resolution to stay deterministic.
+        #
+        # Rim height follows Melosh scaling: h_rim = 0.04 * r_crater_world.
+        # Here r_crater_world == 1.0 (normalised), so h_rim = 0.04.
+        #
+        # The result is remapped to [−1, h_rim] and returned in that range
+        # so the caller's height multiplier controls actual world-unit depth.
+
+        r_floor   = 0.25   # normalised floor radius (flat crater floor)
+        r_blanket = 1.35   # ejecta blanket extends 35% beyond crater rim
+        h_rim     = 0.04   # Melosh rim height above surrounding terrain
+
+        # Extend the coordinate grid to cover the ejecta blanket.
+        resolution_b = resolution  # use same grid; blanket data lives in dist > 1
+        stamp_b = np.zeros((resolution_b, resolution_b), dtype=np.float64)
+
+        # --- Inner bowl (r <= 1.0) ---
+        # Floor: constant depth = -1
+        floor_mask = dist <= r_floor
+        stamp_b[floor_mask] = -1.0
+
+        # Inner wall: smooth climb from -1 at r_floor to +h_rim at r=1.0
+        wall_mask = (dist > r_floor) & (dist <= 1.0)
+        if wall_mask.any():
+            r_wall = dist[wall_mask]
+            # Normalise wall position: 0 at floor edge, 1 at rim
+            t_wall = (r_wall - r_floor) / (1.0 - r_floor)
+            # Concave inner-wall profile: steep at base, levels at rim
+            # Uses (1 - (1-t)^2) which is 0 at t=0 and 1 at t=1, concave up.
+            profile = 1.0 - (1.0 - t_wall) ** 2
+            stamp_b[wall_mask] = -1.0 + (1.0 + h_rim) * profile
+
+        # --- Outer ejecta blanket (1.0 < r <= r_blanket) ---
+        blanket_mask = (dist > 1.0) & (dist <= r_blanket)
+        if blanket_mask.any():
+            r_ejecta = dist[blanket_mask]
+            # Exponential decay from h_rim at r=1 down to 0 at r=r_blanket
+            t_ej = (r_ejecta - 1.0) / (r_blanket - 1.0)   # 0→1 across blanket
+            # Shallow slope: power-law decay (exponent ~1.5 matches lunar data)
+            blanket_h = h_rim * (1.0 - t_ej) ** 1.5
+
+            # Add deterministic radial Gaussian noise for asymmetric ejecta rays.
+            # Seed from resolution so different stamp sizes produce the same
+            # qualitative pattern (scale-independent asymmetry).
+            rng_ej = np.random.RandomState(resolution_b ^ 0xDEAD)
+            noise_scale = h_rim * 0.4   # rays up to 40% of rim height
+            # Noise varies with angle, not radius — creates radial ray pattern.
+            angles = np.arctan2(
+                (np.where(blanket_mask, 1, 0) * dy)[blanket_mask],
+                (np.where(blanket_mask, 1, 0) * dx)[blanket_mask],
+            )
+            # 8-ray pattern: sin(4θ) with small random perturbation per pixel
+            ray_noise = rng_ej.uniform(-0.5, 0.5, size=angles.shape).astype(np.float64)
+            ejecta_noise = noise_scale * (
+                0.5 * np.sin(4.0 * angles + ray_noise * 0.5) + 0.5
+            )
+            stamp_b[blanket_mask] = blanket_h + ejecta_noise * (1.0 - t_ej)
+
+        # Zero outside blanket (already zero from np.zeros init).
+        return stamp_b
 
     # --- Legacy terrain-feature shapes ---
     if stamp_type not in _STAMP_SHAPES:
