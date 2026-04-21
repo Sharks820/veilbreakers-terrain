@@ -5879,8 +5879,83 @@ def _build_level_water_surface_from_terrain(
     bm = bmesh.new()
     uv_layer = bm.loops.layers.uv.new("UVMap")
     flow_layer = bm.loops.layers.float_color.new("flow_vc")
+    # FlowData: Unity-facing flow animation layer.
+    # RGBA: R=flow_x [0,1], G=flow_z [0,1], B=flow_speed [0,1], A=depth_factor [0,1]
+    # (depth_factor: 0=deep, 1=shallow — for foam-edge blending in Unity shader)
+    flow_data_layer = bm.loops.layers.float_color.new("FlowData")
 
     uv_tile = 4.0
+
+    # -----------------------------------------------------------------------
+    # Per-cell D8 flow direction derived from the heights grid (steepest descent).
+    # This ensures every water vertex gets a downstream-pointing flow vector
+    # rather than the constant (0.5, 0.5) neutral that was written before.
+    # D8 convention: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
+    # -----------------------------------------------------------------------
+    _D8_ROW = (-1, -1, 0, 1, 1, 1, 0, -1)
+    _D8_COL = (0, 1, 1, 1, 0, -1, -1, -1)
+    _D8_DIST = (1.0, math.sqrt(2.0), 1.0, math.sqrt(2.0),
+                1.0, math.sqrt(2.0), 1.0, math.sqrt(2.0))
+    # Unit flow vectors per D8 direction (world XY — matches Blender X/Y axes).
+    # X = east (+col), Z/Y = south (+row) in grid space.
+    _D8_FX = (0.0, 1.0 / math.sqrt(2.0), 1.0,  1.0 / math.sqrt(2.0),
+              0.0, -1.0 / math.sqrt(2.0), -1.0, -1.0 / math.sqrt(2.0))
+    _D8_FZ = (-1.0, -1.0 / math.sqrt(2.0), 0.0, 1.0 / math.sqrt(2.0),
+               1.0,  1.0 / math.sqrt(2.0), 0.0, -1.0 / math.sqrt(2.0))
+
+    def _cell_flow_dir_vec(r: int, c: int) -> tuple[float, float]:
+        """Return (fx, fz) unit flow vector for grid cell (r, c) via D8."""
+        best_d = -1
+        best_slope = -1.0
+        h0 = float(heights[r, c])
+        for d in range(8):
+            nr, nc = r + _D8_ROW[d], c + _D8_COL[d]
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                continue
+            drop = (h0 - float(heights[nr, nc])) / _D8_DIST[d]
+            if drop > best_slope:
+                best_slope = drop
+                best_d = d
+        if best_d < 0 or best_slope <= 0.0:
+            return (0.0, 1.0)  # default: south — never zero-vector
+        return (_D8_FX[best_d], _D8_FZ[best_d])
+
+    # Manning-based speed proxy per vertex: V ∝ slope^0.5 (no accumulation grid
+    # available here, so we use local slope only; accumulation comes from
+    # pass_water_flow_speed on the mask stack for the pipeline path).
+    _cell_size_local = max(
+        (max(xs) - min(xs)) / max(cols - 1, 1),
+        (max(ys) - min(ys)) / max(rows - 1, 1),
+        1.0,
+    )
+
+    def _vertex_slope(r: int, c: int) -> float:
+        h0 = float(heights[r, c])
+        max_drop = 0.0
+        for d in range(8):
+            nr, nc = r + _D8_ROW[d], c + _D8_COL[d]
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                continue
+            drop = (h0 - float(heights[nr, nc])) / (_D8_DIST[d] * _cell_size_local)
+            max_drop = max(max_drop, drop)
+        return max(max_drop, 0.0)
+
+    # Pre-compute raw speed values for wet vertices to normalise at 95th pctile.
+    _raw_speeds: list[float] = []
+    for _vi in sorted(used_vertex_indices):
+        _r, _c = _vi // cols, _vi % cols
+        _raw_speeds.append(0.8 * (_vertex_slope(_r, _c) ** 0.5))
+    _p95 = float(np.percentile(_raw_speeds, 95.0)) if _raw_speeds else 1.0
+    _speed_scale = 1.0 / max(_p95, 1e-9)
+
+    # Cache per-vertex flow vectors and speeds for face loop assignment.
+    _flow_cache: dict[int, tuple[float, float, float]] = {}  # index → (fx, fz, speed)
+    for _vi in sorted(used_vertex_indices):
+        _r, _c = _vi // cols, _vi % cols
+        _fx, _fz = _cell_flow_dir_vec(_r, _c)
+        _spd = min(1.0, 0.8 * (_vertex_slope(_r, _c) ** 0.5) * _speed_scale)
+        _flow_cache[_vi] = (_fx, _fz, _spd)
+
     top_verts: dict[int, Any] = {}
     bottom_verts: dict[int, Any] = {}
     _vert_count = 0
@@ -5942,6 +6017,14 @@ def _build_level_water_surface_from_terrain(
             foam = max(0.0, min(1.0, (shallow_fac - 0.24) / 0.28))
             loop[flow_layer] = (shallow_fac, 0.5, 0.5, foam)
             loop[uv_layer].uv = (wx / uv_tile, wy / uv_tile)
+            # FlowData: R=flow_x, G=flow_z, B=speed, A=depth_factor (1=shallow)
+            fx, fz, spd = _flow_cache.get(idx, (0.0, 1.0, 0.32))
+            loop[flow_data_layer] = (
+                (fx + 1.0) * 0.5,   # R: remap [-1,1] → [0,1]
+                (fz + 1.0) * 0.5,   # G: remap [-1,1] → [0,1]
+                spd,                 # B: Manning speed [0,1]
+                shallow_fac,         # A: depth_factor (1=shallow edge, 0=deep)
+            )
 
     if not surface_only:
         for quad_indices in top_faces:
@@ -5958,6 +6041,8 @@ def _build_level_water_surface_from_terrain(
                 wx, wy, _wz = world_points[idx]
                 loop[flow_layer] = (0.0, 0.5, 0.5, 0.0)
                 loop[uv_layer].uv = (wx / uv_tile, wy / uv_tile)
+                fx, fz, spd = _flow_cache.get(idx, (0.0, 1.0, 0.32))
+                loop[flow_data_layer] = ((fx + 1.0) * 0.5, (fz + 1.0) * 0.5, spd, 0.0)
 
         for edge_start, edge_end in _boundary_edges_from_faces(top_faces):
             try:
@@ -5977,6 +6062,8 @@ def _build_level_water_surface_from_terrain(
                 wx, wy, wz = world_points[idx]
                 loop[flow_layer] = (0.0, 0.5, 0.5, 0.0)
                 loop[uv_layer].uv = (wx / uv_tile, (wy / uv_tile) + depth_bias + max(water_level_f - wz, 0.0) * 0.08)
+                fx, fz, spd = _flow_cache.get(idx, (0.0, 1.0, 0.32))
+                loop[flow_data_layer] = ((fx + 1.0) * 0.5, (fz + 1.0) * 0.5, spd, 0.0)
 
     bm.to_mesh(mesh)
     total_tris = sum(len(poly.vertices) - 2 for poly in mesh.polygons)
@@ -6010,6 +6097,9 @@ def _build_level_water_surface_from_terrain(
         "tri_count": total_tris,
         "vertex_count": max(_vert_count, len(mesh.vertices)),
         "has_flow_vertex_colors": True,
+        # FlowData layer present: R=flow_x, G=flow_z, B=speed, A=depth_factor.
+        # Unity shader scrolls FlowUV at speed B in direction (R*2-1, G*2-1).
+        "has_flow_data_layer": True,
         "has_shore_alpha": shoreline_faces > 0,
         "cross_sections": 0,
         "path_point_count": 0,
@@ -6043,14 +6133,23 @@ def handle_create_water(params: dict) -> dict:
             river/lake centre-line.  When provided the mesh follows the path.
         cross_sections (int, default 12): Subdivisions perpendicular to flow.
 
-    Vertex color layer "flow_vc" RGBA convention:
+    Vertex color layers:
+
+    "flow_vc" — Blender-preview RGBA convention (consumed by _ensure_water_material):
         R = shallow/bank cue (0=deep center, 1=bank contact)
         G = flow dir X  (normalised, remapped to 0-1)
         B = flow dir Y  (normalised, remapped to 0-1)
         A = foam        (shore proximity + speed; blended from shore_foam and speed_foam)
 
+    "FlowData" — Unity water shader RGBA convention:
+        R = flow vector X  (downstream, remapped [-1,1]→[0,1])
+        G = flow vector Z  (downstream, remapped [-1,1]→[0,1])
+        B = flow speed     (Manning proxy: 0.8*slope^0.5, 95th-pctile normalised to 1.0)
+        A = depth factor   (0=deep center, 1=shallow bank — for foam-edge blending)
+    Unity shader usage: scroll FlowUV at speed B in direction (R*2-1, G*2-1).
+
     Returns dict with: name, water_level, area, tri_count, vertex_count,
-                       has_flow_vertex_colors, has_shore_alpha.
+                       has_flow_vertex_colors, has_flow_data_layer, has_shore_alpha.
     """
     logger.info("Creating water body (AAA spline mesh)")
     name = params.get("name", "Water")
@@ -6154,8 +6253,14 @@ def handle_create_water(params: dict) -> dict:
     # Without this the water has no UV map and any tiled material is broken.
     uv_layer = bm.loops.layers.uv.new("UVMap")
 
-    # Vertex color layer for flow data
+    # Blender-preview vertex color layer (consumed by _ensure_water_material).
+    # Convention: R=shallow_fac, G=flow_dir_x [0,1], B=flow_dir_z [0,1], A=foam
     flow_layer = bm.loops.layers.float_color.new("flow_vc")
+
+    # Unity-facing flow animation layer — consumed by the Unity water shader.
+    # Convention: R=flow_x [0,1], G=flow_z [0,1], B=flow_speed [0,1], A=depth_factor [0,1]
+    # The shader scrolls FlowUV at speed B in direction (R*2-1, G*2-1).
+    flow_data_layer = bm.loops.layers.float_color.new("FlowData")
 
     half_w = width / 2.0
     num_segs = len(path) - 1
@@ -6206,12 +6311,26 @@ def handle_create_water(params: dict) -> dict:
         flow_dirs.append((tx, ty))
         if pi > 0:
             prev_pt = path[pi - 1]
-            dz = abs(pz - prev_pt[2])
+            dz = max(prev_pt[2] - pz, 0.0)  # positive = downhill (downstream)
             dx_dist = math.sqrt((px - prev_pt[0]) ** 2 + (py - prev_pt[1]) ** 2)
             slope = dz / max(dx_dist, 0.1)
-            flow_speeds.append(min(1.0, 0.24 + slope * 2.4))
+            # Manning proxy: V ∝ k * slope^0.5  (k=0.8, n≈0.035 river roughness)
+            flow_speeds.append(0.8 * (slope ** 0.5))
         else:
-            flow_speeds.append(0.32)
+            flow_speeds.append(0.0)  # sentinel — will be filled from neighbour below
+
+    # Fill the sentinel at index 0 from the next point's speed.
+    if len(flow_speeds) > 1:
+        flow_speeds[0] = flow_speeds[1]
+
+    # Normalise raw Manning speeds: 95th percentile = 1.0, floor at 0.05 for
+    # moving water (rivers are never completely still).
+    _raw_arr = [s for s in flow_speeds if s > 0.0]
+    _p95 = float(np.percentile(_raw_arr, 95.0)) if _raw_arr else 1.0
+    _speed_scale = 1.0 / max(_p95, 1e-9)
+    flow_speeds = [max(0.05, min(1.0, s * _speed_scale)) for s in flow_speeds]
+
+    # Tri-point smoothing for visual continuity (identical kernel to before).
     if len(flow_speeds) >= 3:
         smoothed_flow_speeds: list[float] = []
         for index, speed in enumerate(flow_speeds):
@@ -6331,24 +6450,28 @@ def handle_create_water(params: dict) -> dict:
                     shore_foam = max(0.0, (shallow_fac - 0.4) * 2.0)
                     speed_foam = max(0.0, (sp - 0.7) * 1.5)
                     foam = min(1.0, shore_foam + speed_foam)
+                    # Blender-preview layer: R=shallow, G=flow_x, B=flow_z, A=foam
                     loop[flow_layer] = (shallow_fac, fdx, fdz, foam)
                     loop[uv_layer].uv = (uv_u, uv_v)
+                    # Unity FlowData: R=flow_x, G=flow_z, B=speed, A=depth_factor
+                    loop[flow_data_layer] = (fdx, fdz, sp, shallow_fac)
             except ValueError:
                 pass
             try:
                 if not surface_only and None not in (ba, bd, bc, bb):
                     face = bm.faces.new([ba, bd, bc, bb])
-                    for loop, (fdx, fdz, uv_u, uv_v) in zip(
+                    for loop, (sp_val, fdx, fdz, uv_u, uv_v) in zip(
                         face.loops,
                         [
-                            (fdxa, fdza, ua, va_uv + 0.65),
-                            (fdxd, fdzd, ud, vd_uv + 0.65),
-                            (fdxc, fdzc, uc, vc_uv + 0.65),
-                            (fdxb, fdzb, ub, vb_uv + 0.65),
+                            (spa, fdxa, fdza, ua, va_uv + 0.65),
+                            (spd, fdxd, fdzd, ud, vd_uv + 0.65),
+                            (spc, fdxc, fdzc, uc, vc_uv + 0.65),
+                            (spb, fdxb, fdzb, ub, vb_uv + 0.65),
                         ],
                     ):
                         loop[flow_layer] = (0.0, fdx, fdz, 0.0)
                         loop[uv_layer].uv = (uv_u, uv_v)
+                        loop[flow_data_layer] = (fdx, fdz, sp_val, 0.0)
             except ValueError:
                 pass
 
@@ -6384,6 +6507,7 @@ def handle_create_water(params: dict) -> dict:
                 for loop, (sp, fdx, fdz, uv_u, uv_v) in zip(face.loops, loop_data):
                     loop[flow_layer] = (sp, fdx, fdz, 0.0)
                     loop[uv_layer].uv = (uv_u, uv_v)
+                    loop[flow_data_layer] = (fdx, fdz, sp, 0.0)
 
     if rings and not surface_only:
         start_ring = rings[0]
@@ -6405,6 +6529,7 @@ def handle_create_water(params: dict) -> dict:
                 for loop, (sp, fdx, fdz, uv_u, uv_v) in zip(face.loops, loop_data):
                     loop[flow_layer] = (sp, fdx, fdz, 0.0)
                     loop[uv_layer].uv = (uv_u, uv_v)
+                    loop[flow_data_layer] = (fdx, fdz, sp, 0.0)
 
     bm.to_mesh(mesh)
     _ = sum(1 for p in mesh.polygons if len(p.vertices) == 3)
@@ -6448,6 +6573,9 @@ def handle_create_water(params: dict) -> dict:
         "tri_count": total_tris,
         "vertex_count": max(_vert_count, len(mesh.vertices)),
         "has_flow_vertex_colors": True,
+        # FlowData layer present: R=flow_x, G=flow_z, B=speed, A=depth_factor.
+        # Unity shader scrolls FlowUV at speed B in direction (R*2-1, G*2-1).
+        "has_flow_data_layer": True,
         "has_shore_alpha": True,
         "cross_sections": cross_sections,
         "path_point_count": _input_path_count,

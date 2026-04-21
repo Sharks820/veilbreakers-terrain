@@ -789,14 +789,19 @@ def generate_waterfall_mesh(
       matches both faces when rendered double-sided. Pool UVs use radial [0, 1].
       This matches Horizon Forbidden West's UV-animated water curtain approach.
 
-    Vertex colours (foam + mist gradient):
+    Vertex colours (AAA Unity waterfall shader contract — God of War / Horizon):
       RGBA per vertex stored as a parallel list aligned to the merged vertex list.
-        - Curtain front/back top row: mist white (1, 1, 1, alpha=0.1) — nearly
-          transparent mist hint at the crest.
-        - Curtain front/back bottom row: foam white (1, 1, 1, alpha=1.0) — fully
-          opaque foam at the plunge line, matching Witcher 3 river foam buildup.
-        - Pool surface: foam_alpha fades radially from 1.0 at rim to 0.2 at centre.
-        - Ledge: neutral grey (0.5, 0.5, 0.5, 0.0) — no water-colour contribution.
+      Channel encoding matches Unity's waterfall shader UV-scroll inputs:
+        R = flow_speed  : 0.0 at curtain top (slow), 1.0 at curtain base (max).
+                          Linear gradient from top to base using V-position.
+                          Ledge = 0.0, pool surface = 0.2 (slow outflow).
+        G = turbulence  : 0.0 at curtain top (smooth), ramps to 1.0 at impact
+                          zone (base 0.5 m ring).  Pool = 0.8, ledge = 0.0.
+        B = foam_alpha  : 0.0 on curtain body, 1.0 in base impact ring (0.5 m).
+                          Pool rim = 1.0, fades radially to 0.2 at centre.
+        A = mist_factor : 0.0 on curtain and pool centre, increases outward from
+                          curtain sides and upward from impact zone into mist
+                          region.  Ledge = 0.0.
 
     Foam splash geometry at base:
       A ring of small outward-facing quads at pool_rim height with outward-pointing
@@ -857,7 +862,9 @@ def generate_waterfall_mesh(
                 z_noise = rng.gauss(0.0, 0.015)
                 ledge_verts.append((x, y, z_top + z_noise))
                 ledge_uvs.append((x_frac, y_frac))
-                ledge_vcols.append((0.5, 0.5, 0.5, 0.0))
+                # AAA contract: ledge has no flow speed, turbulence, foam, or mist
+                # R=flow_speed=0, G=turbulence=0, B=foam_alpha=0, A=mist_factor=0
+                ledge_vcols.append((0.0, 0.0, 0.0, 0.0))
         for ly in range(ledge_segs):
             for lx in range(ledge_segs):
                 rw = ledge_segs + 1
@@ -872,7 +879,11 @@ def generate_waterfall_mesh(
         # Top edge: breakup noise on X and Z for organic tear.
         # UV: U = x-fraction, V = global Z-fraction [0 at top-of-waterfall, 1 at base]
         #     so V scrolls downward with the flow shader.
-        # Vertex colour: alpha gradient from mist (top) to foam (bottom).
+        # Vertex colour (AAA Unity waterfall shader contract):
+        #   R = flow_speed   (0 at top, 1 at base — linear V-gradient)
+        #   G = turbulence   (0 at top, 1 at base impact zone)
+        #   B = foam_alpha   (0 on curtain body, 1 at base 0.5m ring)
+        #   A = mist_factor  (outward from curtain into mist cloud)
         # ------------------------------------------------------------------
         y_front = current_y + step_depth
         cx_segs = curtain_front_segs
@@ -901,8 +912,21 @@ def generate_waterfall_mesh(
 
             # V coordinate: fraction of total height (0 = top of fall, 1 = base)
             v_global = (height - z_val) / max(height, 1e-6)
-            # Foam alpha: 0.1 at top (mist), 1.0 at bottom (foam)
-            foam_alpha = v_global
+
+            # AAA Unity waterfall shader contract:
+            #   R = flow_speed  : linear 0 (top) → 1 (base) via V-position
+            #   G = turbulence  : 0 at top, ramps to 1 at impact zone (base)
+            #   B = foam_alpha  : 0 on curtain body, 1 only at base 0.5m impact ring
+            #   A = mist_factor : near-zero on curtain, grows outward at lateral edges
+            r_flow_speed  = v_global                          # 0 top → 1 base
+            g_turbulence  = v_global * v_global               # quadratic ramp, 0 top → 1 base
+            # foam_alpha is 0 across the curtain body; the base impact ring
+            # gets B=1 only in the bottom-most row (v_global ≈ 1.0), fading fast
+            b_foam_alpha  = max(0.0, (v_global - 0.85) / 0.15)  # 0 until 85%, ramps to 1 at base
+            # mist_factor: lateral edges of curtain carry spray outward; use a
+            # symmetric lateral gradient that peaks at the curtain sides (x_frac=0 or 1)
+            # and is zero at centre, scaled by v_global so top is misty too
+            # (computed per-vertex inside the loops below using x_frac)
 
             drop_frac = max(0.0, (z_top - z_val) / max(step_height, 1e-6))
             gravity_bow = step_depth * 0.35 * math.sqrt(drop_frac)
@@ -922,7 +946,11 @@ def generate_waterfall_mesh(
                     z_break = 0.0
                 row_v.append((x, y_front + bow + noise_y, z_val + z_break))
                 row_uv.append((x_frac, v_global))
-                row_vc.append((1.0, 1.0, 1.0, foam_alpha))
+                # A = mist_factor: highest at lateral edges (x_frac=0 or 1),
+                # zero at centre (x_frac=0.5); scaled by v_global (more mist
+                # lower where impact spray forms)
+                a_mist = (1.0 - math.sin(x_frac * math.pi)) * (0.3 + 0.7 * v_global)
+                row_vc.append((r_flow_speed, g_turbulence, b_foam_alpha, a_mist))
 
             # Back vertices (reversed U so both faces share consistent V-scroll)
             for ci in range(cx_segs + 1):
@@ -938,7 +966,8 @@ def generate_waterfall_mesh(
                 row_v.append((x, y_front + bow - thickness + noise_y, z_val + z_break))
                 # Back face UV: U mirrors (1-x_frac) so back-face scroll matches front
                 row_uv.append((1.0 - x_frac, v_global))
-                row_vc.append((1.0, 1.0, 1.0, foam_alpha))
+                a_mist = (1.0 - math.sin(x_frac * math.pi)) * (0.3 + 0.7 * v_global)
+                row_vc.append((r_flow_speed, g_turbulence, b_foam_alpha, a_mist))
 
             return row_v, row_uv, row_vc
 
@@ -1010,8 +1039,15 @@ def generate_waterfall_mesh(
         frac = ri / pool_depth_rings
         ring_radius = pool_radius * math.cos(frac * math.pi * 0.5)
         ring_z = pool_z_surface - pool_radius * math.sin(frac * math.pi * 0.5) * 0.4
-        # Foam alpha: 1.0 at rim (ri=0), fades to 0.2 at bowl centre
-        foam_a = 1.0 - frac * 0.8
+        # AAA contract per-channel for pool surface:
+        #   R = flow_speed  : 0.2 (slow post-impact outflow, not zero — pool circulates)
+        #   G = turbulence  : 0.8 at rim (high impact turbulence), fades to 0.2 at centre
+        #   B = foam_alpha  : 1.0 at rim, fades radially to 0.2 at bowl centre
+        #   A = mist_factor : peaks near rim where splash launches mist upward
+        r_pool = 0.2
+        g_pool = 0.8 * (1.0 - frac) + 0.2 * frac   # 0.8 rim → 0.2 centre
+        b_pool = 1.0 - frac * 0.8                    # 1.0 rim → 0.2 centre
+        a_pool = 0.6 * (1.0 - frac)                  # 0.6 rim → 0.0 centre
         row_idx: list[int] = []
         for pi in range(pool_ring_segs):
             angle = 2.0 * math.pi * pi / pool_ring_segs
@@ -1021,7 +1057,7 @@ def generate_waterfall_mesh(
             pool_verts.append((px, py, ring_z + noise))
             # Radial UVs: U = angle/2π, V = radial fraction
             pool_uvs.append((pi / pool_ring_segs, frac))
-            pool_vcols.append((1.0, 1.0, 1.0, foam_a))
+            pool_vcols.append((r_pool, g_pool, b_pool, a_pool))
             row_idx.append(len(pool_verts) - 1)
         ring_indices.append(row_idx)
 
@@ -1037,10 +1073,11 @@ def generate_waterfall_mesh(
             ))
 
     # Bottom cap: fan triangles from single center vertex
+    # Centre of pool: slow flow (R=0.2), low turbulence (G=0.2), low foam (B=0.2), no mist (A=0)
     bottom_center_z = pool_z_surface - pool_radius * 0.4
     pool_verts.append((0.0, pool_center_y, bottom_center_z))
     pool_uvs.append((0.5, 1.0))
-    pool_vcols.append((1.0, 1.0, 1.0, 0.2))
+    pool_vcols.append((0.2, 0.2, 0.2, 0.0))
     center_idx = len(pool_verts) - 1
     for pi in range(pool_ring_segs):
         pi_next = (pi + 1) % pool_ring_segs
@@ -1096,12 +1133,16 @@ def generate_waterfall_mesh(
             (u_b, 1.0),
             (u_a, 1.0),
         ])
-        # Foam alpha: fully opaque at base (1.0), fading at tip (0.2)
+        # AAA contract for splash skirt (foam explosion zone):
+        #   Base verts: R=1.0 (max speed at impact), G=1.0 (max turbulence),
+        #               B=1.0 (full foam), A=0.2 (some mist at base)
+        #   Tip verts:  R=0.6 (decelerating spray), G=0.5 (turbulence decays),
+        #               B=0.2 (foam dissipates at tips), A=1.0 (pure mist spray)
         splash_vcols.extend([
-            (1.0, 1.0, 1.0, 1.0),
-            (1.0, 1.0, 1.0, 1.0),
-            (1.0, 1.0, 1.0, 0.2),
-            (1.0, 1.0, 1.0, 0.2),
+            (1.0, 1.0, 1.0, 0.2),   # base-left
+            (1.0, 1.0, 1.0, 0.2),   # base-right
+            (0.6, 0.5, 0.2, 1.0),   # tip-right (spray → mist)
+            (0.6, 0.5, 0.2, 1.0),   # tip-left  (spray → mist)
         ])
         splash_faces.append((base_si, base_si + 1, base_si + 2, base_si + 3))
 

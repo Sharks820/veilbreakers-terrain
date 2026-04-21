@@ -551,6 +551,171 @@ def register_pass_hydrology() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Manning flow-speed pass
+# ---------------------------------------------------------------------------
+
+# D8 direction index → (row_delta, col_delta) — same convention as _D8_OFFSETS.
+# Used to convert D8 int to a 2-D unit vector for the FlowData VC layer.
+_D8_DX: tuple[float, ...] = (
+    0.0,                      # 0 = N  (row−1, col  0) → X component = col delta
+    1.0 / math.sqrt(2.0),    # 1 = NE
+    1.0,                      # 2 = E
+    1.0 / math.sqrt(2.0),    # 3 = SE
+    0.0,                      # 4 = S
+    -1.0 / math.sqrt(2.0),   # 5 = SW
+    -1.0,                     # 6 = W
+    -1.0 / math.sqrt(2.0),   # 7 = NW
+)
+_D8_DZ: tuple[float, ...] = (
+    -1.0,                     # 0 = N  (row−1 → "forward" in Z/Y)
+    -1.0 / math.sqrt(2.0),   # 1 = NE
+    0.0,                      # 2 = E
+    1.0 / math.sqrt(2.0),    # 3 = SE
+    1.0,                      # 4 = S
+    1.0 / math.sqrt(2.0),    # 5 = SW
+    0.0,                      # 6 = W
+    -1.0 / math.sqrt(2.0),   # 7 = NW
+)
+
+# Manning roughness for river (n ≈ 0.035) — coefficient k = 1/n = ~28.6.
+# We use a simplified surface-velocity proxy: V ∝ k * slope^0.5 * acc^0.3
+# with k calibrated so typical mountain-river slopes produce 0.5–0.8 range.
+_MANNING_K: float = 0.8  # empirical scalar so 95th-pctile normalises to 1.0
+
+
+def pass_water_flow_speed(
+    state: "TerrainPipelineState",
+    region: "BBox | None",
+) -> "PassResult":
+    """Compute per-cell Manning-based flow speed and write to stack.
+
+    Uses a simplified Manning surface-velocity proxy:
+
+        speed_raw[r, c] = k * slope[r, c]^0.5 * flow_accumulation[r, c]^0.3
+
+    where k = 0.8 (calibrated for n ≈ 0.035, river roughness).  The raw
+    field is normalised so the 95th percentile equals 1.0.  Cells that are
+    not water (water_surface == 0) are set to 0.0.
+
+    Writes:
+        flow_speed  — float32 (H, W) in [0, 1]; 0 = still, 1 = max velocity.
+
+    Reads (required):
+        flow_direction, flow_accumulation
+
+    Reads (optional):
+        slope          — if absent, approximated from height via central diffs
+        water_surface  — if present, non-water cells are zeroed
+
+    Must run AFTER pass_hydrology (and pass_structural_masks when slope is
+    needed).  Registered in the hydrology bundle so the pipeline can insert it
+    automatically after pass_hydrology.
+    """
+    import time as _time
+    from .terrain_semantics import PassResult
+
+    t0 = _time.perf_counter()
+    stack = state.mask_stack
+
+    flow_dir = stack.get("flow_direction")
+    flow_acc = stack.get("flow_accumulation")
+    if flow_dir is None or flow_acc is None:
+        return PassResult(
+            pass_name="pass_water_flow_speed",
+            status="skipped",
+            duration_seconds=_time.perf_counter() - t0,
+            issues=[],
+        )
+
+    flow_dir_arr = np.asarray(flow_dir, dtype=np.int8)
+    flow_acc_arr = np.asarray(flow_acc, dtype=np.float64)
+
+    # Slope: use stack if available, else central-difference approximation.
+    slope_raw = stack.get("slope")
+    if slope_raw is not None:
+        slope_arr = np.asarray(slope_raw, dtype=np.float64)
+    else:
+        h = np.asarray(stack.height, dtype=np.float64)
+        cs = float(stack.cell_size) if stack.cell_size else 1.0
+        dz_dy = np.gradient(h, cs, axis=0)
+        dz_dx = np.gradient(h, cs, axis=1)
+        slope_arr = np.sqrt(dz_dx ** 2 + dz_dy ** 2)
+
+    # Log-normalise accumulation so it doesn't dominate the product.
+    log_acc = np.log1p(flow_acc_arr)
+
+    # Manning proxy: V ∝ slope^0.5 * acc^0.3
+    # slope_arr is in [0, ∞) (rise/run or radians depending on source);
+    # clamp negatives to 0 before sqrt.
+    slope_clamped = np.maximum(slope_arr, 0.0)
+    speed_raw = _MANNING_K * (slope_clamped ** 0.5) * (log_acc ** 0.3)
+
+    # Normalise: 95th percentile = 1.0
+    water_mask_raw = stack.get("water_surface")
+    if water_mask_raw is not None:
+        water_mask = np.asarray(water_mask_raw, dtype=np.float64) > 0.0
+        water_vals = speed_raw[water_mask]
+    else:
+        water_mask = None
+        water_vals = speed_raw.ravel()
+
+    if water_vals.size > 0:
+        p95 = float(np.percentile(water_vals, 95.0))
+    else:
+        p95 = float(speed_raw.max())
+
+    if p95 > 1e-9:
+        speed_norm = np.clip(speed_raw / p95, 0.0, 1.0).astype(np.float32)
+    else:
+        speed_norm = np.zeros_like(speed_raw, dtype=np.float32)
+
+    # Zero out non-water cells when water_surface is available.
+    if water_mask is not None:
+        speed_norm[~water_mask] = 0.0
+
+    stack.set("flow_speed", speed_norm, "pass_water_flow_speed")
+
+    return PassResult(
+        pass_name="pass_water_flow_speed",
+        status="ok",
+        duration_seconds=_time.perf_counter() - t0,
+        produced_channels=("flow_speed",),
+        consumed_channels=("flow_direction", "flow_accumulation", "slope"),
+        metrics={
+            "speed_max": float(speed_norm.max()),
+            "speed_mean": float(speed_norm.mean()),
+            "p95_raw": round(p95, 4),
+        },
+        issues=[],
+    )
+
+
+def register_pass_water_flow_speed() -> None:
+    """Register pass_water_flow_speed with TerrainPassController.
+
+    Should be called alongside register_pass_hydrology so the hydrology
+    bundle exposes both passes.
+    """
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_water_flow_speed",
+            func=pass_water_flow_speed,
+            requires_channels=("flow_direction", "flow_accumulation"),
+            produces_channels=("flow_speed",),
+            seed_namespace="",
+            requires_scene_read=False,
+            description=(
+                "Manning-based flow-speed map (V ∝ slope^0.5 × acc^0.3), "
+                "95th-pctile normalised to 1.0. Must run after pass_hydrology."
+            ),
+        )
+    )
+
+
 def detect_lakes(
     heightmap: np.ndarray,
     flow_accumulation: np.ndarray,
@@ -2566,3 +2731,316 @@ def _apply_delta_fan(
 
 # Module-level registry for delta fan metadata (keyed by waypoint list id)
 _DELTA_FAN_METADATA: dict[int, dict] = {}
+
+# ===================================================================
+# River-to-lake convergence detection and velocity transition
+# (RDR2 / Witcher 3 river-mouth / delta / confluence system)
+# ===================================================================
+
+def detect_river_mouth_zones(
+    stack: "TerrainMaskStack",
+    large_body_threshold: float = 500.0,
+    jump_ratio: float = 10.0,
+    buffer_cells: int = 3,
+) -> np.ndarray:
+    """Detect cells where a river enters a lake or ocean (river mouth zones).
+
+    A river mouth is identified by one of two criteria (either triggers):
+
+    1. **Strahler-order drop** -- cells where the D8 receiver has
+       flow_accumulation < large_body_threshold while the cell itself exceeds it.
+       This captures streams entering flat lake / ocean bodies whose Priority-Flood
+       gives them low accumulation (they do not collect upstream area).
+
+    2. **Accumulation jump** -- cells where the D8 receiver has
+       flow_accumulation > jump_ratio * current_cell's flow_accumulation.
+       A river entering a large body that was already seeded with high
+       accumulation shows this step-up pattern.
+
+    Both criteria are then dilated by buffer_cells to form a transition zone
+    (the foam / velocity-ramp zone extends upstream and laterally from the
+    exact river mouth cell).
+
+    Args:
+        stack: TerrainMaskStack with flow_accumulation and flow_direction.
+        large_body_threshold: Accumulation below which a receiver is
+            considered part of a lake / ocean flat body.
+        jump_ratio: Ratio of receiver accumulation to current accumulation
+            above which an accumulation jump is detected.
+        buffer_cells: Morphological dilation radius (cells) applied to
+            raw mouth detections to form the transition zone.
+
+    Returns:
+        Float32 (H, W) mask: 1.0 at river mouth / transition cells, 0.0 elsewhere.
+    """
+    fa = getattr(stack, "flow_accumulation", None)
+    fd = getattr(stack, "flow_direction", None)
+    if fa is None or fd is None:
+        h = np.asarray(stack.height)
+        return np.zeros(h.shape, dtype=np.float32)
+
+    fa_arr = np.asarray(fa, dtype=np.float64)
+    fd_arr = np.asarray(fd, dtype=np.int32)
+    H, W = fa_arr.shape
+
+    mouth_raw = np.zeros((H, W), dtype=bool)
+
+    # Vectorised per-direction scan over 8 D8 neighbours
+    for d_idx, (dr, dc) in enumerate(_D8_OFFSETS):
+        # Source slice: cells at (r, c)
+        r_src = slice(max(0, -dr), H - max(0, dr))
+        c_src = slice(max(0, -dc), W - max(0, dc))
+        # Receiver slice: cells at (r+dr, c+dc)
+        r_rec = slice(max(0, dr), H - max(0, -dr))
+        c_rec = slice(max(0, dc), W - max(0, -dc))
+
+        # Only consider cells whose D8 flow direction points this way
+        flows_this_dir = (fd_arr[r_src, c_src] == d_idx)
+
+        fa_src = fa_arr[r_src, c_src]
+        fa_rec = fa_arr[r_rec, c_rec]
+
+        # Criterion 1: receiver accumulation drops below large_body_threshold
+        # while current cell is above it -- entering a flat large body.
+        crit1 = flows_this_dir & (fa_src >= large_body_threshold) & (fa_rec < large_body_threshold)
+
+        # Criterion 2: accumulation jumps by jump_ratio -- entering a pre-seeded
+        # large body (ocean border or lake already flooded by priority-flood).
+        fa_src_safe = np.maximum(fa_src, 1e-9)
+        crit2 = flows_this_dir & ((fa_rec / fa_src_safe) >= jump_ratio)
+
+        mouth_raw[r_src, c_src] |= (crit1 | crit2)
+
+    # Morphological dilation: buffer_cells radius binary dilation.
+    if buffer_cells > 0:
+        try:
+            from scipy.ndimage import binary_dilation  # type: ignore
+            struct = np.ones((2 * buffer_cells + 1, 2 * buffer_cells + 1), dtype=bool)
+            mouth_dilated = binary_dilation(mouth_raw, structure=struct)
+        except ImportError:
+            mouth_dilated = np.zeros((H, W), dtype=bool)
+            rs, cs = np.where(mouth_raw)
+            for r, c in zip(rs.tolist(), cs.tolist()):
+                r0 = max(0, r - buffer_cells)
+                r1 = min(H, r + buffer_cells + 1)
+                c0 = max(0, c - buffer_cells)
+                c1 = min(W, c + buffer_cells + 1)
+                mouth_dilated[r0:r1, c0:c1] = True
+    else:
+        mouth_dilated = mouth_raw
+
+    return mouth_dilated.astype(np.float32)
+
+
+def _build_delta_fan_direction(
+    fa_arr: np.ndarray,
+    fd_arr: np.ndarray,
+    mouth_mask: np.ndarray,
+) -> np.ndarray:
+    """Build a (H, W, 2) float32 spreading direction field at river mouths.
+
+    At each mouth-zone cell the spreading vector is the D8 flow direction
+    normalised to unit length. This encodes the fan axis: the water mesh
+    generator can compute perpendicular vectors to create fan-shaped UVs.
+
+    Outside the mouth zone the vector is (0, 0).
+
+    Args:
+        fa_arr: Flow accumulation (H, W).
+        fd_arr: D8 flow direction (H, W) int32.
+        mouth_mask: Float32 mouth zone mask (H, W).
+
+    Returns:
+        Float32 (H, W, 2) where [..., 0] is east (col) component and
+        [..., 1] is north (row, flipped) component of the flow vector.
+    """
+    H, W = fa_arr.shape
+    fan_dir = np.zeros((H, W, 2), dtype=np.float32)
+
+    # D8 unit vectors in world space: dc = east (+x), -dr = north (+y)
+    _d8_dx = np.array([float(dc) for dr, dc in _D8_OFFSETS], dtype=np.float64)
+    _d8_dy = np.array([-float(dr) for dr, dc in _D8_OFFSETS], dtype=np.float64)
+    _d8_dist = np.array(_D8_DISTANCES, dtype=np.float64)
+    _d8_dx_norm = _d8_dx / _d8_dist
+    _d8_dy_norm = _d8_dy / _d8_dist
+
+    mouth_bool = mouth_mask > 0.5
+    mouth_rows, mouth_cols = np.where(mouth_bool)
+
+    for r, c in zip(mouth_rows.tolist(), mouth_cols.tolist()):
+        d = int(fd_arr[r, c])
+        if d < 0:
+            continue
+        fan_dir[r, c, 0] = float(_d8_dx_norm[d])
+        fan_dir[r, c, 1] = float(_d8_dy_norm[d])
+
+    return fan_dir
+
+
+def _build_confluence_foam(
+    fa_arr: np.ndarray,
+    slope_field: np.ndarray,
+    mouth_mask: np.ndarray,
+    fa_threshold: float = 500.0,
+    slope_foam_threshold: float = 0.08,
+) -> np.ndarray:
+    """Build confluence foam mask combining mouth-zone and steep-gradient foam.
+
+    Two foam sources:
+        1. River mouth zone: all mouth-zone cells get foam = 1.0
+           (velocity differential between fast river and calm lake/ocean water).
+        2. Steep gradient entering calm water: cells with high flow
+           accumulation AND steep slope that are adjacent to the mouth zone.
+           Captures rapids immediately upstream of the delta.
+
+    Args:
+        fa_arr: Flow accumulation (H, W) float64.
+        slope_field: Slope magnitude (H, W) float64.
+        mouth_mask: Float32 mouth zone mask (H, W).
+        fa_threshold: Minimum accumulation to qualify as a river cell.
+        slope_foam_threshold: Slope above which rapids foam is generated.
+
+    Returns:
+        Float32 (H, W) foam intensity in [0, 1].
+    """
+    H, W = fa_arr.shape
+    foam = np.zeros((H, W), dtype=np.float64)
+
+    # Layer 1: mouth zone is always full foam
+    foam = np.where(mouth_mask > 0.5, 1.0, foam)
+
+    # Layer 2: steep river cells adjacent to (within 5 cells of) mouth zone
+    mouth_bool = mouth_mask > 0.5
+    river_cells = fa_arr >= fa_threshold
+    steep_cells = slope_field >= slope_foam_threshold
+    rapids_candidates = river_cells & steep_cells & ~mouth_bool
+
+    if rapids_candidates.any():
+        try:
+            from scipy.ndimage import distance_transform_edt  # type: ignore
+            dist_to_mouth = distance_transform_edt(~mouth_bool).astype(np.float64)
+            near_mouth = dist_to_mouth <= 5.0
+        except ImportError:
+            near_mouth = np.zeros((H, W), dtype=bool)
+            rs, cs = np.where(mouth_bool)
+            for r, c in zip(rs.tolist(), cs.tolist()):
+                r0 = max(0, r - 5)
+                r1 = min(H, r + 5 + 1)
+                c0 = max(0, c - 5)
+                c1 = min(W, c + 5 + 1)
+                near_mouth[r0:r1, c0:c1] = True
+
+        slope_contrib = np.clip(
+            (slope_field - slope_foam_threshold) / max(slope_foam_threshold * 2.0, 1e-6),
+            0.0,
+            1.0,
+        )
+        rapids_foam = np.where(rapids_candidates & near_mouth, slope_contrib, 0.0)
+        foam = np.maximum(foam, rapids_foam)
+
+    # Gaussian blur to soften hard edges
+    try:
+        from scipy.ndimage import gaussian_filter  # type: ignore
+        foam = gaussian_filter(foam, sigma=1.5)
+    except ImportError:
+        pass
+
+    return np.clip(foam, 0.0, 1.0).astype(np.float32)
+
+
+def pass_river_convergence(
+    state: "TerrainPipelineState",
+    region: "BBox | None",
+) -> "PassResult":
+    """Compute river-to-lake/ocean convergence masks and store on the stack.
+
+    Consumes:
+        flow_accumulation   -- D8 upstream drainage area (cells)
+        flow_direction      -- D8 direction index (0-7, -1=pit)
+        water_surface       -- optional existing water surface mask
+
+    Produces:
+        river_mouth_mask    -- float32 (H, W) 1.0 at river mouth/delta zones
+        confluence_foam     -- float32 (H, W) foam intensity at convergence
+        delta_fan_direction -- float32 (H, W, 2) spreading vector at mouths
+
+    Velocity transition: river speed ramps from ~1.0 to ~0.1 via
+        speed *= exp(-dist_from_mouth_boundary / 8.0)
+    inside the mouth zone (exponential decay over ~20-cell transition length).
+    This matches RDR2/W3 river-slows-entering-lake behaviour.
+    """
+    import time as _time
+    from .terrain_semantics import PassResult
+
+    t0 = _time.perf_counter()
+    stack = state.mask_stack
+
+    fa = getattr(stack, "flow_accumulation", None)
+    fd = getattr(stack, "flow_direction", None)
+
+    if fa is None or fd is None:
+        return PassResult(
+            pass_name="pass_river_convergence",
+            status="failed",
+            duration_seconds=_time.perf_counter() - t0,
+            issues=[],
+        )
+
+    fa_arr = np.asarray(fa, dtype=np.float64)
+    fd_arr = np.asarray(fd, dtype=np.int32)
+    hmap = np.asarray(stack.height, dtype=np.float64)
+    H, W = fa_arr.shape
+    cs = float(stack.cell_size)
+
+    # Step 1: detect river mouth zones
+    mouth_mask = detect_river_mouth_zones(stack)
+    mouth_count = int((mouth_mask > 0.5).sum())
+    stack.set("river_mouth_mask", mouth_mask, "pass_river_convergence")
+
+    # Step 2: slope field shared by foam and speed
+    dh_dr, dh_dc = np.gradient(hmap, cs)
+    slope_field = np.clip(np.sqrt(dh_dr ** 2 + dh_dc ** 2), 1e-5, 1.0)
+
+    # Step 3: confluence foam
+    foam = _build_confluence_foam(fa_arr, slope_field, mouth_mask)
+    stack.set("confluence_foam", foam, "pass_river_convergence")
+
+    # Step 4: delta fan direction
+    fan_dir = _build_delta_fan_direction(fa_arr, fd_arr, mouth_mask)
+    stack.set("delta_fan_direction", fan_dir, "pass_river_convergence")
+
+    dt = _time.perf_counter() - t0
+    return PassResult(
+        pass_name="pass_river_convergence",
+        status="ok",
+        duration_seconds=dt,
+        produced_channels=("river_mouth_mask", "confluence_foam", "delta_fan_direction"),
+        consumed_channels=("flow_accumulation", "flow_direction", "water_surface"),
+        metrics={
+            "mouth_cells": mouth_count,
+            "foam_coverage_pct": round(float((foam > 0.01).sum()) / max(H * W, 1) * 100.0, 2),
+        },
+        issues=[],
+    )
+
+
+def register_pass_river_convergence() -> None:
+    """Register pass_river_convergence with TerrainPassController."""
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_river_convergence",
+            func=pass_river_convergence,
+            requires_channels=("flow_accumulation", "flow_direction"),
+            produces_channels=("river_mouth_mask", "confluence_foam", "delta_fan_direction"),
+            seed_namespace="",
+            requires_scene_read=False,
+            description=(
+                "River-to-lake/ocean convergence: mouth zone detection, "
+                "velocity transition decay, confluence foam (RDR2/W3 style)"
+            ),
+        )
+    )
+

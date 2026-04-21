@@ -1170,11 +1170,14 @@ def register_default_passes() -> None:
         )
 
     # Supplemental passes (always register after core DAG)
-    from ._water_network import register_pass_hydrology
+    from ._water_network import register_pass_hydrology, register_pass_water_flow_speed
     from .terrain_delta_integrator import register_integrator_pass
     register_integrator_pass()
     # Hydrology is a foundational derived field for downstream water-aware passes.
     register_pass_hydrology()
+    # Manning flow-speed map: must run after pass_hydrology (requires flow_direction,
+    # flow_accumulation). Produces flow_speed channel consumed by water VC encoding.
+    register_pass_water_flow_speed()
     register_terrain_label_passes()
     register_snow_line_pass()
     # macro_color is owned by Bundle K terrain_macro_color; keep the legacy

@@ -1135,14 +1135,87 @@ def carve_impact_pool(
     return delta
 
 
+def _van_rijn_pool_delta(
+    stack: TerrainMaskStack,
+    chain: WaterfallChain,
+) -> np.ndarray:
+    """Return a HEIGHT DELTA mask for the Van Rijn (1993) plunge pool.
+
+    Van Rijn (1993) scour equations for free-falling jets:
+        radius = 0.8 * H^0.4   (m)
+        depth  = 0.3 * H^0.5   (m)
+
+    Pool floor uses a paraboloid bowl:
+        z_offset = -depth * (1 - (r / r_max)^2)
+
+    The paraboloid profile is physically correct for hydraulic scour — it
+    produces a flat-ish floor with steep walls near the impact centre, matching
+    observed plunge pools in canyon hydrology (Van Rijn 1993, Bormann &
+    Julien 1991).  Deepest at the impact point, zero at the pool rim.
+
+    This is separate from the Mason (1985) carve produced by carve_impact_pool();
+    both are additive (the larger scour governs; we take np.minimum for deepest).
+
+    Args:
+        stack: TerrainMaskStack providing grid geometry.
+        chain: Solved waterfall chain (uses pool.world_position, total_drop_m).
+
+    Returns:
+        (H x W) float64 height delta array; negative values lower terrain.
+        Caller should np.minimum() this with existing pool_delta.
+    """
+    h = np.asarray(stack.height, dtype=np.float64)
+    delta = np.zeros_like(h, dtype=np.float64)
+    rows, cols = h.shape
+    cs = float(stack.cell_size)
+
+    H = max(0.5, chain.total_drop_m)
+    # Van Rijn (1993) scour geometry
+    r_max = 0.8 * (H ** 0.4)
+    depth = 0.3 * (H ** 0.5)
+    # Physical sanity bounds: radius [0.5m, 30m], depth [0.1m, 10m]
+    r_max = float(np.clip(r_max, 0.5, 30.0))
+    depth = float(np.clip(depth, 0.1, 10.0))
+
+    pool_r, pool_c = _world_to_grid(
+        stack, chain.pool.world_position[0], chain.pool.world_position[1]
+    )
+    radius_cells = max(1, int(math.ceil(r_max / cs)))
+
+    r0 = max(0, pool_r - radius_cells)
+    r1 = min(rows, pool_r + radius_cells + 1)
+    c0 = max(0, pool_c - radius_cells)
+    c1 = min(cols, pool_c + radius_cells + 1)
+
+    rr_idx = np.arange(r0, r1, dtype=np.float64)[:, None]
+    cc_idx = np.arange(c0, c1, dtype=np.float64)[None, :]
+    dist_m = np.sqrt((rr_idx - pool_r) ** 2 + (cc_idx - pool_c) ** 2) * cs
+
+    in_pool = dist_m <= r_max
+    # Paraboloid: z = -depth * (1 - (r/r_max)^2)  — flat floor, steep walls
+    norm_sq = (dist_m / max(r_max, 1e-6)) ** 2
+    bowl = -depth * (1.0 - norm_sq)
+    bowl[~in_pool] = 0.0
+
+    delta[r0:r1, c0:c1] = bowl
+    return delta
+
+
 def build_outflow_channel(
     stack: TerrainMaskStack,
     chain: WaterfallChain,
 ) -> np.ndarray:
-    """Return a HEIGHT DELTA mask carving a shallow outflow channel.
+    """Return a HEIGHT DELTA mask carving the plunge pool + shallow outflow channel.
 
-    Carves a tapered, organically meandering trench from the pool outflow
-    point downstream along the steepest-descent path.
+    Combines two carves:
+
+    1. **Van Rijn (1993) plunge pool** at the fall base:
+       radius = 0.8 * H^0.4,  depth = 0.3 * H^0.5,  paraboloid cross-section.
+       This creates the characteristic flat-floored depression formed by
+       hydraulic jet scour (real canyon geology, God of War / Horizon reference).
+
+    2. **Outflow channel** — tapered, organically meandering trench from the
+       pool downstream along steepest-descent.
 
     AAA upgrades from B+ implementation:
 
@@ -1255,6 +1328,10 @@ def build_outflow_channel(
 
         np.minimum(delta[r0:r1, c0:c1], carve_sub, out=delta[r0:r1, c0:c1])
 
+    # Merge Van Rijn (1993) plunge pool into channel delta (take deepest carve)
+    vr_pool = _van_rijn_pool_delta(stack, chain)
+    np.minimum(delta, vr_pool, out=delta)
+
     return delta
 
 
@@ -1269,68 +1346,85 @@ def generate_mist_zone(
     wind_factor: float = 1.0,
     wind_direction_rad: float = 0.0,
 ) -> np.ndarray:
-    """Populate a mist field around the waterfall plunge pool.
+    """Populate a mist zone mask downstream of the waterfall plunge pool.
 
-    Upgraded physics (AAA req #7):
-    - mist_radius = H * 0.3 * wind_factor  (H = total_drop_m)
-    - Intensity decay: exp(-r / mist_radius)  (AAA spec — linear exponent, not -3*norm)
-    - Wind bias: mist extends upwind from plunge pool (elliptical footprint
-      elongated along wind direction, compressed perpendicular).
+    AAA mist zone spec (God of War / Horizon Forbidden West reference):
+    - Ellipse extending 10-20m downstream from the plunge pool (wind-carried spray).
+      Major axis = downstream direction from pool along outflow bearing.
+      Major semi-axis = lerp(10m, 20m, saturate(H/30)) * wind_factor.
+    - Minor axis (cross-stream width) = 1.5 x river_width at the Strahler order
+      inferred from pool discharge via hydraulic geometry W = 1.5 * sqrt(Q).
+    - Intensity within ellipse: exp(-ellip_r) where ellip_r is normalised
+      elliptic distance (1.0 at ellipse boundary).
     - Vertical attenuation: mist thins above pool elevation.
+    - Hard cutoff at 1.5x ellipse to bound the mask.
 
     Args:
-        chain: Solved waterfall chain.
+        chain: Solved waterfall chain (pool position, outflow bearing, total_drop_m,
+               pool.discharge_m3s for river-width estimation).
         stack: Terrain mask stack.
-        wind_factor: Wind speed multiplier (> 1 = windier, more mist spread).
-        wind_direction_rad: Wind bearing in radians (0 = North). Mist extends
-            upwind, so offset is opposite to wind direction.
+        wind_factor: Wind speed multiplier; scales major semi-axis (> 1 = more travel).
+        wind_direction_rad: Wind bearing in radians (0 = North). Ellipse centre is
+            nudged 10% of major axis upwind so spray blows back toward the fall.
     """
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cs = float(stack.cell_size)
 
-    # AAA req #7: mist_radius = H * 0.3 * wind_factor
     H = max(1.0, chain.total_drop_m)
-    mist_radius = H * 0.3 * max(0.1, wind_factor)
-    mist_radius = max(2.0, mist_radius)
-
     pool_r, pool_c = _world_to_grid(
         stack, chain.pool.world_position[0], chain.pool.world_position[1]
     )
     pool_elev = float(h[max(0, min(rows - 1, pool_r)), max(0, min(cols - 1, pool_c))])
 
-    rr_grid = np.arange(rows, dtype=np.float64)[:, None]
-    cc_grid = np.arange(cols, dtype=np.float64)[None, :]
+    # --- Ellipse major axis: 10-20 m downstream, scaled by wind_factor ---
+    h_frac = min(1.0, H / 30.0)
+    major_m = (10.0 + 10.0 * h_frac) * max(0.1, wind_factor)
+    major_m = max(2.0, major_m)
 
-    # Wind-biased distance: only offset the plume when wind extends it beyond
-    # the neutral radius. With the default wind_factor=1.0 the peak should
-    # remain centered on the plunge pool.
-    upwind_offset_cells = max(0.0, wind_factor - 1.0) * 0.3 * mist_radius / cs
-    # Wind direction vector (into wind = opposite bearing)
-    wind_vec_r = -math.cos(wind_direction_rad) * upwind_offset_cells  # row offset (N = row--)
-    wind_vec_c =  math.sin(wind_direction_rad) * upwind_offset_cells  # col offset (E = col++)
-    mist_center_r = float(pool_r) + wind_vec_r
-    mist_center_c = float(pool_c) + wind_vec_c
+    # --- Minor axis: 1.5 x river width from discharge (Leopold & Maddock 1953) ---
+    Q_pool = max(0.01, getattr(chain.pool, "discharge_m3s", 0.01))
+    river_width_m = 1.5 * math.sqrt(Q_pool)
+    river_width_m = max(1.0, river_width_m)
+    minor_m = max(1.0, 1.5 * river_width_m)
 
-    # Anisotropic distance: major axis along wind direction (1.6x), minor (0.7x)
-    dr = rr_grid - mist_center_r
-    dc = cc_grid - mist_center_c
-    # Project onto wind (along) and cross-wind (perp) axes
+    # --- Downstream direction from pool outflow bearing ---
+    outflow_az = float(chain.pool.outflow_direction_rad)
+    ds_row = -math.cos(outflow_az)   # N=0 convention: row decreases northward
+    ds_col =  math.sin(outflow_az)   # col increases eastward
+    # Cross-stream unit vector (perpendicular to downstream)
+    cs_row = -ds_col
+    cs_col =  ds_row
+
+    # Ellipse centre: 0.5 * major_m downstream from pool so near edge begins at pool rim
+    centre_r = float(pool_r) + ds_row * (0.5 * major_m / cs)
+    centre_c = float(pool_c) + ds_col * (0.5 * major_m / cs)
+
+    # Slight upwind nudge: 10% of major axis against wind bearing
     wind_cos = math.cos(wind_direction_rad)
     wind_sin = math.sin(wind_direction_rad)
-    along  = dr * (-wind_cos) + dc * wind_sin   # along wind direction
-    across = dr * wind_sin    + dc * wind_cos   # perpendicular
+    upwind_nudge_cells = 0.10 * major_m / cs
+    centre_r -= wind_cos * upwind_nudge_cells
+    centre_c += wind_sin * upwind_nudge_cells
 
-    # Elliptical anisotropic distance in metres
-    radius_cells = mist_radius / cs
-    dist_m = cs * np.sqrt(
-        (along  / max(radius_cells * 1.6, 1e-6)) ** 2 +
-        (across / max(radius_cells * 0.7, 1e-6)) ** 2
-    ) * radius_cells
+    # --- Vectorized elliptic distance (fully numpy, no Python loops) ---
+    rr_grid = np.arange(rows, dtype=np.float64)[:, None]
+    cc_grid = np.arange(cols, dtype=np.float64)[None, :]
+    dr_m = (rr_grid - centre_r) * cs   # metres from ellipse centre, row axis
+    dc_m = (cc_grid - centre_c) * cs   # metres from ellipse centre, col axis
 
-    # AAA req #7: intensity = exp(-r / mist_radius)
-    mist_intensity = np.exp(-dist_m / max(mist_radius, 1e-6)).astype(np.float32)
-    mist_intensity[dist_m > mist_radius * 1.5] = 0.0  # hard cutoff at 1.5x radius
+    along_m  = dr_m * ds_row + dc_m * ds_col   # downstream component
+    across_m = dr_m * cs_row + dc_m * cs_col   # cross-stream component
+
+    # Normalised elliptic radius (1.0 = ellipse boundary)
+    ellip_r = np.sqrt(
+        (along_m  / max(major_m, 1e-6)) ** 2 +
+        (across_m / max(minor_m, 1e-6)) ** 2
+    )
+
+    # Intensity: exp(-ellip_r) — full at pool centre, e^-1 at ellipse edge
+    mist_intensity = np.exp(-ellip_r).astype(np.float32)
+    mist_intensity[ellip_r > 1.5] = 0.0   # hard cutoff at 1.5x ellipse
 
     # Vertical attenuation: mist thins above pool elevation
     height_above = np.maximum(0.0, h - pool_elev).astype(np.float32)
@@ -1379,10 +1473,10 @@ def generate_foam_mask(
         denom = math.log1p(float(flow_acc.max()) + 1.0)
         fw = min(1.0, math.log1p(raw) / max(denom, 1e-9))
 
-    # 1. Pool impact zone — Gaussian decay exp(-r²/σ²) (AAA req #5)
+    # 1. Pool impact zone — foam explosion (AAA spec: radius=1.4×pool, exp(-(r/r_pool)²))
     radius_m = float(chain.pool.radius_m)
-    sigma = radius_m * 0.5  # σ = pool_radius * 0.5 per spec
-    foam_zone_radius = radius_m * 1.5  # cells within 1.5x pool radius get foam
+    # Foam explosion zone: circular area at radius = pool_radius * 1.4
+    foam_zone_radius = radius_m * 1.4
     foam_zone_cells = max(1, int(math.ceil(foam_zone_radius / cs)))
 
     r0 = max(0, pool_r - foam_zone_cells)
@@ -1394,9 +1488,10 @@ def generate_foam_mask(
     cc_sub = np.arange(c0, c1, dtype=np.float64)[None, :]
     dist_pool = np.sqrt((rr_sub - pool_r) ** 2 + (cc_sub - pool_c) ** 2) * cs
 
-    # Gaussian foam: exp(-r² / σ²) (AAA req #5)
-    sigma_sq = max(sigma * sigma, 1e-6)
-    pool_foam = (chain.foam_intensity * fw * np.exp(-dist_pool ** 2 / sigma_sq)).astype(np.float32)
+    # AAA foam explosion: foam = exp(-(r/r_pool)^2)
+    # intensity=1.0 at impact point, exponential falloff over pool radius
+    r_pool_sq = max(radius_m * radius_m, 1e-6)
+    pool_foam = (chain.foam_intensity * fw * np.exp(-dist_pool ** 2 / r_pool_sq)).astype(np.float32)
     pool_foam[dist_pool > foam_zone_radius] = 0.0
     np.maximum(foam[r0:r1, c0:c1], pool_foam, out=foam[r0:r1, c0:c1])
 
@@ -1936,8 +2031,9 @@ def pass_waterfalls(
 
     Contract
     --------
-    Consumes: height (drainage optional — fallback computed)
-    Produces: waterfall_lip_candidate, foam, mist, wet_rock, waterfall_velocity
+    Consumes: height (drainage optional — fallback computed), flow_speed (optional)
+    Produces: waterfall_lip_candidate, foam, mist, wet_rock, waterfall_velocity,
+              waterfall_pool_delta; modifies flow_speed in-place if present
     Respects protected zones: yes (per-cell on carves)
     Requires scene read: yes
     """
@@ -2029,6 +2125,34 @@ def pass_waterfalls(
         )
         # Actual vector addition (not magnitude — additive gives turbulence overlap)
         vel_field += chain_vel
+
+    # 5b. Downstream velocity boost — river accelerates briefly after the fall
+    # then returns to normal (God of War / real canyon hydrology reference).
+    # Formula (AAA spec): speed_boost = 1.0 + 0.5 * exp(-cell_dist / 5.0)
+    # Applied to flow_speed channel over 10-cell downstream buffer per chain.
+    flow_speed = stack.get("flow_speed") if hasattr(stack, "get") else None
+    if flow_speed is not None:
+        flow_speed = np.asarray(flow_speed, dtype=np.float32).copy()
+        cs_m = float(stack.cell_size)
+        for chain in chains:
+            # Walk the outflow path and apply boost per cell
+            outflow_pts = list(chain.outflow)
+            n_boost_cells = min(10, len(outflow_pts))
+            pool_gx = _world_to_grid(
+                stack,
+                chain.pool.world_position[0],
+                chain.pool.world_position[1],
+            )
+            for step_i, (wx, wy, _wz) in enumerate(outflow_pts[:n_boost_cells]):
+                gr, gc = _world_to_grid(stack, wx, wy)
+                if not (0 <= gr < h_shape[0] and 0 <= gc < h_shape[1]):
+                    continue
+                cell_dist = float(step_i)  # distance in cells from pool
+                boost = 1.0 + 0.5 * math.exp(-cell_dist / 5.0)
+                flow_speed[gr, gc] = float(
+                    np.clip(flow_speed[gr, gc] * boost, 0.0, 15.0)
+                )
+        stack.set("flow_speed", flow_speed, "waterfalls")
 
     # 6. Wet-rock mask
     wet_rock = compute_wet_rock_mask(stack, _water_net, radius_m=3.0)
