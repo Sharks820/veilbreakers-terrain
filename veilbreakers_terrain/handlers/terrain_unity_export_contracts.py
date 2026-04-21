@@ -287,15 +287,16 @@ def validate_bit_depth_contract(
                 )
         if kind == "shadow_clipmap":
             enc = meta.get("encoding", "")
-            if enc and enc != "float":
+            accepted = {"float", "float32_npy", "float32_exr", "raw_f32_le"}
+            if enc and enc not in accepted:
                 issues.append(
                     ValidationIssue(
                         code="SHADOW_CLIPMAP_ENCODING_VIOLATION",
                         severity="hard",
                         affected_feature=fname,
                         message=(
-                            f"{fname} encoding={enc!r} != 'float' — "
-                            f"shadow clipmap must be 32-bit float"
+                            f"{fname} encoding={enc!r} not in {sorted(accepted)!r} — "
+                            "shadow clipmap must remain 32-bit float"
                         ),
                         remediation="Re-export shadow_clipmap.exr as float32",
                     )

@@ -504,7 +504,7 @@ def test_unity_export_decals_convert_to_y_up(state):
     with tempfile.TemporaryDirectory() as td:
         export_unity_manifest(state.mask_stack, Path(td))
         decals = json.loads((Path(td) / "decals.json").read_text())
-        placement = decals["decals"]["wet_rock"][0]
+        placement = decals["decals"]["wet_rock"]["placements"][0]
         from veilbreakers_terrain.handlers.terrain_unity_export import UNITY_SCALE_FACTOR
         expected_x = float(state.mask_stack.world_origin_x + 3 * state.mask_stack.cell_size) * UNITY_SCALE_FACTOR
         expected_y = float(state.mask_stack.height[2, 3]) * UNITY_SCALE_FACTOR

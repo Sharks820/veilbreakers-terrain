@@ -200,6 +200,11 @@ def _build_command_handlers() -> Dict[str, Callable]:
         "handle_export_heightmap",
     )
     _try_register(
+        "env_export_unity_bundle",
+        f"{_pkg}.environment",
+        "handle_export_unity_bundle",
+    )
+    _try_register(
         "env_generate_multi_biome_world",
         f"{_pkg}.environment",
         "handle_generate_multi_biome_world",

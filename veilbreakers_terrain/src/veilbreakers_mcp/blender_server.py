@@ -85,6 +85,7 @@ _LOC_HANDLERS: Dict[str, str] = {
     "validation": "terrain_validation",
     "perf_report": "terrain_performance_report",
     "navmesh_export": "terrain_navmesh_export",
+    "unity_export": "env_export_unity_bundle",
     "addon_health": "terrain_check_addon_health",
     "addon_stale": "terrain_detect_stale_addon",
     "addon_reload": "terrain_force_addon_reload",

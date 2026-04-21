@@ -17,6 +17,7 @@ import numpy as np
 
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainMaskStack, TerrainPipelineState
 from .terrain_chunking import build_tile_seam_contract
+from .terrain_unity_export_contracts import UnityExportContract, validate_bit_depth_contract
 
 
 _DETAIL_DENSITY_MAX_PER_CELL = 16
@@ -35,6 +36,11 @@ def _apply_unity_scale(v: "float | list[float]") -> "float | list[float]":
     if isinstance(v, list):
         return [x * UNITY_SCALE_FACTOR for x in v]
     return float(v) * UNITY_SCALE_FACTOR
+
+
+def _is_unity_heightmap_resolution(n: int) -> bool:
+    """Return True when ``n`` matches Unity Terrain's 2^k + 1 contract."""
+    return n >= 33 and ((n - 1) & (n - 2)) == 0
 
 
 def _sha256(path: Path) -> str:
@@ -338,6 +344,248 @@ def _write_json(
     return target.name
 
 
+def _hex_to_rgb01(hex_color: str) -> list[float]:
+    color = str(hex_color).strip().lstrip("#")
+    if len(color) != 6:
+        return [0.5, 0.5, 0.5]
+    try:
+        return [
+            int(color[0:2], 16) / 255.0,
+            int(color[2:4], 16) / 255.0,
+            int(color[4:6], 16) / 255.0,
+        ]
+    except ValueError:
+        return [0.5, 0.5, 0.5]
+
+
+def _default_splatmap_layer_meta(
+    stack: TerrainMaskStack,
+    layer_count: int,
+) -> List[Dict[str, Any]]:
+    from .terrain_materials_v2 import default_dark_fantasy_rules
+
+    rules = list(default_dark_fantasy_rules().channels)
+    layers: List[Dict[str, Any]] = []
+    for layer_index in range(layer_count):
+        if layer_index < len(rules):
+            channel = rules[layer_index]
+            layer_id = str(channel.channel_id)
+            base_color_hex = str(channel.base_color_hex)
+            triplanar = bool(channel.triplanar)
+            roughness = float(channel.roughness)
+        else:
+            layer_id = f"layer_{layer_index:02d}"
+            base_color_hex = "#808080"
+            triplanar = False
+            roughness = 0.8
+
+        layers.append(
+            {
+                "layer_index": layer_index,
+                "layer_id": layer_id,
+                "terrain_layer_asset_path": f"Assets/Terrain/Layers/Layer_{layer_index:03d}.terrainlayer",
+                "uv_scale_meters": float(max(stack.cell_size, 1.0)),
+                "normal_map_intensity": 1.15 if triplanar else 0.9,
+                "roughness": roughness,
+                "roughness_multiplier": 1.0,
+                "smoothness": float(np.clip(1.0 - roughness, 0.0, 1.0)),
+                "height_blend_factor": 0.25 if triplanar else 0.1,
+                "base_color_hex": base_color_hex,
+                "base_color_rgb": _hex_to_rgb01(base_color_hex),
+                "triplanar": triplanar,
+            }
+        )
+    return layers
+
+
+def _iter_connected_components(mask: np.ndarray) -> List[tuple[np.ndarray, np.ndarray]]:
+    mask_np = np.asarray(mask, dtype=bool)
+    if mask_np.ndim != 2 or not mask_np.any():
+        return []
+
+    rows, cols = mask_np.shape
+    visited = np.zeros_like(mask_np, dtype=bool)
+    components: List[tuple[np.ndarray, np.ndarray]] = []
+    starts = np.argwhere(mask_np)
+
+    for start_r, start_c in starts:
+        sr = int(start_r)
+        sc = int(start_c)
+        if visited[sr, sc]:
+            continue
+
+        visited[sr, sc] = True
+        frontier = [(sr, sc)]
+        rr: List[int] = []
+        cc: List[int] = []
+
+        while frontier:
+            r, c = frontier.pop()
+            rr.append(r)
+            cc.append(c)
+            for nr in range(max(0, r - 1), min(rows, r + 2)):
+                for nc in range(max(0, c - 1), min(cols, c + 2)):
+                    if (nr == r and nc == c) or visited[nr, nc] or not mask_np[nr, nc]:
+                        continue
+                    visited[nr, nc] = True
+                    frontier.append((nr, nc))
+
+        components.append(
+            (
+                np.asarray(rr, dtype=np.int32),
+                np.asarray(cc, dtype=np.int32),
+            )
+        )
+    return components
+
+
+def _component_bounds(
+    stack: TerrainMaskStack,
+    rr: np.ndarray,
+    cc: np.ndarray,
+    min_z: float,
+    max_z: float,
+) -> Dict[str, Any]:
+    min_x = float(stack.world_origin_x + int(cc.min()) * stack.cell_size)
+    max_x = float(stack.world_origin_x + (int(cc.max()) + 1) * stack.cell_size)
+    min_y = float(stack.world_origin_y + int(rr.min()) * stack.cell_size)
+    max_y = float(stack.world_origin_y + (int(rr.max()) + 1) * stack.cell_size)
+    return _bounds_to_unity(
+        [min_x, min_y, float(min_z)],
+        [max_x, max_y, float(max_z)],
+    )
+
+
+def _component_vertical_extent(
+    stack: TerrainMaskStack,
+    rr: np.ndarray,
+    cc: np.ndarray,
+    *,
+    floor_pad_m: float,
+    ceil_pad_m: float,
+    fallback_min_m: float,
+    fallback_max_m: float,
+) -> tuple[float, float]:
+    """Resolve a terrain-aware vertical span for a connected component."""
+    height = stack.height
+    if height is None:
+        return float(fallback_min_m), float(fallback_max_m)
+
+    h = np.asarray(height, dtype=np.float64)
+    if h.ndim != 2 or rr.size == 0 or cc.size == 0:
+        return float(fallback_min_m), float(fallback_max_m)
+
+    samples = h[rr, cc]
+    if samples.size == 0:
+        return float(fallback_min_m), float(fallback_max_m)
+    return (
+        float(samples.min()) - float(floor_pad_m),
+        float(samples.max()) + float(ceil_pad_m),
+    )
+
+
+def _build_unity_import_descriptor(
+    stack: TerrainMaskStack,
+    manifest: Dict[str, Any],
+    files: Dict[str, Dict[str, Any]],
+    splatmap_layer_meta: List[Dict[str, Any]],
+    splatmap_files: List[str],
+    detail_files: Dict[str, str],
+    tree_prototype_list: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    height_meta = files["heightmap.raw"]
+    height_shape = list(height_meta.get("shape", []))
+    height_rows = int(height_shape[0]) if len(height_shape) >= 1 else 0
+    height_cols = int(height_shape[1]) if len(height_shape) >= 2 else 0
+
+    splatmaps: List[Dict[str, Any]] = []
+    for filename in splatmap_files:
+        meta = files.get(filename, {})
+        shape = list(meta.get("shape", []))
+        layer_range = list(meta.get("layer_range", []))
+        terrain_layer_assets = meta.get("terrain_layer_assets", {})
+        splatmaps.append(
+            {
+                "file": filename,
+                "width": int(shape[1]) if len(shape) >= 2 else 0,
+                "height": int(shape[0]) if len(shape) >= 1 else 0,
+                "channels": int(meta.get("channels", 4)),
+                "bit_depth": int(meta.get("bit_depth", 8)),
+                "encoding": str(meta.get("encoding", "raw_rgba_u8")),
+                "flip_vertical": bool(meta.get("flip_vertical", True)),
+                "layer_start": int(layer_range[0]) if len(layer_range) >= 1 else 0,
+                "layer_end": int(layer_range[1]) if len(layer_range) >= 2 else -1,
+                "terrain_layer_assets": [
+                    str(terrain_layer_assets.get(channel, ""))
+                    for channel in ("R", "G", "B", "A")
+                ],
+            }
+        )
+
+    detail_layers: List[Dict[str, Any]] = []
+    for kind, filename in sorted(detail_files.items()):
+        meta = files.get(filename, {})
+        shape = list(meta.get("shape", []))
+        detail_layers.append(
+            {
+                "kind": str(kind),
+                "file": filename,
+                "width": int(shape[1]) if len(shape) >= 2 else 0,
+                "height": int(shape[0]) if len(shape) >= 1 else 0,
+                "bit_depth": int(meta.get("bit_depth", 16)),
+                "encoding": str(meta.get("encoding", "raw_u16_le_detail_count")),
+                "flip_vertical": bool(meta.get("flip_vertical", True)),
+                "max_density_per_cell": int(meta.get("max_density_per_cell", _DETAIL_DENSITY_MAX_PER_CELL)),
+                "placeholder_texture_asset_path": f"Assets/Terrain/Details/{kind}_Detail.asset",
+            }
+        )
+
+    return {
+        "schema_version": "1.0",
+        "world_id": str(manifest.get("world_id", "unknown")),
+        "tile_x": int(manifest["tile_x"]),
+        "tile_y": int(manifest["tile_y"]),
+        "tile_size": int(manifest["tile_size"]),
+        "cell_size": float(manifest["cell_size"]),
+        "unity_world_origin": list(manifest["unity_world_origin"]),
+        "terrain_size_x_m": float(int(manifest["tile_size"]) * float(manifest["cell_size"])),
+        "terrain_size_z_m": float(int(manifest["tile_size"]) * float(manifest["cell_size"])),
+        "height_min_m": manifest.get("height_min_m"),
+        "height_max_m": manifest.get("height_max_m"),
+        "heightmap": {
+            "file": "heightmap.raw",
+            "width": height_cols,
+            "height": height_rows,
+            "bit_depth": int(height_meta.get("bit_depth", 16)),
+            "encoding": str(height_meta.get("encoding", "raw_u16_le")),
+            "flip_vertical": bool(height_meta.get("flip_vertical", True)),
+            "endianness": str(height_meta.get("endianness", "little")),
+        },
+        "terrain_normals_file": "terrain_normals.bin",
+        "splatmaps": splatmaps,
+        "terrain_layers": splatmap_layer_meta,
+        "detail_layers": detail_layers,
+        "tree_prototypes": tree_prototype_list,
+        "tree_instances_file": "tree_instances.json",
+        "audio_zones_file": "audio_zones.json",
+        "gameplay_zones_file": "gameplay_zones.json",
+        "wildlife_zones_file": "wildlife_zones.json",
+        "decals_file": "decals.json",
+        "seam_contract": manifest.get("seam_contract", {}),
+        "validation_status": str(manifest.get("validation_status", "unknown")),
+        "validation_issue_count": int(manifest.get("validation_issue_count", 0)),
+        "game_object_name": f"VB_{manifest.get('world_id', 'world')}_{manifest['tile_x']}_{manifest['tile_y']}",
+        "terrain_data_asset_path": (
+            f"Assets/VeilBreakersTerrain/Imported/{manifest.get('world_id', 'world')}"
+            f"/TerrainData_{manifest['tile_x']}_{manifest['tile_y']}.asset"
+        ),
+        "tile_metadata_asset_path": (
+            f"Assets/VeilBreakersTerrain/Imported/{manifest.get('world_id', 'world')}"
+            f"/TerrainTile_{manifest['tile_x']}_{manifest['tile_y']}.asset"
+        ),
+    }
+
+
 def _zup_to_unity_vector(vec: list[float] | tuple[float, float, float]) -> list[float]:
     x, y, z = (float(vec[0]), float(vec[1]), float(vec[2]))
     return [x, z, y]
@@ -405,6 +653,12 @@ def _write_splatmap_groups(
     weights_np = np.asarray(weights, dtype=np.float32)
     if weights_np.ndim != 3:
         raise ValueError("splatmap_weights_layer must be 3D (H, W, L)")
+    if weights_np.shape[2] < 1:
+        raise ValueError("splatmap_weights_layer must contain at least one layer")
+    if stack.height is not None and weights_np.shape[:2] != np.asarray(stack.height).shape:
+        raise ValueError(
+            "splatmap_weights_layer spatial dimensions must match stack.height"
+        )
 
     H, W, L = weights_np.shape
 
@@ -485,6 +739,8 @@ def export_unity_manifest(
     stack: TerrainMaskStack,
     output_dir: Path,
     profile: Optional[str] = None,
+    *,
+    strict_unity_resolution: bool = False,
 ) -> Dict[str, Any]:
     """Write a Unity-consumable export bundle to ``output_dir``.
 
@@ -505,6 +761,20 @@ def export_unity_manifest(
             "Ensure the terrain pipeline has run at least the height pass before export."
         )
 
+    height_shape = np.asarray(stack.height, dtype=np.float64).shape
+    if len(height_shape) != 2:
+        raise ValueError("export_unity_manifest requires a 2D heightmap")
+    if height_shape[0] != height_shape[1]:
+        raise ValueError(
+            "export_unity_manifest requires a square heightmap for Unity Terrain import"
+        )
+    unity_heightmap_resolution_valid = _is_unity_heightmap_resolution(int(height_shape[0]))
+    if strict_unity_resolution and not unity_heightmap_resolution_valid:
+        raise ValueError(
+            "export_unity_manifest requires heightmap resolution 2^n+1 "
+            f"(e.g. 33, 65, 129, 257, 513, 1025, 2049, 4097), got {height_shape[0]}"
+        )
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -518,7 +788,6 @@ def export_unity_manifest(
             stack.populated_by_pass.get("heightmap_raw_u16", "prepare_heightmap_raw_u16"),
         )
     normals = stack.get("terrain_normals")
-    height_shape = np.asarray(stack.height, dtype=np.float64).shape
     if normals is None or np.asarray(normals).shape != (*height_shape, 3):
         normals_zup = _compute_terrain_normals_zup(np.asarray(stack.height, dtype=np.float64), float(stack.cell_size))
         stack.set("terrain_normals", _zup_to_unity_vectors(normals_zup), "prepare_terrain_normals")
@@ -719,19 +988,16 @@ def export_unity_manifest(
     weights = stack.splatmap_weights_layer
     if weights is not None:
         n_layers = int(np.asarray(weights).shape[2]) if np.asarray(weights).ndim == 3 else 1
-        for li in range(n_layers):
-            splatmap_layer_meta.append({
-                "layer_index": li,
-                "layer_id": f"layer_{li:02d}",
-                "uv_scale_meters": float(stack.cell_size),
-                "normal_map_intensity": 1.0,
-                "roughness_multiplier": 1.0,
-                "height_blend_factor": 0.1,
-            })
+        splatmap_layer_meta = _default_splatmap_layer_meta(stack, n_layers)
 
     determinism_hash = stack.compute_hash()
     world_id = str(getattr(stack, "world_id", "unknown"))
     batch_id = getattr(stack, "batch_id", None)
+    terrain_base_y = (
+        float(stack.height_min_m)
+        if stack.height_min_m is not None
+        else float(np.asarray(stack.height, dtype=np.float64).min())
+    )
     manifest: Dict[str, Any] = {
         "schema_version": stack.unity_export_schema_version,
         "world_id": world_id,
@@ -741,7 +1007,9 @@ def export_unity_manifest(
         "cell_size": _apply_unity_scale(float(stack.cell_size)),
         "world_origin_x_m": _apply_unity_scale(float(stack.world_origin_x)),
         "world_origin_y_m": _apply_unity_scale(float(stack.world_origin_y)),
-        "unity_world_origin": _apply_unity_scale([float(stack.world_origin_x), 0.0, float(stack.world_origin_y)]),
+        "unity_world_origin": _apply_unity_scale(
+            [float(stack.world_origin_x), terrain_base_y, float(stack.world_origin_y)]
+        ),
         "height_min_m": _apply_unity_scale(float(stack.height_min_m)) if stack.height_min_m is not None else None,
         "height_max_m": _apply_unity_scale(float(stack.height_max_m)) if stack.height_max_m is not None else None,
         "height_scale_factor": UNITY_SCALE_FACTOR,
@@ -752,6 +1020,15 @@ def export_unity_manifest(
         "profile": profile or "default",
         "heightmap_bit_depth": hm_bit_depth,
         "heightmap_flip_y": True,
+        "direct_unity_heightmap_import_supported": unity_heightmap_resolution_valid,
+        "unity_heightmap_resolution_warning": (
+            None
+            if unity_heightmap_resolution_valid
+            else (
+                "heightmap resolution is not 2^n+1; import through the generated Unity "
+                "bridge or resample before direct TerrainData RAW import"
+            )
+        ),
         "splatmap_group_count": len(splatmap_files),
         "splatmap_layer_count": len(splatmap_layer_meta),
         "splatmap_layers": splatmap_layer_meta,
@@ -762,7 +1039,14 @@ def export_unity_manifest(
         "files": files,
         "populated_channels": list(stack.populated_by_pass.keys()),
         "determinism_hash": determinism_hash,
-        "validation_status": "passed",
+        "terrain_layer_assets_required": [
+            {
+                "layer_index": int(layer["layer_index"]),
+                "layer_id": str(layer["layer_id"]),
+                "asset_path": str(layer["terrain_layer_asset_path"]),
+            }
+            for layer in splatmap_layer_meta
+        ],
         "seam_contract": build_tile_seam_contract(
             np.asarray(stack.height, dtype=np.float64),
             tile_x=int(stack.tile_x),
@@ -774,6 +1058,38 @@ def export_unity_manifest(
             batch_id=str(batch_id) if batch_id is not None else None,
         ),
     }
+    validation_issues = validate_bit_depth_contract(UnityExportContract(), files)
+    manifest["validation_issue_count"] = len(validation_issues)
+    manifest["validation_issues"] = [
+        {
+            "code": issue.code,
+            "severity": issue.severity,
+            "affected_feature": issue.affected_feature,
+            "message": issue.message,
+            "remediation": issue.remediation,
+        }
+        for issue in validation_issues
+    ]
+    manifest["validation_status"] = (
+        "failed" if any(issue.is_hard() for issue in validation_issues) else "passed"
+    )
+    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    import_descriptor = _build_unity_import_descriptor(
+        stack,
+        manifest,
+        files,
+        splatmap_layer_meta,
+        splatmap_files,
+        detail_files,
+        tree_prototype_list,
+    )
+    _write_json(
+        files,
+        output_dir,
+        filename="unity_import_descriptor.json",
+        payload=import_descriptor,
+    )
+    manifest["files"] = files
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest
 
@@ -801,23 +1117,26 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         mask = arr_np == val
         if not mask.any():
             continue
-        rr, cc = np.where(mask)
-        min_x = float(stack.world_origin_x + cc.min() * stack.cell_size)
-        max_x = float(stack.world_origin_x + (cc.max() + 1) * stack.cell_size)
-        min_y = float(stack.world_origin_y + rr.min() * stack.cell_size)
-        max_y = float(stack.world_origin_y + (rr.max() + 1) * stack.cell_size)
-        zones.append(
-            {
-                "bounds": _bounds_to_unity(
-                    [min_x, min_y, 0.0],
-                    [max_x, max_y, float(world_tile_extent)],
-                ),
-                "reverb_class": name,
-                "wet_mix": wet,
-                "early_reflections": er,
-                "tail_length": tail,
-            }
-        )
+        for rr, cc in _iter_connected_components(mask):
+            min_z, max_z = _component_vertical_extent(
+                stack,
+                rr,
+                cc,
+                floor_pad_m=1.0,
+                ceil_pad_m=8.0,
+                fallback_min_m=0.0,
+                fallback_max_m=float(world_tile_extent),
+            )
+            zones.append(
+                {
+                    "bounds": _component_bounds(stack, rr, cc, min_z, max_z),
+                    "reverb_class": name,
+                    "wet_mix": wet,
+                    "early_reflections": er,
+                    "tail_length": tail,
+                    "cell_count": int(rr.size),
+                }
+            )
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
 
@@ -842,22 +1161,25 @@ def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         mask = arr_np == val
         if not mask.any():
             continue
-        rr, cc = np.where(mask)
-        min_x = float(stack.world_origin_x + cc.min() * stack.cell_size)
-        max_x = float(stack.world_origin_x + (cc.max() + 1) * stack.cell_size)
-        min_y = float(stack.world_origin_y + rr.min() * stack.cell_size)
-        max_y = float(stack.world_origin_y + (rr.max() + 1) * stack.cell_size)
-        zones.append(
-            {
-                "bounds": _bounds_to_unity(
-                    [min_x, min_y, 0.0],
-                    [max_x, max_y, 100.0],
-                ),
-                "kind": name,
-                "reason": reason,
-                "suggestion_tags": [],
-            }
-        )
+        for rr, cc in _iter_connected_components(mask):
+            min_z, max_z = _component_vertical_extent(
+                stack,
+                rr,
+                cc,
+                floor_pad_m=0.5,
+                ceil_pad_m=6.0,
+                fallback_min_m=0.0,
+                fallback_max_m=100.0,
+            )
+            zones.append(
+                {
+                    "bounds": _component_bounds(stack, rr, cc, min_z, max_z),
+                    "kind": name,
+                    "reason": reason,
+                    "suggestion_tags": [],
+                    "cell_count": int(rr.size),
+                }
+            )
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
 
@@ -867,25 +1189,30 @@ def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "volumes": volumes}
 
     for species, arr in stack.wildlife_affinity.items():
-        mask = np.asarray(arr) > 0.1
+        values = np.asarray(arr, dtype=np.float32)
+        mask = values > 0.1
         if not mask.any():
             continue
-        rr, cc = np.where(mask)
-        min_x = float(stack.world_origin_x + cc.min() * stack.cell_size)
-        max_x = float(stack.world_origin_x + (cc.max() + 1) * stack.cell_size)
-        min_y = float(stack.world_origin_y + rr.min() * stack.cell_size)
-        max_y = float(stack.world_origin_y + (rr.max() + 1) * stack.cell_size)
-        volumes.append(
-            {
-                "bounds": _bounds_to_unity(
-                    [min_x, min_y, 0.0],
-                    [max_x, max_y, 50.0],
-                ),
-                "species": species,
-                "density": float(np.asarray(arr).mean()),
-                "spawn_rules": {},
-            }
-        )
+        for rr, cc in _iter_connected_components(mask):
+            component_values = values[rr, cc]
+            min_z, max_z = _component_vertical_extent(
+                stack,
+                rr,
+                cc,
+                floor_pad_m=0.5,
+                ceil_pad_m=10.0,
+                fallback_min_m=0.0,
+                fallback_max_m=50.0,
+            )
+            volumes.append(
+                {
+                    "bounds": _component_bounds(stack, rr, cc, min_z, max_z),
+                    "species": species,
+                    "density": float(component_values.mean()) if component_values.size else 0.0,
+                    "cell_count": int(rr.size),
+                    "spawn_rules": {},
+                }
+            )
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "volumes": volumes}
 
 
@@ -895,10 +1222,18 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
     for kind, arr in stack.decal_density.items():
-        arr_np = np.asarray(arr)
+        arr_np = np.asarray(arr, dtype=np.float32)
         coords = np.argwhere(arr_np > 0.5)
+        if coords.size:
+            order = np.argsort(arr_np[coords[:, 0], coords[:, 1]])[::-1]
+            coords = coords[order]
         placements: List[Dict[str, Any]] = []
+        truncated_count = max(0, int(coords.shape[0]) - 512)
         for r, c in coords[:512]:
+            strength = float(arr_np[r, c])
+            jitter_hash = ((int(r) * 73856093) ^ (int(c) * 19349663)) & 0xFFFFFFFF
+            rotation = float((jitter_hash % 36000) / 100.0)
+            scale = float(np.clip(0.8 + strength * 0.6, 0.8, 1.4))
             position_zup = [
                 _apply_unity_scale(float(stack.world_origin_x + c * stack.cell_size)),
                 _apply_unity_scale(float(stack.world_origin_y + r * stack.cell_size)),
@@ -908,11 +1243,15 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                 {
                     "position": _zup_to_unity_vector(position_zup),
                     "normal": _zup_to_unity_vector(_terrain_normal_at(stack, int(r), int(c))),
-                    "scale": 1.0,
-                    "rotation": 0.0,
+                    "scale": scale,
+                    "rotation": rotation,
+                    "strength": strength,
                 }
             )
-        decals[kind] = placements
+        decals[kind] = {
+            "placements": placements,
+            "truncated_count": truncated_count,
+        }
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
 
@@ -994,13 +1333,32 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     trees: List[Dict[str, Any]] = []
     arr = stack.tree_instance_points
     if arr is None:
-        return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "trees": trees}
+        return {
+            "schema_version": "1.0",
+            "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+            "trees": trees,
+            "skipped_out_of_bounds": 0,
+        }
 
     points = np.asarray(arr, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] < 5:
-        return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "trees": trees}
+        return {
+            "schema_version": "1.0",
+            "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+            "trees": trees,
+            "skipped_out_of_bounds": 0,
+        }
+
+    tile_min_x = float(stack.world_origin_x)
+    tile_min_y = float(stack.world_origin_y)
+    tile_max_x = tile_min_x + float(stack.tile_size) * float(stack.cell_size)
+    tile_max_y = tile_min_y + float(stack.tile_size) * float(stack.cell_size)
+    skipped_out_of_bounds = 0
 
     for row in points:
+        if not (tile_min_x <= float(row[0]) <= tile_max_x and tile_min_y <= float(row[1]) <= tile_max_y):
+            skipped_out_of_bounds += 1
+            continue
         # Wind bend vertex color — Fix 13.2 / REQ-P13-002
         # Two representative heights: root (0.0) and crown (tree_height)
         _representative_heights = np.array([0.0, _TREE_HEIGHT_DEFAULT], dtype=np.float32)
@@ -1024,10 +1382,19 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                 ]),
                 "yaw_degrees": float(row[3]),
                 "prototype_id": int(row[4]),
+                "width_scale": 1.0,
+                "height_scale": 1.0,
+                "color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0},
+                "lightmap_color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0},
                 "vertex_color": vertex_color_list,  # NEW — Fix 13.2
             }
         )
-    return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "trees": trees}
+    return {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "trees": trees,
+        "skipped_out_of_bounds": skipped_out_of_bounds,
+    }
 
 
 __all__ = [

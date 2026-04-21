@@ -580,6 +580,14 @@ def test_handlers_registered_for_env_run_terrain_pass():
     assert_handlers_registered(["env_run_terrain_pass"])
 
 
+def test_handlers_registered_for_env_export_unity_bundle():
+    from blender_addon.handlers.terrain_addon_health import (
+        assert_handlers_registered,
+    )
+
+    assert_handlers_registered(["env_export_unity_bundle"])
+
+
 def test_handlers_registered_missing_raises():
     from blender_addon.handlers.terrain_addon_health import (
         AddonNotLoaded,

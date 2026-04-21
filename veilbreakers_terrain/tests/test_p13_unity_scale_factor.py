@@ -151,8 +151,8 @@ class TestUnityScaleAppliedToTreeInstances:
 
     def test_tree_position_scaled(self):
         stack = _make_minimal_stack()
-        # Inject one tree at known position: x=10, z=5 (terrain z-up), y=50
-        tree_points = np.array([[10.0, 5.0, 50.0, 45.0, 0]], dtype=np.float64)
+        # Inject one in-bounds tree at known world position.
+        tree_points = np.array([[110.0, 205.0, 50.0, 45.0, 0]], dtype=np.float64)
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         import dataclasses
         stack = dataclasses.replace(stack, tree_instance_points=tree_points)
@@ -161,8 +161,8 @@ class TestUnityScaleAppliedToTreeInstances:
             trees = json.loads((Path(td) / "tree_instances.json").read_text())
         pos = trees["trees"][0]["position"]
         # After _zup_to_unity_vector (Z-up -> Y-up), then scale:
-        # terrain(x=10, y=5, z=50) -> unity x=10*0.85, y=50*0.85, z=5*0.85
-        assert abs(pos[0] - 10.0 * UNITY_SCALE_FACTOR) < 1e-4, f"Tree X not scaled: {pos}"
+        # terrain(x=110, y=205, z=50) -> unity x=110*0.85, y=50*0.85, z=205*0.85
+        assert abs(pos[0] - 110.0 * UNITY_SCALE_FACTOR) < 1e-4, f"Tree X not scaled: {pos}"
         assert abs(pos[1] - 50.0 * UNITY_SCALE_FACTOR) < 1e-4, f"Tree height not scaled: {pos}"
 
 

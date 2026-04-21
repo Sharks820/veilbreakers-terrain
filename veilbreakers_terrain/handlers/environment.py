@@ -9,6 +9,7 @@ Provides terrain/environment command handlers:
   - handle_generate_road: A-to-B road with proper grading
   - handle_create_water: Lake/ocean/pond plane with shoreline
   - handle_export_heightmap: 16-bit Unity RAW export
+  - handle_export_unity_bundle: Unity terrain bundle export + descriptor bridge
 """
 
 from __future__ import annotations
@@ -7306,6 +7307,58 @@ def handle_carve_water_basin(params: dict) -> dict:
         "affected_cells": cells_modified,
         "duration_seconds": round(_duration, 4),
         "pass_name": "carve_water_basin",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Handler: export_unity_bundle
+# ---------------------------------------------------------------------------
+
+def handle_export_unity_bundle(params: dict) -> dict:
+    """Export a Unity terrain bundle from a populated ``TerrainMaskStack``.
+
+    Params:
+        mask_stack (TerrainMaskStack): Export-ready stack to serialize.
+        output_dir (str): Directory for the Unity bundle.
+        profile (str, optional): Export profile such as ``mobile`` or
+            ``aaa_open_world``.
+
+    Returns:
+        dict with manifest metadata plus the emitted descriptor/manifest paths.
+    """
+    from .terrain_unity_export import export_unity_manifest
+
+    stack = params.get("mask_stack")
+    if stack is None:
+        raise ValueError("'mask_stack' is required")
+
+    output_dir_raw = (
+        params.get("output_dir")
+        or params.get("export_dir")
+        or params.get("filepath")
+    )
+    if not output_dir_raw:
+        raise ValueError("'output_dir' is required")
+
+    output_dir = Path(output_dir_raw)
+    profile = params.get("profile") or params.get("quality_profile")
+    manifest = export_unity_manifest(
+        stack,
+        output_dir,
+        profile=profile,
+        strict_unity_resolution=bool(params.get("strict_unity_resolution", False)),
+    )
+    return {
+        "output_dir": str(output_dir),
+        "manifest_path": str(output_dir / "manifest.json"),
+        "descriptor_path": str(output_dir / "unity_import_descriptor.json"),
+        "validation_status": manifest.get("validation_status", "unknown"),
+        "validation_issue_count": int(manifest.get("validation_issue_count", 0)),
+        "tile_x": int(manifest["tile_x"]),
+        "tile_y": int(manifest["tile_y"]),
+        "world_id": str(manifest["world_id"]),
+        "terrain_layer_asset_count": len(manifest.get("terrain_layer_assets_required", [])),
+        "manifest": manifest,
     }
 
 
