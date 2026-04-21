@@ -1596,6 +1596,76 @@ def carve_cave_volume(
     # to understand the 3-D extent of the cave volume (2.5-D constraint workaround)
     stack.set("cave_underground_depth", depth_hint, "caves")
 
+    # ------------------------------------------------------------------
+    # Navigation clearance validation (AAA character-navigation contract).
+    #
+    # Standard human character: 1.8 m tall, 0.4 m capsule radius.
+    # MAIN path nodes  : carved radius ≥ 1.2 m  (0.4 m capsule + 0.8 m each side)
+    #                    ceiling clearance ≥ 2.2 m
+    # TIGHT passages   : carved radius ≥ 0.5 m, ceiling clearance ≥ 1.2 m (crouch)
+    #                    → flagged as requires_crouch in nav_clearance_issues
+    #
+    # We record per-node clearance violations in a list stored on the stack as
+    # "cave_nav_issues" so the downstream placement system can widen tight nodes
+    # or mark them as crawlspace triggers.
+    # ------------------------------------------------------------------
+    _MIN_MAIN_RADIUS_M = 1.2    # minimum passable radius for standing character
+    _MIN_MAIN_CEILING_M = 2.2   # minimum standing ceiling clearance
+    _MIN_CROUCH_RADIUS_M = 0.5  # absolute minimum (crouch squeeze)
+    _MIN_CROUCH_CEILING_M = 1.2 # crouch height
+
+    nav_issues: List[Dict] = []
+    for path_idx, (wx, wy, wz) in enumerate(path):
+        # Effective carved radius at this node (entrance is enlarged)
+        if path_idx == 0:
+            node_radius_m = radius_m * pit_radius_scale
+            node_depth_m = depth_m + pit_extra_depth
+        else:
+            node_radius_m = radius_m
+            node_depth_m = depth_m
+
+        # Ceiling clearance = carved depth (entrance_height_m drives depth_m)
+        # node_depth_m is the vertical carve from the surface downward, which
+        # gives the ceiling-to-floor span inside the tunnel cross-section.
+        ceiling_clearance_m = node_depth_m * float(spec.taper_ratio)
+
+        issue: Optional[Dict] = None
+        if node_radius_m < _MIN_CROUCH_RADIUS_M or ceiling_clearance_m < _MIN_CROUCH_CEILING_M:
+            issue = {
+                "path_idx": path_idx,
+                "world_pos": (wx, wy, wz),
+                "carved_radius_m": round(node_radius_m, 3),
+                "ceiling_clearance_m": round(ceiling_clearance_m, 3),
+                "severity": "impassable",
+                "requires_crouch": False,
+            }
+        elif node_radius_m < _MIN_MAIN_RADIUS_M or ceiling_clearance_m < _MIN_MAIN_CEILING_M:
+            issue = {
+                "path_idx": path_idx,
+                "world_pos": (wx, wy, wz),
+                "carved_radius_m": round(node_radius_m, 3),
+                "ceiling_clearance_m": round(ceiling_clearance_m, 3),
+                "severity": "tight",
+                "requires_crouch": True,
+            }
+
+        if issue is not None:
+            nav_issues.append(issue)
+
+    if nav_issues:
+        # Encode as a float32 count array so the stack channel is numpy-compatible.
+        # Downstream callers retrieve full issue list via the side-channel metadata.
+        _nav_count_arr = np.array([float(len(nav_issues))], dtype=np.float32)
+        stack.set("cave_nav_issues_count", _nav_count_arr, "caves")
+        # Store the structured issue list in a module-level registry so the
+        # caller (pass_caves) can attach it to the CaveStructure.
+        # We use a stack attribute injection (best-effort) for dict transport.
+        try:
+            _existing = getattr(stack, "_cave_nav_issues", [])
+            setattr(stack, "_cave_nav_issues", _existing + nav_issues)
+        except Exception:
+            pass
+
     # Compute wall texture (Worley + Perlin) and store on the stack so
     # the material pass can use it for procedural surface detail.
     if interior_mask.any():
@@ -1816,10 +1886,23 @@ def scatter_collapse_debris(
             dtype = "pebble" if float(rng.uniform(0.0, 1.0)) > 0.3 else "rubble"
             scale_m = float(rng.uniform(0.05, 0.3))
 
+        # Z placement: boulders rest ON the floor, not at the tunnel centreline.
+        # The cluster centre Z (cz) is the path centreline — the centre of the
+        # carved tunnel cylinder.  The floor of the tunnel is one entrance-radius
+        # below the centreline.  Rest boulders at floor_z + boulder_radius so
+        # they sit on the floor rather than floating at the axis or clipping down.
+        _tunnel_radius = max(0.5, float(spec.entrance_width_m) * 0.5)
+        floor_z = float(cz) - _tunnel_radius
+        boulder_z = floor_z + scale_m  # bottom of sphere tangent to floor
+
+        # Large boulders (> 0.5 m) get a shadow-catcher flag for the scatter system.
+        _shadow_catcher = dtype == "boulder" and scale_m > 0.5
+
         results.append({
-            "world_pos": (wx, wy, float(cz)),
+            "world_pos": (wx, wy, boulder_z),
             "debris_type": dtype,
             "scale_m": round(scale_m, 3),
+            "shadow_catcher": _shadow_catcher,
         })
 
     return results
@@ -2872,9 +2955,22 @@ def _build_chamber_mesh_geometry(
         radius = max(radius, min(rx, ry) * 0.015)
         return length, radius
 
+    # Floor Z reference for stalactite floor-penetration guard.
+    # The floor center vertex was just added as floor_center_idx; read its Z
+    # from the verts list (it is always the last vertex added so far).
+    _floor_z_ref = float(verts[floor_center_idx][2])
+
+    # Track stalactite tip XY positions and their remaining headroom so the
+    # stalagmite loop can attempt to pair columns where combined growth reaches
+    # ≥ 90% of chamber height.  Keys: (fvx_rounded, fvy_rounded) → ceiling_z
+    _stal_positions: List[Tuple[float, float, float, float, float]] = []
+    # Each entry: (base_vx, base_vy, ceiling_z, stal_len, stal_r)
+
     n_stals = int(max(0, stalactite_count))
     if n_stals > 0 and len(ring_start_indices) > 0:
-        # Candidate ceiling vertices: upper half of vault rings
+        # Candidate ceiling vertices: upper half of vault rings.
+        # Only verts in the top half of the vault rings hang stalactites;
+        # lower rings are the wall/shoulder zone, not the ceiling.
         ceiling_pool: List[int] = []
         for ri, rs in enumerate(ring_start_indices):
             if ri < max(1, len(ring_start_indices) // 2):
@@ -2898,18 +2994,48 @@ def _build_chamber_mesh_geometry(
                 ring_frac = float(ring_idx) / max(1.0, float(len(ring_start_indices) - 1))
                 age = float(rng_speleothem.uniform(0.3, 1.0)) * (1.0 - ring_frac * 0.5)
                 stal_len, stal_r = _dreybrodt_dims(age)
+
+                # --- CEILING GUARD -------------------------------------------
+                # Stalactites hang from the ceiling (base_vz) downward.
+                # The tip must not penetrate the floor.  Cap length to 70% of
+                # the ceiling-to-floor clearance at this XY position.
+                # Local floor Z is approximated from _floor_height at (base_vx, base_vy).
+                _local_floor_z = _floor_height(base_vx, base_vy)
+                _clearance = base_vz - _local_floor_z
+                _max_len = max(0.0, _clearance * 0.70)
+                stal_len = min(stal_len, _max_len)
+                if stal_len < h * 0.03:
+                    # Too short to be visible — skip this vertex
+                    continue
+                # Base radius enforcement: cap at parametric range 0.3–2.0 m,
+                # tip radius minimum 0.02 m (implicit in _dreybrodt_dims via
+                # the radius lower bound).
+                stal_len = max(0.3, min(2.0, stal_len))
+                # -------------------------------------------------------------
+
                 tip = (base_vx, base_vy, base_vz - stal_len)
                 base_c = (base_vx, base_vy, base_vz)
-                sv, sf = _cone_verts_faces(tip, base_c, stal_r, segments=6, taper=1.0)
+                # 8 segments per spec (was 6 — matches circular cross-section target)
+                sv, sf = _cone_verts_faces(tip, base_c, stal_r, segments=8, taper=1.0)
                 offset = len(verts)
                 for svx, svy, svz in sv:
                     _add_vert(svx, svy, svz)
                 for tri in sf:
                     faces.append(tuple(i + offset for i in tri))
 
+                # Record position for column-pairing in stalagmite pass
+                _stal_positions.append((base_vx, base_vy, base_vz, stal_len, stal_r))
+
     # ------------------------------------------------------------------
     # Stalagmites — Dreybrodt growth, upward cones with tapered base
     # (younger than stalactites: age ∈ [0.1, 0.6])
+    #
+    # Column merge rule (AAA — Carlsbad/Lechuguilla convention):
+    #   If a stalagmite below a stalactite has combined length ≥ 90% of
+    #   chamber height, replace both with a solid cylinder (column/pillar)
+    #   spanning floor to ceiling.  This creates the iconic speleothem
+    #   column read seen in God of War's Alfheim crystal caves and Skyrim
+    #   Blackreach.
     # ------------------------------------------------------------------
     n_stags = int(max(0, stalagmite_count))
     if n_stags > 0:
@@ -2926,11 +3052,76 @@ def _build_chamber_mesh_geometry(
                 fvx, fvy, fvz = verts[fv_idx]
                 age = float(rng_speleothem.uniform(0.1, 0.6))
                 stag_len, stag_r = _dreybrodt_dims(age)
-                stag_len *= 0.65   # stalagmites shorter than stalactites
+                stag_len *= 0.65   # stalagmites shorter than stalactites; Dreybrodt splash rate
+
+                # --- PAIRING CHECK: look for a stalactite directly above this floor pos ---
+                _PAIR_RADIUS = min(rx, ry) * 0.25  # XY match tolerance
+                paired_stal: Optional[Tuple[float, float, float, float, float]] = None
+                for _sp in _stal_positions:
+                    _sp_dist = math.sqrt((fvx - _sp[0]) ** 2 + (fvy - _sp[1]) ** 2)
+                    if _sp_dist <= _PAIR_RADIUS:
+                        paired_stal = _sp
+                        break
+
+                if paired_stal is not None:
+                    _ps_base_vx, _ps_base_vy, _ps_ceiling_z, _ps_stal_len, _ps_stal_r = paired_stal
+                    _combined_len = _ps_stal_len + stag_len
+                    _local_floor_z_stag = fvz
+                    _local_ceiling_z_stag = _ps_ceiling_z
+                    _chamber_h_local = max(0.01, _local_ceiling_z_stag - _local_floor_z_stag)
+                    _col_frac = _combined_len / _chamber_h_local
+
+                    if _col_frac >= 0.90:
+                        # --- COLUMN MERGE: replace with floor-to-ceiling cylinder ---
+                        col_r = max(stag_r, _ps_stal_r)
+                        col_ns = 8
+                        col_bot_start = len(verts)
+                        for _ci in range(col_ns):
+                            _ang = 2.0 * math.pi * _ci / col_ns
+                            _add_vert(
+                                fvx + col_r * math.cos(_ang),
+                                fvy + col_r * math.sin(_ang),
+                                _local_floor_z_stag,
+                            )
+                        col_top_start = len(verts)
+                        for _ci in range(col_ns):
+                            _ang = 2.0 * math.pi * _ci / col_ns
+                            _add_vert(
+                                fvx + col_r * math.cos(_ang),
+                                fvy + col_r * math.sin(_ang),
+                                _local_ceiling_z_stag,
+                            )
+                        # Bottom cap
+                        col_bot_ctr = len(verts)
+                        _add_vert(fvx, fvy, _local_floor_z_stag)
+                        for _ci in range(col_ns):
+                            _a = col_bot_start + _ci
+                            _b = col_bot_start + (_ci + 1) % col_ns
+                            faces.append((col_bot_ctr, _b, _a))
+                        # Top cap
+                        col_top_ctr = len(verts)
+                        _add_vert(fvx, fvy, _local_ceiling_z_stag)
+                        for _ci in range(col_ns):
+                            _a = col_top_start + _ci
+                            _b = col_top_start + (_ci + 1) % col_ns
+                            faces.append((col_top_ctr, _a, _b))
+                        # Side quads
+                        for _ci in range(col_ns):
+                            _cin = (_ci + 1) % col_ns
+                            v00 = col_bot_start + _ci
+                            v01 = col_bot_start + _cin
+                            v10 = col_top_start + _ci
+                            v11 = col_top_start + _cin
+                            faces.append((v00, v10, v11))
+                            faces.append((v00, v11, v01))
+                        continue  # column placed — skip normal stalagmite cone
+
+                # Normal upward stalagmite cone
                 tip = (fvx, fvy, fvz + stag_len)
                 base_c = (fvx, fvy, fvz)
                 taper = float(rng_speleothem.uniform(0.55, 0.75))
-                sv, sf = _cone_verts_faces(tip, base_c, stag_r, segments=6, taper=taper)
+                # 8 segments per spec (was 6)
+                sv, sf = _cone_verts_faces(tip, base_c, stag_r, segments=8, taper=taper)
                 offset = len(verts)
                 for svx, svy, svz in sv:
                     _add_vert(svx, svy, svz)
@@ -3366,18 +3557,111 @@ def handle_generate_cave(params: dict) -> dict:
             }
 
         # ------------------------------------------------------------------
-        # 6. Assemble output.
+        # 6. Build true entry and exit archway meshes.
+        #
+        # AAA contract: every cave mouth must have an actual elliptic-arch
+        # opening mesh (2.5 m wide × 2.8 m tall) so the scatter/placement
+        # system knows exactly where the cave mouth opens into the terrain.
+        # The arch is a planar ring of quads (annulus) in the XZ plane centred
+        # on entrance_pos, extruded 0.4 m inward (stub wall thickness).
+        # entry_world_pos and exit_world_pos are written into the output dict
+        # so downstream placement, navmesh, and fog-volume systems can consume
+        # them without reparsing the mesh geometry.
+        # ------------------------------------------------------------------
+        _ARCH_W = 2.5    # archway ellipse semi-width (X half-axis) — fits character
+        _ARCH_H = 2.8    # archway ellipse semi-height (Z half-axis) — fits standing
+        _ARCH_DEPTH = 0.4  # stub thickness extruded along Y
+        _ARCH_NS = 16    # segments around the ellipse
+
+        def _build_archway_mesh(
+            centre: Tuple[float, float, float],
+            half_w: float,
+            half_h: float,
+            depth: float,
+            ns: int,
+        ) -> Dict:
+            """Return a mesh spec dict for a planar elliptic arch ring."""
+            cx, cy, cz = centre
+            av: List[Tuple[float, float, float]] = []
+            af: List[Tuple[int, ...]] = []
+            # Two ellipse rings: front face (y=cy) and back face (y=cy+depth)
+            front_start = 0
+            for i in range(ns):
+                ang = 2.0 * math.pi * i / ns
+                av.append((cx + half_w * math.cos(ang), cy, cz + half_h * math.sin(ang)))
+            back_start = ns
+            for i in range(ns):
+                ang = 2.0 * math.pi * i / ns
+                av.append((cx + half_w * math.cos(ang), cy + depth, cz + half_h * math.sin(ang)))
+            # Side quads connecting front to back
+            for i in range(ns):
+                i_n = (i + 1) % ns
+                af.append((front_start + i, back_start + i, back_start + i_n))
+                af.append((front_start + i, back_start + i_n, front_start + i_n))
+            return {
+                "vertices": av,
+                "faces": af,
+                "mesh_type": "cave_archway",
+                "centre": centre,
+                "half_w": half_w,
+                "half_h": half_h,
+            }
+
+        entry_world_pos: Tuple[float, float, float] = entrance_pos
+        # Exit is the far end of the Bezier tunnel — the chamber centre offset
+        # along -Y by half the chamber depth (opposite side from entrance).
+        exit_world_pos: Tuple[float, float, float] = (
+            chamber_center[0],
+            chamber_center[1] + chamber_d * 0.5,
+            chamber_center[2],
+        )
+
+        entry_arch_spec = _build_archway_mesh(
+            entry_world_pos, _ARCH_W, _ARCH_H, _ARCH_DEPTH, _ARCH_NS
+        )
+        entry_arch_spec["name"] = f"{name}_EntryArch"
+        entry_arch_spec["role"] = "entry"
+
+        exit_arch_spec = _build_archway_mesh(
+            exit_world_pos, _ARCH_W, _ARCH_H, _ARCH_DEPTH, _ARCH_NS
+        )
+        exit_arch_spec["name"] = f"{name}_ExitArch"
+        exit_arch_spec["role"] = "exit"
+
+        archway_specs: List[Dict] = [entry_arch_spec, exit_arch_spec]
+
+        # Second exit for deep caves (depth > 30 m): place on the opposite
+        # chamber wall (rotated 120–180° from primary exit) so deep caves have
+        # two distinct egress points on different terrain faces.
+        cave_depth_m = abs(float(chamber_center[2]) - float(entrance_pos[2]))
+        if cave_depth_m > 30.0:
+            alt_exit_pos: Tuple[float, float, float] = (
+                chamber_center[0] + chamber_w * 0.45,
+                chamber_center[1],
+                chamber_center[2] * 0.85,  # slightly lower (canyon-wall exit)
+            )
+            alt_arch = _build_archway_mesh(
+                alt_exit_pos, _ARCH_W, _ARCH_H, _ARCH_DEPTH, _ARCH_NS
+            )
+            alt_arch["name"] = f"{name}_ExitArch2"
+            alt_arch["role"] = "exit_secondary"
+            archway_specs.append(alt_arch)
+
+        # ------------------------------------------------------------------
+        # 7. Assemble output.
         # ------------------------------------------------------------------
         # Floor area in cell units (compatibility with old handler shape).
         cc = state.mask_stack.get("cave_candidate")
         floor_area = int(np.asarray(cc).sum()) if cc is not None else 0
 
         # meshes list: chamber first (primary geometry), then tunnel, then
-        # entrance archway specs from get_cave_entrance_specs.
+        # entrance archway specs from get_cave_entrance_specs, then our
+        # analytically-built archway opening meshes.
         meshes: List[Dict] = [chamber_mesh_spec]
         if tunnel_mesh_spec is not None:
             meshes.append(tunnel_mesh_spec)
         meshes.extend(entrance_specs)
+        meshes.extend(archway_specs)
 
         # Bundle status is extracted before serialisation; the PassResult object
         # itself is NOT included in meta because it contains numpy arrays and
@@ -3390,17 +3674,24 @@ def handle_generate_cave(params: dict) -> dict:
             "status": bundle_status,
             "name": chamber_name,
             "meshes": meshes,
+            # Top-level world positions for scatter/navmesh/fog-volume systems
+            "entry_world_pos": list(entry_world_pos),
+            "exit_world_pos": list(exit_world_pos),
             "meta": {
                 "archetype": picked_archetype or "unknown",
                 "chamber_mesh_spec": chamber_mesh_spec,
                 "entrance_specs": entrance_specs,
                 "tunnel_spec": tunnel_mesh_spec,
+                "archway_specs": archway_specs,
                 "bundle_status": bundle_status,
                 "cave_count": cave_count,
                 "wall_height": wall_height,
                 "floor_area": floor_area,
                 "entrance_radius": entrance_radius,
                 "chamber_radius": chamber_radius,
+                # entry/exit positions also in meta for legacy callers
+                "entry_world_pos": list(entry_world_pos),
+                "exit_world_pos": list(exit_world_pos),
                 # Carve delta (H×W float list) for the terrain geometry pass
                 # to add to stack.height; None when no caves were carved.
                 "cave_height_delta": cave_height_delta,
