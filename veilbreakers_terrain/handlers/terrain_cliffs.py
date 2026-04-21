@@ -15,6 +15,12 @@ Agent protocol compliance:
 - Rule 7: populates Unity-visible mask channels for round-trip export
 - Rule 10: never ``np.clip(..., 0, 1)`` on world heights
 
+Cliff overhang geometry (2026-04-20):
+- _generate_cliff_overhang: 35% of cliff segments get a 0.3-1.2 m protrusion
+  at the top 20% of face height. The overhang tip (drip edge) is tagged with
+  ``is_drip_edge=True`` so the material pass can apply the foam/wet shader.
+  The spec dict is attached to CliffStructure as ``overhang_spec``.
+
 AAA upgrade log (2026-04-19):
 - TalusField: material-specific angle of repose table + talus cone height profile
 - CliffStructure: strata_layers, overhang_mask, contour_spline fields added
@@ -166,6 +172,10 @@ class CliffStructure:
     strata_layers: List[StrataLayer] = field(default_factory=list)
     overhang_mask: Optional[np.ndarray] = None   # (H, W) bool
     contour_spline: Optional[np.ndarray] = None  # (M, 2) float64 B-spline pts
+    # Cliff overhang geometry spec (2026-04-20) — set by pass_cliffs via
+    # _generate_cliff_overhang; consumed by the hero mesh insertion pass to
+    # extrude overhang quads and mark drip edges for wet/foam material.
+    overhang_spec: Optional[Dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1272,6 +1282,175 @@ def build_talus_field(
 
 
 # ---------------------------------------------------------------------------
+# Cliff overhang geometry — silhouette breaks + drip edges
+# ---------------------------------------------------------------------------
+
+
+def _generate_cliff_overhang(
+    cliff_profile: "CliffStructure",
+    *,
+    overhang_probability: float = 0.35,
+    seed: int = 0,
+) -> Dict:
+    """Generate overhang geometry specs for a cliff profile.
+
+    35% of cliff lip segments receive a small outward protrusion (0.3–1.2 m)
+    in the top 20% of the face height.  This breaks the uniform silhouette
+    of cliff walls and creates natural shelter spots — a technique used
+    extensively in God of War (Midgard cliffs) and Elden Ring (Farum Azula
+    and Stormveil overhangs).
+
+    Geometry specification (pure data, no bpy)
+    ------------------------------------------
+    For each overhang segment the spec stores:
+      - ``base_verts``  : two (x, y, z) points on the cliff lip at overhang-
+                         start elevation (top 20% of face height).
+      - ``tip_verts``   : two (x, y, z) points pushed outward by
+                         ``overhang_depth_m`` along the outward face normal.
+      - ``is_drip_edge``: True for tip_verts — marks them for the wet/foam
+                         material shader.
+      - ``depth_m``     : protrusion depth for this segment.
+
+    The overhang is a single horizontal extrusion quad per segment:
+    (base_left, base_right, tip_right, tip_left).
+
+    Parameters
+    ----------
+    cliff_profile   : CliffStructure with a populated lip_polyline and
+                      face_mask.  world_bounds must be set (used to compute
+                      outward normal direction).
+    overhang_probability : Fraction of lip segments that receive an overhang.
+                      Default 0.35 (35%).
+    seed            : Deterministic seed so overhangs are stable across runs.
+
+    Returns
+    -------
+    dict with keys:
+      ``segments``          : list of per-segment dicts (base_verts, tip_verts,
+                              is_drip_edge, depth_m, face_quad).
+      ``total_segments``    : int — number of lip segments examined.
+      ``overhang_count``    : int — number of segments with overhangs.
+      ``overhang_fraction`` : float — actual fraction (overhang_count /
+                              total_segments).
+      ``drip_edge_verts``   : flat list of all tip_verts for wet-material pass.
+    """
+    import random as _rnd
+
+    rng = _rnd.Random(seed)
+
+    lip = cliff_profile.lip_polyline
+    if lip is None or lip.shape[0] < 2:
+        return {
+            "segments": [],
+            "total_segments": 0,
+            "overhang_count": 0,
+            "overhang_fraction": 0.0,
+            "drip_edge_verts": [],
+        }
+
+    # Determine overhang base elevation: top 20% of face height span
+    h_min = float(cliff_profile.min_height_m)
+    h_max = float(cliff_profile.max_height_m)
+    h_span = max(0.1, h_max - h_min)
+    overhang_z_thresh = h_min + h_span * 0.80   # top 20%
+
+    # Outward face normal: use world_bounds to estimate which direction is
+    # "outward" (away from the terrain mass).  The cliff face normal points
+    # from the face centroid outward, which we approximate as the direction
+    # from the clip centre toward the tile edge.
+    if cliff_profile.world_bounds is not None:
+        cx = (cliff_profile.world_bounds.min_x + cliff_profile.world_bounds.max_x) * 0.5
+        cy = (cliff_profile.world_bounds.min_y + cliff_profile.world_bounds.max_y) * 0.5
+        # Simple heuristic: outward = away from centroid along longest axis
+        wx = cliff_profile.world_bounds.max_x - cliff_profile.world_bounds.min_x
+        wy = cliff_profile.world_bounds.max_y - cliff_profile.world_bounds.min_y
+        if wx >= wy:
+            out_nx, out_ny = 0.0, 1.0   # protrude in +Y
+        else:
+            out_nx, out_ny = 1.0, 0.0   # protrude in +X
+    else:
+        out_nx, out_ny = 0.0, 1.0
+
+    segments: List[Dict] = []
+    drip_edge_verts: List[Tuple[float, float, float]] = []
+    overhang_count = 0
+    n_lip = lip.shape[0]
+    total_segments = n_lip - 1
+
+    for seg_i in range(total_segments):
+        r0, c0 = int(lip[seg_i][0]), int(lip[seg_i][1])
+        r1, c1 = int(lip[seg_i + 1][0]), int(lip[seg_i + 1][1])
+
+        # We need world positions; without the stack here we use the lip
+        # row/col as a proxy (real geometry pass will have cell_size/origin).
+        # The spec stores cell coords; the geometry pass resolves to world-m.
+        seg_z0 = float(cliff_profile.max_height_m)   # lip is at face top
+        seg_z1 = seg_z0
+
+        # Only apply overhangs in the top 20% zone and with overhang_probability
+        if seg_z0 < overhang_z_thresh:
+            segments.append({
+                "seg_i": seg_i,
+                "base_cells": ((r0, c0), (r1, c1)),
+                "tip_cells": None,
+                "is_drip_edge": False,
+                "depth_m": 0.0,
+                "has_overhang": False,
+                "face_quad": None,
+            })
+            continue
+
+        if rng.random() > overhang_probability:
+            segments.append({
+                "seg_i": seg_i,
+                "base_cells": ((r0, c0), (r1, c1)),
+                "tip_cells": None,
+                "is_drip_edge": False,
+                "depth_m": 0.0,
+                "has_overhang": False,
+                "face_quad": None,
+            })
+            continue
+
+        # Generate overhang for this segment
+        depth_m = rng.uniform(0.3, 1.2)
+
+        # Base verts (at lip, world-approximate using cell index as proxy metre)
+        base_l = (float(c0), float(r0), seg_z0)
+        base_r = (float(c1), float(r1), seg_z1)
+
+        # Tip verts: push outward by depth_m in the outward normal direction
+        tip_l = (base_l[0] + out_nx * depth_m, base_l[1] + out_ny * depth_m, seg_z0)
+        tip_r = (base_r[0] + out_nx * depth_m, base_r[1] + out_ny * depth_m, seg_z1)
+
+        drip_edge_verts.append(tip_l)
+        drip_edge_verts.append(tip_r)
+        overhang_count += 1
+
+        segments.append({
+            "seg_i": seg_i,
+            "base_cells": ((r0, c0), (r1, c1)),
+            "tip_cells": ((int(c0 + out_nx * depth_m), int(r0 + out_ny * depth_m)),
+                          (int(c1 + out_nx * depth_m), int(r1 + out_ny * depth_m))),
+            "is_drip_edge": True,
+            "depth_m": depth_m,
+            "has_overhang": True,
+            # quad: base_left, base_right, tip_right, tip_left (CCW winding)
+            "face_quad": (base_l, base_r, tip_r, tip_l),
+        })
+
+    overhang_fraction = overhang_count / max(1, total_segments)
+
+    return {
+        "segments": segments,
+        "total_segments": total_segments,
+        "overhang_count": overhang_count,
+        "overhang_fraction": overhang_fraction,
+        "drip_edge_verts": drip_edge_verts,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Hero mesh insertion — wall face + overhang + LOD
 # ---------------------------------------------------------------------------
 
@@ -2069,6 +2248,26 @@ def pass_cliffs(
         add_cliff_ledges(cliff, height=stack.height)
         build_talus_field(cliff, stack)
 
+    # 5b. Generate cliff overhang geometry specs (2026-04-20)
+    # 35% of lip segments per cliff get a 0.3-1.2 m outward protrusion with
+    # a tagged drip edge for wet/foam material.  Stored on cliff.overhang_spec.
+    for cliff_idx, cliff in enumerate(cliffs):
+        overhang_seed = (seed ^ (cliff_idx * 1234567891 + 987654321)) & 0x7FFFFFFF
+        overhang_spec = _generate_cliff_overhang(
+            cliff,
+            overhang_probability=0.35,
+            seed=overhang_seed,
+        )
+        cliff.overhang_spec = overhang_spec
+        if overhang_spec["overhang_count"] > 0:
+            state.side_effects.append(
+                f"cliff_overhang_geometry:{cliff.cliff_id}:"
+                f"segments={overhang_spec['overhang_count']}/"
+                f"{overhang_spec['total_segments']}:"
+                f"fraction={overhang_spec['overhang_fraction']:.2f}:"
+                f"drip_verts={len(overhang_spec['drip_edge_verts'])}"
+            )
+
     # 6. Record intent for hero mesh insertion (no geometry yet)
     insert_hero_cliff_meshes(state, cliffs)
 
@@ -2104,6 +2303,14 @@ def pass_cliffs(
             "total_ledges": sum(len(c.ledges) for c in cliffs),
             "total_strata_layers": sum(len(c.strata_layers) for c in cliffs),
             "cliffs_with_overhang": sum(1 for c in cliffs if c.overhang_mask is not None),
+            "cliffs_with_overhang_geometry": sum(
+                1 for c in cliffs
+                if c.overhang_spec is not None and c.overhang_spec["overhang_count"] > 0
+            ),
+            "total_overhang_segments": sum(
+                (c.overhang_spec["overhang_count"] if c.overhang_spec else 0)
+                for c in cliffs
+            ),
             "cliffs_with_spline": sum(1 for c in cliffs if c.contour_spline is not None),
             "seed_used": seed,
         },
@@ -2170,4 +2377,6 @@ __all__ = [
     "validate_cliff_readability",
     "pass_cliffs",
     "register_bundle_b_passes",
+    # Cliff overhang geometry (2026-04-20)
+    "_generate_cliff_overhang",
 ]

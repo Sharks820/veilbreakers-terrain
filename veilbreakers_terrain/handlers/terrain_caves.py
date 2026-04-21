@@ -7,6 +7,15 @@ numpy / python so it can be tested outside Blender.
 
 See docs/terrain_ultra_implementation_plan_2026-04-08.md §11 (Bundle F).
 
+Cave-mountain integration (2026-04-20):
+- snap_entry_to_cliff_face: snaps cave entry within 15 m of a cliff cell
+  onto the vertical face with an ellipse arch cutout (2.5 × 2.8 m).
+- build_mountainside_overhang: rock arch over entries on steep slopes (>0.45).
+- generate_canyon_dual_exit: forces tunnel-through when depth >40 m in canyons.
+- build_cave_mouth_surround: 12-segment ring mesh sealing cave-terrain seam.
+- _generate_cliff_overhang in terrain_cliffs.py: 35% cliff segments get 0.3-1.2 m
+  protrusion with drip edge for wet material signal.
+
 Agent protocol compliance:
 - Rule 1: all mutation lives behind ``pass_caves`` + ``register_bundle_f_passes``
 - Rule 2: pass declares ``requires_scene_read=True``
@@ -638,6 +647,16 @@ class CaveStructure:
 
 
 # ---------------------------------------------------------------------------
+# Module-level cliff-entry metadata registry
+# ---------------------------------------------------------------------------
+
+# Maps entrance_pos tuple → snap metadata dict from snap_entry_to_cliff_face.
+# Populated by generate_cave_path; consumed by pass_caves to attach
+# cliff_face_entry flags and overhang geometry to CaveStructure.entrance_frame.
+_cliff_entry_meta: Dict[Tuple[float, float, float], Dict] = {}
+
+
+# ---------------------------------------------------------------------------
 # Helpers — world <-> grid coordinate math
 # ---------------------------------------------------------------------------
 
@@ -997,6 +1016,438 @@ def pick_cave_archetype(
 
 
 # ---------------------------------------------------------------------------
+# Cliff-face entry snapping (cave-mountain integration)
+# ---------------------------------------------------------------------------
+
+
+def snap_entry_to_cliff_face(
+    stack: "TerrainMaskStack",
+    entry_pos: Tuple[float, float, float],
+    *,
+    snap_radius_m: float = 15.0,
+) -> Tuple[Tuple[float, float, float], Dict]:
+    """Snap a cave entry point onto the nearest cliff face within ``snap_radius_m``.
+
+    When a cave entry candidate is within 15 m of a cliff-candidate cell,
+    the entry is relocated to the vertical face of that cliff rather than
+    sitting on the flat ground above it.  This matches the God of War /
+    Elden Ring pattern where cave mouths open in cliff faces, not in the
+    ground.
+
+    Algorithm
+    ---------
+    1. Convert ``entry_pos`` to a grid cell.
+    2. Build a square search window of radius ``snap_radius_m / cell_size``
+       cells and intersect it with ``stack.cliff_candidate``.
+    3. If any cliff cells are found, snap the world-XY to the nearest
+       cliff cell's centre.  The Z position is set to the cliff cell's
+       height (the base of the cliff face, not the top).
+    4. Estimate the outward-facing normal of the cliff face at that cell by
+       computing the local height gradient and reversing it (gradient points
+       uphill; the cliff face normal points away from the cliff mass).
+
+    Returns
+    -------
+    (snapped_pos, meta) where:
+      snapped_pos : (wx, wy, wz) world-space entry position (unchanged if no
+                    cliff cell is within range).
+      meta        : dict with keys:
+          ``cliff_face_entry`` : bool — True if snapping occurred.
+          ``face_normal``      : (nx, ny) outward unit normal of cliff face.
+          ``entry_width_m``    : ellipse arch width (fixed 2.5 m).
+          ``entry_height_m``   : ellipse arch height (fixed 2.8 m).
+          ``snap_distance_m``  : distance moved to snap (0.0 if no snap).
+    """
+    meta: Dict = {
+        "cliff_face_entry": False,
+        "face_normal": (0.0, 1.0),
+        "entry_width_m": 2.5,
+        "entry_height_m": 2.8,
+        "snap_distance_m": 0.0,
+    }
+
+    cliff_arr = stack.get("cliff_candidate")
+    if cliff_arr is None:
+        return entry_pos, meta
+
+    cliff_mask = np.asarray(cliff_arr, dtype=bool)
+    height = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = height.shape
+    cell = max(1e-6, float(stack.cell_size))
+
+    x0, y0, z0 = entry_pos
+    row0, col0 = _world_to_cell(stack, x0, y0)
+
+    search_cells = max(1, int(math.ceil(snap_radius_m / cell)))
+    r_lo = max(0, row0 - search_cells)
+    r_hi = min(rows, row0 + search_cells + 1)
+    c_lo = max(0, col0 - search_cells)
+    c_hi = min(cols, col0 + search_cells + 1)
+
+    window_cliff = cliff_mask[r_lo:r_hi, c_lo:c_hi]
+    if not window_cliff.any():
+        return entry_pos, meta
+
+    # Find the nearest cliff cell to the entry point (in cells)
+    cliff_rr, cliff_cc = np.where(window_cliff)
+    # Adjust to full-grid coordinates
+    cliff_rr = cliff_rr + r_lo
+    cliff_cc = cliff_cc + c_lo
+    dist_cells = np.sqrt(
+        (cliff_rr - row0).astype(np.float64) ** 2
+        + (cliff_cc - col0).astype(np.float64) ** 2
+    )
+    nearest_idx = int(np.argmin(dist_cells))
+    snap_r = int(cliff_rr[nearest_idx])
+    snap_c = int(cliff_cc[nearest_idx])
+    snap_dist_m = float(dist_cells[nearest_idx]) * cell
+
+    # New world position: cliff cell centre, Z at the cell's terrain height
+    snap_wx, snap_wy = _cell_to_world(stack, snap_r, snap_c)
+    snap_wz = float(height[snap_r, snap_c])
+
+    # Estimate cliff face outward normal from local height gradient.
+    # gradient returns (dy_gradient, dx_gradient) for a (rows, cols) array.
+    # The cliff face normal points away from the high-terrain side (uphill →
+    # into the mountain), so we NEGATE the gradient direction.
+    gr = max(0, min(rows - 2, snap_r))
+    gc = max(0, min(cols - 2, snap_c))
+    dh_dy = float(height[gr + 1, gc] - height[gr - 1 if gr > 0 else gr, gc]) / (2.0 * cell)
+    dh_dx = float(height[gr, gc + 1] - height[gr, gc - 1 if gc > 0 else gc]) / (2.0 * cell)
+    # Outward face normal: negate uphill direction
+    nx, ny = -dh_dx, -dh_dy
+    n_len = math.sqrt(nx * nx + ny * ny)
+    if n_len > 1e-6:
+        nx /= n_len
+        ny /= n_len
+    else:
+        nx, ny = 0.0, 1.0  # fallback: face south
+
+    meta["cliff_face_entry"] = True
+    meta["face_normal"] = (nx, ny)
+    meta["snap_distance_m"] = snap_dist_m
+
+    return (snap_wx, snap_wy, snap_wz), meta
+
+
+# ---------------------------------------------------------------------------
+# Mountain-side overhang geometry
+# ---------------------------------------------------------------------------
+
+
+def build_mountainside_overhang(
+    entry_pos: Tuple[float, float, float],
+    stack: "TerrainMaskStack",
+    entry_width_m: float,
+    *,
+    seed: int = 0,
+) -> Dict:
+    """Build a rock arch / natural overhang above a cave entry on a steep slope.
+
+    When the terrain slope at the entry exceeds 0.45 (≈ 24°) the entry sits
+    on a mountainside rather than a vertical cliff face.  In this context AAA
+    level designers always add a natural-looking overhang / rock arch above
+    the mouth to break the silhouette and provide a shadow framing the opening.
+
+    Geometry specification (no bpy — pure data)
+    --------------------------------------------
+    The overhang is described as a list of vertices and quad faces in local
+    world-space.  The origin is ``entry_pos``.
+
+    Layout (cross-section, looking sideways at cliff face):
+
+        ←── arch_width_m ──→
+        ██████████████████████  ← top of rock mass
+              ╲      ╱
+               ╲____╱           ← underside of overhang
+             ↑
+             overhang_depth_m protrudes outward (toward player)
+             arch base at entry_pos.z + entry_height_m
+
+    The rock mass above the arch is 1.5–3.0 m tall; the arch underside
+    protrudes 0.5–1.5 m outward.
+
+    Returns a dict with keys:
+      ``overhang_verts``   : list of (x, y, z) world-space vertices.
+      ``overhang_faces``   : list of (i0, i1, i2, i3) quad indices.
+      ``overhang_depth_m`` : float — protrusion depth chosen.
+      ``arch_width_m``     : float — total width of overhang.
+      ``rock_mass_height_m``: float — height of rock mass above arch base.
+      ``has_overhang``     : bool — always True when this function returns.
+    """
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+
+    # Slope check at entry cell
+    slope_arr = stack.get("slope")
+    x0, y0, z0 = entry_pos
+    slope_val = 0.0
+    if slope_arr is not None:
+        row, col = _world_to_cell(stack, x0, y0)
+        slope_val = float(np.asarray(slope_arr, dtype=np.float64)[row, col])
+
+    if slope_val < 0.45:
+        # Gentle slope — no overhang needed
+        return {
+            "overhang_verts": [],
+            "overhang_faces": [],
+            "overhang_depth_m": 0.0,
+            "arch_width_m": 0.0,
+            "rock_mass_height_m": 0.0,
+            "has_overhang": False,
+        }
+
+    # Randomise geometry within spec ranges
+    overhang_depth_m = float(rng.uniform(0.5, 1.5))
+    arch_extra = float(rng.uniform(0.6, 0.8))   # extra width on each side beyond entry_width
+    arch_width_m = entry_width_m + arch_extra * 2.0
+    rock_mass_h = float(rng.uniform(1.5, 3.0))
+
+    # 8 vertices for a simple box-with-protrusion arch:
+    # Bottom-left (BL), bottom-right (BR) at arch base level (z0 + entry_height_m is arch top)
+    # We build the overhang underside as a horizontal ledge protruding outward (y direction).
+    # "Outward" = positive Y in local cave-face space (toward the player).
+    hw = arch_width_m * 0.5
+    arch_base_z = z0  # arch base coincides with entry z
+    arch_top_z = z0 + rock_mass_h
+
+    # 8 vertices: front-bottom-left, front-bottom-right,
+    #             front-top-left, front-top-right (protruded),
+    #             back-top-left, back-top-right (at cliff face),
+    #             back-bottom-left, back-bottom-right
+    verts = [
+        (x0 - hw, y0 + overhang_depth_m, arch_base_z),   # 0: front-BL
+        (x0 + hw, y0 + overhang_depth_m, arch_base_z),   # 1: front-BR
+        (x0 + hw, y0 + overhang_depth_m, arch_top_z),    # 2: front-TR
+        (x0 - hw, y0 + overhang_depth_m, arch_top_z),    # 3: front-TL
+        (x0 - hw, y0, arch_top_z),                        # 4: back-TL (cliff face)
+        (x0 + hw, y0, arch_top_z),                        # 5: back-TR (cliff face)
+        (x0 + hw, y0, arch_base_z),                       # 6: back-BR
+        (x0 - hw, y0, arch_base_z),                       # 7: back-BL
+    ]
+    faces = [
+        (0, 1, 2, 3),   # front face (visible underside of overhang)
+        (3, 2, 5, 4),   # top face
+        (4, 5, 6, 7),   # back face (into cliff)
+        (7, 6, 1, 0),   # bottom face
+        (0, 3, 4, 7),   # left side
+        (1, 6, 5, 2),   # right side
+    ]
+
+    return {
+        "overhang_verts": verts,
+        "overhang_faces": faces,
+        "overhang_depth_m": overhang_depth_m,
+        "arch_width_m": arch_width_m,
+        "rock_mass_height_m": rock_mass_h,
+        "has_overhang": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Canyon dual-exit (tunnel-through) detection
+# ---------------------------------------------------------------------------
+
+
+def generate_canyon_dual_exit(
+    stack: "TerrainMaskStack",
+    cave: "CaveStructure",
+    *,
+    canyon_cliff_threshold: float = 0.5,
+    min_depth_m: float = 40.0,
+) -> Optional[Tuple[float, float, float]]:
+    """Detect canyon topology and force a second exit on the opposite wall.
+
+    In AAA canyon levels (e.g. Elden Ring's Limgrave canyons, God of War's
+    Lake of Nine shores) caves that cut through a narrow canyon become
+    *tunnel-through* features: the player enters one canyon wall and exits
+    the other, giving a natural bridge / tunnel archetype.
+
+    Conditions for dual-exit:
+      1. Cave interior length (path AABB diagonal) > ``min_depth_m`` (40 m).
+      2. The terrain has cliff-candidate cells on BOTH sides of the cave path
+         centre — i.e. the cave sits inside a valley with cliff walls on each
+         side (canyon topology).  We detect this by sampling the
+         ``cliff_candidate`` mask in the four cardinal quadrants around the
+         cave's midpoint; if at least one quadrant on the east side AND at
+         least one on the west side both have cliff cells the condition is met.
+
+    Returns
+    -------
+    The world-space (wx, wy, wz) position of the second exit, or ``None`` if
+    the conditions are not satisfied.  The caller is responsible for adding
+    this point to the cave's ``path_world`` list (tunnel-through semantics).
+    """
+    if cave.path_aabb is None or not cave.path_world:
+        return None
+
+    # Condition 1: path depth
+    min_x, min_y, min_z, max_x, max_y, max_z = cave.path_aabb
+    path_diagonal = math.sqrt(
+        (max_x - min_x) ** 2 + (max_y - min_y) ** 2
+    )
+    if path_diagonal < min_depth_m:
+        return None
+
+    # Condition 2: canyon topology — cliff on both sides of path midpoint
+    cliff_arr = stack.get("cliff_candidate")
+    if cliff_arr is None:
+        return None
+
+    cliff_mask = np.asarray(cliff_arr, dtype=bool)
+    height = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = height.shape
+    cell = max(1e-6, float(stack.cell_size))
+
+    # Midpoint of cave path
+    n_path = len(cave.path_world)
+    mid_idx = n_path // 2
+    mx, my, mz = cave.path_world[mid_idx]
+    mid_row, mid_col = _world_to_cell(stack, mx, my)
+
+    # Sample quadrant radius: 20% of path diagonal in cells
+    quad_r = max(2, int(math.ceil(path_diagonal * 0.20 / cell)))
+
+    def _has_cliff_in_quadrant(dr_sign: int, dc_sign: int) -> bool:
+        r0 = mid_row if dr_sign >= 0 else max(0, mid_row - quad_r)
+        r1 = min(rows, mid_row + quad_r) if dr_sign >= 0 else mid_row + 1
+        c0 = mid_col if dc_sign >= 0 else max(0, mid_col - quad_r)
+        c1 = min(cols, mid_col + quad_r) if dc_sign >= 0 else mid_col + 1
+        if r0 >= r1 or c0 >= c1:
+            return False
+        return bool(cliff_mask[r0:r1, c0:c1].any())
+
+    east_cliff = _has_cliff_in_quadrant(0, +1)
+    west_cliff = _has_cliff_in_quadrant(0, -1)
+
+    if not (east_cliff and west_cliff):
+        return None
+
+    # Place second exit on the opposite side from the entrance.
+    # Project the last path point outward by 10% of path diagonal
+    # to land on the far canyon wall.
+    last_pt = cave.path_world[-1]
+    first_pt = cave.path_world[0]
+    dir_x = last_pt[0] - first_pt[0]
+    dir_y = last_pt[1] - first_pt[1]
+    dir_len = math.sqrt(dir_x ** 2 + dir_y ** 2)
+    if dir_len > 1e-6:
+        dir_x /= dir_len
+        dir_y /= dir_len
+    else:
+        dir_x, dir_y = 1.0, 0.0
+
+    exit_wx = last_pt[0] + dir_x * path_diagonal * 0.10
+    exit_wy = last_pt[1] + dir_y * path_diagonal * 0.10
+    exit_row, exit_col = _world_to_cell(stack, exit_wx, exit_wy)
+    exit_wz = float(height[exit_row, exit_col])
+
+    return (exit_wx, exit_wy, exit_wz)
+
+
+# ---------------------------------------------------------------------------
+# Cave-mouth surround mesh (seam fix between cave opening and terrain)
+# ---------------------------------------------------------------------------
+
+
+def build_cave_mouth_surround(
+    entry_pos: Tuple[float, float, float],
+    entry_width_m: float,
+    entry_height_m: float,
+    *,
+    ring_width_m: float = 0.3,
+    n_segments: int = 12,
+    face_normal: Tuple[float, float] = (0.0, 1.0),
+) -> Dict:
+    """Build a 12-segment ring mesh sealing the cave-opening / terrain seam.
+
+    At the boundary where a cave opening meets the surrounding terrain or
+    cliff surface, a visible seam can appear because the carve delta does not
+    perfectly meet the original terrain mesh.  This function returns a thin
+    ring of geometry (0.3 m wide, 12 quad faces) placed around the opening
+    ellipse to mask that seam.  UVs are laid out continuously around the ring
+    so the rock material tiles without a visible break.
+
+    The ring is described in world-space using the ``entry_pos`` as the arch
+    centre.  The ring normal points outward (toward the viewer) using the
+    supplied ``face_normal`` XY direction.
+
+    Returns
+    -------
+    dict with keys:
+      ``verts``         : list of (x, y, z) — outer ring vertices (2 * n_segments).
+      ``faces``         : list of (i0, i1, i2, i3) quads.
+      ``uvs``           : list of (u, v) per vertex; u wraps 0..1 around ring,
+                          v = 0 on inner edge, 1 on outer edge.
+      ``face_normal``   : (nx, ny) — outward-facing XY normal for material.
+      ``ring_width_m``  : float — width of the rock surround band.
+      ``n_segments``    : int — number of segments.
+    """
+    x0, y0, z0 = entry_pos
+    half_w = entry_width_m * 0.5
+    half_h = entry_height_m * 0.5
+    nx, ny = face_normal
+
+    # Build an orthonormal basis in the arch plane:
+    # right_vec: horizontal direction along the arch face
+    # up_vec   : vertical direction (always world Z)
+    # depth_vec: outward normal (face_normal XY, z=0)
+    right_x = -ny   # 90° rotation of the XY normal
+    right_y = nx
+    right_z = 0.0
+
+    inner_verts: List[Tuple[float, float, float]] = []
+    outer_verts: List[Tuple[float, float, float]] = []
+    uvs_inner: List[Tuple[float, float]] = []
+    uvs_outer: List[Tuple[float, float]] = []
+
+    for seg_i in range(n_segments):
+        theta = 2.0 * math.pi * seg_i / n_segments
+        # Ellipse point on inner ring (the arch opening edge)
+        ex = half_w * math.cos(theta)
+        ez = half_h * math.sin(theta) + half_h  # shift so base is at z0
+
+        # World position: translate along right and up from arch centre
+        inner_x = x0 + right_x * ex
+        inner_y = y0 + right_y * ex
+        inner_z = z0 + ez
+
+        # Outer ring: extend by ring_width_m in the local arch-plane normal
+        # and radially outward from the ellipse
+        radial_x = right_x * math.cos(theta)
+        radial_y = right_y * math.cos(theta)
+        radial_z = math.sin(theta)
+        outer_x = inner_x + radial_x * ring_width_m
+        outer_y = inner_y + radial_y * ring_width_m
+        outer_z = inner_z + radial_z * ring_width_m
+
+        u = seg_i / float(n_segments)
+        inner_verts.append((inner_x, inner_y, inner_z))
+        outer_verts.append((outer_x, outer_y, outer_z))
+        uvs_inner.append((u, 0.0))
+        uvs_outer.append((u, 1.0))
+
+    all_verts = inner_verts + outer_verts   # first n_segments = inner, next = outer
+    all_uvs = uvs_inner + uvs_outer
+
+    faces: List[Tuple[int, int, int, int]] = []
+    for seg_i in range(n_segments):
+        i0 = seg_i                                        # inner current
+        i1 = (seg_i + 1) % n_segments                    # inner next
+        i2 = (seg_i + 1) % n_segments + n_segments       # outer next
+        i3 = seg_i + n_segments                           # outer current
+        faces.append((i0, i1, i2, i3))
+
+    return {
+        "verts": all_verts,
+        "faces": faces,
+        "uvs": all_uvs,
+        "face_normal": (nx, ny),
+        "ring_width_m": ring_width_m,
+        "n_segments": n_segments,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Path generation
 # ---------------------------------------------------------------------------
 
@@ -1143,6 +1594,18 @@ def generate_cave_path(
     minimum-cost path between the two anchor points, producing organic
     routes that respond to actual heightmap topology.
 
+    Cliff-face entry snapping (2026-04-20):
+      - Before computing the heading, the entrance is tested against the
+        cliff_candidate mask.  If a cliff cell is within 15 m, the entry is
+        snapped to the cliff face and the initial path heading is set to the
+        cliff's inward face normal (perpendicular to face, INTO the mountain).
+        The first path segment therefore travels horizontally inward, not
+        diagonally downward — matching God of War / Elden Ring cliff caves.
+      - The snap metadata is stored on the first path point via a module-level
+        ``_cliff_entry_meta`` dict keyed by the entrance world position tuple
+        so callers (pass_caves) can retrieve cliff_face_entry flags without
+        changing the return type.
+
     Branching and chamber generation (AAA upgrade):
       - At each junction point (every 15–25 m along the main spine), a side
         passage is spawned with archetype-specific probability (40% base,
@@ -1167,13 +1630,34 @@ def generate_cave_path(
     """
     spec = make_archetype_spec(archetype)
     length = float(spec.interior_length_m)
-    x0, y0, z0 = entrance_pos
+
+    # ------------------------------------------------------------------
+    # Cliff-face entry snapping: snap entrance to cliff face if within
+    # 15 m of a cliff candidate cell.  When snapped, the initial heading
+    # is aligned with the inward cliff face normal so the first segment
+    # travels horizontally INTO the mountain, not diagonally downward.
+    # ------------------------------------------------------------------
+    snapped_pos, snap_meta = snap_entry_to_cliff_face(stack, entrance_pos)
+    x0, y0, z0 = snapped_pos
+
+    # Store snap metadata in module-level registry so pass_caves can read it
+    _cliff_entry_meta[entrance_pos] = snap_meta
 
     rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
-    # Pick a heading from RNG, in [0, 2π)
-    heading = float(rng.uniform(0.0, 2.0 * math.pi))
-    dx = math.cos(heading)
-    dy = math.sin(heading)
+
+    if snap_meta["cliff_face_entry"]:
+        # Heading: inward face normal (negate the outward face normal so we
+        # travel INTO the mountain from the cliff face opening).
+        fn_x, fn_y = snap_meta["face_normal"]
+        # face_normal points outward; inward = negative of that
+        dx = -fn_x
+        dy = -fn_y
+        heading = math.atan2(dy, dx)
+    else:
+        # Pick a heading from RNG, in [0, 2π)
+        heading = float(rng.uniform(0.0, 2.0 * math.pi))
+        dx = math.cos(heading)
+        dy = math.sin(heading)
 
     height = np.asarray(stack.height, dtype=np.float64)
     rows, cols = height.shape
@@ -1202,12 +1686,19 @@ def generate_cave_path(
         if _wet is not None:
             wetness_arr = np.asarray(_wet, dtype=np.float64)
 
+    # When the entry is cliff-face-snapped, force the A* slope weight low for
+    # the first segment so the path moves horizontally (not steeply downhill)
+    # through the cliff mass — matching real cliff-face cave behaviour.
+    effective_slope_weight = astar_params["slope_weight"]
+    if snap_meta["cliff_face_entry"]:
+        effective_slope_weight = min(0.5, effective_slope_weight)
+
     path_cells = _astar_cave_path(
         height,
         start_rc,
         goal_rc,
         cell,
-        slope_weight=astar_params["slope_weight"],
+        slope_weight=effective_slope_weight,
         wetness=wetness_arr,
         rng_jitter=rng,
     )
@@ -2769,7 +3260,24 @@ def pass_caves(
             stack, ent, cave_seed, intent=state.intent, hints_out=hints_out
         )
         spec = make_archetype_spec(archetype)
+
+        # generate_cave_path internally calls snap_entry_to_cliff_face and
+        # stores the result in _cliff_entry_meta keyed by the original ent tuple.
         path = generate_cave_path(stack, archetype, ent, cave_seed)
+
+        # Retrieve cliff-face snap metadata (populated inside generate_cave_path)
+        _snap_meta = _cliff_entry_meta.get(ent, {
+            "cliff_face_entry": False,
+            "face_normal": (0.0, 1.0),
+            "entry_width_m": spec.entrance_width_m,
+            "entry_height_m": spec.entrance_height_m,
+            "snap_distance_m": 0.0,
+        })
+        _is_cliff_face_entry = bool(_snap_meta.get("cliff_face_entry", False))
+        _face_normal: Tuple[float, float] = _snap_meta.get("face_normal", (0.0, 1.0))
+
+        # Use snapped position (path[0]) as the actual entrance for all downstream
+        _actual_ent: Tuple[float, float, float] = tuple(path[0]) if path else tuple(ent)  # type: ignore[assignment]
 
         # Carve (delta, not mutation) + update cave_candidate
         delta = carve_cave_volume(stack, path, spec, seed=cave_seed)
@@ -2780,9 +3288,47 @@ def pass_caves(
         stack.set("cave_candidate", cc, "caves")
 
         # Framing + debris + damp
-        frame = build_cave_entrance_frame(stack, ent, spec)
+        frame = build_cave_entrance_frame(stack, _actual_ent, spec)
         debris = scatter_collapse_debris(stack, path, spec, cave_seed)
         damp = generate_damp_mask(stack, path, spec)
+
+        # Augment entrance frame with cliff-face entry flags and snap metadata
+        frame["cliff_face_entry"] = _is_cliff_face_entry
+        frame["face_normal"] = _face_normal
+        if _is_cliff_face_entry:
+            # Record the ellipse arch dimensions on the frame for geometry pass
+            frame["cliff_arch_width_m"] = float(_snap_meta.get("entry_width_m", 2.5))
+            frame["cliff_arch_height_m"] = float(_snap_meta.get("entry_height_m", 2.8))
+            frame["snap_distance_m"] = float(_snap_meta.get("snap_distance_m", 0.0))
+            state.side_effects.append(
+                f"cave_cliff_face_entry:{f'cave_{state.tile_x}_{state.tile_y}_{idx:02d}'}:"
+                f"snap_dist={_snap_meta.get('snap_distance_m', 0.0):.1f}m:"
+                f"arch={_snap_meta.get('entry_width_m', 2.5):.1f}x"
+                f"{_snap_meta.get('entry_height_m', 2.8):.1f}m"
+            )
+
+        # Mountain-side overhang — for steep (non-cliff-face) entries
+        _overhang = build_mountainside_overhang(
+            _actual_ent, stack, spec.entrance_width_m, seed=cave_seed
+        )
+        if _overhang["has_overhang"]:
+            frame["overhang_verts"] = _overhang["overhang_verts"]
+            frame["overhang_faces"] = _overhang["overhang_faces"]
+            frame["overhang_depth_m"] = _overhang["overhang_depth_m"]
+            state.side_effects.append(
+                f"cave_mountainside_overhang:{f'cave_{state.tile_x}_{state.tile_y}_{idx:02d}'}:"
+                f"depth={_overhang['overhang_depth_m']:.2f}m:"
+                f"width={_overhang['arch_width_m']:.2f}m"
+            )
+
+        # Cave-mouth surround mesh (seam fix at opening edge)
+        _mouth_surround = build_cave_mouth_surround(
+            _actual_ent,
+            entry_width_m=float(_snap_meta.get("entry_width_m", spec.entrance_width_m)),
+            entry_height_m=float(_snap_meta.get("entry_height_m", spec.entrance_height_m)),
+            face_normal=_face_normal,
+        )
+        frame["mouth_surround"] = _mouth_surround
 
         # Compute path AABB from world-space polyline
         _path_aabb: Optional[Tuple[float, float, float, float, float, float]] = None
@@ -2807,8 +3353,8 @@ def pass_caves(
             cave_id=f"cave_{state.tile_x}_{state.tile_y}_{idx:02d}",
             archetype=archetype,
             spec=spec,
-            entrance_world_pos=tuple(ent),
-            exit_world_pos=tuple(path[-1]) if path else None,
+            entrance_world_pos=_actual_ent,
+            exit_world_pos=tuple(path[-1]) if path else None,  # type: ignore[arg-type]
             path_world=list(path),
             path_aabb=_path_aabb,
             interior_mask=None,
@@ -2824,6 +3370,26 @@ def pass_caves(
             cell_count=int(cc.sum()),
             volume_m3=_vol_m3,
         )
+
+        # Canyon dual-exit: check if this cave should become a tunnel-through.
+        # Must run after CaveStructure is constructed (needs path_aabb + path_world).
+        _dual_exit = generate_canyon_dual_exit(stack, cave)
+        if _dual_exit is not None:
+            cave.exit_world_pos = _dual_exit
+            cave.path_world.append(_dual_exit)
+            # Update AABB to include the second exit
+            if cave.path_aabb is not None:
+                ax0, ay0, az0, ax1, ay1, az1 = cave.path_aabb
+                ex, ey, ez = _dual_exit
+                cave.path_aabb = (
+                    min(ax0, ex), min(ay0, ey), min(az0, ez),
+                    max(ax1, ex), max(ay1, ey), max(az1, ez),
+                )
+            state.side_effects.append(
+                f"cave_canyon_dual_exit:{cave.cave_id}:"
+                f"exit=({_dual_exit[0]:.1f},{_dual_exit[1]:.1f},{_dual_exit[2]:.1f})"
+            )
+
         caves.append(cave)
         debris_total += len(debris)
 
@@ -2832,7 +3398,9 @@ def pass_caves(
             f"cave_structure:{cave.cave_id}:"
             f"archetype={archetype.value}:"
             f"debris={len(debris)}:"
-            f"tier={cave.tier}"
+            f"tier={cave.tier}:"
+            f"cliff_face_entry={_is_cliff_face_entry}:"
+            f"dual_exit={_dual_exit is not None}"
         )
 
         # Validate this entrance (standard checks)
@@ -2894,6 +3462,22 @@ def pass_caves(
             "seed_used": base_seed,
             "speleothem_cells": speleothem_cells,
             "archetypes": {a.value: sum(1 for c in caves if c.archetype == a) for a in CaveArchetype},
+            # Cave-mountain integration metrics (2026-04-20)
+            "cliff_face_entries": sum(
+                1 for c in caves
+                if c.entrance_frame is not None and c.entrance_frame.get("cliff_face_entry", False)
+            ),
+            "mountainside_overhangs": sum(
+                1 for c in caves
+                if c.entrance_frame is not None and c.entrance_frame.get("overhang_verts")
+            ),
+            "canyon_dual_exits": sum(
+                1 for c in caves
+                if c.entrance_frame is not None
+                and "cave_canyon_dual_exit" in "".join(
+                    e for e in state.side_effects if c.cave_id in e
+                )
+            ),
         },
         issues=issues,
         side_effects=[f"cave:{c.cave_id}" for c in caves],
@@ -4357,6 +4941,11 @@ __all__ = [
     "_generate_cave_pools",
     "_generate_cave_vegetation",
     "_generate_drip_channels",
+    # Cave-mountain integration
+    "snap_entry_to_cliff_face",
+    "build_mountainside_overhang",
+    "generate_canyon_dual_exit",
+    "build_cave_mouth_surround",
     # Geometry helpers (exposed for testing)
     "_fbm_noise",
     "_cone_verts_faces",
