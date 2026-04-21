@@ -1909,6 +1909,518 @@ def scatter_collapse_debris(
 
 
 # ---------------------------------------------------------------------------
+# Natural props — speleothem pairs, mineral deposits, cave pools,
+# cave vegetation hints, drip channel geometry
+# ---------------------------------------------------------------------------
+
+
+def _generate_speleothem_pairs(
+    wall_height: float,
+    chamber_width: float,
+    chamber_depth: float,
+    stalactite_positions: List[Tuple[float, float, float]],
+    seed: int,
+) -> List[Dict]:
+    """Return prop dicts for stalactite/stalagmite pairs and merged columns.
+
+    For every supplied stalactite position (ceiling attachment point):
+    - 60% chance: generate a matching stalagmite directly below it on the floor
+      (floor_z = 0.0 in chamber-local space).
+    - When stalactite_length + stalagmite_length >= (ceiling_z - floor_z) - 0.3m:
+      merge both into a COLUMN prop (full cylinder, radius 0.08–0.15 m).
+    - Otherwise emit separate "stalactite" and "stalagmite" dicts.
+
+    Character scale reference: 1.8 m player height.  Stalactites that descend
+    more than 1.8 m below the ceiling apex become a sight-line obstruction —
+    this is intentional for AAA cave readability (Elden Ring, God of War).
+
+    Args:
+        wall_height            : Chamber vault height in meters (floor to apex).
+        chamber_width, _depth  : Chamber half-axes (XY) — used to keep
+                                 speleothems inside the chamber footprint.
+        stalactite_positions   : List of (world_x, world_y, ceiling_z) tuples
+                                 for each stalactite's ceiling attachment.
+        seed                   : Deterministic integer seed.
+
+    Returns:
+        List of prop dicts with keys:
+          ``prop_type``  : "stalactite" | "stalagmite" | "column"
+          ``world_pos``  : (x, y, z) — base of the prop in world/local space
+          ``tip_pos``    : (x, y, z) — tip of the prop (downward for stalactite,
+                          upward for stalagmite, same as world_pos for column)
+          ``radius_m``   : base radius in meters
+          ``length_m``   : total length / height in meters
+          ``normal``     : outward normal (0,0,-1 for stalactite, 0,0,1 for
+                          stalagmite/column — ceiling vs. floor attachment)
+    """
+    rng = np.random.default_rng(int(seed ^ 0xA1B2C3D4) & 0xFFFFFFFF)
+    floor_z = 0.0
+    props: List[Dict] = []
+
+    # Dreybrodt growth constants mirroring _build_chamber_mesh_geometry
+    h = float(wall_height)
+    rx = float(chamber_width) * 0.5
+    ry = float(chamber_depth) * 0.5
+    _A = 0.35 * h
+    _k = 0.028 * min(rx, ry)
+    _alpha = 2.0 / 3.0
+
+    def _dreybrodt(t_age: float) -> Tuple[float, float]:
+        t_age = max(0.01, min(1.0, float(t_age)))
+        length = _A * (t_age ** _alpha)
+        radius = _k * (length ** 0.4)
+        length = max(length, h * 0.04)
+        radius = max(radius, min(rx, ry) * 0.015)
+        return length, radius
+
+    for cx, cy, cz in stalactite_positions:
+        # Each stalactite's age drives its dimensions
+        stac_age = float(rng.uniform(0.3, 1.0))
+        stac_len, stac_r = _dreybrodt(stac_age)
+
+        stac_tip_z = cz - stac_len
+        gap = cz - floor_z           # ceiling-to-floor clearance at this XY
+
+        props.append({
+            "prop_type": "stalactite",
+            "world_pos": (cx, cy, cz),          # ceiling attachment
+            "tip_pos": (cx, cy, stac_tip_z),    # pointing down
+            "radius_m": round(stac_r, 4),
+            "length_m": round(stac_len, 4),
+            "normal": (0.0, 0.0, -1.0),         # hangs downward
+        })
+
+        # 60% pairing probability
+        if float(rng.uniform(0.0, 1.0)) > 0.40:
+            # Stalagmite grows upward from floor — shorter (younger, Dreybrodt)
+            stag_age = float(rng.uniform(0.1, 0.6))
+            stag_len, stag_r = _dreybrodt(stag_age)
+            stag_len *= 0.65   # stalagmites form ~65% as tall (splash accumulation)
+
+            stag_tip_z = floor_z + stag_len
+            combined = stac_len + stag_len
+
+            if combined >= gap - 0.3:
+                # Close enough to merge into a full column
+                col_r = float(rng.uniform(0.08, 0.15))
+                col_h = gap                      # floor-to-ceiling cylinder
+                props.append({
+                    "prop_type": "column",
+                    "world_pos": (cx, cy, floor_z),     # base on floor
+                    "tip_pos": (cx, cy, cz),             # reaches ceiling
+                    "radius_m": round(col_r, 4),
+                    "length_m": round(col_h, 4),
+                    "normal": (0.0, 0.0, 1.0),
+                })
+            else:
+                props.append({
+                    "prop_type": "stalagmite",
+                    "world_pos": (cx, cy, floor_z),     # floor attachment
+                    "tip_pos": (cx, cy, stag_tip_z),    # pointing up
+                    "radius_m": round(stag_r, 4),
+                    "length_m": round(stag_len, 4),
+                    "normal": (0.0, 0.0, 1.0),          # grows upward
+                })
+
+    return props
+
+
+# Mineral type colour table: (diffuse_rgb, shader_hint)
+_MINERAL_COLOURS: Dict[str, Tuple[Tuple[float, float, float], str]] = {
+    "calcite":    ((0.90, 0.87, 0.78), "cave_calcite"),      # cream/tan
+    "iron_oxide": ((0.72, 0.38, 0.18), "cave_iron_oxide"),   # orange-rust
+    "quartz":     ((0.96, 0.96, 0.97), "cave_quartz"),       # near-white
+}
+
+
+def _generate_mineral_deposits(
+    chamber_width: float,
+    chamber_depth: float,
+    wall_height: float,
+    seed: int,
+    archetype: Optional[str] = None,
+) -> List[Dict]:
+    """Return prop dicts for mineral deposit streaks on cave walls.
+
+    Each streak is a vertical band on the wall surface (outward-facing normal).
+    Placed at random azimuths around the chamber perimeter, at heights between
+    0.3 m and (wall_height - 0.5 m) off the floor.
+
+    Streak counts:
+      - KARST_SINKHOLE / SEA_GROTTO: 6–8 (wet limestone dissolves most)
+      - GLACIAL_MELT: 3–5 (ice-carved, limited mineral deposition)
+      - LAVA_TUBE: 3–5 (basaltic iron-oxide coating)
+      - FISSURE: 4–7 (quartz veins dominate)
+      - default: 3–8
+
+    Mineral type is archetype-weighted:
+      - LAVA_TUBE → iron_oxide dominant
+      - KARST / GLACIAL / SEA → calcite dominant
+      - FISSURE → quartz dominant
+      - otherwise random from all three
+
+    Returns:
+        List of prop dicts with keys:
+          ``prop_type``     : "mineral_streak"
+          ``world_pos``     : (x, y, z) — centre of the streak on the wall surface
+          ``normal``        : (nx, ny, 0) pointing outward from wall (unit length)
+          ``width_m``       : horizontal extent [0.2, 0.8] m
+          ``height_m``      : vertical extent [0.5, 2.0] m
+          ``mineral``       : "calcite" | "iron_oxide" | "quartz"
+          ``colour_rgb``    : (r, g, b) float tuple
+          ``shader_hint``   : material slot hint string
+    """
+    rng = np.random.default_rng(int(seed ^ 0xBEEF1234) & 0xFFFFFFFF)
+    rx = float(chamber_width) * 0.5
+    ry = float(chamber_depth) * 0.5
+    h = float(wall_height)
+
+    arch = str(archetype or "").lower()
+
+    # Streak count by archetype
+    if arch in ("karst_sinkhole", "sea_grotto"):
+        n_streaks = int(rng.integers(6, 9))
+    elif arch in ("lava_tube", "glacial_melt"):
+        n_streaks = int(rng.integers(3, 6))
+    elif arch == "fissure":
+        n_streaks = int(rng.integers(4, 8))
+    else:
+        n_streaks = int(rng.integers(3, 9))
+
+    # Mineral type weights by archetype
+    if arch == "lava_tube":
+        mineral_weights = [0.15, 0.70, 0.15]  # [calcite, iron_oxide, quartz]
+    elif arch in ("karst_sinkhole", "glacial_melt", "sea_grotto"):
+        mineral_weights = [0.75, 0.15, 0.10]
+    elif arch == "fissure":
+        mineral_weights = [0.15, 0.10, 0.75]
+    else:
+        mineral_weights = [0.40, 0.30, 0.30]
+
+    mineral_names = list(_MINERAL_COLOURS.keys())
+    props: List[Dict] = []
+
+    for _ in range(n_streaks):
+        # Random azimuth around the elliptical chamber perimeter
+        angle = float(rng.uniform(0.0, 2.0 * math.pi))
+        wx = rx * math.cos(angle)
+        wy = ry * math.sin(angle)
+
+        # Wall-surface normal (outward, XY plane only — walls are vertical)
+        n_len = math.sqrt(wx * wx + wy * wy) or 1.0
+        nx = wx / n_len
+        ny = wy / n_len
+
+        # Height centre of streak: keep well within wall bounds
+        streak_h = float(rng.uniform(0.5, 2.0))       # streak height [0.5, 2.0] m
+        streak_w = float(rng.uniform(0.2, 0.8))       # streak width  [0.2, 0.8] m
+        centre_z = float(rng.uniform(
+            0.3 + streak_h * 0.5,
+            max(0.6, h - 0.5 - streak_h * 0.5),
+        ))
+
+        # Mineral selection
+        idx = int(rng.choice(3, p=mineral_weights))
+        mineral_name = mineral_names[idx]
+        colour_rgb, shader_hint = _MINERAL_COLOURS[mineral_name]
+
+        props.append({
+            "prop_type": "mineral_streak",
+            "world_pos": (round(wx, 4), round(wy, 4), round(centre_z, 4)),
+            "normal": (round(nx, 6), round(ny, 6), 0.0),
+            "width_m": round(streak_w, 4),
+            "height_m": round(streak_h, 4),
+            "mineral": mineral_name,
+            "colour_rgb": colour_rgb,
+            "shader_hint": shader_hint,
+        })
+
+    return props
+
+
+def _generate_cave_pools(
+    chamber_width: float,
+    chamber_depth: float,
+    wall_height: float,
+    cave_underground_depth: float,
+    seed: int,
+    floor_center_z: float = 0.0,
+) -> List[Dict]:
+    """Return a prop dict for a cave pool when underground depth warrants it.
+
+    A pool is generated only when ``cave_underground_depth > 0.5 m``.  The pool
+    is centred near the lowest point of the chamber floor (approximated as a
+    slight inset from centre where fBm noise creates a depression).
+
+    Pool proportions relative to 1.8 m player scale (God of War reference):
+      - Radius: 0.5–2.5 m, capped at 60% of the smaller chamber half-axis.
+      - Depth: 0.2–1.5 m.
+      - Slightly phosphorescent emission hint so artists can toggle cave bioluminescence.
+
+    Args:
+        cave_underground_depth : Metres below terrain surface (from
+                                 ``cave_underground_depth`` mask channel).
+        floor_center_z         : World-Z of the chamber floor centre vertex;
+                                 pool surface sits at this Z.
+
+    Returns:
+        List with 0 or 1 dict (0 when too shallow):
+          ``prop_type``     : "cave_pool"
+          ``world_pos``     : (x, y, z) — centre of pool surface
+          ``radius_m``      : pool radius
+          ``depth_m``       : pool depth below surface
+          ``pool_z``        : world-Z of pool surface (== floor_center_z)
+          ``bottom_z``      : world-Z of flat pool bottom mesh
+          ``emission_hint`` : "phosphorescent" — material slot hint
+          ``shader_hint``   : "cave_pool_water"
+    """
+    if float(cave_underground_depth) <= 0.5:
+        return []
+
+    rng = np.random.default_rng(int(seed ^ 0xC0FFEE00) & 0xFFFFFFFF)
+    rx = float(chamber_width) * 0.5
+    ry = float(chamber_depth) * 0.5
+
+    # Pool offset: slightly off-centre toward a random direction (floor low point)
+    offset_angle = float(rng.uniform(0.0, 2.0 * math.pi))
+    offset_frac = float(rng.uniform(0.05, 0.20))  # 5–20% of smallest half-axis
+    ox = min(rx, ry) * offset_frac * math.cos(offset_angle)
+    oy = min(rx, ry) * offset_frac * math.sin(offset_angle)
+
+    max_r = min(rx, ry) * 0.60
+    radius = float(rng.uniform(0.5, min(2.5, max_r)))
+    depth = float(rng.uniform(0.2, 1.5))
+
+    pool_z = float(floor_center_z)
+    bottom_z = pool_z - depth
+
+    return [{
+        "prop_type": "cave_pool",
+        "world_pos": (round(ox, 4), round(oy, 4), round(pool_z, 4)),
+        "radius_m": round(radius, 4),
+        "depth_m": round(depth, 4),
+        "pool_z": round(pool_z, 4),
+        "bottom_z": round(bottom_z, 4),
+        "emission_hint": "phosphorescent",
+        "shader_hint": "cave_pool_water",
+    }]
+
+
+def _generate_cave_vegetation(
+    chamber_width: float,
+    chamber_depth: float,
+    cave_underground_depth: float,
+    damp_intensity: float,
+    seed: int,
+    pool_props: Optional[List[Dict]] = None,
+) -> List[Dict]:
+    """Return placement-hint dicts for cave floor moss patches and fungi clusters.
+
+    These are NOT placed as geometry by terrain_caves.py — they are scatter
+    hints consumed by the vegetation scatter system (same contract as the
+    surface scatter density-field hints).  The downstream scatter pass uses
+    ``prop_type`` to select the correct instance library.
+
+    Conditions:
+    - Moss patches: generated when ``damp_intensity > 0.35`` or a cave pool
+      exists within the chamber.  Each patch is a disc centred near a pool or
+      near a drip point (random floor position weighted toward chamber centre).
+    - Fungi clusters: generated in dark recesses (``damp_intensity > 0.25``).
+      Each cluster contains 3–7 individual mushrooms at independent positions.
+
+    All positions are in chamber-local space (XY centred at origin, Z = 0 floor).
+
+    Returns:
+        List of prop dicts:
+        Moss:
+          ``prop_type``  : "cave_moss"
+          ``world_pos``  : (x, y, 0.0) — patch centre on floor
+          ``radius_m``   : patch coverage radius [0.1, 0.4] m
+          ``normal``     : (0, 0, 1) — upward on floor surface
+
+        Fungi:
+          ``prop_type``  : "cave_fungi"
+          ``world_pos``  : (x, y, 0.0) — individual mushroom stem base
+          ``height_m``   : cap height [0.05, 0.3] m
+          ``cap_radius_m``: cap radius ≈ 0.4 × height
+          ``cluster_id`` : int — groups mushrooms into clusters for LOD
+          ``normal``     : (0, 0, 1)
+    """
+    rng = np.random.default_rng(int(seed ^ 0xD00DF00D) & 0xFFFFFFFF)
+    rx = float(chamber_width) * 0.5
+    ry = float(chamber_depth) * 0.5
+    props: List[Dict] = []
+
+    has_pool = bool(pool_props)
+    damp = float(damp_intensity)
+
+    # --- Moss patches ---
+    if damp > 0.35 or has_pool:
+        # More moss near pools; 3–8 patches
+        n_moss = int(rng.integers(3, 9)) if has_pool else int(rng.integers(1, 5))
+        for _ in range(n_moss):
+            if has_pool and float(rng.uniform(0.0, 1.0)) < 0.60:
+                # Cluster near the pool
+                pool_pos = pool_props[0]["world_pos"]  # type: ignore[index]
+                px, py = float(pool_pos[0]), float(pool_pos[1])
+                pool_r = float(pool_props[0]["radius_m"])  # type: ignore[index]
+                spread = pool_r + float(rng.uniform(0.1, 0.5))
+                angle = float(rng.uniform(0.0, 2.0 * math.pi))
+                mx = px + spread * math.cos(angle)
+                my = py + spread * math.sin(angle)
+            else:
+                # Random floor position biased toward centre
+                frac = float(rng.uniform(0.0, 0.75))
+                angle = float(rng.uniform(0.0, 2.0 * math.pi))
+                mx = rx * frac * math.cos(angle)
+                my = ry * frac * math.sin(angle)
+
+            patch_r = float(rng.uniform(0.1, 0.4))
+            props.append({
+                "prop_type": "cave_moss",
+                "world_pos": (round(mx, 4), round(my, 4), 0.0),
+                "radius_m": round(patch_r, 4),
+                "normal": (0.0, 0.0, 1.0),
+            })
+
+    # --- Fungi clusters ---
+    if damp > 0.25:
+        # 1–3 clusters in dark recesses (toward chamber perimeter, away from entrance)
+        n_clusters = int(rng.integers(1, 4))
+        for cluster_id in range(n_clusters):
+            # Recesses: mid-to-far radius (0.4–0.9 of half-axis)
+            frac = float(rng.uniform(0.4, 0.90))
+            angle = float(rng.uniform(0.0, 2.0 * math.pi))
+            cx = rx * frac * math.cos(angle)
+            cy = ry * frac * math.sin(angle)
+
+            n_fungi = int(rng.integers(3, 8))
+            for _ in range(n_fungi):
+                # Individual mushroom scatter within cluster (σ = 0.3 m)
+                fx = cx + float(rng.normal(0.0, 0.3))
+                fy = cy + float(rng.normal(0.0, 0.3))
+                f_height = float(rng.uniform(0.05, 0.30))
+                f_cap_r = f_height * float(rng.uniform(0.35, 0.55))
+                props.append({
+                    "prop_type": "cave_fungi",
+                    "world_pos": (round(fx, 4), round(fy, 4), 0.0),
+                    "height_m": round(f_height, 4),
+                    "cap_radius_m": round(f_cap_r, 4),
+                    "cluster_id": cluster_id,
+                    "normal": (0.0, 0.0, 1.0),
+                })
+
+    return props
+
+
+def _generate_drip_channels(
+    stalactite_positions: List[Tuple[float, float, float]],
+    wall_height: float,
+    seed: int,
+) -> List[Dict]:
+    """Return geometry specs for drip-water streak meshes below each stalactite.
+
+    Each stalactite gets one drip channel: a very thin triangle strip running
+    from the ceiling attachment point down to 60% of the way to the floor.  The
+    strip is 2–3 cm wide (4 vertices across) and 10 rows tall, giving a clean
+    vertical wet-streak silhouette.
+
+    UV convention for animated water shader:
+    - U: [0, 1] across the strip width (left→right).
+    - V: [0, 1] from top (ceiling) to bottom of drip (V increases downward so
+      the shader's vertical-scroll direction matches the water's fall direction).
+
+    No bpy dependency — geometry is returned as pure data dicts so the caller
+    can materialise them in Blender or export to Unity.
+
+    Args:
+        stalactite_positions : List of (world_x, world_y, ceiling_z) for each
+                               stalactite ceiling attachment point.
+        wall_height          : Chamber vault height (floor=0 reference).
+        seed                 : Deterministic seed.
+
+    Returns:
+        List of prop dicts with keys:
+          ``prop_type``  : "drip_channel"
+          ``world_pos``  : (x, y, z) — top of the channel (= stalactite base)
+          ``bottom_pos`` : (x, y, z) — bottom of the channel (60% to floor)
+          ``width_m``    : strip width [0.02, 0.03] m
+          ``vertices``   : list of (x, y, z) — 4 columns × 11 rows = 44 verts
+          ``faces``      : list of (i0, i1, i2) index triples (triangle strip)
+          ``uvs``        : list of (u, v) per-vertex (parallel to vertices)
+          ``shader_hint``: "drip_water_scroll"
+    """
+    rng = np.random.default_rng(int(seed ^ 0xE1E2E3E4) & 0xFFFFFFFF)
+    floor_z = 0.0
+    h = float(wall_height)
+    props: List[Dict] = []
+
+    N_COLS = 4    # 4 vertices across the strip width
+    N_ROWS = 11   # 10 quad rows → 11 vertex rows
+
+    for cx, cy, cz in stalactite_positions:
+        strip_w = float(rng.uniform(0.02, 0.03))   # 2–3 cm width
+        gap = cz - floor_z
+        drip_length = gap * 0.60                    # extends to 60% of ceiling-floor gap
+        bottom_z = cz - drip_length
+
+        # Orient strip: pick a random horizontal direction (the streak is always
+        # vertical but tilted slightly ±5° for natural variation)
+        orient_angle = float(rng.uniform(0.0, 2.0 * math.pi))
+        tilt_rad = float(rng.uniform(-math.radians(5.0), math.radians(5.0)))
+        # Right-vector of the strip (perpendicular to drip axis in XY plane)
+        right_x = math.cos(orient_angle)
+        right_y = math.sin(orient_angle)
+        # Tilt: small forward lean in the right-vector's perpendicular
+        fwd_x = -right_y
+        fwd_y = right_x
+
+        verts: List[Tuple[float, float, float]] = []
+        uvs_list: List[Tuple[float, float]] = []
+        faces: List[Tuple[int, ...]] = []
+
+        for row in range(N_ROWS):
+            row_t = float(row) / float(N_ROWS - 1)         # 0 at top, 1 at bottom
+            z_row = cz - drip_length * row_t               # world-Z descending
+            # Slight forward lean increases with depth (water flows outward)
+            lean = math.tan(tilt_rad) * (drip_length * row_t)
+
+            for col in range(N_COLS):
+                col_t = float(col) / float(N_COLS - 1)     # 0 left, 1 right
+                half_w = strip_w * 0.5
+                offset = (col_t - 0.5) * strip_w           # -half_w … +half_w
+                vx = cx + right_x * offset + fwd_x * lean
+                vy = cy + right_y * offset + fwd_y * lean
+                vz = z_row
+                verts.append((round(vx, 6), round(vy, 6), round(vz, 6)))
+                # UV: U across strip, V down (0=top/ceiling, 1=bottom)
+                uvs_list.append((round(col_t, 6), round(row_t, 6)))
+
+        # Build triangle strip faces (two tris per quad)
+        for row in range(N_ROWS - 1):
+            for col in range(N_COLS - 1):
+                i00 = row * N_COLS + col
+                i01 = row * N_COLS + col + 1
+                i10 = (row + 1) * N_COLS + col
+                i11 = (row + 1) * N_COLS + col + 1
+                faces.append((i00, i10, i11))
+                faces.append((i00, i11, i01))
+
+        props.append({
+            "prop_type": "drip_channel",
+            "world_pos": (round(cx, 6), round(cy, 6), round(float(cz), 6)),
+            "bottom_pos": (round(cx, 6), round(cy, 6), round(bottom_z, 6)),
+            "width_m": round(strip_w, 4),
+            "vertices": verts,
+            "faces": faces,
+            "uvs": uvs_list,
+            "shader_hint": "drip_water_scroll",
+        })
+
+    return props
+
+
+# ---------------------------------------------------------------------------
 # Damp mask
 # ---------------------------------------------------------------------------
 
@@ -3648,6 +4160,110 @@ def handle_generate_cave(params: dict) -> dict:
             archway_specs.append(alt_arch)
 
         # ------------------------------------------------------------------
+        # 7. Natural props — speleothem pairs, mineral deposits, cave pools,
+        #    cave vegetation hints, drip channel geometry.
+        # ------------------------------------------------------------------
+        # Derive stalactite ceiling attachment positions from the upper vault
+        # ring.  These mirror exactly what _build_chamber_mesh_geometry emits
+        # for its stalactite_count=6 attachments (same seed, same ring bias):
+        # we replicate the candidate selection logic here so the prop positions
+        # are co-located with the actual mesh geometry without re-parsing verts.
+        # Upper ceiling ring: ring index 0 (closest to apex), ns=16 segments.
+        _ns = 16
+        _nr = 6
+        _rx = chamber_w * 0.5
+        _ry = chamber_d * 0.5
+        _rng_stals = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+        _ceiling_pool_positions: List[Tuple[float, float, float]] = []
+        # Rings 0..(nr//2 - 1) are the "upper half" used as ceiling attachment pool
+        for _ri in range(max(1, _nr // 2)):
+            _t = 1.0 - float(_ri + 1) / float(_nr)
+            _t = max(0.0, min(1.0, _t))
+            _r_lat = math.sqrt(max(0.0, 1.0 - _t * _t))
+            _vault_z = wall_height * _t
+            for _seg in range(_ns):
+                _angle = 2.0 * math.pi * _seg / _ns
+                _vx = _rx * _r_lat * math.cos(_angle)
+                _vy = _ry * _r_lat * math.sin(_angle)
+                _ceiling_pool_positions.append((_vx, _vy, _vault_z))
+
+        _n_stals_used = min(6, len(_ceiling_pool_positions))
+        if _ceiling_pool_positions and _n_stals_used > 0:
+            _chosen_idx = _rng_stals.choice(
+                len(_ceiling_pool_positions),
+                size=_n_stals_used,
+                replace=False,
+            )
+            stalactite_positions: List[Tuple[float, float, float]] = [
+                _ceiling_pool_positions[int(i)] for i in _chosen_idx
+            ]
+        else:
+            stalactite_positions = []
+
+        # cave_underground_depth: max of mask channel (metres below surface)
+        _depth_arr = state.mask_stack.get("cave_underground_depth")
+        _cave_underground_depth = float(
+            np.asarray(_depth_arr).max()
+        ) if _depth_arr is not None else 0.0
+
+        # damp_intensity: resolve from picked archetype spec defaults
+        _arch_enum = None
+        if picked_archetype:
+            try:
+                _arch_enum = CaveArchetype(picked_archetype)
+            except ValueError:
+                pass
+        _damp_intensity = (
+            _ARCHETYPE_DEFAULTS[_arch_enum].get("damp_intensity", 0.5)
+            if _arch_enum in _ARCHETYPE_DEFAULTS
+            else 0.5
+        )
+
+        # Generate all natural prop categories
+        _speleothem_props = _generate_speleothem_pairs(
+            wall_height=wall_height,
+            chamber_width=chamber_w,
+            chamber_depth=chamber_d,
+            stalactite_positions=stalactite_positions,
+            seed=seed,
+        )
+        _mineral_props = _generate_mineral_deposits(
+            chamber_width=chamber_w,
+            chamber_depth=chamber_d,
+            wall_height=wall_height,
+            seed=seed,
+            archetype=picked_archetype,
+        )
+        _pool_props = _generate_cave_pools(
+            chamber_width=chamber_w,
+            chamber_depth=chamber_d,
+            wall_height=wall_height,
+            cave_underground_depth=_cave_underground_depth,
+            seed=seed,
+            floor_center_z=0.0,
+        )
+        _veg_props = _generate_cave_vegetation(
+            chamber_width=chamber_w,
+            chamber_depth=chamber_d,
+            cave_underground_depth=_cave_underground_depth,
+            damp_intensity=_damp_intensity,
+            seed=seed,
+            pool_props=_pool_props if _pool_props else None,
+        )
+        _drip_props = _generate_drip_channels(
+            stalactite_positions=stalactite_positions,
+            wall_height=wall_height,
+            seed=seed,
+        )
+        natural_props: List[Dict] = (
+            _speleothem_props
+            + _mineral_props
+            + _pool_props
+            + _veg_props
+            + _drip_props
+        )
+
+        # ------------------------------------------------------------------
         # 7. Assemble output.
         # ------------------------------------------------------------------
         # Floor area in cell units (compatibility with old handler shape).
@@ -3677,6 +4293,9 @@ def handle_generate_cave(params: dict) -> dict:
             # Top-level world positions for scatter/navmesh/fog-volume systems
             "entry_world_pos": list(entry_world_pos),
             "exit_world_pos": list(exit_world_pos),
+            # natural_props: all placement-hint and geometry dicts for natural
+            # cave props — consumed by the scatter + material passes.
+            "natural_props": natural_props,
             "meta": {
                 "archetype": picked_archetype or "unknown",
                 "chamber_mesh_spec": chamber_mesh_spec,
@@ -3695,6 +4314,14 @@ def handle_generate_cave(params: dict) -> dict:
                 # Carve delta (H×W float list) for the terrain geometry pass
                 # to add to stack.height; None when no caves were carved.
                 "cave_height_delta": cave_height_delta,
+                # Natural prop counts for downstream validation
+                "natural_prop_counts": {
+                    "speleothems": len(_speleothem_props),
+                    "mineral_streaks": len(_mineral_props),
+                    "cave_pools": len(_pool_props),
+                    "vegetation_hints": len(_veg_props),
+                    "drip_channels": len(_drip_props),
+                },
             },
             "error": None,
         }
@@ -3724,6 +4351,12 @@ __all__ = [
     "register_bundle_f_passes",
     "get_cave_entrance_specs",
     "handle_generate_cave",
+    # Natural prop generators (AAA cave dressing)
+    "_generate_speleothem_pairs",
+    "_generate_mineral_deposits",
+    "_generate_cave_pools",
+    "_generate_cave_vegetation",
+    "_generate_drip_channels",
     # Geometry helpers (exposed for testing)
     "_fbm_noise",
     "_cone_verts_faces",
@@ -3735,4 +4368,5 @@ __all__ = [
     # Biome/material hint tables (exposed for testing + external overrides)
     "_BIOME_ARCHETYPE_MAP",
     "_ARCHETYPE_DEFAULT_MATERIAL",
+    "_MINERAL_COLOURS",
 ]
