@@ -2120,6 +2120,38 @@ def handle_generate_terrain_tile(params: dict) -> dict:
         world_center_y=world_center_y,
     )
 
+    # Apply neighbor seam boundary conditions before erosion so the hydraulic
+    # and thermal passes cannot erode away the locked border heights.
+    # neighbor_edges is an optional dict: {"north": [...], "south": [...],
+    # "east": [...], "west": [...]} where each value is a 1-D list/array of
+    # height floats matching the tile's W (north/south) or H (east/west) size.
+    _neighbor_edges = params.get("neighbor_edges") or {}
+    if _neighbor_edges:
+        _BLEND_W = [1.0, 0.6, 0.2]
+        _H, _W = heightmap.shape
+        for _dir, _edge_raw in _neighbor_edges.items():
+            _edge = np.asarray(_edge_raw, dtype=np.float32)
+            if _dir == "north" and _edge.shape == (_W,):
+                heightmap[-1, :] = _edge
+                for _off, _w in enumerate(_BLEND_W[1:], 1):
+                    if _H - 1 - _off >= 0:
+                        heightmap[_H - 1 - _off, :] = _w * _edge + (1.0 - _w) * heightmap[_H - 1 - _off, :]
+            elif _dir == "south" and _edge.shape == (_W,):
+                heightmap[0, :] = _edge
+                for _off, _w in enumerate(_BLEND_W[1:], 1):
+                    if _off < _H:
+                        heightmap[_off, :] = _w * _edge + (1.0 - _w) * heightmap[_off, :]
+            elif _dir == "east" and _edge.shape == (_H,):
+                heightmap[:, -1] = _edge
+                for _off, _w in enumerate(_BLEND_W[1:], 1):
+                    if _W - 1 - _off >= 0:
+                        heightmap[:, _W - 1 - _off] = _w * _edge + (1.0 - _w) * heightmap[:, _W - 1 - _off]
+            elif _dir == "west" and _edge.shape == (_H,):
+                heightmap[:, 0] = _edge
+                for _off, _w in enumerate(_BLEND_W[1:], 1):
+                    if _off < _W:
+                        heightmap[:, _off] = _w * _edge + (1.0 - _w) * heightmap[:, _off]
+
     erosion_applied = False
     if erosion in ("hydraulic", "both"):
         heightmap = erode_world_heightmap(

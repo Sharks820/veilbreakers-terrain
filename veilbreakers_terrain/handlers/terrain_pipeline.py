@@ -566,6 +566,11 @@ class TerrainPassController:
         # ------------------------------------------------------------------
         # Normal execution
         # ------------------------------------------------------------------
+        # Apply neighbor seam boundary conditions before any pass runs.
+        # No-op when all edge fields on the stack are None (non-tiled runs).
+        from .terrain_chunking import apply_seam_boundary_conditions
+        apply_seam_boundary_conditions(self.state.mask_stack)
+
         results: List[PassResult] = []
         for pass_name in pass_sequence:
             res = self.run_pass(pass_name, region=region, checkpoint=checkpoint)
