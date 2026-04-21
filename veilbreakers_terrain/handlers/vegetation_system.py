@@ -973,6 +973,101 @@ def build_vegetation_placement_spec(
     }
 
 
+def build_biome_density_map(
+    stack: Any,
+    biome_name: str,
+) -> "dict[str, Any]":
+    """Build a per-species density map from a TerrainMaskStack and write it.
+
+    Reads ``stack.biome_id`` (uint8/int (H,W) array where each cell holds a
+    biome integer ID matching ``BIOME_ID_MAP``) to assign per-biome density
+    values for every species in ``BIOME_VEGETATION_SETS[biome_name]``.
+
+    The resulting ``density_map`` is a ``Dict[str, np.ndarray]`` where:
+      - keys are species type strings (e.g. ``"tree"``, ``"fern"``, ``"rock"``)
+      - values are float32 (H, W) arrays: density probability for that species
+        at each cell, derived from the biome definition for cells that belong
+        to ``biome_name`` (all other cells get 0.0).
+
+    Writes the map to ``stack.detail_density`` via
+    ``stack.set("detail_density", density_map, "vegetation_system")`` so that
+    ``environment_scatter.py`` can read it without a fallback.
+
+    Parameters
+    ----------
+    stack : TerrainMaskStack
+        Tile mask stack to read ``biome_id`` from and write ``detail_density``
+        to.  Must have a populated ``height`` field; ``biome_id`` may be None
+        (function returns an empty map in that case).
+    biome_name : str
+        Primary biome key into ``BIOME_VEGETATION_SETS``.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        The density map written to the stack (may be empty if ``biome_id`` is
+        not populated or ``biome_name`` is unknown).
+    """
+    if np is None:
+        return {}
+
+    if biome_name not in BIOME_VEGETATION_SETS:
+        return {}
+
+    h_arr = np.asarray(stack.height, dtype=np.float32)
+    H, W = h_arr.shape
+
+    biome_id_arr = getattr(stack, "biome_id", None)
+
+    # Collect all species entries across categories for this biome.
+    biome = BIOME_VEGETATION_SETS[biome_name]
+    all_entries: list[dict] = []
+    for category in ("trees", "ground_cover", "rocks"):
+        for entry in biome.get(category, []):
+            all_entries.append(entry)
+
+    if not all_entries:
+        return {}
+
+    density_map: dict[str, Any] = {}
+
+    if biome_id_arr is not None:
+        # Determine which cells belong to this biome.
+        # biome_id is a numeric ID; look up biome_name in BIOME_ID_MAP if it
+        # exists, otherwise treat all cells as belonging to this biome.
+        bid_arr = np.asarray(biome_id_arr)
+        biome_id_map: dict[str, int] = getattr(stack, "BIOME_ID_MAP", None) or {}
+        numeric_id = biome_id_map.get(biome_name)
+        if numeric_id is not None and bid_arr.shape == (H, W):
+            biome_mask = (bid_arr == numeric_id).astype(np.float32)
+        else:
+            # biome_id populated but no numeric mapping — treat full tile as
+            # this biome (caller may supply a single-biome tile).
+            biome_mask = np.ones((H, W), dtype=np.float32)
+    else:
+        # No biome_id: assume entire tile is this biome.
+        biome_mask = np.ones((H, W), dtype=np.float32)
+
+    for entry in all_entries:
+        species_key = entry.get("style", entry["type"])
+        density_val = float(entry.get("density", 0.0))
+        # Each cell's density = biome_mask * species_density_value.
+        # Cells outside this biome get 0.0 density.
+        density_arr = (biome_mask * density_val).astype(np.float32)
+        # When multiple entries share the same species key, accumulate (cap at 1.0).
+        if species_key in density_map:
+            density_map[species_key] = np.clip(
+                density_map[species_key] + density_arr, 0.0, 1.0
+            )
+        else:
+            density_map[species_key] = density_arr
+
+    if density_map:
+        stack.set("detail_density", density_map, "vegetation_system")
+
+    return density_map
+
+
 def scatter_biome_vegetation(
     params: dict,
 ) -> dict:
@@ -1022,6 +1117,10 @@ def scatter_biome_vegetation(
             return the placement spec dict directly (for testing / export).
         camera_position (list of 3 floats, optional): Reference player/camera
             position for LOD tier distance calculations.
+        stack (TerrainMaskStack, optional): When provided, biome-defined density
+            values are written to ``stack.detail_density`` via
+            ``build_biome_density_map`` so that environment_scatter.py reads
+            the correct per-biome densities instead of falling back to defaults.
 
     Returns dict with: name, instance_count, vegetation_types, biome, season,
                        lod_distribution, species_density.
@@ -1029,6 +1128,10 @@ def scatter_biome_vegetation(
     biome_name = params.get("biome_name")
     if not biome_name:
         raise ValueError("'biome_name' is required")
+
+    # Optional TerrainMaskStack — when provided, biome density is written to
+    # stack.detail_density so environment_scatter.py reads real values.
+    _mask_stack = params.get("stack")
 
     min_distance = float(params.get("min_distance", 3.0))
     seed = int(params.get("seed", 42))
@@ -1152,6 +1255,10 @@ def scatter_biome_vegetation(
         if adjacent_biome:
             spec["adjacent_biome"] = adjacent_biome
             spec["ecotone_blend_width"] = ecotone_blend_width
+
+        # Write biome density to stack so environment_scatter reads real values.
+        if _mask_stack is not None:
+            build_biome_density_map(_mask_stack, biome_name)
 
         return spec
 
@@ -1314,5 +1421,9 @@ def scatter_biome_vegetation(
     if adjacent_biome:
         result["adjacent_biome"] = adjacent_biome
         result["ecotone_blend_width"] = ecotone_blend_width
+
+    # Write biome density to stack so environment_scatter reads real values.
+    if _mask_stack is not None:
+        build_biome_density_map(_mask_stack, biome_name)
 
     return result

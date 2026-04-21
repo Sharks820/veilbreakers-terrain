@@ -1093,15 +1093,55 @@ def run_twelve_step_world_terrain(
     road_specs: List[Dict[str, Any]] = []
     world_road_mask = np.zeros(world_eroded.shape, dtype=np.uint8)
     world_road_sdf = np.zeros(world_eroded.shape, dtype=np.float32)
-    try:
-        road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(
-            world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed,
-            rock_hardness=None,   # TODO Phase 7: pass stack.rock_hardness when available
-            water_surface=None,   # TODO Phase 7: pass stack.water_surface when available
-        )
-    except Exception as exc:
-        errors["9_apply_road_carve"] = str(exc)
-        _log.warning("Step 9 road carve failed, continuing without roads: %s", exc)
+
+    # Routing gate: skip Step 9 entirely when no waypoints are defined.
+    # This prevents phantom road geometry on worlds with no road intent.
+    _road_waypoints = getattr(intent, "road_waypoints", None) or []
+    _road_anchors = getattr(intent, "anchors", ()) or ()
+    _has_road_intent = bool(_road_waypoints) or len(_road_anchors) >= 2
+
+    if not _has_road_intent:
+        _log.info("Step 9 skipped: no road_waypoints and fewer than 2 anchors")
+    else:
+        # Derive world-level cost-map inputs from already-computed erosion data.
+        # rock_hardness: cells eroded less than average are harder (>0.7 = hard rock).
+        #   Estimate via normalised erosion delta: delta = pre_eroded - post_eroded.
+        #   High delta → soft; low delta → hard. Invert and normalise to [0,1].
+        _world_rock_hardness: "np.ndarray | None" = None
+        try:
+            _delta = np.asarray(world_hmap, dtype=np.float32) - np.asarray(world_eroded, dtype=np.float32)
+            _delta_min = float(_delta.min())
+            _delta_range = float(_delta.max()) - _delta_min
+            if _delta_range > 1e-8:
+                # Invert: low erosion → high hardness
+                _world_rock_hardness = np.clip(
+                    1.0 - (_delta - _delta_min) / _delta_range, 0.0, 1.0
+                ).astype(np.float32)
+        except Exception:
+            pass
+
+        # water_surface: positive flow_accumulation (normalised) marks water cells.
+        _world_water_surface: "np.ndarray | None" = None
+        try:
+            _flow_acc_raw = world_flow.get("flow_accumulation") if isinstance(world_flow, dict) else None
+            if _flow_acc_raw is not None:
+                _flow_acc = np.asarray(_flow_acc_raw, dtype=np.float32)
+                if _flow_acc.shape == world_eroded.shape:
+                    _acc_max = float(_flow_acc.max())
+                    if _acc_max > 0.0:
+                        _world_water_surface = np.clip(_flow_acc / _acc_max, 0.0, 1.0)
+        except Exception:
+            pass
+
+        try:
+            road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(
+                world_eroded, intent, tile_grid_x, tile_grid_y, cell_size, seed,
+                rock_hardness=_world_rock_hardness,
+                water_surface=_world_water_surface,
+            )
+        except Exception as exc:
+            errors["9_apply_road_carve"] = str(exc)
+            _log.warning("Step 9 road carve failed, continuing without roads: %s", exc)
 
     # Step 10 — per-tile extraction (from carved world heightmap)
     sequence.append("10_per_tile_extract")

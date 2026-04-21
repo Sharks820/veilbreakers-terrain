@@ -589,6 +589,95 @@ def build_tile_seam_contract(
     }
 
 
+def apply_seam_boundary_conditions(stack: Any) -> None:
+    """Lock tile border rows/cols to neighbor edge values with a 3-cell blend.
+
+    Reads the ``north_edge``, ``south_edge``, ``east_edge``, ``west_edge``
+    fields on a ``TerrainMaskStack`` (populated via
+    ``stack.import_neighbor_edge()``) and enforces them on ``stack.height``
+    so that erosion, materials, and scatter passes see a continuous surface
+    across tile boundaries.
+
+    Border enforcement:
+      - ``north_edge`` (shape ``(W,)``): locks ``height[-1, :]`` to the
+        neighbor's value (last row = north border of this tile).
+      - ``south_edge`` (shape ``(W,)``): locks ``height[0, :]``.
+      - ``east_edge``  (shape ``(H,)``): locks ``height[:, -1]``.
+      - ``west_edge``  (shape ``(H,)``): locks ``height[:, 0]``.
+
+    After locking the border row/col a 3-cell weighted blend is applied
+    inward from the border so interior values transition smoothly rather
+    than stepping abruptly:
+
+        weights = [1.0, 0.6, 0.2]  (border cell → interior)
+
+    The blend blends each locked border cell toward the original interior
+    value using linear interpolation:
+        ``blended[i] = w * border_val + (1 - w) * original[i]``
+
+    Only edges where the corresponding field is not ``None`` are modified.
+    The function uses ``object.__setattr__`` to bypass the stack's
+    provenance-warning guard (same pattern as ``import_neighbor_edge``).
+
+    Parameters
+    ----------
+    stack : TerrainMaskStack
+        Tile stack to enforce seam conditions on.  Modified in-place.
+    """
+    import numpy as _np
+
+    h = _np.asarray(stack.height, dtype=np.float32).copy()
+    H, W = h.shape
+    _BLEND_WEIGHTS = [1.0, 0.6, 0.2]
+
+    north_edge = getattr(stack, "north_edge", None)
+    if north_edge is not None:
+        edge = _np.asarray(north_edge, dtype=np.float32)
+        if edge.shape == (W,):
+            # Lock border row
+            h[-1, :] = edge
+            # Blend 3 inner rows
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                row = H - 1 - offset
+                if row >= 0:
+                    h[row, :] = w * edge + (1.0 - w) * h[row, :]
+
+    south_edge = getattr(stack, "south_edge", None)
+    if south_edge is not None:
+        edge = _np.asarray(south_edge, dtype=np.float32)
+        if edge.shape == (W,):
+            h[0, :] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                row = offset
+                if row < H:
+                    h[row, :] = w * edge + (1.0 - w) * h[row, :]
+
+    east_edge = getattr(stack, "east_edge", None)
+    if east_edge is not None:
+        edge = _np.asarray(east_edge, dtype=np.float32)
+        if edge.shape == (H,):
+            h[:, -1] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                col = W - 1 - offset
+                if col >= 0:
+                    h[:, col] = w * edge + (1.0 - w) * h[:, col]
+
+    west_edge = getattr(stack, "west_edge", None)
+    if west_edge is not None:
+        edge = _np.asarray(west_edge, dtype=np.float32)
+        if edge.shape == (H,):
+            h[:, 0] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                col = offset
+                if col < W:
+                    h[:, col] = w * edge + (1.0 - w) * h[:, col]
+
+    # Write back via object.__setattr__ to avoid provenance-guard warning;
+    # the height field itself is the authoritative terrain surface — this
+    # is an in-place correction, not a new channel write.
+    object.__setattr__(stack, "height", h)
+
+
 def build_tile_batch_manifest(
     tile_contracts: list[dict[str, Any]],
     *,
