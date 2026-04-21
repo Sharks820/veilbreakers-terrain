@@ -1466,6 +1466,190 @@ def generate_foam_mask(
 
 
 # ---------------------------------------------------------------------------
+# Physical foam composite — 5 distinct turbulence sources (AAA upgrade)
+# ---------------------------------------------------------------------------
+
+
+def compute_physical_foam_composite(
+    stack: TerrainMaskStack,
+    waterfall_foam: np.ndarray,
+    lip_mask: np.ndarray,
+) -> np.ndarray:
+    """Compute a physically correct foam placement mask from 5 sources.
+
+    Sources (Witcher 3 / Horizon Zero Dawn reference):
+        1. Rapid foam   — high slope + high accumulation
+        2. Bend foam    — centrifugal turbulence at flow direction curvature
+        3. Waterfall-base foam — cells within 5 m downstream of lip candidates
+        4. Shoreline foam — wave action at water_surface edges
+        5. Waterfall chain foam — passed in as ``waterfall_foam`` (already computed)
+
+    All sources are combined with np.maximum (strongest source wins) then
+    Gaussian-smoothed at σ=1.5 cells.
+
+    Args:
+        stack: TerrainMaskStack with at minimum ``height`` populated.  Uses
+               ``flow_accumulation``, ``flow_direction``, ``slope``,
+               ``waterfall_lip_candidate``, and ``water_surface`` when available.
+        waterfall_foam: Pre-computed per-chain waterfall foam mask (H×W float32).
+        lip_mask: Waterfall lip candidate mask (H×W float32, confidence scores).
+
+    Returns:
+        (H×W) float32 composite foam mask in [0, 1].
+    """
+    try:
+        from scipy.ndimage import gaussian_filter, binary_dilation  # type: ignore
+        _have_scipy = True
+    except ImportError:
+        _have_scipy = False
+
+    h = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = h.shape
+
+    # ------------------------------------------------------------------
+    # Source 1: Rapid foam — slope > 0.15 with significant flow
+    # Formula: clip((slope - 0.15) / 0.1, 0, 1) * clip(log(fa+1) / 8.0, 0, 1)
+    # ------------------------------------------------------------------
+    fa_arr = stack.flow_accumulation
+    sl_arr = stack.slope
+
+    if sl_arr is not None and fa_arr is not None:
+        sl = np.asarray(sl_arr, dtype=np.float64)
+        fa = np.asarray(fa_arr, dtype=np.float64)
+        slope_term = np.clip((sl - 0.15) / 0.1, 0.0, 1.0)
+        acc_term = np.clip(np.log(fa + 1.0) / 8.0, 0.0, 1.0)
+        rapid_foam = (slope_term * acc_term).astype(np.float32)
+    elif sl_arr is not None:
+        sl = np.asarray(sl_arr, dtype=np.float64)
+        rapid_foam = np.clip((sl - 0.15) / 0.1, 0.0, 1.0).astype(np.float32)
+    else:
+        # Derive slope from height gradient
+        dh_r, dh_c = np.gradient(h, float(stack.cell_size))
+        sl = np.sqrt(dh_r ** 2 + dh_c ** 2)
+        rapid_foam = np.clip((sl - 0.15) / 0.1, 0.0, 1.0).astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Source 2: Bend foam — |∇(flow_direction)| captures centrifugal turbulence
+    # Only activated in river cells (flow_accumulation > 50)
+    # ------------------------------------------------------------------
+    fd_arr = stack.flow_direction
+    fa_arr2 = stack.flow_accumulation
+
+    if fd_arr is not None:
+        fd = np.asarray(fd_arr, dtype=np.float64)
+        dfd_r, dfd_c = np.gradient(fd)
+        bend = np.sqrt(dfd_r ** 2 + dfd_c ** 2)
+        # Normalise: maximum expected direction change is π (0→7 → ~180° wrap)
+        bend_norm = np.clip(bend / math.pi * 2.0, 0.0, 1.0)
+        if fa_arr2 is not None:
+            river_mask = (np.asarray(fa_arr2, dtype=np.float64) > 50.0)
+        else:
+            river_mask = np.ones((rows, cols), dtype=bool)
+        bend_foam = (bend_norm * river_mask).astype(np.float32)
+    else:
+        bend_foam = np.zeros((rows, cols), dtype=np.float32)
+
+    # ------------------------------------------------------------------
+    # Source 3: Waterfall-base foam — dilate lip candidates 5 cells downstream
+    # Uses D8 flow_direction to steer dilation; falls back to isotropic when absent.
+    # ------------------------------------------------------------------
+    lip_binary = (lip_mask > 0.0)
+
+    if fd_arr is not None and np.any(lip_binary):
+        fd_int = np.asarray(fd_arr, dtype=np.int32)
+        # Walk 5 steps downstream from each lip cell, seeding a foam grid
+        wf_base = np.zeros((rows, cols), dtype=np.float32)
+        wf_base[lip_binary] = 1.0
+        current = lip_binary.copy()
+        for _step in range(5):
+            next_cells = np.zeros((rows, cols), dtype=bool)
+            rr, cc = np.where(current)
+            for r, c in zip(rr.tolist(), cc.tolist()):
+                d = int(fd_int[r, c])
+                if d < 0 or d >= len(_D8_OFFSETS):
+                    continue
+                dr, dc = _D8_OFFSETS[d]
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    wf_base[nr, nc] = max(float(wf_base[nr, nc]), 1.0)
+                    next_cells[nr, nc] = True
+            current = next_cells
+        wf_foam = wf_base
+    elif np.any(lip_binary) and _have_scipy:
+        struct = np.ones((11, 11), dtype=bool)  # ~5-cell isotropic dilation
+        wf_foam = binary_dilation(lip_binary, structure=struct).astype(np.float32)
+    else:
+        wf_foam = np.zeros((rows, cols), dtype=np.float32)
+
+    # ------------------------------------------------------------------
+    # Source 4: Shoreline foam — 3-cell band at water_surface boundary
+    # Detect edges where water_surface > 0 AND any neighbour == 0.
+    # ------------------------------------------------------------------
+    ws_arr = getattr(stack, "water_surface", None)
+
+    if ws_arr is not None:
+        ws = np.asarray(ws_arr, dtype=np.float32)
+        wet = ws > 0.0
+        # Edge: wet cell with at least one dry neighbour
+        if _have_scipy:
+            edge = wet & ~binary_dilation(wet, iterations=1)
+            # Alternatively: cells at the inner boundary of the wet region
+            # Proper edge = wet but adjacent to dry
+            from scipy.ndimage import binary_erosion  # type: ignore
+            inner = binary_erosion(wet, iterations=1)
+            edge = wet & ~inner
+            shore_seed = binary_dilation(edge, iterations=3).astype(np.float32)
+        else:
+            # Manual 3-cell dilation via 7×7 window
+            from numpy.lib.stride_tricks import sliding_window_view  # noqa
+            pad = 3
+            padded = np.pad(wet.astype(np.uint8), pad, mode="constant", constant_values=0)
+            any_dry_neighbour = np.zeros((rows, cols), dtype=bool)
+            for dr in range(-1, 2):
+                for dc in range(-1, 2):
+                    if dr == 0 and dc == 0:
+                        continue
+                    shifted = padded[pad + dr: pad + dr + rows, pad + dc: pad + dc + cols]
+                    any_dry_neighbour |= (shifted == 0)
+            edge = wet & any_dry_neighbour
+            # Expand 3 cells
+            shore_seed = edge.copy().astype(np.uint8)
+            for _ in range(3):
+                padded_s = np.pad(shore_seed, 1, mode="constant", constant_values=0)
+                expanded = np.zeros_like(shore_seed)
+                for dr in range(-1, 2):
+                    for dc in range(-1, 2):
+                        expanded = np.maximum(
+                            expanded,
+                            padded_s[1 + dr: 1 + dr + rows, 1 + dc: 1 + dc + cols],
+                        )
+                shore_seed = expanded
+            shore_seed = shore_seed.astype(np.float32)
+
+        shore_foam = shore_seed * 0.6
+    else:
+        shore_foam = np.zeros((rows, cols), dtype=np.float32)
+
+    # ------------------------------------------------------------------
+    # Source 5: Waterfall chain foam (passed in — already Gaussian-blurred)
+    # ------------------------------------------------------------------
+    wf_chain_foam = np.asarray(waterfall_foam, dtype=np.float32)
+
+    # ------------------------------------------------------------------
+    # Composite: strongest source wins, then smooth
+    # ------------------------------------------------------------------
+    composite = np.maximum(rapid_foam, bend_foam)
+    composite = np.maximum(composite, wf_foam)
+    composite = np.maximum(composite, shore_foam)
+    composite = np.maximum(composite, wf_chain_foam)
+
+    if _have_scipy:
+        composite = gaussian_filter(composite, sigma=1.5).astype(np.float32)
+
+    return np.clip(composite, 0.0, 1.0).astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
 # Velocity field — AAA req #6: float2 per cell for Unity water shader
 # ---------------------------------------------------------------------------
 
@@ -1808,10 +1992,10 @@ def pass_waterfalls(
     _preview_stack = replace(stack, height=_h_preview)
 
     # 4. Accumulate foam + mist masks across chains
-    foam = np.zeros(h_shape, dtype=np.float32)
+    wf_chain_foam = np.zeros(h_shape, dtype=np.float32)
     mist = np.zeros(h_shape, dtype=np.float32)
     for chain in chains:
-        foam = np.maximum(foam, generate_foam_mask(chain, _preview_stack))
+        wf_chain_foam = np.maximum(wf_chain_foam, generate_foam_mask(chain, _preview_stack))
         mist = np.maximum(
             mist,
             generate_mist_zone(
@@ -1820,6 +2004,10 @@ def pass_waterfalls(
                 wind_direction_rad=wind_direction_rad,
             )
         )
+
+    # 4b. Upgrade foam to physically correct 5-source composite:
+    #     rapids, flow-bend, waterfall-base dilation, shoreline, waterfall-chain.
+    foam = compute_physical_foam_composite(stack, wf_chain_foam, lip_mask)
 
     # 5. Velocity field (AAA req #6 — float2 channel for Unity water shader)
     vel_field = np.zeros((*h_shape, 2), dtype=np.float32)
@@ -1873,7 +2061,7 @@ def pass_waterfalls(
 
     stack.set("waterfall_pool_delta", pool_delta.astype(np.float32), "waterfalls")
     stack.set("waterfall_lip_candidate", lip_mask, "waterfalls")
-    stack.set("foam", foam, "waterfalls")
+    stack.set("foam", foam, "water_foam_pass")
     stack.set("mist", mist, "waterfalls")
     stack.set("wet_rock", wet_rock, "waterfalls")
     # AAA req #6: export velocity field as float2 channel
