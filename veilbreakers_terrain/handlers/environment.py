@@ -71,6 +71,7 @@ from .terrain_waterfalls_volumetric import (  # noqa: E402
     enforce_functional_object_naming,
 )
 from ._water_network import WaterNetwork  # noqa: E402
+from .road_network import compute_road_network  # noqa: E402
 from .terrain_semantics import TerrainMaskStack, WorldHeightTransform  # noqa: E402
 
 
@@ -1817,7 +1818,11 @@ def handle_generate_terrain(params: dict) -> dict:
             "scale": noise_scale,
             "world_origin_x": float(object_location[0]) - float(scale) * 0.5,
             "world_origin_y": float(object_location[1]) - float(scale) * 0.5,
+            "composition_hints": dict(params.get("composition_hints") or {}),
+            "quality_profile": str(params.get("quality_profile", "production")),
         }
+        if params.get("viewport_vantage") is not None:
+            controller_params["viewport_vantage"] = params.get("viewport_vantage")
         pipeline = ["macro_world", "structural_masks"]
         controller_apply_caves = bool(params.get("controller_apply_caves", False))
         if erosion in ("hydraulic", "thermal", "both") or cave_candidates:
@@ -1841,6 +1846,8 @@ def handle_generate_terrain(params: dict) -> dict:
             pipeline.append("integrate_deltas")
         if params.get("cliff_overlays", True):
             pipeline.append("cliffs")
+        if ("caves" in pipeline or "cliffs" in pipeline) and "emit_overhang_meshes" not in pipeline:
+            pipeline.append("emit_overhang_meshes")
         pipeline.append("validation_minimal")
         controller_params["pipeline"] = pipeline
 
@@ -2614,29 +2621,36 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     # Scene read (accept any non-None value as satisfying the requirement)
     scene_read_raw = params.get("scene_read")
     scene_read: Optional[TerrainSceneRead] = None
+    viewport_vantage = params.get("viewport_vantage")
     if scene_read_raw is not None:
-        raw_cave_candidates = scene_read_raw.get("cave_candidates", ()) or ()
-        cave_candidates: list[tuple[float, float, float]] = []
-        for entry in raw_cave_candidates:
-            if not isinstance(entry, (list, tuple)) or len(entry) < 2:
-                continue
-            cx = float(entry[0])
-            cy = float(entry[1])
-            cz = float(entry[2]) if len(entry) >= 3 else 0.0
-            cave_candidates.append((cx, cy, cz))
-        scene_read = TerrainSceneRead(
-            timestamp=float(scene_read_raw.get("timestamp", 0.0)),
+        from .terrain_scene_read import capture_scene_read, get_extended_metadata
+
+        scene_read = capture_scene_read(
+            reviewer=str(scene_read_raw.get("reviewer", "unknown")),
+            focal_point_hint=tuple(scene_read_raw.get("focal_point", (0.0, 0.0, 0.0))),
             major_landforms=tuple(scene_read_raw.get("major_landforms", ()) or ()),
-            focal_point=tuple(scene_read_raw.get("focal_point", (0.0, 0.0, 0.0))),
-            hero_features_present=tuple(),
+            hero_features_present=tuple(scene_read_raw.get("hero_features_present", ()) or ()),
             hero_features_missing=tuple(scene_read_raw.get("hero_features_missing", ()) or ()),
-            waterfall_chains=tuple(),
-            cave_candidates=tuple(cave_candidates),
+            waterfall_chains=tuple(scene_read_raw.get("waterfall_chains", ()) or ()),
+            cave_candidates=tuple(
+                tuple(entry)
+                for entry in (scene_read_raw.get("cave_candidates", ()) or ())
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2
+            ),
             protected_zones_in_region=tuple(z.zone_id for z in protected_zones),
             edit_scope=region or region_bounds,
             success_criteria=tuple(scene_read_raw.get("success_criteria", ()) or ()),
-            reviewer=str(scene_read_raw.get("reviewer", "unknown")),
+            viewport_vantage=scene_read_raw.get("viewport_vantage", viewport_vantage),
+            addon_version=(
+                tuple(scene_read_raw.get("addon_version"))
+                if scene_read_raw.get("addon_version") is not None
+                else None
+            ),
+            terrain_content_hash=scene_read_raw.get("terrain_content_hash"),
+            lockable_anchors=tuple(scene_read_raw.get("lockable_anchors", ()) or ()),
         )
+        scene_read_ext = get_extended_metadata(scene_read) or {}
+        viewport_vantage = scene_read_ext.get("viewport_vantage", viewport_vantage)
 
     # Build or accept heightmap
     height_raw = params.get("height")
@@ -2696,6 +2710,9 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         seasonal_state=str(water_system_raw.get("seasonal_state", params.get("seasonal_state", "normal"))),
     )
 
+    composition_hints = dict(params.get("composition_hints") or {})
+    quality_profile = str(params.get("quality_profile", "production"))
+
     intent = TerrainIntentState(
         seed=seed,
         region_bounds=region_bounds,
@@ -2703,11 +2720,14 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         cell_size=cell_size,
         protected_zones=tuple(protected_zones),
         water_system_spec=water_system_spec,
+        quality_profile=quality_profile,
         erosion_profile=str(params.get("erosion_profile", "temperate")),
         scene_read=scene_read,
+        composition_hints=composition_hints,
     )
 
     state = TerrainPipelineState(intent=intent, mask_stack=mask_stack)
+    state.viewport_vantage = viewport_vantage
     try:
         state.water_network = WaterNetwork.from_heightmap(
             height,
@@ -2738,7 +2758,9 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
             ProtocolGate.rule_1_observe_before_calculate(state)
             ProtocolGate.rule_2_sync_to_user_viewport(
                 state,
-                out_of_view_ok=bool(params.get("out_of_view_ok", True)),
+                out_of_view_ok=bool(
+                    params.get("out_of_view_ok", state.viewport_vantage is None)
+                ),
             )
             ProtocolGate.rule_3_lock_reference_empties(state)
             ProtocolGate.rule_4_real_geometry_not_vertex_tricks(params)
@@ -2769,7 +2791,6 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     pass_name = params.get("pass_name")
     pipeline = params.get("pipeline")
 
-    composition_hints = params.get("composition_hints") or {}
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
 
     if pipeline is None and pass_name is None:
@@ -2780,6 +2801,19 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
 
     if pipeline is not None:
         pipeline = list(pipeline)
+        if (
+            any(pass_name in pipeline for pass_name in ("cliffs", "caves"))
+            and "emit_overhang_meshes" not in pipeline
+        ):
+            insert_at = next(
+                (
+                    idx
+                    for idx, pipeline_pass in enumerate(pipeline)
+                    if pipeline_pass.startswith("validation_")
+                ),
+                len(pipeline),
+            )
+            pipeline.insert(insert_at, "emit_overhang_meshes")
         if "validation_full" in pipeline and not unity_export_opt_out:
             insert_at = pipeline.index("validation_full")
             for prereq in ("materials_v2", "navmesh", "prepare_terrain_normals", "prepare_heightmap_raw_u16"):
@@ -3798,6 +3832,218 @@ def _point_segment_distance_2d(
     cx = ax + abx * t
     cy = ay + aby * t
     return math.hypot(px - cx, py - cy), t
+
+
+def _terrain_world_xy_to_grid_rc(
+    world_x: float,
+    world_y: float,
+    *,
+    rows: int,
+    cols: int,
+    terrain_width: float,
+    terrain_height: float,
+    terrain_origin_x: float,
+    terrain_origin_y: float,
+) -> tuple[int, int]:
+    """Inverse of ``_terrain_grid_to_world_xy`` with bounds clamping."""
+    if rows < 2 or cols < 2:
+        return 0, 0
+
+    width = max(float(terrain_width), 1e-9)
+    height = max(float(terrain_height), 1e-9)
+    row = int(round(((float(world_y) - float(terrain_origin_y)) / height + 0.5) * (rows - 1)))
+    col = int(round(((float(world_x) - float(terrain_origin_x)) / width + 0.5) * (cols - 1)))
+    return (
+        max(0, min(rows - 1, row)),
+        max(0, min(cols - 1, col)),
+    )
+
+
+def _fill_grid_path_gaps(path: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Insert unit grid steps so every path hop stays 8-connected."""
+    if len(path) < 2:
+        return [(int(r), int(c)) for r, c in path]
+
+    filled = [(int(path[0][0]), int(path[0][1]))]
+    for raw_r1, raw_c1 in path[1:]:
+        r1 = int(raw_r1)
+        c1 = int(raw_c1)
+        while abs(r1 - filled[-1][0]) > 1 or abs(c1 - filled[-1][1]) > 1:
+            r0, c0 = filled[-1]
+            step_r = 0 if r1 == r0 else (1 if r1 > r0 else -1)
+            step_c = 0 if c1 == c0 else (1 if c1 > c0 else -1)
+            filled.append((r0 + step_r, c0 + step_c))
+        if (r1, c1) != filled[-1]:
+            filled.append((r1, c1))
+    return filled
+
+
+def _extract_road_network_centerline_points(network_result: dict[str, Any]) -> list[tuple[float, float, float]]:
+    """Return an ordered world-space centreline from a road-network result."""
+    points: list[tuple[float, float, float]] = []
+
+    for route in network_result.get("routes", []) or []:
+        raw_points = route.get("points") if isinstance(route, dict) else None
+        if not raw_points:
+            continue
+        route_points = [
+            (float(pt[0]), float(pt[1]), float(pt[2]))
+            for pt in raw_points
+            if len(pt) >= 3
+        ]
+        if not route_points:
+            continue
+        if points and all(math.isclose(points[-1][axis], route_points[0][axis], abs_tol=1e-6) for axis in range(3)):
+            points.extend(route_points[1:])
+        else:
+            points.extend(route_points)
+
+    if points:
+        return points
+
+    for raw_start, raw_end, *_rest in network_result.get("segments", []) or []:
+        start = (float(raw_start[0]), float(raw_start[1]), float(raw_start[2]))
+        end = (float(raw_end[0]), float(raw_end[1]), float(raw_end[2]))
+        if not points:
+            points.append(start)
+        elif not all(math.isclose(points[-1][axis], start[axis], abs_tol=1e-6) for axis in range(3)):
+            points.append(start)
+        points.append(end)
+    return points
+
+
+def _grid_path_from_world_centerline(
+    world_points: list[tuple[float, float, float]],
+    *,
+    rows: int,
+    cols: int,
+    terrain_width: float,
+    terrain_height: float,
+    terrain_origin_x: float,
+    terrain_origin_y: float,
+) -> list[tuple[int, int]]:
+    """Project a world-space centreline onto the terrain grid."""
+    if not world_points:
+        return []
+
+    coarse_path: list[tuple[int, int]] = []
+    for world_x, world_y, _world_z in world_points:
+        rc = _terrain_world_xy_to_grid_rc(
+            world_x,
+            world_y,
+            rows=rows,
+            cols=cols,
+            terrain_width=terrain_width,
+            terrain_height=terrain_height,
+            terrain_origin_x=terrain_origin_x,
+            terrain_origin_y=terrain_origin_y,
+        )
+        if not coarse_path or rc != coarse_path[-1]:
+            coarse_path.append(rc)
+    return _fill_grid_path_gaps(coarse_path)
+
+
+def _grade_road_path_in_world_space(
+    heightmap: np.ndarray,
+    path: list[tuple[int, int]],
+    *,
+    width: int,
+    grade_strength: float,
+) -> np.ndarray:
+    """Apply the legacy road centreline grading pass in world-height space."""
+    world_heightmap = np.asarray(heightmap, dtype=np.float64)
+    if world_heightmap.ndim != 2:
+        raise ValueError("heightmap must be a 2D array")
+
+    if not path:
+        return world_heightmap.copy()
+
+    transform = WorldHeightTransform(
+        world_min=float(world_heightmap.min()) if world_heightmap.size else 0.0,
+        world_max=float(world_heightmap.max()) if world_heightmap.size else 0.0,
+    )
+    snapshot = np.clip(transform.to_normalized(world_heightmap), 0.0, 1.0)
+    result = snapshot.copy()
+    rows, cols = result.shape
+    half_w = max(int(width) // 2, 0)
+
+    for r, c in path:
+        if not (0 <= r < rows and 0 <= c < cols):
+            continue
+        target_h = float(snapshot[r, c])
+        for dr in range(-half_w, half_w + 1):
+            for dc in range(-half_w, half_w + 1):
+                nr = r + dr
+                nc = c + dc
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    dist = math.sqrt(dr * dr + dc * dc)
+                    if dist <= half_w + 0.5:
+                        falloff = 1.0 - dist / (half_w + 1.0)
+                        blend = float(grade_strength) * falloff
+                        current = float(result[nr, nc])
+                        result[nr, nc] = current * (1.0 - blend) + target_h * blend
+
+    return transform.from_normalized(np.clip(result, 0.0, 1.0))
+
+
+def _solve_road_path_with_network(
+    heightmap: np.ndarray,
+    waypoints: list[tuple[int, int]],
+    *,
+    terrain_width: float,
+    terrain_height: float,
+    terrain_origin_x: float,
+    terrain_origin_y: float,
+    cost_map: np.ndarray | None,
+    seed: int,
+    rdp_epsilon: float,
+) -> tuple[list[tuple[int, int]], dict[str, Any]]:
+    """Solve the production road route through the richer road-network path."""
+    rows, cols = heightmap.shape
+    world_waypoints: list[tuple[float, float, float]] = []
+    for raw_row, raw_col in waypoints:
+        row = max(0, min(rows - 1, int(raw_row)))
+        col = max(0, min(cols - 1, int(raw_col)))
+        world_x, world_y = _terrain_grid_to_world_xy(
+            row,
+            col,
+            rows=rows,
+            cols=cols,
+            terrain_width=terrain_width,
+            terrain_height=terrain_height,
+            terrain_origin_x=terrain_origin_x,
+            terrain_origin_y=terrain_origin_y,
+        )
+        world_waypoints.append((world_x, world_y, float(heightmap[row, col])))
+
+    network_result = compute_road_network(
+        world_waypoints,
+        seed=int(seed),
+        heightmap=np.asarray(heightmap, dtype=np.float64),
+        cost_map=cost_map,
+        use_astar=True,
+        rdp_epsilon=float(rdp_epsilon),
+        terrain_bounds=(
+            float(terrain_origin_x) - float(terrain_width) * 0.5,
+            float(terrain_origin_y) - float(terrain_height) * 0.5,
+            float(terrain_origin_x) + float(terrain_width) * 0.5,
+            float(terrain_origin_y) + float(terrain_height) * 0.5,
+        ),
+        connection_strategy="chain",
+    )
+    centerline = _extract_road_network_centerline_points(network_result)
+    path = _grid_path_from_world_centerline(
+        centerline,
+        rows=rows,
+        cols=cols,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        terrain_origin_x=terrain_origin_x,
+        terrain_origin_y=terrain_origin_y,
+    )
+    if len(path) < 2:
+        raise ValueError("road_network produced fewer than 2 grid path points")
+    return path, network_result
 
 
 def _apply_road_profile_to_heightmap(
@@ -5111,13 +5357,42 @@ def handle_generate_road(params: dict) -> dict:
                 & (_row_w[:, np.newaxis] >= pz_y0) & (_row_w[:, np.newaxis] <= pz_y1)
             )
 
-    path, graded, _ = _run_height_solver_in_world_space(
-        heightmap,
-        generate_road_path_grid,
-        waypoints=waypoints,
-        width=width, grade_strength=grade_strength, seed=seed,
-        cost_map=road_cost_map,
-    )
+    road_route_rdp_epsilon = float(params.get("rdp_epsilon", max(cell_size * 0.5, 0.75)))
+    road_routing_method = "legacy_grid"
+    try:
+        path, road_network_result = _solve_road_path_with_network(
+            heightmap,
+            waypoints,
+            terrain_width=terrain_width,
+            terrain_height=terrain_height,
+            terrain_origin_x=_ox,
+            terrain_origin_y=_oy,
+            cost_map=road_cost_map,
+            seed=seed,
+            rdp_epsilon=road_route_rdp_epsilon,
+        )
+        graded = _grade_road_path_in_world_space(
+            heightmap,
+            path,
+            width=width,
+            grade_strength=float(grade_strength),
+        )
+        road_routing_method = str(road_network_result.get("routing_method", "astar_24dir"))
+    except Exception:
+        logger.warning(
+            "Road-network route solve failed for %s; falling back to legacy grid solver",
+            terrain_name,
+            exc_info=True,
+        )
+        path, graded, _ = _run_height_solver_in_world_space(
+            heightmap,
+            generate_road_path_grid,
+            waypoints=waypoints,
+            width=width,
+            grade_strength=grade_strength,
+            seed=seed,
+            cost_map=road_cost_map,
+        )
 
     water_level_raw = params.get("water_level")
     water_level = float(water_level_raw) if water_level_raw is not None else None
@@ -5260,6 +5535,7 @@ def handle_generate_road(params: dict) -> dict:
             "road_mask_nonzero": int(road_mask.sum()),
             "terrain_cost_context_used": road_cost_map is not None,
             "terrain_cost_source": road_cost_source,
+            "road_routing_method": road_routing_method,
             "protected_cells_skipped": protected_cells_skipped,
             "affected_cells": len(path),
             "duration_seconds": round(_duration, 4),
@@ -5368,6 +5644,7 @@ def handle_generate_road(params: dict) -> dict:
         "road_mask_nonzero": int(road_mask.sum()),
         "terrain_cost_context_used": road_cost_map is not None,
         "terrain_cost_source": road_cost_source,
+        "road_routing_method": road_routing_method,
         "protected_cells_skipped": protected_cells_skipped,
         "affected_cells": len(path),
         "duration_seconds": round(_duration, 4),

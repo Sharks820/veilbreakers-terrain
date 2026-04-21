@@ -58,6 +58,7 @@ from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
 from .vegetation_lsystem import generate_billboard_impostor
 from .lod_pipeline import generate_lod_chain
+from .terrain_semantics import WorldHeightTransform
 
 logger = logging.getLogger(__name__)
 
@@ -344,10 +345,11 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
 
     heights = np.array([v.co.z for v in bm.verts], dtype=np.float64)
     bm.free()
-    height_min = heights.min() if heights.size else 0.0
-    height_max = heights.max() if heights.size else 1.0
-    height_range = max(height_max - height_min, 1e-6)
-    heightmap = ((heights - height_min) / height_range).reshape(rows, cols)
+    transform = WorldHeightTransform(
+        world_min=float(heights.min()) if heights.size else 0.0,
+        world_max=float(heights.max()) if heights.size else 1.0,
+    )
+    heightmap = transform.to_normalized(heights).reshape(rows, cols)
     dims = terrain_obj.dimensions
     terrain_width = max(float(dims.x), 1.0)
     terrain_height = max(float(dims.y), 1.0)
@@ -355,14 +357,11 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
     origin_y = float(terrain_obj.location.y)
 
     def _sample(world_x: float, world_y: float) -> float:
-        # heightmap is normalised [0, 1] via (z - height_min) / height_range.
-        # _sample_heightmap_world multiplies by height_scale, so we pass
-        # height_range — then add height_min back to reconstruct true world Z.
-        # Previously height_max was passed, which is wrong for any terrain whose
-        # minimum elevation is non-zero (BUG-R8-A4-001 fix).
+        # Sample through the explicit world-height transform so signed terrain
+        # elevations round-trip without collapsing sub-zero terrain to 0.
         normalised_z = _sample_heightmap_world(
             heightmap,
-            height_scale=height_range,
+            height_scale=transform.world_range,
             world_x=world_x,
             world_y=world_y,
             terrain_width=terrain_width,
@@ -370,7 +369,7 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
             terrain_origin_x=origin_x,
             terrain_origin_y=origin_y,
         )
-        return normalised_z + height_min
+        return float(transform.from_normalized(normalised_z))
 
     return _sample
 
@@ -552,6 +551,322 @@ def _density_reject(density_map, row_f: float, col_f: float, rng_val: float) -> 
     c = int(np.clip(col_f, 0, density_map.shape[1] - 1))
     density_val = float(np.clip(density_map[r, c], 0.0, 1.0))
     return rng_val > density_val
+
+
+def _stack_value(stack, key: str):
+    """Return a channel/property from stack when available, else None."""
+    if stack is None:
+        return None
+    val = getattr(stack, key, None)
+    if val is None and hasattr(stack, "get"):
+        try:
+            val = stack.get(key)
+        except Exception:
+            val = None
+    return val
+
+
+def _resize_scatter_map(map_raw, target_shape: tuple[int, int]) -> "np.ndarray | None":
+    """Resize a 2-D context map to target_shape using nearest-neighbor resampling."""
+    if map_raw is None:
+        return None
+    arr = np.asarray(map_raw, dtype=np.float32)
+    if arr.ndim != 2:
+        return None
+    if arr.shape != target_shape:
+        y_idx = np.round(np.linspace(0, arr.shape[0] - 1, target_shape[0])).astype(int)
+        x_idx = np.round(np.linspace(0, arr.shape[1] - 1, target_shape[1])).astype(int)
+        arr = arr[np.ix_(y_idx, x_idx)]
+    return arr.astype(np.float32, copy=False)
+
+
+def _normalize_scatter_signal(signal_raw, *, log_scale: bool = False) -> "np.ndarray | None":
+    """Normalize a scalar raster signal to [0, 1] for scatter weighting."""
+    if signal_raw is None:
+        return None
+    arr = np.asarray(signal_raw, dtype=np.float32)
+    if arr.ndim != 2:
+        return None
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    arr = np.clip(arr, 0.0, None)
+    if log_scale:
+        arr = np.log1p(arr)
+    max_val = float(arr.max()) if arr.size else 0.0
+    if max_val <= 1e-12:
+        return np.zeros_like(arr, dtype=np.float32)
+    return (arr / max_val).astype(np.float32, copy=False)
+
+
+def _scatter_base_type(vegetation_type: str) -> str:
+    """Map concrete vegetation ids back to the coarse scatter categories."""
+    if vegetation_type.startswith("grass"):
+        return "grass"
+    if vegetation_type.startswith("tree"):
+        return "tree"
+    if vegetation_type.startswith("rock"):
+        return "rock"
+    if vegetation_type.startswith(("bush", "shrub")):
+        return "bush"
+    return vegetation_type
+
+
+def _resolve_scatter_context_maps(
+    stack,
+    heightmap: np.ndarray,
+    moisture_map: "np.ndarray | None" = None,
+) -> tuple["np.ndarray | None", "np.ndarray | None"]:
+    """Resolve water/disturbance support maps for the AAA multi-pass scatter path."""
+    target_shape = tuple(heightmap.shape)
+
+    water_map = _resize_scatter_map(moisture_map, target_shape)
+    if water_map is None:
+        wetness = _resize_scatter_map(_stack_value(stack, "wetness"), target_shape)
+        if wetness is not None:
+            water_map = np.clip(wetness, 0.0, 1.0).astype(np.float32, copy=False)
+    if water_map is None:
+        water_surface = _resize_scatter_map(_stack_value(stack, "water_surface"), target_shape)
+        if water_surface is not None:
+            water_map = np.clip(water_surface, 0.0, 1.0).astype(np.float32, copy=False)
+    if water_map is None:
+        flow_acc = _resize_scatter_map(_stack_value(stack, "flow_accumulation"), target_shape)
+        if flow_acc is not None:
+            water_map = _normalize_scatter_signal(flow_acc, log_scale=True)
+
+    disturbance_map = None
+    for key in ("disturbance_patch_mask", "erosion_amount", "erosion_delta", "deposition_amount"):
+        candidate = _resize_scatter_map(_stack_value(stack, key), target_shape)
+        if candidate is None:
+            continue
+        disturbance_map = _normalize_scatter_signal(candidate)
+        if disturbance_map is not None:
+            break
+
+    return water_map, disturbance_map
+
+
+def _localize_exclusion_zones(
+    exclusion_zones_world: list[tuple[float, float, float, float]],
+    *,
+    terrain_origin_x: float,
+    terrain_origin_y: float,
+) -> list[tuple[float, float, float, float]]:
+    """Convert world-space AABBs to the centered local space used by _scatter_pass."""
+    local_zones: list[tuple[float, float, float, float]] = []
+    for min_x, min_y, max_x, max_y in exclusion_zones_world:
+        local_zones.append(
+            (
+                min_x - terrain_origin_x,
+                min_y - terrain_origin_y,
+                max_x - terrain_origin_x,
+                max_y - terrain_origin_y,
+            )
+        )
+    return local_zones
+
+
+def _resolve_combat_clearings(params: dict) -> "list[dict[str, Any]] | None":
+    """Resolve optional combat clearings for the multi-pass scatter path."""
+    clearings = params.get("combat_clearings")
+    if clearings:
+        return list(clearings)
+    clearing = params.get("combat_clearing")
+    if isinstance(clearing, dict):
+        return [clearing]
+    center = params.get("combat_clearing_center")
+    diameter = params.get("combat_clearing_diameter")
+    if center is not None and diameter is not None:
+        seed = int(params.get("combat_clearing_seed", params.get("seed", 0)))
+        num_entries = int(params.get("combat_clearing_entries", 3))
+        return [_generate_combat_clearing(tuple(center), float(diameter), num_entries=num_entries, seed=seed)]
+    return None
+
+
+def _sample_scalar_map(map_arr: np.ndarray, x_local: float, y_local: float, width: float, height: float) -> float:
+    """Nearest-neighbor scalar map sample in local [0,width] x [0,height] space."""
+    col_f = (x_local / max(width, 1e-6)) * (map_arr.shape[1] - 1)
+    row_f = (y_local / max(height, 1e-6)) * (map_arr.shape[0] - 1)
+    r = int(np.clip(row_f, 0, map_arr.shape[0] - 1))
+    c = int(np.clip(col_f, 0, map_arr.shape[1] - 1))
+    return float(map_arr[r, c])
+
+
+def _filter_multipass_scatter_placements(
+    placements_centered: list[dict[str, Any]],
+    *,
+    rules: list[dict[str, Any]],
+    terrain_width: float,
+    terrain_height: float,
+    slope_map: np.ndarray,
+    moisture_map: "np.ndarray | None",
+    max_tilt_angle: float,
+    seed: int,
+    apply_rule_density: bool,
+) -> list[dict[str, Any]]:
+    """Adapt centered/radian _scatter_pass placements to the handler's legacy contract."""
+    rng = random.Random(seed ^ 0x5CA77E2)
+    filtered: list[dict[str, Any]] = []
+
+    rule_index: dict[str, list[dict[str, Any]]] = {}
+    for rule in rules:
+        veg_type = str(rule.get("vegetation_type", "")).strip()
+        if veg_type:
+            rule_index.setdefault(veg_type, []).append(rule)
+
+    for placement in placements_centered:
+        base_type = _scatter_base_type(str(placement.get("vegetation_type", "")))
+        matching_rules = rule_index.get(base_type)
+        if not matching_rules:
+            continue
+
+        centered_x, centered_y = placement["position"]
+        local_x = centered_x + terrain_width * 0.5
+        local_y = centered_y + terrain_height * 0.5
+        if not (0.0 <= local_x <= terrain_width and 0.0 <= local_y <= terrain_height):
+            continue
+
+        altitude = float(placement.get("altitude", 0.0))
+        slope_deg = _sample_scalar_map(slope_map, local_x, local_y, terrain_width, terrain_height)
+        moisture = float(placement.get("moisture", 0.0))
+        if moisture_map is not None:
+            moisture = _sample_scalar_map(moisture_map, local_x, local_y, terrain_width, terrain_height)
+
+        chosen_rule = None
+        for rule in matching_rules:
+            min_alt = float(rule.get("min_alt", 0.0))
+            max_alt = float(rule.get("max_alt", 1.0))
+            min_slope = float(rule.get("min_slope", 0.0))
+            max_slope = min(float(rule.get("max_slope", 90.0)), float(max_tilt_angle))
+            min_moisture = float(rule.get("min_moisture", 0.0))
+            max_moisture = float(rule.get("max_moisture", 1.0))
+            if not (min_alt <= altitude <= max_alt):
+                continue
+            if not (min_slope <= slope_deg <= max_slope):
+                continue
+            if not (min_moisture <= moisture <= max_moisture):
+                continue
+            chosen_rule = rule
+            break
+
+        if chosen_rule is None:
+            continue
+
+        if apply_rule_density and rng.random() > float(chosen_rule.get("density", 1.0)):
+            continue
+
+        placement_local = dict(placement)
+        placement_local["position"] = (local_x, local_y)
+        placement_local["rotation"] = math.degrees(float(placement.get("rotation", 0.0))) % 360.0
+        placement_local["moisture"] = moisture
+        placement_local["altitude"] = altitude
+        scale_range = chosen_rule.get("scale_range")
+        if (
+            isinstance(scale_range, (tuple, list))
+            and len(scale_range) == 2
+        ):
+            scale_min = float(scale_range[0])
+            scale_max = float(scale_range[1])
+            if scale_max >= scale_min:
+                placement_local["scale"] = rng.uniform(scale_min, scale_max)
+        filtered.append(placement_local)
+
+    return filtered
+
+
+def _generate_multipass_scatter_placements(
+    *,
+    heightmap: np.ndarray,
+    slope_map: np.ndarray,
+    terrain_width: float,
+    terrain_height: float,
+    biome: str,
+    rules: list[dict[str, Any]],
+    seed: int,
+    separation_scale: float,
+    max_tilt_angle: float,
+    stack=None,
+    moisture_map: "np.ndarray | None" = None,
+    building_zones_world: "list[tuple[float, float, float, float]] | None" = None,
+    terrain_origin_x: float = 0.0,
+    terrain_origin_y: float = 0.0,
+    viewer_origin_local: "tuple[float, float] | None" = None,
+    combat_clearings: "list[dict[str, Any]] | None" = None,
+    apply_rule_density: bool = False,
+) -> list[dict[str, Any]]:
+    """Generate handler-ready vegetation placements using the richer multi-pass path."""
+    water_map, disturbance_map = _resolve_scatter_context_maps(stack, heightmap, moisture_map)
+    local_building_zones = _localize_exclusion_zones(
+        building_zones_world or [],
+        terrain_origin_x=terrain_origin_x,
+        terrain_origin_y=terrain_origin_y,
+    )
+
+    terrain_size = max(terrain_width, terrain_height, 1.0)
+    structure = _scatter_pass(
+        heightmap,
+        slope_map,
+        terrain_size=terrain_size,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        pass_type="structure",
+        biome=biome,
+        seed=seed,
+        separation_scale=separation_scale,
+        building_zones=local_building_zones,
+        combat_clearings=combat_clearings,
+        water_proximity_map=water_map,
+        disturbance_map=disturbance_map,
+        viewer_origin=viewer_origin_local,
+    )
+    tree_positions = [
+        tuple(item["position"])
+        for item in structure
+        if _scatter_base_type(str(item.get("vegetation_type", ""))) == "tree"
+    ]
+    ground_cover = _scatter_pass(
+        heightmap,
+        slope_map,
+        terrain_size=terrain_size,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        pass_type="ground_cover",
+        biome=biome,
+        seed=seed + 101,
+        separation_scale=separation_scale,
+        building_zones=local_building_zones,
+        tree_positions=tree_positions,
+        combat_clearings=combat_clearings,
+        water_proximity_map=water_map,
+        disturbance_map=disturbance_map,
+        viewer_origin=viewer_origin_local,
+    )
+    debris = _scatter_pass(
+        heightmap,
+        slope_map,
+        terrain_size=terrain_size,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        pass_type="debris",
+        biome=biome,
+        seed=seed + 202,
+        separation_scale=separation_scale,
+        building_zones=local_building_zones,
+        combat_clearings=combat_clearings,
+        water_proximity_map=water_map,
+        disturbance_map=disturbance_map,
+        viewer_origin=viewer_origin_local,
+    )
+
+    return _filter_multipass_scatter_placements(
+        structure + ground_cover + debris,
+        rules=rules,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        slope_map=slope_map,
+        moisture_map=water_map,
+        max_tilt_angle=max_tilt_angle,
+        seed=seed,
+        apply_rule_density=apply_rule_density,
+    )
 
 
 def _hero_excluded(
@@ -1144,9 +1459,14 @@ def _add_leaf_card_canopy(
         wind_layer = bm.verts.layers.float_color.new("wind_vc")
 
     # Ensure UV layer exists for leaf atlas mapping
-    uv_layer = bm.loops.layers.uv.get("UVMap")
-    if uv_layer is None:
-        uv_layer = bm.loops.layers.uv.new("UVMap")
+    uv_layer = None
+    loops = getattr(bm, "loops", None)
+    loop_layers = getattr(loops, "layers", None)
+    loop_uv = getattr(loop_layers, "uv", None)
+    if loop_uv is not None:
+        uv_layer = loop_uv.get("UVMap")
+        if uv_layer is None:
+            uv_layer = loop_uv.new("UVMap")
 
     # Leaf atlas: 4×4 grid.
     #   ROWS (V axis) = species variants: row 0=broadleaf, 1=needle, 2=palm, 3=fern/other
@@ -1192,9 +1512,10 @@ def _add_leaf_card_canopy(
             )
         try:
             face = bm.faces.new(front_verts)
-            uv_corners = _atlas_uv(age_col)
-            for loop, uv in zip(face.loops, uv_corners):
-                loop[uv_layer].uv = uv
+            if uv_layer is not None:
+                uv_corners = _atlas_uv(age_col)
+                for loop, uv in zip(face.loops, uv_corners):
+                    loop[uv_layer].uv = uv
         except ValueError:
             return
 
@@ -1215,9 +1536,10 @@ def _add_leaf_card_canopy(
             )
         try:
             back_face = bm.faces.new(back_verts)
-            uv_corners_back = _atlas_uv_flipped(age_col)
-            for loop, uv in zip(back_face.loops, uv_corners_back):
-                loop[uv_layer].uv = uv
+            if uv_layer is not None:
+                uv_corners_back = _atlas_uv_flipped(age_col)
+                for loop, uv in zip(back_face.loops, uv_corners_back):
+                    loop[uv_layer].uv = uv
         except ValueError:
             pass
 
@@ -1867,8 +2189,11 @@ def _scatter_pass(
     slope_map: np.ndarray,
     terrain_size: float,
     pass_type: str,
+    terrain_width: float | None = None,
+    terrain_height: float | None = None,
     biome: str = "default",
     seed: int = 0,
+    separation_scale: float = 1.0,
     building_zones: "list[tuple[float, float, float, float]] | None" = None,
     tree_positions: "list[tuple[float, float]] | None" = None,
     combat_clearings: "list[dict] | None" = None,
@@ -1926,7 +2251,10 @@ def _scatter_pass(
     rng = random.Random(seed)
     base_density = _BIOME_DENSITY.get(biome, 0.5)
     rows, cols = heightmap.shape
-    terrain_half = terrain_size / 2.0
+    terrain_width = float(terrain_width if terrain_width is not None else terrain_size)
+    terrain_height = float(terrain_height if terrain_height is not None else terrain_size)
+    terrain_half_x = terrain_width / 2.0
+    terrain_half_y = terrain_height / 2.0
 
     # Viewer position defaults to terrain centre
     vx, vy = viewer_origin if viewer_origin is not None else (0.0, 0.0)
@@ -1940,8 +2268,8 @@ def _scatter_pass(
     )
 
     def _cell(pos: tuple[float, float]) -> tuple[int, int]:
-        u = pos[0] / terrain_size
-        v = pos[1] / terrain_size
+        u = pos[0] / max(terrain_width, 1e-6)
+        v = pos[1] / max(terrain_height, 1e-6)
         ci = int(max(0, min(u * (cols - 1), cols - 1)))
         ri = int(max(0, min(v * (rows - 1), rows - 1)))
         return ri, ci
@@ -2023,25 +2351,25 @@ def _scatter_pass(
         # Poisson disk enforces the minimum separation globally; Lloyd relaxation
         # then redistributes the remaining candidates for uniform coverage —
         # matching GTS's 2-pass tree distribution pipeline.
-        tree_sep = _SPECIES_CONSTRAINTS["tree"]["min_sep"]
+        tree_sep = _SPECIES_CONSTRAINTS["tree"]["min_sep"] * max(float(separation_scale), 1e-3)
         _raw_tree_candidates = poisson_disk_sample(
-            terrain_size, terrain_size, tree_sep, seed=seed,
+            terrain_width, terrain_height, tree_sep, seed=seed,
         )
         tree_candidates = lloyd_relax_points(
-            _raw_tree_candidates, terrain_size, terrain_size,
+            _raw_tree_candidates, terrain_width, terrain_height,
             iterations=2, min_distance=tree_sep * 0.9,
         )
 
         # --- Bush sub-pass ---
         # Separate Poisson disk at bush min-separation (2m) with distinct seed.
-        bush_sep = _SPECIES_CONSTRAINTS["bush"]["min_sep"]
+        bush_sep = _SPECIES_CONSTRAINTS["bush"]["min_sep"] * max(float(separation_scale), 1e-3)
         bush_candidates = poisson_disk_sample(
-            terrain_size, terrain_size, bush_sep, seed=seed + 1,
+            terrain_width, terrain_height, bush_sep, seed=seed + 1,
         )
 
         for pos in tree_candidates:
-            wx = pos[0] - terrain_half
-            wy = pos[1] - terrain_half
+            wx = pos[0] - terrain_half_x
+            wy = pos[1] - terrain_half_y
             if not _passes_species_constraints("tree", pos):
                 continue
             if _in_building(wx, wy) or _in_clearing(wx, wy):
@@ -2061,8 +2389,8 @@ def _scatter_pass(
             })
 
         for pos in bush_candidates:
-            wx = pos[0] - terrain_half
-            wy = pos[1] - terrain_half
+            wx = pos[0] - terrain_half_x
+            wy = pos[1] - terrain_half_y
             if not _passes_species_constraints("bush", pos):
                 continue
             if _in_building(wx, wy) or _in_clearing(wx, wy):
@@ -2082,19 +2410,20 @@ def _scatter_pass(
             })
 
     elif pass_type == "ground_cover":
-        grass_sep = _SPECIES_CONSTRAINTS["grass"]["min_sep"]
+        grass_sep = _SPECIES_CONSTRAINTS["grass"]["min_sep"] * max(float(separation_scale), 1e-3)
         grass_candidates = poisson_disk_sample(
-            terrain_size, terrain_size, grass_sep, seed=seed + 2,
+            terrain_width, terrain_height, grass_sep, seed=seed + 2,
         )
         biome_grass = biome if biome in _GRASS_BIOME_SPECS else "prairie"
 
         # Build tree exclusion as a set of (row,col) grid cells for O(1) lookup
         tree_cell_set: set[tuple[int, int]] = set()
         if tree_positions:
-            exclusion_cells = max(1, int(1.0 / (terrain_size / max(rows, cols))))
+            cell_span = max(terrain_width / max(cols, 1), terrain_height / max(rows, 1), 1e-6)
+            exclusion_cells = max(1, int(1.0 / cell_span))
             for tx, ty in tree_positions:
-                u = (tx + terrain_half) / terrain_size
-                v = (ty + terrain_half) / terrain_size
+                u = (tx + terrain_half_x) / max(terrain_width, 1e-6)
+                v = (ty + terrain_half_y) / max(terrain_height, 1e-6)
                 ci = int(max(0, min(u * (cols - 1), cols - 1)))
                 ri = int(max(0, min(v * (rows - 1), rows - 1)))
                 for dr in range(-exclusion_cells, exclusion_cells + 1):
@@ -2104,8 +2433,8 @@ def _scatter_pass(
                         tree_cell_set.add((nr, nc))
 
         for pos in grass_candidates:
-            wx = pos[0] - terrain_half
-            wy = pos[1] - terrain_half
+            wx = pos[0] - terrain_half_x
+            wy = pos[1] - terrain_half_y
             if not _passes_species_constraints("grass", pos):
                 continue
             if building_zones:
@@ -2132,13 +2461,13 @@ def _scatter_pass(
             })
 
     elif pass_type == "debris":
-        rock_sep = _SPECIES_CONSTRAINTS["rock"]["min_sep"]
+        rock_sep = _SPECIES_CONSTRAINTS["rock"]["min_sep"] * max(float(separation_scale), 1e-3)
         rock_candidates = poisson_disk_sample(
-            terrain_size, terrain_size, rock_sep, seed=seed + 3,
+            terrain_width, terrain_height, rock_sep, seed=seed + 3,
         )
         for pos in rock_candidates:
-            wx = pos[0] - terrain_half
-            wy = pos[1] - terrain_half
+            wx = pos[0] - terrain_half_x
+            wy = pos[1] - terrain_half_y
             if not _passes_species_constraints("rock", pos):
                 continue
             if building_zones:
@@ -2215,12 +2544,14 @@ def handle_scatter_vegetation(params: dict) -> dict:
     if not terrain_name:
         raise ValueError("'terrain_name' is required")
 
-    rules = params.get("rules", _DEFAULT_VEG_RULES)
+    custom_rules_provided = params.get("rules") is not None
+    rules = params.get("rules") or _DEFAULT_VEG_RULES
     min_distance = params.get("min_distance", 3.0)
     seed = params.get("seed", 0)
     max_instances = params.get("max_instances", 5000)
     max_tilt_angle = params.get("max_tilt_angle", 45.0)
     moisture_map_raw = params.get("moisture_map", None)
+    _stack = params.get("stack")
 
     obj = bpy.data.objects.get(terrain_name)
     if obj is None:
@@ -2270,39 +2601,75 @@ def handle_scatter_vegetation(params: dict) -> dict:
     terrain_origin_x = float(obj.location.x)
     terrain_origin_y = float(obj.location.y)
 
-    # Generate scatter points
-    candidates = poisson_disk_sample(
-        terrain_width, terrain_height, min_distance, seed=seed,
-    )
-
     # Convert moisture_map to numpy array if provided
     moisture_np = None
     if moisture_map_raw is not None:
-        moisture_np = np.array(moisture_map_raw, dtype=np.float64)
-        # Resize to match heightmap if needed
-        if moisture_np.shape != heightmap.shape:
-            # Simple nearest-neighbor resize
-            y_idx = np.round(np.linspace(0, moisture_np.shape[0] - 1, rows)).astype(int)
-            x_idx = np.round(np.linspace(0, moisture_np.shape[1] - 1, cols)).astype(int)
-            moisture_np = moisture_np[np.ix_(y_idx, x_idx)]
+        moisture_np = _resize_scatter_map(moisture_map_raw, heightmap.shape)
 
-    # Filter through biome rules
-    placements = biome_filter_points(
-        candidates, heightmap, slope_map, rules,
-        terrain_size=terrain_size,
+    # Collect world-space building exclusion zones up front so the richer
+    # multi-pass scatter path can avoid them before candidate acceptance.
+    building_exclusion_zones_world: list[tuple[float, float, float, float]] = []
+    for _obj in bpy.data.objects:
+        if _obj.type == "EMPTY" and _obj.children:
+            min_x = min_y = float("inf")
+            max_x = max_y = float("-inf")
+            for _child in _obj.children:
+                if _child.type != "MESH":
+                    continue
+                bb_corners = [_child.matrix_world @ _mathutils_Vector(c) for c in _child.bound_box]
+                for corner in bb_corners:
+                    min_x = min(min_x, corner.x)
+                    max_x = max(max_x, corner.x)
+                    min_y = min(min_y, corner.y)
+                    max_y = max(max_y, corner.y)
+            if min_x < float("inf"):
+                fp_w = max(max_x - min_x, 0.1)
+                fp_d = max(max_y - min_y, 0.1)
+                margin = max(1.5, min(6.0, ((fp_w ** 2 + fp_d ** 2) ** 0.5) * 0.25))
+                building_exclusion_zones_world.append(
+                    (min_x - margin, min_y - margin, max_x + margin, max_y + margin)
+                )
+
+    biome_key = params.get("biome_name") or params.get("biome") or "default"
+    viewer_param = (
+        params.get("viewer_origin")
+        or params.get("camera_position")
+        or params.get("player_position")
+    )
+    viewer_origin_local = None
+    if isinstance(viewer_param, (tuple, list)) and len(viewer_param) >= 2:
+        viewer_origin_local = (
+            float(viewer_param[0]) - terrain_origin_x,
+            float(viewer_param[1]) - terrain_origin_y,
+        )
+
+    separation_scale = max(float(min_distance) / 3.0, 0.1)
+    combat_clearings = _resolve_combat_clearings(params)
+    placements = _generate_multipass_scatter_placements(
+        heightmap=heightmap,
+        slope_map=slope_map,
         terrain_width=terrain_width,
-        terrain_depth=terrain_height,
+        terrain_height=terrain_height,
+        biome=biome_key,
+        rules=rules,
         seed=seed,
+        separation_scale=separation_scale,
         max_tilt_angle=max_tilt_angle,
+        stack=_stack,
         moisture_map=moisture_np,
+        building_zones_world=building_exclusion_zones_world,
+        terrain_origin_x=terrain_origin_x,
+        terrain_origin_y=terrain_origin_y,
+        viewer_origin_local=viewer_origin_local,
+        combat_clearings=combat_clearings,
+        apply_rule_density=custom_rules_provided,
     )
 
     # ------------------------------------------------------------------ Fix 9.1
     # detail_density consumer: reject candidates stochastically based on
     # per-cell density multiplier from pass_vegetation_depth output.
     # ------------------------------------------------------------------ Fix 9.1
-    _stack = params.get("stack")
-    _detail_dens_raw = _stack.get("detail_density") if _stack is not None else None
+    _detail_dens_raw = _stack_value(_stack, "detail_density")
     density_map = _collapse_detail_density(_detail_dens_raw)
     if density_map is not None and len(placements) > 0:
         _rng_density = random.Random(seed ^ 0xD1CE7)
@@ -2320,56 +2687,29 @@ def handle_scatter_vegetation(params: dict) -> dict:
     # ------------------------------------------------------------------ Fix 9.3/9.4/9.11
     _road_mask = None
     if _stack is not None:
-        _road_mask = getattr(_stack, "road_mask", None)
-        if _road_mask is None and hasattr(_stack, "get"):
-            _road_mask = _stack.get("road_mask")
+        _road_mask = _stack_value(_stack, "road_mask")
     road_mask_np = np.asarray(_road_mask, dtype=np.uint8) if _road_mask is not None else None
 
     _road_sdf = None
     if _stack is not None:
-        _road_sdf = getattr(_stack, "road_sdf_dist", None)
-        if _road_sdf is None and hasattr(_stack, "get"):
-            _road_sdf = _stack.get("road_sdf_dist")
+        _road_sdf = _stack_value(_stack, "road_sdf_dist")
     road_sdf_np = np.asarray(_road_sdf, dtype=np.float32) if _road_sdf is not None else None
     placement_radius = float(params.get("road_sdf_clearance", 2.0))
 
-    _excl = _stack.get("hero_exclusion") if _stack is not None else None
+    _excl = _stack_value(_stack, "hero_exclusion")
     excl_np = np.asarray(_excl, dtype=np.float32) if _excl is not None else None
 
     # ------------------------------------------------------------------ Fix 9.5
     # wind_field consumer: read for per-placement rotation_y
     # ------------------------------------------------------------------ Fix 9.5
-    _wind = _stack.get("wind_field") if _stack is not None else None
+    _wind = _stack_value(_stack, "wind_field")
 
     # Filter out placements that overlap with building footprints or roads
     # Collect bounding boxes of all EMPTY-type objects (building parents) in scene
-    _exclusion_zones: list[tuple[float, float, float, float]] = []
-    for _obj in bpy.data.objects:
-        if _obj.type == "EMPTY" and _obj.children:
-            # ARCH-025: Estimate building footprint from actual mesh bounding box,
-            # then add a proportional clearance margin (half the diagonal, min 1.5m).
-            _min_x = _min_y = float("inf")
-            _max_x = _max_y = float("-inf")
-            for _child in _obj.children:
-                if _child.type == "MESH":
-                    _bb_corners = [_child.matrix_world @ _mathutils_Vector(c) for c in _child.bound_box]
-                    for _c in _bb_corners:
-                        _min_x = min(_min_x, _c.x)
-                        _max_x = max(_max_x, _c.x)
-                        _min_y = min(_min_y, _c.y)
-                        _max_y = max(_max_y, _c.y)
-            if _min_x < float("inf"):
-                # Proportional margin: half the footprint diagonal, clamped 1.5–6.0m
-                _fp_w = max(_max_x - _min_x, 0.1)
-                _fp_d = max(_max_y - _min_y, 0.1)
-                _margin = max(1.5, min(6.0, ((_fp_w ** 2 + _fp_d ** 2) ** 0.5) * 0.25))
-                _exclusion_zones.append((
-                    _min_x - _margin, _min_y - _margin,
-                    _max_x + _margin, _max_y + _margin,
-                ))
-
+    _exclusion_zones: list[tuple[float, float, float, float]] = list(building_exclusion_zones_world)
+    if road_mask_np is None:
         # Legacy fallback: bpy name-string road exclusion (only when road_mask channel absent)
-        if road_mask_np is None:
+        for _obj in bpy.data.objects:
             if _obj.type == "MESH" and ("road" in _obj.name.lower() or "_Road_" in _obj.name):
                 _bb = [_obj.matrix_world @ _mathutils_Vector(corner) for corner in _obj.bound_box]
                 _road_margin = 2.0  # meters buffer around road edges

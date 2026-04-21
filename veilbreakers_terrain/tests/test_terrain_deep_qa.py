@@ -127,12 +127,172 @@ def _build_state(tile_size: int = 16, seed: int = 1234):
 def test_bundle_n_registrar_is_callable():
     from blender_addon.handlers.terrain_bundle_n import (
         BUNDLE_N_MODULES,
+        BUNDLE_N_RUNTIME_CONTRACT,
         register_bundle_n_passes,
     )
 
-    register_bundle_n_passes()  # idempotent, no-op
+    contract = register_bundle_n_passes()
     assert "terrain_determinism_ci" in BUNDLE_N_MODULES
     assert len(BUNDLE_N_MODULES) == 6
+    assert contract == BUNDLE_N_RUNTIME_CONTRACT
+    assert contract["registers_passes"] is False
+    assert "compute_readability_bands" in contract["always_on_post_pipeline"]
+    assert "apply_review_blockers" in contract["always_on_post_pipeline"]
+    assert "run_determinism_check" in contract["opt_in_post_pipeline"]
+
+
+def test_bundle_n_pipeline_hooks_attach_budget_issues_and_readability(monkeypatch):
+    import blender_addon.handlers.terrain_bundle_n as bundle_n
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from blender_addon.handlers.terrain_semantics import ValidationIssue
+
+    def _fake_enforce_budget(stack, intent, budget):
+        return [
+            ValidationIssue(
+                code="BUNDLE_N_SOFT",
+                severity="soft",
+                message="soft issue",
+            ),
+            ValidationIssue(
+                code="BUNDLE_N_HARD",
+                severity="hard",
+                message="hard issue",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        bundle_n.terrain_budget_enforcer,
+        "enforce_budget",
+        _fake_enforce_budget,
+    )
+
+    state = _build_state(tile_size=8, seed=2121)
+    controller = TerrainPassController(state)
+    results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
+
+    last = results[-1]
+    assert [issue.code for issue in last.issues] == ["BUNDLE_N_SOFT", "BUNDLE_N_HARD"]
+    assert last.status == "failed"
+    assert not hasattr(last, "validation_issues")
+    assert "bundle_n" in last.metrics
+    assert "budget_report" in last.metrics["bundle_n"]
+    assert len(last.metrics["bundle_n"]["readability_band_scores"]) == 5
+
+
+def test_bundle_n_pipeline_hooks_attach_structured_budget_report():
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    state = _build_state(tile_size=8, seed=2222)
+    controller = TerrainPassController(state)
+    results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
+
+    budget_report = results[-1].metrics["bundle_n"]["budget_report"]
+    assert "lod0_tris" in budget_report
+    assert "unique_materials" in budget_report
+    assert budget_report["lod0_tris"]["current"] >= 0
+
+
+def test_bundle_n_pipeline_hooks_apply_review_blockers_from_intent():
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    state = _build_state(tile_size=8, seed=2323)
+    state.intent.composition_hints["review_blockers"] = [
+        {
+            "source": "human",
+            "location": [1.0, 2.0, 3.0],
+            "message": "Hero cliff silhouette still blocks the focal read.",
+            "suggested_fix": "Smooth the silhouette around the camera lane.",
+            "affected_feature": "hero_cliff",
+        }
+    ]
+    state.intent.composition_hints["review_suggestions"] = [
+        {
+            "source": "ai",
+            "message": "Smooth waterfall framing and erosion transition.",
+            "suggested_fix": "Smooth the waterfall shoulder.",
+            "affected_feature": "waterfall",
+        }
+    ]
+
+    controller = TerrainPassController(state)
+    results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
+
+    last = results[-1]
+    assert last.status == "failed"
+    assert any(issue.code == "review_blocker:hero_cliff" for issue in last.issues)
+    assert any(side_effect.startswith("review_blocker:hero_cliff:") for side_effect in state.side_effects)
+    assert last.metrics["bundle_n"]["review_blocker_count"] == 1
+    assert "pass_smooth_height" in last.metrics["bundle_n"]["review_suggested_passes"]
+
+
+def test_bundle_n_pipeline_opt_in_records_telemetry_and_golden():
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    state = _build_state(tile_size=8, seed=3131)
+    with tempfile.TemporaryDirectory() as td:
+        telemetry_path = Path(td) / "telemetry.ndjson"
+        golden_dir = Path(td) / "goldens"
+        state.intent.composition_hints["bundle_n_runtime"] = {
+            "telemetry_path": str(telemetry_path),
+            "golden_output_dir": str(golden_dir),
+            "golden_snapshot_id": "bundle_n_runtime_test",
+        }
+
+        controller = TerrainPassController(state, checkpoint_dir=Path(td) / "ckpt")
+        results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
+
+        bundle_n_metrics = results[-1].metrics["bundle_n"]
+        assert telemetry_path.exists()
+        assert (golden_dir / "bundle_n_runtime_test.golden.json").exists()
+        parsed = json.loads(telemetry_path.read_text().strip().splitlines()[0])
+        assert parsed["extra"]["bundle_n_post_pipeline"] is True
+        assert bundle_n_metrics["telemetry_path"] == str(telemetry_path)
+        assert bundle_n_metrics["golden_snapshot_id"] == "bundle_n_runtime_test"
+
+
+def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
+    monkeypatch,
+):
+    import blender_addon.handlers.terrain_bundle_n as bundle_n
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    captured = {}
+
+    def _fake_run_determinism_check(controller, seed, runs=3, *, pass_sequence=None):
+        captured["seed"] = seed
+        captured["runs"] = runs
+        captured["pass_sequence"] = tuple(pass_sequence or ())
+        captured["baseline_hash"] = controller.state.mask_stack.compute_hash()
+        captured["skip_post_pipeline_hooks"] = controller.state.intent.composition_hints[
+            "bundle_n_runtime"
+        ]["skip_post_pipeline_hooks"]
+        return {
+            "deterministic": True,
+            "run_count": runs,
+            "suspect_passes": [],
+        }
+
+    monkeypatch.setattr(
+        bundle_n.terrain_determinism_ci,
+        "run_determinism_check",
+        _fake_run_determinism_check,
+    )
+
+    state = _build_state(tile_size=8, seed=4141)
+    baseline_hash = state.mask_stack.compute_hash()
+    state.intent.composition_hints["bundle_n_runtime"] = {"determinism_runs": 2}
+
+    controller = TerrainPassController(state)
+    results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
+
+    bundle_n_metrics = results[-1].metrics["bundle_n"]
+    assert captured["seed"] == 4141
+    assert captured["runs"] == 2
+    assert captured["pass_sequence"] == ("macro_world",)
+    assert captured["baseline_hash"] == baseline_hash
+    assert captured["skip_post_pipeline_hooks"] is True
+    assert bundle_n_metrics["deterministic"] is True
+    assert bundle_n_metrics["determinism_run_count"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +462,18 @@ def test_budget_usage_computes_per_axis():
     assert "tri_count" in usage
     assert "npz_mb" in usage
     assert usage["tri_count"]["current"] > 0
+
+
+def test_budget_resolve_uses_quality_profile_defaults():
+    from blender_addon.handlers.terrain_budget_enforcer import resolve_budget
+
+    state = _build_state(tile_size=8)
+    object.__setattr__(state.intent, "quality_profile", "mobile")
+
+    budget = resolve_budget(intent=state.intent)
+    assert budget.max_tri_lod0 == 100_000
+    assert budget.max_unique_materials == 4
+    assert budget.max_scatter_instances == 250
 
 
 def test_budget_enforce_clean_tile_no_issues():

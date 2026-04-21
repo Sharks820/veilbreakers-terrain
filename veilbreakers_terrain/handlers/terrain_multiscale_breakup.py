@@ -85,10 +85,10 @@ def pass_multiscale_breakup(
     state: TerrainPipelineState,
     region: Optional[BBox],
 ) -> PassResult:
-    """Bundle K pass: compute multi-scale breakup noise (read-only consumer).
+    """Bundle K pass: compute multi-scale breakup noise for downstream roughness.
 
     Consumes: height
-    Produces: (nothing — roughness_variation is owned by terrain_roughness_driver, Fix 7.18)
+    Produces: roughness_breakup
     """
     from .terrain_pipeline import derive_pass_seed
 
@@ -105,16 +105,14 @@ def pass_multiscale_breakup(
         region,
     )
     breakup = compute_multiscale_breakup(stack, scales_m=scales, seed=seed)
-
-    # roughness_variation is written only by terrain_roughness_driver (Fix 7.18)
-    # This pass computes a local breakup value but does not write back to the stack.
+    stack.set("roughness_breakup", breakup, "multiscale_breakup")
 
     return PassResult(
         pass_name="multiscale_breakup",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=(),
+        produced_channels=("roughness_breakup",),
         metrics={
             "scales_m": list(scales),
             "breakup_min": float(breakup.min()),
@@ -135,10 +133,10 @@ def register_bundle_k_multiscale_breakup_pass() -> None:
             name="multiscale_breakup",
             func=pass_multiscale_breakup,
             requires_channels=("height",),
-            produces_channels=(),
+            produces_channels=("roughness_breakup",),
             seed_namespace="multiscale_breakup",
             requires_scene_read=False,
-            description="Bundle K: 3-scale noise breakup (read-only; roughness_variation owned by roughness_driver)",
+            description="Bundle K: 3-scale breakup noise feeding the roughness driver",
         )
     )
 

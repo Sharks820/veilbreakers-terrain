@@ -14,6 +14,7 @@ Covers:
 
 from __future__ import annotations
 
+import math
 import tempfile
 from pathlib import Path
 
@@ -108,6 +109,45 @@ def _build_state(height: np.ndarray, *, include_scene_read: bool = True, seed: i
         scene_read=scene_read,
     )
     return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+def _build_manual_chain():
+    from blender_addon.handlers.terrain_waterfalls import (
+        ImpactPool,
+        LipCandidate,
+        WaterfallChain,
+    )
+
+    return WaterfallChain(
+        chain_id="manual",
+        lip=LipCandidate(
+            world_position=(15.0, 6.0, 30.0),
+            upstream_drainage=1200.0,
+            downstream_drop_m=26.0,
+            flow_direction_rad=math.pi,
+            confidence_score=0.9,
+        ),
+        plunge_path=(
+            (15.0, 6.0, 30.0),
+            (15.0, 10.0, 20.0),
+            (15.0, 14.0, 10.0),
+            (15.0, 18.0, 4.0),
+        ),
+        pool=ImpactPool(
+            world_position=(15.0, 18.0, 4.0),
+            radius_m=1.0,
+            max_depth_m=2.0,
+            outflow_direction_rad=math.pi,
+            discharge_m3s=1.5,
+            drop_height_m=26.0,
+        ),
+        outflow=((15.0, 18.0, 4.0), (15.0, 22.0, 3.0), (15.0, 26.0, 2.5)),
+        mist_radius_m=6.0,
+        foam_intensity=0.9,
+        total_drop_m=26.0,
+        drop_segments=(26.0,),
+        flow_azimuth_rad=math.pi,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +422,103 @@ def test_generate_foam_mask_peaks_at_pool():
     from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
     pr, pc = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
     assert foam[pr, pc] == pytest.approx(foam.max(), rel=1e-5)
+
+
+def test_generate_foam_mask_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch):
+    import blender_addon.handlers._water_network_ext as water_ext
+    from blender_addon.handlers.terrain_waterfalls import generate_foam_mask
+
+    stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
+    chain = _build_manual_chain()
+    sentinel = np.zeros_like(stack.height, dtype=np.float32)
+    sentinel[2, 2] = 0.37
+
+    monkeypatch.setattr(
+        water_ext,
+        "compute_foam_mask",
+        lambda chain_arg, stack_arg: sentinel.copy(),
+    )
+
+    foam = generate_foam_mask(chain, stack)
+    assert foam[2, 2] == pytest.approx(0.37)
+
+
+def test_generate_foam_mask_preserves_plunge_path_turbulence_when_ext_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import blender_addon.handlers._water_network_ext as water_ext
+    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from blender_addon.handlers.terrain_waterfalls import generate_foam_mask
+
+    stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
+    chain = _build_manual_chain()
+
+    monkeypatch.setattr(
+        water_ext,
+        "compute_foam_mask",
+        lambda chain_arg, stack_arg: np.zeros_like(stack.height, dtype=np.float32),
+    )
+
+    foam = generate_foam_mask(chain, stack)
+    turb_r, turb_c = _world_to_grid(stack, chain.plunge_path[1][0], chain.plunge_path[1][1])
+    pool_r, pool_c = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
+
+    assert abs(turb_r - pool_r) >= 4
+    assert foam[turb_r, turb_c] > 0.0
+
+
+def test_generate_mist_zone_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch):
+    import blender_addon.handlers._water_network_ext as water_ext
+    from blender_addon.handlers.terrain_waterfalls import generate_mist_zone
+
+    stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
+    chain = _build_manual_chain()
+    sentinel = np.zeros_like(stack.height, dtype=np.float32)
+    sentinel[2, 2] = 0.41
+    seen: dict[str, float] = {}
+
+    def _fake_compute_mist_mask(
+        chain_arg,
+        stack_arg,
+        mist_height_range: float = 20.0,
+        wind_direction_rad: float = 0.0,
+        wind_speed_ms: float = 3.0,
+    ):
+        seen["wind_direction_rad"] = float(wind_direction_rad)
+        seen["wind_speed_ms"] = float(wind_speed_ms)
+        return sentinel.copy()
+
+    monkeypatch.setattr(water_ext, "compute_mist_mask", _fake_compute_mist_mask)
+
+    mist = generate_mist_zone(chain, stack, wind_factor=1.0, wind_direction_rad=0.0)
+    assert mist[2, 2] == pytest.approx(0.41)
+    assert seen["wind_speed_ms"] == pytest.approx(3.0)
+    assert seen["wind_direction_rad"] == pytest.approx(math.pi * 0.5)
+
+
+def test_generate_mist_zone_preserves_downstream_bias_when_ext_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import blender_addon.handlers._water_network_ext as water_ext
+    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from blender_addon.handlers.terrain_waterfalls import generate_mist_zone
+
+    stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
+    chain = _build_manual_chain()
+
+    monkeypatch.setattr(
+        water_ext,
+        "compute_mist_mask",
+        lambda chain_arg, stack_arg, **kwargs: np.zeros_like(stack.height, dtype=np.float32),
+    )
+
+    mist = generate_mist_zone(chain, stack)
+    pool_r, pool_c = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
+    ds_row = -math.cos(chain.pool.outflow_direction_rad)
+    ds_col = math.sin(chain.pool.outflow_direction_rad)
+    downstream_r = pool_r + int(round(ds_row * 4.0))
+    downstream_c = pool_c + int(round(ds_col * 4.0))
+    upstream_r = pool_r - int(round(ds_row * 4.0))
+    upstream_c = pool_c - int(round(ds_col * 4.0))
+
+    assert mist[downstream_r, downstream_c] > mist[upstream_r, upstream_c]

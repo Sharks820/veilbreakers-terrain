@@ -1447,6 +1447,45 @@ def build_cave_mouth_surround(
     }
 
 
+def _build_cave_entry_mesh_specs(caves: List["CaveStructure"]) -> List[Dict]:
+    """Persist cave mouth surround and overhang geometry as mesh specs."""
+    mesh_specs: List[Dict] = []
+    for cave in caves:
+        frame = cave.entrance_frame or {}
+        overhang_verts = list(frame.get("overhang_verts") or [])
+        overhang_faces = list(frame.get("overhang_faces") or [])
+        if overhang_verts and overhang_faces:
+            mesh_specs.append(
+                {
+                    "mesh_id": f"{cave.cave_id}_overhang",
+                    "mesh_type": "cave_overhang",
+                    "cave_id": cave.cave_id,
+                    "tier": cave.tier,
+                    "material_hint": "cave_entry_overhang",
+                    "vertices": overhang_verts,
+                    "faces": overhang_faces,
+                }
+            )
+
+        mouth_surround = frame.get("mouth_surround") or {}
+        surround_verts = list(mouth_surround.get("verts") or [])
+        surround_faces = list(mouth_surround.get("faces") or [])
+        if surround_verts and surround_faces:
+            mesh_specs.append(
+                {
+                    "mesh_id": f"{cave.cave_id}_mouth_surround",
+                    "mesh_type": "cave_mouth_surround",
+                    "cave_id": cave.cave_id,
+                    "tier": cave.tier,
+                    "material_hint": "cave_entry_ring",
+                    "vertices": surround_verts,
+                    "faces": surround_faces,
+                    "uvs": list(mouth_surround.get("uvs") or []),
+                }
+            )
+    return mesh_specs
+
+
 # ---------------------------------------------------------------------------
 # Path generation
 # ---------------------------------------------------------------------------
@@ -3440,6 +3479,8 @@ def pass_caves(
             stalagmite_acc = np.maximum(stalagmite_acc, stags)
     stack.set("cave_stalactite_length", stalactite_acc, "caves")
     stack.set("cave_stalagmite_length", stalagmite_acc, "caves")
+    cave_mesh_specs = _build_cave_entry_mesh_specs(caves)
+    stack.set("cave_mesh_specs", cave_mesh_specs, "caves")
 
     hard_issues = [i for i in issues if i.is_hard()]
     status = "ok" if not hard_issues else "warning"
@@ -3454,6 +3495,7 @@ def pass_caves(
         produced_channels=(
             "cave_candidate", "wet_rock", "cave_height_delta",
             "cave_wall_texture", "cave_stalactite_length", "cave_stalagmite_length",
+            "cave_mesh_specs",
         ),
         metrics={
             "cave_count": len(caves),
@@ -3471,6 +3513,7 @@ def pass_caves(
                 1 for c in caves
                 if c.entrance_frame is not None and c.entrance_frame.get("overhang_verts")
             ),
+            "cave_mesh_spec_count": len(cave_mesh_specs),
             "canyon_dual_exits": sum(
                 1 for c in caves
                 if c.entrance_frame is not None
@@ -3500,6 +3543,7 @@ def register_bundle_f_passes() -> None:
                 "cave_wall_texture",
                 "cave_stalactite_length",
                 "cave_stalagmite_length",
+                "cave_mesh_specs",
             ),
             seed_namespace="caves",
             requires_scene_read=True,
@@ -4947,6 +4991,7 @@ __all__ = [
     "build_mountainside_overhang",
     "generate_canyon_dual_exit",
     "build_cave_mouth_surround",
+    "_build_cave_entry_mesh_specs",
     # Geometry helpers (exposed for testing)
     "_fbm_noise",
     "_cone_verts_faces",

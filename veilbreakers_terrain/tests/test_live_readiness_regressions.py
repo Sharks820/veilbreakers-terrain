@@ -79,6 +79,19 @@ def test_apply_seam_boundary_conditions_respects_cardinal_rows():
     np.testing.assert_allclose(stack.height[-1, :], 2.0)
 
 
+def test_apply_seam_boundary_conditions_can_target_low_freq_channel():
+    from veilbreakers_terrain.handlers.terrain_chunking import apply_seam_boundary_conditions
+
+    stack = _make_stack()
+    stack.set("hmap_low_freq", np.zeros((5, 5), dtype=np.float32), "test")
+    object.__setattr__(stack, "east_edge", np.full((5,), 3.0, dtype=np.float32))
+
+    apply_seam_boundary_conditions(stack, channels=("hmap_low_freq",))
+
+    np.testing.assert_allclose(stack.hmap_low_freq[:, -1], 3.0)
+    np.testing.assert_allclose(stack.height, 0.0)
+
+
 def test_validate_tile_seam_continuity_accepts_cardinal_neighbor_keys():
     from veilbreakers_terrain.handlers.terrain_validation import (
         validate_tile_seam_continuity,

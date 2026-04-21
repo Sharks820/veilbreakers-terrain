@@ -1004,6 +1004,17 @@ def pass_stratigraphy(
             width_range_m=(w_min, w_max),
             albedo_iron_stain_strength=iron_strength,
         )
+    else:
+        stack.set(
+            "intrusion_mask",
+            np.zeros_like(np.asarray(stack.height, dtype=np.float32)),
+            "stratigraphy",
+        )
+        stack.set(
+            "albedo_shift_rgb",
+            np.zeros((*np.asarray(stack.height).shape, 3), dtype=np.float32),
+            "stratigraphy",
+        )
 
     # --- 7. Strata cross-section JSON export ------------------------------
     cross_section = export_strata_cross_section(stack, strat_stack)

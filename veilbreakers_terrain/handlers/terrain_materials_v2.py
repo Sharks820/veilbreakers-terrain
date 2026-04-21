@@ -26,6 +26,7 @@ from .terrain_semantics import (
     BBox,
     PassDefinition,
     PassResult,
+    ValidationIssue,
     TerrainMaskStack,
     TerrainPipelineState,
 )
@@ -716,6 +717,71 @@ def compute_slope_material_weights(
     return weights.astype(np.float32)
 
 
+_DEFAULT_HEIGHT_BLEND_GAMMAS = {
+    "ground": 0.95,
+    "cliff": 1.15,
+    "scree": 0.85,
+    "wet_rock": 0.70,
+    "snow": 2.20,
+}
+
+
+def _resolve_height_blend_gammas(
+    rules: MaterialRuleSet,
+    hints: dict,
+) -> Tuple[float, ...]:
+    overrides = hints.get("material_height_blend_gamma") or {}
+    gammas = []
+    for ch in rules.channels:
+        gamma = overrides.get(
+            ch.channel_id,
+            _DEFAULT_HEIGHT_BLEND_GAMMAS.get(ch.channel_id, 1.0),
+        )
+        try:
+            gammas.append(max(float(gamma), 1e-6))
+        except (TypeError, ValueError):
+            gammas.append(1.0)
+    return tuple(gammas)
+
+
+def _build_material_channel_exts(
+    rules: MaterialRuleSet,
+    hints: dict,
+):
+    from .terrain_materials_ext import MaterialChannelExt
+
+    gamma_map = dict(zip(
+        (ch.channel_id for ch in rules.channels),
+        _resolve_height_blend_gammas(rules, hints),
+    ))
+    density_overrides = hints.get("material_texel_density_m") or {}
+    hero_ids = {
+        str(cid)
+        for cid in (hints.get("hero_material_ids") or ())
+    }
+    channels = []
+    for ch in rules.channels:
+        default_density = 512.0 if ch.triplanar else 256.0
+        if ch.channel_id in hero_ids:
+            default_density = max(default_density, 1024.0)
+        density_raw = density_overrides.get(ch.channel_id, default_density)
+        try:
+            texel_density = float(density_raw)
+        except (TypeError, ValueError):
+            texel_density = default_density
+        channels.append(
+            MaterialChannelExt(
+                base=ch,
+                height_blend_gamma=gamma_map[ch.channel_id],
+                texel_density_m=texel_density,
+                roughness=ch.roughness,
+                metallic=ch.metallic,
+                triplanar=ch.triplanar,
+            )
+        )
+    return channels
+
+
 # ---------------------------------------------------------------------------
 # Pass wiring
 # ---------------------------------------------------------------------------
@@ -752,7 +818,40 @@ def pass_materials(
     if rules is None:
         rules = default_dark_fantasy_rules()
 
+    hints: dict = {}
+    if state.intent is not None:
+        hints = state.intent.composition_hints or {}
+
     new_weights = compute_slope_material_weights(stack, rules)
+    issues: list[ValidationIssue] = []
+    warnings: list[ValidationIssue] = []
+
+    from .terrain_materials_ext import (
+        compute_height_blended_weights,
+        validate_cliff_silhouette_area,
+        validate_texel_density_coherency,
+    )
+
+    material_exts = _build_material_channel_exts(rules, hints)
+    height_blend_gammas = tuple(ch.height_blend_gamma for ch in material_exts)
+    if any(abs(gamma - 1.0) > 1e-6 for gamma in height_blend_gammas):
+        new_weights = compute_height_blended_weights(new_weights, stack.height, height_blend_gammas)
+
+    texel_issues = validate_texel_density_coherency(
+        material_exts,
+        max_ratio=float(hints.get("material_texel_density_max_ratio", 2.0)),
+    )
+    for issue in texel_issues:
+        (issues if issue.is_hard() else warnings).append(issue)
+
+    hero_cliff_coverage = hints.get("hero_cliff_pixel_coverage_fraction")
+    if hero_cliff_coverage is not None:
+        for issue in validate_cliff_silhouette_area(hero_cliff_coverage, tier="hero"):
+            (issues if issue.is_hard() else warnings).append(issue)
+    secondary_cliff_coverage = hints.get("secondary_cliff_pixel_coverage_fraction")
+    if secondary_cliff_coverage is not None:
+        for issue in validate_cliff_silhouette_area(secondary_cliff_coverage, tier="secondary"):
+            (issues if issue.is_hard() else warnings).append(issue)
 
     # Region scoping: preserve existing weights outside the region
     if region is not None:
@@ -790,14 +889,29 @@ def pass_materials(
     }
     for i, c in enumerate(rules.channels):
         metrics[f"coverage_{c.channel_id}"] = float(per_layer_coverage[i])
+    metrics["height_blend_enabled"] = True
+    metrics["height_blend_gammas"] = {
+        c.channel_id: float(g)
+        for c, g in zip(rules.channels, height_blend_gammas)
+    }
+    metrics["texel_density_issue_count"] = len(texel_issues)
+    metrics["material_warning_count"] = len(warnings)
+
+    status = "ok"
+    if issues:
+        status = "failed"
+    elif warnings:
+        status = "warning"
 
     return PassResult(
         pass_name="materials_v2",
-        status="ok",
+        status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("slope", "height"),
         produced_channels=("splatmap_weights_layer", "material_weights"),
         metrics=metrics,
+        issues=issues,
+        warnings=warnings,
     )
 
 

@@ -1340,33 +1340,13 @@ def build_outflow_channel(
 # ---------------------------------------------------------------------------
 
 
-def generate_mist_zone(
+def _generate_directional_mist_zone(
     chain: WaterfallChain,
     stack: TerrainMaskStack,
     wind_factor: float = 1.0,
     wind_direction_rad: float = 0.0,
 ) -> np.ndarray:
-    """Populate a mist zone mask downstream of the waterfall plunge pool.
-
-    AAA mist zone spec (God of War / Horizon Forbidden West reference):
-    - Ellipse extending 10-20m downstream from the plunge pool (wind-carried spray).
-      Major axis = downstream direction from pool along outflow bearing.
-      Major semi-axis = lerp(10m, 20m, saturate(H/30)) * wind_factor.
-    - Minor axis (cross-stream width) = 1.5 x river_width at the Strahler order
-      inferred from pool discharge via hydraulic geometry W = 1.5 * sqrt(Q).
-    - Intensity within ellipse: exp(-ellip_r) where ellip_r is normalised
-      elliptic distance (1.0 at ellipse boundary).
-    - Vertical attenuation: mist thins above pool elevation.
-    - Hard cutoff at 1.5x ellipse to bound the mask.
-
-    Args:
-        chain: Solved waterfall chain (pool position, outflow bearing, total_drop_m,
-               pool.discharge_m3s for river-width estimation).
-        stack: Terrain mask stack.
-        wind_factor: Wind speed multiplier; scales major semi-axis (> 1 = more travel).
-        wind_direction_rad: Wind bearing in radians (0 = North). Ellipse centre is
-            nudged 10% of major axis upwind so spray blows back toward the fall.
-    """
+    """Legacy local mist field used to preserve downstream waterfall shaping."""
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cs = float(stack.cell_size)
@@ -1436,24 +1416,60 @@ def generate_mist_zone(
     return mist
 
 
+def _north_cw_to_east_ccw_angle(angle_rad: float) -> float:
+    """Convert cartographic (0=north, clockwise-positive) to math-style wind angle."""
+    converted = (math.pi * 0.5) - float(angle_rad)
+    return math.atan2(math.sin(converted), math.cos(converted))
+
+
+def generate_mist_zone(
+    chain: WaterfallChain,
+    stack: TerrainMaskStack,
+    wind_factor: float = 1.0,
+    wind_direction_rad: float = 0.0,
+) -> np.ndarray:
+    """Populate production mist by composing the richer ext plume with local shaping.
+
+    The shared `_water_network_ext.compute_mist_mask` supplies the richer
+    wind-advected plume + valley pooling model.  We retain the existing
+    downstream ellipse from this module so the production mask keeps its
+    waterfall-local outflow bias and vertical attenuation.
+    """
+    from ._water_network_ext import compute_mist_mask
+
+    local_mist = _generate_directional_mist_zone(
+        chain,
+        stack,
+        wind_factor=wind_factor,
+        wind_direction_rad=wind_direction_rad,
+    )
+    richer_mist = compute_mist_mask(
+        chain,
+        stack,
+        wind_direction_rad=_north_cw_to_east_ccw_angle(wind_direction_rad),
+        wind_speed_ms=max(0.0, 3.0 * float(wind_factor)),
+    )
+    mist = np.maximum(local_mist, richer_mist).astype(np.float32)
+    rows, cols = mist.shape
+    pool_r, pool_c = _world_to_grid(
+        stack, chain.pool.world_position[0], chain.pool.world_position[1]
+    )
+    if 0 <= pool_r < rows and 0 <= pool_c < cols:
+        mist[pool_r, pool_c] = max(float(mist[pool_r, pool_c]), float(mist.max()))
+    np.clip(mist, 0.0, 1.0, out=mist)
+    return mist
+
+
 # ---------------------------------------------------------------------------
 # Foam mask — AAA req #5: exp(-r²/σ²), σ = pool_radius * 0.5
 # ---------------------------------------------------------------------------
 
 
-def generate_foam_mask(
+def _generate_local_waterfall_foam_mask(
     chain: WaterfallChain,
     stack: TerrainMaskStack,
 ) -> np.ndarray:
-    """Populate foam intensity using AAA Gaussian formula.
-
-    Upgraded from parabolic falloff to Gaussian (AAA req #5):
-    - Cells within plunge_pool_radius * 1.5 get:
-        foam_intensity = exp(-r² / σ²)  where σ = pool_radius * 0.5
-    - Turbulence contribution from steep plunge path segments.
-    - Gaussian blur for natural diffusion.
-    - Flow-accumulation weighting at pool centre.
-    """
+    """Legacy local pool/plunge foam used where waterfall-local behaviour matters."""
     h = np.asarray(stack.height, dtype=np.float64)
     foam = np.zeros_like(h, dtype=np.float32)
     rows, cols = h.shape
@@ -1557,6 +1573,32 @@ def generate_foam_mask(
     np.clip(foam, 0.0, 1.0, out=foam)
     if 0 <= pool_r < rows and 0 <= pool_c < cols:
         foam[pool_r, pool_c] = max(float(foam[pool_r, pool_c]), float(foam.max()))
+    return foam
+
+
+def generate_foam_mask(
+    chain: WaterfallChain,
+    stack: TerrainMaskStack,
+) -> np.ndarray:
+    """Populate production foam from shared ext logic plus local plunge turbulence.
+
+    `_water_network_ext.compute_foam_mask` contributes the richer shared
+    waterfall/rapids/coastal model used in production.  The existing
+    waterfall-local pool and plunge-path turbulence are preserved via the
+    local mask from this module.
+    """
+    from ._water_network_ext import compute_foam_mask
+
+    local_foam = _generate_local_waterfall_foam_mask(chain, stack)
+    richer_foam = compute_foam_mask(chain, stack)
+    foam = np.maximum(local_foam, richer_foam).astype(np.float32)
+    rows, cols = foam.shape
+    pool_r, pool_c = _world_to_grid(
+        stack, chain.pool.world_position[0], chain.pool.world_position[1]
+    )
+    if 0 <= pool_r < rows and 0 <= pool_c < cols:
+        foam[pool_r, pool_c] = max(float(foam[pool_r, pool_c]), float(foam.max()))
+    np.clip(foam, 0.0, 1.0, out=foam)
     return foam
 
 
@@ -2157,7 +2199,7 @@ def pass_waterfalls(
     # 6. Wet-rock mask
     wet_rock = compute_wet_rock_mask(stack, _water_net, radius_m=3.0)
     for chain in chains:
-        pool_foam_contribution = generate_foam_mask(chain, stack)
+        pool_foam_contribution = _generate_local_waterfall_foam_mask(chain, stack)
         wet_rock = np.maximum(wet_rock, pool_foam_contribution.astype(np.float32) * 0.8)
 
     # 7. Region scope: zero outside the region

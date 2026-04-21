@@ -151,6 +151,7 @@ _CATEGORY_PREFIXES: Tuple[Tuple[str, str], ...] = (
     ("protected_",       "pipeline"),   # protected zone mutations = pipeline concern
     ("erosion_",         "erosion"),
     ("material_",        "materials"),
+    ("mat_",             "materials"),
     ("channel_dtype",    "materials"),
     ("unity_export",     "pipeline"),   # export readiness = pipeline concern
     ("validator_crashed","pipeline"),
@@ -703,6 +704,123 @@ def validate_material_coverage(
                     ),
                 )
             )
+    return issues
+
+
+def _material_channel_exts_for_validation(
+    stack: TerrainMaskStack,
+    intent: TerrainIntentState,
+):
+    """Rebuild the current material-layer metadata for validator-only checks.
+
+    The live materials pass owns the canonical layer ordering, but validation
+    still needs a best-effort view of the authored stack even when the tile was
+    produced with a truncated/custom layer count. We mirror the default ordered
+    rules for the active layer count and synthesize generic fallback entries for
+    any extra layers the stack carries.
+    """
+    from .terrain_materials_ext import MaterialChannelExt
+    from .terrain_materials_v2 import (
+        MaterialChannel,
+        _build_material_channel_exts,
+        default_dark_fantasy_rules,
+    )
+
+    weights = _safe_asarray(stack.splatmap_weights_layer)
+    if weights is None or weights.ndim != 3 or weights.shape[2] <= 0:
+        return []
+
+    hints = intent.composition_hints or {}
+    layer_count = int(weights.shape[2])
+    ext_channels = list(
+        _build_material_channel_exts(default_dark_fantasy_rules(), hints)
+    )
+    if layer_count <= len(ext_channels):
+        return ext_channels[:layer_count]
+
+    density_overrides = hints.get("material_texel_density_m") or {}
+    hero_ids = {str(cid) for cid in (hints.get("hero_material_ids") or ())}
+    for idx in range(len(ext_channels), layer_count):
+        channel_id = f"layer_{idx}"
+        default_density = 1024.0 if channel_id in hero_ids else 256.0
+        density_raw = density_overrides.get(channel_id, default_density)
+        try:
+            texel_density = float(density_raw)
+        except (TypeError, ValueError):
+            texel_density = default_density
+        ext_channels.append(
+            MaterialChannelExt(
+                base=MaterialChannel(channel_id=channel_id),
+                texel_density_m=texel_density,
+                triplanar=False,
+            )
+        )
+    return ext_channels
+
+
+def _default_texel_density_max_ratio(intent: TerrainIntentState) -> float:
+    profile_name = str(getattr(intent, "quality_profile", "production") or "production")
+    profile_ratios = {
+        "preview": 4.0,
+        "mobile": 4.0,
+        "production": 2.5,
+        "standard": 2.5,
+        "hero_shot": 1.5,
+        "high_fidelity": 1.5,
+        "aaa_open_world": 1.5,
+    }
+    return float(profile_ratios.get(profile_name, 2.0))
+
+
+def validate_material_texel_density_coherency(
+    stack: TerrainMaskStack,
+    intent: TerrainIntentState,
+) -> List[ValidationIssue]:
+    """Validate authored terrain layers against texel-density floor/coherency."""
+    weights = _safe_asarray(stack.splatmap_weights_layer)
+    if weights is None or weights.ndim != 3:
+        return []
+
+    from .terrain_materials_ext import validate_texel_density_coherency
+
+    hints = intent.composition_hints or {}
+    try:
+        max_ratio = float(
+            hints.get(
+                "material_texel_density_max_ratio",
+                _default_texel_density_max_ratio(intent),
+            )
+        )
+    except (TypeError, ValueError):
+        max_ratio = _default_texel_density_max_ratio(intent)
+    return validate_texel_density_coherency(
+        _material_channel_exts_for_validation(stack, intent),
+        max_ratio=max_ratio,
+    )
+
+
+def validate_cliff_screen_coverage(
+    stack: TerrainMaskStack,
+    intent: TerrainIntentState,
+) -> List[ValidationIssue]:
+    """Validate screen-space cliff coverage hints carried by composition intent."""
+    del stack  # Intent-driven validator; stack is unused by design.
+
+    from .terrain_materials_ext import validate_cliff_silhouette_area
+
+    hints = intent.composition_hints or {}
+    issues: List[ValidationIssue] = []
+
+    hero_coverage = hints.get("hero_cliff_pixel_coverage_fraction")
+    if hero_coverage is not None:
+        issues.extend(validate_cliff_silhouette_area(hero_coverage, tier="hero"))
+
+    secondary_coverage = hints.get("secondary_cliff_pixel_coverage_fraction")
+    if secondary_coverage is not None:
+        issues.extend(
+            validate_cliff_silhouette_area(secondary_coverage, tier="secondary")
+        )
+
     return issues
 
 
@@ -1722,6 +1840,8 @@ DEFAULT_VALIDATORS: Tuple[
     ("validate_erosion_mass_conservation", validate_erosion_mass_conservation),
     ("validate_hero_feature_placement", validate_hero_feature_placement),
     ("validate_material_coverage", validate_material_coverage),
+    ("validate_material_texel_density_coherency", validate_material_texel_density_coherency),
+    ("validate_cliff_screen_coverage", validate_cliff_screen_coverage),
     ("validate_channel_dtypes", validate_channel_dtypes),
     ("validate_unity_export_ready", validate_unity_export_ready),
     ("readability_audit", _readability_audit_validator),
@@ -1744,7 +1864,7 @@ def run_validation_suite(
         ]
     ] = None,
 ) -> ValidationReport:
-    """Run all 10 validators (or a custom list) and aggregate issues.
+    """Run the registered validators (or a custom list) and aggregate issues.
 
     Validators are invoked in order. This function never mutates state —
     it only reads.
@@ -1815,7 +1935,7 @@ def pass_validation_full(
     state: TerrainPipelineState,
     region: Optional[BBox],
 ) -> PassResult:
-    """Run all 10 validators against the current state and return a PassResult.
+    """Run the registered validators against the current state and return a PassResult.
 
     On hard failures, if a controller has been bound via
     ``bind_active_controller`` and it has checkpoints, a rollback to the
@@ -1884,7 +2004,7 @@ def register_bundle_d_passes() -> None:
             may_modify_geometry=False,
             respects_protected_zones=False,
             requires_scene_read=False,
-            description="Bundle D — full validation suite (10 validators)",
+            description="Bundle D — full validation suite",
         )
     )
 
@@ -1901,6 +2021,8 @@ __all__ = [
     "validate_erosion_mass_conservation",
     "validate_hero_feature_placement",
     "validate_material_coverage",
+    "validate_material_texel_density_coherency",
+    "validate_cliff_screen_coverage",
     "validate_channel_dtypes",
     "validate_unity_export_ready",
     # Geological plausibility validators (R9 additions)

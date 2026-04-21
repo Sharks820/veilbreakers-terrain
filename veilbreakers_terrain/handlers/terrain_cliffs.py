@@ -1447,7 +1447,95 @@ def _generate_cliff_overhang(
         "overhang_count": overhang_count,
         "overhang_fraction": overhang_fraction,
         "drip_edge_verts": drip_edge_verts,
+        "outward_normal_xy": (float(out_nx), float(out_ny)),
     }
+
+
+def _cell_center_world(
+    stack: TerrainMaskStack,
+    row: int,
+    col: int,
+) -> Tuple[float, float]:
+    return (
+        float(stack.world_origin_x) + (float(col) + 0.5) * float(stack.cell_size),
+        float(stack.world_origin_y) + (float(row) + 0.5) * float(stack.cell_size),
+    )
+
+
+def _build_cliff_overhang_mesh_specs(
+    cliffs: List["CliffStructure"],
+    stack: TerrainMaskStack,
+) -> List[Dict]:
+    """Convert cliff overhang metadata into world-space quad mesh specs."""
+    mesh_specs: List[Dict] = []
+    for cliff in cliffs:
+        overhang_spec = cliff.overhang_spec or {}
+        out_nx, out_ny = overhang_spec.get("outward_normal_xy", (0.0, 1.0))
+        for segment in overhang_spec.get("segments", ()):
+            if not segment.get("has_overhang"):
+                continue
+            try:
+                (r0, c0), (r1, c1) = segment["base_cells"]
+            except Exception:
+                continue
+            base_z = float(cliff.max_height_m)
+            depth_m = float(segment.get("depth_m", 0.0))
+            base_l_x, base_l_y = _cell_center_world(stack, int(r0), int(c0))
+            base_r_x, base_r_y = _cell_center_world(stack, int(r1), int(c1))
+            mesh_specs.append(
+                {
+                    "mesh_id": f"{cliff.cliff_id}_overhang_{int(segment.get('seg_i', 0)):03d}",
+                    "mesh_type": "cliff_overhang",
+                    "cliff_id": cliff.cliff_id,
+                    "tier": cliff.tier,
+                    "depth_m": depth_m,
+                    "material_hint": "wet_cliff_drip",
+                    "drip_edge_indices": (2, 3),
+                    "vertices": [
+                        (base_l_x, base_l_y, base_z),
+                        (base_r_x, base_r_y, base_z),
+                        (base_r_x + out_nx * depth_m, base_r_y + out_ny * depth_m, base_z),
+                        (base_l_x + out_nx * depth_m, base_l_y + out_ny * depth_m, base_z),
+                    ],
+                    "faces": [(0, 1, 2, 3)],
+                }
+            )
+    return mesh_specs
+
+
+def pass_emit_overhang_meshes(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Publish persisted cave/cliff mesh specs onto a mesh-layer cache."""
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    cliff_specs = list(stack.get("cliff_mesh_specs") or [])
+    cave_specs = list(stack.get("cave_mesh_specs") or [])
+    all_specs = cliff_specs + cave_specs
+    layer_token = f"overhang_mesh_layer:{state.tile_x}:{state.tile_y}:{len(all_specs)}"
+
+    try:
+        cache = dict(getattr(state, "mesh_layer_specs", {}))
+        cache[layer_token] = all_specs
+        state.mesh_layer_specs = cache  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+    return PassResult(
+        pass_name="emit_overhang_meshes",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("cliff_mesh_specs", "cave_mesh_specs"),
+        produced_channels=(),
+        metrics={
+            "mesh_spec_count": len(all_specs),
+            "cliff_mesh_spec_count": len(cliff_specs),
+            "cave_mesh_spec_count": len(cave_specs),
+            "region_scoped": region is not None,
+        },
+        side_effects=[layer_token] if all_specs else [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2270,6 +2358,8 @@ def pass_cliffs(
 
     # 6. Record intent for hero mesh insertion (no geometry yet)
     insert_hero_cliff_meshes(state, cliffs)
+    cliff_mesh_specs = _build_cliff_overhang_mesh_specs(cliffs, stack)
+    stack.set("cliff_mesh_specs", cliff_mesh_specs, "cliffs")
 
     # 7. Record structures as side effects (so downstream bundles can find them)
     for cliff in cliffs:
@@ -2295,7 +2385,7 @@ def pass_cliffs(
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("slope", "saliency_macro"),
-        produced_channels=("cliff_candidate", "cliff_contour_spline"),
+        produced_channels=("cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs"),
         metrics={
             "candidate_cells": int(candidate.sum()),
             "cliff_count": len(cliffs),
@@ -2312,6 +2402,7 @@ def pass_cliffs(
                 for c in cliffs
             ),
             "cliffs_with_spline": sum(1 for c in cliffs if c.contour_spline is not None),
+            "cliff_mesh_spec_count": len(cliff_mesh_specs),
             "seed_used": seed,
         },
         issues=issues,
@@ -2356,11 +2447,23 @@ def register_bundle_b_passes() -> None:
             name="cliffs",
             func=pass_cliffs,
             requires_channels=("slope", "height"),
-            produces_channels=("cliff_candidate", "cliff_contour_spline"),
+            produces_channels=("cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs"),
             seed_namespace="cliffs",
             requires_scene_read=False,
             may_modify_geometry=False,
             description="Bundle B — cliff anatomy (lip + face + ledges + talus + strata + overhang + contour spline).",
+        )
+    )
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="emit_overhang_meshes",
+            func=pass_emit_overhang_meshes,
+            requires_channels=(),
+            produces_channels=(),
+            seed_namespace="emit_overhang_meshes",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Bundle B/F bridge — publish cave/cliff overhang mesh specs to a mesh-layer cache.",
         )
     )
 
@@ -2375,7 +2478,9 @@ __all__ = [
     "build_talus_field",
     "insert_hero_cliff_meshes",
     "validate_cliff_readability",
+    "_build_cliff_overhang_mesh_specs",
     "pass_cliffs",
+    "pass_emit_overhang_meshes",
     "register_bundle_b_passes",
     # Cliff overhang geometry (2026-04-20)
     "_generate_cliff_overhang",

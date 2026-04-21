@@ -154,6 +154,7 @@ def save_checkpoint(
         coordinate_system=stack.coordinate_system,
         unity_export_schema_version=stack.unity_export_schema_version,
         water_network_snapshot=copy.deepcopy(state.water_network),
+        viewport_vantage_snapshot=copy.deepcopy(state.viewport_vantage),
         side_effects_snapshot=list(state.side_effects),
         pass_history_len=len(state.pass_history),
     )

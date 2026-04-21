@@ -589,14 +589,76 @@ def build_tile_seam_contract(
     }
 
 
-def apply_seam_boundary_conditions(stack: Any) -> None:
+def _blend_locked_edges(
+    values: np.ndarray,
+    *,
+    north_edge: Any,
+    south_edge: Any,
+    east_edge: Any,
+    west_edge: Any,
+) -> np.ndarray:
+    """Return a seam-locked copy of a 2-D field."""
+    h = np.asarray(values).copy()
+    if h.ndim != 2:
+        return h
+
+    if not np.issubdtype(h.dtype, np.floating):
+        h = h.astype(np.float32, copy=False)
+
+    H, W = h.shape
+    _BLEND_WEIGHTS = [1.0, 0.6, 0.2]
+
+    if north_edge is not None:
+        edge = np.asarray(north_edge, dtype=h.dtype)
+        if edge.shape == (W,):
+            h[0, :] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                row = offset
+                if row < H:
+                    h[row, :] = w * edge + (1.0 - w) * h[row, :]
+
+    if south_edge is not None:
+        edge = np.asarray(south_edge, dtype=h.dtype)
+        if edge.shape == (W,):
+            h[-1, :] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                row = H - 1 - offset
+                if row >= 0:
+                    h[row, :] = w * edge + (1.0 - w) * h[row, :]
+
+    if east_edge is not None:
+        edge = np.asarray(east_edge, dtype=h.dtype)
+        if edge.shape == (H,):
+            h[:, -1] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                col = W - 1 - offset
+                if col >= 0:
+                    h[:, col] = w * edge + (1.0 - w) * h[:, col]
+
+    if west_edge is not None:
+        edge = np.asarray(west_edge, dtype=h.dtype)
+        if edge.shape == (H,):
+            h[:, 0] = edge
+            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
+                col = offset
+                if col < W:
+                    h[:, col] = w * edge + (1.0 - w) * h[:, col]
+
+    return h
+
+
+def apply_seam_boundary_conditions(
+    stack: Any,
+    *,
+    channels: tuple[str, ...] = ("height",),
+) -> None:
     """Lock tile border rows/cols to neighbor edge values with a 3-cell blend.
 
     Reads the ``north_edge``, ``south_edge``, ``east_edge``, ``west_edge``
     fields on a ``TerrainMaskStack`` (populated via
-    ``stack.import_neighbor_edge()``) and enforces them on ``stack.height``
-    so that erosion, materials, and scatter passes see a continuous surface
-    across tile boundaries.
+    ``stack.import_neighbor_edge()``) and enforces them on the requested
+    2-D channels so that erosion, materials, and scatter passes see a
+    continuous surface across tile boundaries.
 
     Border enforcement:
       - ``north_edge`` (shape ``(W,)``): locks ``height[0, :]`` to the
@@ -623,60 +685,56 @@ def apply_seam_boundary_conditions(stack: Any) -> None:
     Parameters
     ----------
     stack : TerrainMaskStack
-        Tile stack to enforce seam conditions on.  Modified in-place.
+        Tile stack to enforce seam conditions on. Modified in-place.
+    channels : tuple[str, ...], optional
+        Stack fields to seam-lock. Defaults to ``("height",)``. Any missing
+        or non-2-D channels are ignored.
     """
-    import numpy as _np
-
-    h = _np.asarray(stack.height, dtype=np.float32).copy()
-    H, W = h.shape
-    _BLEND_WEIGHTS = [1.0, 0.6, 0.2]
-
     north_edge = getattr(stack, "north_edge", None)
-    if north_edge is not None:
-        edge = _np.asarray(north_edge, dtype=np.float32)
-        if edge.shape == (W,):
-            # Lock border row
-            h[0, :] = edge
-            # Blend 3 inner rows
-            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
-                row = offset
-                if row < H:
-                    h[row, :] = w * edge + (1.0 - w) * h[row, :]
-
     south_edge = getattr(stack, "south_edge", None)
-    if south_edge is not None:
-        edge = _np.asarray(south_edge, dtype=np.float32)
-        if edge.shape == (W,):
-            h[-1, :] = edge
-            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
-                row = H - 1 - offset
-                if row >= 0:
-                    h[row, :] = w * edge + (1.0 - w) * h[row, :]
-
     east_edge = getattr(stack, "east_edge", None)
-    if east_edge is not None:
-        edge = _np.asarray(east_edge, dtype=np.float32)
-        if edge.shape == (H,):
-            h[:, -1] = edge
-            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
-                col = W - 1 - offset
-                if col >= 0:
-                    h[:, col] = w * edge + (1.0 - w) * h[:, col]
-
     west_edge = getattr(stack, "west_edge", None)
-    if west_edge is not None:
-        edge = _np.asarray(west_edge, dtype=np.float32)
-        if edge.shape == (H,):
-            h[:, 0] = edge
-            for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
-                col = offset
-                if col < W:
-                    h[:, col] = w * edge + (1.0 - w) * h[:, col]
 
-    # Write back via object.__setattr__ to avoid provenance-guard warning;
-    # the height field itself is the authoritative terrain surface — this
-    # is an in-place correction, not a new channel write.
-    object.__setattr__(stack, "height", h)
+    mutated = False
+    for channel in tuple(dict.fromkeys(str(ch) for ch in channels)):
+        arr = getattr(stack, channel, None)
+        if arr is None:
+            continue
+        arr_np = np.asarray(arr)
+        if arr_np.ndim != 2:
+            continue
+
+        blended = _blend_locked_edges(
+            arr_np,
+            north_edge=north_edge,
+            south_edge=south_edge,
+            east_edge=east_edge,
+            west_edge=west_edge,
+        )
+        if np.array_equal(arr_np, blended):
+            continue
+
+        # Write back via object.__setattr__ to avoid provenance-guard warning;
+        # this is an in-place seam correction, not a new producer claiming the
+        # channel.
+        object.__setattr__(stack, channel, blended)
+        mutated = True
+
+    if mutated:
+        object.__setattr__(stack, "content_hash", None)
+        height = getattr(stack, "height", None)
+        if height is not None:
+            height_np = np.asarray(height, dtype=np.float64)
+            object.__setattr__(
+                stack,
+                "height_min_m",
+                float(height_np.min()) if height_np.size else 0.0,
+            )
+            object.__setattr__(
+                stack,
+                "height_max_m",
+                float(height_np.max()) if height_np.size else 0.0,
+            )
 
 
 def build_tile_batch_manifest(

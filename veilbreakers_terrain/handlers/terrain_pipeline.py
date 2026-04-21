@@ -566,10 +566,14 @@ class TerrainPassController:
         # ------------------------------------------------------------------
         # Normal execution
         # ------------------------------------------------------------------
-        # Apply neighbor seam boundary conditions before any pass runs.
-        # No-op when all edge fields on the stack are None (non-tiled runs).
-        from .terrain_chunking import apply_seam_boundary_conditions
-        apply_seam_boundary_conditions(self.state.mask_stack)
+        bundle_n_pre_pipeline_state = None
+        try:
+            from .terrain_bundle_n import bundle_n_runtime_requests_determinism
+
+            if bundle_n_runtime_requests_determinism(self.state.intent):
+                bundle_n_pre_pipeline_state = copy.deepcopy(self.state)
+        except Exception:  # noqa: BLE001
+            bundle_n_pre_pipeline_state = None
 
         results: List[PassResult] = []
         for pass_name in pass_sequence:
@@ -579,38 +583,24 @@ class TerrainPassController:
                 break
 
         # ------------------------------------------------------------------
-        # Post-pipeline budget enforcement (Bundle N safety net).
-        # Runs when the pipeline completed without a failure so the authored
-        # mask stack is valid to inspect. Any budget ValidationIssue is
-        # attached to the final PassResult's validation_issues list, so the
-        # controller's existing soft/hard-gate path handles it the same way
-        # as per-pass validation findings.
+        # Bundle N post-pipeline QA safety net.
+        # Runs only after a successful execution phase so the authored mask
+        # stack is valid to inspect. The hook truthfully owns Bundle N's
+        # always-on and opt-in runtime surfaces and attaches findings to the
+        # final PassResult itself.
         # ------------------------------------------------------------------
         if results and results[-1].status != "failed":
             try:
-                from .terrain_budget_enforcer import (
-                    enforce_budget as _enforce_budget,
-                    TerrainBudget as _TerrainBudget,
+                from .terrain_bundle_n import run_bundle_n_post_pipeline_hooks
+
+                run_bundle_n_post_pipeline_hooks(
+                    self,
+                    results,
+                    pre_pipeline_state=bundle_n_pre_pipeline_state,
                 )
-                budget_issues = _enforce_budget(
-                    self.state.mask_stack,
-                    self.state.intent,
-                    _TerrainBudget(),
-                )
-                if budget_issues:
-                    last = results[-1]
-                    # PassResult.validation_issues is a list; extend in-place
-                    existing = list(getattr(last, "validation_issues", []) or [])
-                    existing.extend(budget_issues)
-                    try:
-                        last.validation_issues = existing
-                    except Exception:  # noqa: BLE001
-                        # Frozen dataclass or similar — fall back to best-effort.
-                        pass
             except Exception:  # noqa: BLE001
-                # Budget enforcer is a safety net: never let its failure break
-                # the pipeline. Errors are logged by the caller's logging
-                # handler via terrain_budget_enforcer.
+                # Bundle N post-pipeline QA is a safety net: never let it break
+                # the main pipeline. Optional hook errors remain best-effort.
                 pass
 
         return results
@@ -660,6 +650,7 @@ class TerrainPassController:
             coordinate_system=stack.coordinate_system,
             unity_export_schema_version=stack.unity_export_schema_version,
             water_network_snapshot=copy.deepcopy(self.state.water_network),
+            viewport_vantage_snapshot=copy.deepcopy(self.state.viewport_vantage),
             side_effects_snapshot=list(self.state.side_effects),
             pass_history_len=len(self.state.pass_history),
         )
@@ -712,6 +703,9 @@ class TerrainPassController:
 
                 self.state.mask_stack = restored
                 self.state.water_network = copy.deepcopy(ckpt.water_network_snapshot)
+                self.state.viewport_vantage = copy.deepcopy(
+                    ckpt.viewport_vantage_snapshot
+                )
                 self.state.side_effects = list(ckpt.side_effects_snapshot)
                 self.state.pass_history = self.state.pass_history[: ckpt.pass_history_len]
 
@@ -1114,7 +1108,6 @@ def register_default_passes() -> None:
                 "drainage",
                 "bank_instability",
                 "talus",
-                "ridge",
             ),
             seed_namespace="erosion",
             requires_scene_read=True,

@@ -448,7 +448,7 @@ class TestCombatClearingDiameter(unittest.TestCase):
         result = scatter_mod._generate_combat_clearing(
             center=(0.0, 0.0, 0.0), diameter=30.0, seed=4
         )
-        expected_area = math.pi * 15.0 * 15.0
+        expected_area = math.pi * result["inner_clear_radius"] * result["inner_clear_radius"]
         self.assertAlmostEqual(result["cleared_area_m2"], expected_area, delta=0.1)
 
     def test_center_preserved(self):

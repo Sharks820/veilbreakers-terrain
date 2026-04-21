@@ -113,7 +113,9 @@ def pass_roughness_driver(
         the computed value for that zone's pixels.  Unknown zone IDs are
         ignored.  This matches the MicroSplat per-layer roughness override
         workflow.
-    5.  Final clip to [0..1] and cast to float32.
+    5.  Multiply by any precomputed ``roughness_breakup`` modulation from
+        ``terrain_multiscale_breakup``.
+    6.  Final clip to [0..1] and cast to float32.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -173,6 +175,17 @@ def pass_roughness_driver(
                 rough = np.where(mask, zone_r, rough)
                 zone_driven = True
 
+    breakup_arr = stack.get("roughness_breakup")
+    breakup_driven = False
+    if breakup_arr is not None:
+        breakup = np.asarray(breakup_arr, dtype=np.float64)
+        if breakup.shape == rough.shape:
+            # Treat breakup as a centered multiplicative modulation so this pass
+            # remains the single writer of roughness_variation while still
+            # consuming the richer multi-scale signal.
+            rough = rough * (1.0 + 0.18 * np.clip(breakup, -1.0, 1.0))
+            breakup_driven = True
+
     rough_f32 = np.clip(rough, 0.0, 1.0).astype(np.float32)
     stack.set("roughness_variation", rough_f32, "roughness_driver")
 
@@ -189,6 +202,7 @@ def pass_roughness_driver(
             "slope",
             "curvature",
             "material_zones",
+            "roughness_breakup",
         ),
         produced_channels=("roughness_variation",),
         metrics={
@@ -200,6 +214,7 @@ def pass_roughness_driver(
             "slope_driven": slope_driven,
             "curvature_driven": curvature_driven,
             "zone_driven": zone_driven,
+            "breakup_driven": breakup_driven,
         },
         issues=[],
     )

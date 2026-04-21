@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch
 
 
 def test_master_registrar_loads_all_bundles():
@@ -133,6 +134,84 @@ def test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read():
     assert [r["pass_name"] for r in result["results"]] == [
         "macro_world",
         "structural_masks",
+        "validation_minimal",
+    ]
+
+
+def test_execute_terrain_pipeline_threads_quality_profile_hints_and_viewport():
+    from blender_addon.handlers.environment import _execute_terrain_pipeline
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    TerrainPassController.clear_registry()
+    try:
+        with patch.object(TerrainPassController, "run_pipeline", return_value=[]):
+            execution = _execute_terrain_pipeline(
+                {
+                    "tile_size": 16,
+                    "cell_size": 2.0,
+                    "seed": 42,
+                    "terrain_type": "hills",
+                    "scale": 60.0,
+                    "pipeline": ["macro_world", "validation_minimal"],
+                    "quality_profile": "aaa_open_world",
+                    "composition_hints": {"bundle_n_runtime": {"determinism_runs": 2}},
+                    "scene_read": {
+                        "major_landforms": ["ridge"],
+                        "focal_point": [0.0, 0.0, 0.0],
+                        "success_criteria": ["test"],
+                        "reviewer": "pytest",
+                        "viewport_vantage": {"camera": "scene"},
+                    },
+                }
+            )
+    finally:
+        TerrainPassController.clear_registry()
+
+    state = execution["state"]
+    assert state.intent.quality_profile == "aaa_open_world"
+    assert state.intent.composition_hints == {
+        "bundle_n_runtime": {"determinism_runs": 2}
+    }
+    assert state.viewport_vantage == {"camera": "scene"}
+
+
+def test_handle_run_terrain_pass_injects_overhang_emit_phase_for_cliff_pipeline():
+    from blender_addon.handlers.environment import handle_run_terrain_pass
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    captured = {}
+
+    def _fake_run_pipeline(self, pass_sequence, **kwargs):
+        captured["pass_sequence"] = list(pass_sequence)
+        return []
+
+    TerrainPassController.clear_registry()
+    try:
+        with patch.object(TerrainPassController, "run_pipeline", _fake_run_pipeline):
+            result = handle_run_terrain_pass(
+                {
+                    "tile_size": 16,
+                    "cell_size": 2.0,
+                    "seed": 42,
+                    "terrain_type": "hills",
+                    "scale": 60.0,
+                    "pipeline": [
+                        "macro_world",
+                        "structural_masks",
+                        "cliffs",
+                        "validation_minimal",
+                    ],
+                }
+            )
+    finally:
+        TerrainPassController.clear_registry()
+
+    assert result["results"] == []
+    assert captured["pass_sequence"] == [
+        "macro_world",
+        "structural_masks",
+        "cliffs",
+        "emit_overhang_meshes",
         "validation_minimal",
     ]
 

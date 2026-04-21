@@ -313,6 +313,7 @@ class TerrainMaskStack:
     # Material-zoning masks (Pass 7)
     biome_id: Optional[np.ndarray] = None
     material_weights: Optional[np.ndarray] = None
+    roughness_breakup: Optional[np.ndarray] = None
     roughness_variation: Optional[np.ndarray] = None
     macro_color: Optional[np.ndarray] = None
 
@@ -400,6 +401,10 @@ class TerrainMaskStack:
     mist_zone_mask: Optional[np.ndarray] = None
     # Shader-facing wet-surface decal descriptors emitted by waterfall_mist.
     wet_surface_decal: Optional[List[Dict[str, Any]]] = None
+    # Geometry-side mesh specs for negative-space features the heightfield
+    # cannot represent directly (overhangs, cave mouth rings, cliff lips).
+    cliff_mesh_specs: Optional[List[Dict[str, Any]]] = None
+    cave_mesh_specs: Optional[List[Dict[str, Any]]] = None
 
     # River-to-lake/ocean convergence channels (pass_river_convergence)
     # Float32 (H, W): 1.0 = river mouth / delta zone, 0.0 = elsewhere.
@@ -506,6 +511,7 @@ class TerrainMaskStack:
             "flow_speed",
             "biome_id",
             "material_weights",
+            "roughness_breakup",
             "roughness_variation",
             "macro_color",
             "audio_reverb_class",
@@ -730,7 +736,11 @@ class TerrainMaskStack:
         "albedo_shift_rgb":       ("f", 3),
     }
 
-    _OPAQUE_CHANNELS: ClassVar[Tuple[str, ...]] = ("wet_surface_decal",)
+    _OPAQUE_CHANNELS: ClassVar[Tuple[str, ...]] = (
+        "wet_surface_decal",
+        "cliff_mesh_specs",
+        "cave_mesh_specs",
+    )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:
         """Store a channel value with dtype/shape validation, provenance, and dirty-flag clearing.
@@ -1370,6 +1380,7 @@ class TerrainCheckpoint:
     splatmap_layer_ids: Tuple[str, ...] = ()
     # Rollback completeness — restores full pipeline state, not just mask stack
     water_network_snapshot: Optional[Any] = field(default=None, repr=False)
+    viewport_vantage_snapshot: Optional[Any] = field(default=None, repr=False)
     side_effects_snapshot: List[str] = field(default_factory=list)
     pass_history_len: int = 0
 

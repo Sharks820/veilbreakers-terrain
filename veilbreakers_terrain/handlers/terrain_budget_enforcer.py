@@ -171,6 +171,49 @@ class TerrainBudget:
     chunk_grid: int = 4
 
 
+def resolve_budget(
+    *,
+    intent: Optional[TerrainIntentState] = None,
+    budget: Optional[TerrainBudget] = None,
+) -> TerrainBudget:
+    """Resolve the active terrain budget, preferring the intent quality profile.
+
+    Quality profiles become a real runtime control surface here: if the caller
+    does not supply an explicit ``TerrainBudget``, the current
+    ``intent.quality_profile`` is loaded and mapped onto budget ceilings so
+    Bundle N enforcement and reporting reflect the active runtime tier.
+    """
+    if budget is not None:
+        return budget
+    if intent is None:
+        return TerrainBudget()
+
+    profile_name = str(getattr(intent, "quality_profile", "production") or "production")
+    try:
+        from .terrain_quality_profiles import load_quality_profile
+
+        profile = load_quality_profile(profile_name)
+    except Exception:
+        return TerrainBudget()
+
+    lod0 = max(int(profile.triangle_budget), 1)
+    lod1 = max(int(round(lod0 * 0.4)), 1)
+    lod2 = max(int(round(lod0 * 0.2)), 1)
+    max_npz_mb = max(
+        8.0,
+        64.0 * (float(profile.heightmap_resolution) / 2049.0) ** 2,
+    )
+    return TerrainBudget(
+        max_tri_lod0=lod0,
+        max_tri_lod1=lod1,
+        max_tri_lod2=lod2,
+        max_tri_count=lod0,
+        max_unique_materials=max(int(profile.splatmap_layer_count), 1),
+        max_scatter_instances=max(int(profile.max_tree_count), 250),
+        max_npz_mb=float(max_npz_mb),
+    )
+
+
 def _km2_from_stack(stack: TerrainMaskStack) -> float:
     cs = float(stack.cell_size) if stack.cell_size else 1.0
     area_m2 = float(stack.tile_size) * cs * float(stack.tile_size) * cs
@@ -317,7 +360,7 @@ def compute_tile_budget_usage(
     The ``hero_tri_contribution`` key reports how many tile tris are consumed
     by hero meshes alone, and what fraction of the LOD0 budget they represent.
     """
-    b = budget or TerrainBudget()
+    b = resolve_budget(intent=intent, budget=budget)
     km2 = _km2_from_stack(stack)
 
     hero_count = 0
@@ -438,7 +481,7 @@ def compute_budget_report(
     Scatter budget:
       visible instance count (tree_instance_points + detail_density sum) ≤ 2000
     """
-    b = budget or TerrainBudget()
+    b = resolve_budget(intent=intent, budget=budget)
     usage = compute_tile_budget_usage(stack, budget=b, intent=intent)
 
     lod0 = usage["lod0_tris"]["current"]
@@ -632,6 +675,7 @@ __all__ = [
     "LOD_TRI_BUDGETS",
     "UNITY_STATIC_BATCH_TRI_LIMIT",
     "UNITY_DYNAMIC_BATCH_TRI_LIMIT",
+    "resolve_budget",
     "compute_tile_budget_usage",
     "compute_budget_report",
     "enforce_budget",

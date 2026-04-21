@@ -190,6 +190,10 @@ class TestPassDAGContracts:
         p = self.reg["erosion"]
         assert "hmap_low_freq" in p.requires_channels
 
+    def test_erosion_does_not_claim_ridge_channel(self):
+        p = self.reg["erosion"]
+        assert "ridge" not in p.produces_channels
+
     def test_pass_composite_hmap_registered(self):
         assert "pass_composite_hmap" in self.reg
 
@@ -239,6 +243,21 @@ class TestPassFunctionBehavior:
         state.mask_stack.set("height", np.zeros((16, 16), dtype=np.float32), "test")
         pass_generate_low_freq_hmap(state, None)
         assert state.mask_stack.height is not None
+
+    def test_pass_generate_low_freq_hmap_reuses_existing_low_freq_channel(self):
+        from blender_addon.handlers._terrain_world import pass_generate_low_freq_hmap
+
+        state = _make_state()
+        existing = np.full((16, 16), 37.5, dtype=np.float32)
+        state.mask_stack.set("hmap_low_freq", existing, "macro_world")
+        state.mask_stack.set("height", np.zeros((16, 16), dtype=np.float32), "test")
+
+        result = pass_generate_low_freq_hmap(state, None)
+
+        assert result.metrics["generated"] is False
+        assert result.metrics["reused_existing"] is True
+        np.testing.assert_array_equal(state.mask_stack.hmap_low_freq, existing)
+        np.testing.assert_array_equal(state.mask_stack.height, existing)
 
     def test_pass_generate_high_freq_detail_sets_hmap_high_freq(self):
         from blender_addon.handlers._terrain_world import pass_generate_high_freq_detail
@@ -344,6 +363,23 @@ class TestPassFunctionBehavior:
             state.mask_stack.hmap_low_freq,
             state.mask_stack.height,
         )
+
+    def test_macro_world_pipeline_reapplies_neighbor_seams_after_generation(self):
+        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+        state = _make_state(with_scene_read=False)
+        state.mask_stack.set("height", np.zeros((16, 16), dtype=np.float32), "test")
+        object.__setattr__(
+            state.mask_stack,
+            "north_edge",
+            np.full((16,), 7.0, dtype=np.float32),
+        )
+
+        controller = TerrainPassController(state)
+        controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
+
+        np.testing.assert_allclose(state.mask_stack.height[0, :], 7.0)
+        np.testing.assert_allclose(state.mask_stack.hmap_low_freq[0, :], 7.0)
 
     def test_constants_declared(self):
         from blender_addon.handlers._terrain_world import (

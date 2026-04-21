@@ -1,7 +1,4 @@
-"""Bundle D — tests for terrain_validation.
-
-Covers all 10 validators + run_validation_suite + pass_validation_full.
-"""
+"""Bundle D — tests for terrain_validation."""
 
 from __future__ import annotations
 
@@ -367,6 +364,77 @@ def test_material_coverage_skipped_when_not_populated():
     assert validate_material_coverage(stack, _make_intent(stack)) == []
 
 
+def test_material_texel_density_validator_accepts_default_two_layer_stack():
+    from blender_addon.handlers.terrain_validation import (
+        validate_material_texel_density_coherency,
+    )
+
+    stack = _make_stack(tile_size=16)
+    stack.splatmap_weights_layer = np.full((16, 16, 2), 0.5, dtype=np.float32)
+    intent = _make_intent(
+        stack,
+        composition_hints={
+            "material_texel_density_m": {"ground": 256.0, "cliff": 512.0}
+        },
+    )
+
+    assert validate_material_texel_density_coherency(stack, intent) == []
+
+
+def test_material_texel_density_validator_flags_below_tier():
+    from blender_addon.handlers.terrain_validation import (
+        validate_material_texel_density_coherency,
+    )
+
+    stack = _make_stack(tile_size=16)
+    stack.splatmap_weights_layer = np.full((16, 16, 2), 0.5, dtype=np.float32)
+    intent = _make_intent(
+        stack,
+        composition_hints={
+            "material_texel_density_m": {"ground": 256.0, "cliff": 128.0}
+        },
+    )
+
+    issues = validate_material_texel_density_coherency(stack, intent)
+    assert any(i.code == "MAT_TEXEL_DENSITY_BELOW_TIER" for i in issues)
+
+
+def test_material_texel_density_validator_uses_quality_profile_default_ratio():
+    from blender_addon.handlers.terrain_validation import (
+        validate_material_texel_density_coherency,
+    )
+
+    stack = _make_stack(tile_size=16)
+    stack.splatmap_weights_layer = np.full((16, 16, 2), 0.5, dtype=np.float32)
+
+    production_intent = _make_intent(stack)
+    aaa_intent = _make_intent(stack)
+    object.__setattr__(aaa_intent, "quality_profile", "aaa_open_world")
+
+    assert validate_material_texel_density_coherency(stack, production_intent) == []
+    aaa_issues = validate_material_texel_density_coherency(stack, aaa_intent)
+    assert any(i.code == "MAT_TEXEL_DENSITY_INCOHERENT" for i in aaa_issues)
+
+
+def test_cliff_screen_coverage_validator_reads_composition_hints():
+    from blender_addon.handlers.terrain_validation import validate_cliff_screen_coverage
+
+    stack = _make_stack(tile_size=16)
+    intent = _make_intent(
+        stack,
+        composition_hints={"hero_cliff_pixel_coverage_fraction": 0.05},
+    )
+
+    issues = validate_cliff_screen_coverage(stack, intent)
+    assert any(i.code == "CLIFF_SILHOUETTE_TOO_SMALL" for i in issues)
+
+
+def test_issue_category_routes_mat_prefix_to_materials():
+    from blender_addon.handlers.terrain_validation import _issue_category
+
+    assert _issue_category("MAT_TEXEL_DENSITY_INCOHERENT") == "materials"
+
+
 # ---------------------------------------------------------------------------
 # 9. validate_channel_dtypes
 # ---------------------------------------------------------------------------
@@ -463,6 +531,26 @@ def test_run_validation_suite_ok_when_clean():
     report = run_validation_suite(stack, _make_intent(stack))
     assert report.overall_status in ("ok", "warning")
     assert len(report.hard_issues) == 0
+
+
+def test_run_validation_suite_surfaces_material_texel_density_issues():
+    from blender_addon.handlers.terrain_validation import run_validation_suite
+
+    stack = _make_stack()
+    stack.slope = np.random.default_rng(0).uniform(0, 1, stack.height.shape)
+    shape = stack.height.shape
+    stack.heightmap_raw_u16 = np.zeros(shape, dtype=np.uint16)
+    stack.splatmap_weights_layer = np.full((*shape, 2), 0.5, dtype=np.float32)
+    stack.navmesh_area_id = np.zeros(shape, dtype=np.int32)
+    intent = _make_intent(
+        stack,
+        composition_hints={
+            "material_texel_density_m": {"ground": 256.0, "cliff": 128.0}
+        },
+    )
+
+    report = run_validation_suite(stack, intent)
+    assert any(i.code == "MAT_TEXEL_DENSITY_BELOW_TIER" for i in report.hard_issues)
 
 
 def test_run_validation_suite_custom_validators():

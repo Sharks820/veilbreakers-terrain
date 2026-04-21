@@ -400,9 +400,21 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_run_height_solver(heightmap, solver, /, **solver_kwargs):
-            captured["cost_map"] = solver_kwargs.get("cost_map")
-            return [(0, 0), (1, 1)], np.asarray(heightmap, dtype=np.float64).copy(), SimpleNamespace()
+        def _fake_compute_road_network(waypoints, **kwargs):
+            captured["cost_map"] = kwargs.get("cost_map")
+            captured["terrain_bounds"] = kwargs.get("terrain_bounds")
+            captured["connection_strategy"] = kwargs.get("connection_strategy")
+            return {
+                "routes": [
+                    {
+                        "points": [
+                            (-2.0, -2.0, 0.0),
+                            (2.0, 2.0, 0.3),
+                        ]
+                    }
+                ],
+                "routing_method": "astar_24dir",
+            }
 
         rock_hardness = np.array([[0.0, 0.8], [0.0, 0.0]], dtype=np.float32)
         water_surface = np.array([[0.0, 0.0], [0.2, 0.0]], dtype=np.float32)
@@ -415,7 +427,8 @@ class TestRoadHandlerTerrainAwareRouting:
         with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
              patch.object(env_mod.bmesh, "new", return_value=_BM()), \
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
-             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
              patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
@@ -431,8 +444,11 @@ class TestRoadHandlerTerrainAwareRouting:
             )
 
         np.testing.assert_allclose(captured["cost_map"], expected_cost)
+        assert captured["terrain_bounds"] == (-2.0, -2.0, 2.0, 2.0)
+        assert captured["connection_strategy"] == "chain"
         assert result["terrain_cost_context_used"] is True
         assert result["terrain_cost_source"] == "rock_hardness+water_surface"
+        assert result["road_routing_method"] == "astar_24dir"
         assert result["road_mask_shape"] == [2, 2]
         assert result["road_mask_nonzero"] > 0
 
@@ -471,16 +487,27 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_run_height_solver(heightmap, solver, /, **solver_kwargs):
-            captured["cost_map"] = solver_kwargs.get("cost_map")
-            return [(0, 0), (1, 1)], np.asarray(heightmap, dtype=np.float64).copy(), SimpleNamespace()
+        def _fake_compute_road_network(waypoints, **kwargs):
+            captured["cost_map"] = kwargs.get("cost_map")
+            return {
+                "routes": [
+                    {
+                        "points": [
+                            (-2.0, -2.0, 0.0),
+                            (2.0, 2.0, 0.3),
+                        ]
+                    }
+                ],
+                "routing_method": "astar_24dir",
+            }
 
         explicit_cost_map = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
 
         with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
              patch.object(env_mod.bmesh, "new", return_value=_BM()), \
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
-             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
              patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
@@ -499,6 +526,7 @@ class TestRoadHandlerTerrainAwareRouting:
         np.testing.assert_array_equal(captured["cost_map"], explicit_cost_map)
         assert result["terrain_cost_context_used"] is True
         assert result["terrain_cost_source"] == "explicit_cost_map"
+        assert result["road_routing_method"] == "astar_24dir"
 
     def test_handle_generate_road_can_return_road_channels(self):
         from blender_addon.handlers import environment as env_mod
@@ -533,13 +561,24 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_run_height_solver(heightmap, solver, /, **solver_kwargs):
-            return [(0, 0), (1, 1)], np.asarray(heightmap, dtype=np.float64).copy(), SimpleNamespace()
+        def _fake_compute_road_network(waypoints, **kwargs):
+            return {
+                "routes": [
+                    {
+                        "points": [
+                            (-2.0, -2.0, 0.0),
+                            (2.0, 2.0, 0.3),
+                        ]
+                    }
+                ],
+                "routing_method": "astar_24dir",
+            }
 
         with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
              patch.object(env_mod.bmesh, "new", return_value=_BM()), \
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
-             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
              patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
@@ -555,6 +594,7 @@ class TestRoadHandlerTerrainAwareRouting:
 
         assert result["road_mask_shape"] == [2, 2]
         assert result["road_mask_nonzero"] > 0
+        assert result["road_routing_method"] == "astar_24dir"
         assert result["road_mask"][0][0] in (0, 1)
         assert result["road_sdf_dist"][0][0] >= 0.0
 
@@ -938,7 +978,13 @@ class TestControllerTerrainPath:
 
         params = captured["params"]
         assert params["scene_read"]["cave_candidates"] == [(6.0, 3.0, 0.0)]
-        assert params["pipeline"] == ["macro_world", "structural_masks", "cliffs", "validation_minimal"]
+        assert params["pipeline"] == [
+            "macro_world",
+            "structural_masks",
+            "cliffs",
+            "emit_overhang_meshes",
+            "validation_minimal",
+        ]
         assert params["world_origin_x"] == pytest.approx(-12.0)
         assert params["world_origin_y"] == pytest.approx(-18.0)
         assert result["cave_candidates"] == [[6.0, 3.0, 0.0]]
@@ -1002,7 +1048,15 @@ class TestControllerTerrainPath:
             )
 
         params = captured["params"]
-        assert params["pipeline"] == ["macro_world", "structural_masks", "caves", "integrate_deltas", "cliffs", "validation_minimal"]
+        assert params["pipeline"] == [
+            "macro_world",
+            "structural_masks",
+            "caves",
+            "integrate_deltas",
+            "cliffs",
+            "emit_overhang_meshes",
+            "validation_minimal",
+        ]
         assert result["cave_pipeline_deferred"] is False
 
     def test_controller_path_inserts_hydrology_before_erosion(self):
@@ -1066,8 +1120,68 @@ class TestControllerTerrainPath:
             "erosion",
             "structural_masks",
             "cliffs",
+            "emit_overhang_meshes",
             "validation_minimal",
         ]
+
+    def test_controller_path_forwards_quality_profile_hints_and_viewport_vantage(self):
+        from blender_addon.handlers import environment as env_mod
+        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+        height = np.zeros((3, 3), dtype=np.float64)
+        stack = TerrainMaskStack(
+            tile_size=2,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=height,
+        )
+        controller_execution = {
+            "state": SimpleNamespace(mask_stack=stack),
+            "results": [],
+            "mask_stack": stack,
+            "tile_x": 0,
+            "tile_y": 0,
+        }
+        captured: dict[str, object] = {}
+
+        def _fake_execute(params):
+            captured["params"] = dict(params)
+            return controller_execution
+
+        def _fake_create_mesh(**kwargs):
+            return {
+                "name": kwargs["name"],
+                "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
+                "cliff_overlays": 0,
+                "hero_cliff_overlays": 0,
+            }
+
+        with patch.object(env_mod, "_execute_terrain_pipeline", side_effect=_fake_execute), \
+             patch.object(env_mod, "_create_terrain_mesh_from_heightmap", side_effect=_fake_create_mesh):
+            env_mod.handle_generate_terrain(
+                {
+                    "name": "ProfileForwardTerrain",
+                    "resolution": 3,
+                    "terrain_type": "mountains",
+                    "erosion": "none",
+                    "seed": 11,
+                    "scale": 32.0,
+                    "height_scale": 6.0,
+                    "use_controller": True,
+                    "quality_profile": "aaa_open_world",
+                    "composition_hints": {"bundle_n_runtime": {"determinism_runs": 2}},
+                    "viewport_vantage": {"camera": "test"},
+                }
+            )
+
+        assert captured["params"]["quality_profile"] == "aaa_open_world"
+        assert captured["params"]["composition_hints"] == {
+            "bundle_n_runtime": {"determinism_runs": 2}
+        }
+        assert captured["params"]["viewport_vantage"] == {"camera": "test"}
 
 
 class TestWorldTerrainGeneration:

@@ -124,11 +124,11 @@ them into pipeline or MCP handlers as the relevant features ship.
 | `vegetation_system.py` | `get_seasonal_variant` | Seasonal variant selector |
 | `vertex_paint_live.py` | `blend_colors_array` | Live vertex paint utility |
 | `terrain_pass_dag.py` | `PassDAG.names` | DAG property; already reachable from test code |
-| `terrain_budget_enforcer.py` | `_estimate_tri_count`, `compute_budget_report` | Budget report; `compute_budget_report` should be called post-validation |
+| `terrain_budget_enforcer.py` | `_estimate_tri_count` | Legacy triangle-count helper kept for backward compatibility |
 | `terrain_unity_export.py` | `_export_heightmap` | Unity export helper |
 | `terrain_waterfalls.py` | `export_water_mesh_vertices` | Waterfall mesh export |
 | `road_network.py` | `_sample_heightmap` | Road network private helper |
-| `terrain_review_ingest.py` | `pass_apply_review_blockers` | Review-to-pipeline blocker injection; call from review workflow |
+| `terrain_review_ingest.py` | `pass_apply_review_blockers` | Resolved on 2026-04-21: now consumed by Bundle N post-pipeline review blocker runtime |
 
 ---
 

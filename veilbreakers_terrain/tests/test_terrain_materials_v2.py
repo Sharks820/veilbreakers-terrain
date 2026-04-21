@@ -370,6 +370,37 @@ def test_pass_materials_is_deterministic():
     )
 
 
+def test_pass_materials_applies_height_blend_defaults():
+    from blender_addon.handlers.terrain_materials_v2 import (
+        MaterialChannel,
+        MaterialRuleSet,
+        pass_materials,
+    )
+
+    state = _build_state()
+    state.intent.composition_hints["material_height_blend_gamma"] = {
+        "valley": 0.5,
+        "peak": 2.5,
+    }
+    rules = MaterialRuleSet(
+        channels=(
+            MaterialChannel(channel_id="valley", base_weight=1.0),
+            MaterialChannel(channel_id="peak", base_weight=1.0),
+        ),
+        default_channel_id="valley",
+    )
+    result = pass_materials(state, None, rules=rules)
+    assert result.status == "ok"
+    weights = state.mask_stack.splatmap_weights_layer
+    assert weights is not None
+    min_pos = np.unravel_index(np.argmin(state.mask_stack.height), state.mask_stack.height.shape)
+    max_pos = np.unravel_index(np.argmax(state.mask_stack.height), state.mask_stack.height.shape)
+    valley_idx = rules.index_of("valley")
+    peak_idx = rules.index_of("peak")
+    assert weights[min_pos][valley_idx] > weights[max_pos][valley_idx]
+    assert weights[max_pos][peak_idx] > weights[min_pos][peak_idx]
+
+
 def test_region_scoped_pass_leaves_outside_cells_unchanged():
     from blender_addon.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,

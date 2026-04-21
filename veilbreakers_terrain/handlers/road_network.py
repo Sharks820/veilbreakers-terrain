@@ -1056,12 +1056,15 @@ def compute_road_network(
     anchor_kinds: list | None = None,
     use_astar: bool = True,
     rdp_epsilon: float = 1.0,
+    terrain_bounds=None,
+    connection_strategy: str = "mst",
 ) -> dict:
     """Build a full AAA road network from waypoints.
 
     Uses 24-directional A* with full AASHTO cost function to find
-    contour-following paths between each pair of MST-connected waypoints.
-    Falls back to straight-line MST when no heightmap is supplied.
+    contour-following paths between connected waypoint pairs. Connection
+    topology is chosen by ``connection_strategy``. Falls back to straight-line
+    connections when no heightmap is supplied.
 
     Parameters
     ----------
@@ -1086,18 +1089,25 @@ def compute_road_network(
     rdp_epsilon:
         RDP simplification tolerance in metres (default 1.0 m). Reduce for
         higher-fidelity terrain following; increase for fewer segments.
+    terrain_bounds:
+        Optional explicit ``(min_x, min_y, max_x, max_y)`` bounds for the
+        supplied heightmap. When omitted, bounds are inferred from waypoints.
+    connection_strategy:
+        ``"mst"`` (default) connects waypoints via a minimum spanning tree.
+        ``"chain"`` preserves caller order by connecting successive pairs.
 
     Returns
     -------
     Dict with keys:
         waypoint_count, segments, total_length, mesh_specs,
         bridge_mesh_specs, bridges, switchbacks, worn_paths,
-        routing_method ("astar_24dir" | "mst_straight").
+        routing_method ("astar_24dir" | "mst_straight" | "chain_straight").
     """
     if not waypoints:
         return {
             "waypoint_count": 0,
             "segments": [],
+            "routes": [],
             "total_length": 0.0,
             "mesh_specs": [],
             "bridge_mesh_specs": [],
@@ -1112,6 +1122,7 @@ def compute_road_network(
         return {
             "waypoint_count": 1,
             "segments": [],
+            "routes": [],
             "total_length": 0.0,
             "mesh_specs": [],
             "bridge_mesh_specs": [],
@@ -1123,8 +1134,20 @@ def compute_road_network(
 
     # Resolve heightmap + terrain bounds
     hmap = heightmap
-    terrain_bounds = None
-    if hmap is not None and hasattr(hmap, 'tolist'):
+    resolved_terrain_bounds = None
+    if terrain_bounds is not None:
+        try:
+            min_x, min_y, max_x, max_y = terrain_bounds
+            resolved_terrain_bounds = (
+                float(min_x),
+                float(min_y),
+                float(max_x),
+                float(max_y),
+            )
+        except Exception as exc:
+            raise ValueError("terrain_bounds must be a 4-item iterable") from exc
+
+    if resolved_terrain_bounds is None and hmap is not None and hasattr(hmap, 'tolist'):
         rows, cols = hmap.shape[:2]
         # Infer bounds: treat heightmap as covering the bounding box of waypoints
         xs = [wp[0] for wp in waypoints]
@@ -1133,9 +1156,9 @@ def compute_road_network(
         min_y = min(ys) - 50.0
         max_x = max(xs) + 50.0
         max_y = max(ys) + 50.0
-        terrain_bounds = (min_x, min_y, max_x, max_y)
+        resolved_terrain_bounds = (min_x, min_y, max_x, max_y)
         # Keep as numpy array for efficient indexing in A*
-    elif hmap is not None:
+    elif resolved_terrain_bounds is None and hmap is not None:
         rows_list = len(hmap)
         cols_list = len(hmap[0]) if rows_list else 0
         if rows_list > 0 and cols_list > 0:
@@ -1145,7 +1168,7 @@ def compute_road_network(
             min_y = min(ys) - 50.0
             max_x = max(xs) + 50.0
             max_y = max(ys) + 50.0
-            terrain_bounds = (min_x, min_y, max_x, max_y)
+            resolved_terrain_bounds = (min_x, min_y, max_x, max_y)
 
     # Build anchor traffic weights
     _TRAFFIC_WEIGHTS: dict[str, float] = {
@@ -1163,20 +1186,32 @@ def compute_road_network(
         wj = _TRAFFIC_WEIGHTS.get(kj.lower(), 1.0)
         return (wi + wj) / 2.0
 
-    # Step 1: MST to determine which waypoints to connect
-    mst_edges = compute_mst_edges(waypoints)
+    # Step 1: choose which waypoints to connect
+    if connection_strategy == "mst":
+        route_edges = compute_mst_edges(waypoints)
+    elif connection_strategy == "chain":
+        route_edges = [
+            (i, i + 1, _dist3(waypoints[i], waypoints[i + 1]))
+            for i in range(n - 1)
+        ]
+    else:
+        raise ValueError("connection_strategy must be 'mst' or 'chain'")
 
-    all_costs = [cost for _, _, cost in mst_edges]
+    all_costs = [cost for _, _, cost in route_edges]
     max_cost = max(all_costs) if all_costs else 0.0
 
     segments = []
+    routes = []
     switchbacks = []
     worn_paths = []
     total_length = 0.0
 
-    routing_method = "astar_24dir" if (use_astar and hmap is not None) else "mst_straight"
+    if use_astar and hmap is not None and resolved_terrain_bounds is not None:
+        routing_method = "astar_24dir"
+    else:
+        routing_method = "chain_straight" if connection_strategy == "chain" else "mst_straight"
 
-    for i, j, cost in mst_edges:
+    for edge_index, (i, j, cost) in enumerate(route_edges):
         start_wp = waypoints[i]
         end_wp = waypoints[j]
         gradient_deg = _compute_slope_degrees(start_wp, end_wp)
@@ -1193,10 +1228,10 @@ def compute_road_network(
         max_grade_deg = math.degrees(math.atan(max_grade_pct / 100.0))
 
         # Step 2: A* contour-following path between this pair of waypoints
-        if use_astar and hmap is not None and terrain_bounds is not None:
+        if use_astar and hmap is not None and resolved_terrain_bounds is not None:
             raw_path = _astar_24dir(
                 hmap,
-                terrain_bounds,
+                resolved_terrain_bounds,
                 start_wp,
                 end_wp,
                 road_type=road_type_ext,
@@ -1220,6 +1255,17 @@ def compute_road_network(
                 seg_switchbacks.extend(sb_pts)
             final_pts.append(seg_e)
 
+        routes.append(
+            {
+                "connection_index": edge_index,
+                "start_index": i,
+                "end_index": j,
+                "points": final_pts,
+                "width": width,
+                "road_type": road_type,
+                "road_type_tier": road_type_ext,
+            }
+        )
         switchbacks.extend(seg_switchbacks)
 
         # Step 4: Build segments from the full resolved point list
@@ -1244,7 +1290,7 @@ def compute_road_network(
     bridges: list = []
     bridge_mesh_specs: list = []
     if water_level is not None:
-        detect_bounds = terrain_bounds
+        detect_bounds = resolved_terrain_bounds
         detect_hmap = hmap
         if detect_hmap is not None and hasattr(detect_hmap, "tolist"):
             detect_hmap = detect_hmap.tolist()
@@ -1264,6 +1310,7 @@ def compute_road_network(
     return {
         "waypoint_count": n,
         "segments": segments,
+        "routes": routes,
         "total_length": total_length,
         "mesh_specs": mesh_specs,
         "bridge_mesh_specs": bridge_mesh_specs,
@@ -1289,6 +1336,11 @@ def handle_compute_road_network(params: dict) -> dict:
                     directly to the A* per-step cost, so high values (e.g.
                     water bodies, protected zones) are routed around naturally.
                     Silently ignored when shape does not match heightmap.
+      terrain_bounds:
+                    Optional explicit (min_x, min_y, max_x, max_y) bounds for
+                    the supplied heightmap.
+      connection_strategy:
+                    "mst" (default) or "chain" for ordered waypoint routing.
       use_astar:    bool (default True) — enable 24-dir A* routing
       rdp_epsilon:  float (default 1.0 m) — RDP path simplification tolerance
     """
@@ -1300,6 +1352,8 @@ def handle_compute_road_network(params: dict) -> dict:
     cost_map = params.get("cost_map", None)
     use_astar = params.get("use_astar", True)
     rdp_epsilon = float(params.get("rdp_epsilon", 1.0))
+    terrain_bounds = params.get("terrain_bounds", None)
+    connection_strategy = str(params.get("connection_strategy", "mst"))
 
     return compute_road_network(
         waypoints,
@@ -1310,4 +1364,6 @@ def handle_compute_road_network(params: dict) -> dict:
         cost_map=cost_map,
         use_astar=use_astar,
         rdp_epsilon=rdp_epsilon,
+        terrain_bounds=terrain_bounds,
+        connection_strategy=connection_strategy,
     )

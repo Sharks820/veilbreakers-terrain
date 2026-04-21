@@ -523,6 +523,22 @@ def _terrain_type_from_intent(intent) -> str:
     return terrain_type_map.get(str(noise_profile), "mountains")
 
 
+def _apply_post_height_seams(
+    stack: Any,
+    *channels: str,
+) -> None:
+    """Re-apply imported neighbor seam constraints after a height mutation."""
+    if not any(
+        getattr(stack, edge_name, None) is not None
+        for edge_name in ("north_edge", "south_edge", "east_edge", "west_edge")
+    ):
+        return
+
+    from .terrain_chunking import apply_seam_boundary_conditions
+
+    apply_seam_boundary_conditions(stack, channels=tuple(channels) or ("height",))
+
+
 def pass_generate_low_freq_hmap(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -549,20 +565,26 @@ def pass_generate_low_freq_hmap(
     world_origin_y = float(stack.world_origin_y)
     terrain_type = _terrain_type_from_intent(intent)
 
-    hmap_low = generate_world_heightmap(
-        width=tile_size,
-        height=tile_size,
-        scale=float(tile_size) * cell_size,
-        world_origin_x=world_origin_x,
-        world_origin_y=world_origin_y,
-        cell_size=cell_size,
-        seed=seed,
-        terrain_type=terrain_type,
-        octaves=low_freq_octaves,
-    ).astype(np.float32)
+    existing_low = stack.get("hmap_low_freq")
+    reused_existing = existing_low is not None
+    if reused_existing:
+        hmap_low = np.asarray(existing_low, dtype=np.float32).copy()
+    else:
+        hmap_low = generate_world_heightmap(
+            width=tile_size,
+            height=tile_size,
+            scale=float(tile_size) * cell_size,
+            world_origin_x=world_origin_x,
+            world_origin_y=world_origin_y,
+            cell_size=cell_size,
+            seed=seed,
+            terrain_type=terrain_type,
+            octaves=low_freq_octaves,
+        ).astype(np.float32)
 
     stack.set("hmap_low_freq", hmap_low, "pass_generate_low_freq_hmap")
     stack.set("height", hmap_low, "pass_generate_low_freq_hmap")
+    _apply_post_height_seams(stack, "height", "hmap_low_freq")
 
     elapsed = time.perf_counter() - t0
     return PassResult(
@@ -570,7 +592,11 @@ def pass_generate_low_freq_hmap(
         status="ok",
         duration_seconds=elapsed,
         produced_channels=("height", "hmap_low_freq"),
-        metrics={"elapsed_s": elapsed},
+        metrics={
+            "elapsed_s": elapsed,
+            "generated": not reused_existing,
+            "reused_existing": reused_existing,
+        },
     )
 
 
@@ -666,6 +692,7 @@ def pass_composite_hmap(
     final_height = low + high * detail_scale
 
     stack.set("height", final_height, "pass_composite_hmap")
+    _apply_post_height_seams(stack, "height")
 
     elapsed = time.perf_counter() - t0
     return PassResult(
@@ -946,6 +973,8 @@ def pass_macro_world(
             ),
         ))
 
+    _apply_post_height_seams(stack, "height", "hmap_low_freq")
+
     soft_issues = [i for i in issues if not i.is_hard()]
     return PassResult(
         pass_name="macro_world",
@@ -1070,6 +1099,7 @@ def pass_erosion(
             "pass_erosion: hmap_low_freq not populated — falling back to stack.height "
             "(run pass_generate_low_freq_hmap first for full Fix 12.1 behavior)"
         )
+    structural_ridge = stack.get("ridge")
     h_before = (_low if _low is not None else stack.height).copy()
 
     # Combine hero_exclusion + protected-zone mask
@@ -1116,7 +1146,14 @@ def pass_erosion(
     h_after_analytical = h_before + analytical_delta
 
     # Store ridge map on the mask stack
-    ridge_out = analytical_result.ridge_map
+    ridge_out = np.asarray(analytical_result.ridge_map, dtype=np.float32)
+    if structural_ridge is not None:
+        structural_ridge_arr = np.asarray(structural_ridge, dtype=np.float32)
+        ridge_out = np.where(
+            structural_ridge_arr > 0.0,
+            np.maximum(ridge_out, structural_ridge_arr),
+            ridge_out,
+        )
     if region is not None:
         r_s, c_s = _region_slice(state, region)
         scoped_ridge = np.zeros_like(ridge_out)
@@ -1124,7 +1161,10 @@ def pass_erosion(
         ridge_out = scoped_ridge
     if protected.any():
         ridge_out = np.where(protected, 0.0, ridge_out)
-    stack.set("ridge", ridge_out, "erosion")
+    # Keep structural_masks as the sole declared DAG producer for ``ridge``.
+    # Erosion still refines the in-memory ridge field for sequential consumers,
+    # but does not claim channel ownership in the registry.
+    object.__setattr__(stack, "ridge", np.ascontiguousarray(ridge_out))
 
     # --- Hydraulic erosion (secondary refinement on analytical output) ---
     hydro = apply_hydraulic_erosion_masks(
@@ -1235,6 +1275,7 @@ def pass_erosion(
     stack.set("drainage", drainage_out, "erosion")
     stack.set("bank_instability", bank_instability_out, "erosion")
     stack.set("talus", talus_out, "erosion")
+    _apply_post_height_seams(stack, "height", "hmap_low_freq")
 
     # Sediment mass-balance metric (AAA spec): ratio of total redeposited
     # material to total eroded material.  A healthy simulation is 0.6–0.95;
@@ -1251,10 +1292,9 @@ def pass_erosion(
         pass_name="erosion",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
-        consumed_channels=("height",),
+        consumed_channels=("hmap_low_freq",),
         produced_channels=(
             "height",
-            "ridge",
             "erosion_amount",
             "deposition_amount",
             "wetness",
@@ -1272,6 +1312,11 @@ def pass_erosion(
             "total_talus": float(talus_out.sum()),
             "protected_cells": int(protected.sum()),
             "region_scoped": region is not None,
+            "structural_ridge_fraction_input": (
+                float(np.asarray(structural_ridge, dtype=np.float32).mean())
+                if structural_ridge is not None
+                else 0.0
+            ),
         },
     )
 

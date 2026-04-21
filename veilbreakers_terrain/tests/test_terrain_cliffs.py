@@ -281,6 +281,7 @@ def test_pass_cliffs_populates_cliff_candidate_channel():
     assert result.status in ("ok", "warning")
     assert state.mask_stack.cliff_candidate is not None
     assert state.mask_stack.cliff_candidate.dtype == bool
+    assert isinstance(state.mask_stack.get("cliff_mesh_specs"), list)
     assert result.metrics["cliff_count"] >= 1
 
 
@@ -370,3 +371,16 @@ def test_hero_mesh_insertion_records_intent():
     intents = insert_hero_cliff_meshes(state, cliffs)
     assert len(intents) >= 1
     assert any("insert_hero_cliff_mesh" in s for s in state.side_effects)
+
+
+def test_emit_overhang_meshes_publishes_mesh_layer_cache():
+    from blender_addon.handlers.terrain_cliffs import register_bundle_b_passes
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+
+    register_bundle_b_passes()
+    state = _build_cliff_state()
+    controller = TerrainPassController(state)
+    controller.run_pass("cliffs", checkpoint=False)
+    result = controller.run_pass("emit_overhang_meshes", checkpoint=False)
+    assert result.status == "ok"
+    assert hasattr(state, "mesh_layer_specs")

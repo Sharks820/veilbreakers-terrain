@@ -933,8 +933,12 @@ def compute_stream_power_erosion(
     else:
         A = np.ones(h.shape, dtype=np.float64)
 
-    # Precompute A^m (constant across steps unless A updates)
-    A_m = np.power(np.maximum(A, 1.0), m)
+    # Convert upstream contributing-cell counts into world-space drainage area
+    # before applying the stream-power exponent. This keeps cell_size changes
+    # physically meaningful instead of silently treating a 10 m tile and a 1 m
+    # tile as the same catchment.
+    A_world = np.maximum(A, 1.0) * float(cell_size) * float(cell_size)
+    A_m = np.power(A_world, m)
 
     # 8-neighbor direction offsets and distances
     _SQRT2 = 1.4142135623730951

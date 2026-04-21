@@ -519,6 +519,7 @@ def test_register_bundle_f_passes_adds_caves():
     assert "cave_wall_texture" in definition.produces_channels
     assert "cave_stalactite_length" in definition.produces_channels
     assert "cave_stalagmite_length" in definition.produces_channels
+    assert "cave_mesh_specs" in definition.produces_channels
 
 
 def test_pass_caves_requires_scene_read():
@@ -572,6 +573,7 @@ def test_pass_caves_populates_channels_and_structures():
     assert result.status in ("ok", "warning")
     assert state.mask_stack.get("cave_candidate") is not None
     assert state.mask_stack.get("wet_rock") is not None
+    assert isinstance(state.mask_stack.get("cave_mesh_specs"), list)
     assert result.metrics["cave_count"] == 2
     # side_effects recorded on state
     assert any("cave_structure:" in s for s in state.side_effects)

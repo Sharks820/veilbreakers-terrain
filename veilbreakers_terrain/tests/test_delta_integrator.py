@@ -406,3 +406,40 @@ class TestDeltaIntegratorPipelineSequencing:
         ]
         assert state.mask_stack.height[3, 3] == pytest.approx(96.0)
         assert results[-1].metrics["height_3_3"] == pytest.approx(96.0)
+
+    def test_run_pipeline_auto_inserts_integrator_after_stratigraphy(self):
+        from blender_addon.handlers.terrain_geology_validator import register_bundle_i_passes
+        from blender_addon.handlers.terrain_pipeline import (
+            TerrainPassController,
+            register_default_passes,
+        )
+
+        original = dict(TerrainPassController.PASS_REGISTRY)
+        try:
+            TerrainPassController.clear_registry()
+            register_default_passes()
+            register_bundle_i_passes()
+
+            stack = _make_stack()
+            state = _make_state(stack)
+            object.__setattr__(state.intent, "composition_hints", {
+                "fold_enabled": False,
+                "intrusions_enabled": False,
+            })
+            with tempfile.TemporaryDirectory() as td:
+                controller = TerrainPassController(state, checkpoint_dir=Path(td))
+                results = controller.run_pipeline(
+                    pass_sequence=["macro_world", "stratigraphy"],
+                    checkpoint=False,
+                )
+        finally:
+            TerrainPassController.clear_registry()
+            TerrainPassController.PASS_REGISTRY.update(original)
+
+        assert [result.pass_name for result in results] == [
+            "macro_world",
+            "stratigraphy",
+            "integrate_deltas",
+        ]
+        assert state.mask_stack.strat_erosion_delta is not None
+        assert float(np.min(state.mask_stack.strat_erosion_delta)) < 0.0

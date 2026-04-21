@@ -256,6 +256,10 @@ def test_pass_multiscale_breakup_does_not_write_roughness(state):
 
     result = pass_multiscale_breakup(state, None)
     assert result.status == "ok"
+    breakup = state.mask_stack.get("roughness_breakup")
+    assert breakup is not None
+    assert breakup.shape == state.mask_stack.height.shape
+    assert breakup.dtype == np.float32
     # roughness_variation must NOT be written by this pass
     assert state.mask_stack.get("roughness_variation") is None, (
         "multiscale_breakup must not write roughness_variation (Fix 7.18 single-writer rule)"
@@ -386,6 +390,25 @@ def test_pass_roughness_driver(state):
     rough = state.mask_stack.get("roughness_variation")
     assert rough is not None
     assert rough.dtype == np.float32
+
+
+def test_pass_roughness_driver_consumes_breakup_signal(state):
+    from blender_addon.handlers.terrain_roughness_driver import pass_roughness_driver
+
+    baseline_result = pass_roughness_driver(state, None)
+    assert baseline_result.status == "ok"
+    baseline = state.mask_stack.get("roughness_variation").copy()
+
+    boosted_state = _build_state()
+    boosted_state.mask_stack.set(
+        "roughness_breakup",
+        np.ones_like(boosted_state.mask_stack.height, dtype=np.float32),
+        "test",
+    )
+    boosted_result = pass_roughness_driver(boosted_state, None)
+    assert boosted_result.status == "ok"
+    boosted = boosted_state.mask_stack.get("roughness_variation")
+    assert boosted.mean() > baseline.mean()
 
 
 # ---------------------------------------------------------------------------

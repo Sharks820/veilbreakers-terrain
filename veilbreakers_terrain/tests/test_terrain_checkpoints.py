@@ -173,6 +173,18 @@ def test_rollback_to_by_label():
         assert controller.state.mask_stack.compute_hash() == hash1
 
 
+def test_rollback_to_restores_viewport_vantage_snapshot():
+    from blender_addon.handlers.terrain_checkpoints import rollback_to, save_checkpoint
+
+    with tempfile.TemporaryDirectory() as td:
+        controller, _ = _make_controller(checkpoint_dir=td)
+        controller.state.viewport_vantage = {"camera": "baseline"}
+        ckpt = save_checkpoint(controller, "baseline")
+        controller.state.viewport_vantage = {"camera": "mutated"}
+        rollback_to(controller, ckpt.checkpoint_id)
+        assert controller.state.viewport_vantage == {"camera": "baseline"}
+
+
 def test_rollback_to_unknown_raises():
     from blender_addon.handlers.terrain_checkpoints import rollback_to, save_checkpoint
 

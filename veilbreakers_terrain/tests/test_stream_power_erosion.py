@@ -172,6 +172,35 @@ class TestComputeStreamPowerErosion:
             "10x drainage area should produce more incision (lower terrain)"
         )
 
+    def test_larger_cell_size_increases_world_space_drainage_area_effect(self):
+        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+
+        dem = _make_sloped_dem(8).astype(np.float64)
+        drainage = np.full_like(dem, 16.0)
+        fine = compute_stream_power_erosion(
+            dem,
+            K_scalar=0.001,
+            drainage_area=drainage,
+            cell_size=1.0,
+            m=1.0,
+            uplift_rate=0.0,
+            steps=10,
+        )
+        coarse = compute_stream_power_erosion(
+            dem,
+            K_scalar=0.001,
+            drainage_area=drainage,
+            cell_size=4.0,
+            m=1.0,
+            uplift_rate=0.0,
+            steps=10,
+        )
+
+        assert coarse.sum() < fine.sum(), (
+            "Larger cell_size should represent a larger real catchment area and "
+            "therefore produce more incision for the same drainage_area counts"
+        )
+
     def test_positive_uplift_partially_counteracts_erosion(self):
         from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)

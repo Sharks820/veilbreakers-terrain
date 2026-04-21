@@ -190,6 +190,24 @@ def test_pass_stratigraphy_populates_channels():
     assert "hardness_mean" in result.metrics
 
 
+def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():
+    from blender_addon.handlers.terrain_stratigraphy import pass_stratigraphy
+
+    stack = _build_stack(heights="ramp")
+    state = _build_state(stack, hints={"intrusions_enabled": False, "fold_enabled": False})
+
+    result = pass_stratigraphy(state, None)
+
+    assert result.status == "ok"
+    assert stack.strat_erosion_delta is not None
+    assert stack.unconformity_mask is not None
+    assert stack.intrusion_mask is not None
+    assert stack.albedo_shift_rgb is not None
+    assert stack.strata_cross_section is not None
+    np.testing.assert_allclose(stack.intrusion_mask, 0.0)
+    np.testing.assert_allclose(stack.albedo_shift_rgb, 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Glacial
 # ---------------------------------------------------------------------------
@@ -617,3 +635,27 @@ def test_bundle_i_does_not_modify_default_passes():
     finally:
         TerrainPassController.PASS_REGISTRY.clear()
         TerrainPassController.PASS_REGISTRY.update(prior)
+
+
+def test_bundle_i_declares_full_stratigraphy_channel_contract():
+    from blender_addon.handlers.terrain_geology_validator import register_bundle_i_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    prior = dict(TerrainPassController.PASS_REGISTRY)
+    try:
+        TerrainPassController.PASS_REGISTRY.clear()
+        register_bundle_i_passes()
+        stratigraphy = TerrainPassController.PASS_REGISTRY["stratigraphy"]
+    finally:
+        TerrainPassController.PASS_REGISTRY.clear()
+        TerrainPassController.PASS_REGISTRY.update(prior)
+
+    assert stratigraphy.produces_channels == (
+        "rock_hardness",
+        "strata_orientation",
+        "strat_erosion_delta",
+        "unconformity_mask",
+        "intrusion_mask",
+        "albedo_shift_rgb",
+        "strata_cross_section",
+    )

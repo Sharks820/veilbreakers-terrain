@@ -256,6 +256,39 @@ class TestPipelineUnification:
         assert result["waypoint_count"] == 3
         assert len(result["segments"]) > 0
 
+    def test_compute_road_network_chain_strategy_preserves_waypoint_order(self):
+        from veilbreakers_terrain.handlers.road_network import compute_road_network
+
+        waypoints = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0)]
+        result = compute_road_network(waypoints, connection_strategy="chain", seed=1)
+
+        assert result["routing_method"] == "chain_straight"
+        assert [(route["start_index"], route["end_index"]) for route in result["routes"]] == [(0, 1), (1, 2)]
+        assert result["segments"][0][0] == waypoints[0]
+        assert result["segments"][0][1] == waypoints[1]
+        assert result["segments"][-1][0] == waypoints[1]
+        assert result["segments"][-1][1] == waypoints[2]
+
+    def test_compute_road_network_threads_explicit_terrain_bounds_to_astar(self, monkeypatch):
+        from veilbreakers_terrain.handlers import road_network as road_mod
+
+        captured: dict[str, object] = {}
+
+        def _fake_astar(heightmap, terrain_bounds, start_world, end_world, **kwargs):
+            captured["terrain_bounds"] = terrain_bounds
+            return [start_world, end_world]
+
+        monkeypatch.setattr(road_mod, "_astar_24dir", _fake_astar)
+        heightmap = np.zeros((4, 4), dtype=np.float32)
+        road_mod.compute_road_network(
+            [(0.0, 0.0, 0.0), (5.0, 5.0, 0.0)],
+            heightmap=heightmap,
+            terrain_bounds=(-20.0, -10.0, 20.0, 10.0),
+            connection_strategy="chain",
+        )
+
+        assert captured["terrain_bounds"] == (-20.0, -10.0, 20.0, 10.0)
+
     def test_two_settlement_anchors_produce_nonzero_road_mask(self):
         """End-to-end: two settlement anchors → road_mask has nonzero pixels."""
         from veilbreakers_terrain.handlers.terrain_twelve_step import _generate_road_mesh_specs

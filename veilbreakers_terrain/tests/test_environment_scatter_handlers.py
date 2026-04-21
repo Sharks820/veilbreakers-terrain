@@ -256,6 +256,153 @@ class TestScatterVegetationLogic:
         assert len(vegetation_types) >= 2, "Overlapping rules should produce multiple vegetation types"
 
 
+class TestMultipassScatterIntegration:
+    """Tests for the richer multi-pass scatter path used by handle_scatter_vegetation."""
+
+    @staticmethod
+    def _rules():
+        return [
+            {
+                "vegetation_type": "tree",
+                "min_alt": 0.0,
+                "max_alt": 1.0,
+                "min_slope": 0.0,
+                "max_slope": 35.0,
+                "scale_range": (0.9, 1.2),
+                "density": 1.0,
+            },
+            {
+                "vegetation_type": "bush",
+                "min_alt": 0.0,
+                "max_alt": 1.0,
+                "min_slope": 0.0,
+                "max_slope": 40.0,
+                "scale_range": (0.6, 0.9),
+                "density": 1.0,
+            },
+            {
+                "vegetation_type": "grass",
+                "min_alt": 0.0,
+                "max_alt": 1.0,
+                "min_slope": 0.0,
+                "max_slope": 45.0,
+                "scale_range": (0.4, 0.8),
+                "density": 1.0,
+            },
+            {
+                "vegetation_type": "rock",
+                "min_alt": 0.0,
+                "max_alt": 1.0,
+                "min_slope": 0.0,
+                "max_slope": 90.0,
+                "scale_range": (0.4, 1.1),
+                "density": 1.0,
+            },
+        ]
+
+    def test_scatter_pass_supports_rectangular_terrain_extents(self):
+        from blender_addon.handlers.environment_scatter import _scatter_pass
+
+        hm = np.full((40, 80), 0.35, dtype=np.float32)
+        slope = np.zeros_like(hm)
+        result = _scatter_pass(
+            hm,
+            slope,
+            terrain_size=120.0,
+            pass_type="structure",
+            terrain_width=120.0,
+            terrain_height=60.0,
+            biome="prairie",
+            seed=11,
+        )
+        assert len(result) > 0
+        for item in result:
+            x, y = item["position"]
+            assert -60.0 <= x <= 60.0
+            assert -30.0 <= y <= 30.0
+
+    def test_generate_multipass_scatter_placements_returns_local_positions(self):
+        from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
+
+        hm = np.full((48, 64), 0.32, dtype=np.float32)
+        slope = np.zeros_like(hm)
+        placements = _generate_multipass_scatter_placements(
+            heightmap=hm,
+            slope_map=slope,
+            terrain_width=120.0,
+            terrain_height=60.0,
+            biome="prairie",
+            rules=self._rules(),
+            seed=7,
+            separation_scale=1.0,
+            max_tilt_angle=45.0,
+        )
+
+        assert len(placements) > 0
+        for item in placements:
+            x, y = item["position"]
+            assert 0.0 <= x <= 120.0
+            assert 0.0 <= y <= 60.0
+            assert 0.0 <= item["rotation"] <= 360.0
+
+    def test_generate_multipass_scatter_placements_respects_building_exclusion(self):
+        from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
+
+        hm = np.full((64, 64), 0.3, dtype=np.float32)
+        slope = np.zeros_like(hm)
+        placements = _generate_multipass_scatter_placements(
+            heightmap=hm,
+            slope_map=slope,
+            terrain_width=100.0,
+            terrain_height=100.0,
+            biome="prairie",
+            rules=self._rules(),
+            seed=21,
+            separation_scale=1.0,
+            max_tilt_angle=45.0,
+            building_zones_world=[(-10.0, -10.0, 10.0, 10.0)],
+            terrain_origin_x=0.0,
+            terrain_origin_y=0.0,
+        )
+
+        assert len(placements) > 0
+        for item in placements:
+            x, y = item["position"]
+            assert not (40.0 <= x <= 60.0 and 40.0 <= y <= 60.0)
+
+    def test_generate_multipass_scatter_placements_filters_to_requested_types(self):
+        from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
+
+        hm = np.full((48, 48), 0.28, dtype=np.float32)
+        slope = np.zeros_like(hm)
+        tree_only_rules = [
+            {
+                "vegetation_type": "tree",
+                "min_alt": 0.0,
+                "max_alt": 1.0,
+                "min_slope": 0.0,
+                "max_slope": 45.0,
+                "scale_range": (0.9, 1.1),
+                "density": 1.0,
+            },
+        ]
+        placements = _generate_multipass_scatter_placements(
+            heightmap=hm,
+            slope_map=slope,
+            terrain_width=80.0,
+            terrain_height=80.0,
+            biome="prairie",
+            rules=tree_only_rules,
+            seed=5,
+            separation_scale=1.0,
+            max_tilt_angle=45.0,
+            apply_rule_density=True,
+        )
+
+        assert len(placements) > 0
+        assert {item["vegetation_type"] for item in placements} == {"tree"}
+
+
 class TestScatterPropsLogic:
     """Test the pure-logic path used by handle_scatter_props."""
 
