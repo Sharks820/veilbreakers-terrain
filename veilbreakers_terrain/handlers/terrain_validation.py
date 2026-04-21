@@ -409,7 +409,8 @@ def validate_tile_seam_continuity(
       cells.
 
     Tier 2 — Cross-tile match (runs when ``neighbor_stacks`` is supplied):
-      Neighbor stacks are keyed by direction: "top", "bottom", "left", "right".
+      Neighbor stacks may be keyed by cardinal directions
+      (``north/south/east/west``) or edge names (``top/bottom/left/right``).
       The shared border row/column of this tile and its neighbor must agree
       within ``seam_tolerance * cell_size`` (world-unit absolute tolerance
       derived from intent cell_size).  A mismatch indicates the neighboring
@@ -478,6 +479,16 @@ def validate_tile_seam_continuity(
     # ------------------------------------------------------------------
     if neighbor_stacks:
         abs_tol = seam_tolerance * cs
+        direction_aliases = {
+            "north": "top",
+            "south": "bottom",
+            "west": "left",
+            "east": "right",
+            "top": "top",
+            "bottom": "bottom",
+            "left": "left",
+            "right": "right",
+        }
 
         neighbor_border_map: Dict[str, Tuple[np.ndarray, np.ndarray]] = {
             # (this_tile_edge, neighbor_opposite_edge)
@@ -495,18 +506,19 @@ def validate_tile_seam_continuity(
         }
 
         for direction, neighbor_stack in neighbor_stacks.items():
-            if direction not in direction_neighbor_edge:
+            canonical_direction = direction_aliases.get(str(direction).lower())
+            if canonical_direction not in direction_neighbor_edge:
                 continue
             nh = _safe_asarray(neighbor_stack.height)
             if nh is None or nh.ndim != 2:
                 continue
 
-            this_edge = border_edges.get(direction)
+            this_edge = border_edges.get(canonical_direction)
             if this_edge is None:
                 continue
 
             try:
-                neighbor_edge = direction_neighbor_edge[direction](neighbor_stack)
+                neighbor_edge = direction_neighbor_edge[canonical_direction](neighbor_stack)
             except Exception:
                 continue
 
@@ -522,10 +534,10 @@ def validate_tile_seam_continuity(
             if bad_cells > 0:
                 issues.append(
                     ValidationIssue(
-                        code=f"SEAM_CROSS_TILE_MISMATCH_{direction.upper()}",
+                        code=f"SEAM_CROSS_TILE_MISMATCH_{canonical_direction.upper()}",
                         severity="soft",
                         message=(
-                            f"{direction} seam: {bad_cells}/{min_len} cells differ from "
+                            f"{canonical_direction} seam: {bad_cells}/{min_len} cells differ from "
                             f"neighbor tile by more than {abs_tol:.3f} m "
                             f"(max diff {max_diff:.3f} m)"
                         ),

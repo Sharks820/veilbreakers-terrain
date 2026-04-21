@@ -2280,7 +2280,8 @@ def pass_waterfall_mist(
     Runs AFTER pass_waterfalls (requires mist channel already populated).
     Produces:
         mist_zone_mask — (H, W) float32 copy of stack.mist (or zeros if absent)
-        wet_surface_decal — list of decal dicts written to stack._extra_channels
+        wet_surface_decal — list of decal dicts written to the mask stack and
+        mirrored to stack._extra_channels for legacy consumers
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -2332,6 +2333,7 @@ def pass_waterfall_mist(
             pass
 
     stack.set("mist_zone_mask", mist_zone_mask, "waterfall_mist")
+    stack.set("wet_surface_decal", decal_list, "waterfall_mist")
     stack._extra_channels = getattr(stack, "_extra_channels", {})
     stack._extra_channels["wet_surface_decal"] = decal_list
 

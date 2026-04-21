@@ -599,9 +599,10 @@ def apply_seam_boundary_conditions(stack: Any) -> None:
     across tile boundaries.
 
     Border enforcement:
-      - ``north_edge`` (shape ``(W,)``): locks ``height[-1, :]`` to the
-        neighbor's value (last row = north border of this tile).
-      - ``south_edge`` (shape ``(W,)``): locks ``height[0, :]``.
+      - ``north_edge`` (shape ``(W,)``): locks ``height[0, :]`` to the
+        south border of the tile to the north.
+      - ``south_edge`` (shape ``(W,)``): locks ``height[-1, :]`` to the
+        north border of the tile to the south.
       - ``east_edge``  (shape ``(H,)``): locks ``height[:, -1]``.
       - ``west_edge``  (shape ``(H,)``): locks ``height[:, 0]``.
 
@@ -635,21 +636,21 @@ def apply_seam_boundary_conditions(stack: Any) -> None:
         edge = _np.asarray(north_edge, dtype=np.float32)
         if edge.shape == (W,):
             # Lock border row
-            h[-1, :] = edge
+            h[0, :] = edge
             # Blend 3 inner rows
             for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
-                row = H - 1 - offset
-                if row >= 0:
+                row = offset
+                if row < H:
                     h[row, :] = w * edge + (1.0 - w) * h[row, :]
 
     south_edge = getattr(stack, "south_edge", None)
     if south_edge is not None:
         edge = _np.asarray(south_edge, dtype=np.float32)
         if edge.shape == (W,):
-            h[0, :] = edge
+            h[-1, :] = edge
             for offset, w in enumerate(_BLEND_WEIGHTS[1:], start=1):
-                row = offset
-                if row < H:
+                row = H - 1 - offset
+                if row >= 0:
                     h[row, :] = w * edge + (1.0 - w) * h[row, :]
 
     east_edge = getattr(stack, "east_edge", None)

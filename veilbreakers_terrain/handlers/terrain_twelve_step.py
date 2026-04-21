@@ -756,6 +756,7 @@ def _generate_road_mesh_specs(
             waypoints[i],
             waypoints[i + 1],
             cost_map=cost_map if cost_map.any() else None,
+            cell_size=cell_size,
         )
         if full_raw_path and segment:
             full_raw_path.extend(segment[1:])

@@ -1215,17 +1215,16 @@ def pass_erosion(
     if protected.any():
         new_height = np.where(protected, h_before, new_height)
 
-    # BUG-99 (part 2): Apply rock_hardness K modifier to the full erosion delta
-    # (analytical + hydraulic + thermal + SPL combined).  Hard rock (hardness→1.0)
-    # gets k_mod→0.3 meaning only 30% of the net height change is kept; soft rock
-    # (hardness→0.0) keeps 100%.  Guard: only active when stratigraphy ran first
-    # (strat_erosion_delta present).
+    # Apply the post-analytical hardness reduction only to the downstream
+    # hydraulic / thermal / SPL delta. Analytical erosion already consumed the
+    # hardness modifier above; re-scaling from h_before would double-attenuate
+    # that component whenever stratigraphy is present.
     if rock_hardness is not None and stack.get("strat_erosion_delta") is not None:
         rh_arr = np.asarray(rock_hardness, dtype=np.float64)
         rh_arr = rh_arr[:new_height.shape[0], :new_height.shape[1]]
         k_mod_full = 1.0 - 0.7 * np.clip(rh_arr, 0.0, 1.0)
-        full_delta = new_height - h_before
-        new_height = h_before + full_delta * k_mod_full
+        downstream_delta = new_height - h_after_analytical
+        new_height = h_after_analytical + downstream_delta * k_mod_full
 
     stack.set("height", new_height, "erosion")
     # Fix 12.1: also update hmap_low_freq so pass_composite_hmap sees the eroded base

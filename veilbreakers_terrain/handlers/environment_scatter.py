@@ -208,7 +208,8 @@ def _assign_scatter_material(obj: bpy.types.Object, material_key: str) -> None:
     # Blender 4.x uses blend_method on the material.
     if mode == "foliage":
         mat.blend_method = "CLIP"
-        mat.alpha_threshold = 0.5
+        if hasattr(mat, "alpha_threshold"):
+            mat.alpha_threshold = 0.5
         mat.use_backface_culling = False  # leaf cards must be double-sided
     else:
         mat.blend_method = "OPAQUE"

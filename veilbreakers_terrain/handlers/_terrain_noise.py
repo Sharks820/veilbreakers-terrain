@@ -1668,6 +1668,7 @@ def _astar(
     slope_weight: float = 5.0,   # kept for backward compat; ignored in Rune formula
     height_weight: float = 1.0,  # kept for backward compat; ignored in Rune formula
     cost_map: np.ndarray | None = None,
+    cell_size: float = 1.0,
 ) -> list[tuple[int, int]]:
     """A* pathfinding on a heightmap using Rune Skovbo Johansen's exact cost formula.
 
@@ -1678,6 +1679,8 @@ def _astar(
 
     cost_map: optional float32[H,W] terrain cost array (rock hardness, water, etc.).
               High values discourage routing through difficult terrain.
+    cell_size: world-space spacing of one grid step. The solver treats height
+               deltas as world units, so slope and move cost must scale by this.
     """
     rows, cols = heightmap.shape
     sr, sc = source
@@ -1692,6 +1695,7 @@ def _astar(
     # Priority queue: (f_cost, g_cost, row, col)
     open_set: list[tuple[float, float, int, int]] = []
     heapq.heappush(open_set, (0.0, 0.0, sr, sc))
+    cell_size = max(float(cell_size), 1e-6)
 
     came_from: dict[tuple[int, int], tuple[int, int]] = {}
     g_score: dict[tuple[int, int], float] = {(sr, sc): 0.0}
@@ -1718,11 +1722,12 @@ def _astar(
 
         for nr, nc in _neighbors(cr, cc, rows, cols):
             flat_dist = math.sqrt(float((nr - cr) ** 2 + (nc - cc) ** 2))
-            slope = abs(float(heightmap[nr, nc]) - float(heightmap[cr, cc])) / max(flat_dist, 1e-6)
+            step_world = flat_dist * cell_size
+            slope = abs(float(heightmap[nr, nc]) - float(heightmap[cr, cc])) / max(step_world, 1e-6)
             terrain_cost = 0.0
             if cost_map is not None:
                 terrain_cost = 12.0 * 0.5 * (float(cost_map[cr, cc]) + float(cost_map[nr, nc]))
-            move_cost = flat_dist * (1.0 + (6.0 * slope) ** 2) + terrain_cost
+            move_cost = step_world * (1.0 + (6.0 * slope) ** 2) + terrain_cost
             tentative_g = g + move_cost
 
             if tentative_g < g_score.get((nr, nc), float("inf")):

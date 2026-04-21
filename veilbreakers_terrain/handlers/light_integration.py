@@ -135,6 +135,8 @@ LIGHT_PROP_MAP: dict[str, dict[str, Any]] = {
         "energy": 80,
         "radius": 10.0,
         "offset_z": 4.0,
+        "direction": (0.0, 0.0, -1.0),
+        "spot_angle": math.radians(55.0),
         "shadow": True,
         "flicker": None,
     },
@@ -435,6 +437,9 @@ def compute_light_placements(
                 "shadow": ldef["shadow"],
                 "flicker": dict(ldef["flicker"]) if ldef.get("flicker") else None,
             })
+            if ldef["type"] == "spot":
+                lights[-1]["direction"] = tuple(ldef.get("direction", (0.0, 0.0, -1.0)))
+                lights[-1]["spot_angle"] = float(ldef.get("spot_angle", math.radians(45.0)))
 
     return lights
 
@@ -522,6 +527,8 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
         has_shadow = any(lights[k]["shadow"] for k in group)
         max_k = max(group, key=lambda k: lights[k]["energy"])
         has_flicker = lights[max_k].get("flicker")
+        dominant_direction = lights[max_k].get("direction")
+        dominant_spot_angle = lights[max_k].get("spot_angle")
 
         max_energy_val = max(lights[k]["energy"] for k in group)
         min_energy_val = min(lights[k]["energy"] for k in group)
@@ -549,6 +556,11 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
             "flicker": has_flicker,
             "merged_count": len(group),
         })
+        if rep["light_type"] == "spot":
+            if dominant_direction is not None:
+                merged[-1]["direction"] = dominant_direction
+            if dominant_spot_angle is not None:
+                merged[-1]["spot_angle"] = dominant_spot_angle
 
     return merged
 

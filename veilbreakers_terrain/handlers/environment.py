@@ -5156,16 +5156,22 @@ def handle_generate_road(params: dict) -> dict:
     # 1. Flush bmesh to mesh to make vertex count canonical.
     bm.to_mesh(mesh)
     bm.free()
-    # 2. Batch-read all vertex co via foreach_get.
-    n_verts = len(mesh.vertices)
-    co_road = np.empty(n_verts * 3, dtype=np.float32)
-    mesh.vertices.foreach_get("co", co_road)
-    # 3. Overwrite Z channel with numpy stride-slice — no Python loop.
-    graded_flat = graded.flatten()
-    n_write = min(n_verts, len(graded_flat))
-    co_road[2::3][:n_write] = graded_flat[:n_write].astype(np.float32)
-    # 4. Batch-write back.
-    mesh.vertices.foreach_set("co", co_road)
+    mesh_vertices = getattr(mesh, "vertices", None)
+    if (
+        mesh_vertices is not None
+        and hasattr(mesh_vertices, "foreach_get")
+        and hasattr(mesh_vertices, "foreach_set")
+    ):
+        # 2. Batch-read all vertex co via foreach_get.
+        n_verts = len(mesh_vertices)
+        co_road = np.empty(n_verts * 3, dtype=np.float32)
+        mesh_vertices.foreach_get("co", co_road)
+        # 3. Overwrite Z channel with numpy stride-slice — no Python loop.
+        graded_flat = graded.flatten()
+        n_write = min(n_verts, len(graded_flat))
+        co_road[2::3][:n_write] = graded_flat[:n_write].astype(np.float32)
+        # 4. Batch-write back.
+        mesh_vertices.foreach_set("co", co_road)
     if hasattr(mesh, "update"):
         mesh.update()
 

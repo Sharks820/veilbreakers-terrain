@@ -269,6 +269,7 @@ class TerrainMaskStack:
     cave_depth_hint: Optional[np.ndarray] = None
     cave_underground_depth: Optional[np.ndarray] = None
     cave_chambers: Optional[np.ndarray] = None
+    cave_nav_issues_count: Optional[np.ndarray] = None
     waterfall_lip_candidate: Optional[np.ndarray] = None
     waterfall_pool_delta: Optional[np.ndarray] = None
     hero_exclusion: Optional[np.ndarray] = None
@@ -277,6 +278,7 @@ class TerrainMaskStack:
     erosion_amount: Optional[np.ndarray] = None
     deposition_amount: Optional[np.ndarray] = None
     wetness: Optional[np.ndarray] = None
+    ice_factor: Optional[np.ndarray] = None
     talus: Optional[np.ndarray] = None
     drainage: Optional[np.ndarray] = None
     bank_instability: Optional[np.ndarray] = None
@@ -366,6 +368,8 @@ class TerrainMaskStack:
     horizon_elevation_angles: Optional[np.ndarray] = None
     # Grass/foliage/detail density per type. dict[type] -> (H, W) float32.
     detail_density: Optional[Dict[str, np.ndarray]] = None
+    # Legacy single-channel grass density export for Unity detail layers.
+    grass_density_map: Optional[np.ndarray] = None
     # Tree instance spawn list. Stored as ndarray of shape (N, 5):
     # (x, y, z, rot, prototype_id). Unity consumer: TerrainData.treeInstances.
     tree_instance_points: Optional[np.ndarray] = None
@@ -394,6 +398,8 @@ class TerrainMaskStack:
 
     # Waterfall mist zone mask — float32 mist intensity per cell (Bundle C supplementary)
     mist_zone_mask: Optional[np.ndarray] = None
+    # Shader-facing wet-surface decal descriptors emitted by waterfall_mist.
+    wet_surface_decal: Optional[List[Dict[str, Any]]] = None
 
     # River-to-lake/ocean convergence channels (pass_river_convergence)
     # Float32 (H, W): 1.0 = river mouth / delta zone, 0.0 = elsewhere.
@@ -473,14 +479,19 @@ class TerrainMaskStack:
             "basin",
             "saliency_macro",
             "cliff_candidate",
+            "cliff_contour_spline",
             "cave_candidate",
             "cave_height_delta",
+            "cave_wall_texture",
+            "cave_stalactite_length",
+            "cave_stalagmite_length",
             "waterfall_lip_candidate",
             "waterfall_pool_delta",
             "hero_exclusion",
             "erosion_amount",
             "deposition_amount",
             "wetness",
+            "ice_factor",
             "talus",
             "drainage",
             "bank_instability",
@@ -491,6 +502,7 @@ class TerrainMaskStack:
             "mist",
             "wet_rock",
             "tidal",
+            "waterfall_velocity",
             "flow_speed",
             "biome_id",
             "material_weights",
@@ -526,6 +538,7 @@ class TerrainMaskStack:
             "lod_bias",
             "tree_instance_points",
             "ambient_occlusion_bake",
+            "grass_density_map",
             # Road network (Phase 8)
             "road_mask",
             "road_sdf_dist",
@@ -550,6 +563,8 @@ class TerrainMaskStack:
             # Hero feature live-preview influence overlay (Bundle M edit_hero_feature)
             "hero_feature_preview",
             # Bundle I AAA geology channels (terrain_stratigraphy upgrade)
+            "stochastic_uv_mask",
+            "shadow_map",
             "unconformity_mask",
             "intrusion_mask",
             "albedo_shift_rgb",
@@ -558,6 +573,7 @@ class TerrainMaskStack:
             "cave_depth_hint",
             "cave_underground_depth",
             "cave_chambers",
+            "cave_nav_issues_count",
             # Neighbor seam boundary conditions (chunked generation)
             "north_edge",
             "south_edge",
@@ -620,7 +636,9 @@ class TerrainMaskStack:
         object.__setattr__(self, "_guard_active", True)
 
     def __setattr__(self, name: str, value: object) -> None:
-        if self.__dict__.get("_guard_active") and name in self._ARRAY_CHANNELS:
+        if self.__dict__.get("_guard_active") and (
+            name in self._ARRAY_CHANNELS or name in self._OPAQUE_CHANNELS
+        ):
             logger.warning(
                 "Direct stack.%s = ... bypasses provenance tracking; "
                 "use stack.set(%r, value, pass_name) instead.",
@@ -630,12 +648,13 @@ class TerrainMaskStack:
 
     # -- core accessors -----------------------------------------------------
 
-    def get(self, channel: str) -> Optional[np.ndarray]:
+    def get(self, channel: str) -> Any:
         """Return the named channel, or None if not yet populated.
 
         Supports scalar ndarray channels plus dict-valued channels
         (``wildlife_affinity``, ``decal_density``) via explicit key suffix
-        ``channel[key]``.
+        ``channel[key]`` and opaque JSON-compatible channels such as
+        ``wet_surface_decal``.
         """
         if "[" in channel and channel.endswith("]"):
             base, key = channel[:-1].split("[", 1)
@@ -687,8 +706,8 @@ class TerrainMaskStack:
         """
         h = np.asarray(self.height, dtype=np.float32)
         return {
-            "north": h[-1, :].copy(),
-            "south": h[0, :].copy(),
+            "north": h[0, :].copy(),
+            "south": h[-1, :].copy(),
             "east":  h[:, -1].copy(),
             "west":  h[:, 0].copy(),
         }
@@ -711,12 +730,14 @@ class TerrainMaskStack:
         "albedo_shift_rgb":       ("f", 3),
     }
 
-    def set(self, channel: str, value: np.ndarray, pass_name: str) -> None:
+    _OPAQUE_CHANNELS: ClassVar[Tuple[str, ...]] = ("wet_surface_decal",)
+
+    def set(self, channel: str, value: Any, pass_name: str) -> None:
         """Store a channel value with dtype/shape validation, provenance, and dirty-flag clearing.
 
         Dict-valued channels (``decal_density``, ``wildlife_affinity``,
-        ``detail_density``) are accepted as plain dicts and stored as-is.
-        All other channels are coerced to contiguous arrays.
+        ``detail_density``) and opaque JSON-compatible channels are accepted
+        as-is. All other channels are coerced to contiguous arrays.
 
         For Unity-export channels listed in ``_CHANNEL_CONSTRAINTS``, the
         incoming array's dtype kind and ndim are validated eagerly so that
@@ -736,7 +757,7 @@ class TerrainMaskStack:
         # Dict-valued channels (decal_density, wildlife_affinity, detail_density)
         # must be stored as-is; np.ascontiguousarray would wrap them in a 0-d
         # object array, breaking downstream dict operations.
-        if channel in self._DICT_CHANNELS:
+        if channel in self._DICT_CHANNELS or channel in self._OPAQUE_CHANNELS:
             object.__setattr__(self, channel, value)
         else:
             arr = np.ascontiguousarray(value)
@@ -872,6 +893,8 @@ class TerrainMaskStack:
                 "height_max_m": float(self.height_max_m) if self.height_max_m is not None else None,
                 "coordinate_system": self.coordinate_system,
                 "unity_export_schema_version": self.unity_export_schema_version,
+                "strict_tile_contract": bool(self.strict_tile_contract),
+                "populated_by_pass": sorted(self.populated_by_pass.items()),
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -897,6 +920,15 @@ class TerrainMaskStack:
                 hasher.update(str(arr.dtype).encode("utf-8"))
                 hasher.update(repr(arr.shape).encode("utf-8"))
                 hasher.update(arr.tobytes())
+
+        for name in self._OPAQUE_CHANNELS:
+            val = getattr(self, name, None)
+            if val is None:
+                continue
+            hasher.update(name.encode("utf-8"))
+            hasher.update(
+                json.dumps(val, sort_keys=True, default=str).encode("utf-8")
+            )
 
         digest = hasher.hexdigest()
         self.content_hash = digest
@@ -945,6 +977,12 @@ class TerrainMaskStack:
             "coordinate_system": self.coordinate_system,
             "height_min_m": float(self.height_min_m) if self.height_min_m is not None else None,
             "height_max_m": float(self.height_max_m) if self.height_max_m is not None else None,
+            "strict_tile_contract": bool(self.strict_tile_contract),
+            "opaque_channels": {
+                name: getattr(self, name)
+                for name in self._OPAQUE_CHANNELS
+                if getattr(self, name, None) is not None
+            },
         }
         arrays["__meta__"] = np.array(json.dumps(meta), dtype=object)
         np.savez_compressed(path, **arrays)
@@ -974,15 +1012,13 @@ class TerrainMaskStack:
                 coordinate_system=str(meta.get("coordinate_system", "z-up")),
                 height_min_m=float(_height_min) if _height_min is not None else None,
                 height_max_m=float(_height_max) if _height_max is not None else None,
+                strict_tile_contract=bool(meta.get("strict_tile_contract", False)),
             )
             for name in cls._ARRAY_CHANNELS:
                 if name == "height":
                     continue
                 if name in data.files:
-                    setattr(stack, name, np.array(data[name]))
-            stack.populated_by_pass.update(meta.get("populated_by_pass", {}))
-            stack.dirty_channels.update(meta.get("dirty_channels", []))
-            stack.schema_version = meta.get("schema_version", "1.0")
+                    stack.set(name, np.array(data[name]), "__npz__")
             dict_channels = meta.get("dict_channels", {})
             for dict_field, keys in dict_channels.items():
                 if dict_field not in cls._DICT_CHANNELS:
@@ -993,7 +1029,18 @@ class TerrainMaskStack:
                     if arr_name in data.files:
                         container[k] = np.array(data[arr_name])
                 if container:
-                    setattr(stack, dict_field, container)
+                    stack.set(dict_field, container, "__npz__")
+            for name, value in meta.get("opaque_channels", {}).items():
+                if name in cls._OPAQUE_CHANNELS:
+                    stack.set(name, value, "__npz__")
+            loaded_height_pass = stack.populated_by_pass.get("height", "__init__")
+            stack.populated_by_pass.clear()
+            stack.populated_by_pass.update(meta.get("populated_by_pass", {}))
+            stack.populated_by_pass.setdefault("height", loaded_height_pass)
+            stack.dirty_channels.clear()
+            stack.dirty_channels.update(meta.get("dirty_channels", []))
+            stack.schema_version = meta.get("schema_version", "1.0")
+            stack.content_hash = meta.get("content_hash")
             return stack
 
 
@@ -1166,6 +1213,9 @@ class TerrainIntentState:
             "biome_rules": self.biome_rules,
             "noise_profile": self.noise_profile,
             "erosion_profile": self.erosion_profile,
+            "water_system_spec": (
+                vars(self.water_system_spec) if self.water_system_spec is not None else None
+            ),
             "hero_feature_specs": [
                 (
                     h.feature_id,

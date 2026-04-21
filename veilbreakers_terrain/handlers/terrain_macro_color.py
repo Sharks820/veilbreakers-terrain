@@ -117,6 +117,13 @@ def compute_macro_color(
         mud_target = np.array([0.38, 0.32, 0.22], dtype=np.float64).reshape(1, 1, 3)
         color = color * (1.0 - 0.30 * dep) + mud_target * (0.30 * dep)
 
+    # Stratigraphy can stamp additive RGB shifts for oxidised intrusions.
+    albedo_shift = stack.get("albedo_shift_rgb")
+    if albedo_shift is not None:
+        shift_arr = np.asarray(albedo_shift, dtype=np.float64)
+        if shift_arr.shape == color.shape:
+            color = color + shift_arr
+
     # Altitude cool shift (Z-up): above 0.7 h_norm shift toward blue-grey
     alt_mix = np.clip((h_norm - 0.6) / 0.4, 0.0, 1.0)[..., None]
     cool_target = np.array([0.55, 0.58, 0.65], dtype=np.float64).reshape(1, 1, 3)

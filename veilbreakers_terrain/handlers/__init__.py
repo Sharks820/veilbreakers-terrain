@@ -140,6 +140,11 @@ def _build_command_handlers() -> Dict[str, Callable]:
         "handle_generate_waterfall",
     )
     _try_register(
+        "env_create_cave_entrance",
+        f"{_pkg}.environment",
+        "handle_create_cave_entrance",
+    )
+    _try_register(
         "env_run_terrain_pass",
         f"{_pkg}.environment",
         "handle_run_terrain_pass",
@@ -183,6 +188,11 @@ def _build_command_handlers() -> Dict[str, Callable]:
         "env_create_water",
         f"{_pkg}.environment",
         "handle_create_water",
+    )
+    _try_register(
+        "env_generate_road",
+        f"{_pkg}.environment",
+        "handle_generate_road",
     )
     _try_register(
         "env_export_heightmap",
@@ -265,7 +275,11 @@ def _build_command_handlers() -> Dict[str, Callable]:
 
         def _handle_compute_light_placements(params: dict) -> list:
             props = params.get("props") or params.get("prop_positions") or []
-            return _li.compute_light_placements(props)
+            sun_direction = params.get("sun_direction", (0.5, -0.5, -0.7))
+            return _li.compute_light_placements(
+                props,
+                sun_direction=sun_direction,
+            )
 
         def _handle_merge_lights(params: dict) -> list:
             return _li.merge_nearby_lights(params.get("lights", []))

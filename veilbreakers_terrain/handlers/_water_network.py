@@ -1043,9 +1043,10 @@ def detect_waterfalls(
             # matching LipCandidate: N=0, E=π/2)
             dr_dir = (r_bot - r_top) * cell_size  # positive = south
             dc_dir = (c_bot - c_top) * cell_size  # positive = east
-            # Rotate: N points in the −row direction; atan2(east, south) gives
-            # clockwise-from-north bearing as used by _d8_to_angle.
-            orientation_rad = math.atan2(dc_dir, dr_dir)
+            # Convert row/col deltas to the N=0, E=pi/2 convention used by
+            # terrain_waterfalls._d8_to_angle. Positive rows point south, so
+            # north is the negative row axis.
+            orientation_rad = math.atan2(dc_dir, -dr_dir)
 
             drain_val = float(fa[r_top, c_top]) if fa is not None else 0.0
 

@@ -4306,7 +4306,8 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
             uv_wet.data[loop_idx].uv = (u_wet, v_wet)
 
     # --- Custom split normals (per-face flat shading) ---
-    mesh.use_auto_smooth = True
+    if hasattr(mesh, "use_auto_smooth"):
+        mesh.use_auto_smooth = True
     custom_normals = []
     for pi, poly in enumerate(mesh.polygons):
         fn = face_normals[pi] if pi < len(face_normals) else (0.0, 0.0, 1.0)
