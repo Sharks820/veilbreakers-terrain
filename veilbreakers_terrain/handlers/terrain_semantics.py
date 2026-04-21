@@ -290,6 +290,23 @@ class TerrainMaskStack:
     wet_rock: Optional[np.ndarray] = None
     tidal: Optional[np.ndarray] = None
     waterfall_velocity: Optional[np.ndarray] = None
+    # Manning-based flow speed per cell — float32 (H, W) in [0, 1].
+    # 0 = still water, 1 = max velocity (95th-percentile normalised).
+    # Formula: speed = 0.8 * slope^0.5 * accumulation^0.3; n ≈ 0.035 (river).
+    # Populated by pass_water_flow_speed (consumes flow_direction, flow_accumulation, slope).
+    flow_speed: Optional[np.ndarray] = None
+
+    # Water depth channels (Pass 5 supplement — bathymetry + gameplay zones)
+    # bathymetry: float32 (H, W), positive metres below water surface.
+    #   bathymetry[r, c] = max(0, water_surface_elevation[r,c] - height[r,c])
+    #   Populated by pass_bathymetry once both height and water_surface exist.
+    bathymetry: Optional[np.ndarray] = None
+    # water_depth_zone: uint8 (H, W), gameplay classification:
+    #   0 = dry          (no water)
+    #   1 = wade zone    (0–1.0 m — character walks through)
+    #   2 = swim zone    (1.0–4.0 m — character must swim)
+    #   3 = deep zone    (>4.0 m   — fishing pools, diving, hazard)
+    water_depth_zone: Optional[np.ndarray] = None
 
     # Material-zoning masks (Pass 7)
     biome_id: Optional[np.ndarray] = None
@@ -378,6 +395,20 @@ class TerrainMaskStack:
     # Waterfall mist zone mask — float32 mist intensity per cell (Bundle C supplementary)
     mist_zone_mask: Optional[np.ndarray] = None
 
+    # River-to-lake/ocean convergence channels (pass_river_convergence)
+    # Float32 (H, W): 1.0 = river mouth / delta zone, 0.0 = elsewhere.
+    # Buffered 3 cells around each detected mouth for the transition zone.
+    river_mouth_mask: Optional[np.ndarray] = None
+    # Float32 (H, W): foam intensity at convergence points (turbulence from
+    # velocity differential where fast river meets calm lake/ocean water).
+    # Drives Unity water shader foam texture blending at river-meets-lake
+    # boundaries.
+    confluence_foam: Optional[np.ndarray] = None
+    # Float32 (H, W, 2): spreading direction vector at river mouths.
+    # Stores the (dx, dy) fan vector so the water mesh generator can produce
+    # fan-shaped UV spread (Galloway 1975 delta geometry hint).
+    delta_fan_direction: Optional[np.ndarray] = None
+
     # Hero feature preview channel — float32 influence/weight overlay stamped
     # by edit_hero_feature whenever a hero feature is edited interactively.
     # Shape (H, W): each cell holds the blended influence radius weight (0–1)
@@ -460,6 +491,7 @@ class TerrainMaskStack:
             "mist",
             "wet_rock",
             "tidal",
+            "flow_speed",
             "biome_id",
             "material_weights",
             "roughness_variation",
@@ -505,6 +537,10 @@ class TerrainMaskStack:
             # POI proximity + waterfall mist zone (Phase 14)
             "poi_mask",
             "mist_zone_mask",
+            # River-to-lake/ocean convergence channels (pass_river_convergence)
+            "river_mouth_mask",
+            "confluence_foam",
+            "delta_fan_direction",
             # Structural terrain labels (Phase 10 / Fix 10.10)
             "rock_label",
             "gravel_label",
@@ -527,6 +563,9 @@ class TerrainMaskStack:
             "south_edge",
             "east_edge",
             "west_edge",
+            # Water depth channels (Pass 5 supplement — bathymetry + gameplay zones)
+            "bathymetry",
+            "water_depth_zone",
         ),
     )
 

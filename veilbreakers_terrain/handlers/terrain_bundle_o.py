@@ -21,10 +21,17 @@ def register_bundle_o_passes() -> None:
 
     Registers:
         - ``water_variants`` (produces water_surface, wetness)
+        - ``bathymetry`` (produces bathymetry + water_depth_zone from height + water_surface)
         - ``vegetation_depth`` (populates stack.detail_density dict)
         - ``emergent_grass`` (derives grass_density_map from splatmap; Fix 9.9)
+
+    Pass ordering note: ``bathymetry`` must run after ``water_variants`` so
+    that ``water_surface`` is populated before depth zones are classified.
+    The TerrainPassController dependency graph enforces this via
+    ``requires_channels=("height", "water_surface")``.
     """
     terrain_water_variants.register_water_variants_pass()
+    terrain_water_variants.register_bathymetry_pass()
     terrain_vegetation_depth.register_vegetation_depth_pass()
     terrain_vegetation_depth.register_emergent_grass_pass()
 

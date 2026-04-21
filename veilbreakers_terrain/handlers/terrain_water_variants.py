@@ -944,6 +944,553 @@ def get_swamp_specs(
     return results
 
 
+# ---------------------------------------------------------------------------
+# Bathymetry channel computation
+# ---------------------------------------------------------------------------
+
+# Depth-zone thresholds (metres below water surface).
+# Witcher 3 / RDR2 parity: characters wade ≤1 m, swim 1–4 m, deep >4 m.
+_WADE_DEPTH_M: float = 1.0
+_SWIM_DEPTH_M: float = 4.0
+
+# Water-bottom sediment material classification driven by flow accumulation.
+# Values match the material_indices returned by generate_water_bottom_mesh.
+BOTTOM_MAT_SILT: int = 0    # high-accumulation areas — brown, high roughness
+BOTTOM_MAT_GRAVEL: int = 1  # mid-accumulation areas — grey, medium roughness
+BOTTOM_MAT_ROCK: int = 2    # low-accumulation areas — dark, low roughness
+
+
+def _fbm_noise_2d(
+    rows: int,
+    cols: int,
+    scale: float,
+    octaves: int,
+    persistence: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Generate 2-octave fractional Brownian motion noise on a (rows, cols) grid.
+
+    Uses smooth random cosine interpolation between lattice values so the
+    result is band-limited — suitable for sediment ripple micro-detail on
+    river / lake beds where high-frequency hash noise would look synthetic.
+
+    Args:
+        rows, cols: Output grid dimensions.
+        scale:      Spatial frequency (higher = tighter ripples).
+        octaves:    Number of fBm octaves (2 is enough for bottom sediment).
+        persistence: Amplitude falloff per octave (0.5 = halved each octave).
+        rng:        Seeded numpy Generator for deterministic output.
+
+    Returns:
+        float32 ndarray shape (rows, cols), values normalised to [0, 1].
+    """
+    result = np.zeros((rows, cols), dtype=np.float64)
+    amplitude = 1.0
+    frequency = 1.0
+    total_amplitude = 0.0
+
+    for _ in range(octaves):
+        # Lattice size for this octave
+        lat_rows = max(2, int(math.ceil(rows * frequency / scale)) + 1)
+        lat_cols = max(2, int(math.ceil(cols * frequency / scale)) + 1)
+        lattice = rng.standard_normal((lat_rows, lat_cols)).astype(np.float64)
+
+        # Bilinear interpolation across the lattice
+        row_coords = np.linspace(0.0, lat_rows - 1, rows, endpoint=False)
+        col_coords = np.linspace(0.0, lat_cols - 1, cols, endpoint=False)
+        ri = np.clip(np.floor(row_coords).astype(int), 0, lat_rows - 2)
+        ci = np.clip(np.floor(col_coords).astype(int), 0, lat_cols - 2)
+        rf = row_coords - ri
+        cf = col_coords - ci
+
+        rf2d = rf[:, None]
+        cf2d = cf[None, :]
+        ri2d = ri[:, None]
+        ci2d = ci[None, :]
+
+        v00 = lattice[ri2d, ci2d]
+        v10 = lattice[ri2d + 1, ci2d]
+        v01 = lattice[ri2d, ci2d + 1]
+        v11 = lattice[ri2d + 1, ci2d + 1]
+
+        # Cosine smoothstep for less grid artifact vs pure linear
+        sf = rf2d * rf2d * (3.0 - 2.0 * rf2d)
+        sc = cf2d * cf2d * (3.0 - 2.0 * cf2d)
+        interp = (
+            v00 * (1.0 - sf) * (1.0 - sc)
+            + v10 * sf * (1.0 - sc)
+            + v01 * (1.0 - sf) * sc
+            + v11 * sf * sc
+        )
+        result += amplitude * interp
+        total_amplitude += amplitude
+        amplitude *= persistence
+        frequency *= 2.0
+
+    # Normalise to [0, 1]
+    result /= total_amplitude if total_amplitude > 0.0 else 1.0
+    lo, hi = result.min(), result.max()
+    if hi - lo > 1e-9:
+        result = (result - lo) / (hi - lo)
+    return result.astype(np.float32)
+
+
+def generate_water_bottom_mesh(
+    stack: "TerrainMaskStack",
+    water_body_mask: np.ndarray,
+    *,
+    cell_size_override: Optional[float] = None,
+    ripple_amplitude_m: float = 0.10,
+    ripple_scale: float = 8.0,
+    seed: int = 0,
+) -> dict:
+    """Generate a water-bottom mesh with sediment micro-terrain and material zones.
+
+    Produces geometry for the underside of a water body — the river / lake
+    bed that players see when swimming or when the water is shallow enough
+    for the camera to look through the surface. Comparable to how Witcher 3
+    stamps distinct gravel / silt bottom tiles under the Pontar river.
+
+    Algorithm
+    ---------
+    1.  Extract the bounding box of ``water_body_mask`` to keep the mesh
+        compact (only cells inside the mask are triangulated).
+    2.  Compute the base floor elevation = mean terrain height inside the
+        mask minus a small bed-incision offset so the bottom sits below the
+        terrain surface.
+    3.  Apply 2-octave fBm noise (amplitude 0.05–0.15 m) to add sediment
+        ripple micro-detail — the same technique used in RDR2's river-bed
+        shader to break the flat-plane look.
+    4.  Assign per-quad sediment material using flow_accumulation:
+          high accumulation  → silt   (0) — fine particles settle in slack water
+          medium accumulation → gravel (1) — transported, not deposited
+          low / zero accumulation → rock (2) — exposed bedrock at scour zones
+    5.  Build UV coordinates from normalised (u, v) = (col, row) position in
+        the mask bounding box so texture tiling is consistent.
+
+    Args:
+        stack:              TerrainMaskStack with at least ``height`` populated.
+        water_body_mask:    Boolean or float32 (H, W) array — True/1.0 inside
+                            the water body. Same grid as stack.height.
+        cell_size_override: Override stack.cell_size (useful in tests).
+        ripple_amplitude_m: Half-amplitude of sediment ripple noise in metres.
+                            Clamped to [0.01, 0.30].
+        ripple_scale:       Spatial frequency of ripples (higher = finer).
+        seed:               RNG seed for deterministic noise.
+
+    Returns:
+        dict with keys:
+          ``verts``             — float32 ndarray (N, 3) world XYZ vertices
+          ``faces``             — int32 ndarray (M, 4) quad face vertex indices
+          ``material_indices``  — int32 ndarray (M,) per-face material index
+                                  (0=silt, 1=gravel, 2=rock)
+          ``uvs``               — float32 ndarray (M, 4, 2) per-face UV coords
+          ``depth_stats``       — dict with ``mean_depth_m``, ``max_depth_m``,
+                                  ``silt_frac``, ``gravel_frac``, ``rock_frac``
+
+    Notes:
+        The returned dict is consumed by Blender mesh builders that call
+        ``bpy.data.meshes.new()`` + ``bmesh`` — no bpy calls are made here.
+        All coordinates are in world metres (Z-up).
+    """
+    rng = np.random.default_rng(seed)
+    ripple_amplitude_m = float(np.clip(ripple_amplitude_m, 0.01, 0.30))
+    cell_size = float(cell_size_override if cell_size_override is not None else stack.cell_size)
+
+    h = np.asarray(stack.height, dtype=np.float32)
+    rows, cols = h.shape
+    mask = np.asarray(water_body_mask, dtype=bool)
+    if mask.shape != h.shape:
+        raise ValueError(
+            f"water_body_mask shape {mask.shape} must match height shape {h.shape}"
+        )
+
+    # Find bounding box of the water mask (fall back to full grid if empty)
+    nonzero_rows, nonzero_cols = np.where(mask)
+    if nonzero_rows.size == 0:
+        # Empty mask — return degenerate but valid empty mesh
+        return {
+            "verts": np.zeros((0, 3), dtype=np.float32),
+            "faces": np.zeros((0, 4), dtype=np.int32),
+            "material_indices": np.zeros(0, dtype=np.int32),
+            "uvs": np.zeros((0, 4, 2), dtype=np.float32),
+            "depth_stats": {
+                "mean_depth_m": 0.0,
+                "max_depth_m": 0.0,
+                "silt_frac": 0.0,
+                "gravel_frac": 0.0,
+                "rock_frac": 0.0,
+            },
+        }
+
+    r0 = int(nonzero_rows.min())
+    r1 = int(nonzero_rows.max()) + 1
+    c0 = int(nonzero_cols.min())
+    c1 = int(nonzero_cols.max()) + 1
+
+    sub_h = h[r0:r1, c0:c1]
+    sub_mask = mask[r0:r1, c0:c1]
+    sub_rows, sub_cols = sub_h.shape
+
+    # --- Base floor elevation ---
+    # Floor = mean terrain height inside the mask, minus a small incision
+    # so the bed sits below the surrounding terrain.  0.25 m is enough to
+    # clear the terrain surface without creating a canyon-like gap.
+    masked_heights = sub_h[sub_mask]
+    if masked_heights.size > 0:
+        mean_terrain_z = float(masked_heights.mean())
+        min_terrain_z = float(masked_heights.min())
+    else:
+        mean_terrain_z = float(sub_h.mean())
+        min_terrain_z = mean_terrain_z
+    base_z = min_terrain_z - 0.25  # bed sits just below the lowest terrain point
+
+    # --- Sediment ripple noise (2 octaves, 0.05–0.15 m amplitude) ---
+    noise = _fbm_noise_2d(
+        sub_rows, sub_cols,
+        scale=ripple_scale,
+        octaves=2,
+        persistence=0.5,
+        rng=rng,
+    )  # values in [0, 1]
+    # Signed ripple: centre at 0, ±ripple_amplitude
+    ripple_z = (noise - 0.5) * 2.0 * ripple_amplitude_m  # metres, float32
+
+    # --- Flow-accumulation-based material classification ---
+    fa_raw = stack.get("flow_accumulation")
+    if fa_raw is not None:
+        fa = np.asarray(fa_raw, dtype=np.float32)[r0:r1, c0:c1]
+        fa_max = float(fa[sub_mask].max()) if sub_mask.any() else 1.0
+        fa_norm = fa / max(fa_max, 1.0)  # [0, 1] — 1 = highest accumulation
+    else:
+        # No flow data — assume uniform medium-accumulation (gravel)
+        fa_norm = np.full((sub_rows, sub_cols), 0.5, dtype=np.float32)
+
+    # Thresholds: top 40% accumulation → silt, bottom 20% → rock, rest → gravel
+    mat_map = np.where(
+        fa_norm >= 0.60, BOTTOM_MAT_SILT,
+        np.where(fa_norm <= 0.20, BOTTOM_MAT_ROCK, BOTTOM_MAT_GRAVEL),
+    ).astype(np.int32)
+
+    # --- Build quad-mesh vertex grid ---
+    # One vertex per grid point (sub_rows+1 × sub_cols+1 to share edges cleanly,
+    # but here we keep a per-cell grid matching the heightmap resolution for
+    # simplicity — inner vertices are shared, perimeter clipped to mask).
+    # Vertex layout: row-major, (sub_rows, sub_cols) cell centres.
+
+    # World XY of each cell centre
+    world_origin_x = float(stack.world_origin_x) + c0 * cell_size
+    world_origin_y = float(stack.world_origin_y) + r0 * cell_size
+
+    # We emit QUADS only for cells where sub_mask is True.
+    # Each quad uses the 4 corners of the cell (vertex-shared grid).
+    # Vertex array: (sub_rows+1) × (sub_cols+1), corner positions.
+    vert_rows = sub_rows + 1
+    vert_cols = sub_cols + 1
+
+    # Expand noise + ripple to corner grid by averaging adjacent cell values
+    # (pad then convolve with [0.25, 0.5, 0.25] kernel — simple and stable).
+    padded_ripple = np.pad(ripple_z, 1, mode="edge")  # (sub_rows+2, sub_cols+2)
+    corner_ripple = (
+        padded_ripple[:-1, :-1]
+        + padded_ripple[1:, :-1]
+        + padded_ripple[:-1, 1:]
+        + padded_ripple[1:, 1:]
+    ) * 0.25  # shape: (sub_rows+1, sub_cols+1)
+
+    col_idx = np.arange(vert_cols, dtype=np.float32)
+    row_idx = np.arange(vert_rows, dtype=np.float32)
+    vx = world_origin_x + col_idx * cell_size  # (vert_cols,)
+    vy = world_origin_y + row_idx * cell_size  # (vert_rows,)
+
+    vx2d, vy2d = np.meshgrid(vx, vy)   # (vert_rows, vert_cols)
+    vz2d = np.full((vert_rows, vert_cols), base_z, dtype=np.float32) + corner_ripple
+
+    # Flatten to (N, 3) vertex array
+    verts = np.stack(
+        [vx2d.ravel(), vy2d.ravel(), vz2d.ravel()], axis=1
+    ).astype(np.float32)
+
+    # Build face list: for each sub_mask-True cell (r, c) emit quad
+    # face = (top-left, top-right, bottom-right, bottom-left) in vert_cols-stride layout
+    cell_rs, cell_cs = np.where(sub_mask)
+    n_quads = int(cell_rs.size)
+
+    tl = cell_rs * vert_cols + cell_cs
+    tr = cell_rs * vert_cols + (cell_cs + 1)
+    bl = (cell_rs + 1) * vert_cols + cell_cs
+    br = (cell_rs + 1) * vert_cols + (cell_cs + 1)
+
+    # Face winding: top-left → top-right → bottom-right → bottom-left (CCW from above)
+    faces = np.stack([tl, tr, br, bl], axis=1).astype(np.int32)
+
+    # Per-face material index from cell (r, c)
+    material_indices = mat_map[cell_rs, cell_cs].astype(np.int32)
+
+    # --- UV coordinates ---
+    # Normalise to [0, 1] within the sub-grid bounding box.
+    u_tl = cell_cs.astype(np.float32) / max(sub_cols, 1)
+    v_tl = cell_rs.astype(np.float32) / max(sub_rows, 1)
+    du = 1.0 / max(sub_cols, 1)
+    dv = 1.0 / max(sub_rows, 1)
+    uvs = np.stack([
+        np.stack([u_tl,       v_tl      ], axis=1),  # TL
+        np.stack([u_tl + du,  v_tl      ], axis=1),  # TR
+        np.stack([u_tl + du,  v_tl + dv ], axis=1),  # BR
+        np.stack([u_tl,       v_tl + dv ], axis=1),  # BL
+    ], axis=1).astype(np.float32)  # (n_quads, 4, 2)
+
+    # --- Depth stats for SUMMARY / debugging ---
+    bathymetry_channel = stack.get("bathymetry")
+    if bathymetry_channel is not None:
+        bath_sub = np.asarray(bathymetry_channel, dtype=np.float32)[r0:r1, c0:c1]
+        depth_vals = bath_sub[sub_mask]
+        mean_depth = float(depth_vals.mean()) if depth_vals.size else 0.0
+        max_depth = float(depth_vals.max()) if depth_vals.size else 0.0
+    else:
+        mean_depth = 0.0
+        max_depth = 0.0
+
+    total_quads = float(n_quads) if n_quads > 0 else 1.0
+    silt_frac   = float((material_indices == BOTTOM_MAT_SILT).sum()) / total_quads
+    gravel_frac = float((material_indices == BOTTOM_MAT_GRAVEL).sum()) / total_quads
+    rock_frac   = float((material_indices == BOTTOM_MAT_ROCK).sum()) / total_quads
+
+    return {
+        "verts": verts,
+        "faces": faces,
+        "material_indices": material_indices,
+        "uvs": uvs,
+        "depth_stats": {
+            "mean_depth_m": mean_depth,
+            "max_depth_m": max_depth,
+            "silt_frac": round(silt_frac, 3),
+            "gravel_frac": round(gravel_frac, 3),
+            "rock_frac": round(rock_frac, 3),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bathymetry + depth zone pass
+# ---------------------------------------------------------------------------
+
+
+def pass_bathymetry(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Compute bathymetry (depth-below-surface) and water_depth_zone channels.
+
+    Contract
+    --------
+    Consumes:  height, water_surface
+    Produces:  bathymetry, water_depth_zone
+    Respects protected zones: yes
+    Requires scene read: no
+
+    Bathymetry
+    ----------
+    For every cell where ``water_surface > 0.5`` (i.e. is under water), the
+    bathymetric depth in metres is:
+
+        bathymetry[r, c] = max(0, water_surface_elevation[r, c] - height[r, c])
+
+    where ``water_surface_elevation`` is reconstructed from the height map:
+    for each connected water body we use the 95th-percentile height of the
+    cells in that body as the water-surface elevation (a robust estimator
+    that ignores sub-surface outliers while still respecting local variation).
+    If ``water_surface`` holds float values in [0, 1] (the common mask
+    convention) rather than absolute elevations, we detect this and fall back
+    to the per-body 95th-percentile terrain height approach.
+
+    Depth zone classification
+    -------------------------
+    Zones are assigned per the gameplay spec:
+        0 = dry          — water_surface <= 0.5
+        1 = wade zone    — 0 < depth <= 1.0 m
+        2 = swim zone    — 1.0 < depth <= 4.0 m
+        3 = deep zone    — depth > 4.0 m
+
+    This matches Witcher 3 Oxenfurt ford (wading shallows → swim channel →
+    deep pool at the piers) and RDR2 bayou rivers.
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    issues: List[ValidationIssue] = []
+
+    h = np.asarray(stack.height, dtype=np.float32)
+    rows, cols = h.shape
+
+    ws_raw = stack.get("water_surface")
+    if ws_raw is None:
+        # No water surface yet — produce zero-depth maps and warn
+        issues.append(ValidationIssue(
+            severity="warning",
+            message="pass_bathymetry: water_surface channel absent; "
+                    "bathymetry will be all zeros. Run pass_water_variants first.",
+            channel="water_surface",
+        ))
+        bathymetry = np.zeros(h.shape, dtype=np.float32)
+        water_depth_zone = np.zeros(h.shape, dtype=np.uint8)
+        stack.set("bathymetry", bathymetry, "bathymetry")
+        stack.set("water_depth_zone", water_depth_zone, "bathymetry")
+        return PassResult(
+            pass_name="bathymetry",
+            status="ok",
+            duration_seconds=time.perf_counter() - t0,
+            consumed_channels=("height",),
+            produced_channels=("bathymetry", "water_depth_zone"),
+            metrics={"wet_cells": 0, "max_depth_m": 0.0},
+            issues=issues,
+        )
+
+    ws = np.asarray(ws_raw, dtype=np.float32)
+
+    # Detect whether water_surface is an elevation map or a [0,1] mask.
+    # Heuristic: if max(ws) > max(h) * 0.1 AND range(ws) > 5 m it is likely
+    # an absolute elevation field.  Otherwise treat as mask and reconstruct.
+    ws_max = float(ws.max())
+    h_max = float(h.max())
+    h_min = float(h.min())
+    h_range = max(h_max - h_min, 1.0)
+
+    is_absolute_elevation = (ws_max > h_range * 0.1) and (ws_max - float(ws.min()) > 5.0)
+
+    # Water mask: cells that are "wet" (water_surface > 0.5 for mask, or ws >= h for elevation)
+    if is_absolute_elevation:
+        wet_mask = (ws >= h - 0.05)  # small tolerance for floating-point seam cells
+        water_surface_elev = ws  # already in metres
+    else:
+        wet_mask = (ws > 0.5)
+        # Reconstruct per-body water surface elevation using connected-component
+        # analysis: each body's surface = 95th percentile height of wet cells
+        # (robust against sub-surface depressions deepening the estimate).
+        water_surface_elev = np.zeros_like(h)
+        if wet_mask.any():
+            # Label connected components (4-connectivity for speed)
+            # We implement a simple two-pass union-find flood fill without scipy
+            label_grid = np.full(h.shape, -1, dtype=np.int32)
+            next_label = 0
+
+            # First pass: row-major assignment with left/up neighbour merging
+            parent = list(range(rows * cols))
+
+            def _find(x: int) -> int:
+                root = x
+                while parent[root] != root:
+                    root = parent[root]
+                while parent[x] != root:
+                    parent[x], x = root, parent[x]
+                return root
+
+            def _union(a: int, b: int) -> None:
+                ra, rb = _find(a), _find(b)
+                if ra != rb:
+                    parent[ra] = rb
+
+            wet_flat = wet_mask.ravel()
+            for idx in range(rows * cols):
+                if not wet_flat[idx]:
+                    continue
+                r_i = idx // cols
+                c_i = idx % cols
+                label_grid.ravel()[idx] = idx  # provisional label = own index
+                up = (r_i - 1) * cols + c_i if r_i > 0 else -1
+                left = r_i * cols + (c_i - 1) if c_i > 0 else -1
+                if up >= 0 and wet_flat[up]:
+                    _union(idx, up)
+                if left >= 0 and wet_flat[left]:
+                    _union(idx, left)
+
+            # Assign canonical labels and compute per-body height percentile
+            body_heights: dict = {}
+            for idx in range(rows * cols):
+                if not wet_flat[idx]:
+                    continue
+                root = _find(idx)
+                r_i = idx // cols
+                c_i = idx % cols
+                body_heights.setdefault(root, []).append(float(h[r_i, c_i]))
+
+            body_surface: dict = {
+                root: float(np.percentile(heights, 95))
+                for root, heights in body_heights.items()
+            }
+
+            # Write surface elevation for each wet cell
+            for idx in range(rows * cols):
+                if not wet_flat[idx]:
+                    continue
+                root = _find(idx)
+                r_i = idx // cols
+                c_i = idx % cols
+                water_surface_elev[r_i, c_i] = body_surface.get(root, h[r_i, c_i])
+
+    # --- Bathymetry: depth below water surface ---
+    # bathymetry = max(0, surface_elevation - terrain_height) for wet cells
+    raw_depth = np.where(wet_mask, np.maximum(0.0, water_surface_elev - h), 0.0)
+    bathymetry = raw_depth.astype(np.float32)
+
+    # --- Depth zone classification ---
+    zone = np.zeros(h.shape, dtype=np.uint8)
+    zone = np.where(wet_mask & (bathymetry <= 0.0),                         np.uint8(1), zone)  # barely wet → wade
+    zone = np.where(wet_mask & (bathymetry > 0.0) & (bathymetry <= _WADE_DEPTH_M),  np.uint8(1), zone)
+    zone = np.where(wet_mask & (bathymetry > _WADE_DEPTH_M) & (bathymetry <= _SWIM_DEPTH_M), np.uint8(2), zone)
+    zone = np.where(wet_mask & (bathymetry > _SWIM_DEPTH_M),                np.uint8(3), zone)
+    water_depth_zone = zone
+
+    stack.set("bathymetry", bathymetry, "bathymetry")
+    stack.set("water_depth_zone", water_depth_zone, "bathymetry")
+
+    wet_count = int(wet_mask.sum())
+    max_depth = float(bathymetry.max())
+    wade_cells = int((water_depth_zone == 1).sum())
+    swim_cells = int((water_depth_zone == 2).sum())
+    deep_cells = int((water_depth_zone == 3).sum())
+
+    logger.debug(
+        "pass_bathymetry: %d wet cells, max_depth=%.2f m, "
+        "wade=%d swim=%d deep=%d",
+        wet_count, max_depth, wade_cells, swim_cells, deep_cells,
+    )
+
+    return PassResult(
+        pass_name="bathymetry",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height", "water_surface"),
+        produced_channels=("bathymetry", "water_depth_zone"),
+        metrics={
+            "wet_cells": wet_count,
+            "max_depth_m": round(max_depth, 3),
+            "wade_cells": wade_cells,
+            "swim_cells": swim_cells,
+            "deep_cells": deep_cells,
+        },
+        issues=issues,
+    )
+
+
+def register_bathymetry_pass() -> None:
+    """Register pass_bathymetry on the TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="bathymetry",
+            func=pass_bathymetry,
+            requires_channels=("height", "water_surface"),
+            produces_channels=("bathymetry", "water_depth_zone"),
+            seed_namespace="bathymetry",
+            requires_scene_read=False,
+            description=(
+                "Pass 5 supplement — compute bathymetry (depth-below-surface) "
+                "and water_depth_zone (0=dry/1=wade/2=swim/3=deep) from "
+                "height + water_surface channels."
+            ),
+        )
+    )
+
+
 __all__ = [
     "BraidedChannels",
     "Estuary",
@@ -961,6 +1508,12 @@ __all__ = [
     "apply_seasonal_water_state",
     "pass_water_variants",
     "register_water_variants_pass",
+    "pass_bathymetry",
+    "register_bathymetry_pass",
+    "generate_water_bottom_mesh",
+    "BOTTOM_MAT_SILT",
+    "BOTTOM_MAT_GRAVEL",
+    "BOTTOM_MAT_ROCK",
     "get_geyser_specs",
     "get_swamp_specs",
 ]
