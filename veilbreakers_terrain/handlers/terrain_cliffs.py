@@ -1276,6 +1276,39 @@ def build_talus_field(
 # ---------------------------------------------------------------------------
 
 
+def _fbm2(x: float, y: float, octaves: int, amplitude: float, scale: float, seed: int) -> float:
+    """Deterministic 2-D fBm via integer-hash noise — no external deps.
+
+    Used for surface normal perturbation during cliff mesh generation.
+    Amplitude is in metres; scale is the spatial frequency multiplier.
+    """
+    def _h(ix: int, iy: int) -> float:
+        n = (ix * 1664525 + iy * 1013904223 + seed * 22695477) & 0x7FFFFFFF
+        n = (n ^ (n >> 13)) * 1540483477
+        return (((n ^ (n >> 15)) & 0x7FFFFFFF) / 1073741823.5) - 1.0
+
+    v = 0.0
+    amp = amplitude
+    freq = scale
+    for _ in range(octaves):
+        fx = x * freq
+        fy = y * freq
+        ix, iy = int(math.floor(fx)), int(math.floor(fy))
+        tx = fx - ix
+        ty = fy - iy
+        tx = tx * tx * (3.0 - 2.0 * tx)
+        ty = ty * ty * (3.0 - 2.0 * ty)
+        v += (
+            _h(ix, iy) * (1 - tx) * (1 - ty)
+            + _h(ix + 1, iy) * tx * (1 - ty)
+            + _h(ix, iy + 1) * (1 - tx) * ty
+            + _h(ix + 1, iy + 1) * tx * ty
+        ) * amp
+        amp *= 0.5
+        freq *= 2.0
+    return v
+
+
 def _build_cliff_wall_mesh_spec(
     lip_polyline: np.ndarray,
     wall_height: float,
@@ -1285,8 +1318,48 @@ def _build_cliff_wall_mesh_spec(
     noise_amplitude: float = 0.5,
     seed: int = 0,
     style: str = "granite",
+    strata_layers: Optional[List["StrataLayer"]] = None,
+    strata_period: float = 10.0,
+    mean_hardness: float = 0.5,
 ) -> dict:
     """Build a MeshSpec for the cliff wall directly from the lip polyline.
+
+    AAA upgrade (2026-04-20)
+    ------------------------
+    Five new features computed *during mesh generation* (not as post-process):
+
+    1. **Strata ledges** — at every stratum boundary the face is offset ±0.1-0.3 m
+       outward (hard strata protrude, soft strata recess).  Driven by the
+       ``strata_layers`` list from ``CliffStructure`` when available; falls back
+       to a uniform ``strata_period`` split.
+
+    2. **Vertical crack grooves** — Voronoi-like crack centres placed every 3-8 m
+       along arc length.  Within ±crack_radius of a crack centre each vertex is
+       pushed 0.05-0.12 m inward (negative face-normal direction).
+
+    3. **fBm surface normal perturbation** — 2-octave fBm (amplitude 0.08 m,
+       scale 1.5) applied perpendicular to the cliff face at every vertex.
+       This adds organic micro-detail that survives any distance.
+
+    4. **Cliff-top integration blend** — the top 3 vertex rows are progressively
+       pulled back toward the terrain surface normal (lerp factor 0, 0.35, 0.7)
+       so there is no hard edge where cliff meets flat ground.
+
+    5. **Material indices** — per face: material 0 (dark basalt) for hard/
+       protruding strata, material 1 (lighter sandstone) for soft/recessed
+       strata.  ``mean_hardness`` (0-1) biases which material is chosen.
+
+    Outputs
+    -------
+    ``metadata`` now contains:
+      - ``vegetation_anchors``: existing hanging anchor positions
+      - ``cliff_boulder_placements``: list of dicts with position/radius for
+        scatter system — 5-15 boulders per 10 m of arc length using Williams
+        morphometry  r = 0.6 * H^0.4
+      - ``cliff_ledge_vegetation_points``: positions on ledge mid-points suitable
+        for small shrubs/ferns
+      - ``material_indices``: per-face int list (0=basalt, 1=sandstone)
+      - ``lod``: three LOD levels (unchanged)
 
     Geometry
     --------
@@ -1295,7 +1368,7 @@ def _build_cliff_wall_mesh_spec(
 
     - **Lip row** (top):    lip point at (world_x, world_y, lip_z)
     - **Base row** (bottom): same XY, z = lip_z - wall_height
-    - Between top and base: ``segments_vertical`` rows with subtle noise
+    - Between top and base: ``segments_vertical`` rows with strata/crack/fBm
       displacement in Y (outward from the cliff face).
 
     Overhang
@@ -1303,11 +1376,6 @@ def _build_cliff_wall_mesh_spec(
     The top ``overhang_fraction`` (15–30%) of the wall height is pushed
     outward in Y by a linear ramp from 0 at the overhang-start elevation
     to ``overhang_fraction * wall_height * 0.5`` at the lip.
-
-    Hanging vegetation anchors
-    --------------------------
-    ``metadata["vegetation_anchors"]`` contains one (x, y, z) tuple per lip
-    vertex at (x, y, lip_z - 0.3), ready for ivy/moss scatter.
 
     LOD metadata
     ------------
@@ -1362,12 +1430,7 @@ def _build_cliff_wall_mesh_spec(
     max_overhang_y = overhang_frac * wall_height * 0.5
 
     # ------------------------------------------------------------------
-    # AAA requirement #7 — stochastic width variation ±15% per segment.
-    # For each interior lip vertex, compute the tangent direction from its
-    # neighbours and apply a deterministic ±15% displacement along the
-    # tangent.  This breaks the uniform-grid regularity that would read
-    # as procedural on real AAA cliff walls.
-    # The first and last points are not shifted (boundary stability).
+    # Stochastic width variation ±15% per segment (existing AAA feature).
     # ------------------------------------------------------------------
     arc_length = 0.0
     seg_lengths: List[float] = []
@@ -1378,59 +1441,290 @@ def _build_cliff_wall_mesh_spec(
         seg_lengths.append(sl)
         arc_length += sl
 
-    # Stochastic width scale per segment: 1.0 ± 0.15
     seg_width_scale: List[float] = []
     for j in range(n_lip - 1):
         w_hash = (seed ^ (j * 2246822519 + 1013904223)) & 0x7FFFFFFF
-        w_frac = w_hash / 0x7FFFFFFF  # 0..1
-        seg_width_scale.append(0.85 + w_frac * 0.30)  # [0.85, 1.15]
+        w_frac = w_hash / 0x7FFFFFFF
+        seg_width_scale.append(0.85 + w_frac * 0.30)
 
-    # Perturbed lip points: shift interior vertices along tangent
     lip_pts_perturbed = list(lip_pts)
     for j in range(1, n_lip - 1):
-        # Tangent = direction from prev to next (normalised)
         tx = lip_pts[j + 1][0] - lip_pts[j - 1][0]
         ty = lip_pts[j + 1][1] - lip_pts[j - 1][1]
         tlen = math.sqrt(tx * tx + ty * ty)
         if tlen > 1e-6:
             tx /= tlen
             ty /= tlen
-        # Mean segment length on either side, scaled ±15%
         left_sl = seg_lengths[j - 1] if j - 1 < len(seg_lengths) else 0.0
         shift = left_sl * (seg_width_scale[j - 1] - 1.0) * 0.5
         lx, ly, lz = lip_pts[j]
         lip_pts_perturbed[j] = (lx + tx * shift, ly + ty * shift, lz)
 
+    # ------------------------------------------------------------------
+    # AAA feature 1 — Strata ledge boundaries.
+    # Build a list of (z_fraction, ledge_offset_m, hardness) for each
+    # stratum boundary.  At each boundary the face is displaced ±0.1-0.3 m
+    # perpendicular to itself: hard strata protrude (negative Y = outward
+    # toward viewer), soft strata recess (positive Y = into cliff).
+    # ------------------------------------------------------------------
+    _sp = max(2.0, float(strata_period))
+    if strata_layers and wall_height > 0.0:
+        # Use actual StrataLayer objects — most accurate path.
+        ledge_fracs: List[Tuple[float, float, float]] = []
+        cumulative = 0.0
+        for sl in strata_layers:
+            frac = cumulative / max(wall_height, 1e-6)
+            # Ledge offset: 0.1 (soft) to 0.3 (very hard) m, sign depends on hardness
+            h = float(sl.hardness)
+            offset = 0.1 + h * 0.2  # 0.1 .. 0.3 m
+            # Hard strata protrude outward (-Y in our coordinate = outward from face)
+            # Soft strata recess inward (+Y)
+            signed_offset = -offset if h >= 0.5 else offset
+            ledge_fracs.append((min(frac, 1.0), signed_offset, h))
+            cumulative += sl.thickness_m
+    else:
+        # Fallback: uniform period every strata_period metres.
+        n_uniform = max(1, int(wall_height / _sp))
+        ledge_fracs = []
+        for si in range(1, n_uniform + 1):
+            frac = si / (n_uniform + 1)
+            h_hash = (seed ^ (si * 374761393)) & 0x7FFFFFFF
+            h = (h_hash & 0xFFFF) / 65535.0
+            offset = 0.1 + h * 0.2
+            signed_offset = -offset if h >= 0.5 else offset
+            ledge_fracs.append((frac, signed_offset, h))
+
+    def _strata_offset_at(t_frac: float) -> float:
+        """Y displacement (metres) from strata ledge banding at t_frac [0=top, 1=base]."""
+        # t_frac=0 is the cliff top, t_frac=1 is the base — flip to height-from-base
+        h_frac = 1.0 - t_frac
+        best_offset = 0.0
+        best_dist = 1.0
+        for (lf, lo, _lh) in ledge_fracs:
+            dist = abs(h_frac - lf)
+            # Smooth step falloff: ledge influence extends ±0.04 of total height
+            influence_half = 0.04
+            if dist < influence_half:
+                w = 1.0 - (dist / influence_half)
+                w = w * w * (3.0 - 2.0 * w)  # smoothstep
+                if dist < best_dist:
+                    best_dist = dist
+                    best_offset = lo * w
+        return best_offset
+
+    # ------------------------------------------------------------------
+    # AAA feature 2 — Vertical crack positions along arc length.
+    # Cracks every 3-8 m; groove depth 0.05-0.12 m inward.
+    # ------------------------------------------------------------------
+    min_crack_spacing = 3.0
+    max_crack_spacing = 8.0
+    crack_spacing_mean = (min_crack_spacing + max_crack_spacing) * 0.5
+    n_cracks = max(1, int(arc_length / crack_spacing_mean))
+    crack_rng = _rnd.Random(seed ^ 0xDEAD)
+    crack_arc_positions: List[float] = []
+    crack_depths: List[float] = []
+    pos = 0.0
+    for _ in range(n_cracks):
+        gap = crack_rng.uniform(min_crack_spacing, max_crack_spacing)
+        pos += gap
+        if pos >= arc_length:
+            break
+        crack_arc_positions.append(pos)
+        crack_depths.append(crack_rng.uniform(0.05, 0.12))
+
+    # Build cumulative arc position per lip column for crack lookup
+    col_arc: List[float] = [0.0]
+    for j in range(n_lip - 1):
+        col_arc.append(col_arc[-1] + seg_lengths[j] if j < len(seg_lengths) else col_arc[-1])
+
+    def _crack_groove_at(col_j: int) -> float:
+        """Inward Y displacement (positive = into cliff) from nearest vertical crack."""
+        arc_pos = col_arc[col_j] if col_j < len(col_arc) else 0.0
+        groove = 0.0
+        crack_radius = 0.8  # metres influence radius around crack centre
+        for cp, cd in zip(crack_arc_positions, crack_depths):
+            dist = abs(arc_pos - cp)
+            if dist < crack_radius:
+                t = dist / crack_radius
+                # Cosine falloff: deepest at crack centre
+                groove = max(groove, cd * (0.5 + 0.5 * math.cos(math.pi * t)))
+        return groove  # positive = recess inward (add to Y)
+
+    # ------------------------------------------------------------------
+    # AAA feature 3 — fBm surface normal perturbation.
+    # 2 octaves, amplitude 0.08 m, scale 1.5 — applied perpendicular to
+    # the cliff face at each vertex.  We treat the cliff face as roughly
+    # YZ-plane, so perturbation is in the local X direction (tangential
+    # to arc) and Z (vertical).  The outward normal perturbation in Y is
+    # computed per-vertex from the fBm offset in XZ space.
+    # ------------------------------------------------------------------
+    _FBM_AMP = 0.08
+    _FBM_SCALE = 1.5
+    _FBM_OCTAVES = 2
+
+    def _fbm_normal_perturb(arc_pos: float, z_world: float) -> float:
+        """Outward Y displacement from fBm normal perturbation."""
+        return _fbm2(
+            arc_pos * _FBM_SCALE * 0.05,
+            z_world * _FBM_SCALE * 0.05,
+            _FBM_OCTAVES,
+            _FBM_AMP,
+            1.0,
+            seed ^ 0xABCD,
+        )
+
+    # ------------------------------------------------------------------
+    # AAA feature 4 — Cliff top blend zone.
+    # Top N_TOP_BLEND rows are pulled progressively toward the terrain
+    # surface normal.  Row 0 = lip (no blend), row 1 = 35%, row 2 = 70%.
+    # The blend collapses noise_y and strata offset toward zero so the
+    # cliff face merges smoothly into the flat terrain above.
+    # ------------------------------------------------------------------
+    N_TOP_BLEND = 3
+    TOP_BLEND_LERP = [0.0, 0.35, 0.70]  # row_i=0,1,2
+
+    # ------------------------------------------------------------------
+    # Ledge vegetation point collection (populated during vertex loop).
+    # Collect one point per ledge boundary × lip column pair.
+    # ------------------------------------------------------------------
+    cliff_ledge_vegetation_points: List[Tuple[float, float, float]] = []
+    _ledge_veg_fracs_seen: set = set()
+
+    # ------------------------------------------------------------------
+    # Main vertex + face build loop.
+    # ------------------------------------------------------------------
     vertices: List[Tuple[float, float, float]] = []
     faces: List[Tuple[int, ...]] = []
+    material_indices: List[int] = []
     vegetation_anchors: List[Tuple[float, float, float]] = []
 
     for row_i in range(n_rows):
-        t = row_i / float(seg_v)
-        z_offset = t * wall_height
+        t = row_i / float(seg_v)          # 0 = top (lip), 1 = base
+        z_offset = t * wall_height        # depth below lip in metres
+
+        # Height above base in metres (0 at base, wall_height at lip)
+        height_above_base = wall_height - z_offset
+
+        # Strata ledge offset for this row
+        strata_y = _strata_offset_at(t)
+
+        # Cliff top blend factor (reduces all displacements near the top)
+        if row_i < N_TOP_BLEND:
+            blend_suppress = TOP_BLEND_LERP[row_i]  # 0 = no suppress, 0.7 = strong
+        else:
+            blend_suppress = 0.0
 
         for col_j, (lx, ly, lz) in enumerate(lip_pts_perturbed):
             z = lz - z_offset
 
+            # Basic sinusoidal noise (existing)
             noise_y = rng.uniform(-noise_amplitude, noise_amplitude) * math.sin(t * math.pi)
 
-            height_above_base = wall_height - z_offset
+            # Overhang push (existing)
             if height_above_base > overhang_z_start:
                 ramp = (height_above_base - overhang_z_start) / (wall_height * overhang_frac)
                 noise_y += max_overhang_y * ramp
 
+            # AAA 1: strata ledge
+            noise_y += strata_y
+
+            # AAA 2: vertical crack groove (positive = into cliff = add Y)
+            noise_y += _crack_groove_at(col_j)
+
+            # AAA 3: fBm normal perturbation
+            arc_pos_j = col_arc[col_j] if col_j < len(col_arc) else 0.0
+            noise_y += _fbm_normal_perturb(arc_pos_j, z)
+
+            # AAA 4: suppress all displacement in the top-blend zone
+            # (pulls vertices back toward the terrain surface normal)
+            if blend_suppress > 0.0:
+                noise_y *= (1.0 - blend_suppress)
+
             vertices.append((lx, ly + noise_y, z))
 
+            # Hanging vegetation anchors at the lip (row_i == 0)
             if row_i == 0:
                 vegetation_anchors.append((lx, ly, lz - 0.3))
 
+            # Ledge vegetation: collect one point per stratum boundary row
+            # when we are within ±1 row of an actual strata ledge elevation
+            if row_i > 0:
+                h_frac = 1.0 - t
+                for (lf, _lo, lh) in ledge_fracs:
+                    if abs(h_frac - lf) < (1.0 / max(seg_v, 1)) * 1.5:
+                        frac_key = round(lf, 2)
+                        veg_key = (frac_key, col_j)
+                        if veg_key not in _ledge_veg_fracs_seen:
+                            _ledge_veg_fracs_seen.add(veg_key)
+                            cliff_ledge_vegetation_points.append((lx, ly + noise_y, z))
+
+    # ------------------------------------------------------------------
+    # Face topology + material index (AAA feature 5).
+    # Material 0 = dark basalt (hard/protruding strata)
+    # Material 1 = lighter sandstone (soft/recessed strata)
+    # Assignment: look at the t_frac of the face centre against strata
+    # ledge data; hard strata (hardness >= 0.5 or mean_hardness >= 0.65)
+    # → mat 0, soft → mat 1.
+    # ------------------------------------------------------------------
     for row_i in range(n_rows - 1):
+        t_face = (row_i + 0.5) / float(seg_v)
+        h_frac_face = 1.0 - t_face
+
+        # Find which strata band this face height falls in
+        face_mat = 1  # default: sandstone
+        for (lf, lo, lh) in ledge_fracs:
+            if abs(h_frac_face - lf) < (1.0 / max(n_rows, 1)):
+                face_mat = 0 if (lh >= 0.5 or mean_hardness >= 0.65) else 1
+                break
+        else:
+            # Between ledge boundaries: use mean_hardness to decide
+            # which band we're in.  Alternate by stratum index.
+            strata_idx = int(h_frac_face * max(len(ledge_fracs), 1))
+            face_mat = 0 if (strata_idx % 2 == 0) == (mean_hardness >= 0.5) else 1
+
         for col_j in range(n_lip - 1):
             v0 = row_i * n_lip + col_j
             v1 = row_i * n_lip + col_j + 1
             v2 = (row_i + 1) * n_lip + col_j + 1
             v3 = (row_i + 1) * n_lip + col_j
             faces.append((v0, v1, v2, v3))
+            material_indices.append(face_mat)
+
+    # ------------------------------------------------------------------
+    # AAA boulder placements — Williams morphometry r = 0.6 * H^0.4
+    # 5-15 boulders per 10 m of cliff arc length.
+    # Placed 3-8 m outward from cliff base (in the +Y direction = away
+    # from the cliff face), scattered stochastically along the arc.
+    # ------------------------------------------------------------------
+    boulder_rng = _rnd.Random(seed ^ 0xB0B0)
+    boulders_per_10m = boulder_rng.uniform(5.0, 15.0)
+    n_boulders = max(1, int(boulders_per_10m * arc_length / 10.0))
+    cliff_boulder_placements: List[dict] = []
+    base_z = lip_pts_perturbed[0][2] - wall_height if lip_pts_perturbed else 0.0
+
+    for bi in range(n_boulders):
+        # Random arc position
+        arc_t = boulder_rng.random()
+        b_arc = arc_t * arc_length
+        # Find lip column for this arc position
+        col_idx = 0
+        for j in range(n_lip - 1):
+            if col_arc[j] <= b_arc <= col_arc[j + 1]:
+                col_idx = j
+                break
+        bx, by, bz = lip_pts_perturbed[col_idx]
+        # Place boulder 3-8 m outward from cliff face base
+        outward_dist = boulder_rng.uniform(3.0, 8.0)
+        # Williams morphometry: r = 0.6 * H^0.4
+        boulder_r = 0.6 * (wall_height ** 0.4)
+        # Add size variation: 0.3-2.5 m radius clamped
+        size_scale = boulder_rng.uniform(0.15, 1.25)
+        boulder_r = max(0.3, min(2.5, boulder_r * size_scale))
+        cliff_boulder_placements.append({
+            "position": (bx, by + outward_dist, base_z + boulder_r),
+            "radius_m": boulder_r,
+            "arc_fraction": arc_t,
+        })
 
     lod_meta = [
         {"level": 0, "description": "full", "rows": seg_v, "face_count": len(faces)},
@@ -1454,6 +1748,11 @@ def _build_cliff_wall_mesh_spec(
             "arc_length_m": arc_length,
             "seg_width_scale_mean": float(sum(seg_width_scale) / max(len(seg_width_scale), 1)),
             "vegetation_anchors": vegetation_anchors,
+            "cliff_boulder_placements": cliff_boulder_placements,
+            "cliff_ledge_vegetation_points": cliff_ledge_vegetation_points,
+            "material_indices": material_indices,
+            "strata_ledge_count": len(ledge_fracs),
+            "crack_count": len(crack_arc_positions),
             "lod": lod_meta,
         },
     }
@@ -1558,6 +1857,10 @@ def insert_hero_cliff_meshes(
             noise_amplitude=noise_amplitude * 0.4,
             seed=mesh_seed,
             style=style,
+            strata_layers=cliff.strata_layers if cliff.strata_layers else None,
+            strata_period=max(2.0, cliff_height / max(len(cliff.strata_layers), 1))
+            if cliff.strata_layers else 10.0,
+            mean_hardness=mean_hardness,
         )
 
         face_mesh_spec = None
@@ -1612,8 +1915,13 @@ def insert_hero_cliff_meshes(
 
         n_wall_verts = len(wall_mesh.get("vertices", []))
         n_wall_faces = len(wall_mesh.get("faces", []))
-        veg_anchors = len(wall_mesh.get("metadata", {}).get("vegetation_anchors", []))
-        lod_levels = len(wall_mesh.get("metadata", {}).get("lod", []))
+        wall_meta = wall_mesh.get("metadata", {})
+        veg_anchors = len(wall_meta.get("vegetation_anchors", []))
+        lod_levels = len(wall_meta.get("lod", []))
+        n_boulders = len(wall_meta.get("cliff_boulder_placements", []))
+        n_ledge_veg = len(wall_meta.get("cliff_ledge_vegetation_points", []))
+        n_strata_ledges = wall_meta.get("strata_ledge_count", 0)
+        n_cracks = wall_meta.get("crack_count", 0)
 
         intent = (
             f"insert_hero_cliff_mesh:{cliff.cliff_id}:"
@@ -1624,6 +1932,8 @@ def insert_hero_cliff_meshes(
             f"wall_verts={n_wall_verts}:wall_faces={n_wall_faces}:"
             f"overhang={overhang_fraction:.2f}:"
             f"veg_anchors={veg_anchors}:lod_levels={lod_levels}:"
+            f"strata_ledges={n_strata_ledges}:cracks={n_cracks}:"
+            f"boulders={n_boulders}:ledge_veg_pts={n_ledge_veg}:"
             f"blender_obj={blender_name or 'none'}"
         )
         state.side_effects.append(intent)

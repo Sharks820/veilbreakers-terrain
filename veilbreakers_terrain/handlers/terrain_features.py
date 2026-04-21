@@ -1655,6 +1655,48 @@ def generate_cliff_face(
         # Convert lean distance to approximate angle from vertical (degrees)
         band["setback_angle_deg"] = math.degrees(math.atan2(abs(total_lean), height * 0.1))
 
+    # ------------------------------------------------------------------
+    # 8. Boulder scatter placements — Williams morphometry r = 0.6 * H^0.4
+    #    5-15 boulders per 10 m of cliff width, placed 3-8 m outward from
+    #    cliff base (positive Y = away from cliff face).
+    #    Output feeds scatter system for physical boulder mesh placement.
+    # ------------------------------------------------------------------
+    boulder_rng = random.Random(seed + 77777)
+    boulders_per_10m = boulder_rng.uniform(5.0, 15.0)
+    n_boulders = max(1, int(boulders_per_10m * width / 10.0))
+    cliff_boulder_placements: list[dict] = []
+    for _bi in range(n_boulders):
+        bx = boulder_rng.uniform(-half_w * 0.95, half_w * 0.95)
+        outward_dist = boulder_rng.uniform(3.0, 8.0)
+        # Williams morphometry: base radius = 0.6 * height^0.4
+        b_radius = 0.6 * (height ** 0.4)
+        size_scale = boulder_rng.uniform(0.15, 1.25)
+        b_radius = max(0.3, min(2.5, b_radius * size_scale))
+        # Y = cliff foot (y=0) + outward extent; Z = ground level + radius
+        cliff_boulder_placements.append({
+            "position": (bx, outward_dist, b_radius),
+            "radius_m": b_radius,
+        })
+
+    # ------------------------------------------------------------------
+    # 9. Ledge vegetation points — one anchor per ledge per 2 m along X.
+    #    Placed on the hard strata ledge surfaces at the mid-depth of each
+    #    ledge band; suitable for small shrubs, ferns, and creeping plants.
+    # ------------------------------------------------------------------
+    cliff_ledge_vegetation_points: list[Vec3] = []
+    hard_strata = [b for b in strata_bands if b["type"] == "hard"]
+    veg_step = max(1, int(width / 2.0))
+    for band in hard_strata:
+        ledge_z = (band["z_bottom"] + band["z_top"]) * 0.5
+        # Place a vegetation point every ~2 m along the cliff width
+        for vi in range(veg_step + 1):
+            vt = vi / max(veg_step, 1)
+            vx = -half_w + vt * width
+            # Slight Y inset so vegetation sits on the ledge face (0.1 m into face)
+            vy = _hash_noise(vx * 0.2, ledge_z * 0.2, seed + 8888) * 0.15 - 0.1
+            vz = ledge_z + _hash_noise(vx * 0.3, float(vi), seed + 9999) * 0.2
+            cliff_ledge_vegetation_points.append((vx, vy, vz))
+
     _cf_normals = _compute_face_normals(vertices, faces)
     return {
         "mesh": {"vertices": vertices, "faces": faces, "normals": _cf_normals},
@@ -1666,6 +1708,8 @@ def generate_cliff_face(
         "strata_bands": strata_bands,
         "fracture_spec": fracture_spec,
         "talus_spec": talus_spec,
+        "cliff_boulder_placements": cliff_boulder_placements,
+        "cliff_ledge_vegetation_points": cliff_ledge_vegetation_points,
         "materials": materials,
         "material_indices": mat_indices,
         "material_metadata": _material_metadata(
