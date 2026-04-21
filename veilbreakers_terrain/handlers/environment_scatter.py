@@ -235,7 +235,8 @@ def _assign_scatter_material(obj: bpy.types.Object, material_key: str) -> None:
     ramp.color_ramp.elements[0].position = 0.36
     ramp.color_ramp.elements[1].position = 0.82
 
-    mix = nt.nodes.new("ShaderNodeMixRGB")
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
     mix.location = (120, 110)
     mix.blend_type = "MIX"
 
@@ -250,31 +251,32 @@ def _assign_scatter_material(obj: bpy.types.Object, material_key: str) -> None:
         height_ramp.color_ramp.elements[1].position = 0.52
         height_ramp.color_ramp.elements[0].color = preset["trunk_color"]
         height_ramp.color_ramp.elements[1].color = preset["foliage_color"]
-        accent_mix = nt.nodes.new("ShaderNodeMixRGB")
+        accent_mix = nt.nodes.new("ShaderNodeMix")
+        accent_mix.data_type = "RGBA"
         accent_mix.location = (-120, -20)
         accent_mix.blend_type = "MULTIPLY"
-        accent_mix.inputs["Color2"].default_value = preset.get("accent_color", preset["foliage_color"])
-        accent_mix.inputs["Fac"].default_value = 0.28
+        accent_mix.inputs["B"].default_value = preset.get("accent_color", preset["foliage_color"])
+        accent_mix.inputs["Factor"].default_value = 0.28
 
         nt.links.new(geom.outputs["Position"], separate.inputs["Vector"])
         nt.links.new(separate.outputs["Y"], height_ramp.inputs["Fac"])
         nt.links.new(tex_coord.outputs["Object"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
         nt.links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
-        nt.links.new(height_ramp.outputs["Color"], accent_mix.inputs["Color1"])
-        nt.links.new(noise.outputs["Fac"], accent_mix.inputs["Fac"])
-        nt.links.new(accent_mix.outputs["Color"], mix.inputs["Color1"])
-        mix.inputs["Color2"].default_value = preset.get("accent_color", preset["foliage_color"])
-        mix.inputs["Fac"].default_value = 0.15
+        nt.links.new(height_ramp.outputs["Color"], accent_mix.inputs["A"])
+        nt.links.new(noise.outputs["Fac"], accent_mix.inputs["Factor"])
+        nt.links.new(accent_mix.outputs["Result"], mix.inputs["A"])
+        mix.inputs["B"].default_value = preset.get("accent_color", preset["foliage_color"])
+        mix.inputs["Factor"].default_value = 0.15
     else:
-        mix.inputs["Color1"].default_value = preset["base_color"]
-        mix.inputs["Color2"].default_value = preset.get("accent_color", preset["base_color"])
+        mix.inputs["A"].default_value = preset["base_color"]
+        mix.inputs["B"].default_value = preset.get("accent_color", preset["base_color"])
         nt.links.new(tex_coord.outputs["Object"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
         nt.links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
-        nt.links.new(noise.outputs["Fac"], mix.inputs["Fac"])
+        nt.links.new(noise.outputs["Fac"], mix.inputs["Factor"])
 
-    nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
+    nt.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
     if "Roughness" in bsdf.inputs:
         bsdf.inputs["Roughness"].default_value = float(preset["roughness"])
 

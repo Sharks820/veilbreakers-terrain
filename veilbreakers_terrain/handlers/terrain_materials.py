@@ -2978,13 +2978,13 @@ def _build_terrain_recipe(
         dark_rgb.outputs["Color"].default_value = _clamp_rgba(base_color, scale=0.82, bias=-0.005)
         light_rgb = _add_node(tree, "ShaderNodeRGB", -145, y + 155, f"Stone Light {layer_name}")
         light_rgb.outputs["Color"].default_value = _clamp_rgba(base_color, scale=1.04, bias=0.005)
-        strata_color = _add_node(tree, "ShaderNodeMixRGB", 220, y + 120, f"Stone Color {layer_name}")
-        strata_color.blend_type = "MIX"
-        links.new(shape_ramp.outputs["Color"], strata_color.inputs["Fac"])
-        links.new(dark_rgb.outputs["Color"], strata_color.inputs["Color1"])
-        links.new(light_rgb.outputs["Color"], strata_color.inputs["Color2"])
+        strata_color = _add_node(tree, "ShaderNodeMix", 220, y + 120, f"Stone Color {layer_name}")
+        strata_color.data_type = "RGBA"
+        links.new(shape_ramp.outputs["Color"], strata_color.inputs["Factor"])
+        links.new(dark_rgb.outputs["Color"], strata_color.inputs["A"])
+        links.new(light_rgb.outputs["Color"], strata_color.inputs["B"])
         if base_color_input is not None:
-            links.new(strata_color.outputs["Color"], base_color_input)
+            links.new(strata_color.outputs["Result"], base_color_input)
 
         rough_variation = _add_node(tree, "ShaderNodeMapRange", 220, y + 25, f"Stone Rough {layer_name}")
         rough_variation.clamp = True
@@ -3059,12 +3059,13 @@ def _build_terrain_recipe(
         darker.outputs["Color"].default_value = _clamp_rgba(base_color, scale=0.74)
         lighter = _add_node(tree, "ShaderNodeRGB", -120, y + 155, f"Organic Light {layer_name}")
         lighter.outputs["Color"].default_value = _clamp_rgba(base_color, scale=1.08)
-        color_mix = _add_node(tree, "ShaderNodeMixRGB", 380, y + 120, f"Organic Color {layer_name}")
-        links.new(color_ramp.outputs["Color"], color_mix.inputs["Fac"])
-        links.new(darker.outputs["Color"], color_mix.inputs["Color1"])
-        links.new(lighter.outputs["Color"], color_mix.inputs["Color2"])
+        color_mix = _add_node(tree, "ShaderNodeMix", 380, y + 120, f"Organic Color {layer_name}")
+        color_mix.data_type = "RGBA"
+        links.new(color_ramp.outputs["Color"], color_mix.inputs["Factor"])
+        links.new(darker.outputs["Color"], color_mix.inputs["A"])
+        links.new(lighter.outputs["Color"], color_mix.inputs["B"])
         if base_color_input is not None:
-            links.new(color_mix.outputs["Color"], base_color_input)
+            links.new(color_mix.outputs["Result"], base_color_input)
 
         bump = _add_node(tree, "ShaderNodeBump", 380, y - 110, f"Bump {layer_name}")
         bump.inputs["Strength"].default_value = normal_strength * 0.72
@@ -3095,12 +3096,13 @@ def _build_terrain_recipe(
         dark_rgb.outputs["Color"].default_value = _clamp_rgba(base_color, scale=0.76)
         light_rgb = _add_node(tree, "ShaderNodeRGB", -145, y + 155, f"Terrain Light {layer_name}")
         light_rgb.outputs["Color"].default_value = _clamp_rgba(base_color, scale=1.05)
-        terrain_color = _add_node(tree, "ShaderNodeMixRGB", 220, y + 120, f"Terrain Color {layer_name}")
-        links.new(terrain_ramp.outputs["Color"], terrain_color.inputs["Fac"])
-        links.new(dark_rgb.outputs["Color"], terrain_color.inputs["Color1"])
-        links.new(light_rgb.outputs["Color"], terrain_color.inputs["Color2"])
+        terrain_color = _add_node(tree, "ShaderNodeMix", 220, y + 120, f"Terrain Color {layer_name}")
+        terrain_color.data_type = "RGBA"
+        links.new(terrain_ramp.outputs["Color"], terrain_color.inputs["Factor"])
+        links.new(dark_rgb.outputs["Color"], terrain_color.inputs["A"])
+        links.new(light_rgb.outputs["Color"], terrain_color.inputs["B"])
         if base_color_input is not None:
-            links.new(terrain_color.outputs["Color"], base_color_input)
+            links.new(terrain_color.outputs["Result"], base_color_input)
 
         bump = _add_node(tree, "ShaderNodeBump", 220, y - 120, f"Bump {layer_name}")
         bump.inputs["Strength"].default_value = normal_strength * (0.72 + wear_intensity * 0.30)

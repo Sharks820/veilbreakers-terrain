@@ -397,6 +397,16 @@ class TerrainMaskStack:
     # Stored as object ndarray shape (1,) wrapping a JSON-serialisable dict.
     strata_cross_section: Optional[np.ndarray] = None
 
+    # -- Neighbor seam boundary conditions (chunked generation) --
+    # Each field stores the border height row/column exported by the adjacent
+    # tile so that passes can lock this tile's edges to match.  Shape for
+    # north/south: (tile_cols,); shape for east/west: (tile_rows,).
+    # None = neighbor not yet generated (generate tile independently).
+    north_edge: Optional[np.ndarray] = None  # south row of the tile to the north
+    south_edge: Optional[np.ndarray] = None  # north row of the tile to the south
+    east_edge: Optional[np.ndarray] = None   # west col of the tile to the east
+    west_edge: Optional[np.ndarray] = None   # east col of the tile to the west
+
     # -- World-unit scalar metadata (required for Unity .raw round-trip) --
     height_min_m: Optional[float] = None
     height_max_m: Optional[float] = None
@@ -512,6 +522,11 @@ class TerrainMaskStack:
             "cave_depth_hint",
             "cave_underground_depth",
             "cave_chambers",
+            # Neighbor seam boundary conditions (chunked generation)
+            "north_edge",
+            "south_edge",
+            "east_edge",
+            "west_edge",
         ),
     )
 
@@ -590,6 +605,54 @@ class TerrainMaskStack:
                 return container.get(key)
             return None
         return getattr(self, channel, None)
+
+    def import_neighbor_edge(self, neighbor: "TerrainMaskStack", direction: str) -> None:
+        """Copy the touching border of *neighbor* into this tile's seam field.
+
+        Call this before running generation passes so that erosion, materials,
+        and scatter passes can read the boundary constraint and avoid seam
+        discontinuities.
+
+        Parameters
+        ----------
+        neighbor:
+            The already-generated adjacent tile's mask stack.
+        direction:
+            One of ``"north"``, ``"south"``, ``"east"``, ``"west"`` —
+            the cardinal direction of *neighbor* relative to *this* tile.
+        """
+        h = np.asarray(neighbor.height, dtype=np.float32)
+        direction = direction.lower()
+        if direction == "north":
+            # Neighbor is to the north → its south border (last row) is our constraint
+            object.__setattr__(self, "north_edge", h[-1, :].copy())
+        elif direction == "south":
+            # Neighbor is to the south → its north border (first row) is our constraint
+            object.__setattr__(self, "south_edge", h[0, :].copy())
+        elif direction == "east":
+            # Neighbor is to the east → its west border (first col) is our constraint
+            object.__setattr__(self, "east_edge", h[:, 0].copy())
+        elif direction == "west":
+            # Neighbor is to the west → its east border (last col) is our constraint
+            object.__setattr__(self, "west_edge", h[:, -1].copy())
+        else:
+            raise ValueError(f"direction must be north/south/east/west, got {direction!r}")
+
+    def export_edge_heights(self) -> "Dict[str, np.ndarray]":
+        """Return the four border rows/columns of this tile for neighbor import.
+
+        Returns a dict with keys ``"north"``, ``"south"``, ``"east"``, ``"west"``
+        each mapping to a float32 1-D array of height values at that border.
+        The next tile should call ``import_neighbor_edge(this_tile, opposite_dir)``
+        using the returned arrays.
+        """
+        h = np.asarray(self.height, dtype=np.float32)
+        return {
+            "north": h[-1, :].copy(),
+            "south": h[0, :].copy(),
+            "east":  h[:, -1].copy(),
+            "west":  h[:, 0].copy(),
+        }
 
     # Expected dtype + shape constraints for channels that have a strict Unity
     # export contract.  Shape entries use ``None`` for "must match height shape"

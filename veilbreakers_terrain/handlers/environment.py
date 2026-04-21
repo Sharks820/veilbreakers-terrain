@@ -5436,33 +5436,35 @@ def _ensure_water_material(
                 else (0.82, 0.86, 0.84, 1.0)
             )
 
-            shallow_mix = nodes.new("ShaderNodeMixRGB")
+            shallow_mix = nodes.new("ShaderNodeMix")
+            shallow_mix.data_type = "RGBA"
             shallow_mix.location = (-220, 100)
             shallow_mix.blend_type = "MIX"
-            shallow_mix.inputs["Fac"].default_value = 0.0
+            shallow_mix.inputs["Factor"].default_value = 0.0
             separate_red = separate.outputs.get("Red") if hasattr(separate, "outputs") else None
-            shallow_fac = shallow_mix.inputs.get("Fac") if hasattr(shallow_mix, "inputs") else None
+            shallow_fac = shallow_mix.inputs.get("Factor") if hasattr(shallow_mix, "inputs") else None
             if separate_red is not None and shallow_fac is not None:
                 # The red flow_vc channel is authored as a shallow-water cue.
                 links.new(separate_red, shallow_fac)
-            if shallow_mix.inputs.get("Color1") is not None:
-                links.new(deep_color.outputs["Color"], shallow_mix.inputs["Color1"])
-            if shallow_mix.inputs.get("Color2") is not None:
-                links.new(shallow_color.outputs["Color"], shallow_mix.inputs["Color2"])
+            if shallow_mix.inputs.get("A") is not None:
+                links.new(deep_color.outputs["Color"], shallow_mix.inputs["A"])
+            if shallow_mix.inputs.get("B") is not None:
+                links.new(shallow_color.outputs["Color"], shallow_mix.inputs["B"])
 
-            foam_mix = nodes.new("ShaderNodeMixRGB")
+            foam_mix = nodes.new("ShaderNodeMix")
+            foam_mix.data_type = "RGBA"
             foam_mix.location = (0, 40)
             foam_mix.blend_type = "MIX"
             foam_color_socket = foam_ramp.outputs.get("Color") if hasattr(foam_ramp, "outputs") else None
-            if foam_color_socket is not None and foam_mix.inputs.get("Fac") is not None:
-                links.new(foam_color_socket, foam_mix.inputs["Fac"])
-            if shallow_mix.outputs.get("Color") is not None and foam_mix.inputs.get("Color1") is not None:
-                links.new(shallow_mix.outputs["Color"], foam_mix.inputs["Color1"])
-            if foam_mix.inputs.get("Color2") is not None:
-                links.new(foam_color.outputs["Color"], foam_mix.inputs["Color2"])
+            if foam_color_socket is not None and foam_mix.inputs.get("Factor") is not None:
+                links.new(foam_color_socket, foam_mix.inputs["Factor"])
+            if shallow_mix.outputs.get("Result") is not None and foam_mix.inputs.get("A") is not None:
+                links.new(shallow_mix.outputs["Result"], foam_mix.inputs["A"])
+            if foam_mix.inputs.get("B") is not None:
+                links.new(foam_color.outputs["Color"], foam_mix.inputs["B"])
 
-            if base_color and foam_mix.outputs.get("Color") is not None:
-                links.new(foam_mix.outputs["Color"], base_color)
+            if base_color and foam_mix.outputs.get("Result") is not None:
+                links.new(foam_mix.outputs["Result"], base_color)
         except Exception:
             # Test stubs expose a smaller node API surface; keep the readable
             # fallback tint instead of failing material creation outright.

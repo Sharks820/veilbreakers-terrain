@@ -1232,28 +1232,30 @@ def build_stone_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     surface_var.inputs["Roughness"].default_value = 0.7
     links.new(mapping.outputs["Vector"], surface_var.inputs["Vector"])
 
-    # -- MixRGB: Blend base color with surface variation --
-    mix_color = _add_node(tree, "ShaderNodeMixRGB", -400, 100,
+    # -- Mix: Blend base color with surface variation --
+    mix_color = _add_node(tree, "ShaderNodeMix", -400, 100,
                           "Color Variation")
+    mix_color.data_type = "RGBA"
     mix_color.blend_type = "OVERLAY"
-    links.new(surface_var.outputs["Fac"], mix_color.inputs["Fac"])
-    links.new(ramp_blocks.outputs["Color"], mix_color.inputs["Color1"])
-    links.new(ramp_mortar.outputs["Color"], mix_color.inputs["Color2"])
+    links.new(surface_var.outputs["Fac"], mix_color.inputs["Factor"])
+    links.new(ramp_blocks.outputs["Color"], mix_color.inputs["A"])
+    links.new(ramp_mortar.outputs["Color"], mix_color.inputs["B"])
 
-    # -- MixRGB: Apply base color tint --
-    mix_base = _add_node(tree, "ShaderNodeMixRGB", -200, 100, "Base Color Mix")
+    # -- Mix: Apply base color tint --
+    mix_base = _add_node(tree, "ShaderNodeMix", -200, 100, "Base Color Mix")
+    mix_base.data_type = "RGBA"
     mix_base.blend_type = "MULTIPLY"
-    mix_base.inputs["Fac"].default_value = 1.0
+    mix_base.inputs["Factor"].default_value = 1.0
     bc = params["base_color"]
     # Scale the base color for multiply blending -- clamped to avoid clipping
-    mix_base.inputs["Color1"].default_value = (
+    mix_base.inputs["A"].default_value = (
         min(1.0, bc[0] * 2.5),
         min(1.0, bc[1] * 2.5),
         min(1.0, bc[2] * 2.5),
         1.0,
     )
-    links.new(mix_color.outputs["Color"], mix_base.inputs["Color2"])
-    links.new(mix_base.outputs["Color"], bsdf.inputs["Base Color"])
+    links.new(mix_color.outputs["Result"], mix_base.inputs["B"])
+    links.new(mix_base.outputs["Result"], bsdf.inputs["Base Color"])
 
     # -- Roughness variation --
     noise_rough = _add_node(tree, "ShaderNodeTexNoise", -600, -400,
@@ -1347,13 +1349,14 @@ def build_wood_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     noise_knots.inputs["Distortion"].default_value = 1.5
     links.new(mapping.outputs["Vector"], noise_knots.inputs["Vector"])
 
-    # -- MixRGB: Overlay knots onto grain --
-    mix_knots = _add_node(tree, "ShaderNodeMixRGB", -400, 100, "Knot Overlay")
+    # -- Mix: Overlay knots onto grain --
+    mix_knots = _add_node(tree, "ShaderNodeMix", -400, 100, "Knot Overlay")
+    mix_knots.data_type = "RGBA"
     mix_knots.blend_type = "OVERLAY"
-    mix_knots.inputs["Fac"].default_value = params.get("wear_intensity", 0.3)
-    links.new(ramp_grain.outputs["Color"], mix_knots.inputs["Color1"])
-    links.new(noise_knots.outputs["Color"], mix_knots.inputs["Color2"])
-    links.new(mix_knots.outputs["Color"], bsdf.inputs["Base Color"])
+    mix_knots.inputs["Factor"].default_value = params.get("wear_intensity", 0.3)
+    links.new(ramp_grain.outputs["Color"], mix_knots.inputs["A"])
+    links.new(noise_knots.outputs["Color"], mix_knots.inputs["B"])
+    links.new(mix_knots.outputs["Result"], bsdf.inputs["Base Color"])
 
     # -- Roughness variation --
     noise_rough = _add_node(tree, "ShaderNodeTexNoise", -600, -300,
@@ -1581,13 +1584,14 @@ def build_organic_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     noise_skin.inputs["Roughness"].default_value = 0.65
     links.new(mapping.outputs["Vector"], noise_skin.inputs["Vector"])
 
-    # -- MixRGB: Color variation using voronoi and noise --
-    mix_color = _add_node(tree, "ShaderNodeMixRGB", -400, 100, "Color Variation")
+    # -- Mix: Color variation using voronoi and noise --
+    mix_color = _add_node(tree, "ShaderNodeMix", -400, 100, "Color Variation")
+    mix_color.data_type = "RGBA"
     mix_color.blend_type = "OVERLAY"
-    mix_color.inputs["Fac"].default_value = 0.25
-    mix_color.inputs["Color1"].default_value = bc
-    links.new(noise_skin.outputs["Color"], mix_color.inputs["Color2"])
-    links.new(mix_color.outputs["Color"], bsdf.inputs["Base Color"])
+    mix_color.inputs["Factor"].default_value = 0.25
+    mix_color.inputs["A"].default_value = bc
+    links.new(noise_skin.outputs["Color"], mix_color.inputs["B"])
+    links.new(mix_color.outputs["Result"], bsdf.inputs["Base Color"])
 
     # -- Roughness variation: Wet / dry areas --
     noise_rough = _add_node(tree, "ShaderNodeTexNoise", -600, -300,
@@ -1614,14 +1618,15 @@ def build_organic_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
                                  "Rim Fresnel")
         layer_weight.inputs["Blend"].default_value = 0.3
 
-        mix_rim = _add_node(tree, "ShaderNodeMixRGB", -400, -700, "Rim Mix")
-        mix_rim.inputs[1].default_value = (0.0, 0.0, 0.0, 1.0)
-        mix_rim.inputs[2].default_value = rim_color
-        links.new(layer_weight.outputs["Facing"], mix_rim.inputs["Fac"])
+        mix_rim = _add_node(tree, "ShaderNodeMix", -400, -700, "Rim Mix")
+        mix_rim.data_type = "RGBA"
+        mix_rim.inputs["A"].default_value = (0.0, 0.0, 0.0, 1.0)
+        mix_rim.inputs["B"].default_value = rim_color
+        links.new(layer_weight.outputs["Facing"], mix_rim.inputs["Factor"])
 
         emission_rim = _get_bsdf_input(bsdf, "Emission Color")
         if emission_rim is not None:
-            links.new(mix_rim.outputs[0], emission_rim)
+            links.new(mix_rim.outputs["Result"], emission_rim)
 
     return _make_channel_ext(params, triplanar=False)
 
@@ -1700,18 +1705,20 @@ def build_terrain_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     links.new(mapping.outputs["Vector"], noise_fine.inputs["Vector"])
 
     # -- Mix large + medium --
-    mix_lm = _add_node(tree, "ShaderNodeMixRGB", -700, 150, "Large+Med Mix")
+    mix_lm = _add_node(tree, "ShaderNodeMix", -700, 150, "Large+Med Mix")
+    mix_lm.data_type = "RGBA"
     mix_lm.blend_type = "OVERLAY"
-    mix_lm.inputs["Fac"].default_value = 0.5
-    links.new(noise_large.outputs["Color"], mix_lm.inputs["Color1"])
-    links.new(noise_med.outputs["Color"], mix_lm.inputs["Color2"])
+    mix_lm.inputs["Factor"].default_value = 0.5
+    links.new(noise_large.outputs["Color"], mix_lm.inputs["A"])
+    links.new(noise_med.outputs["Color"], mix_lm.inputs["B"])
 
     # -- Mix result + fine --
-    mix_all = _add_node(tree, "ShaderNodeMixRGB", -500, 100, "All Noise Mix")
+    mix_all = _add_node(tree, "ShaderNodeMix", -500, 100, "All Noise Mix")
+    mix_all.data_type = "RGBA"
     mix_all.blend_type = "OVERLAY"
-    mix_all.inputs["Fac"].default_value = 0.3
-    links.new(mix_lm.outputs["Color"], mix_all.inputs["Color1"])
-    links.new(noise_fine.outputs["Color"], mix_all.inputs["Color2"])
+    mix_all.inputs["Factor"].default_value = 0.3
+    links.new(mix_lm.outputs["Result"], mix_all.inputs["A"])
+    links.new(noise_fine.outputs["Color"], mix_all.inputs["B"])
 
     # -- Geometry node for slope-based mixing --
     geometry = _add_node(tree, "ShaderNodeNewGeometry", -800, -500, "Geometry")
@@ -1733,17 +1740,18 @@ def build_terrain_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     # Bug 11 fix: use min(1.0, ...) clamping instead of raw * 4.0 which clips
     # any base_color component > 0.25 to white. Use * 2.0 with clamping for
     # proper range without blowing out terrain colors.
-    mix_base = _add_node(tree, "ShaderNodeMixRGB", -300, 100, "Base Tint")
+    mix_base = _add_node(tree, "ShaderNodeMix", -300, 100, "Base Tint")
+    mix_base.data_type = "RGBA"
     mix_base.blend_type = "MULTIPLY"
-    mix_base.inputs["Fac"].default_value = 1.0
-    mix_base.inputs["Color1"].default_value = (
+    mix_base.inputs["Factor"].default_value = 1.0
+    mix_base.inputs["A"].default_value = (
         min(1.0, bc[0] * 2.0),
         min(1.0, bc[1] * 2.0),
         min(1.0, bc[2] * 2.0),
         1.0,
     )
-    links.new(mix_all.outputs["Color"], mix_base.inputs["Color2"])
-    links.new(mix_base.outputs["Color"], bsdf.inputs["Base Color"])
+    links.new(mix_all.outputs["Result"], mix_base.inputs["B"])
+    links.new(mix_base.outputs["Result"], bsdf.inputs["Base Color"])
 
     # -- Roughness: Slope-influenced --
     math_rough = _add_node(tree, "ShaderNodeMath", -200, -300, "Roughness Map")
@@ -1838,13 +1846,14 @@ def build_fabric_material(mat: Any, params: dict[str, Any]) -> "Optional[Any]":
     noise_var.inputs["Roughness"].default_value = 0.5
     links.new(mapping.outputs["Vector"], noise_var.inputs["Vector"])
 
-    # -- MixRGB: Blend weave with variation --
-    mix_color = _add_node(tree, "ShaderNodeMixRGB", -400, 100, "Fabric Color")
+    # -- Mix: Blend weave with variation --
+    mix_color = _add_node(tree, "ShaderNodeMix", -400, 100, "Fabric Color")
+    mix_color.data_type = "RGBA"
     mix_color.blend_type = "OVERLAY"
-    mix_color.inputs["Fac"].default_value = 0.15
-    links.new(brick.outputs["Color"], mix_color.inputs["Color1"])
-    links.new(noise_var.outputs["Color"], mix_color.inputs["Color2"])
-    links.new(mix_color.outputs["Color"], bsdf.inputs["Base Color"])
+    mix_color.inputs["Factor"].default_value = 0.15
+    links.new(brick.outputs["Color"], mix_color.inputs["A"])
+    links.new(noise_var.outputs["Color"], mix_color.inputs["B"])
+    links.new(mix_color.outputs["Result"], bsdf.inputs["Base Color"])
 
     # -- Roughness variation --
     math_rough = _add_node(tree, "ShaderNodeMath", -400, -300, "Roughness Map")

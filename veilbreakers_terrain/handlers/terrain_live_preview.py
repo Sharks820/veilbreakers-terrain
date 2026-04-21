@@ -163,18 +163,7 @@ class LivePreviewSession:
         output_path = Path(path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Try Blender render path
-        try:
-            import bpy
-            old_path = bpy.context.scene.render.filepath
-            bpy.context.scene.render.filepath = str(output_path)
-            bpy.context.scene.render.image_settings.file_format = 'PNG'
-            bpy.ops.render.opengl(write_still=True)
-            bpy.context.scene.render.filepath = old_path
-            return str(output_path)
-        except Exception:
-            pass
-
+        # bpy.ops.render.opengl removed in Blender 4.0; use matplotlib fallback.
         # Headless fallback: matplotlib heightmap
         try:
             import matplotlib
