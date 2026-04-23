@@ -36,8 +36,8 @@ def _normalize3(v: tuple) -> tuple | None:
     l2 = v[0] ** 2 + v[1] ** 2 + v[2] ** 2
     if l2 < 1e-24:
         return None
-    l = math.sqrt(l2)
-    return (v[0] / l, v[1] / l, v[2] / l)
+    length_v = math.sqrt(l2)
+    return (v[0] / length_v, v[1] / length_v, v[2] / length_v)
 
 
 # ---------------------------------------------------------------------------

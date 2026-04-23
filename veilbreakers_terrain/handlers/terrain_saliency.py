@@ -46,7 +46,7 @@ import numpy as np
 
 try:
     from scipy.ndimage import map_coordinates as _map_coordinates
-    from scipy.ndimage import uniform_filter, generic_filter
+    from scipy.ndimage import uniform_filter
     _SCIPY_AVAILABLE = True
 except ImportError:
     _SCIPY_AVAILABLE = False

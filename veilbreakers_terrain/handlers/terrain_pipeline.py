@@ -31,7 +31,7 @@ from typing import Dict, List, Optional
 
 _log = logging.getLogger(__name__)
 
-from .terrain_semantics import (
+from .terrain_semantics import (  # noqa: E402
     BBox,
     PassContractError,
     PassDefinition,

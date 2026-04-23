@@ -60,8 +60,8 @@ def _build_laplacian(n: int, neighbors: List[Set[int]]) -> csr_matrix:
             cols.append(j)
             data.append(w)
     A = csr_matrix((data, (rows, cols)), shape=(n, n), dtype=np.float64)
-    I = csr_matrix(np.eye(n, dtype=np.float64))
-    return A - I
+    eye_mat = csr_matrix(np.eye(n, dtype=np.float64))
+    return A - eye_mat
 
 
 def _compute_face_normal(
@@ -198,7 +198,7 @@ def _laplacian_pass(
 # Public API
 # ---------------------------------------------------------------------------
 
-import math
+import math  # noqa: E402
 
 
 def smooth_assembled_mesh(

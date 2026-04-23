@@ -744,8 +744,12 @@ def post_boolean_cleanup(
         v1 = clean_verts[face[1]]
         v2 = clean_verts[face[2]]
         # Cross product magnitude / 2 = area
-        ex1 = v1[0] - v0[0]; ey1 = v1[1] - v0[1]; ez1 = v1[2] - v0[2]
-        ex2 = v2[0] - v0[0]; ey2 = v2[1] - v0[1]; ez2 = v2[2] - v0[2]
+        ex1 = v1[0] - v0[0]
+        ey1 = v1[1] - v0[1]
+        ez1 = v1[2] - v0[2]
+        ex2 = v2[0] - v0[0]
+        ey2 = v2[1] - v0[1]
+        ez2 = v2[2] - v0[2]
         cx_ = ey1 * ez2 - ez1 * ey2
         cy_ = ez1 * ex2 - ex1 * ez2
         cz_ = ex1 * ey2 - ey1 * ex2

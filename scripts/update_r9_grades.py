@@ -284,7 +284,6 @@ updates = {
     ('terrain_wind_erosion.py', 'generate_dunes'): 'B+|2026-04-19: upgraded C -> McKee 1979 transverse/barchan/star by wind_variability barchan Gaussian+2horns star N_arms sinusoidal radial Gaussian',
     ('terrain_wind_erosion.py', 'pass_wind_erosion'): 'B+|2026-04-19: upgraded C+ -> deterministic seed + optional dune layering + wind_erosion_delta metrics orchestration around continuous aeolian core',
     ('terrain_roughness_driver.py', 'compute_roughness_from_wetness_wear'): 'A-|2026-04-19: upgraded C+ -> neutral 0.55 replace base wetness/erosion/deposition/AO blend independent of pre-existing roughness channel',
-    ('terrain_roughness_driver.py', 'pass_roughness_driver'): 'A-|2026-04-19: upgraded B -> consumed_channels aligned with wetness/erosion/deposition/AO/slope/curvature/material_zones and roughness zone overrides',
     ('_terrain_erosion.py', 'apply_hydraulic_erosion_masks'): 'B+|2026-04-19: upgraded B- -> mask-aware droplet erosion with erodibility_map scaling hero/deposition gates wetness/drainage outputs',
     ('_water_network.py', 'pass_hydrology'): 'A-|2026-04-19: confirmed A- -> Barnes priority-flood orchestration writes flow_direction/flow_accumulation with PassResult metrics',
     ('_water_network.py', 'register_pass_hydrology'): 'A-|2026-04-19: confirmed A- -> declarative pass registration for hydrology channels and dependency contract',
@@ -406,7 +405,6 @@ updates = {
     ('terrain_cliffs.py', 'CliffStructure'): 'A|2026-04-19: upgraded C+ -> strata_layers StrataLayer list overhang_mask contour_spline cubic B-spline through Moore-neighbor contour',
     ('terrain_cliffs.py', 'build_cliff_candidate_mask'): 'A|2026-04-19: upgraded C -> Moore-neighbor contour tracing Jacobs stopping criterion Gaussian smooth cubic B-spline fit NO rectangular footprints',
     ('terrain_cliffs.py', 'build_talus_field'): 'A|2026-04-19: upgraded C -> cone_radius=cliff_h*cot(repose) profile (1-r/r_max)^1.5 cone_profile (H,W) float64 material-specific repose',
-    ('terrain_cliffs.py', 'carve_cliff_system'): 'A|2026-04-19: upgraded C+ -> 8-stage: Moore-neighbor lip / slope-P75 face / overhang / talus / ledges / strata / micro-erosion / B-spline contour',
 
     # road_network.py - PRIORITY: contour-following paths
     ('road_network.py', 'handle_compute_road_network'): 'A|2026-04-19: upgraded A- -> cost_map wired through handle->compute->_astar_24dir shape-validated added as per-step penalty',
@@ -465,7 +463,6 @@ updates = {
 
     # terrain_sculpt.py
     ('terrain_sculpt.py', '_build_falloff_lut'): 'A|2026-04-19: upgraded B -> fully vectorized per-curve smooth 2d^3-3d^2+1 sphere sqrt(1-d^2) root sqrt(1-d) gaussian exp(-4d^2) zero Python iteration',
-    ('terrain_sculpt.py', 'compute_stamp_displacements'): 'A|2026-04-19: upgraded B+ -> fully vectorized indices/weights numpy arrays feathering np.where bilinear np.floor+indexing all 4 blend modes broadcast',
     ('terrain_sculpt.py', 'compute_flatten_displacements'): 'A|2026-04-19: upgraded B+ -> return contract fix all affected vertices returned not just changed SVD plane-fit slope masking preserved',
     ('terrain_sculpt.py', 'compute_raise_displacements'): 'A|2026-04-19: confirmed A -> SDF target_surface_z Hermite cubic slope/curvature masking protected-zone clipping vectorized',
     ('terrain_sculpt.py', 'compute_lower_displacements'): 'A|2026-04-19: confirmed A -> SDF mode dual floor clamps vectorized',
@@ -572,7 +569,6 @@ updates = {
     # terrain_stratigraphy.py
     ('terrain_stratigraphy.py', 'StratigraphyLayer'): 'A|2026-04-19: upgraded C+ -> rock_type sedimentary/metamorphic/igneous age_ma color_rgb strike_angle_rad validation enum',
     ('terrain_stratigraphy.py', 'StratigraphyStack'): 'B+|2026-04-19: upgraded B -> structurally sound no algorithm change',
-    ('terrain_stratigraphy.py', 'apply_differential_erosion'): 'A-|2026-04-19: upgraded B -> spec formula erosion_depth*(1-hardness) Houdini Heightfield reference exposure_mult drives depth',
     ('terrain_stratigraphy.py', '_default_strat_stack_from_hints'): 'A|2026-04-19: upgraded C+ -> 21-entry material table rock_type/age_ma/color_rgb 7-layer default sedimentary+metamorphic+igneous ±5deg dip noise',
     ('terrain_stratigraphy.py', 'pass_stratigraphy'): 'A|2026-04-19: upgraded C -> 7-step pipeline: layers/hardness/orientation/fold/differential-erosion/unconformity/dike/cross-section export',
     ('terrain_stratigraphy.py', 'compute_strata_orientation'): 'A-|2026-04-19: confirmed A- -> vectorized formula correct _CHANNEL_CONTRACTS ndim 2->3 fix',
@@ -581,8 +577,6 @@ updates = {
     # terrain_waterfalls.py - PRIORITY: freefall physics, foam, merging
     ('terrain_waterfalls.py', 'detect_waterfall_lip_candidates'): 'A|2026-04-19: upgraded C+ -> contour tracing _trace_lip_contour Manning velocity+discharge Q lip width varies with flow accumulation NO straight-line lip',
     ('terrain_waterfalls.py', 'solve_waterfall_from_river'): 'A|2026-04-19: upgraded C -> freefall t_impact=V_v/g+sqrt((V_v/g)^2+2H/g) Mason 1985 pool Galloway delta cascade chain detection multi-tier',
-    ('terrain_waterfalls.py', 'carve_impact_pool'): 'A-|2026-04-19: upgraded B -> Mason 1985 radius=0.45*sqrt(H*Q^0.5) depth=0.664*H^0.5*Q^0.33 pool geometry from upgraded solver',
-    ('terrain_waterfalls.py', 'generate_foam_mask'): 'A|2026-04-19: upgraded C+ -> Gaussian exp(-r^2/sigma^2) sigma=pool_radius*0.5 zone extends 1.5x pool_radius flow-accumulation weighting',
     ('terrain_waterfalls.py', 'generate_mist_zone'): 'A|2026-04-19: upgraded C -> mist_radius=H*0.3*wind_factor exp(-r/mist_radius) wind-biased anisotropic ellipse 1.6x along 0.7x cross-wind',
     ('terrain_waterfalls.py', 'validate_waterfall_system'): 'A-|2026-04-19: upgraded B -> lip polyline check single-point flag Mason 1985 pool size verification',
 
@@ -709,7 +703,6 @@ updates = {
     ('light_integration.py', 'compute_light_budget'): 'A|2026-04-19: per-type base costs (point 1.0, spot 0.8, area 1.5), per-type shadow multipliers (point 6x, spot 1x, area 2x), mobile vs desktop threshold tiers, by_type breakdown dict.',
 
     # animation_environment.py new entries (agent ae39e1af)
-    ('animation_environment.py', 'validate_env_params'): 'A|2026-04-19: validates object_name, all 27 env_types, fills defaults; correct.',
     ('animation_environment.py', 'generate_gate_raise_keyframes'): 'B+|2026-04-19: counterweight-assisted acceleration (blended cubic + sqrt profile), chain-slack jerk key, sparse 5+1 keys with analytical tangents.',
     ('animation_environment.py', 'generate_gate_lower_keyframes'): 'B+|2026-04-19: gravity-driven cubic fall phase + chain-brake ease-out decel, analytical tangents per phase, sparse keys + impact bounce.',
     ('animation_environment.py', 'generate_drawbridge_keyframes'): 'B+|2026-04-19: sparse smooth-step rotation (6 keys) + catenary cable sag channel sag(angle)=L*sag_r*sin(theta/2) with overshoot key.',

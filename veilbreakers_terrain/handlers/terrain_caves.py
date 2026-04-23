@@ -3884,8 +3884,12 @@ def _face_normal(
     v2: Tuple[float, float, float],
 ) -> Tuple[float, float, float]:
     """Return the unit normal of triangle (v0, v1, v2) using the cross product."""
-    ax = v1[0] - v0[0]; ay = v1[1] - v0[1]; az = v1[2] - v0[2]
-    bx = v2[0] - v0[0]; by = v2[1] - v0[1]; bz = v2[2] - v0[2]
+    ax = v1[0] - v0[0]
+    ay = v1[1] - v0[1]
+    az = v1[2] - v0[2]
+    bx = v2[0] - v0[0]
+    by = v2[1] - v0[1]
+    bz = v2[2] - v0[2]
     nx = ay * bz - az * by
     ny = az * bx - ax * bz
     nz = ax * by - ay * bx
@@ -4541,7 +4545,9 @@ def _build_bezier_tunnel_geometry(
         ry = tang_z * up_x - tang_x * up_z
         rz = tang_x * up_y - tang_y * up_x
         r_len = math.sqrt(rx**2 + ry**2 + rz**2) or 1.0
-        rx /= r_len; ry /= r_len; rz /= r_len
+        rx /= r_len
+        ry /= r_len
+        rz /= r_len
 
         # Recompute up = right × tangent
         up_x = ry * tang_z - rz * tang_y

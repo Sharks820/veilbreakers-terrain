@@ -17,8 +17,8 @@ from typing import Dict, List, Optional, Sequence, Set
 
 logger = logging.getLogger(__name__)
 
-from .terrain_pipeline import TerrainPassController
-from .terrain_semantics import PassDefinition, PassResult
+from .terrain_pipeline import TerrainPassController  # noqa: E402
+from .terrain_semantics import PassDefinition, PassResult  # noqa: E402
 
 
 class PassDAGError(RuntimeError):

@@ -856,9 +856,14 @@ def _default_strat_stack_from_hints(
     # --- Fallback: canonical dark-fantasy 7-layer column -----------------
     # N=7 hits the AAA requirement of 5-9 layers; covers sedimentary,
     # metamorphic, and igneous rock types for VeilBreakers dark aesthetic.
-    dip_fn = lambda: float(rng.uniform(-dip_variation, dip_variation))
-    az_fn  = lambda: float(rng.uniform(0.0, 2.0 * np.pi))
-    str_fn = lambda: float(rng.uniform(0.0, np.pi))
+    def dip_fn() -> float:
+        return float(rng.uniform(-dip_variation, dip_variation))
+
+    def az_fn() -> float:
+        return float(rng.uniform(0.0, 2.0 * np.pi))
+
+    def str_fn() -> float:
+        return float(rng.uniform(0.0, np.pi))
 
     return StratigraphyStack(
         base_elevation_m=base,

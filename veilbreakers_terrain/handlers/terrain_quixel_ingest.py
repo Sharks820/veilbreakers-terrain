@@ -206,7 +206,7 @@ def _classify_texture(filename: str) -> Optional[TextureType]:
     return None
 
 
-import logging as _logging
+import logging as _logging  # noqa: E402
 _log = _logging.getLogger(__name__)
 
 # Expected core channels for a typical Quixel surface asset.  A missing

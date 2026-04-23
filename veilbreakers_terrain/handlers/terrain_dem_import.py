@@ -55,7 +55,6 @@ from .terrain_semantics import BBox
 # ---------------------------------------------------------------------------
 try:
     import rasterio  # type: ignore[import]
-    from rasterio.enums import Resampling as _Resampling  # type: ignore[import]
     _HAS_RASTERIO = True
 except ImportError:
     _HAS_RASTERIO = False

@@ -101,10 +101,10 @@ def _length(v: tuple) -> float:
 
 
 def _normalize(v: tuple) -> tuple | None:
-    l = _length(v)
-    if l < 1e-12:
+    length_v = _length(v)
+    if length_v < 1e-12:
         return None
-    return (v[0] / l, v[1] / l, v[2] / l)
+    return (v[0] / length_v, v[1] / length_v, v[2] / length_v)
 
 
 def _face_normal(verts: list, face: tuple) -> tuple | None:

@@ -185,8 +185,10 @@ def _kuwahara_quadrant_stats(
     def _box_sum(S: np.ndarray, r1: np.ndarray, r2: np.ndarray,
                  c1: np.ndarray, c2: np.ndarray) -> np.ndarray:
         # S has a leading zero row/col from the prefix sum; shift +1
-        r1z = r1 + 1; r2z = r2 + 1
-        c1z = c1 + 1; c2z = c2 + 1
+        r1z = r1 + 1
+        r2z = r2 + 1
+        c1z = c1 + 1
+        c2z = c2 + 1
         return (S[r2z, c2z] - S[r1z - 1, c2z]
                 - S[r2z, c1z - 1] + S[r1z - 1, c1z - 1]).astype(np.float64)
 

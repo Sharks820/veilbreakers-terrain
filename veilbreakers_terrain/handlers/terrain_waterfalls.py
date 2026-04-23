@@ -933,7 +933,7 @@ def solve_waterfall_from_river(
     # --- Freefall physics at each tier (AAA req #1) ---
     # V_h at lip from Manning's equation (stored on lip)
     v_h = max(0.1, lip.flow_velocity_mps)
-    Q = max(0.01, lip.discharge_m3s)
+    _Q = max(0.01, lip.discharge_m3s)
 
     # Trace plunge path while drop-per-step is steep (> half lip drop)
     steep_threshold = max(1.0, lip.downstream_drop_m * 0.5)

@@ -13,7 +13,10 @@ import heapq
 import math
 from collections import deque
 from dataclasses import dataclass, asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .terrain_semantics import BBox, PassResult, TerrainMaskStack, TerrainPipelineState
 
 import numpy as np
 

@@ -32,8 +32,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from .terrain_pipeline import TerrainPassController, derive_pass_seed
-from .terrain_semantics import (
+from .terrain_pipeline import TerrainPassController, derive_pass_seed  # noqa: E402
+from .terrain_semantics import (  # noqa: E402
     BBox,
     PassDefinition,
     PassResult,
@@ -608,10 +608,10 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
             mean_rh = 0.3  # assume acidic when no data
 
         if near_open and mean_w > 0.5:
-            wetland_type = "marsh"
+            _wetland_type = "marsh"
             veg_density = min(1.0, mean_w + 0.25)
         elif mean_rh > 0.55:
-            wetland_type = "fen"
+            _wetland_type = "fen"
             veg_density = min(1.0, mean_w + 0.15)
         else:
             _wetland_type = "bog"

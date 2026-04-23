@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
