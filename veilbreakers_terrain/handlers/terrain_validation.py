@@ -207,11 +207,24 @@ def _safe_asarray(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
 
 
 def _numpy_block_max(arr: np.ndarray, radius: int) -> np.ndarray:
-    """Pure-numpy neighbourhood maximum over a square (2r+1)×(2r+1) window.
+    """Sliding-window presence count over a square (2*radius+1)×(2*radius+1) window.
 
-    Used as a scipy.ndimage.maximum_filter fallback.  Implemented via
-    two passes of 1-D cumsum sliding-window max (O(rows*cols) time, O(cols)
-    extra memory) — no Python per-cell loops.
+    For each output cell (i, j), the result is the count of non-zero values
+    in the input within the window centred at (i, j).  Testing ``result > 0``
+    is therefore equivalent to binary dilation — the typical use-case here.
+
+    Used as a fallback when ``scipy.ndimage`` is unavailable.  Implemented via
+    two passes of 1-D cumsum (O(rows*cols) time, O(cols) extra memory) — no
+    Python per-cell loops.
+
+    Args:
+        arr: 2-D float32-compatible array.  Non-zero cells are treated as
+             "present".
+        radius: Half-width of the square structuring element, in cells.
+
+    Returns:
+        Float32 array of the same shape as ``arr`` containing per-cell
+        neighbour presence counts.
     """
     out = arr.astype(np.float32)
     # Row-direction pass: sliding-window presence count via cumsum
@@ -1257,6 +1270,7 @@ def check_cave_framing_presence(
         if _SCIPY_VALIDATION_AVAILABLE and _scipy_binary_dilation is not None:
             delta_near = _scipy_binary_dilation(delta_presence, structure=dilation_struct)
         else:
+            # _numpy_block_max counts non-zero neighbours; > 0 gives binary dilation
             delta_near = _numpy_block_max(delta_presence.astype(np.float32), radius_cells) > 0
 
     framing_near: np.ndarray = np.zeros(cave_mask.shape, dtype=bool)
