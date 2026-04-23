@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import List, Sequence, Tuple
 
 import numpy as np
 

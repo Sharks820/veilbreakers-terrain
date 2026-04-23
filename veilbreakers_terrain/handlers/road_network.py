@@ -20,7 +20,6 @@ from __future__ import annotations
 import heapq
 import math
 import random
-from typing import Any
 
 try:
     import numpy as np

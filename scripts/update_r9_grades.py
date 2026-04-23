@@ -1,6 +1,5 @@
 """Update GRADES_VERIFIED.csv with R9 Phase7-14 Consensus grades."""
 import csv
-import sys
 
 csv_path = r"C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\docs\aaa-audit\GRADES_VERIFIED.csv"
 

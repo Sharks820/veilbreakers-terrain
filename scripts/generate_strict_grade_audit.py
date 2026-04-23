@@ -10,12 +10,11 @@ from __future__ import annotations
 import ast
 import csv
 import json
-import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

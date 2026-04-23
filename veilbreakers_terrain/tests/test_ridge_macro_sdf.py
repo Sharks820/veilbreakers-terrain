@@ -9,10 +9,8 @@ Phase 10 / Fixes 10.3, 10.8, 10.9 / REQ-P10-004, REQ-P10-005.
 
 from __future__ import annotations
 
-import math
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_semantics import (
     TerrainMaskStack,
@@ -24,7 +22,6 @@ from veilbreakers_terrain.handlers.terrain_pipeline import (
     pass_compute_macro_color,
 )
 from veilbreakers_terrain.handlers.terrain_materials_v2 import (
-    RAVINE_THRESHOLD,
     sample_macro_color,
     ROAD_EDGE_FADE_WIDTH,
     apply_sdf_road_blend,

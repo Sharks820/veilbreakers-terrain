@@ -12,7 +12,6 @@ from typing import List
 from grade_audit_shared import (
     DEFAULT_GRADE_FILE,
     REPO_ROOT,
-    GradeMatch,
     build_grade_index,
     collect_callables,
     collect_classes,

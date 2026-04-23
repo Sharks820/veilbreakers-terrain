@@ -1,7 +1,6 @@
 """Phase 14 terrain features quality tests — Fix 7.3–7.6, 7.14–7.16."""
 from __future__ import annotations
 
-import math
 import warnings
 
 import numpy as np

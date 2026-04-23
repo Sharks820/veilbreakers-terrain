@@ -50,14 +50,11 @@ def _require_bpy() -> None:
 from ._scatter_engine import (
     poisson_disk_sample,
     lloyd_relax_points,
-    biome_filter_points,
     context_scatter,
     generate_breakable_variants,
 )
 from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
-from .vegetation_lsystem import generate_billboard_impostor
-from .lod_pipeline import generate_lod_chain
 from .terrain_semantics import WorldHeightTransform
 
 logger = logging.getLogger(__name__)
@@ -1330,7 +1327,6 @@ def _create_vegetation_template(
         # Low billboard plane — ground-level cover
         bmesh.ops.create_grid(bm_local, x_segments=1, y_segments=1, size=0.3)
         # Rotate to stand vertically (Z-up convention for billboard grass)
-        import bmesh as _bmesh_mod
         bmesh.ops.rotate(
             bm_local,
             cent=(0, 0, 0),

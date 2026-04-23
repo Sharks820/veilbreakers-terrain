@@ -7864,7 +7864,7 @@ def _compute_vertex_colors_for_biome_map(
 
     Returns list of (R, G, B, A) tuples, one per vertex.
     """
-    from .terrain_materials import apply_corruption_tint, BIOME_PALETTES, _get_material_def
+    from .terrain_materials import BIOME_PALETTES, _get_material_def
 
     mesh = obj.data
     rows, cols = spec.biome_ids.shape

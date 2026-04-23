@@ -49,6 +49,6 @@ def test_canonical_writer_still_writes():
     f = HANDLERS_DIR / CANONICAL_WRITER
     hits = _grep_stack_set_roughness(f)
     assert len(hits) >= 1, (
-        f"terrain_roughness_driver.py has NO stack.set('roughness_variation') call! "
-        f"The canonical writer must be preserved."
+        "terrain_roughness_driver.py has NO stack.set('roughness_variation') call! "
+        "The canonical writer must be preserved."
     )

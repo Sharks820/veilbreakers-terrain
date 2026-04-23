@@ -5,10 +5,8 @@ Tests are fast (no full pipeline; mock stacks and small arrays).
 """
 from __future__ import annotations
 
-import math
 
 import numpy as np
-import pytest
 
 
 # ---------------------------------------------------------------------------

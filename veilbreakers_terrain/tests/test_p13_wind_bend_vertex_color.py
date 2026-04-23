@@ -5,7 +5,6 @@ Formula: wind_bend_xz = abs(dot(normal_xz, wind_dir)) * (h/tree_height)**2
          wind_bend_y  = 0.1 * wind_bend_xz
 """
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_unity_export import (
     compute_wind_bend_vertex_color,

@@ -17,7 +17,6 @@ from typing import Any
 
 import numpy as np
 
-from .terrain_advanced import compute_flow_map
 
 # ---------------------------------------------------------------------------
 # D8 direction offsets (same convention as terrain_advanced)

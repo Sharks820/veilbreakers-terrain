@@ -1,9 +1,7 @@
 """Phase 14 Wave 3 mesh quality + BUG-87 + stratigraphy + water tests."""
 from __future__ import annotations
 
-import math
 import numpy as np
-import pytest
 
 
 # ---------------------------------------------------------------------------

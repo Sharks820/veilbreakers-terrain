@@ -22,7 +22,6 @@ Provides:
 
 from __future__ import annotations
 
-import heapq as _heapq
 import math
 import random as _random
 from dataclasses import dataclass, field

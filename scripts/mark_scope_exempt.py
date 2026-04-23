@@ -1,4 +1,4 @@
-import csv, io
+import csv
 
 rows = []
 with open('docs/aaa-audit/GRADES_VERIFIED.csv', encoding='utf-8-sig', newline='') as f:

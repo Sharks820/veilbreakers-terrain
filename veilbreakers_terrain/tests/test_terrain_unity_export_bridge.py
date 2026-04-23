@@ -5,7 +5,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack, ValidationIssue
 

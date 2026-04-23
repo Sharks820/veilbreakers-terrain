@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers._terrain_depth import detect_cliff_edges
 from veilbreakers_terrain.handlers.lod_pipeline import decimate_preserving_silhouette

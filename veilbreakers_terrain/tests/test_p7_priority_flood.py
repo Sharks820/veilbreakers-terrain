@@ -5,7 +5,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers._water_network import priority_flood_d8
 

@@ -11,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +140,7 @@ class TestPoiRoadPipeline:
 def _make_intent(waypoints=None, anchors=()):
     """Build a minimal TerrainIntentState for testing."""
     from veilbreakers_terrain.handlers.terrain_semantics import (
-        BBox, TerrainIntentState, TerrainAnchor,
+        BBox, TerrainIntentState,
     )
     intent = TerrainIntentState(
         seed=42,

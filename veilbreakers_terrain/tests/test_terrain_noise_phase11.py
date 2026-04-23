@@ -7,7 +7,6 @@ Fix 11.8 (Voronoise). Tests added wave-by-wave; each plan adds its own class.
 from __future__ import annotations
 import math
 import numpy as np
-import pytest
 
 
 class TestPowInv:

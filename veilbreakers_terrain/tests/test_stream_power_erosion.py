@@ -306,7 +306,6 @@ class TestPassErosionIntegration:
     def test_pass_erosion_with_rock_hardness_produces_different_height(self):
         """With rock_hardness populated, pass_erosion output differs from None rock_hardness."""
         from blender_addon.handlers._terrain_world import pass_erosion
-        import copy
 
         h = _make_sloped_dem(16).astype(np.float32)
 
