@@ -157,6 +157,9 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "MeshFilter",
         "MeshRenderer",
         "VbTerrainTileMetadata",
+        "TryAppendSupplementalFaceTriangles",
+        "TryEarClipSupplementalPolygon",
+        "mesh.SetUVs(1, dripMask)",
     ):
         assert token in source
     assert "new int[descriptor.height, descriptor.width]" in source

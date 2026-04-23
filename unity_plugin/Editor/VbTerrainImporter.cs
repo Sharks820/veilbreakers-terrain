@@ -648,13 +648,11 @@ namespace VeilBreakers.TerrainImport.Editor
                 {
                     continue;
                 }
-
-                var baseIndex = face.indices[0];
-                for (var i = 1; i < face.indices.Length - 1; i++)
+                if (!TryAppendSupplementalFaceTriangles(face.indices, vertices, triangles))
                 {
-                    triangles.Add(baseIndex);
-                    triangles.Add(face.indices[i]);
-                    triangles.Add(face.indices[i + 1]);
+                    Debug.LogWarning(
+                        $"VeilBreakers terrain import skipped invalid supplemental face on {spec.mesh_id}."
+                    );
                 }
             }
 
@@ -679,10 +677,247 @@ namespace VeilBreakers.TerrainImport.Editor
                 }
                 mesh.SetUVs(0, uv);
             }
+            if (spec.drip_edge_indices != null && spec.drip_edge_indices.Length > 0)
+            {
+                var dripMask = new List<Vector4>(vertices.Length);
+                var dripVertexFlags = new bool[vertices.Length];
+                foreach (var dripIndex in spec.drip_edge_indices)
+                {
+                    if (dripIndex >= 0 && dripIndex < dripVertexFlags.Length)
+                    {
+                        dripVertexFlags[dripIndex] = true;
+                    }
+                }
+
+                for (var index = 0; index < vertices.Length; index++)
+                {
+                    dripMask.Add(new Vector4(dripVertexFlags[index] ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f));
+                }
+                mesh.SetUVs(1, dripMask);
+            }
 
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             return mesh;
+        }
+
+        private static bool TryAppendSupplementalFaceTriangles(
+            int[] faceIndices,
+            Vector3[] vertices,
+            List<int> triangles
+        )
+        {
+            if (faceIndices == null || faceIndices.Length < 3)
+            {
+                return false;
+            }
+
+            var polygon = new List<int>(faceIndices.Length);
+            foreach (var rawIndex in faceIndices)
+            {
+                if (rawIndex < 0 || rawIndex >= vertices.Length)
+                {
+                    return false;
+                }
+                if (polygon.Count == 0 || polygon[polygon.Count - 1] != rawIndex)
+                {
+                    polygon.Add(rawIndex);
+                }
+            }
+
+            if (polygon.Count >= 2 && polygon[0] == polygon[polygon.Count - 1])
+            {
+                polygon.RemoveAt(polygon.Count - 1);
+            }
+
+            if (polygon.Count == 3)
+            {
+                triangles.Add(polygon[0]);
+                triangles.Add(polygon[1]);
+                triangles.Add(polygon[2]);
+                return true;
+            }
+
+            if (polygon.Count < 3)
+            {
+                return false;
+            }
+
+            return TryEarClipSupplementalPolygon(polygon, vertices, triangles);
+        }
+
+        private static bool TryEarClipSupplementalPolygon(
+            List<int> polygon,
+            Vector3[] vertices,
+            List<int> triangles
+        )
+        {
+            var projected = ProjectSupplementalPolygon(vertices, polygon);
+            if (projected.Count != polygon.Count)
+            {
+                return false;
+            }
+
+            var working = new List<int>(polygon);
+            var projectedByIndex = new Dictionary<int, Vector2>(polygon.Count);
+            for (var i = 0; i < polygon.Count; i++)
+            {
+                projectedByIndex[polygon[i]] = projected[i];
+            }
+
+            if (ComputeSignedArea(projected) < 0.0f)
+            {
+                working.Reverse();
+            }
+
+            var guard = working.Count * working.Count;
+            while (working.Count > 3 && guard-- > 0)
+            {
+                var earFound = false;
+                for (var i = 0; i < working.Count; i++)
+                {
+                    var prevIndex = working[(i - 1 + working.Count) % working.Count];
+                    var currIndex = working[i];
+                    var nextIndex = working[(i + 1) % working.Count];
+
+                    var a = projectedByIndex[prevIndex];
+                    var b = projectedByIndex[currIndex];
+                    var c = projectedByIndex[nextIndex];
+                    if (Cross2D(a, b, c) <= 1e-5f)
+                    {
+                        continue;
+                    }
+
+                    var containsOther = false;
+                    for (var test = 0; test < working.Count; test++)
+                    {
+                        var candidate = working[test];
+                        if (candidate == prevIndex || candidate == currIndex || candidate == nextIndex)
+                        {
+                            continue;
+                        }
+
+                        if (PointInTriangle(projectedByIndex[candidate], a, b, c))
+                        {
+                            containsOther = true;
+                            break;
+                        }
+                    }
+
+                    if (containsOther)
+                    {
+                        continue;
+                    }
+
+                    triangles.Add(prevIndex);
+                    triangles.Add(currIndex);
+                    triangles.Add(nextIndex);
+                    working.RemoveAt(i);
+                    earFound = true;
+                    break;
+                }
+
+                if (!earFound)
+                {
+                    return AppendFanTriangles(working, triangles);
+                }
+            }
+
+            if (working.Count == 3)
+            {
+                triangles.Add(working[0]);
+                triangles.Add(working[1]);
+                triangles.Add(working[2]);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static List<Vector2> ProjectSupplementalPolygon(
+            Vector3[] vertices,
+            List<int> polygon
+        )
+        {
+            var normal = Vector3.zero;
+            for (var i = 0; i < polygon.Count; i++)
+            {
+                var current = vertices[polygon[i]];
+                var next = vertices[polygon[(i + 1) % polygon.Count]];
+                normal.x += (current.y - next.y) * (current.z + next.z);
+                normal.y += (current.z - next.z) * (current.x + next.x);
+                normal.z += (current.x - next.x) * (current.y + next.y);
+            }
+
+            var ax = Mathf.Abs(normal.x);
+            var ay = Mathf.Abs(normal.y);
+            var az = Mathf.Abs(normal.z);
+            var projected = new List<Vector2>(polygon.Count);
+
+            foreach (var vertexIndex in polygon)
+            {
+                var vertex = vertices[vertexIndex];
+                if (ax >= ay && ax >= az)
+                {
+                    projected.Add(new Vector2(vertex.y, vertex.z));
+                }
+                else if (ay >= ax && ay >= az)
+                {
+                    projected.Add(new Vector2(vertex.x, vertex.z));
+                }
+                else
+                {
+                    projected.Add(new Vector2(vertex.x, vertex.y));
+                }
+            }
+
+            return projected;
+        }
+
+        private static float ComputeSignedArea(List<Vector2> polygon)
+        {
+            var area = 0.0f;
+            for (var i = 0; i < polygon.Count; i++)
+            {
+                var current = polygon[i];
+                var next = polygon[(i + 1) % polygon.Count];
+                area += (current.x * next.y) - (next.x * current.y);
+            }
+
+            return area * 0.5f;
+        }
+
+        private static float Cross2D(Vector2 a, Vector2 b, Vector2 c)
+        {
+            return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        }
+
+        private static bool PointInTriangle(Vector2 point, Vector2 a, Vector2 b, Vector2 c)
+        {
+            var w0 = Cross2D(a, b, point);
+            var w1 = Cross2D(b, c, point);
+            var w2 = Cross2D(c, a, point);
+            var hasNegative = w0 < -1e-5f || w1 < -1e-5f || w2 < -1e-5f;
+            var hasPositive = w0 > 1e-5f || w1 > 1e-5f || w2 > 1e-5f;
+            return !(hasNegative && hasPositive);
+        }
+
+        private static bool AppendFanTriangles(List<int> polygon, List<int> triangles)
+        {
+            if (polygon.Count < 3)
+            {
+                return false;
+            }
+
+            var baseIndex = polygon[0];
+            for (var i = 1; i < polygon.Count - 1; i++)
+            {
+                triangles.Add(baseIndex);
+                triangles.Add(polygon[i]);
+                triangles.Add(polygon[i + 1]);
+            }
+
+            return true;
         }
 
         private static Material GetOrCreateSupplementalMaterial(
