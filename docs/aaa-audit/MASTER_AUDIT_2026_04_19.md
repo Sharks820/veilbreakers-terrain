@@ -12,8 +12,8 @@ Second-pass audit over every live callable in `veilbreakers_terrain/handlers`, m
 - Runtime-primary callables: `143`
 - Runtime-transitive callables: `514`
 - Hard wiring risks (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `255`
-- Callables with no exact or semantic CSV match: `252`
-- Callables with no matching R9 coverage: `641`
+- Callables with no exact or semantic CSV match: `226`
+- Callables with no matching R9 coverage: `615`
 
 Status distribution:
 - `cross_module_helper`: `78`
