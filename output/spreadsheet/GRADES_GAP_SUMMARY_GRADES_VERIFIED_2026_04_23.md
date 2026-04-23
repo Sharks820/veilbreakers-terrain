@@ -3,20 +3,20 @@
 - Grade source CSV: `docs\aaa-audit\GRADES_VERIFIED.csv`
 - UTC date tag: `2026_04_23`
 - Total handler callables: **1488**
-- Exact graded callables: **1185**
+- Exact graded callables: **1235**
 - Name-only matches (needs explicit file-level row): **0**
 - Ambiguous same-file grade rows: **1**
 - Ambiguous name matches (manual disambiguation required): **4**
-- Missing callable grades: **298**
+- Missing callable grades: **248**
 - Stale grade rows (in CSV but no longer in code): **513**
 - Class rows in CSV (tracked but non-callable by this audit): **95**
 
 ## Current grade distribution (matched rows only)
 
-- A: 445
-- A-: 412
-- B+: 238
-- B: 41
+- A: 471
+- A-: 432
+- B+: 241
+- B: 42
 - C+: 16
 - B-: 10
 - (blank): 8
@@ -29,25 +29,25 @@
 ## Files with most non-exact coverage
 
 - environment_scatter.py: 13
-- terrain_caves.py: 12
-- autonomous_loop.py: 11
-- terrain_bundle_n.py: 11
-- terrain_dirty_tracking.py: 11
+- terrain_caves.py: 11
 - terrain_cliffs.py: 10
 - _water_network.py: 9
-- lod_pipeline.py: 8
 - terrain_chunking.py: 8
-- terrain_iteration_metrics.py: 8
 - terrain_materials_v2.py: 8
 - terrain_waterfalls.py: 8
 - animation_environment.py: 7
 - terrain_asset_metadata.py: 7
-- terrain_features.py: 7
 - terrain_validation.py: 7
 - road_network.py: 6
 - terrain_audio_zones.py: 6
 - terrain_gameplay_zones.py: 6
 - terrain_unity_export.py: 6
+- terrain_waterfalls_volumetric.py: 6
+- vegetation_lsystem.py: 6
+- _terrain_world.py: 5
+- atmospheric_volumes.py: 5
+- mesh_smoothing.py: 5
+- terrain_dem_import.py: 5
 
 ## Top stale grade rows
 

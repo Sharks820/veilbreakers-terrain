@@ -17,7 +17,7 @@ _biome_grammar.py,apply_geological_folds,apply_geological_folds,1707,function,,n
 _bridge_mesh.py,generate_terrain_bridge_mesh,generate_terrain_bridge_mesh,21,function,,none,no,0,0,,,yes,yes,1,no,A-,B,FAIL_NONE,helper_reachable,orphan_candidate
 _mesh_bridge.py,_lsystem_tree_generator,_lsystem_tree_generator,220,function,,none,no,0,0,,,yes,yes,1,no,B+,D+,FAIL_NONE,orphan_candidate,orphan_candidate
 _mesh_bridge.py,get_material_for_category,get_material_for_category,528,function,,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
-_mesh_bridge.py,_face_normal,_face_normal,545,function,,none,no,4,0,_mesh_bridge.py:896; _mesh_bridge.py:908,,no,no,0,no,,,,helper_reachable,module_local_helper
+_mesh_bridge.py,_face_normal,_face_normal,545,function,,none,no,4,0,_mesh_bridge.py:896; _mesh_bridge.py:908,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
 _mesh_bridge.py,_dot3,_dot3,564,function,,none,no,2,0,_mesh_bridge.py:909,,yes,yes,1,yes,B,,,helper_reachable,module_local_helper
 _mesh_bridge.py,post_boolean_cleanup,post_boolean_cleanup,568,function,,none,no,0,0,,,yes,yes,1,no,B-,D,FAIL_NONE,orphan_candidate,orphan_candidate
 _mesh_bridge.py,resolve_generator,resolve_generator,952,function,,none,yes,4,0,vegetation_system.py:854; vegetation_system.py:856,,yes,yes,1,no,A,B+,FAIL_NONE,helper_reachable,runtime_transitive
@@ -212,18 +212,18 @@ atmospheric_volumes.py,compute_atmospheric_placements,compute_atmospheric_placem
 atmospheric_volumes.py,compute_volume_mesh_spec,compute_volume_mesh_spec,648,function,,none,no,2,32,__init__.py:338,veilbreakers_terrain/tests/test_atmospheric_volumes.py:131; veilbreakers_terrain/tests/test_atmospheric_volumes.py:137; veilbreakers_terrain/tests/test_atmospheric_volumes.py:143; veilbreakers_terrain/tests/test_atmospheric_volumes.py:149; veilbreakers_terrain/tests/test_atmospheric_volumes.py:155,yes,yes,1,yes,A-,B-,FAIL_NONE,helper_reachable,cross_module_helper
 atmospheric_volumes.py,_count_by_type,_count_by_type,867,function,,none,no,2,0,atmospheric_volumes.py:942,,yes,yes,1,no,A-,C+,FAIL_NONE,helper_reachable,module_local_helper
 atmospheric_volumes.py,estimate_atmosphere_performance,estimate_atmosphere_performance,876,function,,none,no,2,38,__init__.py:341,veilbreakers_terrain/tests/test_atmospheric_volumes.py:186; veilbreakers_terrain/tests/test_atmospheric_volumes.py:195; veilbreakers_terrain/tests/test_atmospheric_volumes.py:204; veilbreakers_terrain/tests/test_atmospheric_volumes.py:205; veilbreakers_terrain/tests/test_atmospheric_volumes.py:210,yes,yes,1,yes,A-,B+,FAIL_NONE,helper_reachable,cross_module_helper
-autonomous_loop.py,_cross,_cross,83,function,,none,no,2,0,autonomous_loop.py:135,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_dot,_dot,91,function,,none,no,0,0,,,no,no,0,no,,,,helper_reachable,orphan_candidate
-autonomous_loop.py,_sub,_sub,95,function,,none,no,4,0,autonomous_loop.py:133; autonomous_loop.py:134,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_length,_length,99,function,,none,no,4,0,autonomous_loop.py:104; autonomous_loop.py:136,,no,no,0,no,,,,helper_reachable,module_local_helper
+autonomous_loop.py,_cross,_cross,83,function,,none,no,2,0,autonomous_loop.py:135,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+autonomous_loop.py,_dot,_dot,91,function,,none,no,0,0,,,yes,yes,1,yes,A,,,helper_reachable,orphan_candidate
+autonomous_loop.py,_sub,_sub,95,function,,none,no,4,0,autonomous_loop.py:133; autonomous_loop.py:134,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+autonomous_loop.py,_length,_length,99,function,,none,no,4,0,autonomous_loop.py:104; autonomous_loop.py:136,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
 autonomous_loop.py,_normalize,_normalize,103,function,,none,no,2,0,autonomous_loop.py:122,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
-autonomous_loop.py,_face_normal,_face_normal,110,function,,none,no,2,0,autonomous_loop.py:399,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_is_degenerate,_is_degenerate,125,function,,none,no,2,0,autonomous_loop.py:305,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_edge_key,_edge_key,141,function,,none,no,2,0,autonomous_loop.py:150,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_compute_edge_face_counts,_compute_edge_face_counts,145,function,,none,no,0,0,,,no,no,0,no,,,,helper_reachable,orphan_candidate
-autonomous_loop.py,_uv_triangle_area,_uv_triangle_area,155,function,,none,no,2,0,autonomous_loop.py:170,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_face_uv_area,_face_uv_area,163,function,,none,no,2,0,autonomous_loop.py:499,,no,no,0,no,,,,helper_reachable,module_local_helper
-autonomous_loop.py,_grade_worse_than,_grade_worse_than,178,function,,none,no,2,0,autonomous_loop.py:587,,no,no,0,no,,,,helper_reachable,module_local_helper
+autonomous_loop.py,_face_normal,_face_normal,110,function,,none,no,2,0,autonomous_loop.py:399,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
+autonomous_loop.py,_is_degenerate,_is_degenerate,125,function,,none,no,2,0,autonomous_loop.py:305,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
+autonomous_loop.py,_edge_key,_edge_key,141,function,,none,no,2,0,autonomous_loop.py:150,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+autonomous_loop.py,_compute_edge_face_counts,_compute_edge_face_counts,145,function,,none,no,0,0,,,yes,yes,1,yes,A-,,,helper_reachable,orphan_candidate
+autonomous_loop.py,_uv_triangle_area,_uv_triangle_area,155,function,,none,no,2,0,autonomous_loop.py:170,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+autonomous_loop.py,_face_uv_area,_face_uv_area,163,function,,none,no,2,0,autonomous_loop.py:499,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
+autonomous_loop.py,_grade_worse_than,_grade_worse_than,178,function,,none,no,2,0,autonomous_loop.py:587,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
 autonomous_loop.py,evaluate_mesh_quality,evaluate_mesh_quality,191,function,,none,no,2,24,__init__.py:456,veilbreakers_terrain/tests/test_missing_gaps.py:321; veilbreakers_terrain/tests/test_missing_gaps.py:331; veilbreakers_terrain/tests/test_missing_gaps.py:341; veilbreakers_terrain/tests/test_missing_gaps.py:350; veilbreakers_terrain/tests/test_missing_gaps.py:358,yes,yes,1,yes,A-,D+,FAIL_NONE,helper_reachable,cross_module_helper
 autonomous_loop.py,select_fix_action,select_fix_action,521,function,,none,no,2,16,__init__.py:463,veilbreakers_terrain/tests/test_missing_gaps.py:462; veilbreakers_terrain/tests/test_missing_gaps.py:473; veilbreakers_terrain/tests/test_missing_gaps.py:484; veilbreakers_terrain/tests/test_missing_gaps.py:495; veilbreakers_terrain/tests/test_missing_gaps.py:506,yes,yes,1,no,A,B+,FAIL_NONE,helper_reachable,cross_module_helper
 coastline.py,_wang_hash,_wang_hash,94,function,,none,no,8,0,coastline.py:126; coastline.py:448,,no,no,0,no,,,,helper_reachable,module_local_helper
@@ -377,11 +377,11 @@ light_integration.py,_uf_find,_uf_find,457,function,,none,no,6,0,light_integrati
 light_integration.py,_uf_union,_uf_union,464,function,,none,no,2,0,light_integration.py:508,,no,no,0,no,,,,helper_reachable,module_local_helper
 light_integration.py,merge_nearby_lights,merge_nearby_lights,475,function,,none,no,2,12,__init__.py:290,veilbreakers_terrain/tests/test_live_readiness_regressions.py:303; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:554; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:564; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:576; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:588,yes,yes,1,yes,A,A-,FAIL_NONE,helper_reachable,cross_module_helper
 light_integration.py,compute_light_budget,compute_light_budget,572,function,,none,no,2,12,__init__.py:293,veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:617; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:628; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:639; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:648; veilbreakers_terrain/tests/test_world_map_light_atmosphere.py:655,yes,yes,1,yes,A,A-,FAIL_NONE,helper_reachable,cross_module_helper
-lod_pipeline.py,_cross,_cross,90,function,,none,yes,10,0,lod_pipeline.py:135; lod_pipeline.py:834; lod_pipeline.py:856; lod_pipeline.py:882; lod_pipeline.py:912,,no,no,0,no,,,,helper_reachable,runtime_transitive
-lod_pipeline.py,_sub,_sub,101,function,,none,yes,34,0,lod_pipeline.py:133; lod_pipeline.py:134; lod_pipeline.py:807; lod_pipeline.py:817; lod_pipeline.py:824,,no,no,0,no,,,,helper_reachable,runtime_transitive
-lod_pipeline.py,_dot,_dot,108,function,,none,yes,20,0,lod_pipeline.py:221; lod_pipeline.py:530; lod_pipeline.py:620; lod_pipeline.py:808; lod_pipeline.py:818,,no,no,0,no,,,,helper_reachable,runtime_transitive
+lod_pipeline.py,_cross,_cross,90,function,,none,yes,10,0,lod_pipeline.py:135; lod_pipeline.py:834; lod_pipeline.py:856; lod_pipeline.py:882; lod_pipeline.py:912,,yes,yes,1,yes,A,,,helper_reachable,runtime_transitive
+lod_pipeline.py,_sub,_sub,101,function,,none,yes,34,0,lod_pipeline.py:133; lod_pipeline.py:134; lod_pipeline.py:807; lod_pipeline.py:817; lod_pipeline.py:824,,yes,yes,1,yes,A,,,helper_reachable,runtime_transitive
+lod_pipeline.py,_dot,_dot,108,function,,none,yes,20,0,lod_pipeline.py:221; lod_pipeline.py:530; lod_pipeline.py:620; lod_pipeline.py:808; lod_pipeline.py:818,,yes,yes,1,yes,A,,,helper_reachable,runtime_transitive
 lod_pipeline.py,_normalize,_normalize,115,function,,none,yes,6,0,lod_pipeline.py:135; lod_pipeline.py:198; lod_pipeline.py:834,,yes,yes,1,yes,A-,,,helper_reachable,runtime_transitive
-lod_pipeline.py,_face_normal,_face_normal,123,function,,none,yes,4,0,lod_pipeline.py:201; lod_pipeline.py:600,,no,no,0,no,,,,helper_reachable,runtime_transitive
+lod_pipeline.py,_face_normal,_face_normal,123,function,,none,yes,4,0,lod_pipeline.py:201; lod_pipeline.py:600,,yes,yes,1,yes,A-,,,helper_reachable,runtime_transitive
 lod_pipeline.py,compute_silhouette_importance,compute_silhouette_importance,143,function,,none,yes,2,0,lod_pipeline.py:1415,,yes,yes,1,no,B,D+,FAIL_NONE,helper_reachable,runtime_transitive
 lod_pipeline.py,compute_region_importance,compute_region_importance,273,function,,none,yes,2,0,lod_pipeline.py:1421,,yes,yes,1,no,B+,D+,FAIL_NONE,helper_reachable,runtime_transitive
 lod_pipeline.py,_compute_quadric,_compute_quadric,352,function,,none,yes,2,0,lod_pipeline.py:594,,yes,yes,1,yes,B+,C-,FAIL_NONE,helper_reachable,runtime_transitive
@@ -613,18 +613,18 @@ terrain_budget_enforcer.py,enforce_budget,enforce_budget,562,function,,none,no,2
 terrain_bundle_j.py,register_bundle_j_passes,register_bundle_j_passes,49,function,,master_registrar,yes,0,8,,veilbreakers_terrain/tests/test_terrain_ecosystem.py:580; veilbreakers_terrain/tests/test_terrain_ecosystem.py:597; veilbreakers_terrain/tests/test_terrain_ecosystem.py:618; veilbreakers_terrain/tests/test_terrain_ecosystem.py:640,yes,yes,1,yes,A-,B+,FAIL_NONE,runtime_primary,runtime_primary
 terrain_bundle_k.py,register_bundle_k_passes,register_bundle_k_passes,40,function,,master_registrar,yes,0,4,,veilbreakers_terrain/tests/test_terrain_material_ceiling.py:526; veilbreakers_terrain/tests/test_terrain_material_ceiling.py:547,yes,yes,1,yes,A-,B+,FAIL_NONE,runtime_primary,runtime_primary
 terrain_bundle_l.py,register_bundle_l_passes,register_bundle_l_passes,30,function,,master_registrar,yes,0,4,,veilbreakers_terrain/tests/test_terrain_atmosphere.py:331; veilbreakers_terrain/tests/test_terrain_atmosphere.py:346,yes,yes,1,yes,A-,B+,FAIL_NONE,runtime_primary,runtime_primary
-terrain_bundle_n.py,get_bundle_n_runtime_contract,get_bundle_n_runtime_contract,65,function,,none,no,2,0,terrain_bundle_n.py:244,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_runtime_options,_runtime_options,80,function,,none,no,4,0,terrain_bundle_n.py:103; terrain_bundle_n.py:271,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_determinism_runs,_determinism_runs,88,function,,none,no,4,0,terrain_bundle_n.py:103; terrain_bundle_n.py:384,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,bundle_n_runtime_requests_determinism,bundle_n_runtime_requests_determinism,101,function,,none,no,2,0,terrain_pipeline.py:573,,no,no,0,no,,,,,cross_module_helper
-terrain_bundle_n.py,_skip_runtime_hooks,_skip_runtime_hooks,107,function,,none,no,2,0,terrain_bundle_n.py:393,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_attach_issues,_attach_issues,130,function,,none,no,6,0,terrain_bundle_n.py:294; terrain_bundle_n.py:334; terrain_bundle_n.py:414,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_merge_bundle_n_metrics,_merge_bundle_n_metrics,141,function,,none,no,2,0,terrain_bundle_n.py:438,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_review_findings_from_intent,_review_findings_from_intent,149,function,,none,no,2,0,terrain_bundle_n.py:316,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_validation_issue_from_review_payload,_validation_issue_from_review_payload,197,function,,none,no,2,0,terrain_bundle_n.py:330,,no,no,0,no,,,,,module_local_helper
-terrain_bundle_n.py,_default_snapshot_id,_default_snapshot_id,224,function,,none,no,2,0,terrain_bundle_n.py:369,,no,no,0,no,,,,,module_local_helper
+terrain_bundle_n.py,get_bundle_n_runtime_contract,get_bundle_n_runtime_contract,65,function,,none,no,2,0,terrain_bundle_n.py:244,,yes,yes,1,yes,A-,,,,module_local_helper
+terrain_bundle_n.py,_runtime_options,_runtime_options,80,function,,none,no,4,0,terrain_bundle_n.py:103; terrain_bundle_n.py:271,,yes,yes,1,yes,A,,,,module_local_helper
+terrain_bundle_n.py,_determinism_runs,_determinism_runs,88,function,,none,no,4,0,terrain_bundle_n.py:103; terrain_bundle_n.py:384,,yes,yes,1,yes,A-,,,,module_local_helper
+terrain_bundle_n.py,bundle_n_runtime_requests_determinism,bundle_n_runtime_requests_determinism,101,function,,none,no,2,0,terrain_pipeline.py:573,,yes,yes,1,yes,A,,,,cross_module_helper
+terrain_bundle_n.py,_skip_runtime_hooks,_skip_runtime_hooks,107,function,,none,no,2,0,terrain_bundle_n.py:393,,yes,yes,1,yes,A-,,,,module_local_helper
+terrain_bundle_n.py,_attach_issues,_attach_issues,130,function,,none,no,6,0,terrain_bundle_n.py:294; terrain_bundle_n.py:334; terrain_bundle_n.py:414,,yes,yes,1,yes,A-,,,,module_local_helper
+terrain_bundle_n.py,_merge_bundle_n_metrics,_merge_bundle_n_metrics,141,function,,none,no,2,0,terrain_bundle_n.py:438,,yes,yes,1,yes,A,,,,module_local_helper
+terrain_bundle_n.py,_review_findings_from_intent,_review_findings_from_intent,149,function,,none,no,2,0,terrain_bundle_n.py:316,,yes,yes,1,yes,B+,,,,module_local_helper
+terrain_bundle_n.py,_validation_issue_from_review_payload,_validation_issue_from_review_payload,197,function,,none,no,2,0,terrain_bundle_n.py:330,,yes,yes,1,yes,A-,,,,module_local_helper
+terrain_bundle_n.py,_default_snapshot_id,_default_snapshot_id,224,function,,none,no,2,0,terrain_bundle_n.py:369,,yes,yes,1,yes,A,,,,module_local_helper
 terrain_bundle_n.py,register_bundle_n_passes,register_bundle_n_passes,231,function,,none,no,0,2,,veilbreakers_terrain/tests/test_terrain_deep_qa.py:134,yes,yes,1,yes,A-,B,FAIL_NONE,runtime_primary,test_only_or_unwired
-terrain_bundle_n.py,run_bundle_n_post_pipeline_hooks,run_bundle_n_post_pipeline_hooks,247,function,,none,no,2,0,terrain_pipeline.py:596,,no,no,0,no,,,,,cross_module_helper
+terrain_bundle_n.py,run_bundle_n_post_pipeline_hooks,run_bundle_n_post_pipeline_hooks,247,function,,none,no,2,0,terrain_pipeline.py:596,,yes,yes,1,yes,B+,,,,cross_module_helper
 terrain_bundle_o.py,register_bundle_o_passes,register_bundle_o_passes,19,function,,master_registrar,yes,0,16,,veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:522; veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:535; veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:541; veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:557; veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py:583,yes,yes,1,yes,A-,B+,FAIL_NONE,runtime_primary,runtime_primary
 terrain_caves.py,_worley_noise_2d,_worley_noise_2d,58,function,,none,yes,2,0,terrain_caves.py:240,,no,no,0,no,,,,helper_reachable,runtime_transitive
 terrain_caves.py,_perlin_noise_2d,_perlin_noise_2d,109,function,,none,yes,2,0,terrain_caves.py:241,,no,no,0,no,,,,helper_reachable,runtime_transitive
@@ -661,7 +661,7 @@ terrain_caves.py,get_cave_entrance_specs,get_cave_entrance_specs,3638,function,,
 terrain_caves.py,_build_synthetic_state,_build_synthetic_state,3712,function,,none,yes,2,0,terrain_caves.py:4614,,yes,yes,1,no,B+,D+,FAIL_TRANSITIVE_MODULE,helper_reachable,runtime_transitive
 terrain_caves.py,_fbm_noise,_fbm_noise,3809,function,,none,yes,4,0,terrain_caves.py:4045; terrain_caves.py:4084,,yes,yes,1,yes,A-,,,helper_reachable,runtime_transitive
 terrain_caves.py,_cone_verts_faces,_cone_verts_faces,3833,function,,none,yes,4,0,terrain_caves.py:4241; terrain_caves.py:4346,,no,no,0,no,,,,helper_reachable,runtime_transitive
-terrain_caves.py,_face_normal,_face_normal,3881,function,,none,yes,2,0,terrain_caves.py:4359,,no,no,0,no,,,,helper_reachable,runtime_transitive
+terrain_caves.py,_face_normal,_face_normal,3881,function,,none,yes,2,0,terrain_caves.py:4359,,yes,yes,1,yes,A-,,,helper_reachable,runtime_transitive
 terrain_caves.py,_triplanar_uv,_triplanar_uv,3898,function,,none,no,2,0,terrain_caves.py:4009,,no,no,0,no,,,,helper_reachable,module_local_helper
 terrain_caves.py,_build_chamber_mesh_geometry,_build_chamber_mesh_geometry,3919,function,,none,yes,4,0,terrain_caves.py:4393; terrain_caves.py:4671,,yes,yes,1,yes,A,,,helper_reachable,runtime_transitive
 terrain_caves.py,_build_chamber_mesh,_build_chamber_mesh,4364,function,,none,yes,2,0,terrain_caves.py:4701,,yes,yes,1,yes,A-,C-,FAIL_TRANSITIVE_MODULE,helper_reachable,runtime_transitive
@@ -763,21 +763,21 @@ terrain_determinism_ci.py,run_determinism_check,run_determinism_check,100,functi
 terrain_determinism_ci.py,detect_determinism_regressions,detect_determinism_regressions,212,function,,none,no,0,6,,veilbreakers_terrain/tests/test_terrain_deep_qa.py:322; veilbreakers_terrain/tests/test_terrain_deep_qa.py:333; veilbreakers_terrain/tests/test_terrain_deep_qa.py:367,yes,yes,1,no,A,B-,FAIL_NONE,test_only_or_unwired,test_only_or_unwired
 terrain_dirty_tracking.py,DirtyRegion.touches_channel,touches_channel,33,method,DirtyRegion,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
 terrain_dirty_tracking.py,DirtyRegion.merge,merge,37,method,DirtyRegion,none,no,2,0,terrain_dirty_tracking.py:319; terrain_dirty_tracking.py:414,,yes,yes,1,no,B-,D,FAIL_NONE,helper_reachable,module_local_helper
-terrain_dirty_tracking.py,DirtyRegion.intersection,intersection,57,method,DirtyRegion,none,no,0,0,,,no,no,0,no,,,,helper_reachable,orphan_candidate
-terrain_dirty_tracking.py,_IntervalTree._ensure_sorted,_ensure_sorted,122,method,_IntervalTree,none,no,1,0,terrain_dirty_tracking.py:143,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_dirty_tracking.py,_IntervalTree.insert,insert,128,method,_IntervalTree,none,no,1,0,terrain_dirty_tracking.py:225,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_dirty_tracking.py,_IntervalTree.remove,remove,132,method,_IntervalTree,none,no,0,0,,,no,no,0,no,,,,helper_reachable,orphan_candidate
-terrain_dirty_tracking.py,_IntervalTree.candidates,candidates,136,method,_IntervalTree,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
-terrain_dirty_tracking.py,_IntervalTree.rebuild,rebuild,154,method,_IntervalTree,none,no,1,0,terrain_dirty_tracking.py:216,,no,no,0,no,,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,DirtyRegion.intersection,intersection,57,method,DirtyRegion,none,no,0,0,,,yes,yes,1,yes,A-,,,helper_reachable,orphan_candidate
+terrain_dirty_tracking.py,_IntervalTree._ensure_sorted,_ensure_sorted,122,method,_IntervalTree,none,no,1,0,terrain_dirty_tracking.py:143,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,_IntervalTree.insert,insert,128,method,_IntervalTree,none,no,1,0,terrain_dirty_tracking.py:225,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,_IntervalTree.remove,remove,132,method,_IntervalTree,none,no,0,0,,,yes,yes,1,yes,A-,,,helper_reachable,orphan_candidate
+terrain_dirty_tracking.py,_IntervalTree.candidates,candidates,136,method,_IntervalTree,none,no,0,0,,,yes,yes,1,yes,A-,,,orphan_candidate,orphan_candidate
+terrain_dirty_tracking.py,_IntervalTree.rebuild,rebuild,154,method,_IntervalTree,none,no,1,0,terrain_dirty_tracking.py:216,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
 terrain_dirty_tracking.py,DirtyTracker.world_bounds,world_bounds,203,property,DirtyTracker,none,no,0,0,,,yes,yes,2,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
 terrain_dirty_tracking.py,DirtyTracker.set_world_bounds,set_world_bounds,206,method,DirtyTracker,none,no,0,0,,,yes,yes,2,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
-terrain_dirty_tracking.py,DirtyTracker._rebuild_indexes,_rebuild_indexes,213,method,DirtyTracker,none,no,1,0,terrain_dirty_tracking.py:334,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_dirty_tracking.py,DirtyTracker._append_region,_append_region,221,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:248; terrain_dirty_tracking.py:268,,no,no,0,no,,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,DirtyTracker._rebuild_indexes,_rebuild_indexes,213,method,DirtyTracker,none,no,1,0,terrain_dirty_tracking.py:334,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,DirtyTracker._append_region,_append_region,221,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:248; terrain_dirty_tracking.py:268,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
 terrain_dirty_tracking.py,DirtyTracker.mark_dirty,mark_dirty,234,method,DirtyTracker,none,no,1,0,terrain_dirty_tracking.py:491,,yes,yes,2,no,A,C+,FAIL_NONE,helper_reachable,module_local_helper
 terrain_dirty_tracking.py,DirtyTracker.mark_many,mark_many,252,method,DirtyTracker,none,no,0,0,,,yes,yes,2,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
-terrain_dirty_tracking.py,DirtyTracker._clip_to_world,_clip_to_world,272,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:239; terrain_dirty_tracking.py:259,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_dirty_tracking.py,DirtyTracker._sweep_merge,_sweep_merge,286,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:333; terrain_dirty_tracking.py:367,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_dirty_tracking.py,DirtyTracker._coalesce_inplace,_coalesce_inplace,329,method,DirtyTracker,none,no,3,0,terrain_dirty_tracking.py:249; terrain_dirty_tracking.py:269; terrain_dirty_tracking.py:405,,no,no,0,no,,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,DirtyTracker._clip_to_world,_clip_to_world,272,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:239; terrain_dirty_tracking.py:259,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,DirtyTracker._sweep_merge,_sweep_merge,286,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:333; terrain_dirty_tracking.py:367,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
+terrain_dirty_tracking.py,DirtyTracker._coalesce_inplace,_coalesce_inplace,329,method,DirtyTracker,none,no,3,0,terrain_dirty_tracking.py:249; terrain_dirty_tracking.py:269; terrain_dirty_tracking.py:405,,yes,yes,1,yes,A,,,helper_reachable,module_local_helper
 terrain_dirty_tracking.py,DirtyTracker.get_dirty_regions,get_dirty_regions,336,method,DirtyTracker,none,no,0,0,,,yes,yes,2,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
 terrain_dirty_tracking.py,DirtyTracker.get_dirty_channels,get_dirty_channels,339,method,DirtyTracker,none,no,0,0,,,yes,yes,2,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
 terrain_dirty_tracking.py,DirtyTracker.clear,clear,342,method,DirtyTracker,none,no,2,0,terrain_dirty_tracking.py:343; terrain_dirty_tracking.py:344,,yes,yes,2,no,A,C+,FAIL_NONE,helper_reachable,module_local_helper
@@ -798,10 +798,10 @@ terrain_erosion_filter.py,finite_difference_gradient,finite_difference_gradient,
 terrain_erosion_filter.py,phacelle_noise,phacelle_noise,162,function,,none,no,2,6,terrain_erosion_filter.py:356,veilbreakers_terrain/tests/test_terrain_noise_phase11.py:124; veilbreakers_terrain/tests/test_terrain_noise_phase11.py:136; veilbreakers_terrain/tests/test_terrain_noise_phase11.py:137,yes,yes,1,no,B+,B-,FAIL_NONE,helper_reachable,module_local_helper
 terrain_erosion_filter.py,erosion_filter,erosion_filter,265,function,,none,no,2,0,terrain_erosion_filter.py:512,,yes,yes,2,no,B+,C-,FAIL_NONE,helper_reachable,module_local_helper
 terrain_erosion_filter.py,apply_analytical_erosion,apply_analytical_erosion,472,function,,none,no,2,34,_terrain_world.py:1123,veilbreakers_terrain/tests/test_terrain_erosion_filter.py:33; veilbreakers_terrain/tests/test_terrain_erosion_filter.py:49; veilbreakers_terrain/tests/test_terrain_erosion_filter.py:65; veilbreakers_terrain/tests/test_terrain_erosion_filter.py:66; veilbreakers_terrain/tests/test_terrain_erosion_filter.py:81,yes,yes,1,no,B+,B-,FAIL_NONE,helper_reachable,cross_module_helper
-terrain_features.py,_cross,_cross,33,function,,none,no,0,0,,,no,no,0,no,,,,helper_reachable,orphan_candidate
-terrain_features.py,_sub,_sub,42,function,,none,no,0,0,,,no,no,0,no,,,,helper_reachable,orphan_candidate
+terrain_features.py,_cross,_cross,33,function,,none,no,0,0,,,yes,yes,1,yes,A,,,helper_reachable,orphan_candidate
+terrain_features.py,_sub,_sub,42,function,,none,no,0,0,,,yes,yes,1,yes,A,,,helper_reachable,orphan_candidate
 terrain_features.py,_normalize,_normalize,46,function,,none,yes,2,0,terrain_features.py:66,,yes,yes,1,yes,A-,,,helper_reachable,runtime_transitive
-terrain_features.py,_face_normal,_face_normal,54,function,,none,yes,2,0,terrain_features.py:71,,no,no,0,no,,,,helper_reachable,runtime_transitive
+terrain_features.py,_face_normal,_face_normal,54,function,,none,yes,2,0,terrain_features.py:71,,yes,yes,1,yes,A-,,,helper_reachable,runtime_transitive
 terrain_features.py,_compute_face_normals,_compute_face_normals,69,function,,none,yes,18,0,terrain_features.py:655; terrain_features.py:1194; terrain_features.py:1700; terrain_features.py:2086; terrain_features.py:2524,,no,no,0,no,,,,helper_reachable,runtime_transitive
 terrain_features.py,_lod1_faces,_lod1_faces,74,function,,none,yes,18,0,terrain_features.py:691; terrain_features.py:1232; terrain_features.py:1734; terrain_features.py:2113; terrain_features.py:2555,,no,no,0,no,,,,helper_reachable,runtime_transitive
 terrain_features.py,_material_metadata,_material_metadata,79,function,,none,yes,18,0,terrain_features.py:672; terrain_features.py:1213; terrain_features.py:1715; terrain_features.py:2099; terrain_features.py:2534,,no,no,0,no,,,,helper_reachable,runtime_transitive
@@ -885,26 +885,26 @@ terrain_hot_reload.py,HotReloadWatcher.check_and_reload,check_and_reload,138,met
 terrain_hot_reload.py,HotReloadWatcher.force_reload_all,force_reload_all,182,method,HotReloadWatcher,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
 terrain_hot_reload.py,HotReloadWatcher.clear_errors,clear_errors,198,method,HotReloadWatcher,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
 terrain_hot_reload.py,force_reload_all,force_reload_all,203,function,,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
-terrain_iteration_metrics.py,_get_peak_memory_mb,_get_peak_memory_mb,24,function,,none,no,2,0,terrain_iteration_metrics.py:131,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_iteration_metrics.py,IterationMetrics.record,record,98,method,IterationMetrics,none,no,1,0,terrain_iteration_metrics.py:326,,no,no,0,no,,,,helper_reachable,module_local_helper
-terrain_iteration_metrics.py,IterationMetrics.reset,reset,141,method,IterationMetrics,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
+terrain_iteration_metrics.py,_get_peak_memory_mb,_get_peak_memory_mb,24,function,,none,no,2,0,terrain_iteration_metrics.py:131,,yes,yes,1,yes,B+,,,helper_reachable,module_local_helper
+terrain_iteration_metrics.py,IterationMetrics.record,record,98,method,IterationMetrics,none,no,1,0,terrain_iteration_metrics.py:326,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
+terrain_iteration_metrics.py,IterationMetrics.reset,reset,141,method,IterationMetrics,none,no,0,0,,,yes,yes,1,yes,A,,,orphan_candidate,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.merge,merge,160,method,IterationMetrics,none,no,0,0,,,yes,yes,1,yes,B-,,,helper_reachable,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.avg_pass_duration_s,avg_pass_duration_s,192,property,IterationMetrics,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.cache_hit_rate,cache_hit_rate,200,property,IterationMetrics,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.p50_duration_s,p50_duration_s,205,property,IterationMetrics,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.p95_duration_s,p95_duration_s,209,property,IterationMetrics,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,test_only_or_unwired,orphan_candidate
-terrain_iteration_metrics.py,IterationMetrics.p99_duration_s,p99_duration_s,213,property,IterationMetrics,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
+terrain_iteration_metrics.py,IterationMetrics.p99_duration_s,p99_duration_s,213,property,IterationMetrics,none,no,0,0,,,yes,yes,1,yes,A,,,orphan_candidate,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.max_duration_s,max_duration_s,217,property,IterationMetrics,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
-terrain_iteration_metrics.py,IterationMetrics.slowest_pass_name,slowest_pass_name,221,property,IterationMetrics,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
+terrain_iteration_metrics.py,IterationMetrics.slowest_pass_name,slowest_pass_name,221,property,IterationMetrics,none,no,0,0,,,yes,yes,1,yes,A,,,orphan_candidate,orphan_candidate
 terrain_iteration_metrics.py,IterationMetrics.per_pass_totals,per_pass_totals,228,method,IterationMetrics,none,no,0,0,,,yes,yes,1,yes,B+,C-,FAIL_NONE,orphan_candidate,orphan_candidate
-terrain_iteration_metrics.py,IterationMetrics.hotspots,hotspots,232,method,IterationMetrics,none,no,1,0,terrain_iteration_metrics.py:271,,no,no,0,no,,,,helper_reachable,module_local_helper
+terrain_iteration_metrics.py,IterationMetrics.hotspots,hotspots,232,method,IterationMetrics,none,no,1,0,terrain_iteration_metrics.py:271,,yes,yes,1,yes,A-,,,helper_reachable,module_local_helper
 terrain_iteration_metrics.py,IterationMetrics.summary_report,summary_report,239,method,IterationMetrics,none,no,1,0,terrain_iteration_metrics.py:285,,yes,yes,1,yes,A,B,FAIL_NONE,helper_reachable,module_local_helper
-terrain_iteration_metrics.py,IterationMetrics.to_json,to_json,278,method,IterationMetrics,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
+terrain_iteration_metrics.py,IterationMetrics.to_json,to_json,278,method,IterationMetrics,none,no,0,0,,,yes,yes,1,yes,A,,,orphan_candidate,orphan_candidate
 terrain_iteration_metrics.py,_percentile,_percentile,288,function,,none,no,6,0,terrain_iteration_metrics.py:206; terrain_iteration_metrics.py:210; terrain_iteration_metrics.py:214,,yes,yes,1,yes,A,C+,FAIL_NONE,helper_reachable,module_local_helper
 terrain_iteration_metrics.py,record_iteration,record_iteration,324,function,,none,no,0,10,,veilbreakers_terrain/tests/test_terrain_iteration.py:516; veilbreakers_terrain/tests/test_terrain_iteration.py:517; veilbreakers_terrain/tests/test_terrain_iteration.py:520; veilbreakers_terrain/tests/test_terrain_iteration.py:521; veilbreakers_terrain/tests/test_terrain_wiring_integration.py:461,yes,yes,1,no,D,F,FAIL_NONE,test_only_or_unwired,test_only_or_unwired
 terrain_iteration_metrics.py,record_cache_hit,record_cache_hit,329,function,,none,no,0,4,,veilbreakers_terrain/tests/test_terrain_iteration.py:536; veilbreakers_terrain/tests/test_terrain_iteration.py:537,yes,yes,1,no,A,B-,FAIL_NONE,test_only_or_unwired,test_only_or_unwired
 terrain_iteration_metrics.py,record_cache_miss,record_cache_miss,333,function,,none,no,0,2,,veilbreakers_terrain/tests/test_terrain_iteration.py:538,yes,yes,1,no,A,B-,FAIL_NONE,test_only_or_unwired,test_only_or_unwired
-terrain_iteration_metrics.py,record_wave,record_wave,337,function,,none,no,0,0,,,no,no,0,no,,,,orphan_candidate,orphan_candidate
+terrain_iteration_metrics.py,record_wave,record_wave,337,function,,none,no,0,0,,,yes,yes,1,yes,B,,,orphan_candidate,orphan_candidate
 terrain_iteration_metrics.py,speedup_factor,speedup_factor,342,function,,none,no,2,4,terrain_iteration_metrics.py:372,veilbreakers_terrain/tests/test_terrain_iteration.py:523; veilbreakers_terrain/tests/test_terrain_iteration.py:613,yes,yes,1,no,A,B-,FAIL_NONE,helper_reachable,module_local_helper
 terrain_iteration_metrics.py,meets_speedup_target,meets_speedup_target,361,function,,none,no,0,4,,veilbreakers_terrain/tests/test_terrain_wiring_integration.py:485; veilbreakers_terrain/tests/test_terrain_wiring_integration.py:488,yes,yes,1,no,D,F,FAIL_NONE,test_only_or_unwired,test_only_or_unwired
 terrain_iteration_metrics.py,stdev_duration_s,stdev_duration_s,376,function,,none,no,0,0,,,yes,yes,1,no,A,C+,FAIL_NONE,orphan_candidate,orphan_candidate
