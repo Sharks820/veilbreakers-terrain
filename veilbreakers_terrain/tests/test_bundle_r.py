@@ -11,6 +11,7 @@ Covers every module from Addendum 1.A.1:
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -480,6 +481,35 @@ def test_lock_overwrites_previous():
     lock_anchor(TerrainAnchor(name="X", world_position=(0, 0, 0)))
     lock_anchor(TerrainAnchor(name="X", world_position=(1, 1, 1)))
     assert _LOCKED_ANCHORS["X"].world_position == (1, 1, 1)
+
+
+def test_anchor_locks_are_isolated_per_thread():
+    from blender_addon.handlers.terrain_reference_locks import (
+        _LOCKED_ANCHORS,
+        clear_all_locks,
+        is_locked,
+        lock_anchor,
+    )
+    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+
+    clear_all_locks()
+    lock_anchor(TerrainAnchor(name="X", world_position=(0.0, 0.0, 0.0)))
+    worker_result: dict[str, object] = {}
+
+    def _worker() -> None:
+        lock_anchor(TerrainAnchor(name="X", world_position=(5.0, 5.0, 5.0)))
+        worker_result["locked"] = is_locked("X")
+        from blender_addon.handlers import terrain_reference_locks as locks_mod
+        worker_result["position"] = locks_mod._lock_registry()["X"].world_position
+        clear_all_locks()
+
+    thread = threading.Thread(target=_worker)
+    thread.start()
+    thread.join()
+
+    assert worker_result["locked"] is True
+    assert worker_result["position"] == (5.0, 5.0, 5.0)
+    assert _LOCKED_ANCHORS["X"].world_position == (0.0, 0.0, 0.0)
 
 
 def test_within_tolerance_passes():

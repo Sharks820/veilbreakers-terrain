@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -638,6 +639,34 @@ def test_pass_validation_full_triggers_rollback_on_hard_fail(
     assert result.metrics.get("triggered_rollback") is True
     # After rollback, hash matches clean baseline
     assert controller.state.mask_stack.compute_hash() == clean_hash
+
+
+def test_bind_active_controller_isolated_per_thread():
+    from blender_addon.handlers import terrain_validation as validation_mod
+
+    main_controller = object()
+    worker_controller = object()
+    worker_result: dict[str, object] = {}
+
+    validation_mod.bind_active_controller(main_controller)
+    try:
+        def _worker() -> None:
+            first = validation_mod.bind_active_controller(worker_controller)
+            second = validation_mod.bind_active_controller(worker_controller)
+            worker_result["first"] = first
+            worker_result["second"] = second
+            validation_mod.bind_active_controller(None)
+
+        thread = threading.Thread(target=_worker)
+        thread.start()
+        thread.join()
+
+        rebound = validation_mod.bind_active_controller(main_controller)
+        assert worker_result["first"]["controller_id"] == id(worker_controller)
+        assert worker_result["second"]["already_bound"] is True
+        assert rebound["already_bound"] is True
+    finally:
+        validation_mod.bind_active_controller(None)
 
 
 def test_register_bundle_d_passes_adds_validation_full():

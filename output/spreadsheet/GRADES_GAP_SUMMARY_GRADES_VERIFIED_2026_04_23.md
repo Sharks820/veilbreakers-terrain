@@ -2,8 +2,8 @@
 
 - Grade source CSV: `docs\aaa-audit\GRADES_VERIFIED.csv`
 - UTC date tag: `2026_04_23`
-- Total handler callables: **1749**
-- Exact graded callables: **1154**
+- Total handler callables: **1751**
+- Exact graded callables: **1156**
 - Name-only matches (needs explicit file-level row): **36**
 - Ambiguous same-file grade rows: **1**
 - Ambiguous name matches (manual disambiguation required): **6**
@@ -13,7 +13,7 @@
 
 ## Current grade distribution (matched rows only)
 
-- A-: 442
+- A-: 444
 - A: 420
 - B+: 237
 - B: 41

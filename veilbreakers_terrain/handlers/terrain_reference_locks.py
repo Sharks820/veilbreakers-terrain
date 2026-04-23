@@ -10,6 +10,7 @@ See Addendum 1.A.4.
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -32,6 +33,21 @@ class AnchorDriftReport:
 # Module-level lock registry — maps anchor name → originally-locked anchor.
 # Mutable by design so `lock_anchor` + `assert_*` work across calls.
 _LOCKED_ANCHORS: Dict[str, TerrainAnchor] = {}
+_LOCKED_ANCHORS_LOCAL = threading.local()
+_LOCKED_ANCHORS_GUARD = threading.RLock()
+
+
+def _lock_registry() -> Dict[str, TerrainAnchor]:
+    # Preserve the historical module-level registry for the main thread so
+    # existing tests/tools that inspect `_LOCKED_ANCHORS` directly still work.
+    if threading.current_thread() is threading.main_thread():
+        return _LOCKED_ANCHORS
+
+    registry = getattr(_LOCKED_ANCHORS_LOCAL, "anchors", None)
+    if registry is None:
+        registry = {}
+        _LOCKED_ANCHORS_LOCAL.anchors = registry
+    return registry
 
 
 def lock_anchor(anchor: TerrainAnchor) -> None:
@@ -40,20 +56,24 @@ def lock_anchor(anchor: TerrainAnchor) -> None:
     Overwrites any prior lock for the same name. Use ``unlock_anchor``
     to release before re-locking if you want to catch accidental re-locks.
     """
-    _LOCKED_ANCHORS[anchor.name] = anchor
+    with _LOCKED_ANCHORS_GUARD:
+        _lock_registry()[anchor.name] = anchor
 
 
 def unlock_anchor(anchor_name: str) -> None:
-    _LOCKED_ANCHORS.pop(anchor_name, None)
+    with _LOCKED_ANCHORS_GUARD:
+        _lock_registry().pop(anchor_name, None)
 
 
 def clear_all_locks() -> None:
     """Test helper — releases every registered anchor lock."""
-    _LOCKED_ANCHORS.clear()
+    with _LOCKED_ANCHORS_GUARD:
+        _lock_registry().clear()
 
 
 def is_locked(anchor_name: str) -> bool:
-    return anchor_name in _LOCKED_ANCHORS
+    with _LOCKED_ANCHORS_GUARD:
+        return anchor_name in _lock_registry()
 
 
 def _distance(
@@ -69,7 +89,8 @@ def assert_anchor_integrity(
     tolerance: float = 0.01,
 ) -> None:
     """Raise ``AnchorDrift`` if a named anchor no longer matches its lock."""
-    locked = _LOCKED_ANCHORS.get(anchor.name)
+    with _LOCKED_ANCHORS_GUARD:
+        locked = _lock_registry().get(anchor.name)
     if locked is None:
         # Unlocked anchors are always considered intact — caller's choice.
         return
@@ -93,7 +114,8 @@ def assert_all_anchors_intact(
     """
     reports: List[AnchorDriftReport] = []
     for anchor in intent.anchors:
-        locked = _LOCKED_ANCHORS.get(anchor.name)
+        with _LOCKED_ANCHORS_GUARD:
+            locked = _lock_registry().get(anchor.name)
         if locked is None:
             reports.append(
                 AnchorDriftReport(

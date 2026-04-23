@@ -16,6 +16,7 @@ No Blender / bpy imports. Fully unit-testable outside Blender.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import math
 import time
@@ -1903,6 +1904,16 @@ def run_validation_suite(
 # a weak contract: if not set, pass_validation_full simply returns a
 # PassResult and does not attempt rollback.
 _ACTIVE_CONTROLLER: Optional[TerrainPassController] = None
+_ACTIVE_CONTROLLER_CTX: contextvars.ContextVar[Optional[TerrainPassController]] = (
+    contextvars.ContextVar("terrain_validation_active_controller", default=None)
+)
+
+
+def _get_active_controller() -> Optional[TerrainPassController]:
+    controller = _ACTIVE_CONTROLLER_CTX.get()
+    if controller is not None:
+        return controller
+    return _ACTIVE_CONTROLLER
 
 
 def bind_active_controller(
@@ -1921,12 +1932,15 @@ def bind_active_controller(
     """
     global _ACTIVE_CONTROLLER
     if controller is None:
+        _ACTIVE_CONTROLLER_CTX.set(None)
         _ACTIVE_CONTROLLER = None
         return {"bound": True, "already_bound": False, "controller_id": None}
 
-    if _ACTIVE_CONTROLLER is controller:
+    active_controller = _get_active_controller()
+    if active_controller is controller:
         return {"bound": False, "already_bound": True, "controller_id": id(controller)}
 
+    _ACTIVE_CONTROLLER_CTX.set(controller)
     _ACTIVE_CONTROLLER = controller
     return {"bound": True, "already_bound": False, "controller_id": id(controller)}
 
@@ -1954,8 +1968,9 @@ def pass_validation_full(
     metrics["region_scoped"] = region is not None
 
     triggered_rollback = False
-    if status == "failed" and _ACTIVE_CONTROLLER is not None:
-        ctrl = _ACTIVE_CONTROLLER
+    active_controller = _get_active_controller()
+    if status == "failed" and active_controller is not None:
+        ctrl = active_controller
         if ctrl.state.checkpoints:
             try:
                 ctrl.rollback_last_checkpoint()
