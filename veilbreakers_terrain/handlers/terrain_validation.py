@@ -25,6 +25,19 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+try:
+    from scipy.ndimage import (
+        binary_dilation as _scipy_binary_dilation,
+        label as _scipy_label,
+        maximum_filter as _scipy_maximum_filter,
+    )
+    _SCIPY_VALIDATION_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _scipy_binary_dilation = None  # type: ignore[assignment]
+    _scipy_label = None  # type: ignore[assignment]
+    _scipy_maximum_filter = None  # type: ignore[assignment]
+    _SCIPY_VALIDATION_AVAILABLE = False
+
 from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import (
     BBox,
@@ -191,6 +204,29 @@ def _safe_asarray(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
     if arr is None:
         return None
     return np.asarray(arr)
+
+
+def _numpy_block_max(arr: np.ndarray, radius: int) -> np.ndarray:
+    """Pure-numpy neighbourhood maximum over a square (2r+1)×(2r+1) window.
+
+    Used as a scipy.ndimage.maximum_filter fallback.  Implemented via
+    two passes of 1-D cumsum sliding-window max (O(rows*cols) time, O(cols)
+    extra memory) — no Python per-cell loops.
+    """
+    out = arr.astype(np.float32)
+    # Row-direction pass: sliding-window presence count via cumsum
+    row_pad = np.pad(out, ((radius, radius), (0, 0)), mode="constant", constant_values=0)
+    row_pad_bin = (row_pad > 0).astype(np.float32)
+    csum = np.concatenate([np.zeros((1, out.shape[1]), dtype=np.float32),
+                           np.cumsum(row_pad_bin, axis=0)], axis=0)
+    row_any = csum[2 * radius + 1:, :] - csum[: out.shape[0], :]
+    # Column-direction pass
+    col_pad = np.pad(row_any, ((0, 0), (radius, radius)), mode="constant", constant_values=0)
+    col_pad_bin = (col_pad > 0).astype(np.float32)
+    csumc = np.concatenate([np.zeros((out.shape[0], 1), dtype=np.float32),
+                            np.cumsum(col_pad_bin, axis=1)], axis=1)
+    result = csumc[:, 2 * radius + 1:] - csumc[:, : out.shape[1]]
+    return result.astype(np.float32)
 
 
 def _cell_bounds_for_feature(
@@ -490,14 +526,6 @@ def validate_tile_seam_continuity(
             "bottom": "bottom",
             "left": "left",
             "right": "right",
-        }
-
-        neighbor_border_map: Dict[str, Tuple[np.ndarray, np.ndarray]] = {
-            # (this_tile_edge, neighbor_opposite_edge)
-            "top":    (h[0, :],    None),
-            "bottom": (h[-1, :],   None),
-            "left":   (h[:, 0],    None),
-            "right":  (h[:, -1],   None),
         }
 
         direction_neighbor_edge: Dict[str, Callable[..., np.ndarray]] = {
@@ -964,15 +992,15 @@ def check_cliff_silhouette_readability(
     if h is not None and h.ndim == 2 and h.shape == cliff_arr.shape:
         rows, cols = h.shape
         if rows >= 3 and cols >= 3:
-            h_pad = np.pad(h, 1, mode="reflect")
-            local_max = h_pad[:-2, :-2].copy()
-            for dr in range(3):
-                for dc in range(3):
-                    if dr == 0 and dc == 0:
-                        continue
-                    local_max = np.maximum(
-                        local_max, h_pad[dr: dr + rows, dc: dc + cols]
-                    )
+            if _SCIPY_VALIDATION_AVAILABLE and _scipy_maximum_filter is not None:
+                local_max = _scipy_maximum_filter(h, size=3, mode="reflect")
+            else:
+                # Pure-numpy vectorized 3×3 max via padded slicing (9 array ops, no Python loops)
+                h_pad = np.pad(h, 1, mode="reflect")
+                local_max = h_pad[0: rows, 0: cols].copy()
+                for dr in range(3):
+                    for dc in range(3):
+                        local_max = np.maximum(local_max, h_pad[dr: dr + rows, dc: dc + cols])
             sky_exposed = h >= (local_max - 1e-9)
             sky_exposed_cliff = mask & sky_exposed
             sky_exposure_pct = float(sky_exposed_cliff.sum()) / float(cliff_cells) * 100.0
@@ -1012,30 +1040,33 @@ def check_cliff_silhouette_readability(
         )
 
     # ------------------------------------------------------------------
-    # Tier 3: connected-component minimum size
+    # Tier 3: connected-component minimum size — vectorized via scipy.ndimage.label
+    # or a pure-numpy minimum-label-propagation fallback (no per-cell Python BFS).
     # ------------------------------------------------------------------
-    labels = np.zeros(mask.shape, dtype=np.int32)
-    n_rows, n_cols = mask.shape
-    next_id = 1
-    for r0 in range(n_rows):
-        for c0 in range(n_cols):
-            if not mask[r0, c0] or labels[r0, c0] != 0:
-                continue
-            bfs = [(r0, c0)]
-            comp_id = next_id
-            next_id += 1
-            while bfs:
-                r, c = bfs.pop()
-                if r < 0 or r >= n_rows or c < 0 or c >= n_cols:
-                    continue
-                if not mask[r, c] or labels[r, c] != 0:
-                    continue
-                labels[r, c] = comp_id
-                for dr in (-1, 0, 1):
-                    for dc in (-1, 0, 1):
-                        if dr == 0 and dc == 0:
-                            continue
-                        bfs.append((r + dr, c + dc))
+    if _SCIPY_VALIDATION_AVAILABLE and _scipy_label is not None:
+        struct_8 = np.ones((3, 3), dtype=np.int32)
+        labels, _n = _scipy_label(mask, structure=struct_8)
+    else:
+        # Pure-numpy minimum-label propagation:
+        # 1. Assign each True cell its flat index + 1 as a unique seed label.
+        # 2. Each pass broadcasts the minimum label to 8-connected neighbours.
+        # 3. After convergence all cells in the same component share the same
+        #    minimum label.  Converges in O(max_diameter) passes — no per-cell
+        #    Python loops.
+        labels = np.full(mask.shape, 0, dtype=np.int64)
+        flat_idx = np.flatnonzero(mask.ravel())
+        if flat_idx.size > 0:
+            labels.ravel()[flat_idx] = flat_idx.astype(np.int64) + 1
+        # Propagate minimum labels until stable
+        changed = True
+        while changed:
+            new_labels = labels.copy()
+            for dr, dc in ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)):
+                shifted = np.roll(np.roll(labels, dr, axis=0), dc, axis=1)
+                improve = mask & (shifted > 0) & ((new_labels == 0) | (shifted < new_labels))
+                new_labels[improve] = shifted[improve]
+            changed = bool(np.any(new_labels != labels))
+            labels = new_labels
 
     unique_ids, counts = np.unique(labels, return_counts=True)
     component_pairs = sorted(
@@ -1092,39 +1123,50 @@ def check_waterfall_chain_completeness(
     flow_acc = _safe_asarray(stack.get("flow_accumulation"))
 
     lip_rows, lip_cols = np.where(lip_arr > 0)
-    incomplete: List[Tuple[int, int]] = []
+    n_lips = int(lip_rows.shape[0])
 
-    for r, c in zip(lip_rows.tolist(), lip_cols.tolist()):
-        # Define search window: drain_distance cells in each direction.
-        r0 = max(0, r - drain_distance)
-        r1 = min(lip_arr.shape[0], r + drain_distance + 1)
-        c0 = max(0, c - drain_distance)
-        c1 = min(lip_arr.shape[1], c + drain_distance + 1)
+    # Vectorised neighbourhood check: expand pool_delta and flow_accumulation
+    # by drain_distance using maximum_filter, then sample at each lip cell.
+    # This avoids O(n_lips) Python window-extraction loops.
+    filter_size = 2 * drain_distance + 1
 
-        # (a) Pool presence check
-        pool_present = False
-        if pool_delta is not None:
-            window = pool_delta[r0:r1, c0:c1]
-            pool_present = bool(np.any(window > 0))
+    pool_present_arr: np.ndarray
+    outflow_present_arr: np.ndarray
 
-        # (b) Outflow to water_network: flow_accumulation > threshold in window
-        outflow_present = False
-        if flow_acc is not None:
-            window_fa = flow_acc[r0:r1, c0:c1]
-            # threshold: at least 10% of max accumulation nearby
-            local_max = float(window_fa.max()) if window_fa.size > 0 else 0.0
-            outflow_present = local_max > 0.0
+    if pool_delta is not None and pool_delta.shape == lip_arr.shape:
+        if _SCIPY_VALIDATION_AVAILABLE and _scipy_maximum_filter is not None:
+            pool_expanded = _scipy_maximum_filter(
+                (pool_delta > 0).astype(np.float32), size=filter_size, mode="constant", cval=0
+            )
+        else:
+            # Pure-numpy: use cumulative-sum sliding window max approximation
+            pd_bool = (pool_delta > 0).astype(np.float32)
+            pool_expanded = _numpy_block_max(pd_bool, drain_distance)
+        pool_present_arr = pool_expanded[lip_rows, lip_cols] > 0
+    else:
+        pool_present_arr = np.zeros(n_lips, dtype=bool)
 
-        if not pool_present or not outflow_present:
-            incomplete.append((int(r), int(c)))
+    if flow_acc is not None and flow_acc.shape == lip_arr.shape:
+        if _SCIPY_VALIDATION_AVAILABLE and _scipy_maximum_filter is not None:
+            fa_expanded = _scipy_maximum_filter(
+                flow_acc.astype(np.float32), size=filter_size, mode="constant", cval=0
+            )
+        else:
+            fa_expanded = _numpy_block_max(flow_acc.astype(np.float32), drain_distance)
+        outflow_present_arr = fa_expanded[lip_rows, lip_cols] > 0
+    else:
+        outflow_present_arr = np.zeros(n_lips, dtype=bool)
 
-    if incomplete:
+    incomplete_mask = ~pool_present_arr | ~outflow_present_arr
+    incomplete_count = int(incomplete_mask.sum())
+
+    if incomplete_count > 0:
         issues.append(
             ValidationIssue(
                 code="waterfall-chain-incomplete",
                 severity="soft",
                 message=(
-                    f"{len(incomplete)} waterfall lip candidate(s) lack a downstream "
+                    f"{incomplete_count} waterfall lip candidate(s) lack a downstream "
                     f"pool (waterfall_pool_delta) or outflow (flow_accumulation) "
                     f"within {drain_distance} cells"
                 ),
@@ -1200,25 +1242,32 @@ def check_cave_framing_presence(
     delta = _safe_asarray(stack.get("cave_height_delta"))
     framing = _safe_asarray(stack.get("hero_exclusion"))
 
-    cave_rows, cave_cols = np.where(cave_arr > 0)
-    unframed: int = 0
+    cave_mask = cave_arr > 0
 
-    for r, c in zip(cave_rows.tolist(), cave_cols.tolist()):
-        r0 = max(0, r - radius_cells)
-        r1 = min(cave_arr.shape[0], r + radius_cells + 1)
-        c0 = max(0, c - radius_cells)
-        c1 = min(cave_arr.shape[1], c + radius_cells + 1)
+    # Vectorised framing check: dilate the presence of framing signals by
+    # radius_cells, then test whether each cave cell lands in the dilation.
+    # This replaces O(n_cave_cells) Python window loops with two array ops.
+    dilation_struct = np.ones(
+        (2 * radius_cells + 1, 2 * radius_cells + 1), dtype=bool
+    )
 
-        has_delta = (
-            delta is not None
-            and bool(np.any(delta[r0:r1, c0:c1] != 0))
-        )
-        has_framing = (
-            framing is not None
-            and bool(np.any(framing[r0:r1, c0:c1] > 0))
-        )
-        if not has_delta and not has_framing:
-            unframed += 1
+    delta_near: np.ndarray = np.zeros(cave_mask.shape, dtype=bool)
+    if delta is not None and delta.shape == cave_mask.shape:
+        delta_presence = delta != 0
+        if _SCIPY_VALIDATION_AVAILABLE and _scipy_binary_dilation is not None:
+            delta_near = _scipy_binary_dilation(delta_presence, structure=dilation_struct)
+        else:
+            delta_near = _numpy_block_max(delta_presence.astype(np.float32), radius_cells) > 0
+
+    framing_near: np.ndarray = np.zeros(cave_mask.shape, dtype=bool)
+    if framing is not None and framing.shape == cave_mask.shape:
+        framing_presence = framing > 0
+        if _SCIPY_VALIDATION_AVAILABLE and _scipy_binary_dilation is not None:
+            framing_near = _scipy_binary_dilation(framing_presence, structure=dilation_struct)
+        else:
+            framing_near = _numpy_block_max(framing_presence.astype(np.float32), radius_cells) > 0
+
+    unframed = int(np.sum(cave_mask & ~delta_near & ~framing_near))
 
     if unframed > 0:
         issues.append(
