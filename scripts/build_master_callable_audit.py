@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import subprocess
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +67,29 @@ def read_text(path: Path) -> str:
 
 def parse_module(path: Path) -> ast.AST:
     return ast.parse(read_text(path), filename=str(path))
+
+
+def tracked_python_files() -> List[Path]:
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "*.py", "veilbreakers_terrain/**/*.py"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        files = [
+            REPO_ROOT / line.strip()
+            for line in proc.stdout.splitlines()
+            if line.strip().endswith(".py")
+        ]
+        return sorted(path for path in files if path.exists())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return sorted((REPO_ROOT / "veilbreakers_terrain").rglob("*.py"))
+
+
+def handler_files() -> List[Path]:
+    return [path for path in tracked_python_files() if path.parent == HANDLERS_DIR]
 
 
 def normalize_function_name(name: str) -> str:
@@ -125,6 +149,7 @@ class DefVisitor(ast.NodeVisitor):
     def __init__(self, file_name: str) -> None:
         self.file_name = file_name
         self.class_stack: List[str] = []
+        self.function_stack: List[str] = []
         self.records: List[CallableDef] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
@@ -133,12 +158,18 @@ class DefVisitor(ast.NodeVisitor):
         self.class_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._record(node)
-        self.generic_visit(node)
+        self._enter_function(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._record(node)
+        self._enter_function(node)
+
+    def _enter_function(self, node: ast.AST) -> None:
+        assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if not self.function_stack:
+            self._record(node)
+        self.function_stack.append(node.name)
         self.generic_visit(node)
+        self.function_stack.pop()
 
     def _record(self, node: ast.AST) -> None:
         assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -374,7 +405,7 @@ def collect_module_exports(path: Path) -> set[str]:
 def collect_defs() -> Tuple[List[CallableDef], Dict[str, List[CallableDef]]]:
     defs: List[CallableDef] = []
     defs_by_file: Dict[str, List[CallableDef]] = defaultdict(list)
-    for path in sorted(HANDLERS_DIR.glob("*.py")):
+    for path in handler_files():
         visitor = DefVisitor(path.name)
         visitor.visit(parse_module(path))
         defs.extend(visitor.records)
@@ -384,7 +415,7 @@ def collect_defs() -> Tuple[List[CallableDef], Dict[str, List[CallableDef]]]:
 
 def collect_edges(defs_by_file: Dict[str, List[CallableDef]]) -> List[CallEdge]:
     edges: List[CallEdge] = []
-    for path in sorted((REPO_ROOT / "veilbreakers_terrain").rglob("*.py")):
+    for path in tracked_python_files():
         file_name = path.relative_to(REPO_ROOT).as_posix()
         tree = parse_module(path)
         alias_functions, alias_modules = import_maps(tree, file_name, defs_by_file)
@@ -406,7 +437,7 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
     registrar_calls: DefaultDict[Tuple[str, str], List[Tuple[str, str]]] = defaultdict(list)
 
     # Collect registrar-owned pass targets and registrar -> sub-registrar calls.
-    for path in sorted(HANDLERS_DIR.glob("*.py")):
+    for path in handler_files():
         tree = parse_module(path)
         aliases, module_aliases = import_maps(tree, path.name, defs_by_file)
         for node in ast.walk(tree):

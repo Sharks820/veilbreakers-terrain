@@ -2,52 +2,52 @@
 
 - Grade source CSV: `docs\aaa-audit\GRADES_VERIFIED.csv`
 - UTC date tag: `2026_04_23`
-- Total handler callables: **1752**
-- Exact graded callables: **1157**
-- Name-only matches (needs explicit file-level row): **36**
+- Total handler callables: **1488**
+- Exact graded callables: **1185**
+- Name-only matches (needs explicit file-level row): **0**
 - Ambiguous same-file grade rows: **1**
-- Ambiguous name matches (manual disambiguation required): **6**
-- Missing callable grades: **552**
-- Stale grade rows (in CSV but no longer in code): **459**
+- Ambiguous name matches (manual disambiguation required): **4**
+- Missing callable grades: **298**
+- Stale grade rows (in CSV but no longer in code): **513**
 - Class rows in CSV (tracked but non-callable by this audit): **95**
 
 ## Current grade distribution (matched rows only)
 
-- A-: 445
-- A: 420
-- B+: 237
+- A: 445
+- A-: 412
+- B+: 238
 - B: 41
 - C+: 16
 - B-: 10
 - (blank): 8
 - C: 8
-- D: 4
+- D: 3
 - D+: 2
 - A+: 1
 - F: 1
 
 ## Files with most non-exact coverage
 
-- terrain_baked.py: 32
-- environment_scatter.py: 29
-- _terrain_noise.py: 28
-- terrain_caves.py: 27
-- environment.py: 21
-- road_network.py: 20
-- terrain_features.py: 19
-- terrain_cliffs.py: 15
-- _water_network.py: 14
-- animation_environment.py: 13
-- autonomous_loop.py: 13
-- terrain_dirty_tracking.py: 13
-- lod_pipeline.py: 12
+- environment_scatter.py: 13
+- terrain_caves.py: 12
+- autonomous_loop.py: 11
 - terrain_bundle_n.py: 11
-- terrain_waterfalls.py: 11
-- atmospheric_volumes.py: 10
-- terrain_materials.py: 10
-- terrain_chunking.py: 9
-- terrain_iteration_metrics.py: 9
-- terrain_materials_v2.py: 9
+- terrain_dirty_tracking.py: 11
+- terrain_cliffs.py: 10
+- _water_network.py: 9
+- lod_pipeline.py: 8
+- terrain_chunking.py: 8
+- terrain_iteration_metrics.py: 8
+- terrain_materials_v2.py: 8
+- terrain_waterfalls.py: 8
+- animation_environment.py: 7
+- terrain_asset_metadata.py: 7
+- terrain_features.py: 7
+- terrain_validation.py: 7
+- road_network.py: 6
+- terrain_audio_zones.py: 6
+- terrain_gameplay_zones.py: 6
+- terrain_unity_export.py: 6
 
 ## Top stale grade rows
 
