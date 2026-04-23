@@ -1150,7 +1150,7 @@ def generate_canyon(
     Returns:
         Scatter spec dict with feature_type, layers, and placement metadata.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     debris_density = min(1.0, max(0.1, (width_m * 0.5 + depth_m) / 120.0))
 
     return {
@@ -1251,7 +1251,7 @@ def generate_waterfall(
     Returns:
         Scatter spec dict with layers and placement metadata.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     mist_radius = min(20.0, max(3.0, height_m * 0.8))
     splash_density = min(1.0, height_m / 15.0)
 
@@ -1344,7 +1344,7 @@ def generate_cliff_face(
     Returns:
         Scatter spec dict.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     steepness = min(1.0, (slope_deg - 45.0) / 45.0) if slope_deg > 45.0 else 0.0
     grass_density = max(0.0, 0.5 - steepness * 0.4)
     rock_density = 0.3 + steepness * 0.5
@@ -1432,7 +1432,7 @@ def generate_swamp_terrain(
     Returns:
         Scatter spec dict.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     reed_density = min(1.0, 0.3 + water_coverage * 0.6)
     log_density = max(0.05, 0.15 * (1.0 - water_coverage) + 0.1)
 
@@ -1532,7 +1532,7 @@ def generate_sinkhole(
     Returns:
         Scatter spec dict.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     rim_density = min(1.0, radius_m / 10.0)
     stalactite_density = min(1.0, depth_m / 8.0) * 0.5
 
@@ -1743,7 +1743,7 @@ def generate_ice_formation(
     Returns:
         Scatter spec dict.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     cold_factor = min(1.0, max(0.0, (-temperature_c) / 30.0))
     crystal_density = cold_factor * moisture
     icicle_density = min(1.0, cold_factor * moisture * 0.8)
@@ -1838,7 +1838,7 @@ def generate_lava_flow(
     Returns:
         Scatter spec dict.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     crust_density = min(1.0, 0.2 + cooling_age * 0.7)
     vent_density = max(0.0, 0.4 - cooling_age * 0.35)
     obsidian_density = min(1.0, cooling_age * 0.6 + 0.1)

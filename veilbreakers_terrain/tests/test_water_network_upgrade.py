@@ -226,7 +226,7 @@ def test_compute_foam_mask_peaks_at_pool():
     # position.  The exact peak cell depends on the cell-center convention
     # used by _world_to_grid (origin + (idx+0.5)*cs), so we test proximity
     # rather than an exact cell index.
-    peak = float(foam.max())
+    _peak = float(foam.max())
     peak_r, peak_c = divmod(int(foam.argmax()), foam.shape[1])
     assert abs(peak_r - 15) <= 2, f"foam peak row {peak_r} not near pool row 15"
     assert abs(peak_c - 15) <= 2, f"foam peak col {peak_c} not near pool col 15"

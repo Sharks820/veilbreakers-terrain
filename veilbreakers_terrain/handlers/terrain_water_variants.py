@@ -598,7 +598,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
         )
 
         mean_w = float(w[cell_rs, cell_cs].mean())
-        mean_s = float(s[cell_rs, cell_cs].mean())
+        _mean_s = float(s[cell_rs, cell_cs].mean())
 
         # Classify by pH proxy
         near_open = bool(near_water[cell_rs, cell_cs].any())
@@ -614,7 +614,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
             wetland_type = "fen"
             veg_density = min(1.0, mean_w + 0.15)
         else:
-            wetland_type = "bog"
+            _wetland_type = "bog"
             veg_density = min(1.0, mean_w + 0.10)
 
         # Radius from bounding box diagonal / 2
@@ -1371,7 +1371,7 @@ def pass_bathymetry(
             # Label connected components (4-connectivity for speed)
             # We implement a simple two-pass union-find flood fill without scipy
             label_grid = np.full(h.shape, -1, dtype=np.int32)
-            next_label = 0
+            _next_label = 0
 
             # First pass: row-major assignment with left/up neighbour merging
             parent = list(range(rows * cols))

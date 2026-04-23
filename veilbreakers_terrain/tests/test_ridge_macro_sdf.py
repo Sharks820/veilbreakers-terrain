@@ -146,7 +146,7 @@ class TestSampleMacroColor:
         """pass_compute_macro_color with no authored macro_texture falls back to all-ones."""
         stack = _make_stack(size=8)
         state = _make_state(stack)
-        result = pass_compute_macro_color(state, None)
+        _result = pass_compute_macro_color(state, None)
 
         mc = stack.get("macro_color")
         assert mc is not None

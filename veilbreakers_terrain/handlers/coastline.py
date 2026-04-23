@@ -1103,7 +1103,7 @@ def apply_coastal_erosion(
 
     # Normalise fetch to [0, 1] — longer unobstructed fetch → higher energy
     max_fetch = float(fetch_cells.max()) if fetch_cells.max() > 0 else 1.0
-    fetch_norm = fetch_cells / max_fetch  # 0 at ocean edge, 1 at inland extremity
+    _fetch_norm = fetch_cells / max_fetch  # 0 at ocean edge, 1 at inland extremity
 
     # Wave energy peaks at shoreline (small fetch) and decays inland
     # A Gaussian centred on ~0 fetch with sigma of 15% of map size models

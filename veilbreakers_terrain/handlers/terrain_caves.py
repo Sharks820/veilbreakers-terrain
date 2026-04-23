@@ -1393,7 +1393,7 @@ def build_cave_mouth_surround(
     # depth_vec: outward normal (face_normal XY, z=0)
     right_x = -ny   # 90° rotation of the XY normal
     right_y = nx
-    right_z = 0.0
+    _right_z = 0.0
 
     inner_verts: List[Tuple[float, float, float]] = []
     outer_verts: List[Tuple[float, float, float]] = []
@@ -2896,7 +2896,7 @@ def _generate_drip_channels(
     """
     rng = np.random.default_rng(int(seed ^ 0xE1E2E3E4) & 0xFFFFFFFF)
     floor_z = 0.0
-    h = float(wall_height)
+    _h = float(wall_height)
     props: List[Dict] = []
 
     N_COLS = 4    # 4 vertices across the strip width
@@ -2931,7 +2931,7 @@ def _generate_drip_channels(
 
             for col in range(N_COLS):
                 col_t = float(col) / float(N_COLS - 1)     # 0 left, 1 right
-                half_w = strip_w * 0.5
+                _half_w = strip_w * 0.5
                 offset = (col_t - 0.5) * strip_w           # -half_w … +half_w
                 vx = cx + right_x * offset + fwd_x * lean
                 vy = cy + right_y * offset + fwd_y * lean
@@ -4518,7 +4518,7 @@ def _build_bezier_tunnel_geometry(
             t_next = t
             t_prev = float(si - 1) / float(n_segs)
             c_prev = _bezier_cubic(p0, p1, p2, p3, t_prev)
-            centre_next = centre
+            _centre_next = centre
             centre = c_prev
             centre = _bezier_cubic(p0, p1, p2, p3, t)
         c_next = _bezier_cubic(p0, p1, p2, p3, min(t_next, 1.0))

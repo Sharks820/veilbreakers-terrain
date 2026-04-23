@@ -2619,7 +2619,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
     dims = obj.dimensions
     terrain_width = max(float(dims.x), 1.0)
     terrain_height = max(float(dims.y), 1.0)
-    terrain_size = max(terrain_width, terrain_height, 1.0)
+    _terrain_size = max(terrain_width, terrain_height, 1.0)
     terrain_row_spacing, terrain_col_spacing = _terrain_axis_spacing_from_extent(
         terrain_width,
         terrain_height,

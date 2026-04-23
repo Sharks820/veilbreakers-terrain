@@ -958,7 +958,7 @@ def compute_stream_power_erosion(
         recv_dist : (N,) float64
             World-space distance from cell to its receiver (cell_size * diagonal).
         """
-        H2D = h_flat.reshape(rows, cols)
+        _H2D = h_flat.reshape(rows, cols)
         flat_idx = np.arange(rows * cols, dtype=np.int32)
         receiver = flat_idx.copy()
         best_slope = np.zeros(rows * cols, dtype=np.float64)
@@ -1021,7 +1021,7 @@ def compute_stream_power_erosion(
         # before h_new[i], so we can process all cells sequentially in one
         # numpy-indexed pass without a Python scalar loop.
 
-        is_outlet_arr = receiver == np.arange(rows * cols, dtype=np.int32)
+        _is_outlet_arr = receiver == np.arange(rows * cols, dtype=np.int32)
         coeff = dt * K_flat * A_m_flat / np.maximum(recv_dist, 1e-9)
 
         h_new = h_flat + dt * uplift_flat  # baseline: uplift only (outlets)

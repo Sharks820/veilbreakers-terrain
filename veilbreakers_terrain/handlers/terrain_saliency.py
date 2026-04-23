@@ -394,8 +394,8 @@ def _rasterize_vantage_silhouettes_onto_grid(
 
     ray_count = silhouettes.shape[1]
     angles = np.linspace(0.0, 2.0 * np.pi, ray_count, endpoint=False)
-    cos_a = np.cos(angles)
-    sin_a = np.sin(angles)
+    _cos_a = np.cos(angles)
+    _sin_a = np.sin(angles)
 
     grid_cx = stack.world_origin_x + (cols * 0.5) * cell
     grid_cy = stack.world_origin_y + (rows * 0.5) * cell

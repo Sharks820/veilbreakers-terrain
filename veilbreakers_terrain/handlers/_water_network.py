@@ -351,7 +351,7 @@ def _build_sine_generated_waypoints(
 
     # Build forward-direction angles using sine-generated formula
     # θ(s) = θ_max * sin(2π s / λ + phase_offset)
-    theta = theta_max * np.sin(2.0 * math.pi * arc / wavelength + phase_offset)
+    _theta = theta_max * np.sin(2.0 * math.pi * arc / wavelength + phase_offset)
 
     # Convert to Cartesian tangent direction by integrating theta increments
     # Base direction: overall chord direction from start to end
@@ -627,7 +627,7 @@ def pass_water_flow_speed(
             issues=[],
         )
 
-    flow_dir_arr = np.asarray(flow_dir, dtype=np.int8)
+    _flow_dir_arr = np.asarray(flow_dir, dtype=np.int8)
     flow_acc_arr = np.asarray(flow_acc, dtype=np.float64)
 
     # Slope: use stack if available, else central-difference approximation.
@@ -1848,7 +1848,7 @@ class WaterNetwork:
                         # Flow goes east: exits tx_lo east edge, enters tx_hi west edge
                         entry_col = tx_hi * ts
                         entry_row = max(0, min(rows - 1, int(cross_cy / cs)))
-                        src_tile = (tx_lo, ty0)
+                        _src_tile = (tx_lo, ty0)
                         tgt_tile = (tx_hi, ty0)
                         contract_out = _make_contract(
                             cross_cx, cross_cy, tgt_tile, (entry_row, entry_col)

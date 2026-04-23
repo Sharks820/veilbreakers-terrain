@@ -66,7 +66,7 @@ def _build_24_directions():
     for dr, dc in [(2, 2), (2, -2), (-2, 2), (-2, -2)]:
         dirs.append((dr, dc, 2.0 * math.sqrt(2.0)))
     # 3-step knight variants (3,1) and (1,3): 8 (total = 28, trim to 24)
-    count = len(dirs)  # 20 so far
+    _count = len(dirs)  # 20 so far
     for dr, dc in [(3, 1), (3, -1), (-3, 1), (-3, -1)]:
         dirs.append((dr, dc, math.sqrt(10.0)))
     return dirs[:24]
@@ -206,7 +206,7 @@ def _astar_24dir(
 
     # A* open set: (f, g, r, c, prev_dr, prev_dc, parent)
     # Use (r, c) -> (g, prev_dir, parent) closed dict
-    INF = float('inf')
+    _INF = float('inf')
     open_heap = []
     g_start = 0.0
     h_start = _heuristic(sr, sc)
@@ -559,7 +559,7 @@ def _generate_switchback_points(
     if slope <= max_slope:
         return []
 
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
 
     dz = abs(end[2] - start[2])
     horiz = _dist2(start, end)

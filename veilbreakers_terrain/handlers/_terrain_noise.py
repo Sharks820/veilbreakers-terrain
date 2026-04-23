@@ -1256,7 +1256,7 @@ def generate_heightmap(
     ridged_blend = float(preset.get("ridged_blend", 0.0))
 
     gen = _make_noise_generator(seed)
-    ridged_gen = _make_noise_generator(seed ^ 0xA5A5A5A5)  # decorrelated ridged seed
+    _ridged_gen = _make_noise_generator(seed ^ 0xA5A5A5A5)  # decorrelated ridged seed
 
     # Sample a one-cell halo so local post-noise filters like geological
     # constraints can be cropped back to the requested tile without breaking

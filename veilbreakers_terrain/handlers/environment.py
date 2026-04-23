@@ -4751,7 +4751,7 @@ def _paint_road_mask_on_terrain(
         return
 
     total_radius = max(road_half_width + shoulder_width, 1e-6)
-    zero_color = np.asarray((0.0, 0.0, 0.0, 0.0), dtype=np.float32)
+    _zero_color = np.asarray((0.0, 0.0, 0.0, 0.0), dtype=np.float32)
     surface = str(surface_key or "dirt").strip().lower()
     target_palette = {
         "trail": (0.90, 0.07, 0.02, 0.01),
@@ -7286,7 +7286,7 @@ def handle_carve_water_basin(params: dict) -> dict:
     cx = float(center[0])
     cy = float(center[1])
     protected_zones: list[dict] = list(params.get("protected_zones") or [])
-    seed_param = params.get("seed")
+    _seed_param = params.get("seed")
 
     # ------------------------------------------------------------------
     # World-space coordinate arrays — must be defined before any mask or

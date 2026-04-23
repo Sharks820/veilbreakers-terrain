@@ -581,7 +581,7 @@ def _detect_cascade_chain(
             break
         visited.add((nr, nc))
 
-        drop_here = float(h[nr, nc - search_cells:nc + search_cells + 1].min()
+        _drop_here = float(h[nr, nc - search_cells:nc + search_cells + 1].min()
                           if 0 <= nc - search_cells and nc + search_cells < cols
                           else h[nr, nc])
 
@@ -973,7 +973,7 @@ def solve_waterfall_from_river(
             Q_here = _estimate_discharge(drain_here, cs)
             r_hyd = max(0.1, Q_here ** 0.4)
             v_h = _manning_velocity(slope_here, r_hyd)
-            Q = Q_here
+            _Q = Q_here
 
         cur_r, cur_c = nr, nc
         plunge_path.append(_grid_to_world(stack, cur_r, cur_c))
@@ -2208,12 +2208,12 @@ def pass_waterfalls(
     flow_speed = stack.get("flow_speed") if hasattr(stack, "get") else None
     if flow_speed is not None:
         flow_speed = np.asarray(flow_speed, dtype=np.float32).copy()
-        cs_m = float(stack.cell_size)
+        _cs_m = float(stack.cell_size)
         for chain in chains:
             # Walk the outflow path and apply boost per cell
             outflow_pts = list(chain.outflow)
             n_boost_cells = min(10, len(outflow_pts))
-            pool_gx = _world_to_grid(
+            _pool_gx = _world_to_grid(
                 stack,
                 chain.pool.world_position[0],
                 chain.pool.world_position[1],

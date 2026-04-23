@@ -225,7 +225,7 @@ def compute_mist_envelope(
     h_range = max(float(h.max()) - valley_elev, 1.0)
 
     # Distance step size in normalised units (one cell step)
-    step_dist = float(stack.cell_size) / h_range
+    _step_dist = float(stack.cell_size) / h_range
 
     # Maximum mist reach: falloff_steps cell-widths from any wet cell.
     # Beyond this radius mist is exactly zero (matches dilation-ring semantics).

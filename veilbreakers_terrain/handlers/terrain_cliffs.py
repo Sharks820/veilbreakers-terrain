@@ -775,7 +775,7 @@ def carve_cliff_system(
 
     # Rock material hint (for angle of repose selection)
     rock_material = "default"
-    rock_hardness_arr = stack.get("rock_hardness")
+    _rock_hardness_arr = stack.get("rock_hardness")
 
     cliffs: List[CliffStructure] = []
     for idx, (lid, size) in enumerate(component_sizes):
@@ -1359,8 +1359,8 @@ def _generate_cliff_overhang(
     # from the face centroid outward, which we approximate as the direction
     # from the clip centre toward the tile edge.
     if cliff_profile.world_bounds is not None:
-        cx = (cliff_profile.world_bounds.min_x + cliff_profile.world_bounds.max_x) * 0.5
-        cy = (cliff_profile.world_bounds.min_y + cliff_profile.world_bounds.max_y) * 0.5
+        _cx = (cliff_profile.world_bounds.min_x + cliff_profile.world_bounds.max_x) * 0.5
+        _cy = (cliff_profile.world_bounds.min_y + cliff_profile.world_bounds.max_y) * 0.5
         # Simple heuristic: outward = away from centroid along longest axis
         wx = cliff_profile.world_bounds.max_x - cliff_profile.world_bounds.min_x
         wy = cliff_profile.world_bounds.max_y - cliff_profile.world_bounds.min_y

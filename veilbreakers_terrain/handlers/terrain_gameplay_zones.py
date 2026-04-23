@@ -137,7 +137,7 @@ def _compute_sky_exposure(h: np.ndarray) -> np.ndarray:
         exposure = gaussian_filter(exposure, sigma=1.5)
     except ImportError:
         # Manual 3x3 box blur as fallback
-        kernel = np.ones((3, 3), dtype=np.float64) / 9.0
+        _kernel = np.ones((3, 3), dtype=np.float64) / 9.0
         from numpy.lib.stride_tricks import sliding_window_view
         try:
             win = sliding_window_view(exposure, (3, 3))
@@ -296,7 +296,7 @@ def compute_gameplay_zones(
     cover_score = _compute_cover_score(h, float(stack.cell_size))
     sky_exposure = _compute_sky_exposure(h)
     choke_score = _compute_choke_score(h, slope_deg)
-    vantage_score = _compute_vantage_score(h, slope_deg)
+    _vantage_score = _compute_vantage_score(h, slope_deg)
 
     # SAFE: low slope + basin or water proximity + low exposure (sheltered)
     safe = (slope_deg < 8.0) & (sky_exposure < 0.6)

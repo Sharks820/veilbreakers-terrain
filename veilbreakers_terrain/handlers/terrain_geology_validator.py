@@ -180,7 +180,7 @@ def validate_strahler_ordering(
 
         # Identify headwaters (nodes with no upstream neighbors)
         all_nodes: set = set(downstream.keys()) | set(upstream_of.keys())
-        headwaters = [n for n in all_nodes if n not in upstream_of]
+        _headwaters = [n for n in all_nodes if n not in upstream_of]
 
         # BFS/post-order from headwaters to outlets to compute Strahler order.
         # We use iterative post-order DFS so deep networks don't hit Python's

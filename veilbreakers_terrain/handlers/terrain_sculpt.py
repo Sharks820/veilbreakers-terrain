@@ -1101,7 +1101,7 @@ def handle_sculpt_terrain(params: dict) -> dict:
     # Approximate local-space radius: divide by the average absolute scale.
     scale_x = abs(mw[0][0])
     scale_y = abs(mw[1][1])
-    scale_z = abs(mw[2][2])
+    _scale_z = abs(mw[2][2])
     # Use the XY mean for the horizontal radius conversion.
     avg_scale_xy = (scale_x + scale_y) / 2.0 if (scale_x + scale_y) > 0 else 1.0
     local_radius = radius / avg_scale_xy if avg_scale_xy > 1e-8 else radius

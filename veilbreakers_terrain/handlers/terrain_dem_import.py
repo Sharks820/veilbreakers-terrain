@@ -149,7 +149,7 @@ def _fill_nodata(arr: np.ndarray, nodata_mask: np.ndarray) -> np.ndarray:
     if _HAS_SCIPY:
         # EDT-based nearest-valid fill: find the index of the nearest valid
         # pixel for each invalid pixel and copy its value.
-        valid_mask = ~nodata_mask
+        _valid_mask = ~nodata_mask
         _, nearest_idx = _dt_edt(nodata_mask, return_indices=True)
         # nearest_idx shape: (2, H, W) — (row_indices, col_indices)
         out[nodata_mask] = arr[nearest_idx[0][nodata_mask], nearest_idx[1][nodata_mask]]

@@ -281,7 +281,7 @@ def generate_canyon(
         + ["talus_debris", "overhang_cap"]
     )
     MAT_FLOOR    = 0
-    MAT_WALL     = 1
+    _MAT_WALL     = 1
     MAT_WET      = 2
     MAT_LEDGE    = 3
     MAT_STRATA_0 = 4
@@ -986,7 +986,7 @@ def generate_waterfall(
     pool_depth_val = rng.uniform(height * 0.1, height * 0.2)
     pool_center_y = -(effective_steps * 1.5 + effective_pool_radius * 0.6)
 
-    pool_vert_start = len(vertices)
+    _pool_vert_start = len(vertices)
     pool_vert_indices: list[int] = []
 
     # Build hemispherical basin rings from rim (lat=0, z=0) down to nadir
@@ -3595,11 +3595,11 @@ def generate_floating_rocks(
             # Re-label the equatorial band faces as crystal_vein
             # Count backward from the current mat_indices tail
             # Equatorial band = ring_sizes_list[equator_ring] quads
-            eq_size = ring_sizes_list[equator_ring]
+            _eq_size = ring_sizes_list[equator_ring]
             # Position in mat_indices: top_cap + sum of previous ring bands + eq band
             top_cap_faces = ring_sizes_list[0] if ring_starts else 0
             prev_band_faces = sum(ring_sizes_list[i] for i in range(equator_ring))
-            eq_start_mi = (len(mat_indices) - rock_end + rock_start
+            _eq_start_mi = (len(mat_indices) - rock_end + rock_start
                            + top_cap_faces + prev_band_faces)
             # Simpler: just tag the vein in the RockSpec; downstream shader handles it
             # (adding geometry-level crystal veins would require UV seams)
@@ -4259,7 +4259,7 @@ def generate_lava_flow(
             offset = -rock_edge_outer + jt * 2.0 * rock_edge_outer
             dist = abs(offset)
             half_w = width / 2.0
-            side = 1.0 if offset >= 0.0 else -1.0
+            _side = 1.0 if offset >= 0.0 else -1.0
 
             # Height profile (inside-out):
             #   hot channel: sunken -0.2 m

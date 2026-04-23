@@ -1408,7 +1408,7 @@ def generate_lod_chain(
         return []
 
     ratios = preset["ratios"]
-    screen_pcts = preset.get("screen_percentages", [1.0] * len(ratios))
+    _screen_pcts = preset.get("screen_percentages", [1.0] * len(ratios))
     min_tris = preset.get("min_tris", [0] * len(ratios))
 
     # Compute silhouette importance for the source mesh
@@ -1935,7 +1935,7 @@ def _setup_billboard_lod(
         ( tree_width / 2.0, 0.0, tree_height),
         (-tree_width / 2.0, 0.0, tree_height),
     ]
-    bb_quad_spec = _generate_billboard_quad_spec(_raw_verts_for_spec)
+    _bb_quad_spec = _generate_billboard_quad_spec(_raw_verts_for_spec)
 
     # Wire billboard as final LOD level in the vegetation LOD chain and create
     # the actual Blender mesh child object so Unity LOD group switching works.

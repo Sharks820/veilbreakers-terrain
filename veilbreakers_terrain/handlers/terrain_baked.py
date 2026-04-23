@@ -783,7 +783,7 @@ class BakedTerrain:
         """
         cell_size = float(self.metadata.get("cell_size", 1.0))
         h = self.height_grid.astype(np.float64)
-        cs2 = cell_size * cell_size
+        _cs2 = cell_size * cell_size
         # Central-difference second derivatives.
         # d²h/dx² and d²h/dy² via np.gradient applied twice.
         drow, dcol = np.gradient(h, cell_size)

@@ -310,13 +310,13 @@ class TestPassErosionIntegration:
         h = _make_sloped_dem(16).astype(np.float32)
 
         state_no_rh = make_state(h, rock_hardness=None, flow_accum=None)
-        result_no_rh = pass_erosion(state_no_rh, None)
+        _result_no_rh = pass_erosion(state_no_rh, None)
         height_no_rh = state_no_rh.mask_stack.height.copy()
 
         # High rock hardness → less erodible (lower K_map) → different erosion
         rh = np.full((16, 16), 1.0, dtype=np.float32)  # max hardness
         state_rh = make_state(h, rock_hardness=rh, flow_accum=None)
-        result_rh = pass_erosion(state_rh, None)
+        _result_rh = pass_erosion(state_rh, None)
         height_rh = state_rh.mask_stack.height.copy()
 
         assert not np.allclose(height_no_rh, height_rh), (

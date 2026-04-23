@@ -865,8 +865,8 @@ def place_clearings(
     # Grid cell size for the background grid = r / sqrt(2) so each grid cell
     # contains at most one sample.
     grid_cell = r_min_cells / np.sqrt(2.0)
-    grid_rows = max(1, int(np.ceil(rows / grid_cell)))
-    grid_cols = max(1, int(np.ceil(cols / grid_cell)))
+    _grid_rows = max(1, int(np.ceil(rows / grid_cell)))
+    _grid_cols = max(1, int(np.ceil(cols / grid_cell)))
 
     background: Dict[Tuple[int, int], Tuple[float, float]] = {}  # grid_ij -> (r, c)
 

@@ -118,7 +118,7 @@ def generate_cliff_face_mesh(
         MeshSpec with cliff face geometry, strata_bands count, erosion_channels
         count, and per-vertex uvs list in metadata.
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
 
     # AAA requirement: minimum 8×8 grid
     seg_h = max(8, segments_horizontal)
@@ -322,7 +322,7 @@ def generate_cave_entrance_mesh(
     # the crown point is where both arcs meet at X=0.
     # Crown Z = spring_z + sqrt(R^2 - d^2)
     crown_z = spring_z + math.sqrt(max(R * R - d * d, 0.0))
-    apex_z = crown_z  # alias for clarity
+    _apex_z = crown_z  # alias for clarity
 
     max_overhang = overhang_factor * width
 
@@ -578,7 +578,7 @@ def generate_biome_transition_mesh(
     # σ_world = 5 m projected onto normalised [0,1] coord space.
     # -----------------------------------------------------------------------
     sigma_world = 5.0  # metres, Perlin warp standard deviation
-    sigma_norm = sigma_world / max(zone_depth, 1e-6)  # normalised σ
+    _sigma_norm = sigma_world / max(zone_depth, 1e-6)  # normalised σ
 
     def _boundary_warp_offset(iz: int) -> float:
         """Per-row normalised-X warp offset via 2-octave fBm domain warp."""

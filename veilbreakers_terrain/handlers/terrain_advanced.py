@@ -949,7 +949,7 @@ def apply_layer_operation(
     r_grid_y = radius / td * rows
 
     affected = 0
-    rng = _random.Random(seed)
+    _rng = _random.Random(seed)
 
     min_row = max(0, int(cy_grid - r_grid_y) - 1)
     max_row = min(rows, int(cy_grid + r_grid_y) + 2)
@@ -1592,8 +1592,8 @@ def compute_erosion_brush(
                 else:
                     # Erode: pick up material scaled by velocity bend (curvature)
                     # Bend factor = 1 - dot(old_dir, new_dir): high on sharp turns
-                    old_vx = nx_dir
-                    old_vy = ny_dir
+                    _old_vx = nx_dir
+                    _old_vy = ny_dir
                     erode_amount = (sed_capacity - sediment) * erode_rate
                     erode_amount = min(erode_amount, abs(h_cur) * 0.5)
                     if erode_amount > 0.0:
@@ -1870,9 +1870,9 @@ def compute_flow_map(
     # Build destination arrays for vectorized scatter-add:
     # For each cell with a valid flow direction, compute its downstream (nr, nc).
     valid_mask = flat_d >= 0
-    vi_r = flat_r[valid_mask]
-    vi_c = flat_c[valid_mask]
-    vi_d = flat_d[valid_mask]
+    _vi_r = flat_r[valid_mask]
+    _vi_c = flat_c[valid_mask]
+    _vi_d = flat_d[valid_mask]
 
     # Process each valid cell in height-descending order (Python loop over sorted
     # unique heights would be O(N) — keep explicit loop only over sorted order).
