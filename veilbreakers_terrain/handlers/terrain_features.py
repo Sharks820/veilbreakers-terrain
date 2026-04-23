@@ -3088,9 +3088,9 @@ def generate_sinkhole(
     mat_indices: list[int] = []
 
     # Materials: 0=dirt_wall, 1=exposed_rock, 2=rubble, 3=cave_entrance,
-    #            4=rim_ground, 5=cave_ceiling, 6=debris_rim
+    #            4=rim_ground
     materials = ["dirt_wall", "exposed_rock", "rubble", "cave_entrance",
-                 "rim_ground", "cave_ceiling", "debris_rim"]
+                 "rim_ground"]
 
     radial_res = max(20, int(radius * 4))
     depth_res = max(8, int(depth * 2))
@@ -3298,7 +3298,7 @@ def generate_sinkhole(
             vertices.append((dx + rx2 + nd, dy + ry3 + nd, dz + rz2 + abs(nd) * 0.2))
         for bf in [(0,1,2,3),(4,7,6,5),(0,4,5,1),(2,6,7,3),(0,3,7,4),(1,5,6,2)]:
             faces.append((db_start+bf[0], db_start+bf[1], db_start+bf[2], db_start+bf[3]))
-            mat_indices.append(6)  # debris_rim
+            mat_indices.append(2)  # rubble (debris_rim folded in)
 
     # ------------------------------------------------------------------
     # 5. Optional bottom cave — exposed cave roof geometry above the entrance
@@ -3343,7 +3343,7 @@ def generate_sinkhole(
         cc_start = len(vertices)
         vertices.extend(ceil_corners)
         faces.append((cc_start, cc_start+1, cc_start+2, cc_start+3))
-        mat_indices.append(5)  # cave_ceiling
+        mat_indices.append(1)  # exposed_rock (cave ceiling)
 
     # ------------------------------------------------------------------
     # 6. Limestone layer specification — progressive depth profile showing
@@ -3411,8 +3411,6 @@ def generate_sinkhole(
             ("rubble",         0.85, "sediment",  0.0),
             ("cave_entrance",  0.80, "hard_rock", 0.0),
             ("rim_ground",     0.88, "sediment",  0.0),
-            ("cave_ceiling",   0.60, "limestone", 0.0),
-            ("debris_rim",     0.88, "sediment",  0.0),
         ),
         "dimensions": {
             "radius": radius,
