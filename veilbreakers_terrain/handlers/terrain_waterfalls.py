@@ -1821,22 +1821,54 @@ def generate_velocity_field(
     v_east  = v_h * math.sin(az)
     v_north = v_h * math.cos(az)
 
-    # Mark all plunge path cells with cascade velocity
-    for wx, wy, wz in chain.plunge_path:
+    def _stamp_velocity(center_r: int, center_c: int, vel_x: float, vel_y: float, radius_m: float) -> None:
+        radius_cells = max(1, int(math.ceil(max(radius_m, cs) / cs)))
+        r0 = max(0, center_r - radius_cells)
+        r1 = min(rows, center_r + radius_cells + 1)
+        c0 = max(0, center_c - radius_cells)
+        c1 = min(cols, center_c + radius_cells + 1)
+        rr = np.arange(r0, r1, dtype=np.float64)[:, None]
+        cc = np.arange(c0, c1, dtype=np.float64)[None, :]
+        dist_m = np.sqrt((rr - center_r) ** 2 + (cc - center_c) ** 2) * cs
+        support_m = max(radius_m, cs)
+        weight = np.exp(-((dist_m / support_m) ** 2)).astype(np.float32)
+        weight[dist_m > support_m] = 0.0
+        if not np.any(weight):
+            return
+        sub = vel_field[r0:r1, c0:c1, :]
+        proposed_x = weight * np.float32(vel_x)
+        proposed_y = weight * np.float32(vel_y)
+        proposed_speed = np.sqrt(proposed_x ** 2 + proposed_y ** 2)
+        existing_speed = np.sqrt(sub[..., 0] ** 2 + sub[..., 1] ** 2)
+        replace = proposed_speed > existing_speed
+        sub[..., 0] = np.where(replace, proposed_x, sub[..., 0])
+        sub[..., 1] = np.where(replace, proposed_y, sub[..., 1])
+
+    path_radius_m = max(cs * 1.5, float(chain.pool.radius_m) * 2.0)
+    outflow_radius_m = max(cs, float(chain.pool.radius_m) * 1.25)
+
+    # Stamp the plunge with a smooth radial falloff so Unity water shaders
+    # receive a coherent local velocity field instead of a 1-cell ribbon.
+    for wx, wy, _wz in chain.plunge_path:
         pr, pc = _world_to_grid(stack, wx, wy)
         if 0 <= pr < rows and 0 <= pc < cols:
-            vel_field[pr, pc, 0] = float(v_east)
-            vel_field[pr, pc, 1] = float(v_north)
+            _stamp_velocity(pr, pc, v_east, v_north, path_radius_m)
 
-    # Outflow velocity: tapers from pool velocity to near-zero
+    # Pool core keeps some directional energy for foam/flow shading continuity.
+    pool_r, pool_c = _world_to_grid(
+        stack, chain.pool.world_position[0], chain.pool.world_position[1]
+    )
+    if 0 <= pool_r < rows and 0 <= pool_c < cols:
+        _stamp_velocity(pool_r, pool_c, v_east * 0.35, v_north * 0.35, outflow_radius_m)
+
+    # Outflow velocity: tapers from pool velocity to near-zero with local spread.
     n_out = len(chain.outflow)
     for i, (wx, wy, wz) in enumerate(chain.outflow):
         pr, pc = _world_to_grid(stack, wx, wy)
         if not (0 <= pr < rows and 0 <= pc < cols):
             continue
         taper = max(0.0, 1.0 - float(i) / max(1.0, float(n_out - 1)))
-        vel_field[pr, pc, 0] = float(v_east * taper * 0.5)
-        vel_field[pr, pc, 1] = float(v_north * taper * 0.5)
+        _stamp_velocity(pr, pc, v_east * taper * 0.5, v_north * taper * 0.5, outflow_radius_m)
 
     return vel_field
 
@@ -1892,8 +1924,9 @@ def blend_velocity_to_water_body(
     cc = np.arange(c0, c1, dtype=np.float64)[None, :]
     dist_m = np.sqrt((rr - pool_r) ** 2 + (cc - pool_c) ** 2) * cs
 
-    # Blend weight: 1 at pool, 0 at blend_radius (linear fade over 3*R)
-    blend_weight = np.clip(1.0 - dist_m / max(blend_radius_m, 1e-6), 0.0, 1.0)
+    # Smooth blend weight: 1 at pool, 0 at blend_radius with a cubic falloff.
+    fade = np.clip(1.0 - dist_m / max(blend_radius_m, 1e-6), 0.0, 1.0)
+    blend_weight = fade * fade * (3.0 - 2.0 * fade)
 
     # If water body mask provided, only blend where water body is present
     if water_body_mask is not None:
@@ -1919,16 +1952,19 @@ def blend_velocity_to_water_body(
     # Perlin-like noise at scale=2m (frequency = 1/2 cycles/m)
     scale = 2.0  # metres
     freq = 1.0 / max(scale, 1e-6)
-    wx_world = (rr_t * cs + float(getattr(stack, "world_origin_x", 0.0)))
-    wy_world = (cc_t * cs + float(getattr(stack, "world_origin_y", 0.0)))
+    wx_world = ((cc_t + 0.5) * cs + float(getattr(stack, "world_origin_x", 0.0)))
+    wy_world = ((rr_t + 0.5) * cs + float(getattr(stack, "world_origin_y", 0.0)))
     noise_x = (np.sin(wx_world * freq * math.pi * 2.0 + perlin_seed * 0.37)
                * np.cos(wy_world * freq * math.pi * 1.7 + perlin_seed * 0.13))
     noise_y = (np.sin(wy_world * freq * math.pi * 2.3 + perlin_seed * 0.51)
                * np.cos(wx_world * freq * math.pi * 1.9 + perlin_seed * 0.29))
 
     noise_amp = 0.5  # AAA req #8: velocity_noise += Perlin(...) * 0.5
-    out[r0t:r1t, c0t:c1t, 0] += np.where(in_turb, noise_x * noise_amp, 0.0).astype(np.float32)
-    out[r0t:r1t, c0t:c1t, 1] += np.where(in_turb, noise_y * noise_amp, 0.0).astype(np.float32)
+    if water_body_mask is not None:
+        in_turb = in_turb & water_body_mask[r0t:r1t, c0t:c1t].astype(bool)
+    turb_fade = np.clip(1.0 - dist_t / max(turb_radius_m, 1e-6), 0.0, 1.0) ** 2
+    out[r0t:r1t, c0t:c1t, 0] += np.where(in_turb, noise_x * noise_amp * turb_fade, 0.0).astype(np.float32)
+    out[r0t:r1t, c0t:c1t, 1] += np.where(in_turb, noise_y * noise_amp * turb_fade, 0.0).astype(np.float32)
 
     return out
 
@@ -2160,13 +2196,10 @@ def pass_waterfalls(
             water_body_mask=water_body_mask,
             perlin_seed=int(derived_seed) % 65536,
         )
-        np.maximum(
-            np.abs(vel_field),
-            np.abs(chain_vel),
-            out=np.abs(vel_field),  # magnitude-max blend
-        )
-        # Actual vector addition (not magnitude — additive gives turbulence overlap)
-        vel_field += chain_vel
+        existing_speed = np.sqrt(np.sum(vel_field ** 2, axis=-1))
+        chain_speed = np.sqrt(np.sum(chain_vel ** 2, axis=-1))
+        stronger_mask = chain_speed > existing_speed
+        vel_field[stronger_mask] = chain_vel[stronger_mask]
 
     # 5b. Downstream velocity boost — river accelerates briefly after the fall
     # then returns to normal (God of War / real canyon hydrology reference).

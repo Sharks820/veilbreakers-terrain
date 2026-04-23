@@ -143,6 +143,22 @@ def test_default_pass_registration_includes_river_convergence():
     assert "pass_river_convergence" in TerrainPassController.PASS_REGISTRY
 
 
+def test_default_pass_registration_includes_water_flow_speed():
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
+        TerrainPassController,
+        register_default_passes,
+    )
+
+    TerrainPassController.clear_registry()
+    register_default_passes()
+
+    definition = TerrainPassController.PASS_REGISTRY["pass_water_flow_speed"]
+    assert definition.func.__name__ == "pass_water_flow_speed"
+    assert "flow_speed" in definition.produces_channels
+    assert "flow_direction" in definition.requires_channels
+    assert "flow_accumulation" in definition.requires_channels
+
+
 def test_command_handlers_expose_live_commands_and_thread_sun_direction(monkeypatch):
     from veilbreakers_terrain.handlers import COMMAND_HANDLERS
     from veilbreakers_terrain.handlers import light_integration
@@ -167,6 +183,104 @@ def test_command_handlers_expose_live_commands_and_thread_sun_direction(monkeypa
     )
 
     assert captured["sun_direction"] == (0.0, 0.0, -1.0)
+
+
+def test_command_handlers_probe_dispatch_filters_kwargs_and_coerces_arrays(monkeypatch):
+    from veilbreakers_terrain.handlers import COMMAND_HANDLERS
+    from veilbreakers_terrain.handlers import light_integration
+
+    captured = {}
+
+    def _fake_compute_probe_placements(
+        height,
+        *,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        water_surface=None,
+        feature_positions=None,
+        max_probes=16,
+        min_probe_spacing_m=20.0,
+        height_weight=1.0,
+        water_weight=1.5,
+        feature_weight=2.0,
+    ):
+        captured["height_dtype"] = height.dtype.name
+        captured["water_dtype"] = None if water_surface is None else water_surface.dtype.name
+        captured["cell_size"] = cell_size
+        captured["world_origin"] = (world_origin_x, world_origin_y)
+        captured["feature_positions"] = feature_positions
+        captured["max_probes"] = max_probes
+        captured["spacing"] = min_probe_spacing_m
+        captured["weights"] = (height_weight, water_weight, feature_weight)
+        return [{"position": (0.5, 0.5, 1.0), "probe_index": 0}]
+
+    monkeypatch.setattr(
+        light_integration,
+        "compute_probe_placements",
+        _fake_compute_probe_placements,
+    )
+
+    result = COMMAND_HANDLERS["env_compute_probe_placements"](
+        {
+            "height": [[1, 2], [3, 4]],
+            "water_surface": [[0, 1], [0, 1]],
+            "cell_size": 2,
+            "world_origin_x": 10,
+            "world_origin_y": 20,
+            "feature_positions": [(1.0, 2.0, 3.0)],
+            "max_probes": 3,
+            "min_probe_spacing_m": 12.5,
+            "height_weight": 0.25,
+            "water_weight": 2.0,
+            "feature_weight": 3.0,
+            "ignored_key": "must_not_leak",
+        }
+    )
+
+    assert result == [{"position": (0.5, 0.5, 1.0), "probe_index": 0}]
+    assert captured["height_dtype"] == "float64"
+    assert captured["water_dtype"] == "float64"
+    assert captured["cell_size"] == 2.0
+    assert captured["world_origin"] == (10.0, 20.0)
+    assert captured["feature_positions"] == [(1.0, 2.0, 3.0)]
+    assert captured["max_probes"] == 3
+    assert captured["spacing"] == 12.5
+    assert captured["weights"] == (0.25, 2.0, 3.0)
+
+
+def test_build_command_handlers_signature_wrapper_drops_unknown_kwargs(monkeypatch):
+    from veilbreakers_terrain import handlers as handlers_mod
+    from veilbreakers_terrain.handlers import terrain_features
+
+    captured = {}
+
+    def _fake_generate_canyon(length=0.0, width=0.0, seed=0):
+        captured["args"] = {
+            "length": length,
+            "width": width,
+            "seed": seed,
+        }
+        return {"ok": True}
+
+    monkeypatch.setattr(terrain_features, "generate_canyon", _fake_generate_canyon)
+
+    handlers = handlers_mod._build_command_handlers()
+    result = handlers["env_generate_canyon"](
+        {
+            "length": 120.0,
+            "width": 30.0,
+            "seed": 9,
+            "unknown": "ignored",
+        }
+    )
+
+    assert result == {"ok": True}
+    assert captured["args"] == {
+        "length": 120.0,
+        "width": 30.0,
+        "seed": 9,
+    }
 
 
 def test_street_lamp_spot_metadata_survives_merge():

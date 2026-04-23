@@ -1468,6 +1468,11 @@ def _build_cliff_overhang_mesh_specs(
 ) -> List[Dict]:
     """Convert cliff overhang metadata into world-space quad mesh specs."""
     mesh_specs: List[Dict] = []
+    height_arr = (
+        np.asarray(stack.height, dtype=np.float64)
+        if stack.height is not None
+        else None
+    )
     for cliff in cliffs:
         overhang_spec = cliff.overhang_spec or {}
         out_nx, out_ny = overhang_spec.get("outward_normal_xy", (0.0, 1.0))
@@ -1478,8 +1483,17 @@ def _build_cliff_overhang_mesh_specs(
                 (r0, c0), (r1, c1) = segment["base_cells"]
             except Exception:
                 continue
-            base_z = float(cliff.max_height_m)
             depth_m = float(segment.get("depth_m", 0.0))
+            if height_arr is not None and height_arr.size:
+                rr0 = max(0, min(height_arr.shape[0] - 1, int(r0)))
+                cc0 = max(0, min(height_arr.shape[1] - 1, int(c0)))
+                rr1 = max(0, min(height_arr.shape[0] - 1, int(r1)))
+                cc1 = max(0, min(height_arr.shape[1] - 1, int(c1)))
+                base_l_z = float(height_arr[rr0, cc0])
+                base_r_z = float(height_arr[rr1, cc1])
+            else:
+                base_l_z = float(cliff.max_height_m)
+                base_r_z = float(cliff.max_height_m)
             base_l_x, base_l_y = _cell_center_world(stack, int(r0), int(c0))
             base_r_x, base_r_y = _cell_center_world(stack, int(r1), int(c1))
             mesh_specs.append(
@@ -1492,12 +1506,13 @@ def _build_cliff_overhang_mesh_specs(
                     "material_hint": "wet_cliff_drip",
                     "drip_edge_indices": (2, 3),
                     "vertices": [
-                        (base_l_x, base_l_y, base_z),
-                        (base_r_x, base_r_y, base_z),
-                        (base_r_x + out_nx * depth_m, base_r_y + out_ny * depth_m, base_z),
-                        (base_l_x + out_nx * depth_m, base_l_y + out_ny * depth_m, base_z),
+                        (base_l_x, base_l_y, base_l_z),
+                        (base_r_x, base_r_y, base_r_z),
+                        (base_r_x + out_nx * depth_m, base_r_y + out_ny * depth_m, base_r_z),
+                        (base_l_x + out_nx * depth_m, base_l_y + out_ny * depth_m, base_l_z),
                     ],
                     "faces": [(0, 1, 2, 3)],
+                    "uvs": [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
                 }
             )
     return mesh_specs

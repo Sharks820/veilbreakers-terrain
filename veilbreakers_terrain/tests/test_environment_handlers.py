@@ -326,6 +326,137 @@ class TestRoadTerrainProfiling:
         assert road_sdf[4, 4] == pytest.approx(0.0)
         assert road_sdf[0, 0] > 0.0
 
+    def test_extract_road_network_centerline_points_accepts_2d_routes_and_dedupes(self):
+        from blender_addon.handlers.environment import _extract_road_network_centerline_points
+
+        result = _extract_road_network_centerline_points(
+            {
+                "routes": [
+                    {"points": [(-2.0, -2.0), (0.0, 0.0), (2.0, 2.0)]},
+                    {"points": [(2.0, 2.0), (4.0, 4.0)]},
+                ]
+            }
+        )
+
+        assert result == [
+            (-2.0, -2.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (2.0, 2.0, 0.0),
+            (4.0, 4.0, 0.0),
+        ]
+
+    def test_extract_road_network_centerline_points_skips_non_finite_points(self):
+        from blender_addon.handlers.environment import _extract_road_network_centerline_points
+
+        result = _extract_road_network_centerline_points(
+            {
+                "routes": [
+                    {"points": [(0.0, 0.0, 0.0), (float("nan"), 1.0, 0.0), (2.0, 2.0, 0.0)]},
+                ],
+                "segments": [
+                    ((2.0, 2.0, 0.0), (float("inf"), 3.0, 0.0)),
+                    ((2.0, 2.0, 0.0), (4.0, 4.0, 0.0)),
+                ],
+            }
+        )
+
+        assert result == [
+            (0.0, 0.0, 0.0),
+            (2.0, 2.0, 0.0),
+        ]
+
+    def test_grid_path_from_world_centerline_fills_gaps(self):
+        from blender_addon.handlers.environment import _grid_path_from_world_centerline
+
+        path = _grid_path_from_world_centerline(
+            [(-4.0, -4.0, 0.0), (4.0, 4.0, 0.0)],
+            rows=5,
+            cols=5,
+            terrain_width=8.0,
+            terrain_height=8.0,
+            terrain_origin_x=0.0,
+            terrain_origin_y=0.0,
+        )
+
+        assert path[0] == (0, 0)
+        assert path[-1] == (4, 4)
+        for (r0, c0), (r1, c1) in zip(path, path[1:]):
+            assert abs(r1 - r0) <= 1
+            assert abs(c1 - c0) <= 1
+
+    def test_terrain_world_xy_to_grid_rc_clamps_to_bounds(self):
+        from blender_addon.handlers.environment import _terrain_world_xy_to_grid_rc
+
+        rc = _terrain_world_xy_to_grid_rc(
+            999.0,
+            -999.0,
+            rows=5,
+            cols=5,
+            terrain_width=8.0,
+            terrain_height=8.0,
+            terrain_origin_x=0.0,
+            terrain_origin_y=0.0,
+        )
+
+        assert rc == (0, 4)
+
+    def test_fill_grid_path_gaps_produces_8_connected_steps(self):
+        from blender_addon.handlers.environment import _fill_grid_path_gaps
+
+        path = _fill_grid_path_gaps([(0, 0), (0, 3), (3, 3)])
+
+        assert path[0] == (0, 0)
+        assert path[-1] == (3, 3)
+        for (r0, c0), (r1, c1) in zip(path, path[1:]):
+            assert abs(r1 - r0) <= 1
+            assert abs(c1 - c0) <= 1
+
+    def test_solve_road_path_with_network_accepts_2d_route_points(self, monkeypatch):
+        from blender_addon.handlers import environment as env_mod
+
+        def _fake_compute_road_network(*args, **kwargs):
+            return {
+                "routes": [
+                    {
+                        "points": [(-4.0, -4.0), (0.0, 0.0), (4.0, 4.0)],
+                    }
+                ],
+                "routing_method": "astar_24dir",
+            }
+
+        monkeypatch.setattr(env_mod, "compute_road_network", _fake_compute_road_network)
+
+        path, network_result = env_mod._solve_road_path_with_network(
+            np.zeros((5, 5), dtype=np.float64),
+            [(0, 0), (4, 4)],
+            terrain_width=8.0,
+            terrain_height=8.0,
+            terrain_origin_x=0.0,
+            terrain_origin_y=0.0,
+            cost_map=None,
+            seed=17,
+            rdp_epsilon=1.0,
+        )
+
+        assert network_result["routing_method"] == "astar_24dir"
+        assert path[0] == (0, 0)
+        assert path[-1] == (4, 4)
+
+    def test_grade_road_path_in_world_space_respects_fractional_width(self):
+        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+
+        heightmap = np.zeros((7, 7), dtype=np.float64)
+        heightmap[3, 3] = 10.0
+
+        graded = _grade_road_path_in_world_space(
+            heightmap,
+            [(3, 3)],
+            width=3.5,
+            grade_strength=1.0,
+        )
+
+        assert graded[3, 1] > 0.0
+
     def test_sample_path_indices_preserves_forced_boundaries(self):
         from blender_addon.handlers.environment import _sample_path_indices
 
@@ -526,7 +657,105 @@ class TestRoadHandlerTerrainAwareRouting:
         np.testing.assert_array_equal(captured["cost_map"], explicit_cost_map)
         assert result["terrain_cost_context_used"] is True
         assert result["terrain_cost_source"] == "explicit_cost_map"
+
+    def test_handle_generate_road_sanitizes_explicit_cost_map_nonfinite_values(self):
+        from blender_addon.handlers import environment as env_mod
+
+        captured: dict[str, object] = {}
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    SimpleNamespace(co=SimpleNamespace(z=float(z)))
+                    for z in (0.0, 0.1, 0.2, 0.3)
+                )
+
+            def from_mesh(self, mesh):
+                return None
+
+            def to_mesh(self, mesh):
+                return None
+
+            def free(self):
+                return None
+
+        class _Mesh:
+            def update(self):
+                return None
+
+        terrain_obj = SimpleNamespace(
+            data=_Mesh(),
+            dimensions=SimpleNamespace(x=4.0, y=4.0),
+            location=SimpleNamespace(x=0.0, y=0.0),
+        )
+
+        def _fake_compute_road_network(waypoints, **kwargs):
+            captured["cost_map"] = kwargs.get("cost_map")
+            return {
+                "routes": [
+                    {
+                        "points": [
+                            (-2.0, -2.0, 0.0),
+                            (2.0, 2.0, 0.3),
+                        ]
+                    }
+                ],
+                "routing_method": "astar_24dir",
+            }
+
+        explicit_cost_map = np.array([[np.nan, np.inf], [-5.0, 4.0]], dtype=np.float32)
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            result = env_mod.handle_generate_road(
+                {
+                    "terrain_name": "Terrain",
+                    "waypoints": [(0, 0), (1, 1)],
+                    "surface": "dirt",
+                    "road_cost_map": explicit_cost_map,
+                }
+            )
+
+        expected = np.array([[0.0, 4.0], [0.0, 4.0]], dtype=np.float32)
+        np.testing.assert_array_equal(captured["cost_map"], expected)
+        assert result["terrain_cost_context_used"] is True
+        assert result["terrain_cost_source"] == "explicit_cost_map"
         assert result["road_routing_method"] == "astar_24dir"
+
+    def test_write_json_manifest_writes_utf8_and_creates_parent(self, tmp_path):
+        from blender_addon.handlers.environment import _write_json_manifest
+
+        target = tmp_path / "nested" / "manifest.json"
+        payload = {"name": "cafe", "value": 3}
+        written = _write_json_manifest(target, payload)
+
+        assert Path(written) == target
+        assert target.exists()
+        assert target.read_text(encoding="utf-8").endswith("\n}")
+
+    def test_cleanup_written_artifacts_removes_existing_and_missing_paths(self, tmp_path):
+        from blender_addon.handlers.environment import _cleanup_written_artifacts
+
+        first = tmp_path / "a.json"
+        second = tmp_path / "b.raw"
+        first.write_text("a", encoding="utf-8")
+        second.write_text("b", encoding="utf-8")
+
+        _cleanup_written_artifacts([first, None, second, tmp_path / "missing.txt"])
+
+        assert not first.exists()
+        assert not second.exists()
 
     def test_handle_generate_road_can_return_road_channels(self):
         from blender_addon.handlers import environment as env_mod
@@ -722,6 +951,13 @@ class TestExportHeightmapRaw:
         assert values[0] == 0
         assert values[1] == 65535
 
+    def test_rejects_non_finite_height_values(self):
+        from blender_addon.handlers.environment import _export_heightmap_raw
+
+        hmap = np.array([[0.0, np.nan]], dtype=np.float64)
+        with pytest.raises(ValueError, match="non-finite"):
+            _export_heightmap_raw(hmap, flip_vertical=False)
+
 
 class TestExportSplatmapRaw:
     """Test RAW splatmap export (pure logic, no file I/O)."""
@@ -748,6 +984,22 @@ class TestExportSplatmapRaw:
         values = np.frombuffer(raw, dtype=np.uint8)
         assert values.shape == (2 * 2 * 4,)
         assert values.max() <= 255
+
+    def test_zero_weight_pixel_defaults_to_base_layer(self):
+        from blender_addon.handlers.environment import _export_splatmap_raw
+
+        splat = np.zeros((1, 1, 4), dtype=np.float64)
+        raw = _export_splatmap_raw(splat, flip_vertical=False)
+
+        assert tuple(raw) == (255, 0, 0, 0)
+
+    def test_negative_and_non_finite_weights_are_sanitized(self):
+        from blender_addon.handlers.environment import _export_splatmap_raw
+
+        splat = np.array([[[np.nan, -3.0, 2.0, np.inf]]], dtype=np.float64)
+        raw = _export_splatmap_raw(splat, flip_vertical=False)
+
+        assert tuple(raw) == (0, 0, 255, 0)
 
 
 class TestWorldSplatmapWeights:
@@ -836,6 +1088,53 @@ class TestHandlerReturnDictKeys:
         assert arr.shape == (33 * 33,)
         assert arr.min() >= 0
         assert arr.max() <= 65535
+
+    def test_handle_export_heightmap_writes_metadata_sidecar(self, tmp_path):
+        from blender_addon.handlers import environment as env_mod
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    [
+                        SimpleNamespace(co=SimpleNamespace(z=10.0)),
+                        SimpleNamespace(co=SimpleNamespace(z=12.0)),
+                        SimpleNamespace(co=SimpleNamespace(z=14.0)),
+                        SimpleNamespace(co=SimpleNamespace(z=18.0)),
+                    ]
+                )
+
+            def from_mesh(self, _mesh):
+                return None
+
+            def free(self):
+                return None
+
+        filepath = tmp_path / "terrain.raw"
+        dummy_obj = SimpleNamespace(data=object())
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=dummy_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)):
+            result = env_mod.handle_export_heightmap(
+                {
+                    "terrain_name": "Terrain",
+                    "filepath": str(filepath),
+                    "flip_vertical": True,
+                }
+            )
+
+        metadata = json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+        assert filepath.exists()
+        assert result["height_min_m"] == pytest.approx(10.0)
+        assert result["height_max_m"] == pytest.approx(18.0)
+        assert metadata["height_min_m"] == pytest.approx(10.0)
+        assert metadata["height_max_m"] == pytest.approx(18.0)
+        assert metadata["filepath"] == str(filepath)
+        assert metadata["flip_vertical"] is True
 
 
 class TestControllerTerrainPath:
@@ -1220,6 +1519,11 @@ class TestWorldTerrainGeneration:
         assert manifest_path.exists()
         manifest = json.loads(manifest_path.read_text())
         assert manifest["tile_name"] == "TileA"
+        assert result["heightmap_path"].endswith("TileA_heightmap.raw")
+        assert Path(result["heightmap_path"]).exists()
+        assert result.get("alphamap_path") is None
+        assert manifest["heightmap_path"] == result["heightmap_path"]
+        assert manifest["alphamap_path"] is None
         assert manifest["seam_contract"]["tile_coords"] == [0, 0]
         assert manifest["seam_contract"]["neighbor_tiles"]["east"] == [1, 0]
         assert result["seam_contract"]["edge_contracts"]["east"]["sample_count"] == 3
@@ -1506,6 +1810,22 @@ def test_execute_terrain_pipeline_wires_water_network_and_spec():
     assert state.intent.water_system_spec.seasonal_state == "flood"
 
 
+def test_execute_terrain_pipeline_rejects_invalid_region_bounds():
+    from blender_addon.handlers import environment as env_mod
+
+    height = np.zeros((9, 9), dtype=np.float64)
+    with pytest.raises(ValueError, match="max >= min"):
+        env_mod._execute_terrain_pipeline(
+            {
+                "tile_size": 8,
+                "cell_size": 1.0,
+                "height": height,
+                "pipeline": ["macro_world"],
+                "region_bounds": {"min_x": 8.0, "min_y": 0.0, "max_x": 2.0, "max_y": 4.0},
+            }
+        )
+
+
 def test_handle_generate_waterfall_materializes_object_and_threads_direction():
     from blender_addon.handlers import environment as env_mod
 
@@ -1559,6 +1879,33 @@ def test_handle_generate_waterfall_materializes_object_and_threads_direction():
     assert result["name"] == "HeroFalls"
     assert result["object_created"] is True
     assert len(dummy_obj.data.materials) == 1
+
+
+def test_handle_generate_waterfall_normalizes_facing_direction():
+    from blender_addon.handlers import environment as env_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_waterfall(**kwargs):
+        captured["facing_direction"] = kwargs["facing_direction"]
+        return {
+            "mesh": {"vertices": [], "faces": []},
+            "material_indices": [],
+            "vertex_count": 0,
+            "face_count": 0,
+        }
+
+    with patch.object(env_mod, "generate_waterfall", side_effect=_fake_generate_waterfall):
+        env_mod.handle_generate_waterfall(
+            {
+                "height": 8.0,
+                "width": 3.0,
+                "facing_direction": [3.0, 4.0],
+                "allow_legacy_geometry_fallback": True,
+            }
+        )
+
+    assert captured["facing_direction"] == pytest.approx((0.6, 0.8))
 
 
 def test_handle_generate_waterfall_can_require_heightmap_context():
@@ -1619,79 +1966,80 @@ def test_handle_generate_waterfall_validates_authored_functional_names():
     assert "WATERFALL_OBJECT_WRONG_CHAIN" in issue_codes
     assert "WATERFALL_FUNCTIONAL_OBJECT_MISSING" in issue_codes
 
-    def test_multi_biome_world_uses_mesh_backed_scatter_helper(self):
-        from blender_addon.handlers import environment as env_mod
+def test_multi_biome_world_uses_mesh_backed_scatter_helper():
+    from blender_addon.handlers import environment as env_mod
 
-        class _ColorDatum:
-            def __init__(self):
-                self.color = None
+    class _ColorDatum:
+        def __init__(self):
+            self.color = None
 
-        class _ColorAttr:
-            def __init__(self, count):
-                self.data = [_ColorDatum() for _ in range(count)]
+    class _ColorAttr:
+        def __init__(self, count):
+            self.data = [_ColorDatum() for _ in range(count)]
 
-        class _ColorAttributes:
-            def __init__(self):
-                self._attrs = {}
+    class _ColorAttributes:
+        def __init__(self):
+            self._attrs = {}
 
-            def get(self, name):
-                return self._attrs.get(name)
+        def get(self, name):
+            return self._attrs.get(name)
 
-            def new(self, name, type, domain):
-                attr = _ColorAttr(4)
-                self._attrs[name] = attr
-                return attr
+        def new(self, name, type, domain):
+            attr = _ColorAttr(4)
+            self._attrs[name] = attr
+            return attr
 
-            def remove(self, attr):
-                for key, value in list(self._attrs.items()):
-                    if value is attr:
-                        del self._attrs[key]
+        def remove(self, attr):
+            for key, value in list(self._attrs.items()):
+                if value is attr:
+                    del self._attrs[key]
 
-        class _Mesh:
-            def __init__(self):
-                self.color_attributes = _ColorAttributes()
-                self.vertices = [object(), object(), object(), object()]
+    class _Mesh:
+        def __init__(self):
+            self.color_attributes = _ColorAttributes()
+            self.vertices = [object(), object(), object(), object()]
 
-        class _Obj:
-            def __init__(self):
-                self.data = _Mesh()
+    class _Obj:
+        def __init__(self):
+            self.data = _Mesh()
 
-        class _Spec:
-            def __init__(self):
-                self.biome_names = ["thornwood_forest", "corrupted_swamp"]
-                self.biome_ids = np.array([[0, 1], [1, 0]], dtype=np.int32)
-                self.corruption_map = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
-                self.flatten_zones = [{"center": [0.0, 0.0], "radius": 10.0}]
+    class _Spec:
+        def __init__(self):
+            self.biome_names = ["thornwood_forest", "corrupted_swamp"]
+            self.biome_ids = np.array([[0, 1], [1, 0]], dtype=np.int32)
+            self.corruption_map = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
+            self.flatten_zones = [{"center": [0.0, 0.0], "radius": 10.0}]
 
-        fake_obj = _Obj()
-        scatter_calls = []
-        terrain_calls = []
+    fake_obj = _Obj()
+    scatter_calls = []
+    terrain_calls = []
 
-        def _fake_generate_terrain(params):
-            terrain_calls.append(dict(params))
-            return {"vertex_count": 4}
+    def _fake_generate_terrain(params):
+        terrain_calls.append(dict(params))
+        return {"vertex_count": 4}
 
-        with patch.object(env_mod, "handle_generate_terrain", side_effect=_fake_generate_terrain), \
-             patch.object(env_mod, "_compute_vertex_colors_for_biome_map", return_value=[(1.0, 0.0, 0.0, 1.0)] * 4), \
-             patch.object(env_mod.bpy.data.objects, "get", return_value=fake_obj), \
-             patch("blender_addon.handlers._biome_grammar.generate_world_map_spec", return_value=_Spec()), \
-             patch("blender_addon.handlers.terrain_materials.handle_create_biome_terrain", return_value={"status": "ok"}), \
-             patch("blender_addon.handlers.vegetation_system.scatter_biome_vegetation", side_effect=lambda params: scatter_calls.append(params) or {"instance_count": 3}):
-            result = env_mod.handle_generate_multi_biome_world(
-                {
-                    "name": "BiomeWorld",
-                    "width": 2,
-                    "height": 2,
-                    "world_size": 128.0,
-                    "scatter_vegetation": True,
-                    "seed": 7,
-                }
-            )
+    with patch.object(env_mod, "handle_generate_terrain", side_effect=_fake_generate_terrain), \
+         patch.object(env_mod, "_compute_vertex_colors_for_biome_map", return_value=[(1.0, 0.0, 0.0, 1.0)] * 4), \
+         patch.object(env_mod.bpy.data.objects, "get", return_value=fake_obj), \
+         patch("blender_addon.handlers._biome_grammar.generate_world_map_spec", return_value=_Spec()), \
+         patch("blender_addon.handlers.terrain_materials.handle_create_biome_terrain", return_value={"status": "ok"}), \
+         patch("blender_addon.handlers.environment_scatter.handle_scatter_vegetation", side_effect=lambda params: scatter_calls.append(params) or {"instance_count": 3}), \
+         patch("blender_addon.handlers.vegetation_system.scatter_biome_vegetation", side_effect=AssertionError("legacy scatter path should not run")):
+        result = env_mod.handle_generate_multi_biome_world(
+            {
+                "name": "BiomeWorld",
+                "width": 2,
+                "height": 2,
+                "world_size": 128.0,
+                "scatter_vegetation": True,
+                "seed": 7,
+            }
+        )
 
-        assert result["name"] == "BiomeWorld"
-        assert result["vegetation_count"] == 6
-        assert terrain_calls[0]["use_controller"] is True
-        assert [call["biome_name"] for call in scatter_calls] == ["thornwood_forest", "corrupted_swamp"]
+    assert result["name"] == "BiomeWorld"
+    assert result["vegetation_count"] == 6
+    assert terrain_calls[0]["use_controller"] is True
+    assert [call["biome_name"] for call in scatter_calls] == ["thornwood_forest", "corrupted_swamp"]
 
 
 class TestExportHeightRangeResolution:
@@ -1716,6 +2064,52 @@ class TestExportHeightRangeResolution:
         result = _resolve_export_height_range({}, hmap)
 
         assert result is None
+
+
+class TestCreateCaveEntranceHandler:
+    def test_rejects_invalid_style(self):
+        from blender_addon.handlers.environment import handle_create_cave_entrance
+
+        with pytest.raises(ValueError, match="style must be one of"):
+            handle_create_cave_entrance({"style": "sci_fi"})
+
+    def test_accepts_2d_location_and_parent_name_without_bpy_lookup(self):
+        from blender_addon.handlers import environment as env_mod
+
+        fake_spec = {
+            "vertices": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            "metadata": {"stalactite_count": 2, "overhang_m": 0.9},
+        }
+
+        with patch("blender_addon.handlers._terrain_depth.generate_cave_entrance_mesh", return_value=fake_spec), \
+             patch.object(env_mod.bpy.data.objects, "get", return_value=None), \
+             patch.object(env_mod, "_create_mesh_object_from_spec", return_value={"name": "CaveEntrance"}):
+            result = env_mod.handle_create_cave_entrance(
+                {
+                    "name": "CaveEntrance",
+                    "style": "natural",
+                    "location": [12.0, 24.0],
+                    "parent_name": "IgnoredOutsideBpy",
+                    "valley_direction_rad": 0.0,
+                }
+            )
+
+        assert result["name"] == "CaveEntrance"
+        assert result["location"] == [12.0, 24.0, 0.0]
+        assert result["parent_name"] is None
+        assert result["placement_blocked"] is False
+        assert result["arch_spec"]["vertex_count"] == 3
+
+    def test_rejects_non_finite_location(self):
+        from blender_addon.handlers.environment import handle_create_cave_entrance
+
+        with pytest.raises(ValueError, match="non-finite"):
+            handle_create_cave_entrance(
+                {
+                    "style": "natural",
+                    "location": [0.0, float("inf"), 1.0],
+                }
+            )
 
 
 class TestRoadMaskPainting:
@@ -1966,6 +2360,43 @@ class TestTerrainWorldCoordinateHelpers:
 
         assert path == [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]
 
+    def test_resolve_water_path_points_accepts_numpy_arrays(self):
+        from blender_addon.handlers.environment import _resolve_water_path_points
+
+        path = _resolve_water_path_points(
+            path_points_raw=np.asarray([[1.0, 2.0], [4.0, 5.0]], dtype=np.float64),
+            terrain_origin_x=320.0,
+            terrain_origin_y=640.0,
+            fallback_depth=100.0,
+            water_level=7.5,
+        )
+
+        assert path == [(1.0, 2.0, 7.5), (4.0, 5.0, 7.5)]
+
+    def test_resolve_water_path_points_rejects_single_explicit_point(self):
+        from blender_addon.handlers.environment import _resolve_water_path_points
+
+        with pytest.raises(ValueError, match="at least 2 points"):
+            _resolve_water_path_points(
+                path_points_raw=[(1.0, 2.0, 3.0)],
+                terrain_origin_x=320.0,
+                terrain_origin_y=640.0,
+                fallback_depth=100.0,
+                water_level=3.0,
+            )
+
+    def test_resolve_water_path_points_rejects_non_finite_coordinates(self):
+        from blender_addon.handlers.environment import _resolve_water_path_points
+
+        with pytest.raises(ValueError, match="non-finite"):
+            _resolve_water_path_points(
+                path_points_raw=[(1.0, 2.0, 3.0), (4.0, float("nan"), 6.0)],
+                terrain_origin_x=320.0,
+                terrain_origin_y=640.0,
+                fallback_depth=100.0,
+                water_level=3.0,
+            )
+
 
 class TestRiverPathSmoothing:
     """River path smoothing should reduce stair-stepping and stay downhill."""
@@ -1995,6 +2426,26 @@ class TestRiverPathSmoothing:
             abs(x - round(x)) > 1e-6 or abs(y - round(y)) > 1e-6
             for x, y, _ in smoothed[1:-1]
         ), "Expected smoothed river control points to move off the stair-step grid"
+
+    def test_smooth_river_path_points_collapses_duplicate_xy_points(self):
+        from blender_addon.handlers.environment import _smooth_river_path_points
+
+        path = [
+            (0.0, 0.0, 12.0),
+            (0.0, 0.0, 11.9),
+            (1.0, 0.0, 11.6),
+            (2.0, 0.0, 11.2),
+            (2.0, 0.0, 11.0),
+        ]
+
+        smoothed = _smooth_river_path_points(path, enforce_monotonic_z=True)
+
+        assert len(smoothed) >= 2
+        assert all(
+            abs(ax - bx) > 1e-9 or abs(ay - by) > 1e-9
+            for (ax, ay, _), (bx, by, _) in zip(smoothed, smoothed[1:])
+        )
+        assert smoothed[0][2] <= 11.9
 
 
 class TestRiverTerminalWidthTaper:
@@ -2038,6 +2489,23 @@ class TestRiverBankContactSolver:
 
         assert dist < 1.0
         assert terrain_z > 0.0
+
+    def test_solver_falls_back_when_sampler_returns_non_finite(self):
+        from blender_addon.handlers.environment import _resolve_river_bank_contact
+
+        dist, terrain_z = _resolve_river_bank_contact(
+            terrain_height_sampler=lambda x, y: float("nan"),
+            center_x=0.0,
+            center_y=0.0,
+            surface_z=2.5,
+            normal_x=1.0,
+            normal_y=0.0,
+            default_half_width=4.0,
+            side_sign=1.0,
+        )
+
+        assert dist == pytest.approx(4.0)
+        assert terrain_z == pytest.approx(2.5)
 
 
 # ---------------------------------------------------------------------------
@@ -2181,6 +2649,45 @@ class TestVBBiomePresets:
         preset["resolution"] = 9999
         assert VB_BIOME_PRESETS["thornwood_forest"]["resolution"] != 9999
 
+    def test_build_tripo_environment_manifest_falls_back_for_unknown_assets(self):
+        from blender_addon.handlers.environment import _build_tripo_environment_manifest
+
+        scene_bounds = {
+            "x_min": 0.0,
+            "y_min": 0.0,
+            "z_min": 0.0,
+            "x_max": 64.0,
+            "y_max": 64.0,
+            "z_max": 20.0,
+        }
+        manifest = _build_tripo_environment_manifest(
+            "thornwood_forest",
+            [
+                {
+                    "asset": "ancient_spire",
+                    "density": float("nan"),
+                    "min_distance": -2.0,
+                    "scale_range": [float("nan"), 0.4],
+                }
+            ],
+            season="winter",
+            scene_bounds=scene_bounds,
+        )
+
+        assert len(manifest) == 1
+        entry = manifest[0]
+        assert entry["asset"] == "ancient_spire"
+        assert entry["preferred_source"] == "tripo_fallback"
+        assert entry["asset_class"] == "rock_large"
+        assert "ancient spire" in entry["prompt"]
+        assert "winter" in entry["prompt"]
+        assert "thornwood forest biome" in entry["prompt"]
+        assert entry["scatter_density"] == 0.0
+        assert entry["min_distance"] == 0.0
+        assert entry["scale_range"] == [0.4, 1.0]
+        assert entry["scene_bounds"] == scene_bounds
+        assert entry["scene_bounds"] is not scene_bounds
+
     def test_thornwood_forest_uses_progression_tree_assets(self):
         from blender_addon.handlers.environment import VB_BIOME_PRESETS
 
@@ -2203,6 +2710,18 @@ class TestVBBiomePresets:
         for name in self.VB_BIOME_NAMES:
             preset = get_vb_biome_preset(name)
             assert isinstance(preset, dict), f"get_vb_biome_preset('{name}') returned {type(preset)}"
+
+    def test_get_vb_biome_preset_builds_manifest_entries_for_all_scatter_rules(self):
+        from blender_addon.handlers.environment import get_vb_biome_preset
+
+        for name in self.VB_BIOME_NAMES:
+            preset = get_vb_biome_preset(name)
+            expected = sum(
+                1
+                for rule in preset.get("scatter_rules", [])
+                if str(rule.get("asset", "")).strip()
+            )
+            assert len(preset.get("tripo_asset_manifest", [])) == expected
 
     def test_biome_preset_resolves_in_validate(self):
         """A biome name resolves to valid terrain params via _validate_terrain_params.

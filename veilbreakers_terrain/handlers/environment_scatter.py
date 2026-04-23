@@ -359,9 +359,10 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
     def _sample(world_x: float, world_y: float) -> float:
         # Sample through the explicit world-height transform so signed terrain
         # elevations round-trip without collapsing sub-zero terrain to 0.
-        normalised_z = _sample_heightmap_world(
+        sampled_world_z = _sample_heightmap_world(
             heightmap,
             height_scale=transform.world_range,
+            height_offset=transform.world_min,
             world_x=world_x,
             world_y=world_y,
             terrain_width=terrain_width,
@@ -369,7 +370,7 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
             terrain_origin_x=origin_x,
             terrain_origin_y=origin_y,
         )
-        return float(transform.from_normalized(normalised_z))
+        return float(sampled_world_z)
 
     return _sample
 
@@ -401,6 +402,7 @@ def _sample_heightmap_surface_world(
     heightmap: np.ndarray,
     *,
     height_scale: float,
+    height_offset: float = 0.0,
     world_x: float,
     world_y: float,
     terrain_width: float,
@@ -417,7 +419,7 @@ def _sample_heightmap_surface_world(
     if rows == 0 or cols == 0:
         return 0.0, 0.0, 0.0
     if rows == 1 or cols == 1:
-        return float(hmap[0, 0]) * height_scale, 0.0, 0.0
+        return float(height_offset + hmap[0, 0] * height_scale), 0.0, 0.0
 
     u, v = _world_to_terrain_uv(
         world_x,
@@ -452,13 +454,14 @@ def _sample_heightmap_surface_world(
     dsample_drow = (h01 - h00) * (1 - cf) + (h11 - h10) * cf
     dzdx = dsample_dcol * (cols - 1) / max(terrain_width, 1e-9) * height_scale
     dzdy = dsample_drow * (rows - 1) / max(terrain_height, 1e-9) * height_scale
-    return sample * height_scale, dzdx, dzdy
+    return float(height_offset + sample * height_scale), dzdx, dzdy
 
 
 def _sample_heightmap_world(
     heightmap: np.ndarray,
     *,
     height_scale: float,
+    height_offset: float = 0.0,
     world_x: float,
     world_y: float,
     terrain_width: float,
@@ -470,6 +473,7 @@ def _sample_heightmap_world(
     sample, _dzdx, _dzdy = _sample_heightmap_surface_world(
         heightmap,
         height_scale=height_scale,
+        height_offset=height_offset,
         world_x=world_x,
         world_y=world_y,
         terrain_width=terrain_width,
@@ -618,28 +622,36 @@ def _resolve_scatter_context_maps(
     """Resolve water/disturbance support maps for the AAA multi-pass scatter path."""
     target_shape = tuple(heightmap.shape)
 
-    water_map = _resize_scatter_map(moisture_map, target_shape)
-    if water_map is None:
-        wetness = _resize_scatter_map(_stack_value(stack, "wetness"), target_shape)
-        if wetness is not None:
-            water_map = np.clip(wetness, 0.0, 1.0).astype(np.float32, copy=False)
-    if water_map is None:
-        water_surface = _resize_scatter_map(_stack_value(stack, "water_surface"), target_shape)
-        if water_surface is not None:
-            water_map = np.clip(water_surface, 0.0, 1.0).astype(np.float32, copy=False)
-    if water_map is None:
-        flow_acc = _resize_scatter_map(_stack_value(stack, "flow_accumulation"), target_shape)
-        if flow_acc is not None:
-            water_map = _normalize_scatter_signal(flow_acc, log_scale=True)
+    water_layers: list[np.ndarray] = []
+    explicit_moisture = _resize_scatter_map(moisture_map, target_shape)
+    if explicit_moisture is not None:
+        water_layers.append(np.clip(explicit_moisture, 0.0, 1.0).astype(np.float32, copy=False))
+    wetness = _resize_scatter_map(_stack_value(stack, "wetness"), target_shape)
+    if wetness is not None:
+        water_layers.append(np.clip(wetness, 0.0, 1.0).astype(np.float32, copy=False))
+    water_surface = _resize_scatter_map(_stack_value(stack, "water_surface"), target_shape)
+    if water_surface is not None:
+        water_layers.append(np.clip(water_surface, 0.0, 1.0).astype(np.float32, copy=False))
+    flow_acc = _resize_scatter_map(_stack_value(stack, "flow_accumulation"), target_shape)
+    if flow_acc is not None:
+        flow_support = _normalize_scatter_signal(flow_acc, log_scale=True)
+        if flow_support is not None:
+            water_layers.append(flow_support)
+    water_map = None
+    if water_layers:
+        water_map = np.maximum.reduce(water_layers).astype(np.float32, copy=False)
 
-    disturbance_map = None
+    disturbance_layers: list[np.ndarray] = []
     for key in ("disturbance_patch_mask", "erosion_amount", "erosion_delta", "deposition_amount"):
         candidate = _resize_scatter_map(_stack_value(stack, key), target_shape)
         if candidate is None:
             continue
-        disturbance_map = _normalize_scatter_signal(candidate)
-        if disturbance_map is not None:
-            break
+        normalized = _normalize_scatter_signal(candidate)
+        if normalized is not None:
+            disturbance_layers.append(normalized)
+    disturbance_map = None
+    if disturbance_layers:
+        disturbance_map = np.maximum.reduce(disturbance_layers).astype(np.float32, copy=False)
 
     return water_map, disturbance_map
 
@@ -682,12 +694,22 @@ def _resolve_combat_clearings(params: dict) -> "list[dict[str, Any]] | None":
 
 
 def _sample_scalar_map(map_arr: np.ndarray, x_local: float, y_local: float, width: float, height: float) -> float:
-    """Nearest-neighbor scalar map sample in local [0,width] x [0,height] space."""
+    """Bilinear scalar-map sample in local [0,width] x [0,height] space."""
     col_f = (x_local / max(width, 1e-6)) * (map_arr.shape[1] - 1)
     row_f = (y_local / max(height, 1e-6)) * (map_arr.shape[0] - 1)
-    r = int(np.clip(row_f, 0, map_arr.shape[0] - 1))
-    c = int(np.clip(col_f, 0, map_arr.shape[1] - 1))
-    return float(map_arr[r, c])
+    h, w = map_arr.shape
+    r0 = int(math.floor(np.clip(row_f, 0.0, h - 1)))
+    c0 = int(math.floor(np.clip(col_f, 0.0, w - 1)))
+    r1 = min(r0 + 1, h - 1)
+    c1 = min(c0 + 1, w - 1)
+    tr = float(np.clip(row_f - math.floor(row_f), 0.0, 1.0))
+    tc = float(np.clip(col_f - math.floor(col_f), 0.0, 1.0))
+    return float(
+        map_arr[r0, c0] * (1.0 - tr) * (1.0 - tc)
+        + map_arr[r0, c1] * (1.0 - tr) * tc
+        + map_arr[r1, c0] * tr * (1.0 - tc)
+        + map_arr[r1, c1] * tr * tc
+    )
 
 
 def _filter_multipass_scatter_placements(
@@ -977,6 +999,15 @@ def _write_tree_instance_points(
     arr = np.asarray(instances, dtype=np.float32)
     if arr.ndim != 2 or arr.shape[1] != 5:
         return
+    if arr.shape[0] == 0:
+        return
+    finite_rows = np.all(np.isfinite(arr), axis=1)
+    if not np.all(finite_rows):
+        arr = arr[finite_rows]
+    if arr.shape[0] == 0:
+        return
+    arr = arr.copy()
+    arr[:, 4] = np.maximum(np.rint(arr[:, 4]), 0.0)
     if hasattr(stack, "set"):
         stack.set("tree_instance_points", arr, "location_layer")
     else:
@@ -2580,8 +2611,13 @@ def handle_scatter_vegetation(params: dict) -> dict:
 
     height_min = float(heights.min()) if heights.size else 0.0
     height_max = float(heights.max()) if heights.size else 1.0
-    height_range = max(height_max - height_min, 1e-6)
-    heightmap = ((heights - height_min) / height_range).reshape(rows, cols)
+    world_heightmap = heights.reshape(rows, cols)
+    height_transform = WorldHeightTransform(
+        world_min=height_min,
+        world_max=height_max,
+    )
+    height_range = float(height_transform.world_range)
+    heightmap = height_transform.to_normalized(world_heightmap)
 
     # Determine terrain world-space size
     dims = obj.dimensions
@@ -2595,7 +2631,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
         cols,
     )
     slope_map = compute_slope_map(
-        heightmap,
+        world_heightmap,
         cell_size=(terrain_row_spacing, terrain_col_spacing),
     )
     terrain_origin_x = float(obj.location.x)
@@ -2816,7 +2852,8 @@ def handle_scatter_vegetation(params: dict) -> dict:
         # Sample terrain height in world space so offset tiles use the same contract
         wz, dzdx, dzdy = _sample_heightmap_surface_world(
             heightmap,
-            height_scale=height_max,
+            height_scale=height_range,
+            height_offset=height_min,
             world_x=wx,
             world_y=wy,
             terrain_width=terrain_width,

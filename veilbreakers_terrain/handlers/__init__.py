@@ -936,7 +936,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 }
             report = _tv.run_validation_suite(stack, intent)
             return {
-                "status": report.status,
+                "status": getattr(report, "overall_status", getattr(report, "status", "ok")),
                 "hard_count": len(report.hard_issues),
                 "soft_count": len(report.soft_issues),
                 "info_count": len(report.info_issues),

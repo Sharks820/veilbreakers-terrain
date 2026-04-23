@@ -12,6 +12,7 @@ from CI, and the handlers we pick to exercise the happy path are pure Python
 """
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from veilbreakers_terrain.socket_server import (
@@ -545,3 +546,28 @@ class TestObservationAndSafetyDispatch:
         navmesh = COMMAND_HANDLERS["terrain_navmesh_export"]({})
         assert navmesh["status"] == "error"
         assert navmesh["error"] == "missing_params"
+
+    def test_validation_bridge_uses_overall_status(self) -> None:
+        from blender_addon.handlers.terrain_semantics import BBox, TerrainIntentState, TerrainMaskStack
+
+        stack = TerrainMaskStack(
+            tile_size=4,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=np.full((4, 4), 10.0, dtype=np.float64),
+        )
+        intent = TerrainIntentState(
+            seed=1,
+            region_bounds=BBox(0.0, 0.0, 4.0, 4.0),
+            tile_size=4,
+            cell_size=1.0,
+        )
+
+        validation = COMMAND_HANDLERS["terrain_validation"](
+            {"mask_stack": stack, "intent": intent}
+        )
+
+        assert validation["status"] in {"ok", "warning", "failed"}

@@ -157,6 +157,15 @@ class TestGenerateHeightmap:
         # Different octave count should produce different result
         assert not np.array_equal(h_default, h_custom)
 
+    def test_explicit_low_octaves_are_honored(self):
+        """Explicit low octave overrides must not be silently clamped to the default stack."""
+        from blender_addon.handlers._terrain_noise import generate_heightmap
+
+        h_oct3 = generate_heightmap(64, 64, seed=42, terrain_type="mountains", octaves=3)
+        h_oct8 = generate_heightmap(64, 64, seed=42, terrain_type="mountains", octaves=8)
+
+        assert not np.array_equal(h_oct3, h_oct8)
+
     def test_large_resolution_256(self):
         """256x256 heightmap generates correctly with vectorized path."""
         from blender_addon.handlers._terrain_noise import generate_heightmap

@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -384,3 +385,37 @@ def test_emit_overhang_meshes_publishes_mesh_layer_cache():
     result = controller.run_pass("emit_overhang_meshes", checkpoint=False)
     assert result.status == "ok"
     assert hasattr(state, "mesh_layer_specs")
+
+
+def test_build_cliff_overhang_mesh_specs_uses_local_lip_heights():
+    from blender_addon.handlers.terrain_cliffs import _build_cliff_overhang_mesh_specs
+
+    state = _build_cliff_state()
+    state.mask_stack.height[10, 12] = 14.0
+    state.mask_stack.height[10, 13] = 18.0
+    cliff = SimpleNamespace(
+        cliff_id="cliff_test",
+        tier="hero",
+        max_height_m=99.0,
+        overhang_spec={
+            "outward_normal_xy": (0.0, 1.0),
+            "segments": [
+                {
+                    "seg_i": 0,
+                    "has_overhang": True,
+                    "depth_m": 2.0,
+                    "base_cells": ((10, 12), (10, 13)),
+                }
+            ],
+        },
+    )
+
+    specs = _build_cliff_overhang_mesh_specs([cliff], state.mask_stack)
+
+    assert len(specs) == 1
+    vertices = specs[0]["vertices"]
+    assert vertices[0][2] == pytest.approx(14.0)
+    assert vertices[1][2] == pytest.approx(18.0)
+    assert vertices[2][2] == pytest.approx(18.0)
+    assert vertices[3][2] == pytest.approx(14.0)
+    assert specs[0]["uvs"][2] == (1.0, 1.0)

@@ -583,6 +583,24 @@ def test_register_bundle_o_passes_registers_both():
     register_bundle_o_passes()
     assert "water_variants" in TerrainPassController.PASS_REGISTRY
     assert "vegetation_depth" in TerrainPassController.PASS_REGISTRY
+    assert "bathymetry" in TerrainPassController.PASS_REGISTRY
+    assert "emergent_grass" in TerrainPassController.PASS_REGISTRY
+
+
+def test_bundle_o_supplemental_pass_contracts_are_declared():
+    register_bundle_o_passes()
+
+    bathymetry = TerrainPassController.PASS_REGISTRY["bathymetry"]
+    assert bathymetry.func.__name__ == "pass_bathymetry"
+    assert "height" in bathymetry.requires_channels
+    assert "water_surface" in bathymetry.requires_channels
+    assert "bathymetry" in bathymetry.produces_channels
+    assert "water_depth_zone" in bathymetry.produces_channels
+
+    emergent_grass = TerrainPassController.PASS_REGISTRY["emergent_grass"]
+    assert emergent_grass.func.__name__ == "pass_emergent_grass"
+    assert emergent_grass.requires_channels == ("splatmap_weights_layer",)
+    assert emergent_grass.produces_channels == ("grass_density_map",)
 
 
 def test_register_bundle_o_is_idempotent():

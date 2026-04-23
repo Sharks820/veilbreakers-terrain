@@ -153,9 +153,14 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         ".SetDetailLayer(",
         ".SetTreeInstances(",
         ".SetNeighbors(",
+        "CreateSupplementalMeshes",
+        "MeshFilter",
+        "MeshRenderer",
         "VbTerrainTileMetadata",
     ):
         assert token in source
+    assert "new int[descriptor.height, descriptor.width]" in source
+    assert "counts[y, x]" in source
 
 
 def test_public_unity_export_handler_writes_bundle():
@@ -213,3 +218,71 @@ def test_mcp_unity_export_location_dispatches_to_public_handler():
     assert result["status"] == "ok"
     assert result["command"] == "env_export_unity_bundle"
     assert result["result"]["validation_status"] == "passed"
+
+
+def test_export_manifest_writes_waterfall_velocity_aux_channel():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.set("waterfall_velocity", np.ones((5, 5, 2), dtype=np.float32), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td))
+
+    assert "waterfall_velocity.bin" in manifest["files"]
+    assert manifest["files"]["waterfall_velocity.bin"]["shape"] == [5, 5, 2]
+
+
+def test_export_manifest_writes_supplemental_mesh_specs_for_unity_bridge():
+    from veilbreakers_terrain.handlers.terrain_unity_export import (
+        _apply_unity_scale,
+        export_unity_manifest,
+    )
+
+    stack = _make_stack()
+    stack.set("cliff_mesh_specs", [
+        {
+            "mesh_id": "cliff_overhang_000",
+            "mesh_type": "cliff_overhang",
+            "material_hint": "wet_cliff_drip",
+            "tier": "hero",
+            "vertices": [
+                (100.0, 200.0, 12.0),
+                (104.0, 200.0, 12.0),
+                (104.0, 202.0, 12.0),
+                (100.0, 202.0, 12.0),
+            ],
+            "faces": [(0, 1, 2, 3)],
+        }
+    ], "test")
+    stack.set("cave_mesh_specs", [
+        {
+            "mesh_id": "cave_mouth_000",
+            "mesh_type": "cave_mouth_surround",
+            "material_hint": "cave_entry_ring",
+            "tier": "secondary",
+            "vertices": [
+                (101.0, 201.0, 11.0),
+                (102.0, 201.0, 11.0),
+                (102.0, 201.0, 13.0),
+            ],
+            "faces": [(0, 1, 2)],
+            "uvs": [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)],
+        }
+    ], "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td))
+        payload = json.loads((Path(td) / "supplemental_mesh_specs.json").read_text())
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+
+    assert "supplemental_mesh_specs.json" in manifest["files"]
+    assert descriptor["supplemental_mesh_specs_file"] == "supplemental_mesh_specs.json"
+    assert len(payload["mesh_specs"]) == 2
+    expected_first_vertex = _apply_unity_scale([100.0, 12.0, 200.0])
+    assert payload["mesh_specs"][0]["vertices"][0] == {
+        "x": expected_first_vertex[0],
+        "y": expected_first_vertex[1],
+        "z": expected_first_vertex[2],
+    }
+    assert payload["mesh_specs"][1]["uvs"][2] == {"x": 1.0, "y": 1.0}

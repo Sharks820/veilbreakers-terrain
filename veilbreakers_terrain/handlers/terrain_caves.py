@@ -1893,6 +1893,20 @@ def generate_cave_path(
         except Exception:
             pass  # stack may not accept this channel — non-fatal
 
+    # Normalize chamber metadata so the pass always exposes a deterministic
+    # chamber-count channel even when a given cave instance has no chambers.
+    try:
+        existing_chambers = stack.get("cave_chambers")
+        existing_count = 0.0
+        if existing_chambers is not None:
+            existing_arr = np.asarray(existing_chambers, dtype=np.float32)
+            if existing_arr.size:
+                existing_count = float(existing_arr.flat[0])
+        ch_arr = np.array([existing_count + float(len(chambers))], dtype=np.float32)
+        stack.set("cave_chambers", ch_arr, "caves")
+    except Exception:
+        pass
+
     # Concatenate spine + all branches into final flat point list
     all_points = points + branch_points
     return all_points
@@ -2182,11 +2196,11 @@ def carve_cave_volume(
         if issue is not None:
             nav_issues.append(issue)
 
+    _nav_count_arr = np.array([float(len(nav_issues))], dtype=np.float32)
+    stack.set("cave_nav_issues_count", _nav_count_arr, "caves")
     if nav_issues:
         # Encode as a float32 count array so the stack channel is numpy-compatible.
         # Downstream callers retrieve full issue list via the side-channel metadata.
-        _nav_count_arr = np.array([float(len(nav_issues))], dtype=np.float32)
-        stack.set("cave_nav_issues_count", _nav_count_arr, "caves")
         # Store the structured issue list in a module-level registry so the
         # caller (pass_caves) can attach it to the CaveStructure.
         # We use a stack attribute injection (best-effort) for dict transport.
@@ -3122,9 +3136,6 @@ def _find_entrance_candidates(
                     continue
             raw.append(tuple(pos))  # type: ignore[arg-type]
 
-    if not raw:
-        return []
-
     # Precompute scoring arrays from stack
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
@@ -3174,6 +3185,55 @@ def _find_entrance_candidates(
     # Precomputed absolute max curvature for normalisation
     _curv_max = float(np.abs(curv_arr).max()) if curv_arr is not None else 1e-6
     _curv_max = max(_curv_max, 1e-6)
+
+    if not raw:
+        if cliff_arr is None or cliff_arr.shape != h.shape:
+            return []
+        cliff_strength = np.zeros_like(h, dtype=np.float64)
+        if cliff_arr is not None and cliff_arr.shape == h.shape:
+            cliff_strength = np.clip(cliff_arr, 0.0, 1.0)
+        else:
+            cliff_strength = np.clip((slope_deg_arr - entrance_min_slope_deg) / 25.0, 0.0, 1.0)
+        if float(cliff_strength.max()) < 0.35:
+            return []
+
+        concavity_strength = np.zeros_like(h, dtype=np.float64)
+        if curv_arr is not None:
+            concavity_strength = np.clip(-curv_arr / _curv_max, 0.0, 1.0)
+
+        support_mask = (cliff_strength >= 0.35) & steep_mask
+        discovery_score = np.where(
+            support_mask,
+            (0.85 * cliff_strength) + (0.15 * concavity_strength),
+            0.0,
+        )
+        if region is not None:
+            rs, cs_sl = _region_to_slice(stack, region)
+            region_mask = np.zeros_like(discovery_score, dtype=bool)
+            region_mask[rs, cs_sl] = True
+            discovery_score = np.where(region_mask, discovery_score, 0.0)
+
+        candidate_min_score = 0.55
+        spacing_cells = max(3, int(round(6.0 / max(cs, 1e-6))))
+        order = np.argsort(discovery_score.ravel())[::-1]
+        chosen_cells: List[Tuple[int, int]] = []
+        for flat_idx in order:
+            score_val = float(discovery_score.ravel()[flat_idx])
+            if score_val < candidate_min_score:
+                break
+            row = int(flat_idx // cols)
+            col = int(flat_idx % cols)
+            if any(abs(row - rr) < spacing_cells and abs(col - cc) < spacing_cells for rr, cc in chosen_cells):
+                continue
+            chosen_cells.append((row, col))
+            wx = stack.world_origin_x + (col * cs)
+            wy = stack.world_origin_y + (row * cs)
+            raw.append((wx, wy, float(h[row, col])))
+            if len(raw) >= max_candidates:
+                break
+
+    if not raw:
+        return []
 
     def _neighbourhood_slice(row: int, col: int, radius: int):
         r0 = max(0, row - radius)
@@ -3277,6 +3337,22 @@ def pass_caves(
             np.zeros_like(stack.height, dtype=np.float32),
             "caves",
         )
+    if stack.get("cave_depth_hint") is None:
+        stack.set(
+            "cave_depth_hint",
+            np.zeros_like(stack.height, dtype=np.float32),
+            "caves",
+        )
+    if stack.get("cave_underground_depth") is None:
+        stack.set(
+            "cave_underground_depth",
+            np.zeros_like(stack.height, dtype=np.float32),
+            "caves",
+        )
+    if stack.get("cave_chambers") is None:
+        stack.set("cave_chambers", np.zeros(1, dtype=np.float32), "caves")
+    if stack.get("cave_nav_issues_count") is None:
+        stack.set("cave_nav_issues_count", np.zeros(1, dtype=np.float32), "caves")
 
     # Protected zone per-cell mask (applied to cave_candidate after carve)
     protected = _protected_mask_for_caves(state, stack.height.shape)
@@ -3495,6 +3571,8 @@ def pass_caves(
         produced_channels=(
             "cave_candidate", "wet_rock", "cave_height_delta",
             "cave_wall_texture", "cave_stalactite_length", "cave_stalagmite_length",
+            "cave_depth_hint", "cave_underground_depth", "cave_chambers",
+            "cave_nav_issues_count",
             "cave_mesh_specs",
         ),
         metrics={
@@ -3543,6 +3621,10 @@ def register_bundle_f_passes() -> None:
                 "cave_wall_texture",
                 "cave_stalactite_length",
                 "cave_stalagmite_length",
+                "cave_depth_hint",
+                "cave_underground_depth",
+                "cave_chambers",
+                "cave_nav_issues_count",
                 "cave_mesh_specs",
             ),
             seed_namespace="caves",

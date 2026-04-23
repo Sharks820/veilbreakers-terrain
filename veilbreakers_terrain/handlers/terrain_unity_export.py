@@ -344,6 +344,69 @@ def _write_json(
     return target.name
 
 
+def _supplemental_mesh_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "mesh_specs": [],
+    }
+    mesh_specs: List[Dict[str, Any]] = []
+    for raw_spec in list(stack.cliff_mesh_specs or []) + list(stack.cave_mesh_specs or []):
+        raw_vertices = list(raw_spec.get("vertices") or [])
+        raw_faces = list(raw_spec.get("faces") or [])
+        if not raw_vertices or not raw_faces:
+            continue
+
+        vertices: List[Dict[str, float]] = []
+        for vec in raw_vertices:
+            if not isinstance(vec, (list, tuple)) or len(vec) < 3:
+                vertices = []
+                break
+            unity_vec = _apply_unity_scale(_zup_to_unity_vector(vec))
+            vertices.append(
+                {
+                    "x": float(unity_vec[0]),
+                    "y": float(unity_vec[1]),
+                    "z": float(unity_vec[2]),
+                }
+            )
+        if not vertices:
+            continue
+
+        faces: List[Dict[str, List[int]]] = []
+        for face in raw_faces:
+            if not isinstance(face, (list, tuple)) or len(face) < 3:
+                continue
+            faces.append({"indices": [int(idx) for idx in face]})
+        if not faces:
+            continue
+
+        uvs: List[Dict[str, float]] = []
+        for uv in list(raw_spec.get("uvs") or []):
+            if not isinstance(uv, (list, tuple)) or len(uv) < 2:
+                uvs = []
+                break
+            uvs.append({"x": float(uv[0]), "y": float(uv[1])})
+
+        serialized = {
+            "mesh_id": str(raw_spec.get("mesh_id", f"supplemental_mesh_{len(mesh_specs):03d}")),
+            "mesh_type": str(raw_spec.get("mesh_type", "supplemental")),
+            "material_hint": str(raw_spec.get("material_hint", "terrain_rock")),
+            "tier": str(raw_spec.get("tier", "secondary")),
+            "vertices": vertices,
+            "faces": faces,
+        }
+        drip_edge_indices = raw_spec.get("drip_edge_indices")
+        if isinstance(drip_edge_indices, (list, tuple)):
+            serialized["drip_edge_indices"] = [int(idx) for idx in drip_edge_indices]
+        if uvs and len(uvs) == len(vertices):
+            serialized["uvs"] = uvs
+        mesh_specs.append(serialized)
+
+    payload["mesh_specs"] = mesh_specs
+    return payload
+
+
 def _hex_to_rgb01(hex_color: str) -> list[float]:
     color = str(hex_color).strip().lstrip("#")
     if len(color) != 6:
@@ -571,6 +634,11 @@ def _build_unity_import_descriptor(
         "gameplay_zones_file": "gameplay_zones.json",
         "wildlife_zones_file": "wildlife_zones.json",
         "decals_file": "decals.json",
+        "supplemental_mesh_specs_file": (
+            "supplemental_mesh_specs.json"
+            if "supplemental_mesh_specs.json" in files
+            else ""
+        ),
         "seam_contract": manifest.get("seam_contract", {}),
         "validation_status": str(manifest.get("validation_status", "unknown")),
         "validation_issue_count": int(manifest.get("validation_issue_count", 0)),
@@ -827,7 +895,7 @@ def export_unity_manifest(
         "erosion_amount", "deposition_amount", "wetness",
         "drainage", "bank_instability", "talus",
         "flow_direction", "flow_accumulation",
-        "water_surface", "foam", "mist", "wet_rock", "tidal",
+        "water_surface", "foam", "mist", "wet_rock", "tidal", "waterfall_velocity",
         "biome_id", "macro_color", "roughness_variation", "snow_line_factor",
         "strata_orientation", "rock_hardness",
         "strat_erosion_delta", "sediment_height", "bedrock_height",
@@ -890,6 +958,7 @@ def export_unity_manifest(
     gameplay_zones_json = _gameplay_zones_json(stack)
     wildlife_zones_json = _wildlife_zones_json(stack)
     decals_json = _decals_json(stack)
+    supplemental_mesh_specs_json = _supplemental_mesh_specs_json(stack)
     ecosystem_meta_json = {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -908,8 +977,14 @@ def export_unity_manifest(
         "has_navmesh": stack.navmesh_area_id is not None,
         "has_traversability": stack.traversability is not None,
         "has_decals": bool(stack.decal_density),
+        "has_supplemental_mesh_specs": bool(supplemental_mesh_specs_json["mesh_specs"]),
         "wind_field_descriptor": "wind_field.bin" if stack.wind_field is not None else None,
         "cloud_shadow_descriptor": "cloud_shadow.bin" if stack.cloud_shadow is not None else None,
+        "supplemental_mesh_specs_descriptor": (
+            "supplemental_mesh_specs.json"
+            if supplemental_mesh_specs_json["mesh_specs"]
+            else None
+        ),
     }
 
     for name, payload in (
@@ -921,6 +996,13 @@ def export_unity_manifest(
         ("ecosystem_meta.json", ecosystem_meta_json),
     ):
         _write_json(files, output_dir, filename=name, payload=payload)
+    if supplemental_mesh_specs_json["mesh_specs"]:
+        _write_json(
+            files,
+            output_dir,
+            filename="supplemental_mesh_specs.json",
+            payload=supplemental_mesh_specs_json,
+        )
 
     # ---------------------------------------------------------------------- #
     # Tree prototype list — derived from tree_instance_points column 4.

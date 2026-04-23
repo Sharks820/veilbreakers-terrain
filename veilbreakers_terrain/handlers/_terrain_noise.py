@@ -1242,8 +1242,13 @@ def generate_heightmap(
         )
 
     preset = TERRAIN_PRESETS[terrain_type]
-    oct_ = int(octaves) if octaves is not None else int(preset["octaves"])
-    oct_ = max(oct_, _FBM_OCTAVES_MIN)   # enforce minimum 8 octaves
+    if octaves is None:
+        oct_ = max(int(preset["octaves"]), _FBM_OCTAVES_MIN)
+    else:
+        # Honor explicit octave overrides so multi-band callers can request
+        # lower-frequency stacks without being silently collapsed to the
+        # repo-wide AAA default.
+        oct_ = max(int(octaves), 1)
     pers_ = float(persistence) if persistence is not None else float(preset["persistence"])
     lac_ = float(lacunarity) if lacunarity is not None else float(preset["lacunarity"])
 

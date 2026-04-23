@@ -37,6 +37,7 @@ namespace VeilBreakers.TerrainImport.Editor
             public DetailLayerDescriptor[] detail_layers = Array.Empty<DetailLayerDescriptor>();
             public TreePrototypeDescriptor[] tree_prototypes = Array.Empty<TreePrototypeDescriptor>();
             public string tree_instances_file = "tree_instances.json";
+            public string supplemental_mesh_specs_file = string.Empty;
             public SeamContractPayload seam_contract = new SeamContractPayload();
             public string validation_status = "unknown";
             public int validation_issue_count;
@@ -146,6 +147,46 @@ namespace VeilBreakers.TerrainImport.Editor
             public float a = 1.0f;
         }
 
+        [Serializable]
+        private sealed class SupplementalMeshCollection
+        {
+            public SupplementalMeshSpec[] mesh_specs = Array.Empty<SupplementalMeshSpec>();
+        }
+
+        [Serializable]
+        private sealed class SupplementalMeshSpec
+        {
+            public string mesh_id = string.Empty;
+            public string mesh_type = string.Empty;
+            public string material_hint = string.Empty;
+            public string tier = string.Empty;
+            public Vector3Payload[] vertices = Array.Empty<Vector3Payload>();
+            public FacePayload[] faces = Array.Empty<FacePayload>();
+            public Vector2Payload[] uvs = Array.Empty<Vector2Payload>();
+            public int[] drip_edge_indices = Array.Empty<int>();
+        }
+
+        [Serializable]
+        private sealed class Vector3Payload
+        {
+            public float x;
+            public float y;
+            public float z;
+        }
+
+        [Serializable]
+        private sealed class Vector2Payload
+        {
+            public float x;
+            public float y;
+        }
+
+        [Serializable]
+        private sealed class FacePayload
+        {
+            public int[] indices = Array.Empty<int>();
+        }
+
         [MenuItem("VeilBreakers/Terrain/Import Bundle Directory")]
         private static void ImportBundleDirectoryMenu()
         {
@@ -222,6 +263,8 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.WorldId = descriptor.world_id;
             metadata.TileX = descriptor.tile_x;
             metadata.TileY = descriptor.tile_y;
+
+            CreateSupplementalMeshes(bundleDirectory, descriptor, terrainObject.transform);
 
             EditorUtility.SetDirty(terrainData);
             EditorUtility.SetDirty(terrain);
@@ -520,6 +563,170 @@ namespace VeilBreakers.TerrainImport.Editor
             }
         }
 
+        private static void CreateSupplementalMeshes(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            Transform parent
+        )
+        {
+            if (string.IsNullOrEmpty(descriptor.supplemental_mesh_specs_file))
+            {
+                return;
+            }
+
+            var payloadPath = Path.Combine(bundleDirectory, descriptor.supplemental_mesh_specs_file);
+            if (!File.Exists(payloadPath))
+            {
+                return;
+            }
+
+            var payload = JsonUtility.FromJson<SupplementalMeshCollection>(
+                File.ReadAllText(payloadPath)
+            );
+            if (payload == null || payload.mesh_specs == null || payload.mesh_specs.Length == 0)
+            {
+                return;
+            }
+
+            var materialCache = new Dictionary<string, Material>(StringComparer.Ordinal);
+            foreach (var spec in payload.mesh_specs)
+            {
+                var mesh = BuildSupplementalMesh(spec, parent.position);
+                if (mesh == null)
+                {
+                    continue;
+                }
+
+                var go = new GameObject(
+                    string.IsNullOrEmpty(spec.mesh_id) ? "VB_SupplementalMesh" : spec.mesh_id
+                );
+                go.transform.SetParent(parent, false);
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = Vector3.one;
+
+                var filter = go.AddComponent<MeshFilter>();
+                filter.sharedMesh = mesh;
+
+                var renderer = go.AddComponent<MeshRenderer>();
+                renderer.sharedMaterial = GetOrCreateSupplementalMaterial(
+                    spec.material_hint,
+                    materialCache
+                );
+            }
+        }
+
+        private static Mesh BuildSupplementalMesh(
+            SupplementalMeshSpec spec,
+            Vector3 terrainOrigin
+        )
+        {
+            if (spec == null || spec.vertices == null || spec.vertices.Length < 3)
+            {
+                return null;
+            }
+            if (spec.faces == null || spec.faces.Length == 0)
+            {
+                return null;
+            }
+
+            var vertices = new Vector3[spec.vertices.Length];
+            for (var index = 0; index < spec.vertices.Length; index++)
+            {
+                var source = spec.vertices[index];
+                vertices[index] = new Vector3(
+                    source.x - terrainOrigin.x,
+                    source.y - terrainOrigin.y,
+                    source.z - terrainOrigin.z
+                );
+            }
+
+            var triangles = new List<int>();
+            foreach (var face in spec.faces)
+            {
+                if (face == null || face.indices == null || face.indices.Length < 3)
+                {
+                    continue;
+                }
+
+                var baseIndex = face.indices[0];
+                for (var i = 1; i < face.indices.Length - 1; i++)
+                {
+                    triangles.Add(baseIndex);
+                    triangles.Add(face.indices[i]);
+                    triangles.Add(face.indices[i + 1]);
+                }
+            }
+
+            if (triangles.Count < 3)
+            {
+                return null;
+            }
+
+            var mesh = new Mesh
+            {
+                name = string.IsNullOrEmpty(spec.mesh_id) ? "VB_SupplementalMesh" : spec.mesh_id
+            };
+            mesh.SetVertices(vertices);
+            mesh.SetTriangles(triangles, 0);
+
+            if (spec.uvs != null && spec.uvs.Length == vertices.Length)
+            {
+                var uv = new Vector2[spec.uvs.Length];
+                for (var index = 0; index < spec.uvs.Length; index++)
+                {
+                    uv[index] = new Vector2(spec.uvs[index].x, spec.uvs[index].y);
+                }
+                mesh.SetUVs(0, uv);
+            }
+
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static Material GetOrCreateSupplementalMaterial(
+            string materialHint,
+            Dictionary<string, Material> cache
+        )
+        {
+            var key = string.IsNullOrEmpty(materialHint) ? "terrain_rock" : materialHint;
+            if (cache.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var shader = Shader.Find("Standard");
+            if (shader == null)
+            {
+                shader = Shader.Find("Universal Render Pipeline/Lit");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Diffuse");
+            }
+
+            var material = new Material(shader)
+            {
+                name = $"VB_{key}"
+            };
+            if (key.Contains("wet", StringComparison.OrdinalIgnoreCase))
+            {
+                material.color = new Color(0.26f, 0.28f, 0.30f, 1.0f);
+            }
+            else if (key.Contains("cave", StringComparison.OrdinalIgnoreCase))
+            {
+                material.color = new Color(0.22f, 0.20f, 0.18f, 1.0f);
+            }
+            else
+            {
+                material.color = new Color(0.42f, 0.40f, 0.38f, 1.0f);
+            }
+
+            cache[key] = material;
+            return material;
+        }
+
         private static TerrainLayer GetOrCreateTerrainLayer(
             string bundleDirectory,
             TerrainLayerDescriptor descriptor
@@ -692,7 +899,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 );
             }
 
-            var counts = new int[descriptor.width, descriptor.height];
+            var counts = new int[descriptor.height, descriptor.width];
             for (var y = 0; y < descriptor.height; y++)
             {
                 var srcY = descriptor.flip_vertical ? descriptor.height - 1 - y : y;
@@ -700,7 +907,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 {
                     var offset = (srcY * descriptor.width + x) * 2;
                     var value = (ushort)(bytes[offset] | (bytes[offset + 1] << 8));
-                    counts[x, y] = Mathf.Clamp(value, 0, descriptor.max_density_per_cell);
+                    counts[y, x] = Mathf.Clamp(value, 0, descriptor.max_density_per_cell);
                 }
             }
 

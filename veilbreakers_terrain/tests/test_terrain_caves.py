@@ -519,6 +519,10 @@ def test_register_bundle_f_passes_adds_caves():
     assert "cave_wall_texture" in definition.produces_channels
     assert "cave_stalactite_length" in definition.produces_channels
     assert "cave_stalagmite_length" in definition.produces_channels
+    assert "cave_depth_hint" in definition.produces_channels
+    assert "cave_underground_depth" in definition.produces_channels
+    assert "cave_chambers" in definition.produces_channels
+    assert "cave_nav_issues_count" in definition.produces_channels
     assert "cave_mesh_specs" in definition.produces_channels
 
 
@@ -636,3 +640,38 @@ def test_pass_caves_empty_scene_read_still_ok():
     result = controller.run_pass("caves", checkpoint=False)
     assert result.status == "ok"
     assert result.metrics["cave_count"] == 0
+
+
+def test_find_entrance_candidates_can_fallback_to_terrain_signals():
+    from blender_addon.handlers.terrain_caves import _find_entrance_candidates, _world_to_cell
+
+    state = _build_state(mode="steep", cave_candidates=())
+    cliff = np.zeros_like(state.mask_stack.height, dtype=np.float32)
+    cliff[8:20, 10:14] = 1.0
+    state.mask_stack.set("cliff_candidate", cliff, "test")
+    state.mask_stack.set("traversability", np.ones_like(cliff, dtype=np.float32), "test")
+
+    candidates = _find_entrance_candidates(state, region=None, max_candidates=4)
+
+    assert candidates
+    for x, y, z in candidates:
+        row, col = _world_to_cell(state.mask_stack, x, y)
+        assert cliff[row, col] > 0.0
+
+
+def test_pass_caves_can_discover_candidates_from_cliff_signals():
+    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    register_bundle_f_passes()
+    state = _build_state(mode="steep", cave_candidates=())
+    cliff = np.zeros_like(state.mask_stack.height, dtype=np.float32)
+    cliff[8:20, 10:14] = 1.0
+    state.mask_stack.set("cliff_candidate", cliff, "test")
+    state.mask_stack.set("traversability", np.ones_like(cliff, dtype=np.float32), "test")
+
+    controller = TerrainPassController(state, checkpoint_dir=None)
+    result = controller.run_pass("caves", checkpoint=False)
+
+    assert result.status in ("ok", "warning")
+    assert result.metrics["cave_count"] >= 1

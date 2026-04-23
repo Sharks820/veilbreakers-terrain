@@ -170,6 +170,43 @@ def test_detect_lip_candidates_finds_cliff_edge():
         assert lc.confidence_score > 0.0
 
 
+def test_manning_velocity_is_monotonic_and_clamped():
+    from blender_addon.handlers.terrain_waterfalls import _manning_velocity
+
+    assert _manning_velocity(0.0, 1.0) == pytest.approx(0.1)
+    assert _manning_velocity(0.05, 0.5) > _manning_velocity(0.01, 0.5)
+    assert _manning_velocity(5.0, 20.0) <= 15.0
+
+
+def test_freefall_impact_matches_closed_form_drop():
+    from blender_addon.handlers.terrain_waterfalls import _G, _freefall_impact
+
+    h_drop = 20.0
+    t_impact, v_total = _freefall_impact(h_drop, v_h=0.0)
+    assert t_impact == pytest.approx(math.sqrt(2.0 * h_drop / _G), rel=1e-6)
+    assert v_total == pytest.approx(math.sqrt(2.0 * _G * h_drop), rel=1e-6)
+
+
+def test_mason_1985_pool_grows_with_drop_and_discharge():
+    from blender_addon.handlers.terrain_waterfalls import _mason_1985_pool
+
+    small_r, small_d = _mason_1985_pool(5.0, 0.2)
+    large_r, large_d = _mason_1985_pool(20.0, 5.0)
+    assert large_r > small_r
+    assert large_d > small_d
+    assert 1.0 <= small_r <= 50.0
+    assert 0.3 <= small_d <= 20.0
+
+
+def test_estimate_discharge_increases_with_drainage_area():
+    from blender_addon.handlers.terrain_waterfalls import _estimate_discharge
+
+    small_q = _estimate_discharge(10.0, 1.0)
+    big_q = _estimate_discharge(5_000_000.0, 5.0)
+    assert small_q >= 0.01
+    assert big_q > small_q
+
+
 def test_detect_lip_respects_min_drop():
     from blender_addon.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
@@ -522,3 +559,33 @@ def test_generate_mist_zone_preserves_downstream_bias_when_ext_quiet(
     upstream_c = pool_c - int(round(ds_col * 4.0))
 
     assert mist[downstream_r, downstream_c] > mist[upstream_r, upstream_c]
+
+
+def test_generate_velocity_field_spreads_beyond_exact_path_cells():
+    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from blender_addon.handlers.terrain_waterfalls import generate_velocity_field
+
+    stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
+    chain = _build_manual_chain()
+
+    vel = generate_velocity_field(chain, stack)
+    path_r, path_c = _world_to_grid(stack, chain.plunge_path[1][0], chain.plunge_path[1][1])
+    assert np.linalg.norm(vel[path_r, path_c]) > 0.0
+    assert np.linalg.norm(vel[path_r, min(path_c + 1, vel.shape[1] - 1)]) > 0.0
+
+
+def test_blend_velocity_to_water_body_damps_masked_pool_and_leaves_dry_cells_alone():
+    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from blender_addon.handlers.terrain_waterfalls import blend_velocity_to_water_body
+
+    stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
+    chain = _build_manual_chain()
+    vel = np.ones((40, 40, 2), dtype=np.float32)
+    water_body_mask = np.zeros((40, 40), dtype=bool)
+    pool_r, pool_c = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
+    water_body_mask[max(0, pool_r - 2): pool_r + 3, max(0, pool_c - 2): pool_c + 3] = True
+
+    blended = blend_velocity_to_water_body(vel, chain, stack, water_body_mask=water_body_mask, perlin_seed=11)
+
+    assert np.linalg.norm(blended[pool_r, pool_c]) < np.linalg.norm(vel[pool_r, pool_c])
+    assert np.allclose(blended[0, 0], vel[0, 0])

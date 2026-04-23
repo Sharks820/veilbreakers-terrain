@@ -268,7 +268,11 @@ def _coerce_optional_grid_channel(
     arr = np.asarray(value, dtype=np.float32)
     if arr.ndim != 2 or tuple(arr.shape) != tuple(expected_shape):
         return None
-    return arr
+    finite = arr[np.isfinite(arr)]
+    replace_hi = float(finite.max()) if finite.size else 1.0
+    cleaned = np.nan_to_num(arr, nan=0.0, posinf=replace_hi, neginf=0.0)
+    np.maximum(cleaned, 0.0, out=cleaned)
+    return np.ascontiguousarray(cleaned, dtype=np.float32)
 
 
 def _resolve_road_cost_context(
@@ -834,6 +838,94 @@ _TRIPO_ENVIRONMENT_PROMPTS: dict[str, dict[str, Any]] = {
 }
 
 
+def _sanitize_scatter_scale_range(raw_value: Any) -> list[float]:
+    """Return a finite, ascending, positive 2-item scale range."""
+    if isinstance(raw_value, (list, tuple)) and len(raw_value) >= 2:
+        lo = float(raw_value[0])
+        hi = float(raw_value[1])
+    else:
+        lo = hi = 1.0
+    if not math.isfinite(lo):
+        lo = 1.0
+    if not math.isfinite(hi):
+        hi = lo
+    lo = max(lo, 0.05)
+    hi = max(hi, 0.05)
+    if lo > hi:
+        lo, hi = hi, lo
+    return [lo, hi]
+
+
+def _infer_tripo_asset_class(asset_name: str, rule: dict[str, Any]) -> str:
+    explicit = str(rule.get("asset_class", "")).strip()
+    if explicit:
+        return explicit
+
+    lowered = asset_name.lower()
+    if any(token in lowered for token in ("pine", "fir", "spruce", "conifer")):
+        return "tree_conifer"
+    if any(token in lowered for token in ("tree", "oak", "birch", "blossom")):
+        return "tree_boundary"
+    if any(token in lowered for token in ("boulder", "cliff", "monolith", "spire")):
+        return "rock_large"
+    if any(token in lowered for token in ("rock", "stone", "lantern", "gravestone", "crater")):
+        return "rock_medium"
+    if any(token in lowered for token in ("log", "stump", "branch", "snag", "deadwood")):
+        return "deadwood"
+    if any(token in lowered for token in ("grass", "moss", "flower", "fern", "reed", "lily", "leaf")):
+        return "ground_cover"
+    if any(token in lowered for token in ("bush", "shrub", "sapling", "banner", "flag", "vine")):
+        return "shrub"
+    return "ground_cover"
+
+
+def _build_tripo_fallback_prompt_info(
+    asset_name: str,
+    biome_name: str,
+    season: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    asset_class = _infer_tripo_asset_class(asset_name, rule)
+    readable_name = asset_name.replace("_", " ").replace("-", " ").strip() or "environment prop"
+    biome_label = biome_name.replace("_", " ").strip() or "fantasy wilderness"
+    season_label = season.replace("_", " ").strip() if season else "summer"
+    usage_hint = {
+        "tree_conifer": "conifer scatter tree",
+        "tree_boundary": "hero scatter tree",
+        "rock_large": "large environment rock",
+        "rock_medium": "environment stone prop",
+        "deadwood": "deadwood scatter prop",
+        "ground_cover": "ground cover scatter prop",
+        "shrub": "shrub scatter prop",
+    }.get(asset_class, "environment prop")
+    raw_max_vertices = float(rule.get("suggested_max_vertices", 0) or 0)
+    if not math.isfinite(raw_max_vertices):
+        raw_max_vertices = 0.0
+    max_vertices = max(
+        96,
+        int(raw_max_vertices),
+    )
+    if max_vertices <= 96:
+        max_vertices = {
+            "tree_conifer": 1800,
+            "tree_boundary": 1600,
+            "rock_large": 900,
+            "rock_medium": 480,
+            "deadwood": 320,
+            "ground_cover": 180,
+            "shrub": 260,
+        }.get(asset_class, 220)
+    return {
+        "prompt": (
+            f"low poly {readable_name}, {season_label} {biome_label} biome, "
+            f"{usage_hint}, game ready environment asset"
+        ),
+        "asset_class": asset_class,
+        "suggested_max_vertices": max_vertices,
+        "preferred_source": "tripo_fallback",
+    }
+
+
 def _build_tripo_environment_manifest(
     biome_name: str,
     scatter_rules: list[dict[str, Any]],
@@ -923,13 +1015,26 @@ def _build_tripo_environment_manifest(
     manifest: list[dict[str, Any]] = []
     for rule in scatter_rules:
         asset_name = str(rule.get("asset", "")).strip()
+        if not asset_name:
+            continue
         prompt_info = _TRIPO_ENVIRONMENT_PROMPTS.get(asset_name)
         if prompt_info is None:
-            continue
+            prompt_info = _build_tripo_fallback_prompt_info(
+                asset_name,
+                biome_name,
+                resolved_season,
+                rule,
+            )
 
         asset_class = prompt_info["asset_class"]
         max_verts = int(prompt_info["suggested_max_vertices"])
         lod_distances = _LOD_DISTANCES.get(asset_class, [0.0, 15.0, 40.0, 80.0])
+        scatter_density = float(rule.get("density", 0.0))
+        if not math.isfinite(scatter_density):
+            scatter_density = 0.0
+        min_distance = float(rule.get("min_distance", 0.0))
+        if not math.isfinite(min_distance):
+            min_distance = 0.0
 
         # LOD mesh descriptors: vertex budget halves at each LOD level
         mesh_assets = []
@@ -945,21 +1050,21 @@ def _build_tripo_environment_manifest(
         manifest.append({
             "asset": asset_name,
             "asset_class": asset_class,
-            "preferred_source": "tripo",
+            "preferred_source": str(prompt_info.get("preferred_source", "tripo")),
             "prompt": prompt_info["prompt"],
             "biome": biome_name,
             "season": resolved_season,
             "suggested_max_vertices": max_verts,
-            "scatter_density": float(rule.get("density", 0.0)),
-            "min_distance": float(rule.get("min_distance", 0.0)),
-            "scale_range": list(rule.get("scale_range", [1.0, 1.0])),
+            "scatter_density": max(0.0, scatter_density),
+            "min_distance": max(0.0, min_distance),
+            "scale_range": _sanitize_scatter_scale_range(rule.get("scale_range", [1.0, 1.0])),
             # B+ additions
             "mesh_assets": mesh_assets,
             "material_slots": _MATERIAL_SLOTS.get(asset_class, ["albedo", "normal"]),
             "lod_distances": lod_distances,
             "lighting_hints": _LIGHTING.get(asset_class, {"category": "opaque_static", "shadow": "static"}),
             "collision_profile": _COLLISION.get(asset_class, "box"),
-            "scene_bounds": resolved_bounds,
+            "scene_bounds": dict(resolved_bounds),
         })
     return manifest
 
@@ -1149,13 +1254,22 @@ def _export_heightmap_raw(
     bytes
         16-bit unsigned little-endian binary data.
     """
-    hmap = heightmap.astype(np.float64).copy()
+    hmap = np.asarray(heightmap, dtype=np.float64)
+    if hmap.ndim != 2:
+        raise ValueError(f"heightmap must be a 2D array, got shape {hmap.shape}")
+    if hmap.size == 0:
+        raise ValueError("heightmap must not be empty")
+    if not np.isfinite(hmap).all():
+        raise ValueError("heightmap contains non-finite values")
+    hmap = hmap.copy()
 
     # Normalize to [0, 1]
     if value_range is not None:
         hmin, hmax = float(value_range[0]), float(value_range[1])
     else:
         hmin, hmax = float(hmap.min()), float(hmap.max())
+    if not np.isfinite((hmin, hmax)).all():
+        raise ValueError("value_range must contain finite bounds")
     if hmax - hmin > 1e-10:
         hmap = np.clip((hmap - hmin) / (hmax - hmin), 0.0, 1.0)
     else:
@@ -1165,9 +1279,9 @@ def _export_heightmap_raw(
         hmap = np.flipud(hmap)
 
     # Convert to uint16 (0-65535)
-    hmap_u16 = (hmap * 65535).astype(np.uint16)
+    hmap_u16 = np.rint(hmap * 65535.0).astype("<u2", copy=False)
 
-    return hmap_u16.tobytes()
+    return np.ascontiguousarray(hmap_u16).tobytes()
 
 
 def _export_splatmap_raw(
@@ -1178,16 +1292,20 @@ def _export_splatmap_raw(
     weights = np.asarray(splatmap, dtype=np.float64).copy()
     if weights.ndim != 3 or weights.shape[2] < 4:
         raise ValueError("splatmap must be a 3D array with at least 4 channels")
+    weights = np.nan_to_num(weights, nan=0.0, posinf=0.0, neginf=0.0)
 
-    rgba = weights[:, :, :4]
+    rgba = np.clip(weights[:, :, :4], 0.0, None)
     totals = rgba.sum(axis=2, keepdims=True)
-    rgba = np.divide(rgba, np.where(totals > 1e-9, totals, 1.0))
-    rgba = np.clip(rgba, 0.0, 1.0)
+    safe_totals = np.where(totals > 1e-9, totals, 1.0)
+    rgba = np.divide(rgba, safe_totals, out=np.zeros_like(rgba), where=safe_totals > 1e-9)
+    empty_pixels = totals[:, :, 0] <= 1e-9
+    if np.any(empty_pixels):
+        rgba[empty_pixels] = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
 
     if flip_vertical:
         rgba = np.flipud(rgba)
 
-    rgba_u8 = (rgba * 255).astype(np.uint8)
+    rgba_u8 = np.rint(np.clip(rgba, 0.0, 1.0) * 255.0).astype(np.uint8)
     return rgba_u8.tobytes()
 
 
@@ -1226,7 +1344,11 @@ def _export_world_tile_artifacts(
 def _write_json_manifest(path: str | Path, payload: dict[str, Any]) -> str:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    target.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+        newline="\n",
+    )
     return str(target)
 
 
@@ -1358,9 +1480,24 @@ def _resolve_water_path_points(
     rather than sending half-initialized tuples into downstream mesh
     generation (Gemini consensus finding).
     """
-    if path_points_raw and len(path_points_raw) >= 2:
+    if path_points_raw is None:
+        path_points_seq: list[Any] = []
+    else:
+        try:
+            path_points_seq = list(path_points_raw)
+        except TypeError as exc:
+            raise ValueError(
+                f"path_points_raw must be an iterable of 2D/3D points, got {type(path_points_raw).__name__}"
+            ) from exc
+
+    if path_points_seq:
+        if len(path_points_seq) < 2:
+            raise ValueError(
+                "path_points_raw must contain at least 2 points when provided; "
+                f"got {len(path_points_seq)}"
+            )
         result: list[tuple[float, float, float]] = []
-        for i, pt in enumerate(path_points_raw):
+        for i, pt in enumerate(path_points_seq):
             try:
                 pt_seq = list(pt)
             except TypeError as exc:
@@ -1379,6 +1516,14 @@ def _resolve_water_path_points(
                     f"path_points[{i}] must have 2 (x,y) or 3 (x,y,z) "
                     f"components, got {len(pt_seq)}: {pt!r}"
                 )
+            if not (
+                math.isfinite(x_val)
+                and math.isfinite(y_val)
+                and math.isfinite(z_val)
+            ):
+                raise ValueError(
+                    f"path_points[{i}] contains non-finite coordinates: {pt!r}"
+                )
             result.append((x_val, y_val, z_val))
         return result
 
@@ -1396,6 +1541,21 @@ def _smooth_river_path_points(
     enforce_monotonic_z: bool = False,
 ) -> list[tuple[float, float, float]]:
     """Resample a river centerline with spline interpolation."""
+    canonical_points: list[tuple[float, float, float]] = []
+    for x, y, z in path_points:
+        px = float(x)
+        py = float(y)
+        pz = float(z)
+        if not (math.isfinite(px) and math.isfinite(py) and math.isfinite(pz)):
+            continue
+        if canonical_points:
+            prev_x, prev_y, prev_z = canonical_points[-1]
+            if abs(px - prev_x) <= 1e-9 and abs(py - prev_y) <= 1e-9:
+                canonical_points[-1] = (prev_x, prev_y, min(prev_z, pz))
+                continue
+        canonical_points.append((px, py, pz))
+
+    path_points = canonical_points
     if len(path_points) < 3:
         return [(float(x), float(y), float(z)) for x, y, z in path_points]
 
@@ -1471,10 +1631,17 @@ def _smooth_river_path_points(
             elif smoothed[idx, 2] < smoothed[idx - 1, 2] - max_drop:
                 smoothed[idx, 2] = smoothed[idx - 1, 2] - max_drop
 
-    return [
-        (float(sample[0]), float(sample[1]), float(sample[2]))
-        for sample in smoothed
-    ]
+    deduped: list[tuple[float, float, float]] = []
+    for sample in smoothed:
+        point = (float(sample[0]), float(sample[1]), float(sample[2]))
+        if deduped:
+            prev_x, prev_y, prev_z = deduped[-1]
+            if abs(point[0] - prev_x) <= 1e-9 and abs(point[1] - prev_y) <= 1e-9:
+                deduped[-1] = (prev_x, prev_y, min(prev_z, point[2]))
+                continue
+        deduped.append(point)
+
+    return deduped
 
 
 def _estimate_tile_height_range(
@@ -2262,16 +2429,15 @@ def handle_generate_terrain_tile(params: dict) -> dict:
         "height_range": [height_range[0], height_range[1]],
         "export_dir": str(export_root),
     }
-    if export_splatmaps:
-        result.update(
-            _export_world_tile_artifacts(
-                export_dir=export_root,
-                tile_name=name,
-                heightmap=heightmap,
-                splatmap=splatmap,
-                height_range=height_range,
-            )
+    result.update(
+        _export_world_tile_artifacts(
+            export_dir=export_root,
+            tile_name=name,
+            heightmap=heightmap,
+            splatmap=splatmap if export_splatmaps else None,
+            height_range=height_range,
         )
+    )
 
     from .terrain_chunking import build_tile_seam_contract
 
@@ -2570,22 +2736,37 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         if value is None:
             return None
         if isinstance(value, BBox):
-            return value
-        if isinstance(value, dict):
-            return BBox(
-                min_x=float(value["min_x"]),
-                min_y=float(value["min_y"]),
-                max_x=float(value["max_x"]),
-                max_y=float(value["max_y"]),
+            bbox = value
+            coords = np.array([bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y], dtype=np.float64)
+        elif isinstance(value, dict):
+            coords = np.array(
+                [
+                    float(value["min_x"]),
+                    float(value["min_y"]),
+                    float(value["max_x"]),
+                    float(value["max_y"]),
+                ],
+                dtype=np.float64,
             )
-        if isinstance(value, (list, tuple)) and len(value) == 4:
-            return BBox(
-                min_x=float(value[0]),
-                min_y=float(value[1]),
-                max_x=float(value[2]),
-                max_y=float(value[3]),
+        elif isinstance(value, (list, tuple)) and len(value) == 4:
+            coords = np.array(
+                [float(value[0]), float(value[1]), float(value[2]), float(value[3])],
+                dtype=np.float64,
             )
-        raise ValueError(f"region bounds must be dict|list[4]|BBox, got {type(value)}")
+        else:
+            raise ValueError(f"region bounds must be dict|list[4]|BBox, got {type(value)}")
+        if not np.isfinite(coords).all():
+            raise ValueError("region bounds must contain only finite coordinates")
+        if coords[2] < coords[0] or coords[3] < coords[1]:
+            raise ValueError("region bounds must satisfy max >= min on both axes")
+        if not isinstance(value, BBox):
+            bbox = BBox(
+                min_x=float(coords[0]),
+                min_y=float(coords[1]),
+                max_x=float(coords[2]),
+                max_y=float(coords[3]),
+            )
+        return bbox
 
     region_bounds = _to_bbox(params.get("region_bounds")) or BBox(
         min_x=world_origin_x,
@@ -2935,8 +3116,10 @@ def handle_generate_waterfall(params: dict) -> dict:
         if isinstance(raw_value, (list, tuple)) and len(raw_value) >= 2:
             dx = float(raw_value[0])
             dy = float(raw_value[1])
-            if abs(dx) > 1e-6 or abs(dy) > 1e-6:
-                return dx, dy
+            if math.isfinite(dx) and math.isfinite(dy):
+                mag = math.hypot(dx, dy)
+                if mag > 1e-6:
+                    return dx / mag, dy / mag
         return 0.0, -1.0
 
     facing_direction: tuple[float, float] = _coerce_facing_direction(
@@ -3107,7 +3290,7 @@ def handle_generate_waterfall(params: dict) -> dict:
         float(rotation_raw[2]) if len(rotation_raw) >= 3 else float(params.get("rotation_z", 0.0)),
     )
     parent_name = params.get("parent_name")
-    parent_obj = bpy.data.objects.get(str(parent_name)) if parent_name else None
+    parent_obj = bpy.data.objects.get(str(parent_name)) if parent_name and _HAS_BPY else None
 
     obj = _create_mesh_object_from_spec(
         mesh_spec,
@@ -3883,14 +4066,25 @@ def _extract_road_network_centerline_points(network_result: dict[str, Any]) -> l
     """Return an ordered world-space centreline from a road-network result."""
     points: list[tuple[float, float, float]] = []
 
+    def _coerce_point(raw_point: Any) -> tuple[float, float, float] | None:
+        if not isinstance(raw_point, (list, tuple)) or len(raw_point) < 2:
+            return None
+        x = float(raw_point[0])
+        y = float(raw_point[1])
+        z = float(raw_point[2]) if len(raw_point) >= 3 else 0.0
+        if not math.isfinite(x) or not math.isfinite(y) or not math.isfinite(z):
+            return None
+        return (x, y, z)
+
     for route in network_result.get("routes", []) or []:
         raw_points = route.get("points") if isinstance(route, dict) else None
         if not raw_points:
             continue
         route_points = [
-            (float(pt[0]), float(pt[1]), float(pt[2]))
+            point
             for pt in raw_points
-            if len(pt) >= 3
+            for point in [_coerce_point(pt)]
+            if point is not None
         ]
         if not route_points:
             continue
@@ -3903,8 +4097,10 @@ def _extract_road_network_centerline_points(network_result: dict[str, Any]) -> l
         return points
 
     for raw_start, raw_end, *_rest in network_result.get("segments", []) or []:
-        start = (float(raw_start[0]), float(raw_start[1]), float(raw_start[2]))
-        end = (float(raw_end[0]), float(raw_end[1]), float(raw_end[2]))
+        start = _coerce_point(raw_start)
+        end = _coerce_point(raw_end)
+        if start is None or end is None:
+            continue
         if not points:
             points.append(start)
         elif not all(math.isclose(points[-1][axis], start[axis], abs_tol=1e-6) for axis in range(3)):
@@ -3966,7 +4162,7 @@ def _grade_road_path_in_world_space(
     snapshot = np.clip(transform.to_normalized(world_heightmap), 0.0, 1.0)
     result = snapshot.copy()
     rows, cols = result.shape
-    half_w = max(int(width) // 2, 0)
+    half_w = max(int(math.ceil(float(width) * 0.5)), 0)
 
     for r, c in path:
         if not (0 <= r < rows and 0 <= c < cols):
@@ -5080,6 +5276,12 @@ def handle_create_cave_entrance(params: dict) -> dict:
     overhang_factor = float(params.get("overhang_factor", 0.18))
     max_slope_deg = float(params.get("max_slope_deg", 70.0))
     terrain_name = params.get("terrain_name")
+    allowed_styles = {"natural", "carved"}
+
+    if style not in allowed_styles:
+        raise ValueError(
+            f"style must be one of {sorted(allowed_styles)}, got {style!r}"
+        )
 
     if not (0.0 <= overhang_factor <= 0.4):
         raise ValueError(
@@ -5091,12 +5293,29 @@ def handle_create_cave_entrance(params: dict) -> dict:
             f"width/height/depth must all be positive, got "
             f"width={width}, height={height}, depth={depth}"
         )
+    if not math.isfinite(max_slope_deg) or max_slope_deg < 0.0:
+        raise ValueError(
+            f"max_slope_deg must be a finite non-negative value, got {max_slope_deg}"
+        )
+
+    try:
+        location_seq = list(location_raw)
+    except TypeError as exc:
+        raise ValueError(
+            f"location must be an iterable with 2 or 3 coordinates, got {location_raw!r}"
+        ) from exc
+    if len(location_seq) < 2:
+        raise ValueError(
+            f"location must have at least 2 coordinates, got {location_raw!r}"
+        )
 
     location = (
-        float(location_raw[0]),
-        float(location_raw[1]),
-        float(location_raw[2]) if len(location_raw) >= 3 else 0.0,
+        float(location_seq[0]),
+        float(location_seq[1]),
+        float(location_seq[2]) if len(location_seq) >= 3 else 0.0,
     )
+    if not all(math.isfinite(coord) for coord in location):
+        raise ValueError(f"location contains non-finite coordinates: {location_raw!r}")
 
     # ----------------------------------------------------------------
     # Protected zone enforcement — block placement before any bpy work.
@@ -5143,6 +5362,10 @@ def handle_create_cave_entrance(params: dict) -> dict:
     valley_direction_rad = params.get("valley_direction_rad")
     if valley_direction_rad is not None:
         valley_direction_rad = float(valley_direction_rad)
+        if not math.isfinite(valley_direction_rad):
+            raise ValueError(
+                f"valley_direction_rad must be finite when provided, got {valley_direction_rad}"
+            )
 
     if terrain_name and _HAS_BPY:
         terrain_obj = bpy.data.objects.get(str(terrain_name))
@@ -5189,11 +5412,15 @@ def handle_create_cave_entrance(params: dict) -> dict:
     rotation_z_override = params.get("rotation_z")
     if rotation_z_override is not None:
         rotation_z = float(rotation_z_override)
+        if not math.isfinite(rotation_z):
+            raise ValueError(
+                f"rotation_z must be finite when provided, got {rotation_z}"
+            )
     else:
         # entrance_yaw = valley_direction + π (face down-valley)
         rotation_z = (valley_direction_rad + math.pi) % (2.0 * math.pi)
 
-    parent_obj = bpy.data.objects.get(str(parent_name)) if parent_name else None
+    parent_obj = bpy.data.objects.get(str(parent_name)) if parent_name and _HAS_BPY else None
     spec = generate_cave_entrance_mesh(
         width=width,
         height=height,
@@ -5954,17 +6181,26 @@ def _resolve_river_bank_contact(
     if terrain_height_sampler is None:
         return float(default_half_width), float(surface_z)
 
+    def _safe_sample(sample_x: float, sample_y: float) -> float | None:
+        try:
+            sampled = float(terrain_height_sampler(sample_x, sample_y))
+        except Exception:
+            return None
+        if not math.isfinite(sampled):
+            return None
+        return sampled
+
     target_clearance = 0.035
     max_dist = max(float(default_half_width) * 1.55, 1.25)
     steps = 16
 
     prev_dist = 0.0
-    prev_height = float(
-        terrain_height_sampler(
-            center_x + normal_x * side_sign * prev_dist,
-            center_y + normal_y * side_sign * prev_dist,
-        )
+    prev_height = _safe_sample(
+        center_x + normal_x * side_sign * prev_dist,
+        center_y + normal_y * side_sign * prev_dist,
     )
+    if prev_height is None:
+        return float(default_half_width), float(surface_z)
     prev_delta = prev_height - float(surface_z)
     best_dist = prev_dist
     best_height = prev_height
@@ -5974,7 +6210,9 @@ def _resolve_river_bank_contact(
         dist = max_dist * (step / steps)
         sample_x = center_x + normal_x * side_sign * dist
         sample_y = center_y + normal_y * side_sign * dist
-        terrain_z = float(terrain_height_sampler(sample_x, sample_y))
+        terrain_z = _safe_sample(sample_x, sample_y)
+        if terrain_z is None:
+            continue
         delta = terrain_z - float(surface_z)
         score = abs(delta - target_clearance)
         if score < best_score:
@@ -7415,6 +7653,11 @@ def handle_export_heightmap(params: dict) -> dict:
             x_indices = np.round(np.linspace(0, cols - 1, target)).astype(int)
             y_indices = np.round(np.linspace(0, rows - 1, target)).astype(int)
             heightmap = heightmap[np.ix_(y_indices, x_indices)]
+    if export_height_range is None:
+        export_height_range = (
+            float(heightmap.min()) if heightmap.size else 0.0,
+            float(heightmap.max()) if heightmap.size else 0.0,
+        )
 
     # Export
     raw_bytes = _export_heightmap_raw(
@@ -7426,15 +7669,31 @@ def handle_export_heightmap(params: dict) -> dict:
     out_path = Path(filepath)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(raw_bytes)
+    metadata_path = _write_json_manifest(
+        str(out_path) + ".json",
+        {
+            "filepath": str(out_path),
+            "width": int(heightmap.shape[1]),
+            "height": int(heightmap.shape[0]),
+            "bit_depth": 16,
+            "byte_order": "little-endian",
+            "flip_vertical": bool(flip_vertical),
+            "height_min_m": float(export_height_range[0]),
+            "height_max_m": float(export_height_range[1]),
+        },
+    )
 
     rows, cols = heightmap.shape
 
     return {
         "filepath": str(out_path),
+        "metadata_path": metadata_path,
         "width": cols,
         "height": rows,
         "bit_depth": 16,
         "byte_order": "little-endian",
+        "height_min_m": float(export_height_range[0]),
+        "height_max_m": float(export_height_range[1]),
     }
 
 
@@ -7563,10 +7822,10 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
     # --- 5. Scatter vegetation per biome (if enabled) ---
     vegetation_total = 0
     if scatter_veg:
-        from .vegetation_system import scatter_biome_vegetation
+        from .environment_scatter import handle_scatter_vegetation
         for biome_name in spec.biome_names:
             try:
-                veg_result = scatter_biome_vegetation({
+                veg_result = handle_scatter_vegetation({
                     "terrain_name": name,
                     "biome_name": biome_name,
                     "min_distance": params.get("min_veg_distance", 4.0),

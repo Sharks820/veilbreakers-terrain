@@ -108,6 +108,31 @@ class TestScatterVegetationLogic:
 
         assert sampled == pytest.approx(8.0)
 
+    def test_world_height_sampling_applies_height_offset(self):
+        from blender_addon.handlers.environment_scatter import _sample_heightmap_world
+
+        heightmap = np.array(
+            [
+                [0.0, 0.5],
+                [0.5, 1.0],
+            ],
+            dtype=np.float64,
+        )
+
+        sampled = _sample_heightmap_world(
+            heightmap,
+            height_scale=20.0,
+            height_offset=-5.0,
+            world_x=0.0,
+            world_y=0.0,
+            terrain_width=100.0,
+            terrain_height=100.0,
+            terrain_origin_x=0.0,
+            terrain_origin_y=0.0,
+        )
+
+        assert sampled == pytest.approx(5.0)
+
     def test_terrain_cell_size_from_extent_uses_world_spacing(self):
         from blender_addon.handlers.environment_scatter import _terrain_cell_size_from_extent
 
@@ -642,6 +667,67 @@ class TestScatterChannelConsumers:
         for rv in [0.01, 0.5, 0.99]:
             assert _density_reject(dm, 1.0, 1.0, rv)
 
+    def test_sample_scalar_map_uses_bilinear_sampling(self):
+        from blender_addon.handlers.environment_scatter import _sample_scalar_map
+
+        arr = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+        sampled = _sample_scalar_map(arr, x_local=5.0, y_local=5.0, width=10.0, height=10.0)
+        assert sampled == pytest.approx(1.5, abs=1e-6)
+
+    def test_resolve_scatter_context_maps_combines_water_sources(self):
+        from types import SimpleNamespace
+
+        from blender_addon.handlers.environment_scatter import _resolve_scatter_context_maps
+
+        stack = SimpleNamespace(
+            wetness=np.array([[0.2, 0.1], [0.0, 0.0]], dtype=np.float32),
+            water_surface=np.array([[0.0, 0.8], [0.0, 0.0]], dtype=np.float32),
+            flow_accumulation=np.array([[0.0, 0.0], [0.0, 20.0]], dtype=np.float32),
+            disturbance_patch_mask=None,
+            erosion_amount=None,
+            erosion_delta=None,
+            deposition_amount=None,
+        )
+
+        water_map, disturbance_map = _resolve_scatter_context_maps(
+            stack,
+            np.zeros((2, 2), dtype=np.float32),
+            moisture_map=None,
+        )
+
+        assert disturbance_map is None
+        assert water_map is not None
+        assert water_map[0, 0] == pytest.approx(0.2, abs=1e-6)
+        assert water_map[0, 1] == pytest.approx(0.8, abs=1e-6)
+        assert water_map[1, 1] == pytest.approx(1.0, abs=1e-6)
+
+    def test_resolve_scatter_context_maps_combines_disturbance_layers(self):
+        from types import SimpleNamespace
+
+        from blender_addon.handlers.environment_scatter import _resolve_scatter_context_maps
+
+        stack = SimpleNamespace(
+            wetness=None,
+            water_surface=None,
+            flow_accumulation=None,
+            disturbance_patch_mask=np.array([[0.0, 0.0], [0.6, 0.0]], dtype=np.float32),
+            erosion_amount=np.array([[0.0, 0.3], [0.0, 0.0]], dtype=np.float32),
+            erosion_delta=None,
+            deposition_amount=np.array([[0.0, 0.0], [0.0, 0.9]], dtype=np.float32),
+        )
+
+        water_map, disturbance_map = _resolve_scatter_context_maps(
+            stack,
+            np.zeros((2, 2), dtype=np.float32),
+            moisture_map=None,
+        )
+
+        assert water_map is None
+        assert disturbance_map is not None
+        assert disturbance_map[1, 0] > 0.0
+        assert disturbance_map[0, 1] > 0.0
+        assert disturbance_map[1, 1] == pytest.approx(1.0, abs=1e-6)
+
     # -- hero_exclusion (Fix 9.4) --
 
     def test_hero_exclusion_all_ones_excludes_all(self):
@@ -722,6 +808,25 @@ class TestWriteTreeInstancePoints:
         arr = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)  # (1, 3) not (N, 5)
         _write_tree_instance_points(arr, stack)
         assert stack.tree_instance_points is None
+
+    def test_filters_non_finite_rows_and_normalizes_prototype_ids(self):
+        from types import SimpleNamespace
+        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+
+        stack = SimpleNamespace(tree_instance_points=None)
+        arr = np.array(
+            [
+                [1.0, 2.0, 3.0, 0.5, 1.8],
+                [4.0, np.nan, 6.0, 0.5, 2.0],
+                [7.0, 8.0, 9.0, 1.5, -3.0],
+            ],
+            dtype=np.float32,
+        )
+
+        _write_tree_instance_points(arr, stack)
+
+        assert stack.tree_instance_points.shape == (2, 5)
+        np.testing.assert_array_equal(stack.tree_instance_points[:, 4], np.array([2.0, 0.0], dtype=np.float32))
 
 
 # ---------------------------------------------------------------------------

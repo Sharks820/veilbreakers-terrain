@@ -824,6 +824,18 @@ def _sample_heightmap_bilinear(heightmap, terrain_bounds, wx, wy):
 
     gx = nx * (cols - 1)
     gy = ny * (rows - 1)
+    if rows == 1 and cols == 1:
+        return heightmap[0][0]
+    if rows == 1:
+        c0 = max(0, min(cols - 2, int(gx)))
+        c1 = c0 + 1
+        fx = gx - c0
+        return heightmap[0][c0] * (1.0 - fx) + heightmap[0][c1] * fx
+    if cols == 1:
+        r0 = max(0, min(rows - 2, int(gy)))
+        r1 = r0 + 1
+        fy = gy - r0
+        return heightmap[r0][0] * (1.0 - fy) + heightmap[r1][0] * fy
     c0 = max(0, min(cols - 2, int(gx)))
     r0 = max(0, min(rows - 2, int(gy)))
     c1 = c0 + 1
@@ -913,20 +925,35 @@ def _detect_bridges(
 _TRAVEL_WIDTH_M = 6.0
 _SHOULDER_WIDTH_M = 1.5
 _CROWN_HEIGHT_M = 0.3
+_SHOULDER_DROP_M = 0.18
 _ROAD_BED_WIDTH_M = _TRAVEL_WIDTH_M + 2.0 * _SHOULDER_WIDTH_M  # 9.0 m
 
 
-def _road_cross_section_z(offset: float, crown: float = _CROWN_HEIGHT_M) -> float:
+def _road_cross_section_z(
+    offset: float,
+    width: float = _TRAVEL_WIDTH_M,
+    crown: float = _CROWN_HEIGHT_M,
+    shoulder_width: float = _SHOULDER_WIDTH_M,
+    shoulder_drop: float = _SHOULDER_DROP_M,
+) -> float:
     """Return the parabolic crown Z offset at lateral *offset* from centre line.
 
-    Parabolic crown gives 2% cross-slope for water drainage, matching AASHTO
-    standard road crown geometry.
+    The travelled lane uses a parabolic crown for drainage. Shoulders taper
+    gently below the lane edge instead of ending flush with it, which avoids
+    a hard shelf where the road blends back into terrain.
     """
-    hw = _TRAVEL_WIDTH_M / 2.0
+    hw = max(0.0, float(width) / 2.0)
     if hw <= 0.0:
         return 0.0
-    t = min(1.0, abs(offset) / hw)
-    return crown * (1.0 - t * t)
+    abs_offset = abs(float(offset))
+    if abs_offset <= hw:
+        t = min(1.0, abs_offset / hw)
+        return crown * (1.0 - t * t)
+    if shoulder_width <= 1e-6:
+        return 0.0
+    t = min(1.0, (abs_offset - hw) / float(shoulder_width))
+    smooth_t = t * t * (3.0 - 2.0 * t)
+    return -float(shoulder_drop) * smooth_t
 
 
 def _road_segment_mesh_spec(
@@ -979,7 +1006,7 @@ def _road_segment_mesh_spec(
         for off in cross_offsets:
             vx = cx + off * px
             vy = cy + off * py
-            crown_dz = _road_cross_section_z(off)
+            crown_dz = _road_cross_section_z(off, width=width)
             vz = cz + crown_dz
             vertices.append((vx, vy, vz))
 
@@ -1003,8 +1030,10 @@ def _road_segment_mesh_spec(
             "travel_width": width,
             "shoulder_width": _SHOULDER_WIDTH_M,
             "crown_height": _CROWN_HEIGHT_M,
+            "shoulder_drop": _SHOULDER_DROP_M,
             "total_width": shoulder_hw * 2,
         },
+        "material_hint": "terrain_road_compacted",
     }
 
 
@@ -1014,31 +1043,39 @@ def _road_segment_mesh_spec(
 
 
 def _bridge_mesh_spec(bridge: dict) -> dict:
-    """Generate a rectangular deck mesh spec for a bridge."""
+    """Generate a crowned bridge deck mesh spec aligned to the road profile."""
     deck_start = bridge["deck_start"]
     deck_end = bridge["deck_end"]
     width = bridge.get("width", _TRAVEL_WIDTH_M)
-    hw = width / 2.0
-
     sx, sy, sz = deck_start
     ex, ey, ez = deck_end
-
-    seg_len_xy = math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2)
-    if seg_len_xy > 0.0:
-        px = -(ey - sy) / seg_len_xy
-        py = (ex - sx) / seg_len_xy
-    else:
-        px, py = 1.0, 0.0
-    v0 = (sx - px * hw, sy - py * hw, sz)
-    v1 = (sx + px * hw, sy + py * hw, sz)
-    v2 = (ex + px * hw, ey + py * hw, ez)
-    v3 = (ex - px * hw, ey - py * hw, ez)
+    seg_len = math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2 + (ez - sz) ** 2)
+    subdivisions = max(2, min(16, int(round(seg_len / max(width * 0.8, 2.0)))))
+    deck_spec = _road_segment_mesh_spec(
+        deck_start,
+        deck_end,
+        width=width,
+        subdivisions=subdivisions,
+    )
+    mid_t = 0.5
+    support_points = [
+        deck_start,
+        (
+            sx + (ex - sx) * mid_t,
+            sy + (ey - sy) * mid_t,
+            sz + (ez - sz) * mid_t,
+        ),
+        deck_end,
+    ]
 
     return {
         "type": "terrain_bridge",
-        "vertices": [v0, v1, v2, v3],
-        "faces": [[0, 1, 2, 3]],
+        "vertices": deck_spec["vertices"],
+        "faces": deck_spec["faces"],
         "road_type": bridge.get("road_type", "main"),
+        "cross_section": deck_spec.get("cross_section", {}),
+        "support_points": support_points,
+        "material_hint": "bridge_deck",
     }
 
 

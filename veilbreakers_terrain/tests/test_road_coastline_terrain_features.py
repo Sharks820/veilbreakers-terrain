@@ -327,6 +327,14 @@ class TestComputeRoadNetwork:
 class TestRoadMeshSpec:
     """Test individual road segment mesh generation."""
 
+    def test_cross_section_respects_requested_width_and_shoulder_taper(self):
+        from blender_addon.handlers.road_network import _road_cross_section_z
+
+        assert _road_cross_section_z(0.0, width=4.0) == pytest.approx(0.3)
+        assert _road_cross_section_z(2.0, width=4.0) == pytest.approx(0.0)
+        assert _road_cross_section_z(2.0, width=8.0) > 0.0
+        assert _road_cross_section_z(3.2, width=4.0) < 0.0
+
     def test_mesh_spec_structure(self):
         from blender_addon.handlers.road_network import _road_segment_mesh_spec
 
@@ -351,6 +359,49 @@ class TestRoadMeshSpec:
         v1 = spec["vertices"][1]
         y_diff = abs(v0[1] - v1[1])
         assert y_diff == pytest.approx(4.0)
+
+    def test_mesh_spec_shoulder_vertices_drop_below_lane_edges(self):
+        from blender_addon.handlers.road_network import _road_segment_mesh_spec
+
+        spec = _road_segment_mesh_spec((0, 0, 0), (10, 0, 0), width=4.0)
+        left_edge = spec["vertices"][0][2]
+        left_shoulder = spec["vertices"][2][2]
+        crown = spec["vertices"][4][2]
+
+        assert crown > left_edge
+        assert left_shoulder < left_edge
+
+    def test_bilinear_sampler_handles_single_row_and_single_column_heightmaps(self):
+        from blender_addon.handlers.road_network import _sample_heightmap_bilinear
+
+        row_value = _sample_heightmap_bilinear([[1.0, 3.0]], (0.0, 0.0, 10.0, 1.0), 5.0, 0.0)
+        col_value = _sample_heightmap_bilinear([[1.0], [3.0]], (0.0, 0.0, 1.0, 10.0), 0.0, 5.0)
+
+        assert row_value == pytest.approx(2.0)
+        assert col_value == pytest.approx(2.0)
+
+
+class TestBridgeMeshSpec:
+    def test_bridge_mesh_spec_uses_crowned_road_profile(self):
+        from blender_addon.handlers.road_network import _bridge_mesh_spec
+
+        spec = _bridge_mesh_spec(
+            {
+                "deck_start": (0.0, 0.0, 4.0),
+                "deck_end": (12.0, 0.0, 4.0),
+                "width": 4.0,
+                "road_type": "main",
+            }
+        )
+
+        assert spec["type"] == "terrain_bridge"
+        assert spec["cross_section"]["travel_width"] == pytest.approx(4.0)
+        assert len(spec["vertices"]) > 4
+        assert len(spec["faces"]) > 1
+        assert len(spec["support_points"]) == 3
+        crown_z = spec["vertices"][4][2]
+        lane_edge_z = spec["vertices"][0][2]
+        assert crown_z > lane_edge_z
 
 
 # ===================================================================

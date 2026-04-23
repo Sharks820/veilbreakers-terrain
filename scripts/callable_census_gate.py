@@ -17,17 +17,16 @@ Exit codes:
 
 from __future__ import annotations
 
-import ast
 import csv
 import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-HANDLERS_DIR = REPO_ROOT / "veilbreakers_terrain" / "handlers"
-CSV_PATH = REPO_ROOT / "docs" / "aaa-audit" / "GRADES_VERIFIED.csv"
+from grade_audit_shared import collect_callables
+
+CSV_PATH = Path(__file__).resolve().parent.parent / "docs" / "aaa-audit" / "GRADES_VERIFIED.csv"
 LOCK_PATH = Path(__file__).resolve().parent / "callable_census_gate.lock"
 
 
@@ -39,6 +38,7 @@ LOCK_PATH = Path(__file__).resolve().parent / "callable_census_gate.lock"
 class CallableEntry:
     filename: str
     func_name: str
+    qualified_name: str
     lineno: int
 
 
@@ -63,40 +63,20 @@ class CensusResult:
 # Parsing
 # ---------------------------------------------------------------------------
 
-def _extract_callables(path: Path) -> List[CallableEntry]:
-    """Return every function/method definition in a Python file."""
-    try:
-        source = path.read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source, filename=str(path))
-    except SyntaxError as exc:
-        print(f"  SYNTAX ERROR in {path.name}: {exc}", file=sys.stderr)
-        return []
-    entries: List[CallableEntry] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("__") and node.name.endswith("__"):
-                continue
-            entries.append(CallableEntry(
-                filename=path.name,
-                func_name=node.name,
-                lineno=node.lineno,
-            ))
-    return entries
-
-
 def _load_graded_set() -> Set[Tuple[str, str]]:
-    """Return (filename, func_name) pairs that appear in GRADES_VERIFIED.csv."""
+    """Return grade coverage keys with qualified and simple-name support."""
     graded: Set[Tuple[str, str]] = set()
     if not CSV_PATH.exists():
         print(f"WARNING: GRADES_VERIFIED.csv not found at {CSV_PATH}", file=sys.stderr)
         return graded
     with CSV_PATH.open(newline="", encoding="utf-8-sig") as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            fn = (row.get("File") or "").strip()
-            func = (row.get("Function") or "").strip()
-            if fn and func:
-                graded.add((fn, func))
+        for row in csv.DictReader(fh):
+            file_name = (row.get("File") or "").strip()
+            function_name = (row.get("Function") or "").strip()
+            if not file_name or not function_name:
+                continue
+            graded.add((file_name, function_name))
+            graded.add((file_name, function_name.split(".")[-1]))
     return graded
 
 
@@ -106,16 +86,19 @@ def _load_graded_set() -> Set[Tuple[str, str]]:
 
 def run_census() -> CensusResult:
     graded = _load_graded_set()
-    all_callables: List[CallableEntry] = []
-
-    for py_file in sorted(HANDLERS_DIR.glob("*.py")):
-        if py_file.name == "__init__.py" or "__pycache__" in str(py_file):
-            continue
-        all_callables.extend(_extract_callables(py_file))
+    all_callables = [
+        CallableEntry(
+            filename=callable_def.file,
+            func_name=callable_def.simple_name,
+            qualified_name=callable_def.qualified_name,
+            lineno=callable_def.lineno,
+        )
+        for callable_def in collect_callables(include_init=False)
+    ]
 
     uncovered = [
         e for e in all_callables
-        if (e.filename, e.func_name) not in graded
+        if (e.filename, e.qualified_name) not in graded and (e.filename, e.func_name) not in graded
     ]
 
     return CensusResult(
