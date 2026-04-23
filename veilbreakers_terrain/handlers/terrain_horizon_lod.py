@@ -100,6 +100,32 @@ def compute_horizon_lod(
 # ---------------------------------------------------------------------------
 
 
+def _sample_height_bilinear(
+    height: np.ndarray,
+    row_f: np.ndarray,
+    col_f: np.ndarray,
+) -> np.ndarray:
+    """Sample the heightfield at fractional grid coordinates."""
+    rows, cols = height.shape
+    row0 = np.floor(row_f).astype(np.int32)
+    col0 = np.floor(col_f).astype(np.int32)
+    row0 = np.clip(row0, 0, rows - 1)
+    col0 = np.clip(col0, 0, cols - 1)
+    row1 = np.clip(row0 + 1, 0, rows - 1)
+    col1 = np.clip(col0 + 1, 0, cols - 1)
+    tr = row_f - row0
+    tc = col_f - col0
+
+    h00 = height[row0, col0]
+    h01 = height[row0, col1]
+    h10 = height[row1, col0]
+    h11 = height[row1, col1]
+
+    top = h00 * (1.0 - tc) + h01 * tc
+    bottom = h10 * (1.0 - tc) + h11 * tc
+    return top * (1.0 - tr) + bottom * tr
+
+
 def build_horizon_skybox_mask(
     stack: TerrainMaskStack,
     vantage_pos: Optional[Tuple[float, float, float]] = None,
@@ -115,17 +141,13 @@ def build_horizon_skybox_mask(
 
     Algorithm
     ---------
-    Analytical approach (vectorised, no per-ray loop):
+    Ray-marched horizon scan:
 
-    1.  Compute world-space (dx, dy, dz) from every grid cell to the
-        vantage, where dz = h[cell] - vantage_z.
-    2.  For each cell, compute:
-          azimuth  = atan2(dy, dx)            in [-pi, pi]
-          elev     = atan2(dz, horiz_dist)    in [-pi/2, pi/2]
-    3.  Bin every cell into the nearest azimuth slot (0 … ray_count-1).
-    4.  For each slot, take the maximum elevation angle seen (terrain
-        silhouette is the highest point that blocks the sky).
-    5.  Cells at the vantage position (dist ~ 0) are excluded.
+    1.  For each azimuth sample, march outward from the vantage in fixed
+        world-space increments.
+    2.  Bilinearly sample the terrain height at each step on that ray.
+    3.  Compute the elevation angle from the vantage to the sampled point.
+    4.  Keep the maximum elevation angle reached along that ray.
 
     The result is a ``ray_count``-element float32 array of elevation angles
     in radians, one per azimuth degree bin.  Negative values mean the
@@ -169,38 +191,43 @@ def build_horizon_skybox_mask(
     else:
         vx, vy, vz = float(vantage_pos[0]), float(vantage_pos[1]), float(vantage_pos[2])
 
-    # World-space coordinates of every cell centre (vectorised meshgrid).
-    js = np.arange(cols, dtype=np.float64)
-    is_ = np.arange(rows, dtype=np.float64)
-    wx = ox + (js + 0.5) * cell          # shape (cols,)
-    wy = oy + (is_ + 0.5) * cell         # shape (rows,)
-    gx, gy = np.meshgrid(wx, wy)         # both (rows, cols)
-
-    dx = gx - vx    # east component
-    dy = gy - vy    # north component
-    dz = h - vz     # vertical component
-
-    horiz_dist = np.sqrt(dx * dx + dy * dy)
-
-    # Exclude the vantage cell itself (horiz_dist ~ 0 produces spurious angles).
-    valid = horiz_dist >= (cell * 0.5)
-
-    # Elevation angle to each cell (radians).
-    elev = np.arctan2(dz, np.where(valid, horiz_dist, 1.0))
-
-    # Azimuth angle to each cell: atan2(dy, dx) in [-pi, pi].
-    # Map to bin index in [0, ray_count).
-    azimuth = np.arctan2(dy, dx)
-    bins = ((azimuth + np.pi) / (2.0 * np.pi) * ray_count).astype(np.int32)
-    bins = np.clip(bins, 0, ray_count - 1)
-
-    # Initialise horizon at -pi/2 (looking straight down = no terrain visible).
     profile = np.full((ray_count,), -np.pi * 0.5, dtype=np.float32)
+    step = max(cell * 0.5, 1e-3)
+    corners = np.array(
+        [
+            (ox, oy),
+            (ox + cols * cell, oy),
+            (ox, oy + rows * cell),
+            (ox + cols * cell, oy + rows * cell),
+        ],
+        dtype=np.float64,
+    )
+    max_distance = float(
+        np.sqrt((corners[:, 0] - vx) ** 2 + (corners[:, 1] - vy) ** 2).max()
+    ) + step
+    distances = np.arange(step, max_distance + step, step, dtype=np.float64)
+    if distances.size == 0:
+        return profile
 
-    # Per-bin maximum elevation via np.maximum.at (unbuffered scatter-max).
-    flat_bins = bins[valid].ravel()
-    flat_elev = elev[valid].ravel().astype(np.float32)
-    np.maximum.at(profile, flat_bins, flat_elev)
+    for idx in range(ray_count):
+        angle = (2.0 * np.pi * idx) / ray_count
+        xs = vx + np.cos(angle) * distances
+        ys = vy + np.sin(angle) * distances
+        col_f = (xs - ox) / cell - 0.5
+        row_f = (ys - oy) / cell - 0.5
+        valid = (
+            (col_f >= 0.0)
+            & (col_f <= cols - 1)
+            & (row_f >= 0.0)
+            & (row_f <= rows - 1)
+        )
+        if not np.any(valid):
+            continue
+
+        sample_heights = _sample_height_bilinear(h, row_f[valid], col_f[valid])
+        elev = np.arctan2(sample_heights - vz, distances[valid])
+        if elev.size:
+            profile[idx] = np.float32(np.max(elev))
 
     return profile
 

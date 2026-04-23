@@ -135,6 +135,30 @@ def test_build_horizon_skybox_mask_higher_vantage_lowers_horizon(stack):
     assert float(high.mean()) < float(low.mean())
 
 
+def test_build_horizon_skybox_mask_ignores_off_axis_peaks():
+    from blender_addon.handlers.terrain_horizon_lod import build_horizon_skybox_mask
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    height = np.zeros((9, 9), dtype=np.float64)
+    height[4, 6] = 10.0
+    height[2, 8] = 50.0
+    stack = TerrainMaskStack(
+        tile_size=8,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+
+    profile = build_horizon_skybox_mask(stack, (4.5, 4.5, 0.0), ray_count=4)
+    expected_east = math.atan2(10.0, 2.0)
+
+    assert profile.shape == (4,)
+    assert profile[0] == pytest.approx(expected_east, abs=0.08)
+
+
 def test_pass_horizon_lod_populates_lod_bias(state):
     from blender_addon.handlers.terrain_horizon_lod import pass_horizon_lod
 
