@@ -683,6 +683,80 @@ def _road_profile_params(road_type: str) -> dict:
     return profiles.get(road_type, profiles["path"])
 
 
+def _resolve_road_solver_bounds(
+    hmap: np.ndarray,
+    intent: TerrainIntentState,
+    cell_size: float,
+) -> tuple[float, float, float, float]:
+    """Resolve world-space solver bounds for the local road preview grid.
+
+    The twelve-step path may operate on a downsampled preview/world subset
+    rather than the full intent extent. Build bounds from the actual grid shape
+    so routing preserves the requested metre-per-cell scale.
+    """
+    rows, cols = hmap.shape
+    base_min_x = float(getattr(intent.region_bounds, "min_x", 0.0))
+    base_min_y = float(getattr(intent.region_bounds, "min_y", 0.0))
+    cell = float(cell_size) if math.isfinite(cell_size) and cell_size > 0.0 else 1.0
+    return (
+        base_min_x,
+        base_min_y,
+        base_min_x + cols * cell,
+        base_min_y + rows * cell,
+    )
+
+
+def _grid_cell_to_world_center(
+    row: int,
+    col: int,
+    terrain_bounds: tuple[float, float, float, float],
+    cell_size: float,
+    heightmap: np.ndarray,
+) -> tuple[float, float, float]:
+    """Convert one grid cell index into a world-space cell-center waypoint."""
+    min_x, min_y, _, _ = terrain_bounds
+    rows, cols = heightmap.shape
+    r = max(0, min(rows - 1, int(row)))
+    c = max(0, min(cols - 1, int(col)))
+    cell = float(cell_size) if math.isfinite(cell_size) and cell_size > 0.0 else 1.0
+    return (
+        min_x + (c + 0.5) * cell,
+        min_y + (r + 0.5) * cell,
+        float(heightmap[r, c]),
+    )
+
+
+def _world_path_to_grid_cells(
+    world_path: list[tuple[float, float, float]],
+    terrain_bounds: tuple[float, float, float, float],
+    cell_size: float,
+    rows: int,
+    cols: int,
+) -> list[tuple[int, int]]:
+    """Project world-space waypoints back onto the local carve grid."""
+    if not world_path:
+        return []
+
+    min_x, min_y, _, _ = terrain_bounds
+    cell = float(cell_size) if math.isfinite(cell_size) and cell_size > 0.0 else 1.0
+    snapped: list[tuple[int, int]] = []
+    for point in world_path:
+        if len(point) < 2:
+            continue
+        wx = float(point[0])
+        wy = float(point[1])
+        if not (math.isfinite(wx) and math.isfinite(wy)):
+            continue
+        row = int(round((wy - min_y) / cell - 0.5))
+        col = int(round((wx - min_x) / cell - 0.5))
+        row = max(0, min(rows - 1, row))
+        col = max(0, min(cols - 1, col))
+        cell_point = (row, col)
+        if not snapped or snapped[-1] != cell_point:
+            snapped.append(cell_point)
+    return snapped
+
+
 def _generate_road_mesh_specs(
     world_hmap: np.ndarray,
     intent: TerrainIntentState,
@@ -706,7 +780,8 @@ def _generate_road_mesh_specs(
     If no waypoints are configured on the intent the function returns an empty
     list, the original heightmap, and zero-filled mask/sdf arrays.
     """
-    from ._terrain_noise import _astar, smooth_road_path
+    from ._terrain_noise import smooth_road_path
+    from .road_network import _astar_24dir
 
     rows, cols = world_hmap.shape
     _empty_mask = np.zeros((rows, cols), dtype=np.uint8)
@@ -747,16 +822,30 @@ def _generate_road_mesh_specs(
 
     # Build terrain cost map
     cost_map = _build_road_cost_map(world_hmap, rock_hardness, water_surface)
+    terrain_bounds = _resolve_road_solver_bounds(world_hmap, intent, cell_size)
 
-    # Run _astar for each waypoint pair then concatenate
+    # Run 24-dir world-space A* for each waypoint pair then convert back to cells.
     full_raw_path: List[Tuple[int, int]] = []
     for i in range(len(waypoints) - 1):
-        segment = _astar(
+        start_world = _grid_cell_to_world_center(
+            waypoints[i][0], waypoints[i][1], terrain_bounds, cell_size, world_hmap
+        )
+        end_world = _grid_cell_to_world_center(
+            waypoints[i + 1][0],
+            waypoints[i + 1][1],
+            terrain_bounds,
+            cell_size,
             world_hmap,
-            waypoints[i],
-            waypoints[i + 1],
+        )
+        segment_world = _astar_24dir(
+            world_hmap,
+            terrain_bounds,
+            start_world,
+            end_world,
             cost_map=cost_map if cost_map.any() else None,
-            cell_size=cell_size,
+        )
+        segment = _world_path_to_grid_cells(
+            segment_world, terrain_bounds, cell_size, rows, cols
         )
         if full_raw_path and segment:
             full_raw_path.extend(segment[1:])

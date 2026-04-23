@@ -188,6 +188,28 @@ class TestPipelineUnification:
         np.testing.assert_array_equal(captured["cost_map"], cost_map)
         assert carved.shape == hmap.shape
 
+    def test_twelve_step_road_mesh_specs_use_24dir_world_solver(self, monkeypatch):
+        from veilbreakers_terrain.handlers import road_network as road_mod
+        from veilbreakers_terrain.handlers.terrain_twelve_step import _generate_road_mesh_specs
+
+        captured: dict[str, object] = {}
+
+        def _fake_astar(heightmap, terrain_bounds, start_world, end_world, **kwargs):
+            captured["terrain_bounds"] = terrain_bounds
+            captured["start_world"] = start_world
+            captured["end_world"] = end_world
+            return [start_world, end_world]
+
+        monkeypatch.setattr(road_mod, "_astar_24dir", _fake_astar)
+
+        hmap = np.zeros((4, 4), dtype=np.float64)
+        intent = _make_intent(waypoints=[(0, 0), (3, 3)])
+        _generate_road_mesh_specs(hmap, intent, 1, 1, 2.0, 42)
+
+        assert captured["terrain_bounds"] == (0.0, 0.0, 8.0, 8.0)
+        assert captured["start_world"] == (1.0, 1.0, 0.0)
+        assert captured["end_world"] == (7.0, 7.0, 0.0)
+
     def test_two_waypoints_returns_4tuple(self):
         from veilbreakers_terrain.handlers.terrain_twelve_step import _generate_road_mesh_specs
         hmap = np.random.RandomState(1).rand(32, 32).astype(np.float64)

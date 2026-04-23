@@ -308,25 +308,29 @@ def test_street_lamp_spot_metadata_survives_merge():
 
 
 def test_twelve_step_road_solver_threads_world_cell_size(monkeypatch):
-    from veilbreakers_terrain.handlers import _terrain_noise as noise_mod
+    from veilbreakers_terrain.handlers import road_network as road_mod
     from veilbreakers_terrain.handlers import terrain_twelve_step as twelve_step
 
     captured = {}
 
     def _fake_astar(
         heightmap,
-        source,
-        dest,
-        slope_weight=5.0,
-        height_weight=1.0,
+        terrain_bounds,
+        start_world,
+        end_world,
+        road_type="gravel_road",
+        max_grade_pct=12.0,
+        slope_penalty_weight=6.0,
+        turn_penalty_weight=0.8,
+        cross_slope_penalty_weight=1.5,
         cost_map=None,
-        cell_size=1.0,
     ):
-        captured["cell_size"] = cell_size
-        return [source, dest]
+        captured["terrain_bounds"] = terrain_bounds
+        captured["start_world"] = start_world
+        captured["end_world"] = end_world
+        return [start_world, end_world]
 
-    monkeypatch.setattr(noise_mod, "_astar", _fake_astar)
-    monkeypatch.setattr(noise_mod, "smooth_road_path", lambda path, samples_per_segment=10: path)
+    monkeypatch.setattr(road_mod, "_astar_24dir", _fake_astar)
 
     intent = _make_intent(tile_size=16, cell_size=5.0)
     object.__setattr__(intent, "road_waypoints", [(0, 0), (3, 3)])
@@ -340,4 +344,6 @@ def test_twelve_step_road_solver_threads_world_cell_size(monkeypatch):
         seed=123,
     )
 
-    assert captured["cell_size"] == 5.0
+    assert captured["terrain_bounds"] == (0.0, 0.0, 20.0, 20.0)
+    assert captured["start_world"] == (2.5, 2.5, 0.0)
+    assert captured["end_world"] == (17.5, 17.5, 0.0)
