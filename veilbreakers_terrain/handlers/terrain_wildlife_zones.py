@@ -154,8 +154,8 @@ def _distance_to_mask(mask: np.ndarray, cell_size: float) -> np.ndarray:
             dist[r, :-1] = np.minimum(dist[r, :-1], below[1:] + SQRT2)
         # Right-to-left propagation: dist[r,c] = min over k>=c of (dist[r,k] + k-c)
         # = -c + cummin-from-right(dist[r,k] + k)
-        H = dist[r] + arange_w
-        right_cummin = np.minimum.accumulate(H[::-1])[::-1]
+        right_offset_vals = dist[r] + arange_w
+        right_cummin = np.minimum.accumulate(right_offset_vals[::-1])[::-1]
         dist[r] = np.minimum(dist[r], right_cummin - arange_w)
 
     dist *= float(cell_size)
