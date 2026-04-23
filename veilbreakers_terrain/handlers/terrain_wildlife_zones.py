@@ -122,43 +122,41 @@ def _distance_to_mask(mask: np.ndarray, cell_size: float) -> np.ndarray:
         dist[mask] = 0.0
         return dist
 
-    # Two-pass 8-connected chamfer (axial=1.0 cell, diagonal=√2 cells)
+    # Two-pass 8-connected chamfer (axial=1.0 cell, diagonal=√2 cells).
+    # Vectorized: O(H) Python iterations instead of O(H*W) by propagating
+    # entire rows at once via numpy and using the cummin trick for within-row
+    # left/right propagation.
     SQRT2 = np.sqrt(2.0)
     INF = np.float64(1e12)
     h, w = mask.shape
     dist = np.where(mask, np.float64(0.0), INF).astype(np.float64)
+    arange_w = np.arange(w, dtype=np.float64)
 
     # Forward pass (top-left → bottom-right)
     for r in range(h):
-        for c in range(w):
-            if dist[r, c] == 0.0:
-                continue
-            best = dist[r, c]
-            if r > 0:
-                best = min(best, dist[r - 1, c] + 1.0)
-                if c > 0:
-                    best = min(best, dist[r - 1, c - 1] + SQRT2)
-                if c < w - 1:
-                    best = min(best, dist[r - 1, c + 1] + SQRT2)
-            if c > 0:
-                best = min(best, dist[r, c - 1] + 1.0)
-            dist[r, c] = best
+        if r > 0:
+            above = dist[r - 1]
+            dist[r] = np.minimum(dist[r], above + 1.0)
+            dist[r, 1:] = np.minimum(dist[r, 1:], above[:-1] + SQRT2)
+            dist[r, :-1] = np.minimum(dist[r, :-1], above[1:] + SQRT2)
+        # Left-to-right propagation: dist[r,c] = min over k<=c of (dist[r,k] + c-k)
+        # = c + cummin(dist[r,k] - k)
+        penalized = dist[r] - arange_w
+        np.minimum.accumulate(penalized, out=penalized)
+        dist[r] = np.minimum(dist[r], penalized + arange_w)
 
     # Backward pass (bottom-right → top-left)
     for r in range(h - 1, -1, -1):
-        for c in range(w - 1, -1, -1):
-            if dist[r, c] == 0.0:
-                continue
-            best = dist[r, c]
-            if r < h - 1:
-                best = min(best, dist[r + 1, c] + 1.0)
-                if c > 0:
-                    best = min(best, dist[r + 1, c - 1] + SQRT2)
-                if c < w - 1:
-                    best = min(best, dist[r + 1, c + 1] + SQRT2)
-            if c < w - 1:
-                best = min(best, dist[r, c + 1] + 1.0)
-            dist[r, c] = best
+        if r < h - 1:
+            below = dist[r + 1]
+            dist[r] = np.minimum(dist[r], below + 1.0)
+            dist[r, 1:] = np.minimum(dist[r, 1:], below[:-1] + SQRT2)
+            dist[r, :-1] = np.minimum(dist[r, :-1], below[1:] + SQRT2)
+        # Right-to-left propagation: dist[r,c] = min over k>=c of (dist[r,k] + k-c)
+        # = -c + cummin-from-right(dist[r,k] + k)
+        H = dist[r] + arange_w
+        right_cummin = np.minimum.accumulate(H[::-1])[::-1]
+        dist[r] = np.minimum(dist[r], right_cummin - arange_w)
 
     dist *= float(cell_size)
     dist[dist >= INF * 0.5] = np.inf
