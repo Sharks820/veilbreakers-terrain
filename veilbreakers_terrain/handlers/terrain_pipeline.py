@@ -1108,7 +1108,11 @@ def register_default_passes() -> None:
                 "drainage",
                 "bank_instability",
                 "talus",
-                "ridge",
+                # NOTE: "ridge" is intentionally omitted here.  pass_erosion
+                # refines the in-memory ridge field for sequential consumers
+                # but does not claim channel ownership — structural_masks is
+                # the sole declared DAG producer for ridge.  See _terrain_world
+                # pass_erosion for details.
             ),
             seed_namespace="erosion",
             requires_scene_read=True,

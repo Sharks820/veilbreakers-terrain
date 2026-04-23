@@ -52,14 +52,45 @@ def _sha256(path: Path) -> str:
 
 
 def _quantize_heightmap(stack: TerrainMaskStack) -> np.ndarray:
-    """Quantize world-unit heightmap to uint16 for Unity RAW import."""
+    """Quantize world-unit heightmap to uint16 for Unity RAW import.
+
+    Unity's RAW heightmap importer expects:
+    - 16-bit little-endian unsigned integers normalised to [0, 65535]
+    - Row 0 = the *bottom* (south) edge of the terrain in world space
+
+    The internal heightmap stores row 0 at the top (north), so we flip
+    axis 0 here to match Unity's row-major convention.  Omitting the flip
+    (as was the case before this fix) produces terrain that is mirrored
+    north-south when imported — a cliff on the north side of the tile
+    appears on the south side in Unity.
+
+    Flat-tile handling
+    ------------------
+    When the height range is zero (flat tile or height_min_m == height_max_m),
+    the previous code produced ``(h - lo) / 1e-9`` which overflowed to ~1e9
+    and clipped to all-65535 — wrong for a flat terrain that should export as
+    all-0.  We now detect this case and return an all-zero array, which matches
+    the Unity convention: the manifest records the real-world height range, so
+    a flat tile correctly imports as a level surface at ``height_min_m``.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     lo = float(stack.height_min_m) if stack.height_min_m is not None else float(h.min())
     hi = float(stack.height_max_m) if stack.height_max_m is not None else float(h.max())
-    span = max(hi - lo, 1e-9)
-    norm = (h - lo) / span
-    norm = np.clip(norm, 0.0, 1.0)
-    return (norm * 65535.0 + 0.5).astype(np.uint16)
+
+    if hi - lo <= 1e-9:
+        # Flat tile: all cells are at the minimum height → all-zero RAW.
+        out = np.zeros(h.shape, dtype=np.uint16)
+        if h.ndim >= 2:
+            out = np.flip(out, axis=0)
+        return np.ascontiguousarray(out)
+
+    norm = np.clip((h - lo) / (hi - lo), 0.0, 1.0)
+    # Unity row-convention: flip so row 0 = south (bottom of terrain).
+    if norm.ndim >= 2:
+        norm = np.flip(norm, axis=0)
+    return np.ascontiguousarray(
+        np.round(norm * 65535.0).astype(np.uint16)
+    )
 
 
 def _compute_terrain_normals_zup(heightmap: np.ndarray, cell_size: float) -> np.ndarray:

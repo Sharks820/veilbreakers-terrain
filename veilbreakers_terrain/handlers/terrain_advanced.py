@@ -1405,6 +1405,7 @@ def compute_erosion_brush(
     seed: int = 42,
     talus_angle: float = 30.0,
     cell_size: float = 1.0,
+    wind_angle_deg: float = 0.0,
 ) -> "BrushResult":
     """Apply erosion within a brush radius on a heightmap.
 
@@ -1426,6 +1427,10 @@ def compute_erosion_brush(
         cell_size: Real-world size of one grid cell (world units).
                    Used to normalise the talus threshold so erosion
                    behaviour is resolution-independent (BUG-13 class).
+        wind_angle_deg: Wind direction in degrees clockwise from north
+                        (0=north/up, 90=east/right, 180=south, 270=west).
+                        Only used when erosion_type='wind'. Default 0.0
+                        (north wind = material deposits southward in grid).
 
     Returns:
         BrushResult containing the modified heightmap, active footprint
@@ -1673,13 +1678,38 @@ def compute_erosion_brush(
                     delta[r_d0:r_d1, c_d0:c_d1] += transfer[r_s0:r_s1, c_s0:c_s1]
 
             elif erosion_type == "wind":
-                # Vectorized directional wind: erode each cell, deposit 1 col east.
+                # Vectorized directional wind: erode each cell, deposit one
+                # cell downwind.  Wind direction is controlled by wind_angle_deg:
+                #   0° = north wind → material moves south (row +1)
+                #   90° = east wind → material moves east (col +1)  [legacy default]
+                #   180° = south wind → material moves north (row -1)
+                #   270° = west wind → material moves west (col -1)
+                # We decompose the angle into (row_shift, col_shift) rounded
+                # to the nearest cardinal/diagonal to keep the roll 1 cell.
+                _rad = math.radians(wind_angle_deg)
+                _wr = math.sin(_rad)    # row component  (+south)
+                _wc = math.cos(_rad)    # col component  (+east — 90° points east)
+                # Pick the axis with the larger component to avoid zero-shift.
+                if abs(_wr) >= abs(_wc):
+                    _row_shift = 1 if _wr >= 0 else -1
+                    _col_shift = 0
+                else:
+                    _row_shift = 0
+                    _col_shift = 1 if _wc >= 0 else -1
+
                 noise_map = np.abs(rng_np.normal(0.0, 0.3, size=(rows, cols)))
                 erosion_map = noise_map * brush_weight_map * 0.05
                 delta -= erosion_map
-                # Deposit one column to the east (roll then zero the wrap column).
-                deposit = np.roll(erosion_map, shift=1, axis=1)
-                deposit[:, 0] = 0.0
+                # Deposit one cell downwind; zero out the wrap-around edge.
+                deposit = np.roll(erosion_map, shift=(_row_shift, _col_shift), axis=(0, 1))
+                if _row_shift > 0:
+                    deposit[0, :] = 0.0
+                elif _row_shift < 0:
+                    deposit[-1, :] = 0.0
+                if _col_shift > 0:
+                    deposit[:, 0] = 0.0
+                elif _col_shift < 0:
+                    deposit[:, -1] = 0.0
                 delta += deposit
 
             eroded_this = np.maximum(-delta, 0.0)

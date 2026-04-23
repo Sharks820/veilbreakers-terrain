@@ -508,6 +508,8 @@ def fbm_iq(
     p_y: float,
     octaves: int = 6,
     seed: int = 0,
+    lacunarity: float = 2.0,
+    gain: float = 0.5,
 ) -> float:
     """IQ gradient-accumulated fBm (Fix 11.2 / REQ-P11-004).
 
@@ -526,6 +528,14 @@ def fbm_iq(
         Number of fBm octaves (default 6).
     seed : int
         Deterministic seed.
+    lacunarity : float
+        Frequency multiplier per octave (default 2.0).  Pass the preset's
+        lacunarity (e.g. 2.1 for volcanic, 1.9 for swamp) so domain-warped
+        terrain uses the same spectral profile as the base heightmap.
+    gain : float
+        Amplitude multiplier per octave (default 0.5).  For physically
+        correct spectral synthesis pass ``lacunarity ** -H`` where H is the
+        Hurst exponent (e.g. 0.5545 for H=0.85).
 
     Returns
     -------
@@ -535,7 +545,7 @@ def fbm_iq(
     """
     gen = _make_noise_generator(seed)
     v = 0.0
-    a = 0.5
+    a = 1.0
     d = np.zeros(2, dtype=np.float64)
     for _i in range(octaves):
         n, grad = _noise_with_gradient(p_x, p_y, gen)
@@ -545,9 +555,9 @@ def fbm_iq(
         # Rotate by ~30° to prevent axis alignment (IQ pattern)
         cos30, sin30 = 0.8660254, 0.5
         p_x, p_y = (cos30 * p_x - sin30 * p_y), (sin30 * p_x + cos30 * p_y)
-        a *= 0.5
-        p_x *= 2.0
-        p_y *= 2.0
+        a *= gain
+        p_x *= lacunarity
+        p_y *= lacunarity
     return float(v)
 
 
@@ -731,6 +741,8 @@ def domain_warp_fbm(
     octaves: int = 6,
     warp_strength: float = 0.5,
     seed: int = 0,
+    lacunarity: float = 2.0,
+    gain: float = 0.5,
 ) -> float:
     """Three-level IQ domain warping fBm (Fix 11.3 / REQ-P11-004).
 
@@ -753,6 +765,13 @@ def domain_warp_fbm(
         Coordinate offset amplitude for each warp pass (in noise-space units).
     seed : int
         Deterministic seed.
+    lacunarity : float
+        Frequency multiplier per octave (default 2.0).  Should match the
+        active terrain preset's lacunarity so domain-warped terrain uses the
+        same spectral profile as the base heightmap.
+    gain : float
+        Amplitude multiplier per octave (default 0.5).  For H=0.85 spectral
+        synthesis pass ``lacunarity ** -0.85`` (≈ 0.5545).
 
     Returns
     -------
@@ -762,30 +781,31 @@ def domain_warp_fbm(
     # IQ canonical: q and r are 2D vectors (two independent fBm calls per pass).
     # Using fixed coordinate offsets (5.2, 1.3) / (1.7, 9.2) / (8.3, 2.8) from
     # IQ's shadertoy reference to break diagonal symmetry artifacts.
+    _kw = {"octaves": octaves, "lacunarity": lacunarity, "gain": gain}
     # Pass 1: q = (fbm(p), fbm(p + (5.2, 1.3)))
-    q_x = fbm_iq(p_x, p_y, octaves=octaves, seed=seed)
-    q_y = fbm_iq(p_x + 5.2, p_y + 1.3, octaves=octaves, seed=seed + 17)
+    q_x = fbm_iq(p_x, p_y, seed=seed, **_kw)
+    q_y = fbm_iq(p_x + 5.2, p_y + 1.3, seed=seed + 17, **_kw)
 
     # Pass 2: r = (fbm(p + q*s + (1.7, 9.2)), fbm(p + q*s + (8.3, 2.8)))
     r_x = fbm_iq(
         p_x + q_x * warp_strength + 1.7,
         p_y + q_y * warp_strength + 9.2,
-        octaves=octaves,
         seed=seed + 1,
+        **_kw,
     )
     r_y = fbm_iq(
         p_x + q_x * warp_strength + 8.3,
         p_y + q_y * warp_strength + 2.8,
-        octaves=octaves,
         seed=seed + 19,
+        **_kw,
     )
 
     # Pass 3: result = fbm(p + r*s)
     return fbm_iq(
         p_x + r_x * warp_strength,
         p_y + r_y * warp_strength,
-        octaves=octaves,
         seed=seed + 2,
+        **_kw,
     )
 
 

@@ -302,9 +302,14 @@ def apply_hydraulic_erosion_masks(
                 f"erodibility_map shape {erod_arr.shape} does not match "
                 f"heightmap shape {result.shape}"
             )
-        # Keep absolute hardness meaning intact: a uniformly hard tile must
-        # erode less than a uniformly soft tile, not collapse to the same mean.
-        _erod_scale = np.clip(erod_arr, 0.0, None) / 1e-3
+        # Erodibility map is expected in [0, 1] where 1.0 = fully erodible (soft
+        # sediment) and 0.0 = fully protected (hard rock / hero zone).  We
+        # scale it by 2.0 so the default erosion_rate is preserved at
+        # erodibility=0.5 and hard rock (< 0.5) erodes proportionally less.
+        # The previous / 1e-3 (× 1000) factor made any non-None erodibility_map
+        # catastrophically destructive — e.g. erodibility=0.5 → scale=500 ×
+        # erode_amount — a verified bug.
+        _erod_scale = np.clip(erod_arr, 0.0, 1.0) * 2.0
     else:
         _erod_scale = None
 
