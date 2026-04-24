@@ -1346,7 +1346,16 @@ def _generate_directional_mist_zone(
     wind_factor: float = 1.0,
     wind_direction_rad: float = 0.0,
 ) -> np.ndarray:
-    """Legacy local mist field used to preserve downstream waterfall shaping."""
+    """Legacy local mist field used to preserve downstream waterfall shaping.
+
+    Wind-angle convention
+    ---------------------
+    ``wind_direction_rad`` is **cartographic**: ``0 == wind coming from north``,
+    clockwise-positive (``pi/2`` == wind from east). This matches the
+    ``chain.pool.outflow_direction_rad`` convention used for the downstream
+    ellipse axes below. Do not pass math-style (``0 == east``) angles here;
+    convert with :func:`_north_cw_to_east_ccw_angle` first.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cs = float(stack.cell_size)
@@ -1430,23 +1439,43 @@ def generate_mist_zone(
 ) -> np.ndarray:
     """Populate production mist by composing the richer ext plume with local shaping.
 
-    The shared `_water_network_ext.compute_mist_mask` supplies the richer
+    The shared ``_water_network_ext.compute_mist_mask`` supplies the richer
     wind-advected plume + valley pooling model.  We retain the existing
     downstream ellipse from this module so the production mask keeps its
     waterfall-local outflow bias and vertical attenuation.
+
+    Wind-angle convention
+    ---------------------
+    **Public API is cartographic** (``0 == wind coming from north``,
+    clockwise-positive — ``pi/2`` == wind from east). The two internal
+    helpers use *different* conventions, so this function performs the
+    conversion **exactly once, centrally**, before dispatch:
+
+    - ``_generate_directional_mist_zone`` consumes the cartographic angle
+      directly (it aligns with ``chain.pool.outflow_direction_rad``).
+    - ``_water_network_ext.compute_mist_mask`` expects math-style
+      (``0 == east``, CCW-positive), so we convert via
+      :func:`_north_cw_to_east_ccw_angle` before forwarding.
+
+    Keeping both conversions here guarantees the local ellipse and the ext
+    plume advect in the same physical direction, so the ``np.maximum``
+    combine does not cancel along the advection axis.
     """
     from ._water_network_ext import compute_mist_mask
+
+    wind_cartographic_rad = float(wind_direction_rad)
+    wind_math_rad = _north_cw_to_east_ccw_angle(wind_cartographic_rad)
 
     local_mist = _generate_directional_mist_zone(
         chain,
         stack,
         wind_factor=wind_factor,
-        wind_direction_rad=wind_direction_rad,
+        wind_direction_rad=wind_cartographic_rad,
     )
     richer_mist = compute_mist_mask(
         chain,
         stack,
-        wind_direction_rad=_north_cw_to_east_ccw_angle(wind_direction_rad),
+        wind_direction_rad=wind_math_rad,
         wind_speed_ms=max(0.0, 3.0 * float(wind_factor)),
     )
     mist = np.maximum(local_mist, richer_mist).astype(np.float32)
@@ -1469,11 +1498,30 @@ def _generate_local_waterfall_foam_mask(
     chain: WaterfallChain,
     stack: TerrainMaskStack,
 ) -> np.ndarray:
-    """Legacy local pool/plunge foam used where waterfall-local behaviour matters."""
+    """Legacy local pool/plunge foam used where waterfall-local behaviour matters.
+
+    When ``flow_speed`` is present on the stack, both the pool-impact foam
+    and the plunge-path turbulence are multiplied by
+    ``clip(flow_speed, 0, 1)`` per cell so that stationary water produces
+    no foam and fast flow produces full foam intensity.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     foam = np.zeros_like(h, dtype=np.float32)
     rows, cols = h.shape
     cs = float(stack.cell_size)
+
+    # Optional flow_speed channel — used as a per-cell multiplier so that
+    # legacy foam intensity tracks the physical velocity field when present.
+    local_flow_speed = None
+    try:
+        if hasattr(stack, "get"):
+            _fs_raw = stack.get("flow_speed")
+            if _fs_raw is not None:
+                _fs_arr = np.asarray(_fs_raw, dtype=np.float32)
+                if _fs_arr.shape == h.shape:
+                    local_flow_speed = np.clip(_fs_arr, 0.0, 1.0)
+    except Exception:
+        local_flow_speed = None
 
     pool_r, pool_c = _world_to_grid(
         stack, chain.pool.world_position[0], chain.pool.world_position[1]
@@ -1509,6 +1557,8 @@ def _generate_local_waterfall_foam_mask(
     r_pool_sq = max(radius_m * radius_m, 1e-6)
     pool_foam = (chain.foam_intensity * fw * np.exp(-dist_pool ** 2 / r_pool_sq)).astype(np.float32)
     pool_foam[dist_pool > foam_zone_radius] = 0.0
+    if local_flow_speed is not None:
+        pool_foam *= local_flow_speed[r0:r1, c0:c1]
     np.maximum(foam[r0:r1, c0:c1], pool_foam, out=foam[r0:r1, c0:c1])
 
     # 2. Plunge-path turbulence — EDT-based, no per-pixel loop
@@ -1544,6 +1594,8 @@ def _generate_local_waterfall_foam_mask(
                 (max_turb_int * np.maximum(0.0, 1.0 - norm_turb)).astype(np.float32),
                 0.0,
             ).astype(np.float32)
+            if local_flow_speed is not None:
+                turb_foam = turb_foam * local_flow_speed
             np.maximum(foam, turb_foam, out=foam)
         except ImportError:
             for pr, pc, turb_int in turb_intensities:
@@ -1561,6 +1613,8 @@ def _generate_local_waterfall_foam_mask(
                     (turb_int * np.maximum(0.0, 1.0 - d_t / max(turb_radius_m, 1e-6))).astype(np.float32),
                     0.0,
                 ).astype(np.float32)
+                if local_flow_speed is not None:
+                    val_t = val_t * local_flow_speed[r0t:r1t, c0t:c1t]
                 np.maximum(foam[r0t:r1t, c0t:c1t], val_t, out=foam[r0t:r1t, c0t:c1t])
 
     # 3. Gaussian blur for natural diffusion
