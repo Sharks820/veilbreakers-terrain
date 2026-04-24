@@ -282,6 +282,11 @@ class TerrainMaskStack:
     talus: Optional[np.ndarray] = None
     drainage: Optional[np.ndarray] = None
     bank_instability: Optional[np.ndarray] = None
+    # Ridge refined by ``pass_erosion`` (analytical ridge field after gully
+    # reinforcement + optional structural_ridge merge). ``structural_masks``
+    # remains the single declared DAG producer for the raw ``ridge`` channel;
+    # downstream consumers should prefer ``ridge_eroded`` when present.
+    ridge_eroded: Optional[np.ndarray] = None
 
     # Water masks (Pass 5)
     flow_direction: Optional[np.ndarray] = None
@@ -405,6 +410,25 @@ class TerrainMaskStack:
     # cannot represent directly (overhangs, cave mouth rings, cliff lips).
     cliff_mesh_specs: Optional[List[Dict[str, Any]]] = None
     cave_mesh_specs: Optional[List[Dict[str, Any]]] = None
+    # Particle emitter specs emitted by the waterfall chain (lip/impact/mist
+    # zones) and consumed by ``pass_emit_particle_systems`` to publish
+    # ``state.particle_layer_specs`` for the Unity VFX Graph / Unreal Niagara
+    # exporter. Each entry is a dict with at minimum:
+    #   position       : (x, y, z) world-space emitter centre
+    #   normal         : (x, y, z) emission direction (unit vector)
+    #   bounds         : dict with radius_m / height_m / shape ("sphere"|"cylinder")
+    #   emission_rate  : particles per second
+    #   velocity       : initial particle speed, m/s
+    #   lifetime       : particle lifetime, seconds
+    #   material       : material hint string (e.g. "waterfall_mist")
+    #   zone_name      : "lip_zone" | "impact_zone" | "mist_zone"
+    #   chain_id       : source waterfall chain identifier
+    particle_emitter_specs: Optional[List[Dict[str, Any]]] = None
+    # AAA audio-zone graph for Wwise/FMOD import — list of zone dicts with
+    # rt60_seconds, echo_delay_ms, boundary_polygon, occlusion_weight,
+    # wet_send_default.  Populated by pass_audio_zones; read by
+    # terrain_unity_export for CSV/JSON sidecar emission.
+    audio_zone_list: Optional[List[Dict[str, Any]]] = None
 
     # River-to-lake/ocean convergence channels (pass_river_convergence)
     # Float32 (H, W): 1.0 = river mouth / delta zone, 0.0 = elsewhere.
@@ -740,6 +764,8 @@ class TerrainMaskStack:
         "wet_surface_decal",
         "cliff_mesh_specs",
         "cave_mesh_specs",
+        "audio_zone_list",
+        "particle_emitter_specs",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:
@@ -1476,6 +1502,11 @@ class TerrainPipelineState:
     # FIX BUG-R8-A9-001 — viewport_vantage was missing; terrain_protocol.py rule_2
     # does getattr(state, "viewport_vantage", None) and raises ProtocolViolation if absent.
     viewport_vantage: Optional[Any] = None
+    # VFX particle-layer specs published by ``pass_emit_particle_systems`` and
+    # consumed by the Unity VFX Graph / Unreal Niagara exporter. Each entry is
+    # a dict derived from ``particle_emitter_specs`` with engine-specific
+    # fields added (e.g. "vfx_graph_asset_hint", "niagara_system_hint").
+    particle_layer_specs: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def tile_x(self) -> int:

@@ -1161,10 +1161,13 @@ def pass_erosion(
         ridge_out = scoped_ridge
     if protected.any():
         ridge_out = np.where(protected, 0.0, ridge_out)
-    # Keep structural_masks as the sole declared DAG producer for ``ridge``.
-    # Erosion still refines the in-memory ridge field for sequential consumers,
-    # but does not claim channel ownership in the registry.
-    object.__setattr__(stack, "ridge", np.ascontiguousarray(ridge_out))
+    # Keep structural_masks as the sole declared DAG producer for ``ridge``
+    # (raw analytical ridge field). ``pass_erosion`` publishes its refined
+    # variant under the dedicated ``ridge_eroded`` channel so provenance and
+    # PassDAG ownership stay explicit — downstream consumers that want the
+    # gully-reinforced field should prefer ``ridge_eroded`` and fall back to
+    # ``ridge`` when it is absent.
+    stack.set("ridge_eroded", np.ascontiguousarray(ridge_out), "erosion")
 
     # --- Hydraulic erosion (secondary refinement on analytical output) ---
     hydro = apply_hydraulic_erosion_masks(
@@ -1301,6 +1304,7 @@ def pass_erosion(
             "drainage",
             "bank_instability",
             "talus",
+            "ridge_eroded",
         ),
         metrics={
             "profile": profile,

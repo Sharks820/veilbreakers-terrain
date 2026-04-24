@@ -1032,6 +1032,10 @@ def register_default_passes() -> None:
                 "drainage",
                 "bank_instability",
                 "talus",
+                # Refined ridge field — declared producer so the PassDAG knows
+                # ``pass_erosion`` owns ``ridge_eroded``. ``ridge`` (raw) stays
+                # owned by ``structural_masks`` upstream.
+                "ridge_eroded",
             ),
             seed_namespace="erosion",
             requires_scene_read=True,

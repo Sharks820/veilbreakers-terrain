@@ -261,8 +261,14 @@ def compute_wind_field(
     altitude_factor = 1.0 + h_norm  # 1 at valley, 2 at peak
 
     ridge_factor = np.ones(shape, dtype=np.float64)
-    if stack.ridge is not None:
-        ridge = np.asarray(stack.ridge, dtype=np.float64)
+    # Prefer the erosion-refined ridge_eroded channel when present so canyon
+    # reinforcement from pass_erosion reaches the wind field; fall back to the
+    # raw structural ridge otherwise.
+    ridge_src = stack.get("ridge_eroded")
+    if ridge_src is None:
+        ridge_src = stack.ridge
+    if ridge_src is not None:
+        ridge = np.asarray(ridge_src, dtype=np.float64)
         # Fix 9.6 / BUG-S9-011: use abs(ridge) so BOTH exposed ridgelines AND
         # canyon walls accelerate flow (high-gradient surfaces channel wind).
         # Old code: np.clip(ridge, 0.0, 1.0) silently discarded canyon wind.

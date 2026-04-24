@@ -364,7 +364,11 @@ def build_cliff_candidate_mask(
     # Ridge bias — accept all cells whose slope is close to threshold
     # AND which sit on a ridge line; we express this by OR-ing in any
     # ridge cell that is within 80% of the threshold.
-    ridge = stack.get("ridge")
+    # Prefer the erosion-refined ridge (``ridge_eroded`` from pass_erosion)
+    # when available; fall back to the raw structural ridge otherwise.
+    ridge = stack.get("ridge_eroded")
+    if ridge is None:
+        ridge = stack.get("ridge")
     if ridge is not None and ridge_weight > 0.0:
         rid = np.asarray(ridge, dtype=bool)
         if rid.shape == mask.shape:

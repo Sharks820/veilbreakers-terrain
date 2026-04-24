@@ -152,9 +152,14 @@ def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarra
         if stack.basin is not None
         else np.zeros(shape, dtype=np.float64)
     )
+    # Prefer the erosion-refined ridge channel when present so decals respect
+    # ridge/ravine reinforcement from pass_erosion; fall back to raw ridge.
+    _ridge_src = stack.get("ridge_eroded")
+    if _ridge_src is None:
+        _ridge_src = stack.ridge
     ridge = (
-        np.asarray(stack.ridge, dtype=np.float64)
-        if stack.ridge is not None
+        np.asarray(_ridge_src, dtype=np.float64)
+        if _ridge_src is not None
         else np.zeros(shape, dtype=np.float64)
     )
 

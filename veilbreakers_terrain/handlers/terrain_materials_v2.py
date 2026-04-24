@@ -623,7 +623,12 @@ def compute_slope_material_weights(
 
     # Fix 10.3: Ridge → ravine material blend.
     # Negative ridge values = erosion channels. Apply darker/wetter drainage material.
-    ridge = stack.get("ridge")
+    # Prefer the erosion-refined ridge field when available so ravines carved by
+    # pass_erosion get their wet_rock uplift even when ``ridge`` still holds the
+    # raw structural values from ``pass_structural_masks``.
+    ridge = stack.get("ridge_eroded")
+    if ridge is None:
+        ridge = stack.get("ridge")
     if ridge is not None:
         ridge_arr = np.asarray(ridge, dtype=np.float32)
         ravine_mask = (ridge_arr < RAVINE_THRESHOLD).astype(np.float32)
