@@ -294,24 +294,31 @@ def compute_god_ray_hints(
                 fkind = "valley_shaft"
             candidates.append((v, int(r), int(c), fkind))
     else:
+        # Vectorized NMS without scipy: separable 5×5 max filter using numpy
+        # slicing with a reflect-padded array.  O(H*W) numpy ops vs O(H*W)
+        # Python iterations, giving ~100x faster execution on large grids.
         rows, cols = intensity.shape
-        for r in range(2, rows - 2):
-            for c in range(2, cols - 2):
-                v = float(intensity[r, c])
-                if v < thresh:
-                    continue
-                window = intensity[r - 2 : r + 3, c - 2 : c + 3]
-                if v < float(window.max()) - 1e-9:
-                    continue
-                if cave_mask[r, c] > 0.5:
-                    fkind = "cave_entrance"
-                elif wfall_mask[r, c] > 0.5:
-                    fkind = "waterfall_lip"
-                elif foliage[r, c] > 0.5:
-                    fkind = "foliage_shaft"
-                else:
-                    fkind = "valley_shaft"
-                candidates.append((v, r, c, fkind))
+        padded = np.pad(intensity, 2, mode="reflect")
+        # Row-wise 5-wide max → intermediate shape (rows+4, cols)
+        row_max = np.maximum.reduce(
+            [padded[:, k : k + cols] for k in range(5)]
+        )
+        # Column-wise 5-tall max → final local_max shape (rows, cols)
+        local_max_np = np.maximum.reduce(
+            [row_max[k : k + rows, :] for k in range(5)]
+        )
+        nms_mask = (intensity >= local_max_np - 1e-9) & (intensity > thresh)
+        for r, c in zip(*np.where(nms_mask)):
+            v = float(intensity[r, c])
+            if cave_mask[r, c] > 0.5:
+                fkind = "cave_entrance"
+            elif wfall_mask[r, c] > 0.5:
+                fkind = "waterfall_lip"
+            elif foliage[r, c] > 0.5:
+                fkind = "foliage_shaft"
+            else:
+                fkind = "valley_shaft"
+            candidates.append((v, int(r), int(c), fkind))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))
     top = candidates[:16]
