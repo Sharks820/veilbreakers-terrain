@@ -444,7 +444,8 @@ def test_studio_backend_full_wave_submits_polls_downloads(tmp_path: Path) -> Non
 
 
 def test_studio_backend_insufficient_credit_halts(tmp_path: Path) -> None:
-    stub = StubStudioClient(total_balance=0.0, insufficient_on_create=True)
+    # Balance check passes pre-flight, then create_task raises 2010.
+    stub = StubStudioClient(total_balance=50.0, insufficient_on_create=True)
     driver = _make_studio_driver(tmp_path, stub)
     with pytest.raises(tbg.TripoInsufficientCredit):
         driver.run()
