@@ -319,3 +319,64 @@ class TestFoliageCatalogBinding:
             assert cat_mod.get_default_asset_manifest() is override
         finally:
             cat_mod.set_default_asset_manifest(None)
+
+
+# ---------------------------------------------------------------------------
+# Phase I++ — seven new species flagged by the Phase H catalog audit.
+# Each must have (1) a FOLIAGE_SPECIES_CATALOG entry flagged Tripo-required,
+# (2) a SPECIES_TRIPO_CATEGORIES mapping whose first token is the species-
+# specific category, and (3) an ingest-time filename recognizer for that
+# category token.
+# ---------------------------------------------------------------------------
+
+_PHASE_I_PLUS_PLUS_SPECIES: tuple[tuple[str, str], ...] = (
+    ("hero_boulder",          "hero_boulder"),
+    ("vine_hanging",          "vine_hanging"),
+    ("fence_wood",            "fence_wood"),
+    ("fence_stone",           "fence_stone"),
+    ("sign_wooden",           "sign_wooden"),
+    ("sign_stone_waypoint",   "sign_stone_waypoint"),
+    ("walkway_plank",         "walkway_plank"),
+)
+
+
+class TestPhaseIPlusPlusSpeciesBinding:
+    """Every Phase I++ species is fully bound from catalog -> ingest -> filename."""
+
+    @pytest.mark.parametrize("species_id,category_token", _PHASE_I_PLUS_PLUS_SPECIES)
+    def test_species_has_catalog_entry(
+        self, species_id: str, category_token: str
+    ) -> None:
+        assert species_id in cat_mod.FOLIAGE_SPECIES_CATALOG, (
+            f"Phase I++ species '{species_id}' missing from FOLIAGE_SPECIES_CATALOG"
+        )
+        spec = cat_mod.FOLIAGE_SPECIES_CATALOG[species_id]
+        assert spec.requires_tripo_asset is True, (
+            f"'{species_id}' must be flagged requires_tripo_asset=True"
+        )
+
+    @pytest.mark.parametrize("species_id,category_token", _PHASE_I_PLUS_PLUS_SPECIES)
+    def test_species_tripo_category_mapping(
+        self, species_id: str, category_token: str
+    ) -> None:
+        mapping = cat_mod.SPECIES_TRIPO_CATEGORIES.get(species_id)
+        assert mapping, f"SPECIES_TRIPO_CATEGORIES missing '{species_id}'"
+        assert mapping[0] == category_token, (
+            f"'{species_id}' should prefer category '{category_token}' first "
+            f"for Tripo asset resolution; got {mapping}"
+        )
+
+    @pytest.mark.parametrize("species_id,category_token", _PHASE_I_PLUS_PLUS_SPECIES)
+    def test_ingest_recognizes_category_token(
+        self, tmp_path: Path, species_id: str, category_token: str
+    ) -> None:
+        assert category_token in ingest.CATEGORY_BUDGETS, (
+            f"ingest.CATEGORY_BUDGETS missing '{category_token}' for species "
+            f"'{species_id}'"
+        )
+        # Filename inference must pick the species-specific token.
+        f = tmp_path / f"tripo-{category_token}_variant_A.glb"
+        f.touch()
+        assert ingest.detect_category(f) == category_token, (
+            f"detect_category did not resolve '{f.name}' to '{category_token}'"
+        )
