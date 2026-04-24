@@ -1156,8 +1156,16 @@ def detect_lakes(
             # Pit cell: component member with the lowest raw elevation
             pit_r, pit_c = min(component, key=lambda rc: hmap[rc[0], rc[1]])
 
-            # Gate on drainage area at the pit
-            if flow_acc[pit_r, pit_c] < min_area * 0.5:
+            # P2-7: gate on total catchment area (sum over all lake cells)
+            # instead of the pit cell alone. After Priority-Flood spill routing,
+            # flow accumulated at the geometric pit is often low because the
+            # drainage was shunted toward the spill rim. Summing the component
+            # captures the true contributing area independent of which cell
+            # happened to be lowest.
+            catchment_acc = sum(
+                float(flow_acc[cr, cc]) for cr, cc in component
+            )
+            if catchment_acc < min_area * 0.5:
                 continue
 
             # Build a set for O(1) membership checks
