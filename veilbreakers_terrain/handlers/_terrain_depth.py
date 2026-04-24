@@ -52,33 +52,98 @@ MeshSpec = dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def _fbm_noise2(x: float, y: float, octaves: int, seed: int) -> float:
-    """2-octave fBm via opensimplex or deterministic sin/cos hash fallback."""
+def _fbm_noise2(
+    x: float,
+    y: float,
+    octaves: int,
+    seed: int,
+    lacunarity: float = 2.0,
+    gain: float = 0.5,
+) -> float:
+    """Canonical fractional Brownian motion (fBm) evaluated at (x, y).
+
+    Reference: Inigo Quilez, "Fractional Brownian Motion"
+        https://iquilezles.org/articles/fbm/
+
+    Textbook accumulation:
+        v += amp * noise(p * freq)
+        freq *= lacunarity        # typically 2.0 (octaves cover 1, 2, 4, ...)
+        amp  *= gain              # typically 0.5 (energy-preserving)
+
+    The output is normalised by the geometric partial sum
+        S = sum_{k=0..N-1} gain**k = (1 - gain**N) / (1 - gain)
+    so |v| <= 1.0 when the underlying base noise lies in [-1, 1].
+
+    The previous implementation multiplied the running accumulator by
+    ``amp`` once per octave after adding an already-unscaled bilinear
+    sample; this compounded amplitude non-linearly (the first octave was
+    scaled by gain**N rather than gain**0) and made the spectrum
+    unrecoverable. Callers depended on the output being bounded, so the
+    bug manifested as quietly-clipped surface detail in cliff / cave /
+    bridge geometry. The new form matches IQ's canonical pattern and the
+    spectra used in Guerrilla Games' Decima terrain fBm snippets.
+
+    Args:
+        x, y: Sample coordinates.
+        octaves: Number of octaves to sum. ``<= 0`` is coerced to 1.
+        seed: 32-bit seed — mixed per-octave for decorrelated octaves.
+        lacunarity: Frequency multiplier per octave. Default 2.0.
+        gain: Amplitude multiplier per octave. Default 0.5.
+
+    Returns:
+        Float in approximately [-1, 1] (bounded by |base_noise| <= 1).
+    """
+    n_oct = max(1, int(octaves))
+
     if _HAS_OPENSIMPLEX:
         _opensimplex.seed(seed)
-        v, amp, freq = 0.0, 0.5, 1.0
-        for _ in range(octaves):
-            v += _opensimplex.noise2(x * freq, y * freq) * amp
-            amp *= 0.5
-            freq *= 2.0
-        return v
-    # Hash fallback: smooth pseudo-random via two overlapping sin products
-    def _h(a: float, b: float) -> float:
-        n = int(a * 127.1 + b * 311.7 + seed * 74.3) & 0x7FFFFFFF
-        n = (n ^ (n >> 13)) * 1540483477
+        v = 0.0
+        amp = 1.0
+        freq = 1.0
+        total_amp = 0.0
+        for _ in range(n_oct):
+            v += amp * _opensimplex.noise2(x * freq, y * freq)
+            total_amp += amp
+            freq *= lacunarity
+            amp *= gain
+        return v / total_amp if total_amp > 0.0 else 0.0
+
+    # Hash-based bilinear value-noise fallback.
+    def _h(a: int, b: int, s: int) -> float:
+        n = (int(a) * 127 + int(b) * 311 + int(s) * 74) & 0x7FFFFFFF
+        n = ((n ^ (n >> 13)) * 1540483477) & 0x7FFFFFFF
         return (((n ^ (n >> 15)) & 0x7FFFFFFF) / 1073741823.5) - 1.0
-    v, amp, freq = 0.0, 0.5, 1.0
-    for _ in range(octaves):
-        xi, yi = int(x * freq), int(y * freq)
-        tx, ty = x * freq - xi, y * freq - yi
+
+    def _bilinear_noise(px: float, py: float, s: int) -> float:
+        xi = int(math.floor(px))
+        yi = int(math.floor(py))
+        tx = px - xi
+        ty = py - yi
+        # Smoothstep (Hermite) for C1 continuity
         tx = tx * tx * (3.0 - 2.0 * tx)
         ty = ty * ty * (3.0 - 2.0 * ty)
-        v += (_h(xi, yi) * (1-tx) + _h(xi+1, yi) * tx) * (1-ty) + \
-             (_h(xi, yi+1) * (1-tx) + _h(xi+1, yi+1) * tx) * ty
-        v *= amp
-        amp *= 0.5
-        freq *= 2.0
-    return v
+        v00 = _h(xi,     yi,     s)
+        v10 = _h(xi + 1, yi,     s)
+        v01 = _h(xi,     yi + 1, s)
+        v11 = _h(xi + 1, yi + 1, s)
+        return ((v00 * (1.0 - tx) + v10 * tx) * (1.0 - ty)
+                + (v01 * (1.0 - tx) + v11 * tx) * ty)
+
+    v = 0.0
+    amp = 1.0
+    freq = 1.0
+    total_amp = 0.0
+    # Weyl-sequence seed offset per octave (golden-ratio hash constant 0x9E3779B9)
+    # decorrelates octaves without the aliasing that plain ``seed + i`` exhibits.
+    for i in range(n_oct):
+        oct_seed = (int(seed) + i * 0x9E3779B9) & 0x7FFFFFFF
+        v += amp * _bilinear_noise(x * freq, y * freq, oct_seed)
+        total_amp += amp
+        freq *= lacunarity
+        amp *= gain
+    if total_amp <= 0.0:
+        return 0.0
+    return v / total_amp
 
 
 def generate_cliff_face_mesh(

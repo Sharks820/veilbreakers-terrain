@@ -1042,6 +1042,12 @@ def register_bundle_g_passes() -> None:
             func=pass_banded_macro,
             requires_channels=(),
             produces_channels=("height",),
+            # OVERRIDE: Bundle G's banded-noise macro replaces whatever pure
+            # noise macro (macro_world / pass_generate_low_freq_hmap) wrote
+            # earlier. Bundle G is registered BEFORE scatter/materials but
+            # AFTER Bundle A so the override is deliberate: we use the banded
+            # macro as the final pre-erosion height when Bundle G is active.
+            overrides=("height",),
             seed_namespace="banded_macro",
             requires_scene_read=False,
             may_modify_geometry=False,

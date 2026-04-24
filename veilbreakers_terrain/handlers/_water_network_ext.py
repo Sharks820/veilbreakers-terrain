@@ -995,6 +995,142 @@ def compute_mist_mask(
     return np.clip(mist, 0.0, 1.0).astype(np.float32)
 
 
+# ---------------------------------------------------------------------------
+# Riverbed caustics (Phase E AAA water upgrade)
+# ---------------------------------------------------------------------------
+
+
+def _tileable_value_noise(
+    shape: Tuple[int, int],
+    frequency: float,
+    seed: int,
+) -> np.ndarray:
+    """Generate a tileable value-noise field in [0, 1].
+
+    Seeded by ``seed`` for determinism.  The output is tileable at the
+    native shape so the resulting caustic map can be laid seamlessly in a
+    shader.  Purely numpy — no external noise library required.
+    """
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    rows, cols = int(shape[0]), int(shape[1])
+    cell = max(int(round(max(rows, cols) / max(frequency, 1e-3))), 2)
+    grid_rows = max(rows // cell, 1)
+    grid_cols = max(cols // cell, 1)
+    # Random node values on a low-res grid (periodic in both dims)
+    nodes = rng.uniform(0.0, 1.0, size=(grid_rows + 1, grid_cols + 1)).astype(np.float32)
+    # Wrap last row/col to first for seamless tileability
+    nodes[-1, :] = nodes[0, :]
+    nodes[:, -1] = nodes[:, 0]
+
+    # Bilinearly upsample to target shape
+    rs = np.linspace(0.0, grid_rows, rows, endpoint=False, dtype=np.float32)
+    cs = np.linspace(0.0, grid_cols, cols, endpoint=False, dtype=np.float32)
+    r0 = np.floor(rs).astype(np.int32)
+    c0 = np.floor(cs).astype(np.int32)
+    r1 = np.clip(r0 + 1, 0, grid_rows)
+    c1 = np.clip(c0 + 1, 0, grid_cols)
+    fr = (rs - r0)[:, None]
+    fc = (cs - c0)[None, :]
+    # Smoothstep for less grid-aligned look
+    fr = fr * fr * (3.0 - 2.0 * fr)
+    fc = fc * fc * (3.0 - 2.0 * fc)
+
+    v00 = nodes[r0[:, None], c0[None, :]]
+    v01 = nodes[r0[:, None], c1[None, :]]
+    v10 = nodes[r1[:, None], c0[None, :]]
+    v11 = nodes[r1[:, None], c1[None, :]]
+    top = v00 * (1.0 - fc) + v01 * fc
+    bot = v10 * (1.0 - fc) + v11 * fc
+    out = top * (1.0 - fr) + bot * fr
+    return np.clip(out.astype(np.float32), 0.0, 1.0)
+
+
+def compute_riverbed_caustics(
+    stack: "Any",
+    *,
+    depth_channel: str = "water_depth",
+    water_surface_channel: str = "water_surface",
+    base_caustic_scale: float = 6.0,
+    detail_caustic_scale: float = 18.0,
+    beer_lambert_k: float = 0.35,
+    intensity: float = 1.0,
+    seed: int = 0,
+) -> np.ndarray:
+    """Generate a tileable riverbed caustic intensity map.
+
+    Caustics are produced by sun-light refracting through the wavy water
+    surface and focusing on the riverbed.  In a shader we normally drive
+    this with a scrolling noise texture modulated by water depth.  This
+    function bakes the static per-cell intensity at authoring time using
+    the Beer–Lambert law for underwater light attenuation:
+
+        I_bed(d) = I_surface * exp(-k * d)
+
+    where ``d`` is water depth (metres) and ``k`` is the extinction
+    coefficient (roughly 0.25–0.5 for clear lake water, up to ~3 for
+    silty rivers).  Two octaves of tileable value noise are summed
+    (base_caustic_scale for the dominant swirls and detail_caustic_scale
+    for high-frequency sparkle) and the result is multiplied by the
+    depth-attenuated visibility.
+
+    Args:
+        stack: TerrainMaskStack-like with ``.get(channel)`` and
+            ``.height`` / ``.cell_size``.
+        depth_channel: Name of the water-depth channel (metres).  If
+            missing, depth is derived from
+            ``water_surface - height`` when ``water_surface`` is available.
+        water_surface_channel: Channel storing the water-surface mask
+            / elevation.  Cells where this is 0 (non-water) get zero
+            caustics.
+        base_caustic_scale: Frequency of the large-scale caustic pattern.
+        detail_caustic_scale: Frequency of the detail octave.
+        beer_lambert_k: Extinction coefficient in 1/m.  Higher values
+            darken the bed faster with depth.
+        intensity: Overall multiplier in [0, 1].
+        seed: RNG seed for deterministic tileable noise.
+
+    Returns:
+        float32 (H, W) array in [0, 1] — 0 on dry cells, caustic-modulated
+        brightness on wet cells.
+    """
+    height = np.asarray(stack.height, dtype=np.float64) if getattr(stack, "height", None) is not None else None
+    if height is None:
+        return np.zeros((0, 0), dtype=np.float32)
+    H, W = height.shape
+
+    # Resolve water depth and water mask
+    depth = stack.get(depth_channel) if hasattr(stack, "get") else None
+    water_surface = stack.get(water_surface_channel) if hasattr(stack, "get") else None
+    if depth is None and water_surface is not None:
+        ws = np.asarray(water_surface, dtype=np.float64)
+        depth = np.maximum(ws - height, 0.0)
+    if depth is None:
+        depth_arr = np.zeros((H, W), dtype=np.float32)
+    else:
+        depth_arr = np.asarray(depth, dtype=np.float32)
+
+    if water_surface is not None:
+        ws_arr = np.asarray(water_surface, dtype=np.float32)
+        water_mask = (ws_arr > 0.0) | (depth_arr > 1e-6)
+    else:
+        water_mask = depth_arr > 1e-6
+
+    # Beer-Lambert attenuation: brighter in shallow water, dark in deep
+    attenuation = np.exp(-float(beer_lambert_k) * np.maximum(depth_arr, 0.0)).astype(np.float32)
+
+    # Two-octave tileable caustic noise (seamless, deterministic)
+    base = _tileable_value_noise((H, W), base_caustic_scale, seed=seed)
+    detail = _tileable_value_noise((H, W), detail_caustic_scale, seed=seed + 1)
+    # Bias base noise toward bright hot-spots (caustics are peaky, not gaussian)
+    caustic_noise = np.clip(base, 0.0, 1.0) ** 2
+    caustic_noise = 0.7 * caustic_noise + 0.3 * detail
+    caustic_noise = np.clip(caustic_noise, 0.0, 1.0)
+
+    out = caustic_noise * attenuation * float(intensity)
+    out[~water_mask] = 0.0
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
 __all__ = [
     "add_meander",
     "apply_bank_asymmetry",
@@ -1002,4 +1138,5 @@ __all__ = [
     "compute_wet_rock_mask",
     "compute_foam_mask",
     "compute_mist_mask",
+    "compute_riverbed_caustics",
 ]

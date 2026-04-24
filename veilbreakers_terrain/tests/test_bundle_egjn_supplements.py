@@ -28,6 +28,7 @@ from blender_addon.handlers.terrain_asset_metadata import (
     validate_asset_metadata,
 )
 from blender_addon.handlers.terrain_banded_advanced import (
+    _kuwahara_quadrant_stats,
     apply_anti_grain_smoothing,
     compute_anisotropic_breakup,
 )
@@ -182,6 +183,26 @@ class TestAssetContextRuleExt:
         rule = AssetContextRuleExt(asset_id="filler_rock", scale_variance_by_role=0.4)
         assert rule.effective_variance("filler") > rule.effective_variance("support")
 
+    def test_aabb_properties_are_physical_metrics(self):
+        bounds = AABB(-1.0, -2.0, 0.5, 3.0, 4.0, 8.5)
+
+        assert bounds.size_x == pytest.approx(4.0)
+        assert bounds.size_y == pytest.approx(6.0)
+        assert bounds.size_z == pytest.approx(8.0)
+        assert bounds.diagonal == pytest.approx((4.0**2 + 6.0**2 + 8.0**2) ** 0.5)
+        assert bounds.volume == pytest.approx(192.0)
+        assert bounds.center == pytest.approx((1.0, 1.0, 4.5))
+
+    def test_blended_score_clamps_inputs_and_blends_camera_affinity(self):
+        rule = AssetContextRuleExt(asset_id="framed_rock", camera_priority_weight=0.25)
+
+        assert rule.blended_score(0.8, camera_dot=1.0) == pytest.approx(0.85)
+        assert rule.blended_score(2.0, camera_dot=-1.0) == pytest.approx(0.75)
+        assert rule.blended_score(-1.0, camera_dot=1.0) == pytest.approx(0.25)
+
+        no_camera_bias = AssetContextRuleExt(asset_id="plain", camera_priority_weight=0.0)
+        assert no_camera_bias.blended_score(0.4, camera_dot=1.0) == pytest.approx(0.4)
+
 
 # ---------------------------------------------------------------------------
 # Bundle G — banded advanced
@@ -239,6 +260,78 @@ class TestBandedAdvanced:
         out = compute_anisotropic_breakup(base, (0.5, 0.5), 0.3)
         assert out.shape == base.shape
         assert out.dtype == base.dtype
+
+    # ---- Kuwahara refactor (B+ -> A-): return-type correctness ----
+
+    def test_kuwahara_quadrant_stats_returns_stacked_pair(self):
+        """_kuwahara_quadrant_stats now returns (means, vars), both (4,H,W).
+
+        This locks the return-type fix: the previous implementation returned
+        8 arrays under a 4-arity annotation, which lied to callers. The new
+        form stacks quadrants along the leading axis so the type annotation
+        ``Tuple[ndarray, ndarray]`` is truthful.
+        """
+        arr = np.arange(64, dtype=np.float64).reshape(8, 8)
+        result = _kuwahara_quadrant_stats(arr, 2)
+        assert isinstance(result, tuple)
+        assert len(result) == 2, (
+            f"Expected (means, vars); got {len(result)}-tuple"
+        )
+        means, vars_ = result
+        assert means.shape == (4, 8, 8)
+        assert vars_.shape == (4, 8, 8)
+        # Variance is non-negative (fp slack for edge cases)
+        assert (vars_ >= -1e-12).all()
+
+    def test_kuwahara_quadrant_stats_min_var_matches_wrapper(self):
+        """Sanity: argmin over stacked vars selects the same pixels the
+        public wrapper uses. Protects against axis-ordering regressions.
+        """
+        rng = np.random.default_rng(7)
+        arr = rng.standard_normal((12, 12)).astype(np.float64)
+        means, vars_ = _kuwahara_quadrant_stats(arr, 2)
+        best = np.argmin(vars_, axis=0)
+        rows, cols = np.mgrid[0:12, 0:12]
+        direct = means[best, rows, cols]
+        wrapped = apply_anti_grain_smoothing(arr, sigma=2.0)
+        np.testing.assert_allclose(direct, wrapped, atol=1e-9)
+
+    # ---- Anisotropic (Papari/Kyprianidis) variant ----
+
+    def test_anti_grain_smoothing_anisotropic_shape_and_dtype(self):
+        rng = np.random.default_rng(11)
+        hm = rng.standard_normal((16, 16)).astype(np.float32)
+        out = apply_anti_grain_smoothing(hm, sigma=2.0, variant="anisotropic")
+        assert out.shape == hm.shape
+        assert out.dtype == hm.dtype
+
+    def test_anti_grain_smoothing_anisotropic_preserves_edges(self):
+        """A ramp with a sharp discontinuity must retain its edge after the
+        anisotropic filter — this is the AAA criterion that distinguishes
+        structure-preserving smoothing from a Gaussian blur.
+        """
+        hm = np.zeros((32, 32), dtype=np.float32)
+        hm[:, 16:] = 10.0  # 10-unit cliff down the centre
+        out = apply_anti_grain_smoothing(hm, sigma=2.0, variant="anisotropic")
+        # Edge jump should still be at least 80% of its original magnitude
+        # (Gaussian blur of sigma=2 would reduce it to ~40%).
+        jump = float(out[:, 17].mean() - out[:, 14].mean())
+        assert jump >= 8.0, f"Edge collapsed under anisotropic filter: jump={jump}"
+
+    def test_anti_grain_smoothing_variant_rejects_unknown(self):
+        with pytest.raises(ValueError):
+            apply_anti_grain_smoothing(np.zeros((8, 8), dtype=np.float32),
+                                       sigma=1.0, variant="weird")
+
+    def test_anti_grain_smoothing_anisotropic_differs_from_classic(self):
+        """The two variants must produce different output on non-trivial input."""
+        rng = np.random.default_rng(23)
+        hm = rng.standard_normal((24, 24)).astype(np.float32)
+        classic = apply_anti_grain_smoothing(hm, sigma=2.0, variant="classic")
+        aniso = apply_anti_grain_smoothing(hm, sigma=2.0, variant="anisotropic")
+        assert not np.allclose(classic, aniso), (
+            "Anisotropic variant collapsed to classic output"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -419,3 +419,276 @@ def test_build_cliff_overhang_mesh_specs_uses_local_lip_heights():
     assert vertices[2][2] == pytest.approx(18.0)
     assert vertices[3][2] == pytest.approx(14.0)
     assert specs[0]["uvs"][2] == (1.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Phase G — stratigraphy color, cliff silhouette, talus boulders,
+# height-blend regression, cave strata alignment.
+# ---------------------------------------------------------------------------
+
+
+def test_strata_color_bands_visible_in_macro_color():
+    """Per-cell strata palette is blended into macro_color when a
+    stratigraphy cross-section is published on the stack."""
+    from blender_addon.handlers.terrain_macro_color import compute_macro_color
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    # Build a simple height grid with two bands
+    N = 32
+    height = np.zeros((N, N), dtype=np.float64)
+    height[: N // 2, :] = 10.0
+    height[N // 2 :, :] = 40.0
+
+    stack = TerrainMaskStack(
+        tile_size=N - 1,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+
+    baseline = compute_macro_color(stack)
+
+    # Publish a cross-section that maps the lower band to red and the
+    # upper band to blue
+    surface_mat_id = np.zeros((N, N), dtype=np.int32)
+    surface_mat_id[N // 2 :, :] = 1
+    cross_section = {
+        "layer_table": [
+            {"layer_id": "red_stratum", "color_rgb": [1.0, 0.0, 0.0]},
+            {"layer_id": "blue_stratum", "color_rgb": [0.0, 0.0, 1.0]},
+        ],
+        "surface_material_id": surface_mat_id.tolist(),
+    }
+    wrapper = np.empty((1,), dtype=object)
+    wrapper[0] = cross_section
+    stack.set("strata_cross_section", wrapper, "stratigraphy")
+
+    stamped = compute_macro_color(stack)
+
+    # Lower half pixel red channel must be pushed higher than baseline,
+    # upper half blue channel must be pushed higher than baseline.
+    assert stamped[0, 0, 0] > baseline[0, 0, 0] + 0.1
+    assert stamped[N - 1, 0, 2] > baseline[N - 1, 0, 2] + 0.1
+
+
+def test_cliff_silhouette_rejects_blobby():
+    """A filled circular disc (maximally blobby) is rejected by
+    validate_cliff_silhouette_shape."""
+    from blender_addon.handlers.terrain_materials_ext import (
+        validate_cliff_silhouette_shape,
+    )
+
+    # Render a filled disc of radius 10 in a 32x32 grid — perfectly blobby
+    N = 40
+    yy, xx = np.meshgrid(np.arange(N), np.arange(N), indexing="ij")
+    centre = N // 2
+    radius = 10
+    mask = ((yy - centre) ** 2 + (xx - centre) ** 2) <= radius ** 2
+    # Simulate a tall face — vary heights so uniformity check does not also fire
+    heights = np.zeros((N, N), dtype=np.float64)
+    heights[mask] = np.linspace(0, 40, int(mask.sum()))
+
+    issues = validate_cliff_silhouette_shape(
+        mask, heights=heights, cell_size_m=1.0
+    )
+    codes = {i.code for i in issues}
+    assert "CLIFF_SILHOUETTE_TOO_BLOBBY" in codes
+
+    # A long jagged strip should NOT be flagged blobby.
+    jagged = np.zeros((N, N), dtype=bool)
+    for row in range(5, 35):
+        jagged[row, 10 + (row % 3) : 14 + (row % 3)] = True
+    jagged_heights = np.zeros((N, N), dtype=np.float64)
+    jagged_heights[jagged] = np.linspace(0, 30, int(jagged.sum()))
+    jagged_issues = validate_cliff_silhouette_shape(
+        jagged, heights=jagged_heights, cell_size_m=1.0
+    )
+    jagged_codes = {i.code for i in jagged_issues}
+    assert "CLIFF_SILHOUETTE_TOO_BLOBBY" not in jagged_codes
+
+
+def test_cliff_silhouette_rejects_uniform_face():
+    """A cliff whose face cells all sit at nearly the same height fails
+    the uniformity gate."""
+    from blender_addon.handlers.terrain_materials_ext import (
+        validate_cliff_silhouette_shape,
+    )
+
+    N = 40
+    mask = np.zeros((N, N), dtype=bool)
+    mask[10:30, 10:30] = True
+    # Flat heights — all face cells at ~20 m
+    heights = np.zeros((N, N), dtype=np.float64)
+    heights[mask] = 20.0
+
+    issues = validate_cliff_silhouette_shape(mask, heights=heights, cell_size_m=1.0)
+    codes = {i.code for i in issues}
+    assert "CLIFF_SILHOUETTE_TOO_UNIFORM" in codes
+
+
+def test_talus_boulder_power_law_distribution():
+    """Boulder radii produced by place_talus_boulders_power_law follow a
+    Korcak power law: N(>r) ∝ r^-D with D≈2.3, so small boulders
+    dominate the count."""
+    from blender_addon.handlers.terrain_cliffs import (
+        CliffStructure,
+        _sample_korcak_radii,
+    )
+
+    rng = np.random.default_rng(123)
+    radii = _sample_korcak_radii(5000, rng=rng, d_exponent=2.3)
+
+    assert radii.shape == (5000,)
+    # Bounded between clamp values
+    assert radii.min() >= 0.15
+    assert radii.max() <= 2.75
+
+    # Power-law heavy tail: the count of boulders with radius > 1.0 must be
+    # substantially smaller than the count with radius > 0.3.
+    big = int((radii > 1.0).sum())
+    small = int((radii > 0.3).sum())
+    assert small > big * 3, (
+        f"expected heavy tail (small >> big); got small={small} big={big}"
+    )
+
+    # Monotonic cumulative count: more boulders above a smaller threshold.
+    for thresh_a, thresh_b in [(0.3, 0.6), (0.6, 1.2), (1.2, 2.0)]:
+        assert int((radii > thresh_a).sum()) > int((radii > thresh_b).sum())
+
+
+def test_talus_boulder_placement_gated_by_slope_trigger():
+    """place_talus_boulders_power_law produces no boulders when the slope
+    trigger (steep >60° within 10 cells of gentle <15°) is absent."""
+    from blender_addon.handlers.terrain_cliffs import (
+        CliffStructure,
+        place_talus_boulders_power_law,
+    )
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    N = 32
+    heights = np.zeros((N, N), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=N - 1,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=heights,
+    )
+    # Slope field: everywhere gentle — no steep cells → no trigger
+    stack.set("slope", np.full((N, N), 5.0, dtype=np.float32), "fixture")
+
+    face = np.zeros((N, N), dtype=bool)
+    face[5:10, 5:10] = True
+    talus = np.zeros((N, N), dtype=bool)
+    talus[10:20, 5:20] = True
+
+    cliff = CliffStructure(
+        cliff_id="cliff_0",
+        lip_polyline=np.zeros((4, 2), dtype=np.int32),
+        face_mask=face,
+        talus_mask=talus,
+    )
+    placements = place_talus_boulders_power_law(cliff, stack)
+    assert placements == []
+
+
+def test_talus_boulder_placement_emits_species_tag():
+    """When slope trigger is satisfied, placements carry species='talus_boulder'."""
+    from blender_addon.handlers.terrain_cliffs import (
+        CliffStructure,
+        place_talus_boulders_power_law,
+    )
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    N = 48
+    heights = np.zeros((N, N), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=N - 1,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=heights,
+    )
+    slope = np.full((N, N), 5.0, dtype=np.float32)  # gentle baseline
+    slope[10:20, 5:35] = 70.0  # steep cliff band
+    stack.set("slope", slope, "fixture")
+
+    face = np.zeros((N, N), dtype=bool)
+    face[10:20, 5:35] = True
+    # Apron in the transition zone — some cells near the steep band
+    talus = np.zeros((N, N), dtype=bool)
+    talus[20:28, 5:35] = True
+
+    cliff = CliffStructure(
+        cliff_id="cliff_g",
+        lip_polyline=np.zeros((4, 2), dtype=np.int32),
+        face_mask=face,
+        talus_mask=talus,
+    )
+    placements = place_talus_boulders_power_law(cliff, stack, density_per_100_m2=4.0)
+    assert len(placements) > 0
+    for p in placements:
+        assert p["species"] == "talus_boulder"
+        assert p["cliff_id"] == "cliff_g"
+        assert 0.15 <= p["radius_m"] <= 2.75
+
+
+def test_height_blend_weights_active_in_materials():
+    """Regression guard: pass_materials (terrain_materials_v2) must call
+    compute_height_blended_weights whenever a non-unity gamma is
+    configured on any material channel. P1-8 was marked resolved —
+    this test prevents silent regression."""
+    import inspect
+    from blender_addon.handlers import terrain_materials_v2
+
+    src = inspect.getsource(terrain_materials_v2.pass_materials)
+    assert "compute_height_blended_weights" in src
+    assert "height_blend_gammas" in src
+
+
+def test_cave_opening_crosses_strata_flag():
+    """validate_cave_opening_integration flags cave openings whose 2-cell
+    ring touches > 2 distinct surface strata IDs."""
+    from blender_addon.handlers.terrain_caves import validate_cave_opening_integration
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    N = 32
+    heights = np.zeros((N, N), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=N - 1,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=heights,
+    )
+    # Single cave opening via cave_candidate; boundary at center
+    cave = np.zeros((N, N), dtype=bool)
+    cave[14:18, 14:18] = True
+    stack.set("cave_candidate", cave, "fixture")
+    # Cliff continuity around the opening so the cliff-side checks pass
+    stack.set("cliff_candidate", np.full((N, N), 0.5, dtype=np.float32), "fixture")
+
+    # Striated strata: each row is a different material_id → any 5x5 ring
+    # will intersect many distinct IDs.
+    surface = np.tile(np.arange(N, dtype=np.int32).reshape(N, 1), (1, N))
+    cross_section = {
+        "layer_table": [
+            {"layer_id": f"s_{i}", "color_rgb": [i / N, 0.3, 0.2]} for i in range(N)
+        ],
+        "surface_material_id": surface.tolist(),
+    }
+    wrapper = np.empty((1,), dtype=object)
+    wrapper[0] = cross_section
+    stack.set("strata_cross_section", wrapper, "fixture")
+
+    issues = validate_cave_opening_integration(stack)
+    assert any("cave_opening_crosses_strata" in i for i in issues)

@@ -2317,6 +2317,18 @@ def pass_waterfalls(
     stack.set("foam", foam, "water_foam_pass")
     stack.set("mist", mist, "waterfalls")
     stack.set("wet_rock", wet_rock, "waterfalls")
+
+    # 7b. Publish particle-emitter seed specs for the VFX exporter.
+    # AAA req #10 wiring fix (Phase R9+): the ``terrain_waterfalls_volumetric``
+    # module has always known how to build physically-scaled particle seed
+    # zones, but nothing downstream consumed them. We now serialise each
+    # chain's three zones (lip / impact / mist) into an opaque channel that
+    # pass_emit_particle_systems picks up for Unity VFX Graph / Niagara.
+    particle_emitter_specs = _build_particle_emitter_specs(
+        chains, wind_direction_rad=wind_direction_rad
+    )
+    if particle_emitter_specs:
+        stack.set("particle_emitter_specs", particle_emitter_specs, "waterfalls")
     # AAA req #6: export velocity field as float2 channel
     stack.set("waterfall_velocity", vel_field, "waterfalls")
 
@@ -2324,19 +2336,23 @@ def pass_waterfalls(
     hard = [i for i in issues if i.is_hard()]
     status = "ok" if not hard else "warning"
 
+    produced = [
+        "waterfall_lip_candidate",
+        "waterfall_pool_delta",
+        "foam",
+        "mist",
+        "wet_rock",
+        "waterfall_velocity",
+    ]
+    if particle_emitter_specs:
+        produced.append("particle_emitter_specs")
+
     return PassResult(
         pass_name="waterfalls",
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=(
-            "waterfall_lip_candidate",
-            "waterfall_pool_delta",
-            "foam",
-            "mist",
-            "wet_rock",
-            "waterfall_velocity",
-        ),
+        produced_channels=tuple(produced),
         metrics={
             "lip_count": len(lips),
             "chain_count": len(chains),
@@ -2345,8 +2361,201 @@ def pass_waterfalls(
             "max_cascade_tiers": max((c.tier_count for c in chains), default=0),
             "seed_used": int(derived_seed),
             "region_scoped": region is not None,
+            "particle_emitter_count": len(particle_emitter_specs),
         },
         issues=issues,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Particle emitter specs (AAA req #10 wiring fix, PR5 / Phase R9+)
+# ---------------------------------------------------------------------------
+
+
+def _build_particle_emitter_specs(
+    chains: "List[WaterfallChain]",
+    wind_direction_rad: float = 0.0,
+) -> List[dict]:
+    """Serialise waterfall particle seed zones to JSON-compatible emitter specs.
+
+    Each chain publishes three zones (lip / impact / mist) derived from
+    ``terrain_waterfalls_volumetric.build_particle_seed_zones``. Each zone
+    becomes one emitter spec matching the Unity VFX Graph / Unreal Niagara
+    emitter data model:
+
+        {
+          "position"     : (x, y, z) world position of emitter centre,
+          "normal"       : (nx, ny, nz) primary emission direction (unit),
+          "bounds"       : {"shape": "sphere"|"cylinder",
+                            "radius_m": float, "height_m": float},
+          "emission_rate": particles/second,
+          "velocity"     : initial particle speed, m/s,
+          "lifetime"     : particle lifetime, s,
+          "material"     : material/system hint string,
+          "zone_name"    : "lip_zone" | "impact_zone" | "mist_zone",
+          "chain_id"     : originating waterfall chain id,
+        }
+
+    The emission_rate is computed as
+        rate = particle_density * zone_volume
+    using sphere/cylinder volume from the ParticleSeedZone, so Q-scaling in
+    ``build_particle_seed_zones`` propagates through to particle/s.
+
+    Velocities and lifetimes are tuned to the AAA references:
+      - Lip :   6 m/s launch velocity (water sheet breakup), 0.8 s life.
+      - Impact: 3 m/s upward (splash), 1.5 s life.
+      - Mist  : 0.6 m/s drift (aligned with wind), 3.5 s life.
+
+    Returns:
+        List of emitter spec dicts. Empty when there are no chains.
+    """
+    # Local import to avoid a circular import at module load time.
+    from .terrain_waterfalls_volumetric import build_particle_seed_zones
+
+    specs: List[dict] = []
+    if not chains:
+        return specs
+
+    for chain in chains:
+        try:
+            lip_pos = tuple(float(v) for v in chain.lip.world_position)
+            pool_pos = tuple(float(v) for v in chain.pool.world_position)
+            zones = build_particle_seed_zones(
+                lip_world_position=lip_pos,
+                pool_world_position=pool_pos,
+                flow_azimuth_rad=float(chain.flow_azimuth_rad),
+                lip_width_m=float(max(chain.lip.lip_width_m, 1.0)),
+                cascade_height_m=float(max(chain.total_drop_m, 0.5)),
+                mist_radius_m=float(max(chain.mist_radius_m, 1.0)),
+                discharge_m3s=float(max(chain.lip.discharge_m3s, 0.01)),
+                wind_direction_rad=float(wind_direction_rad),
+            )
+        except Exception as exc:  # pragma: no cover — defensive only
+            logger.debug("build_particle_seed_zones failed for %s: %s",
+                         chain.chain_id, exc)
+            continue
+
+        # Tuned emission parameters per zone (AAA reference tuning).
+        params = {
+            "lip_zone":    {"velocity": 6.0, "lifetime": 0.8,
+                            "material": "waterfall_lip_spray"},
+            "impact_zone": {"velocity": 3.0, "lifetime": 1.5,
+                            "material": "waterfall_impact_splash"},
+            "mist_zone":   {"velocity": 0.6, "lifetime": 3.5,
+                            "material": "waterfall_mist"},
+        }
+
+        # Flow direction unit vector (for lip/impact emission normal)
+        az = float(chain.flow_azimuth_rad)
+        flow_nx = math.sin(az)
+        flow_ny = math.cos(az)
+        wind_nx = math.sin(float(wind_direction_rad))
+        wind_ny = math.cos(float(wind_direction_rad))
+
+        for zone in zones:
+            p = params.get(zone.name, {"velocity": 1.0, "lifetime": 1.0,
+                                        "material": "waterfall_particle"})
+            if zone.name == "impact_zone":
+                shape = "cylinder"
+                # Cylinder volume = π r² h
+                volume = math.pi * (zone.radius_m ** 2) * max(zone.height_m, 0.1)
+                # Impact emits predominantly upward
+                normal = (0.0, 0.0, 1.0)
+            elif zone.name == "lip_zone":
+                shape = "sphere"
+                # Thin disc approximated as half-sphere volume ~ 2/3 π r³
+                volume = (2.0 / 3.0) * math.pi * (zone.radius_m ** 3)
+                # Lip emits along flow direction, slightly downward
+                normal = (flow_nx * 0.9, flow_ny * 0.9, -0.436)  # ~-26° pitch
+            else:  # mist_zone
+                shape = "sphere"
+                volume = (2.0 / 3.0) * math.pi * (zone.radius_m ** 3)
+                # Mist drifts upwind (opposite wind vector)
+                normal = (-wind_nx, -wind_ny, 0.2)
+
+            # Normalise the emission normal
+            nmag = math.sqrt(sum(n * n for n in normal)) or 1.0
+            normal = tuple(n / nmag for n in normal)
+
+            emission_rate = float(zone.particle_density * volume)
+
+            specs.append({
+                "position": (float(zone.world_center[0]),
+                             float(zone.world_center[1]),
+                             float(zone.world_center[2])),
+                "normal": tuple(float(n) for n in normal),
+                "bounds": {
+                    "shape": shape,
+                    "radius_m": float(zone.radius_m),
+                    "height_m": float(zone.height_m),
+                },
+                "emission_rate": emission_rate,
+                "velocity": float(p["velocity"]),
+                "lifetime": float(p["lifetime"]),
+                "material": str(p["material"]),
+                "zone_name": str(zone.name),
+                "chain_id": str(chain.chain_id),
+            })
+
+    return specs
+
+
+def pass_emit_particle_systems(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Publish ``particle_emitter_specs`` onto ``state.particle_layer_specs``.
+
+    This pass mirrors the ``emit_overhang_meshes`` pattern: the upstream
+    ``waterfalls`` pass writes the opaque channel, and this bridge pass
+    forwards it to a runtime-visible list on TerrainPipelineState so the
+    Unity VFX Graph / Unreal Niagara exporter can pick it up.
+
+    Engine-specific fields are attached here rather than in the
+    channel-authoring pass so the two engines can diverge without
+    perturbing the waterfall pass itself.
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    raw = list(stack.get("particle_emitter_specs") or [])
+
+    layer_specs: List[dict] = []
+    for spec in raw:
+        augmented = dict(spec)
+        # Engine-specific hints — kept separate from the raw emitter
+        # spec so the channel remains engine-agnostic.
+        augmented.setdefault(
+            "vfx_graph_asset_hint",
+            f"VFX/Water/{spec.get('material', 'waterfall_particle')}",
+        )
+        augmented.setdefault(
+            "niagara_system_hint",
+            f"NS_{spec.get('material', 'waterfall_particle')}",
+        )
+        layer_specs.append(augmented)
+
+    try:
+        existing = list(getattr(state, "particle_layer_specs", []) or [])
+        existing.extend(layer_specs)
+        state.particle_layer_specs = existing  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover — defensive only
+        pass
+
+    layer_token = (
+        f"particle_layer_specs:{state.tile_x}:{state.tile_y}:{len(layer_specs)}"
+    )
+
+    return PassResult(
+        pass_name="emit_particle_systems",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("particle_emitter_specs",),
+        produced_channels=(),
+        metrics={
+            "particle_layer_count": len(layer_specs),
+            "region_scoped": region is not None,
+        },
+        side_effects=[layer_token] if layer_specs else [],
     )
 
 
@@ -2371,11 +2580,27 @@ def register_bundle_c_passes() -> None:
                 "mist",
                 "wet_rock",
                 "waterfall_velocity",
+                "particle_emitter_specs",
             ),
             seed_namespace="waterfalls",
             requires_scene_read=True,
             may_modify_geometry=False,
-            description="Bundle C — waterfall hydrology chain + foam/mist/wet_rock/velocity masks",
+            description="Bundle C — waterfall hydrology chain + foam/mist/wet_rock/velocity + particle emitter specs",
+        )
+    )
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="emit_particle_systems",
+            func=pass_emit_particle_systems,
+            requires_channels=(),
+            produces_channels=(),
+            seed_namespace="emit_particle_systems",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description=(
+                "Bundle C bridge — publish particle_emitter_specs onto "
+                "state.particle_layer_specs for the VFX exporter."
+            ),
         )
     )
     register_bundle_c_mist_pass()
@@ -2514,6 +2739,7 @@ __all__ = [
     "validate_waterfall_system",
     "pass_waterfalls",
     "pass_waterfall_mist",
+    "pass_emit_particle_systems",
     "register_bundle_c_passes",
     "register_bundle_c_mist_pass",
     "saturate",

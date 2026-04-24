@@ -828,15 +828,14 @@ def register_bundle_k_quixel_ingest_pass() -> None:
         PassDefinition(
             name="quixel_ingest",
             func=pass_quixel_ingest_bundle_k,
-            # NOTE: produces_channels=("splatmap_weights_layer",) overlaps
-            # with materials_v2. This IS intentional: quixel_ingest runs
-            # AFTER materials_v2 and overrides the slope/altitude-derived
-            # splatmap with photoscanned Megascans material weights for
-            # biomes that ship Quixel assets. The DAG resolves the ordering
-            # because quixel_ingest's requires_channels implicitly pull it
-            # after materials_v2 via the bundle registration order.
             requires_channels=("height",),
             produces_channels=("splatmap_weights_layer",),
+            # OVERRIDE: materials_v2 (Bundle B) writes the slope/altitude-derived
+            # splatmap first; quixel_ingest (Bundle K) runs after and rewrites
+            # the splatmap with photoscanned Megascans material weights for
+            # biomes that ship Quixel assets. The DAG orders this correctly
+            # because Bundle K registers after Bundle B.
+            overrides=("splatmap_weights_layer",),
             seed_namespace="quixel_ingest",
             requires_scene_read=False,
             description="Bundle K: ingest Quixel Megascans assets into splatmap layers",

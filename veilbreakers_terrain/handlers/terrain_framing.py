@@ -375,6 +375,12 @@ def register_framing_pass() -> None:
             func=pass_framing,
             requires_channels=("height",),
             produces_channels=("height",),
+            # OVERRIDE: sightline carving deliberately rewrites height along the
+            # vantage→hero corridors after macro/erosion have settled the base
+            # heightmap. Framing is the last height mutator before scatter /
+            # materials see the terrain, so the overwrite is intentional and
+            # must happen at this point in the registration order.
+            overrides=("height",),
             seed_namespace="framing",
             may_modify_geometry=True,
             may_add_geometry=False,

@@ -1286,6 +1286,193 @@ def build_talus_field(
 
 
 # ---------------------------------------------------------------------------
+# Talus boulder power-law placement — Phase G
+# ---------------------------------------------------------------------------
+
+
+#: Korcak power-law exponent for talus-field fragment size distribution.
+#: Empirical studies of real scree slopes (Gutenberg-Richter for earthquake
+#: magnitudes; Korcak's law for island-fragment area) give D ≈ 2.0 – 2.7.
+#: Higher D → more small boulders / fewer large ones. 2.3 is a typical
+#: scree-slope value (Krumbein 1941, Hooke 1967).
+TALUS_KORCAK_EXPONENT_D = 2.3
+
+#: Boulder radius bounds in metres (clamp the power-law tail).
+TALUS_BOULDER_MIN_RADIUS_M = 0.15
+TALUS_BOULDER_MAX_RADIUS_M = 2.75
+
+#: Cliff-base slope trigger: boulder scatter gated by slope > 60° within
+#: 10 cells of lower slope < 15° (per Phase G spec — transitional foot-slope).
+TALUS_TRIGGER_STEEP_DEG = 60.0
+TALUS_TRIGGER_GENTLE_DEG = 15.0
+TALUS_TRIGGER_SEARCH_CELLS = 10
+
+
+def _sample_korcak_radii(
+    count: int,
+    *,
+    rng: np.random.Generator,
+    d_exponent: float = TALUS_KORCAK_EXPONENT_D,
+    r_min: float = TALUS_BOULDER_MIN_RADIUS_M,
+    r_max: float = TALUS_BOULDER_MAX_RADIUS_M,
+) -> np.ndarray:
+    """Sample *count* boulder radii from a Korcak (bounded Pareto) power law.
+
+    Uses the inverse-CDF for a truncated Pareto distribution with exponent
+    ``d_exponent`` — this produces the heavy-tailed distribution empirically
+    observed in real talus fields (Korcak 1940, Hooke 1967): many small
+    fragments, few large ones, with the number of boulders > r scaling as
+    ``r ** -D``.
+    """
+    n = int(max(0, count))
+    if n == 0:
+        return np.zeros(0, dtype=np.float64)
+    u = rng.random(n)
+    a = max(1e-6, float(d_exponent) - 1.0)  # alpha = D - 1 for radii
+    rmin = max(1e-4, float(r_min))
+    rmax = max(rmin + 1e-4, float(r_max))
+    # Inverse CDF of bounded Pareto, α = a
+    rmin_a = rmin ** (-a)
+    rmax_a = rmax ** (-a)
+    radii = (rmin_a - u * (rmin_a - rmax_a)) ** (-1.0 / a)
+    return np.clip(radii, rmin, rmax).astype(np.float64)
+
+
+def _cliff_base_trigger_mask(
+    stack: TerrainMaskStack,
+    *,
+    steep_deg: float = TALUS_TRIGGER_STEEP_DEG,
+    gentle_deg: float = TALUS_TRIGGER_GENTLE_DEG,
+    search_cells: int = TALUS_TRIGGER_SEARCH_CELLS,
+) -> np.ndarray:
+    """Build a bool (H, W) mask of cliff-base cells valid for boulder scatter.
+
+    Definition (Phase G): a cell qualifies when slope > ``steep_deg`` AND
+    there exists a neighbour within ``search_cells`` whose slope < ``gentle_deg``.
+    This isolates the transitional foot-slope where real scree aprons form —
+    you don't get talus at the top of a cliff or in the middle of a plain.
+    """
+    slope = stack.get("slope")
+    if slope is None:
+        return np.zeros((1, 1), dtype=bool)
+    slope_arr = np.asarray(slope, dtype=np.float64)
+    # Slope channel may be radians or degrees; assume degrees convention
+    # used elsewhere in this module (see slope_threshold_deg in
+    # build_cliff_candidate_mask). If values look like radians (max < 2),
+    # convert.
+    if float(np.nanmax(slope_arr)) < 2.0:
+        slope_arr = np.degrees(slope_arr)
+
+    steep = slope_arr > float(steep_deg)
+    gentle = slope_arr < float(gentle_deg)
+
+    def _dilate(m: np.ndarray, iters: int) -> np.ndarray:
+        d = m.copy()
+        for _ in range(max(1, int(iters))):
+            padded = np.pad(d, 1, mode="constant", constant_values=False)
+            d = d | (
+                padded[:-2, 1:-1]
+                | padded[2:,  1:-1]
+                | padded[1:-1, :-2]
+                | padded[1:-1, 2:]
+            )
+        return d
+
+    # Valid talus cells sit in the transition band between steep and
+    # gentle terrain: the cell is gentle AND close enough to a steep cell
+    # for the apron to form (foot-slope geometry). Equivalently, it is a
+    # gentle cell within ``search_cells`` of a steep cell.
+    gentle_near_steep = gentle & _dilate(steep, int(search_cells))
+    # Phase G spec also allows the ambiguous reading: steep cells near
+    # gentle (the top of the talus at cliff base). Accept either — they
+    # cover both the upper and lower edge of the transition band.
+    steep_near_gentle = steep & _dilate(gentle, int(search_cells))
+    return gentle_near_steep | steep_near_gentle
+
+
+def place_talus_boulders_power_law(
+    cliff: "CliffStructure",
+    stack: TerrainMaskStack,
+    *,
+    rng: Optional[np.random.Generator] = None,
+    density_per_100_m2: float = 0.8,
+    d_exponent: float = TALUS_KORCAK_EXPONENT_D,
+    species: str = "talus_boulder",
+) -> List[Dict]:
+    """Scatter power-law-distributed boulders into a cliff's talus apron.
+
+    Phase G (AAA): size distribution follows a Gutenberg-Richter / Korcak
+    power law (``N(>r) ∝ r^-D``). Placement is gated by the cliff-base
+    trigger — slope > 60° within 10 cells of slope < 15°. Boulders land in
+    the intersection of the cliff's talus apron and that trigger mask, so
+    we never drop boulders on cliff faces or in the middle of gentle plains.
+
+    Args:
+        cliff:  A carved cliff structure with ``talus_mask`` populated.
+        stack:  Mask stack (provides ``slope`` and ``cell_size``).
+        rng:    Seeded Generator (deterministic per cliff).
+        density_per_100_m2: Mean boulder count per 100 m² of valid apron.
+        d_exponent:  Korcak exponent (default 2.3 — realistic scree slope).
+        species: Scatter-system species tag stamped on each placement dict.
+
+    Returns:
+        List of placement dicts — each entry has:
+            ``position``   : (x, y, z) world-metres tuple
+            ``radius_m``   : float boulder radius
+            ``species``    : str species tag
+            ``cliff_id``   : str parent cliff id
+    """
+    if cliff.talus_mask is None or not np.any(cliff.talus_mask):
+        return []
+
+    # Intersect talus apron with slope-trigger mask
+    trigger = _cliff_base_trigger_mask(stack)
+    if trigger.shape != cliff.talus_mask.shape:
+        trigger = np.ones_like(cliff.talus_mask, dtype=bool)
+    valid = np.asarray(cliff.talus_mask, dtype=bool) & trigger
+    valid_cells = np.argwhere(valid)
+    if valid_cells.size == 0:
+        return []
+
+    cell_area_m2 = float(stack.cell_size) ** 2
+    apron_area_m2 = valid_cells.shape[0] * cell_area_m2
+
+    if rng is None:
+        seed = sum((i + 1) * ord(ch) for i, ch in enumerate(cliff.cliff_id)) & 0x7FFFFFFF
+        rng = np.random.default_rng(seed ^ 0xB0B15CA7)
+
+    n_boulders = int(round(density_per_100_m2 * apron_area_m2 / 100.0))
+    if n_boulders <= 0:
+        return []
+    # Cap to # of valid cells (no duplicates stacked on same cell)
+    n_boulders = int(min(n_boulders, valid_cells.shape[0]))
+
+    radii = _sample_korcak_radii(n_boulders, rng=rng, d_exponent=d_exponent)
+
+    # Pick boulder cells without replacement
+    pick_idx = rng.choice(valid_cells.shape[0], size=n_boulders, replace=False)
+    chosen = valid_cells[pick_idx]
+
+    placements: List[Dict] = []
+    h = stack.height
+    cell_size = float(stack.cell_size)
+    world_ox = float(stack.world_origin_x)
+    world_oy = float(stack.world_origin_y)
+    for (rr, cc), radius in zip(chosen, radii):
+        x = world_ox + (cc + 0.5) * cell_size
+        y = world_oy + (rr + 0.5) * cell_size
+        z = float(h[rr, cc]) if h is not None else 0.0
+        placements.append({
+            "position":   (float(x), float(y), float(z + radius)),
+            "radius_m":   float(radius),
+            "species":    species,
+            "cliff_id":   cliff.cliff_id,
+        })
+
+    return placements
+
+
+# ---------------------------------------------------------------------------
 # Cliff overhang geometry — silhouette breaks + drip edges
 # ---------------------------------------------------------------------------
 
@@ -2294,6 +2481,24 @@ def validate_cliff_readability(
                 )
             )
 
+    # AAA silhouette shape check (Phase G): blobby/uniform rejection.
+    # Horizon Forbidden West reference — cliffs must read as jagged, layered
+    # structures, not circular pancakes or flat painted walls.
+    if cliff.face_mask is not None and int(cliff.face_mask.sum()) >= 20:
+        try:
+            from .terrain_materials_ext import validate_cliff_silhouette_shape
+        except Exception:
+            validate_cliff_silhouette_shape = None  # type: ignore[assignment]
+        if validate_cliff_silhouette_shape is not None:
+            issues.extend(
+                validate_cliff_silhouette_shape(
+                    cliff.face_mask,
+                    heights=stack.height,
+                    cell_size_m=float(stack.cell_size),
+                    feature_id=cliff.cliff_id,
+                )
+            )
+
     return issues
 
 
@@ -2351,9 +2556,31 @@ def pass_cliffs(
     cliffs = carve_cliff_system(state, region, candidate_mask=candidate)
 
     # 5. Add ledges + talus per cliff
-    for cliff in cliffs:
+    total_talus_boulders = 0
+    all_boulder_placements: List[Dict] = []
+    for cliff_idx, cliff in enumerate(cliffs):
         add_cliff_ledges(cliff, height=stack.height)
         build_talus_field(cliff, stack)
+
+        # Phase G: power-law boulder scatter at cliff base (gated by the
+        # steep/gentle slope transition trigger). Species tag aligns with
+        # the scatter-system contract.
+        boulder_rng = np.random.default_rng(
+            (seed ^ (0xB0B1 + cliff_idx * 37)) & 0x7FFFFFFF
+        )
+        placements = place_talus_boulders_power_law(
+            cliff, stack, rng=boulder_rng
+        )
+        if placements:
+            # Stash onto the cliff structure for scatter-system consumers
+            cliff.talus_boulder_placements = placements  # type: ignore[attr-defined]
+            total_talus_boulders += len(placements)
+            all_boulder_placements.extend(placements)
+            state.side_effects.append(
+                f"talus_boulders:{cliff.cliff_id}:"
+                f"count={len(placements)}:"
+                f"r_mean={float(np.mean([p['radius_m'] for p in placements])):.2f}m"
+            )
 
     # 5b. Generate cliff overhang geometry specs (2026-04-20)
     # 35% of lip segments per cliff get a 0.3-1.2 m outward protrusion with
@@ -2379,6 +2606,10 @@ def pass_cliffs(
     insert_hero_cliff_meshes(state, cliffs)
     cliff_mesh_specs = _build_cliff_overhang_mesh_specs(cliffs, stack)
     stack.set("cliff_mesh_specs", cliff_mesh_specs, "cliffs")
+
+    # Publish aggregated talus boulder placements for scatter consumers
+    if all_boulder_placements:
+        stack.set("talus_boulder_placements", list(all_boulder_placements), "cliffs")
 
     # 7. Record structures as side effects (so downstream bundles can find them)
     for cliff in cliffs:
@@ -2422,6 +2653,7 @@ def pass_cliffs(
             ),
             "cliffs_with_spline": sum(1 for c in cliffs if c.contour_spline is not None),
             "cliff_mesh_spec_count": len(cliff_mesh_specs),
+            "talus_boulder_count": int(total_talus_boulders),
             "seed_used": seed,
         },
         issues=issues,
@@ -2503,4 +2735,11 @@ __all__ = [
     "register_bundle_b_passes",
     # Cliff overhang geometry (2026-04-20)
     "_generate_cliff_overhang",
+    # Talus boulder power-law placement (Phase G, 2026-04-23)
+    "place_talus_boulders_power_law",
+    "_sample_korcak_radii",
+    "_cliff_base_trigger_mask",
+    "TALUS_KORCAK_EXPONENT_D",
+    "TALUS_BOULDER_MIN_RADIUS_M",
+    "TALUS_BOULDER_MAX_RADIUS_M",
 ]

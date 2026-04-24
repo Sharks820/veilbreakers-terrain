@@ -57,6 +57,62 @@ def _resolve_palette(palette: Optional[Dict]) -> Dict[int, Tuple[float, float, f
     return out
 
 
+def _resolve_strata_color_map(stack: TerrainMaskStack) -> Optional[np.ndarray]:
+    """Return (H, W, 3) float64 per-cell strata palette color, or None.
+
+    Reads ``strata_cross_section`` (from the stratigraphy pass): each cell's
+    surface material_id indexes into the layer_table's ``color_rgb``. The
+    result is stacked into an (H, W, 3) array suitable for palette blending
+    in ``compute_macro_color`` — producing Elden Ring-style banded cliffs
+    where different rock strata show their geological color.
+
+    Returns ``None`` when the cross-section channel is absent or malformed.
+    """
+    wrapper = stack.get("strata_cross_section")
+    if wrapper is None:
+        return None
+    # Channel is stored as a (1,)-shape object array around the dict
+    try:
+        if isinstance(wrapper, np.ndarray) and wrapper.dtype == object:
+            cs = wrapper[0] if wrapper.size > 0 else None
+        elif isinstance(wrapper, dict):
+            cs = wrapper
+        else:
+            cs = None
+    except Exception:
+        cs = None
+    if not isinstance(cs, dict):
+        return None
+
+    layer_table = cs.get("layer_table")
+    surface_mat_id = cs.get("surface_material_id")
+    if not layer_table or surface_mat_id is None:
+        return None
+
+    # Build a (N_layers, 3) palette and index by surface_material_id
+    try:
+        palette = np.asarray(
+            [list(L.get("color_rgb", (0.5, 0.5, 0.5)))[:3] for L in layer_table],
+            dtype=np.float64,
+        )
+    except Exception:
+        return None
+    if palette.ndim != 2 or palette.shape[1] != 3 or palette.shape[0] == 0:
+        return None
+
+    try:
+        surf = np.asarray(surface_mat_id, dtype=np.int64)
+    except Exception:
+        return None
+    if surf.ndim != 2:
+        return None
+    # Shape must match the height grid
+    if stack.height is not None and surf.shape != np.asarray(stack.height).shape:
+        return None
+    surf = np.clip(surf, 0, palette.shape[0] - 1)
+    return palette[surf]  # (H, W, 3) float64
+
+
 def compute_macro_color(
     stack: TerrainMaskStack,
     palette: Optional[Dict] = None,
@@ -117,6 +173,16 @@ def compute_macro_color(
         mud_target = np.array([0.38, 0.32, 0.22], dtype=np.float64).reshape(1, 1, 3)
         color = color * (1.0 - 0.30 * dep) + mud_target * (0.30 * dep)
 
+    # Stratigraphy palette blend: per-cell surface strata color lookup.
+    # Elden Ring-style banded cliffs: the surface rock stratum stamps its
+    # geological palette color through the biome base, blended by
+    # ``strata_color_weight`` (defaults to 0.55 — strong but not replacing
+    # biome entirely so slope/wetness still read).
+    strata_color_weight = 0.55
+    strata_rgb = _resolve_strata_color_map(stack)
+    if strata_rgb is not None:
+        color = color * (1.0 - strata_color_weight) + strata_rgb * strata_color_weight
+
     # Stratigraphy can stamp additive RGB shifts for oxidised intrusions.
     albedo_shift = stack.get("albedo_shift_rgb")
     if albedo_shift is not None:
@@ -167,6 +233,9 @@ def pass_macro_color(
             "rgb_mean": [float(color[..., i].mean()) for i in range(3)],
             "rgb_std": [float(color[..., i].std()) for i in range(3)],
             "palette_size": len(_resolve_palette(palette)),
+            "strata_palette_applied": bool(
+                _resolve_strata_color_map(stack) is not None
+            ),
         },
         issues=[],
     )
@@ -191,6 +260,7 @@ def register_bundle_k_macro_color_pass() -> None:
 __all__ = [
     "DARK_FANTASY_PALETTE",
     "compute_macro_color",
+    "_resolve_strata_color_map",
     "pass_macro_color",
     "register_bundle_k_macro_color_pass",
 ]

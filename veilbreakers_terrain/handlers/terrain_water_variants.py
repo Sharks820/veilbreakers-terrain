@@ -871,6 +871,12 @@ def register_water_variants_pass() -> None:
             # see fresh values after this pass runs.
             requires_channels=("height", "slope"),
             produces_channels=("water_surface", "wetness"),
+            # OVERRIDE: ``erosion`` writes a hydraulic ``wetness`` field first;
+            # Bundle O's water_variants refines that into final surface/wetness
+            # values that account for braided channels, estuaries, and wetland
+            # saturation. Overwriting the erosion-era wetness is the entire
+            # point of the Bundle O variant pass.
+            overrides=("wetness",),
             seed_namespace="water_variants",
             requires_scene_read=True,
             description="Bundle O — braided rivers, estuaries, karst, perched lakes, wetlands.",

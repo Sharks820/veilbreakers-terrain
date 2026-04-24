@@ -52,3 +52,46 @@ def test_canonical_writer_still_writes():
         f"terrain_roughness_driver.py has NO stack.set('roughness_variation') call! "
         f"The canonical writer must be preserved."
     )
+
+
+# ---------------------------------------------------------------------------
+# P1-2 DAG ordering — multiscale_breakup must precede roughness_driver
+# ---------------------------------------------------------------------------
+
+
+def test_roughness_driver_declares_breakup_dependency():
+    """pass_roughness_driver must require ``roughness_breakup`` so the DAG
+    scheduler forces ``pass_multiscale_breakup`` to run first (P1-2)."""
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from blender_addon.handlers.terrain_multiscale_breakup import (
+        register_bundle_k_multiscale_breakup_pass,
+    )
+    from blender_addon.handlers.terrain_roughness_driver import (
+        register_bundle_k_roughness_driver_pass,
+    )
+
+    # Idempotent: registrations guard against double-registering.
+    try:
+        register_bundle_k_multiscale_breakup_pass()
+    except Exception:
+        pass
+    try:
+        register_bundle_k_roughness_driver_pass()
+    except Exception:
+        pass
+
+    registry = TerrainPassController.PASS_REGISTRY
+    assert "roughness_driver" in registry, "roughness_driver pass not registered"
+    assert "multiscale_breakup" in registry, "multiscale_breakup pass not registered"
+
+    driver_def = registry["roughness_driver"]
+    breakup_def = registry["multiscale_breakup"]
+
+    assert "roughness_breakup" in driver_def.requires_channels, (
+        "roughness_driver must declare roughness_breakup as a required channel "
+        "so the DAG scheduler enforces multiscale_breakup ordering (P1-2)."
+    )
+    assert "roughness_breakup" in breakup_def.produces_channels, (
+        "multiscale_breakup must produce roughness_breakup for the dependency "
+        "edge to resolve."
+    )

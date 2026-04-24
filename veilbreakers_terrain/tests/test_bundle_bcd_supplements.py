@@ -37,7 +37,12 @@ from blender_addon.handlers.terrain_waterfalls_volumetric import (
 )
 from blender_addon.handlers.terrain_quality_profiles import (
     PRODUCTION_PROFILE,
+    ProfileValidationError,
     TerrainQualityProfile,
+    _is_heightmap_resolution,
+    _is_power_of_two,
+    _validate_profile_schema,
+    list_quality_profiles_canonical,
     list_quality_profiles,
     load_quality_profile,
     write_profile_jsons,
@@ -319,6 +324,46 @@ def test_list_quality_profiles_order():
         "hero_shot",
         "aaa_open_world",
     ]
+
+
+def test_list_quality_profiles_canonical_order():
+    assert list_quality_profiles_canonical() == [
+        "mobile",
+        "standard",
+        "high_fidelity",
+        "aaa_open_world",
+    ]
+
+
+def test_quality_profile_schema_requires_runtime_keys():
+    payload = {
+        "name": "unit",
+        "erosion_iterations": 1,
+        "heightmap_resolution": 65,
+        "texture_resolution": 128,
+        "lod_count": 2,
+        "lod_max_distance_m": 100.0,
+        "triangle_budget": 1000,
+        "shadow_distance_m": 25.0,
+        "streaming_radius_m": 75.0,
+    }
+    _validate_profile_schema(payload)
+
+    del payload["triangle_budget"]
+    with pytest.raises(ProfileValidationError, match="triangle_budget"):
+        _validate_profile_schema(payload)
+
+
+def test_quality_profile_resolution_helpers():
+    assert _is_power_of_two(1) is True
+    assert _is_power_of_two(64) is True
+    assert _is_power_of_two(0) is False
+    assert _is_power_of_two(96) is False
+
+    assert _is_heightmap_resolution(65) is True
+    assert _is_heightmap_resolution(129) is True
+    assert _is_heightmap_resolution(64) is False
+    assert _is_heightmap_resolution(130) is False
 
 
 def test_load_quality_profile_all_four():

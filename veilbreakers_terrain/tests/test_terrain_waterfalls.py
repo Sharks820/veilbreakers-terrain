@@ -589,3 +589,108 @@ def test_blend_velocity_to_water_body_damps_masked_pool_and_leaves_dry_cells_alo
 
     assert np.linalg.norm(blended[pool_r, pool_c]) < np.linalg.norm(vel[pool_r, pool_c])
     assert np.allclose(blended[0, 0], vel[0, 0])
+
+
+# ---------------------------------------------------------------------------
+# Particle emitter wiring (AAA req #10 — was unwired, now produces and
+# consumes particle_emitter_specs through the waterfall pipeline)
+# ---------------------------------------------------------------------------
+
+
+def test_pass_waterfalls_publishes_particle_emitter_specs():
+    """Running pass_waterfalls on a cliff heightmap must produce the
+    three expected particle zones per detected waterfall chain."""
+    from blender_addon.handlers.terrain_waterfalls import pass_waterfalls
+
+    state = _build_state(_cliff_heightmap(size=40, drop=25.0))
+    result = pass_waterfalls(state, region=None)
+
+    # Must have at least one chain for this fixture
+    assert result.metrics["chain_count"] >= 1
+    specs = state.mask_stack.get("particle_emitter_specs")
+    assert specs is not None, "particle_emitter_specs channel was never written"
+    assert len(specs) > 0, "particle_emitter_specs is empty"
+    # Each chain contributes 3 zones
+    zone_names = {spec["zone_name"] for spec in specs}
+    assert zone_names == {"lip_zone", "impact_zone", "mist_zone"}, (
+        f"Expected 3 zones per chain, got {zone_names}"
+    )
+    # Every spec has the required VFX-emitter fields
+    required = {"position", "normal", "bounds", "emission_rate",
+                "velocity", "lifetime", "material", "chain_id"}
+    for spec in specs:
+        assert required.issubset(spec.keys()), (
+            f"Emitter spec missing fields: {required - spec.keys()}"
+        )
+        # emission_rate and velocity must be positive
+        assert spec["emission_rate"] > 0.0
+        assert spec["velocity"] > 0.0
+        assert spec["lifetime"] > 0.0
+    # Result metrics advertise the count
+    assert result.metrics["particle_emitter_count"] == len(specs)
+    assert "particle_emitter_specs" in result.produced_channels
+
+
+def test_pass_emit_particle_systems_forwards_to_state_layer():
+    """pass_emit_particle_systems publishes to state.particle_layer_specs
+    with engine-specific hints attached."""
+    from blender_addon.handlers.terrain_waterfalls import (
+        pass_emit_particle_systems,
+        pass_waterfalls,
+    )
+
+    state = _build_state(_cliff_heightmap(size=40, drop=25.0))
+    pass_waterfalls(state, region=None)
+
+    # Sanity: upstream wrote the channel
+    raw = state.mask_stack.get("particle_emitter_specs")
+    assert raw and len(raw) > 0
+
+    result = pass_emit_particle_systems(state, region=None)
+
+    assert result.status == "ok"
+    assert result.metrics["particle_layer_count"] == len(raw)
+    assert len(state.particle_layer_specs) == len(raw)
+
+    # Engine-specific hints should be attached
+    for layer in state.particle_layer_specs:
+        assert "vfx_graph_asset_hint" in layer
+        assert "niagara_system_hint" in layer
+        assert layer["vfx_graph_asset_hint"].startswith("VFX/Water/")
+        assert layer["niagara_system_hint"].startswith("NS_")
+
+
+def test_pass_waterfalls_without_chains_does_not_publish_empty_emitters():
+    """Flat terrain → zero chains → emitter channel stays unset (not empty)."""
+    from blender_addon.handlers.terrain_waterfalls import pass_waterfalls
+
+    state = _build_state(np.zeros((20, 20), dtype=np.float64))
+    pass_waterfalls(state, region=None)
+    specs = state.mask_stack.get("particle_emitter_specs")
+    # Either unset or a falsy empty list; never a partial write.
+    assert not specs
+
+
+def test_particle_emitter_specs_exported_to_unity_json(tmp_path):
+    """Full pipeline: waterfall emits specs → Unity exporter writes JSON."""
+    from blender_addon.handlers.terrain_unity_export import (
+        _particle_emitter_specs_json,
+    )
+    from blender_addon.handlers.terrain_waterfalls import pass_waterfalls
+
+    state = _build_state(_cliff_heightmap(size=40, drop=25.0))
+    pass_waterfalls(state, region=None)
+    payload = _particle_emitter_specs_json(state.mask_stack)
+
+    assert payload["schema_version"] == "1.0"
+    assert payload["coordinate_system"] == "y-up"
+    assert len(payload["emitters"]) > 0
+    for em in payload["emitters"]:
+        assert "position" in em and set(em["position"].keys()) == {"x", "y", "z"}
+        assert "normal" in em and set(em["normal"].keys()) == {"x", "y", "z"}
+        assert em["bounds"]["shape"] in ("sphere", "cylinder")
+        assert em["emission_rate"] > 0.0
+        assert em["velocity_mps"] > 0.0
+        assert em["lifetime_s"] > 0.0
+        assert em["vfx_graph_asset_hint"].startswith("VFX/Water/")
+        assert em["niagara_system_hint"].startswith("NS_")

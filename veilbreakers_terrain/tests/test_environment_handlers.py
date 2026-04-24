@@ -827,6 +827,144 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result["road_mask"][0][0] in (0, 1)
         assert result["road_sdf_dist"][0][0] >= 0.0
 
+    def _road_handler_fixtures(self, env_mod):
+        """Shared mock fixtures for road-fallback tests.
+
+        Returns (terrain_obj, bm_factory, mesh_patchers) so each test can run
+        ``handle_generate_road`` without a live Blender while still exercising
+        the fallback path through ``_solve_road_path_with_network``.
+        """
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    SimpleNamespace(co=SimpleNamespace(z=float(z)))
+                    for z in (0.0, 0.1, 0.2, 0.3)
+                )
+
+            def from_mesh(self, mesh):
+                return None
+
+            def to_mesh(self, mesh):
+                return None
+
+            def free(self):
+                return None
+
+        class _Mesh:
+            def update(self):
+                return None
+
+        terrain_obj = SimpleNamespace(
+            data=_Mesh(),
+            dimensions=SimpleNamespace(x=4.0, y=4.0),
+            location=SimpleNamespace(x=0.0, y=0.0),
+        )
+        return terrain_obj, _BM, _Mesh
+
+    def test_road_fallback_triggers_on_value_error_and_annotates_result(self, monkeypatch):
+        """LookupError/ValueError/RuntimeError should fall back + annotate result."""
+        from blender_addon.handlers import environment as env_mod
+
+        monkeypatch.delenv("VEILBREAKERS_ROAD_STRICT", raising=False)
+
+        terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
+
+        def _fake_solve_network(*args, **kwargs):
+            raise ValueError("synthetic network solver failure")
+
+        fake_legacy_path = [(0, 0), (0, 1)]
+        fake_legacy_graded = np.zeros((2, 2), dtype=np.float64)
+
+        def _fake_run_height_solver(heightmap, solver, **kwargs):
+            return fake_legacy_path, fake_legacy_graded, {}
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            result = env_mod.handle_generate_road(
+                {
+                    "terrain_name": "Terrain",
+                    "waypoints": [(0, 0), (1, 1)],
+                    "surface": "dirt",
+                }
+            )
+
+        assert result["road_routing_method"] == "legacy_fallback"
+        assert result.get("fallback_reason", "").startswith("ValueError:")
+        assert "synthetic network solver failure" in result["fallback_reason"]
+
+    def test_road_fallback_does_not_swallow_unexpected_exception(self, monkeypatch):
+        """Exceptions outside the narrow whitelist must propagate (not fall back)."""
+        from blender_addon.handlers import environment as env_mod
+
+        monkeypatch.delenv("VEILBREAKERS_ROAD_STRICT", raising=False)
+
+        terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
+
+        class _UnexpectedBoom(Exception):
+            pass
+
+        def _fake_solve_network(*args, **kwargs):
+            raise _UnexpectedBoom("not in the whitelist")
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            with pytest.raises(_UnexpectedBoom):
+                env_mod.handle_generate_road(
+                    {
+                        "terrain_name": "Terrain",
+                        "waypoints": [(0, 0), (1, 1)],
+                        "surface": "dirt",
+                    }
+                )
+
+    def test_road_strict_env_flag_re_raises_narrowed_exception(self, monkeypatch):
+        """VEILBREAKERS_ROAD_STRICT=1 re-raises instead of falling back."""
+        from blender_addon.handlers import environment as env_mod
+
+        monkeypatch.setenv("VEILBREAKERS_ROAD_STRICT", "1")
+
+        terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
+
+        def _fake_solve_network(*args, **kwargs):
+            raise RuntimeError("network solver runtime failure")
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            with pytest.raises(RuntimeError, match="network solver runtime failure"):
+                env_mod.handle_generate_road(
+                    {
+                        "terrain_name": "Terrain",
+                        "waypoints": [(0, 0), (1, 1)],
+                        "surface": "dirt",
+                    }
+                )
+
 
 # ---------------------------------------------------------------------------
 # _export_heightmap_raw tests

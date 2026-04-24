@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple
 
 try:
     import numpy as _np
@@ -301,6 +301,8 @@ def _dist2d(a: Tuple[float, float], b: Tuple[float, float]) -> float:
 
 def _nearest_region(point: Tuple[float, float], regions: List[Region]) -> Region:
     """Return the region whose center is nearest to point."""
+    if not regions:
+        raise ValueError("regions must contain at least one Region")
     best = regions[0]
     best_d = _dist2d(point, best.center)
     for r in regions[1:]:
@@ -315,6 +317,10 @@ def _place_seed_points(
     num: int, map_size: float, rng: random.Random
 ) -> List[Tuple[float, float]]:
     """Place seed points with jittered grid layout for Voronoi-like spacing."""
+    if map_size <= 0.0:
+        raise ValueError("map_size must be positive")
+    if num <= 0:
+        return []
     cols = max(1, math.ceil(math.sqrt(num)))
     rows = math.ceil(num / cols)
     cell_w = map_size / cols
@@ -345,6 +351,11 @@ def _compute_voronoi_bounds(
     Uses scipy.spatial.Voronoi for exact computation when scipy is available.
     Falls back to grid sampling otherwise.
     """
+    if map_size <= 0.0:
+        raise ValueError("map_size must be positive")
+    if not 0 <= idx < len(centers):
+        raise ValueError("idx must reference an existing center")
+    resolution = max(1, int(resolution))
     cx, cy = centers[idx]
 
     if _SCIPY_AVAILABLE and len(centers) >= 3:
@@ -501,6 +512,8 @@ def generate_world_map(
     min_pois:
         Minimum number of POI points to generate (padded if needed).
     """
+    if map_size <= 0.0:
+        raise ValueError("map_size must be positive")
     num_regions = max(2, num_regions)
     rng = random.Random(seed)
 

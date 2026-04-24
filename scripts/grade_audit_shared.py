@@ -102,9 +102,9 @@ def handler_files(include_init: bool = True, tracked_only: bool = True) -> List[
     return sorted(files)
 
 
-def collect_callables(include_init: bool = True) -> List[CallableDef]:
+def collect_callables(include_init: bool = True, tracked_only: bool = True) -> List[CallableDef]:
     out: List[CallableDef] = []
-    for py in handler_files(include_init=include_init):
+    for py in handler_files(include_init=include_init, tracked_only=tracked_only):
         tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"), filename=str(py))
         visitor = CallableVisitor(py.name)
         visitor.visit(tree)
@@ -148,6 +148,17 @@ def parse_line(value: str) -> int | None:
         return int(raw)
     except ValueError:
         return None
+
+
+def parse_row_number(row: dict) -> int:
+    for key in ("#", "\ufeff#"):
+        raw = norm(row.get(key, ""))
+        if raw:
+            try:
+                return int(raw)
+            except ValueError:
+                return -1
+    return -1
 
 
 def latest_grade(row: dict) -> str:
@@ -197,8 +208,8 @@ def _select_row(rows: Sequence[dict], lineno: int) -> tuple[dict | None, bool]:
         return rows[0], False
 
     exact_line_matches = [row for row in rows if parse_line(row.get("Line", "")) == lineno]
-    if len(exact_line_matches) == 1:
-        return exact_line_matches[0], False
+    if exact_line_matches:
+        return max(exact_line_matches, key=parse_row_number), False
 
     return None, True
 

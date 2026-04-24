@@ -179,6 +179,13 @@ def register_integrator_pass() -> None:
             func=pass_integrate_deltas,
             requires_channels=("height",),
             produces_channels=("height",),
+            # OVERRIDE: Bundle I (wind/glacial/karst/coastline/stratigraphy) and
+            # waterfalls publish deferred *_delta channels instead of mutating
+            # height directly. ``integrate_deltas`` is the single designated
+            # writer that sums those deltas into the integrated ``height``
+            # channel — so it is an explicit, intended overwrite of whatever
+            # earlier macro/erosion/composite pass last touched height.
+            overrides=("height",),
             seed_namespace="integrate_deltas",
             requires_scene_read=False,
             may_modify_geometry=True,

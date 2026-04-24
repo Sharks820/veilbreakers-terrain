@@ -209,14 +209,16 @@ def register_bundle_j_ecotones_pass() -> None:
         PassDefinition(
             name="ecotones",
             func=pass_ecotones,
-            # NOTE: produces_channels=("traversability",) overlaps with navmesh.
-            # This is NOT a clobber: pass_ecotones explicitly guards with
-            # `if stack.traversability is None` so navmesh's traversability
-            # survives when navmesh runs first. Declared as produced so the
-            # DAG recognises ecotones as a fallback producer for tiles where
-            # navmesh was skipped.
             requires_channels=("height",),
             produces_channels=("traversability",),
+            # OVERRIDE: navmesh (Bundle J) writes ``traversability`` first when
+            # it runs. ``pass_ecotones`` explicitly guards with
+            # `if stack.traversability is None` so the navmesh value survives
+            # when navmesh ran first, but the DAG still has two passes that
+            # declare the channel. Marking it as an override acknowledges the
+            # intentional fallback-producer role for tiles where navmesh is
+            # skipped.
+            overrides=("traversability",),
             seed_namespace="ecotones",
             requires_scene_read=False,
             description="Bundle J: biome adjacency / ecotone graph",

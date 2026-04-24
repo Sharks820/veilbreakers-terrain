@@ -538,6 +538,12 @@ def register_bundle_i_passes() -> None:
             func=_glacial.pass_glacial,
             requires_channels=("height",),
             produces_channels=("snow_line_factor", "glacial_delta"),
+            # OVERRIDE: Bundle A's ``snow_line`` pass writes a sigmoid-altitude
+            # baseline ``snow_line_factor``. Bundle I's glacial pass refines it
+            # with glacial-carving context (ice flow reduces local snow line,
+            # moraine accumulation raises it) and writes the authoritative
+            # value used by downstream materials / ecosystem passes.
+            overrides=("snow_line_factor",),
             seed_namespace="glacial",
             requires_scene_read=False,
             description="Bundle I: glacial carving + snow line",

@@ -2277,6 +2277,23 @@ _SPECIES_CONSTRAINTS: dict[str, dict[str, float]] = {
     },
 }
 
+# Merge the Phase-H foliage catalog so every registered species
+# participates in the _passes_species_constraints check.  The catalog is
+# the single source of truth; we layer its entries on top of the legacy
+# coarse keys so existing tests keep passing.
+try:
+    from .terrain_foliage_catalog import (
+        SPECIES_CONSTRAINTS_FROM_CATALOG as _CATALOG_CONSTRAINTS,
+        FOLIAGE_SPECIES_CATALOG as _CATALOG,
+    )
+    for _sid, _entry in _CATALOG_CONSTRAINTS.items():
+        # Don't overwrite the coarse "tree"/"bush"/"grass"/"rock" keys;
+        # add every fine species_id as its own constraint row.
+        if _sid not in _SPECIES_CONSTRAINTS:
+            _SPECIES_CONSTRAINTS[_sid] = _entry
+except Exception:  # pragma: no cover - defensive
+    _CATALOG = {}  # type: ignore[assignment]
+
 
 def _scatter_pass(
     heightmap: np.ndarray,
@@ -2582,6 +2599,122 @@ def _scatter_pass(
                 "lod": _lod_for_distance(dist, "rock"),
                 "altitude": _height_at(pos),
                 "moisture": _moisture_at(pos),
+                "gpu_instance": True,
+            })
+
+    # ------------------------------------------------------------------ #
+    # Phase H — AAA foliage catalog sub-pass.
+    #
+    # Iterate every species in FOLIAGE_SPECIES_CATALOG whose category
+    # belongs to the current pass and whose biome_mask admits the
+    # active biome.  Each species gets its own Poisson-disk sample
+    # driven by ``poisson_min_distance_m``, then is filtered through
+    # altitude/slope/moisture, water/road/building exclusion, and
+    # water_edge / tree_base / rock_face / cliff_face affinity rules.
+    #
+    # This is additive: it does not replace the coarse tree/bush/grass/
+    # rock sub-passes above, so existing callers keep their output
+    # cardinality while the catalog supplies the long tail of species
+    # (moss, vines, reeds, flowers, signs, …).
+    # ------------------------------------------------------------------ #
+    _PASS_CATEGORY_MAP = {
+        "structure": {"tree", "boulder", "log", "sign", "fence", "stump"},
+        "ground_cover": {"grass", "moss", "water_foliage", "accent_foliage",
+                         "bush", "walkway"},
+        "debris": {"small_rock", "vine"},
+    }
+
+    def _water_mask_at(pos: tuple[float, float]) -> float:
+        """Return proximity-to-water in [0,1]; 1=on water edge, 0=dry."""
+        if water_proximity_map is None:
+            return 0.0
+        ri, ci = _cell(pos)
+        wpm = np.asarray(water_proximity_map, dtype=np.float32)
+        ri_w = int(max(0, min(ri, wpm.shape[0] - 1)))
+        ci_w = int(max(0, min(ci, wpm.shape[1] - 1)))
+        return float(wpm[ri_w, ci_w])
+
+    def _near_tree(wx: float, wy: float, radius: float = 2.0) -> bool:
+        if not tree_positions:
+            return False
+        r2 = radius * radius
+        for (tx, ty) in tree_positions:
+            if (wx - tx) ** 2 + (wy - ty) ** 2 <= r2:
+                return True
+        return False
+
+    def _passes_affinity(spec_row: dict, pos: tuple[float, float],
+                         wx: float, wy: float) -> bool:
+        """Apply exclude_near / place_near rules from the catalog row."""
+        exclude = spec_row.get("exclude_near", []) or []
+        place = spec_row.get("place_near", []) or []
+        water = _water_mask_at(pos)
+        # Exclusions
+        if "water" in exclude and water > 0.6:
+            return False
+        if "combat_clearing" in exclude and _in_clearing(wx, wy):
+            return False
+        if "building" in exclude and _in_building(wx, wy):
+            return False
+        # Affinities — at least one must match when specified
+        if place:
+            ok = False
+            if "water_edge" in place and water >= 0.55:
+                ok = True
+            if ("tree_base" in place or "trunk" in place) and _near_tree(wx, wy, 2.0):
+                ok = True
+            if "rock_face" in place or "cliff_face" in place:
+                if _slope_at(pos) >= 45.0:
+                    ok = True
+            if not ok:
+                return False
+        return True
+
+    _catalog_species_specs = getattr(_CATALOG, "values", lambda: [])() if _CATALOG else []
+    _target_categories = _PASS_CATEGORY_MAP.get(pass_type, set())
+    for _idx, _spec in enumerate(_catalog_species_specs):
+        if _spec.category not in _target_categories:
+            continue
+        if _spec.biome_mask and biome not in _spec.biome_mask:
+            continue
+        _sid = _spec.species_id
+        _sep = float(_spec.poisson_min_distance_m) * max(float(separation_scale), 1e-3)
+        # Per-species deterministic seed so different species don't share
+        # point grids (otherwise reeds and algae would land on identical pts).
+        _species_seed = seed + 101 + _idx
+        _candidates = poisson_disk_sample(
+            terrain_width, terrain_height, _sep, seed=_species_seed,
+        )
+        _spec_row = _SPECIES_CONSTRAINTS.get(_sid, {})
+        _lod_hint_dist = float(_spec.lod_viewer_distance_m)
+        for pos in _candidates:
+            wx = pos[0] - terrain_half_x
+            wy = pos[1] - terrain_half_y
+            if not _passes_species_constraints(_sid, pos):
+                continue
+            if not _passes_affinity(_spec_row, pos, wx, wy):
+                continue
+            # density + biome multiplier
+            if rng.random() > _density_at(pos):
+                continue
+            dist = _viewer_dist(wx, wy)
+            # Clamp LOD against species lod_viewer_distance_m — if we're
+            # further than the species' billboard range, demote to LOD3.
+            _lod = _lod_for_distance(dist, _spec.category if _spec.category in _LOD_THRESHOLDS else "default")
+            if dist >= _lod_hint_dist:
+                _lod = 3
+            placements.append({
+                "position": (wx, wy),
+                "vegetation_type": _sid,
+                "species_id": _sid,
+                "category": _spec.category,
+                "rotation": rng.uniform(0.0, 2.0 * math.pi),
+                "scale": _scale_pm20(1.0),
+                "lod": _lod,
+                "altitude": _height_at(pos),
+                "moisture": _moisture_at(pos),
+                "biome": biome,
+                "unity_asset_path": _spec.unity_asset_path,
                 "gpu_instance": True,
             })
 

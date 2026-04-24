@@ -227,7 +227,12 @@ def register_bundle_k_roughness_driver_pass() -> None:
         PassDefinition(
             name="roughness_driver",
             func=pass_roughness_driver,
-            requires_channels=("height",),
+            # P1-2 DAG ordering: require ``roughness_breakup`` so the pipeline
+            # scheduler enforces ``pass_multiscale_breakup`` (which produces
+            # that channel) running before ``roughness_driver`` consumes it.
+            # Without this dependency the driver silently falls back to the
+            # base roughness when multiscale breakup has not been executed.
+            requires_channels=("height", "roughness_breakup"),
             produces_channels=("roughness_variation",),
             seed_namespace="roughness_driver",
             requires_scene_read=False,

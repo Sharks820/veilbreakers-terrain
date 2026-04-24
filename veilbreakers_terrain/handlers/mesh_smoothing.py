@@ -18,6 +18,7 @@ pure Laplacian (not recommended for production meshes).
 
 from __future__ import annotations
 
+import math
 from typing import List, Set, Tuple
 
 import numpy as np
@@ -60,8 +61,8 @@ def _build_laplacian(n: int, neighbors: List[Set[int]]) -> csr_matrix:
             cols.append(j)
             data.append(w)
     A = csr_matrix((data, (rows, cols)), shape=(n, n), dtype=np.float64)
-    I = csr_matrix(np.eye(n, dtype=np.float64))
-    return A - I
+    identity = csr_matrix(np.eye(n, dtype=np.float64))
+    return A - identity
 
 
 def _compute_face_normal(
@@ -197,8 +198,6 @@ def _laplacian_pass(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
-import math
 
 
 def smooth_assembled_mesh(

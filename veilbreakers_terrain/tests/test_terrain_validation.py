@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -430,6 +430,28 @@ def test_cliff_screen_coverage_validator_reads_composition_hints():
     assert any(i.code == "CLIFF_SILHOUETTE_TOO_SMALL" for i in issues)
 
 
+def test_cliff_components_do_not_wrap_across_tile_edges():
+    from blender_addon.handlers.terrain_validation import check_cliff_silhouette_readability
+
+    stack = _make_stack(tile_size=8)
+    cliff = np.zeros(stack.height.shape, dtype=np.float32)
+    cliff[:, 0] = 1.0
+    cliff[:, -1] = 1.0
+    stack.set("cliff_candidate", cliff, "test")
+
+    issues = check_cliff_silhouette_readability(
+        stack,
+        min_silhouette_cells=10,
+        min_sky_exposure_pct=0.0,
+    )
+
+    assert any(
+        issue.code == "cliff-silhouette-components-too-small"
+        and "2/2" in issue.message
+        for issue in issues
+    )
+
+
 def test_issue_category_routes_mat_prefix_to_materials():
     from blender_addon.handlers.terrain_validation import _issue_category
 
@@ -596,8 +618,9 @@ def _build_controller_with_checkpoint():
             composition_hints={"unity_export_opt_out": True},
         )
         state = TerrainPipelineState(intent=intent, mask_stack=stack)
-        td = tempfile.mkdtemp()
-        controller = TerrainPassController(state, checkpoint_dir=Path(td))
+        td = Path("output") / "test_artifacts" / "terrain_validation" / uuid.uuid4().hex
+        td.mkdir(parents=True, exist_ok=True)
+        controller = TerrainPassController(state, checkpoint_dir=td)
         return controller, td
 
     return _make

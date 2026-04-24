@@ -313,11 +313,158 @@ def validate_cliff_silhouette_area(
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Cliff silhouette shape validator — Phase G
+# ---------------------------------------------------------------------------
+
+
+# Isoperimetric ratio thresholds: 4π·A / P² using a 4-edge digital perimeter.
+# In continuous geometry the ratio is ∈ [0, 1] with 1.0 = perfect circle.
+# The 4-connected digital perimeter OVERCOUNTS relative to the continuous
+# arc length (each boundary cell contributes up to 4 edges), so the numeric
+# values for discrete shapes land at:
+#   discrete disc (r=10):   ~0.56    — target reject
+#   discrete square:        ~0.79    — still too compact, also reject
+#   discrete jagged strip:  ~0.07    — healthy silhouette
+# Threshold at 0.50 gives clean separation between featureful and blobby.
+CLIFF_BLOBBY_MAX = 0.50   # reject above → too round / featureless silhouette
+CLIFF_UNIFORM_MIN_HEIGHT_STD_M = 2.5  # reject below → too flat / uniform
+
+
+def validate_cliff_silhouette_shape(
+    face_mask: np.ndarray,
+    heights: Optional[np.ndarray] = None,
+    *,
+    cell_size_m: float = 1.0,
+    blobby_max: float = CLIFF_BLOBBY_MAX,
+    uniform_min_height_std_m: float = CLIFF_UNIFORM_MIN_HEIGHT_STD_M,
+    feature_id: str = "cliff",
+) -> List[ValidationIssue]:
+    """Reject cliff silhouettes that are too blobby or too uniform.
+
+    Two checks, matching Horizon Forbidden West's silhouette direction
+    (jagged, layered cliffs — never circular pancakes, never flat walls):
+
+    1. **Blobby** — isoperimetric ratio ``4π·A / P²`` (A = area, P = perimeter)
+       measures how close to a circle the silhouette is. Values near 1.0 are
+       maximally circular (bad for cliffs). Reject when the ratio exceeds
+       ``blobby_max`` (default 0.72 — still allows natural rounded bluffs
+       but rejects perfect blobs).
+
+    2. **Uniform** — std-dev of heights inside the face mask. If all face
+       cells are within ~2.5 m of each other, the cliff face has no visible
+       strata/steps and reads as a flat painted wall. Rejected below
+       ``uniform_min_height_std_m``.
+
+    Args:
+        face_mask:  (H, W) bool array — cliff face cells.
+        heights:    (H, W) float array of cell z — optional. When None, only
+                    the blobby check runs.
+        cell_size_m: world-metres per cell (for perimeter normalisation).
+        blobby_max:  maximum allowed isoperimetric ratio [0, 1].
+        uniform_min_height_std_m: minimum allowed std-dev of face heights.
+        feature_id: string stamped into ``ValidationIssue.affected_feature``.
+
+    Returns:
+        List of ValidationIssue (empty when silhouette passes both gates).
+    """
+    issues: List[ValidationIssue] = []
+    mask = np.asarray(face_mask, dtype=bool)
+    if mask.ndim != 2:
+        issues.append(
+            ValidationIssue(
+                code="CLIFF_SILHOUETTE_SHAPE_BAD_INPUT",
+                severity="hard",
+                affected_feature=feature_id,
+                message=f"face_mask must be 2-D bool; got shape {mask.shape}",
+            )
+        )
+        return issues
+    area_cells = int(mask.sum())
+    if area_cells < 4:
+        # Too small to have meaningful shape — let the area validator handle it
+        return issues
+
+    # Perimeter: count boundary edges (a face cell with a non-face neighbour
+    # contributes one edge per side). Pure numpy via shifted-XOR.
+    # Use constant padding False so outside-the-grid counts as boundary too.
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    # Neighbour presence (inside mask)
+    n_up = padded[:-2, 1:-1]
+    n_dn = padded[2:,  1:-1]
+    n_lf = padded[1:-1, :-2]
+    n_rt = padded[1:-1, 2:]
+    # For each face cell, each missing neighbour is one perimeter edge.
+    edges_per_cell = (
+        (~n_up).astype(np.int32)
+        + (~n_dn).astype(np.int32)
+        + (~n_lf).astype(np.int32)
+        + (~n_rt).astype(np.int32)
+    )
+    # Only count edges for cells that ARE in the mask
+    perimeter_cells = int(edges_per_cell[mask].sum())
+
+    # Convert to world metres
+    area_m2 = area_cells * (cell_size_m ** 2)
+    perimeter_m = perimeter_cells * cell_size_m
+    if perimeter_m <= 1e-6:
+        return issues
+
+    # Isoperimetric ratio: 4π A / P² in [0, 1]; 1.0 = perfect circle.
+    iso_ratio = 4.0 * np.pi * area_m2 / (perimeter_m ** 2)
+    if iso_ratio > blobby_max:
+        issues.append(
+            ValidationIssue(
+                code="CLIFF_SILHOUETTE_TOO_BLOBBY",
+                severity="hard",
+                affected_feature=feature_id,
+                message=(
+                    f"cliff silhouette isoperimetric ratio {iso_ratio:.3f} > "
+                    f"{blobby_max:.3f} — silhouette is too circular/featureless"
+                ),
+                remediation=(
+                    "Break up the cliff footprint with lobes, ledges, or "
+                    "re-entrants; avoid pancake-shaped plateaux."
+                ),
+            )
+        )
+
+    # Height uniformity: std-dev of face cells' heights
+    if heights is not None:
+        h_arr = np.asarray(heights, dtype=np.float64)
+        if h_arr.shape == mask.shape:
+            face_heights = h_arr[mask]
+            if face_heights.size >= 4:
+                h_std = float(face_heights.std())
+                if h_std < uniform_min_height_std_m:
+                    issues.append(
+                        ValidationIssue(
+                            code="CLIFF_SILHOUETTE_TOO_UNIFORM",
+                            severity="hard",
+                            affected_feature=feature_id,
+                            message=(
+                                f"cliff face height std-dev {h_std:.2f} m < "
+                                f"{uniform_min_height_std_m:.2f} m — "
+                                f"silhouette reads as a flat wall"
+                            ),
+                            remediation=(
+                                "Add strata-band displacement, overhangs, or "
+                                "erosion variance to break up the face."
+                            ),
+                        )
+                    )
+
+    return issues
+
+
 __all__ = [
     "MaterialChannelExt",
     "validate_texel_density_coherency",
     "compute_height_blended_weights",
     "validate_cliff_silhouette_area",
+    "validate_cliff_silhouette_shape",
     "HERO_CLIFF_MIN_FRAC",
     "SECONDARY_CLIFF_MIN_FRAC",
+    "CLIFF_BLOBBY_MAX",
+    "CLIFF_UNIFORM_MIN_HEIGHT_STD_M",
 ]

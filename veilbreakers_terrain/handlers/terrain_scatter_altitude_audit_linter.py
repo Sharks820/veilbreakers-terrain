@@ -59,3 +59,63 @@ __all__ = [
     "WORLD_HEIGHT_TRANSFORM_WARNING",
     "audit_scatter_altitude_conversion",
 ]
+
+
+def _cli_main(argv: list[str] | None = None) -> int:
+    """Command-line entry point for CI/lint runs.
+
+    Usage::
+
+        python -m veilbreakers_terrain.handlers.terrain_scatter_altitude_audit_linter \\
+            veilbreakers_terrain/handlers/environment_scatter.py [...more paths]
+
+    Returns non-zero exit on any forbidden pattern found, so the CI job fails
+    loudly. If no paths are given, lints the canonical scatter handlers.
+    """
+    import sys
+    from pathlib import Path
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args:
+        _handlers_dir = Path(__file__).resolve().parent
+        args = [
+            str(_handlers_dir / "environment_scatter.py"),
+            str(_handlers_dir / "_scatter_engine.py"),
+            str(_handlers_dir / "vegetation_system.py"),
+        ]
+
+    total_offenders = 0
+    for raw_path in args:
+        path = Path(raw_path)
+        if not path.exists():
+            print(f"[altitude-linter] MISSING FILE: {path}", file=sys.stderr)
+            total_offenders += 1
+            continue
+        try:
+            src = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"[altitude-linter] READ FAILED {path}: {exc}", file=sys.stderr)
+            total_offenders += 1
+            continue
+        offenders = audit_scatter_altitude_conversion(src)
+        if offenders:
+            print(f"[altitude-linter] {path}: {len(offenders)} violation(s)")
+            for entry in offenders:
+                print(f"  {entry}")
+            total_offenders += len(offenders)
+
+    if total_offenders:
+        print(
+            f"[altitude-linter] FAIL: {total_offenders} violation(s). "
+            f"{WORLD_HEIGHT_TRANSFORM_WARNING}",
+            file=sys.stderr,
+        )
+        return 1
+    print("[altitude-linter] OK: no forbidden altitude idioms detected.")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI glue
+    import sys
+
+    sys.exit(_cli_main())

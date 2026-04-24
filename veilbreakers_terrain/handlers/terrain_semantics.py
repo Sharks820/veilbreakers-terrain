@@ -416,6 +416,10 @@ class TerrainMaskStack:
     # cannot represent directly (overhangs, cave mouth rings, cliff lips).
     cliff_mesh_specs: Optional[List[Dict[str, Any]]] = None
     cave_mesh_specs: Optional[List[Dict[str, Any]]] = None
+    # Phase G — aggregated talus boulder scatter placements (species,
+    # world position, power-law-sampled radius). Published by
+    # ``terrain_cliffs.pass_cliffs`` and consumed by the scatter system.
+    talus_boulder_placements: Optional[List[Dict[str, Any]]] = None
     # Particle emitter specs emitted by the waterfall chain (lip/impact/mist
     # zones) and consumed by ``pass_emit_particle_systems`` to publish
     # ``state.particle_layer_specs`` for the Unity VFX Graph / Unreal Niagara
@@ -774,6 +778,7 @@ class TerrainMaskStack:
         "cave_mesh_specs",
         "audio_zone_list",
         "particle_emitter_specs",
+        "talus_boulder_placements",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:
@@ -1564,6 +1569,18 @@ class UnknownPassError(KeyError):
     """Raised when a pass name is not registered with the controller."""
 
 
+class ChannelOwnershipError(RuntimeError):
+    """Raised when two passes both declare the same produces_channels entry
+    without the later pass explicitly listing the channel in ``overrides``.
+
+    Added 2026-04-23 to force every downstream writer of a shared channel
+    (height, wetness, snow_line_factor, splatmap_weights_layer, traversability)
+    to annotate its overwrite intent explicitly, so accidental dual-producer
+    DAG hazards (of the kind that motivated the cloud_shadow rename) fail loud
+    at register time instead of silently fighting over a channel at run time.
+    """
+
+
 __all__ = [
     "BBox",
     "ErosionStrategy",
@@ -1588,4 +1605,5 @@ __all__ = [
     "ProtectedZoneViolation",
     "PassContractError",
     "UnknownPassError",
+    "ChannelOwnershipError",
 ]

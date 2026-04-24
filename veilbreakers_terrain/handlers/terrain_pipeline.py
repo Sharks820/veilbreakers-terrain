@@ -33,6 +33,7 @@ _log = logging.getLogger(__name__)
 
 from .terrain_semantics import (
     BBox,
+    ChannelOwnershipError,
     PassContractError,
     PassDefinition,
     PassResult,
@@ -173,6 +174,35 @@ class TerrainPassController:
             raise TypeError(
                 f"register_pass expects a PassDefinition, got {type(definition).__name__}"
             )
+
+        # ------------------------------------------------------------------
+        # Duplicate-producer enforcement (added 2026-04-23 wiring audit).
+        #
+        # When a channel is already produced by some other registered pass,
+        # the new pass must explicitly acknowledge the overwrite by listing
+        # the channel in ``overrides``. This catches accidental dual-producer
+        # DAG hazards (of the kind that motivated the cloud_shadow rename)
+        # at register time instead of silently fighting over the channel at
+        # run time.
+        # ------------------------------------------------------------------
+        declared_overrides = set(getattr(definition, "overrides", ()) or ())
+        for ch in definition.produces_channels:
+            existing_producers = [
+                other.name
+                for other in cls.PASS_REGISTRY.values()
+                if other.name != definition.name and ch in other.produces_channels
+            ]
+            if existing_producers and ch not in declared_overrides:
+                raise ChannelOwnershipError(
+                    f"Pass '{definition.name}' declares produces_channels="
+                    f"{definition.produces_channels!r} but channel {ch!r} is "
+                    f"already produced by {existing_producers!r}. If this "
+                    f"overwrite is intentional, add overrides={{'{ch}'}} to "
+                    f"the PassDefinition. Otherwise pick a distinct channel "
+                    f"name (see cloud_shadow → sun_cloud_shadow/baked_cloud_shadow "
+                    f"rename for the canonical pattern)."
+                )
+
         if definition.name in cls.PASS_REGISTRY:
             existing = cls.PASS_REGISTRY[definition.name]
             msg = (
@@ -987,6 +1017,12 @@ def register_default_passes() -> None:
             func=_tw.pass_generate_low_freq_hmap,
             requires_channels=(),
             produces_channels=("height", "hmap_low_freq"),
+            # OVERRIDE: ``macro_world`` also produces (height, hmap_low_freq).
+            # The 12.1 decomposition split the base heightmap into explicit
+            # low_freq/high_freq bands so callers can drive downstream passes
+            # without re-running the legacy ``macro_world`` monolith. Declaring
+            # the override makes the intentional overwrite explicit.
+            overrides=("height", "hmap_low_freq"),
             seed_namespace="macro_world",
             may_modify_geometry=False,
             requires_scene_read=False,
@@ -1037,6 +1073,12 @@ def register_default_passes() -> None:
                 # owned by ``structural_masks`` upstream.
                 "ridge_eroded",
             ),
+            # OVERRIDE: ``macro_world`` / ``pass_generate_low_freq_hmap`` produce
+            # the initial (height, hmap_low_freq) pair; ``erosion`` deliberately
+            # rewrites them with hydraulically-eroded values. This is the Gaea /
+            # World Machine "macro → erosion" staged-pipeline pattern — the
+            # second writer is correct, not accidental.
+            overrides=("height", "hmap_low_freq"),
             seed_namespace="erosion",
             requires_scene_read=True,
         ),
@@ -1045,6 +1087,11 @@ def register_default_passes() -> None:
             func=_tw.pass_composite_hmap,
             requires_channels=("hmap_low_freq", "hmap_high_freq"),
             produces_channels=("height",),
+            # OVERRIDE: composite of eroded low-freq + detail high-freq writes
+            # the FINAL height used by downstream passes. Upstream ``erosion``
+            # already wrote ``height`` from eroded low-freq alone; this pass
+            # finishes the Fix 12.1 decomposition by adding high-freq detail.
+            overrides=("height",),
             seed_namespace="",
             may_modify_geometry=False,
             requires_scene_read=False,

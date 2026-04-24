@@ -7,7 +7,6 @@ Fix 11.8 (Voronoise). Tests added wave-by-wave; each plan adds its own class.
 from __future__ import annotations
 import math
 import numpy as np
-import pytest
 
 
 class TestPowInv:
@@ -190,6 +189,25 @@ class TestPhacelleFbmIQ:
         vals = [fbm_iq(x * 0.1, y * 0.1, octaves=6, seed=0)
                 for x in range(10) for y in range(10)]
         assert all(-4.0 <= v <= 4.0 for v in vals), f"Out of bounds: {[v for v in vals if abs(v) > 4]}"
+
+    def test_fbm_iq_default_contract_preserved_when_params_added(self):
+        """Adding lacunarity/gain knobs must not change default output."""
+        from blender_addon.handlers._terrain_noise import domain_warp_fbm, fbm_iq
+
+        assert fbm_iq(0.37, 1.91, octaves=6, seed=123) == fbm_iq(
+            0.37, 1.91, octaves=6, seed=123, lacunarity=2.0, gain=0.5
+        )
+        assert domain_warp_fbm(4.2, -0.75, octaves=5, seed=99) == domain_warp_fbm(
+            4.2, -0.75, octaves=5, seed=99, lacunarity=2.0, gain=0.5
+        )
+
+    def test_fbm_iq_lacunarity_and_gain_change_spectrum(self):
+        """Preset spectral parameters must be wired, not silently ignored."""
+        from blender_addon.handlers._terrain_noise import fbm_iq
+
+        default = fbm_iq(0.37, 1.91, octaves=6, seed=123)
+        tuned = fbm_iq(0.37, 1.91, octaves=6, seed=123, lacunarity=1.9, gain=0.55)
+        assert tuned != default
 
 
 class TestVoronoise:

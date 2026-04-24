@@ -1408,7 +1408,6 @@ def generate_lod_chain(
         return []
 
     ratios = preset["ratios"]
-    screen_pcts = preset.get("screen_percentages", [1.0] * len(ratios))
     min_tris = preset.get("min_tris", [0] * len(ratios))
 
     # Compute silhouette importance for the source mesh
@@ -1658,7 +1657,9 @@ def handle_generate_lods(params: dict) -> dict:
 
     lod_results: list[dict] = []
 
-    for lod_verts, lod_faces, lod_level in lod_chain:
+    for lod_entry in lod_chain:
+        lod_verts, lod_faces, lod_level = lod_entry[:3]
+        billboard_spec = lod_entry[3] if len(lod_entry) > 3 else None
         lod_name = f"{object_name}_LOD{lod_level}"
 
         if lod_level == 0:
@@ -1685,14 +1686,17 @@ def handle_generate_lods(params: dict) -> dict:
             new_obj.rotation_euler = obj.rotation_euler
             new_obj.scale = obj.scale
 
-            lod_results.append({
+            lod_info = {
                 "name": lod_name,
                 "level": lod_level,
                 "faces": len(lod_faces),
                 "vertices": len(lod_verts),
                 "ratio": preset["ratios"][lod_level],
                 "screen_pct": preset["screen_percentages"][lod_level],
-            })
+            }
+            if billboard_spec is not None:
+                lod_info["billboard_spec"] = billboard_spec
+            lod_results.append(lod_info)
 
     # Create collision mesh object
     col_name = f"{object_name}_COL"
@@ -1927,15 +1931,6 @@ def _setup_billboard_lod(
         tree_depth=tree_depth,
         material_ref=material_ref,
     )
-
-    # Also build the extended AAA quad spec for tangent/alpha assignment
-    _raw_verts_for_spec = [
-        (-tree_width / 2.0, 0.0, 0.0),
-        ( tree_width / 2.0, 0.0, 0.0),
-        ( tree_width / 2.0, 0.0, tree_height),
-        (-tree_width / 2.0, 0.0, tree_height),
-    ]
-    bb_quad_spec = _generate_billboard_quad_spec(_raw_verts_for_spec)
 
     # Wire billboard as final LOD level in the vegetation LOD chain and create
     # the actual Blender mesh child object so Unity LOD group switching works.

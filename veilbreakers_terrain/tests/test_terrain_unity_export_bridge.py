@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack, ValidationIssue
 
@@ -82,6 +82,68 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     assert descriptor["terrain_layers"][0]["terrain_layer_asset_path"].endswith(".terrainlayer")
     assert descriptor["validation_status"] == "passed"
     assert descriptor["unity_world_origin"][1] == 10.0 * UNITY_SCALE_FACTOR
+
+
+def test_heightmap_raw_export_is_flipped_once(monkeypatch):
+    import veilbreakers_terrain.handlers.terrain_unity_export as mod
+
+    stack = TerrainMaskStack(
+        tile_size=1,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        height_min_m=1.0,
+        height_max_m=4.0,
+    )
+    quantized = mod._quantize_heightmap(stack)
+    assert quantized.tolist() == [[43690, 65535], [0, 21845]]
+
+    captured = {}
+
+    def _capture_write(path: Path, data: bytes) -> int:
+        captured["path"] = path
+        captured["data"] = data
+        return len(data)
+
+    monkeypatch.setattr(Path, "write_bytes", _capture_write)
+    monkeypatch.setattr(Path, "stat", lambda _path: SimpleNamespace(st_size=len(captured["data"])))
+    monkeypatch.setattr(mod, "_sha256", lambda _path: "sha256")
+
+    files = {}
+    mod._write_raw_array(
+        files,
+        Path("unused"),
+        filename="heightmap.raw",
+        channel="heightmap_raw_u16",
+        arr=quantized,
+        encoding="raw_u16_le",
+        flip_vertical=False,
+    )
+    written = np.frombuffer(captured["data"], dtype="<u2").reshape(2, 2)
+    np.testing.assert_array_equal(written, quantized)
+    assert files["heightmap.raw"]["flip_vertical"] is False
+
+
+def test_flat_heightmap_quantizes_to_zero():
+    from veilbreakers_terrain.handlers.terrain_unity_export import _quantize_heightmap
+
+    stack = TerrainMaskStack(
+        tile_size=2,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=np.full((3, 3), 7.0, dtype=np.float32),
+        height_min_m=7.0,
+        height_max_m=7.0,
+    )
+    quantized = _quantize_heightmap(stack)
+    assert quantized.dtype == np.uint16
+    assert int(quantized.max()) == 0
 
 
 def test_audio_zones_split_disconnected_components():

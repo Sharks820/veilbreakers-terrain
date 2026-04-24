@@ -674,6 +674,54 @@ def _build_command_handlers() -> Dict[str, Callable]:
         )
 
     try:
+        _vqa = _il.import_module(f"{_pkg}.terrain_visual_qa")
+
+        def _handle_visual_qa_setup_camera(params: dict) -> dict:
+            payload = params or {}
+            return _vqa.handle_visual_qa_setup_camera(
+                max_extent=float(payload.get("max_extent", 100.0)),
+                fov_degrees=float(payload.get("fov_degrees", 45.0)),
+                padding=float(payload.get("padding", 1.2)),
+                camera_height=float(payload.get("camera_height", 0.0)),
+                look_at_center=bool(payload.get("look_at_center", True)),
+                sensor_width_mm=float(payload.get("sensor_width_mm", 36.0)),
+            )
+
+        def _handle_visual_qa_set_shading(params: dict) -> dict:
+            payload = params or {}
+            return _vqa.handle_visual_qa_set_shading(
+                shading_type=str(payload.get("shading_type", "SOLID")),
+                use_scene_lights=bool(payload.get("use_scene_lights", True)),
+                use_world_lighting=bool(payload.get("use_world_lighting", True)),
+            )
+
+        def _handle_visual_qa_capture_screenshot(params: dict) -> dict:
+            payload = params or {}
+            filepath = payload.get("filepath")
+            if not filepath:
+                return {
+                    "status": "error",
+                    "error": "missing_params",
+                    "required": ["filepath"],
+                }
+            return _vqa.handle_visual_qa_capture_screenshot(
+                filepath=str(filepath),
+                width=int(payload.get("width", 1920)),
+                height=int(payload.get("height", 1080)),
+                mode=str(payload.get("mode", "viewport")),
+                thumbnail=bool(payload.get("thumbnail", False)),
+            )
+
+        handlers["visual_qa_setup_camera"] = _handle_visual_qa_setup_camera
+        handlers["visual_qa_set_shading"] = _handle_visual_qa_set_shading
+        handlers["visual_qa_capture_screenshot"] = _handle_visual_qa_capture_screenshot
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register terrain_visual_qa handlers: %r",
+            exc,
+        )
+
+    try:
         _vs = _il.import_module(f"{_pkg}.terrain_viewport_sync")
         from .terrain_semantics import BBox as _BBox
 

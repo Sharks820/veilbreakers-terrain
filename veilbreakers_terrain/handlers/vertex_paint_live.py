@@ -38,7 +38,7 @@ def _falloff_weight(dist: float, radius: float, mode: str) -> float | None:
     if dist > radius:
         return None  # strictly outside — always exclude
 
-    if radius == 0.0:
+    if radius <= 0.0:
         return None  # handled at call site (zero-radius guard)
 
     t = dist / radius
@@ -82,10 +82,14 @@ def compute_paint_weights(
     -------
     List of (vertex_index, weight) tuples for vertices within the brush.
     """
-    if radius == 0.0:
+    if radius <= 0.0:
         return []
 
     verts_np = np.asarray(verts, dtype=np.float64)
+    if verts_np.size == 0:
+        return []
+    if verts_np.ndim != 2 or verts_np.shape[1] != 3:
+        raise ValueError("verts must be an array-like of (x, y, z) triples")
     center_np = np.asarray(brush_center, dtype=np.float64)
     dists = np.linalg.norm(verts_np - center_np, axis=1)
     t = dists / radius
@@ -132,10 +136,14 @@ def compute_paint_weights_uv(
     -------
     List of (uv_index, weight) tuples for UV coordinates within the brush.
     """
-    if radius == 0.0:
+    if radius <= 0.0:
         return []
 
     uvs_np = np.asarray(uvs, dtype=np.float64)
+    if uvs_np.size == 0:
+        return []
+    if uvs_np.ndim != 2 or uvs_np.shape[1] != 2:
+        raise ValueError("uvs must be an array-like of (u, v) pairs")
     center_np = np.asarray(brush_center_uv, dtype=np.float64)
     uv_dists = np.linalg.norm(uvs_np - center_np, axis=1)
     t = uv_dists / radius
@@ -231,5 +239,13 @@ def blend_colors_array(colors: np.ndarray, weights: np.ndarray) -> np.ndarray:
     -------
     np.ndarray of shape (N, 3) or (N, 4), dtype float32, clamped to [0, 1].
     """
-    w = weights[:, np.newaxis]
-    return np.clip(colors * w, 0.0, 1.0).astype(np.float32)
+    colors_arr = np.asarray(colors, dtype=np.float32)
+    weights_arr = np.asarray(weights, dtype=np.float32)
+
+    if colors_arr.ndim != 2 or colors_arr.shape[1] not in (3, 4):
+        raise ValueError("colors must have shape (N, 3) or (N, 4)")
+    if weights_arr.ndim != 1 or weights_arr.shape[0] != colors_arr.shape[0]:
+        raise ValueError("weights must have shape (N,) matching colors")
+
+    w = np.clip(weights_arr, 0.0, 1.0)[:, np.newaxis]
+    return np.clip(colors_arr * w, 0.0, 1.0).astype(np.float32)

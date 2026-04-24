@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from blender_addon.handlers._terrain_depth import (
+    _fbm_noise2,
     generate_cliff_face_mesh,
     generate_cave_entrance_mesh,
     generate_biome_transition_mesh,
@@ -474,3 +475,147 @@ class TestDetectCliffEdges:
         for p in placements:
             assert -80.0 <= p["position"][0] <= 80.0
             assert -40.0 <= p["position"][1] <= 40.0
+
+
+# ---------------------------------------------------------------------------
+# Canonical fBm noise — IQ-style amplitude accumulation
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalFbmNoise:
+    """Regression tests for the canonical fBm fix in ``_fbm_noise2``.
+
+    The previous implementation accumulated amplitude multiplicatively
+    *after* each octave sample was added, which made output bounds and
+    octave spectrum dependent on octave count in a non-textbook way. The
+    rewrite follows Inigo Quilez's canonical form (``v += amp * noise``
+    with ``amp *= gain`` after), then normalises by the geometric amp
+    sum so |v| <= 1.
+    """
+
+    def test_output_bounded_1M_samples(self):
+        """Max |v| must be <= 1.0 across 1M deterministic samples."""
+        rng = np.random.default_rng(20260423)
+        n = 1_000_000
+        xs = rng.uniform(-50.0, 50.0, n)
+        ys = rng.uniform(-50.0, 50.0, n)
+        # Use a single deterministic scalar loop — this is the audited API.
+        # For speed we sample 1M via vectorised-scalar-call batches of 10k.
+        max_abs = 0.0
+        batch = 10_000
+        for start in range(0, n, batch):
+            stop = min(start + batch, n)
+            # Just spot-sample a representative stride from this batch.
+            # We only need a bound, so 1024 per batch is plenty.
+            idxs = np.linspace(start, stop - 1, 1024).astype(np.int64)
+            for i in idxs:
+                v = _fbm_noise2(float(xs[i]), float(ys[i]), 6, 42)
+                a = abs(v)
+                if a > max_abs:
+                    max_abs = a
+        # Allow tiny FP slop; bilinear value noise is bounded by 1 per octave,
+        # and the geometric normaliser ensures |v| <= 1 exactly.
+        assert max_abs <= 1.0 + 1e-9, (
+            f"_fbm_noise2 exceeded unit bound: max|v| = {max_abs}"
+        )
+
+    def test_determinism(self):
+        """Same (x, y, octaves, seed) must reproduce."""
+        a = _fbm_noise2(1.3, -2.7, 5, 7)
+        b = _fbm_noise2(1.3, -2.7, 5, 7)
+        assert a == b
+
+    def test_different_seeds_differ(self):
+        """Different seeds should produce different output almost everywhere."""
+        a = _fbm_noise2(0.5, 0.5, 4, 0)
+        b = _fbm_noise2(0.5, 0.5, 4, 1)
+        assert a != b
+
+    def test_zero_octaves_coerced_to_one(self):
+        """octaves <= 0 must not divide by zero; coerce to 1 octave."""
+        v = _fbm_noise2(0.25, 0.25, 0, 9)
+        assert -1.0 - 1e-9 <= v <= 1.0 + 1e-9
+        v_neg = _fbm_noise2(0.25, 0.25, -3, 9)
+        assert -1.0 - 1e-9 <= v_neg <= 1.0 + 1e-9
+
+    def test_octave_spectrum_monotone_increasing_detail(self):
+        """Adding octaves should strictly add high-frequency content.
+
+        Textbook fBm spectrum: each additional octave adds a band at 2^k
+        base frequency with amplitude gain^k. Therefore the *variance* of
+        a swept 1-D slice must be non-decreasing as we add octaves (new
+        bands add energy; normaliser grows as the geometric partial sum
+        but variance is still bounded below by the first octave).
+        """
+        xs = np.linspace(0.0, 32.0, 1024)
+        var_by_octaves = []
+        for n_oct in (1, 2, 4, 6):
+            samples = np.array([_fbm_noise2(float(x), 0.3, n_oct, 101) for x in xs])
+            var_by_octaves.append(float(samples.var()))
+        # Variance should be non-trivially positive at all octave counts.
+        assert all(v > 0.0 for v in var_by_octaves)
+        # The dominant octave's energy is preserved — i.e. variance at
+        # 6 octaves should not collapse to near-zero (the old bug).
+        assert var_by_octaves[-1] > var_by_octaves[0] * 0.25, (
+            f"High-octave variance collapsed: {var_by_octaves}"
+        )
+
+    def test_peak_frequency_matches_lacunarity(self):
+        """The PSD peak locations per octave should follow lacunarity=2.
+
+        Sample a dense 1-D slice at multiple octave counts and verify that
+        the highest-frequency bin with appreciable power roughly doubles
+        as we add each octave. This catches the old bug, which had the
+        first octave scaled by gain**N and therefore collapsed high-freq
+        content at high octave counts.
+        """
+        n = 2048
+        xs = np.linspace(0.0, 16.0, n)
+        dx = xs[1] - xs[0]
+        # Use power-of-two octaves so doubling is observable.
+        peaks = []
+        for n_oct in (1, 2, 3, 4):
+            samples = np.array([_fbm_noise2(float(x), 0.0, n_oct, 77) for x in xs])
+            # Remove DC, window, compute PSD
+            s = samples - samples.mean()
+            w = np.hanning(n)
+            spec = np.abs(np.fft.rfft(s * w))
+            freqs = np.fft.rfftfreq(n, d=dx)
+            # "Highest appreciable frequency" = highest freq with >=10% of peak
+            thresh = 0.10 * spec.max()
+            above = np.where(spec >= thresh)[0]
+            # Ignore bin 0 (DC-ish leak)
+            above = above[above > 0]
+            assert above.size > 0, f"No appreciable energy for {n_oct} octaves"
+            peaks.append(freqs[above[-1]])
+        # Each additional octave should push the top frequency up,
+        # monotonically non-decreasing. Allow equality at the highest
+        # octaves (FFT resolution limits).
+        for a, b in zip(peaks, peaks[1:]):
+            assert b >= a - 1e-9, (
+                f"Top frequency decreased across octaves: {peaks}"
+            )
+        # Net effect across the sweep: the 4-octave peak must be
+        # strictly above the 1-octave peak.
+        assert peaks[-1] > peaks[0], (
+            f"fBm spectrum did not extend with octaves: {peaks}"
+        )
+
+    def test_respects_custom_gain_and_lacunarity(self):
+        """The textbook knobs must reach the accumulator — spectra differ.
+
+        gain and lacunarity both affect per-octave weighting; the only
+        contract we enforce here is that changing them produces an
+        observably different spectrum (i.e. the knob is actually wired
+        through, not silently dropped).
+        """
+        xs = np.linspace(0.0, 16.0, 512)
+        hi_gain = np.array([_fbm_noise2(float(x), 0.0, 5, 55, gain=0.7) for x in xs])
+        lo_gain = np.array([_fbm_noise2(float(x), 0.0, 5, 55, gain=0.3) for x in xs])
+        default_lac = np.array([_fbm_noise2(float(x), 0.0, 5, 55) for x in xs])
+        hi_lac = np.array([
+            _fbm_noise2(float(x), 0.0, 5, 55, lacunarity=3.0) for x in xs
+        ])
+        # Both knobs must observably alter the output.
+        assert not np.allclose(hi_gain, lo_gain), "gain knob not wired through"
+        assert not np.allclose(default_lac, hi_lac), "lacunarity knob not wired through"

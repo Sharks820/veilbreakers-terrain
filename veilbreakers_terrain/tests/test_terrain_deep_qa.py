@@ -464,6 +464,37 @@ def test_budget_usage_computes_per_axis():
     assert usage["tri_count"]["current"] > 0
 
 
+def test_budget_report_as_dict_serializes_nested_budget_fields():
+    from blender_addon.handlers.terrain_budget_enforcer import BudgetReport
+
+    report = BudgetReport(
+        tile_km2=0.25,
+        lod0_tris=100,
+        lod1_tris=40,
+        lod2_tris=20,
+        unique_materials=3,
+        materials_utilization=0.375,
+        scatter_instances=50,
+        scatter_utilization=0.025,
+        npz_mb=12.5,
+        npz_utilization=0.1953125,
+        hero_features=2,
+        hero_per_km2=8.0,
+        hero_over=True,
+    )
+
+    payload = report.as_dict()
+
+    assert payload["tile_km2"] == 0.25
+    assert payload["lod0_tris"]["current"] == 100
+    assert payload["lod0_tris"]["utilization"] == pytest.approx(100 / 250_000)
+    assert payload["unique_materials"]["current"] == 3
+    assert payload["scatter_instances"]["current"] == 50
+    assert payload["npz_mb"]["current"] == 12.5
+    assert payload["hero_features"]["count"] == 2
+    assert payload["hero_features"]["over"] is True
+
+
 def test_budget_resolve_uses_quality_profile_defaults():
     from blender_addon.handlers.terrain_budget_enforcer import resolve_budget
 

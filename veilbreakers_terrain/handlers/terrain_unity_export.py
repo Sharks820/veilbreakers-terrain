@@ -43,6 +43,35 @@ def _is_unity_heightmap_resolution(n: int) -> bool:
     return n >= 33 and ((n - 1) & (n - 2)) == 0
 
 
+def _build_foliage_scatter_manifest() -> Dict[str, Any]:
+    """Emit the Phase-H foliage scatter manifest for the Unity importer.
+
+    Returns a dict with:
+      - ``species``: dict keyed by species_id with altitude/slope/moisture
+        gating, poisson_min_distance, lod_viewer_distance, biome_mask,
+        and ``unity_asset_path`` so the Unity import bridge can reserve
+        a Terrain Detail slot or Foliage Mode prototype for each entry.
+      - ``categories_covered``: flat list, used by CI to guarantee we
+        never regress the 14-category AAA coverage bar.
+      - ``tripo_assets_required``: species_ids flagged for Phase-I Tripo
+        generation — the Unity project can fall back to a placeholder
+        prefab until the authored asset lands.
+    """
+    try:
+        from .terrain_foliage_catalog import (
+            manifest_entries,
+            categories_covered,
+            tripo_assets_required,
+        )
+    except Exception:  # pragma: no cover - catalog should always import
+        return {"species": {}, "categories_covered": [], "tripo_assets_required": []}
+    return {
+        "species": manifest_entries(),
+        "categories_covered": sorted(categories_covered()),
+        "tripo_assets_required": list(tripo_assets_required()),
+    }
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -52,14 +81,20 @@ def _sha256(path: Path) -> str:
 
 
 def _quantize_heightmap(stack: TerrainMaskStack) -> np.ndarray:
-    """Quantize world-unit heightmap to uint16 for Unity RAW import."""
+    """Quantize world-unit heightmap to Unity-oriented uint16 RAW values.
+
+    Internal heightmaps store row 0 at the north/top edge. Unity RAW import
+    expects row 0 to be the south/bottom edge, so this channel is pre-flipped.
+    """
     h = np.asarray(stack.height, dtype=np.float64)
     lo = float(stack.height_min_m) if stack.height_min_m is not None else float(h.min())
     hi = float(stack.height_max_m) if stack.height_max_m is not None else float(h.max())
-    span = max(hi - lo, 1e-9)
-    norm = (h - lo) / span
-    norm = np.clip(norm, 0.0, 1.0)
-    return (norm * 65535.0 + 0.5).astype(np.uint16)
+    if hi - lo <= 1e-9:
+        return np.zeros(h.shape, dtype=np.uint16)
+    norm = np.clip((h - lo) / (hi - lo), 0.0, 1.0)
+    if norm.ndim >= 2:
+        norm = np.flip(norm, axis=0)
+    return np.ascontiguousarray(np.round(norm * 65535.0).astype(np.uint16))
 
 
 def _compute_terrain_normals_zup(heightmap: np.ndarray, cell_size: float) -> np.ndarray:
@@ -302,8 +337,10 @@ def _write_raw_array(
     arr: np.ndarray,
     encoding: str,
     extra: Optional[Dict[str, Any]] = None,
+    flip_vertical: bool = True,
 ) -> str:
-    export_arr = _ensure_little_endian(_flip_for_unity(np.asarray(arr)))
+    arr_np = np.asarray(arr)
+    export_arr = _ensure_little_endian(_flip_for_unity(arr_np) if flip_vertical else arr_np)
     target = output_dir / filename
     target.write_bytes(export_arr.tobytes())
     meta: Dict[str, Any] = {
@@ -315,7 +352,7 @@ def _write_raw_array(
         "channels": int(export_arr.shape[2]) if export_arr.ndim >= 3 else 1,
         "bit_depth": export_arr.dtype.itemsize * 8,
         "encoding": encoding,
-        "flip_vertical": bool(export_arr.ndim >= 2),
+        "flip_vertical": bool(flip_vertical and export_arr.ndim >= 2),
     }
     if export_arr.dtype.itemsize > 1:
         meta["endianness"] = "little"
@@ -404,6 +441,235 @@ def _supplemental_mesh_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         mesh_specs.append(serialized)
 
     payload["mesh_specs"] = mesh_specs
+    return payload
+
+
+def _water_shader_manifest_json(
+    stack: TerrainMaskStack,
+    profile: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a water_shader_manifest.json payload for Unity/Unreal shader authoring.
+
+    Phase E AAA water upgrade.  Emits a per-material descriptor covering
+    every water surface produced by the pipeline.  Fields are hand-picked
+    to match:
+
+        - Unity HDRP Water System (deep_color, scattering, caustics,
+          normal_map, flow_map_channel, transparency_curve, fresnel).
+        - Unreal Water Plugin (base_color, fresnel, flow, depth fog).
+        - Horizon Forbidden West GDC 2022 water rendering
+          (analytic Gerstner waves + flow-map continuity + caustic bake).
+
+    Reference shader spec (comment-level):
+
+        // Unity ShaderGraph / HDRP Water Surface:
+        //   BaseColor      = lerp(base_color, deep_color, saturate(depth/fog_distance))
+        //   Caustics       = sample(caustic_texture, uv * caustic_tiling) * caustic_strength
+        //   Flow           = flow_map.rg * 2 - 1 (vertex Color2 or texture)
+        //   Normal         = normalize(normal_map_sample + gerstner_wave_normal)
+        //   Transparency   = transparency_curve.Evaluate(depth)
+        //   Fresnel        = schlick(fresnel_f0, dot(N, V), fresnel_power)
+
+        // Unreal Material Function "MF_WaterSurface":
+        //   - Plugs into the Water Plugin's WaterBodyMaterial slot.
+        //   - Flow UVs: Flowmap node with texture + intensity scalar.
+        //   - Depth fade: DepthFade node keyed by transparency_curve points.
+
+    Args:
+        stack: TerrainMaskStack — channels read: foam, flow_direction,
+            flow_speed, waterfall_velocity (indirectly via materials list).
+        profile: Optional profile name (e.g. ``"hero_shot"``); hero profiles
+            bump caustic tiling and Gerstner wave count.
+
+    Returns:
+        Dict with ``schema_version``, ``coordinate_system``, and a
+        ``materials`` list with one entry per water-material kind.
+    """
+    hero = (profile or "").lower() in ("hero_shot", "aaa_open_world")
+
+    # Default base / deep / fog colors — lake, river, waterfall, ocean.
+    # Sourced from Horizon Forbidden West GDC 2022 palette + Sea of Thieves
+    # tropical-ocean references.  Values are linear-sRGB [0, 1].
+    materials: List[Dict[str, Any]] = []
+
+    has_foam = False
+    try:
+        foam = stack.get("foam") if hasattr(stack, "get") else None
+        has_foam = foam is not None and float(np.asarray(foam).max()) > 0.0
+    except Exception:  # pragma: no cover — defensive
+        has_foam = False
+
+    has_flow_dir = False
+    try:
+        fd = stack.get("flow_direction") if hasattr(stack, "get") else None
+        has_flow_dir = fd is not None
+    except Exception:  # pragma: no cover
+        has_flow_dir = False
+
+    def _common_material(
+        name: str,
+        base_color: List[float],
+        deep_color: List[float],
+        fog_distance_m: float,
+    ) -> Dict[str, Any]:
+        return {
+            "material_id": name,
+            "base_color": base_color,
+            "deep_color": deep_color,
+            "caustic_texture": f"Caustics/{name}_caustic.png",
+            "caustic_tiling": 4.0 if hero else 2.0,
+            "caustic_strength": 0.75 if hero else 0.5,
+            "normal_map": f"Normals/{name}_normal.png",
+            "normal_scale": 1.0,
+            "flow_map_channel": "Color2" if has_flow_dir else None,
+            "flow_map_texture": f"Flow/{name}_flowmap.png" if not has_flow_dir else None,
+            "flow_speed_multiplier": 1.0,
+            "foam_channel": "vertex_alpha" if has_foam else None,
+            "foam_texture": f"Foam/{name}_foam.png",
+            "transparency_curve": [
+                {"depth_m": 0.0, "alpha": 0.35},
+                {"depth_m": 0.5, "alpha": 0.55},
+                {"depth_m": 2.0, "alpha": 0.85},
+                {"depth_m": float(fog_distance_m), "alpha": 1.0},
+            ],
+            "fresnel_params": {
+                "f0": 0.02,                     # IOR ~1.33 water
+                "power": 5.0,                   # Schlick exponent
+                "edge_tint": [0.9, 0.95, 1.0],  # slight cyan at grazing
+            },
+            "fog_distance_m": float(fog_distance_m),
+            "gerstner_wave_count": 6 if hero else 3,
+            "gerstner_wave_steepness": 0.4,
+            "beer_lambert_k": 0.35,
+            "shader_target": {
+                "unity": "HDRP/Water",
+                "unity_shadergraph": "ShaderGraphs/SG_Water_AAA",
+                "unreal": "MF_WaterSurface",
+            },
+        }
+
+    # Lake: still water, deep teal
+    materials.append(_common_material(
+        name="lake",
+        base_color=[0.10, 0.30, 0.40],
+        deep_color=[0.02, 0.10, 0.18],
+        fog_distance_m=8.0,
+    ))
+    # River: flowing, lighter, more caustics
+    materials.append(_common_material(
+        name="river",
+        base_color=[0.15, 0.38, 0.42],
+        deep_color=[0.05, 0.18, 0.25],
+        fog_distance_m=4.0,
+    ))
+    # Waterfall: white-water tint, high foam
+    waterfall_mat = _common_material(
+        name="waterfall",
+        base_color=[0.65, 0.75, 0.80],
+        deep_color=[0.15, 0.25, 0.35],
+        fog_distance_m=2.0,
+    )
+    waterfall_mat["foam_texture"] = "Foam/waterfall_whitewater.png"
+    waterfall_mat["caustic_strength"] = 0.0  # no caustics in plume
+    materials.append(waterfall_mat)
+
+    payload: Dict[str, Any] = {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "profile": profile or "default",
+        "unity_scale_factor": UNITY_SCALE_FACTOR,
+        "hero_profile": hero,
+        "materials": materials,
+        "shader_integration_notes": {
+            "unity_hdrp": (
+                "Plug materials into HDRP Water Surface. Use Color2 vertex "
+                "attribute for flow map, vertex alpha for foam."
+            ),
+            "unity_shadergraph": (
+                "SG_Water_AAA drives BaseColor via depth lerp, Caustics by "
+                "sampling caustic_texture * caustic_strength, Flow by "
+                "Color2.rg*2-1. Fresnel uses schlick(f0, NoV, power)."
+            ),
+            "unreal": (
+                "Unreal Water Plugin MF_WaterSurface reads flow_map_texture "
+                "(or Color2 vertex attribute) and the transparency_curve as "
+                "a DepthFade node keyed to fog_distance_m."
+            ),
+        },
+    }
+    return payload
+
+
+def _particle_emitter_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
+    """Serialise ``particle_emitter_specs`` to a Unity VFX Graph friendly payload.
+
+    Each emitter spec is converted to Y-up coordinates and annotated with
+    the VFX Graph asset hint and Niagara system hint. The payload matches
+    the schema Unity's VFX Graph binding expects for ``PointCloudAsset``
+    emitter seeds (position + normal + bounds + rate), with extra fields
+    that the Niagara exporter can pick up unchanged.
+
+    Returns:
+        Dict with schema_version, coordinate_system, and ``emitters`` list.
+        ``emitters`` is empty when no particle_emitter_specs are present.
+    """
+    payload: Dict[str, Any] = {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "emitters": [],
+    }
+    raw_specs = list(stack.particle_emitter_specs or [])
+    emitters: List[Dict[str, Any]] = []
+    for i, raw in enumerate(raw_specs):
+        position = raw.get("position")
+        normal = raw.get("normal")
+        bounds = raw.get("bounds") or {}
+        if not isinstance(position, (list, tuple)) or len(position) < 3:
+            continue
+        if not isinstance(normal, (list, tuple)) or len(normal) < 3:
+            continue
+
+        unity_pos = _apply_unity_scale(_zup_to_unity_vector(list(position)))
+        # Normals are direction vectors — do NOT apply the unity world-scale
+        # factor. We only need the Z-up -> Y-up axis swap.
+        unity_nrm = _zup_to_unity_vector(list(normal))
+
+        emitter = {
+            "emitter_id": str(raw.get("zone_name", f"emitter_{i:03d}")) +
+                          f"_{raw.get('chain_id', i)}",
+            "zone_name": str(raw.get("zone_name", "unknown")),
+            "chain_id": str(raw.get("chain_id", "")),
+            "position": {
+                "x": float(unity_pos[0]),
+                "y": float(unity_pos[1]),
+                "z": float(unity_pos[2]),
+            },
+            "normal": {
+                "x": float(unity_nrm[0]),
+                "y": float(unity_nrm[1]),
+                "z": float(unity_nrm[2]),
+            },
+            "bounds": {
+                "shape": str(bounds.get("shape", "sphere")),
+                "radius_m": float(bounds.get("radius_m", 1.0)),
+                "height_m": float(bounds.get("height_m", 0.0)),
+            },
+            "emission_rate": float(raw.get("emission_rate", 0.0)),
+            "velocity_mps": float(raw.get("velocity", 0.0)),
+            "lifetime_s": float(raw.get("lifetime", 1.0)),
+            "material": str(raw.get("material", "waterfall_particle")),
+            "vfx_graph_asset_hint": str(
+                raw.get("vfx_graph_asset_hint",
+                        f"VFX/Water/{raw.get('material', 'waterfall_particle')}")
+            ),
+            "niagara_system_hint": str(
+                raw.get("niagara_system_hint",
+                        f"NS_{raw.get('material', 'waterfall_particle')}")
+            ),
+        }
+        emitters.append(emitter)
+
+    payload["emitters"] = emitters
     return payload
 
 
@@ -874,6 +1140,7 @@ def export_unity_manifest(
         channel="heightmap_raw_u16",
         arr=np.asarray(stack.heightmap_raw_u16, dtype=np.uint16),
         encoding="raw_u16_le",
+        flip_vertical=False,
     )
     _write_raw_array(
         files,
@@ -959,6 +1226,8 @@ def export_unity_manifest(
     wildlife_zones_json = _wildlife_zones_json(stack)
     decals_json = _decals_json(stack)
     supplemental_mesh_specs_json = _supplemental_mesh_specs_json(stack)
+    particle_emitter_specs_json = _particle_emitter_specs_json(stack)
+    water_shader_manifest_json = _water_shader_manifest_json(stack, profile=profile)
     ecosystem_meta_json = {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -978,6 +1247,7 @@ def export_unity_manifest(
         "has_traversability": stack.traversability is not None,
         "has_decals": bool(stack.decal_density),
         "has_supplemental_mesh_specs": bool(supplemental_mesh_specs_json["mesh_specs"]),
+        "has_particle_emitters": bool(particle_emitter_specs_json["emitters"]),
         "wind_field_descriptor": "wind_field.bin" if stack.wind_field is not None else None,
         "cloud_shadow_descriptor": "cloud_shadow.bin" if stack.cloud_shadow is not None else None,
         "supplemental_mesh_specs_descriptor": (
@@ -985,6 +1255,13 @@ def export_unity_manifest(
             if supplemental_mesh_specs_json["mesh_specs"]
             else None
         ),
+        "particle_emitter_specs_descriptor": (
+            "particle_emitter_specs.json"
+            if particle_emitter_specs_json["emitters"]
+            else None
+        ),
+        "water_shader_manifest_descriptor": "water_shader_manifest.json",
+        "has_water_shader_manifest": True,
     }
 
     for name, payload in (
@@ -1003,6 +1280,21 @@ def export_unity_manifest(
             filename="supplemental_mesh_specs.json",
             payload=supplemental_mesh_specs_json,
         )
+    if particle_emitter_specs_json["emitters"]:
+        _write_json(
+            files,
+            output_dir,
+            filename="particle_emitter_specs.json",
+            payload=particle_emitter_specs_json,
+        )
+    # Phase E — always emit the water shader manifest so the Unity importer
+    # can bind the HDRP water material even on tiles without active chains.
+    _write_json(
+        files,
+        output_dir,
+        filename="water_shader_manifest.json",
+        payload=water_shader_manifest_json,
+    )
 
     # ---------------------------------------------------------------------- #
     # Tree prototype list — derived from tree_instance_points column 4.
@@ -1116,6 +1408,7 @@ def export_unity_manifest(
         "splatmap_layers": splatmap_layer_meta,
         "detail_density_max_per_cell": _DETAIL_DENSITY_MAX_PER_CELL,
         "tree_prototype_list": tree_prototype_list,
+        "foliage_scatter_manifest": _build_foliage_scatter_manifest(),
         "water_level_unity_units": water_level_unity,
         "lightmap_hints": lightmap_hints,
         "files": files,
@@ -1486,6 +1779,7 @@ __all__ = [
     "_export_heightmap",
     "_bit_depth_for_profile",
     "compute_wind_bend_vertex_color",
+    "_water_shader_manifest_json",
     "UNITY_SCALE_FACTOR",
     "_apply_unity_scale",
 ]

@@ -12,7 +12,7 @@ from __future__ import annotations
 import heapq
 import math
 from collections import deque
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Any
 
 import numpy as np
@@ -99,7 +99,16 @@ class WaterNode:
 
 @dataclass
 class WaterSegment:
-    """A connection between two water nodes."""
+    """A connection between two water nodes.
+
+    Phase E AAA water upgrade adds ``braided_polylines`` for wide channels.
+    When a river exceeds the braiding threshold (>20 cells wide), the
+    segment is split into 2-3 flow polylines with a small lateral offset
+    to mimic braided-channel morphology (RDR2 / HFW reference).  The
+    primary ``waypoints`` list remains the dominant thalweg; the extras
+    live in ``braided_polylines`` and are consumed by water mesh builders
+    that want visible channel splitting.
+    """
 
     segment_id: int
     source_node_id: int
@@ -109,6 +118,11 @@ class WaterSegment:
     avg_width: float
     avg_depth: float
     segment_type: str        # "river", "stream", "waterfall", "underground"
+    # Phase E addition — extra braided-flow polylines.  Empty when the
+    # channel is not wide enough for braiding (< braiding_width_threshold).
+    braided_polylines: list[list[tuple[float, float, float]]] = field(
+        default_factory=list
+    )
 
 
 # ===================================================================
@@ -817,6 +831,158 @@ def pass_water_flow_speed(
         },
         issues=[],
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase E AAA water upgrade — flow direction channel + vertex color baking
+# ---------------------------------------------------------------------------
+
+# Reuse the D8 -> (dx, dz) unit vectors defined above for flow_speed. The
+# (+x = east, +y = north) 2D convention matches Horizon Forbidden West and
+# RDR2 water shader flow-map conventions so this field can be exported
+# directly as a 2-channel flow map.
+
+def compute_flow_direction_field(
+    flow_direction: "np.ndarray",
+    flow_speed: "np.ndarray | None" = None,
+    foam_mask: "np.ndarray | None" = None,
+) -> "np.ndarray":
+    """Build a per-cell flow-direction vector field for shader export.
+
+    The returned field is a float32 array of shape (H, W, 4) packed as
+    ``(fx, fy, flow_speed, foam_strength)``:
+
+        fx              — unit-vector east-component of D8 flow direction
+                          (range [-1, 1]; 0 at pits)
+        fy              — unit-vector north-component of D8 flow direction
+                          (range [-1, 1]; 0 at pits)
+        flow_speed      — [0, 1] normalised scalar speed (0 when unknown)
+        foam_strength   — [0, 1] foam mask (0 when unknown)
+
+    This shape matches the "flow_direction_rad" / "flow_dir_xy" channel
+    convention used by LipCandidate.flow_direction_rad and by the Unity
+    water shader flow-map authoring pipeline (Inigo Quilez "flow maps"
+    article — unit vectors packed into two channels).
+
+    Args:
+        flow_direction: 2-D int8/int32 D8 direction index array
+            (0–7, –1 = pit/flat).
+        flow_speed: Optional (H, W) speed array already normalised to [0, 1]
+            (as produced by :func:`pass_water_flow_speed`).  When ``None``
+            the speed channel is set to 0.0.
+        foam_mask: Optional (H, W) bool/float foam mask.  Converted to
+            float32 and clamped to [0, 1].
+
+    Returns:
+        (H, W, 4) float32 array.
+    """
+    fd = np.asarray(flow_direction, dtype=np.int32)
+    if fd.ndim != 2:
+        raise ValueError("flow_direction must be a 2-D array")
+    H, W = fd.shape
+
+    # Build D8 unit direction LUTs (east +x, north +y)
+    lut_fx = np.array(_D8_DX, dtype=np.float32)
+    lut_fy = np.array(
+        [-float(dr) / _d for (dr, dc), _d in zip(_D8_OFFSETS, _D8_DISTANCES)],
+        dtype=np.float32,
+    )
+
+    out = np.zeros((H, W, 4), dtype=np.float32)
+    valid = fd >= 0
+    # Use np.take with mode='clip' and zero-out via mask so -1 maps to 0
+    fd_safe = np.clip(fd, 0, 7)
+    out[..., 0] = np.where(valid, lut_fx[fd_safe], 0.0)
+    out[..., 1] = np.where(valid, lut_fy[fd_safe], 0.0)
+
+    if flow_speed is not None:
+        fs = np.asarray(flow_speed, dtype=np.float32)
+        out[..., 2] = np.clip(fs, 0.0, 1.0)
+    if foam_mask is not None:
+        fm = np.asarray(foam_mask, dtype=np.float32)
+        out[..., 3] = np.clip(fm, 0.0, 1.0)
+    return out
+
+
+def bake_flow_direction_vertex_color(
+    vertex_grid_indices: "np.ndarray",
+    stack: "Any",
+    *,
+    color_attribute: str = "Color2",
+    flow_direction_channel: str = "flow_direction",
+    flow_speed_channel: str = "flow_speed",
+    foam_channel: str = "foam",
+) -> "np.ndarray":
+    """Bake per-vertex flow direction + speed + foam into an RGBA array.
+
+    The packing matches the Horizon Forbidden West water shader convention
+    used by Unity HDRP's flow-map water and RDR2's river shader:
+
+        R = fx * 0.5 + 0.5          (east component, [0, 1])
+        G = fy * 0.5 + 0.5          (north component, [0, 1])
+        B = flow_speed              ([0, 1] scalar speed)
+        A = foam_strength           ([0, 1] foam intensity)
+
+    Consumers map the ``Color2`` attribute into the shader's flow sample and
+    multiply water-surface UV offsets by the unpacked (fx, fy) vector.
+
+    Args:
+        vertex_grid_indices: (N, 2) int array of (row, col) indices into the
+            stack's grid for each vertex, OR an (H, W) field (in which case
+            the full grid is baked and returned as an (H*W, 4) flat array).
+        stack: TerrainMaskStack-like object exposing ``.get(channel)``.
+        color_attribute: Name of the vertex color attribute to write.  The
+            attribute name is stored on the returned array as ``_attr_name``
+            for downstream mesh-export consumers.  Default ``"Color2"``.
+        flow_direction_channel: Channel name on the stack holding the D8
+            flow direction (``"flow_direction"`` by default).
+        flow_speed_channel: Channel name for the normalised flow speed.
+        foam_channel: Channel name for the foam intensity.
+
+    Returns:
+        (N, 4) float32 RGBA array in [0, 1] suitable for writing straight to
+        a Blender color attribute via ``mesh.color_attributes.new(...)``.
+    """
+    fd = stack.get(flow_direction_channel) if hasattr(stack, "get") else None
+    fs = stack.get(flow_speed_channel) if hasattr(stack, "get") else None
+    foam = stack.get(foam_channel) if hasattr(stack, "get") else None
+    if fd is None:
+        # Nothing we can do — return zero-direction with half-half packing.
+        vi = np.asarray(vertex_grid_indices)
+        n = int(vi.shape[0]) if vi.ndim >= 2 else int(vi.size // 2)
+        rgba = np.tile(np.array([0.5, 0.5, 0.0, 0.0], dtype=np.float32), (n, 1))
+        rgba_view = rgba.view()
+        try:
+            rgba_view.setflags(write=False)  # pragma: no cover — defensive
+        except Exception:
+            pass
+        return rgba
+
+    field4 = compute_flow_direction_field(fd, fs, foam)
+    H, W, _ = field4.shape
+
+    vi = np.asarray(vertex_grid_indices)
+    if vi.ndim == 2 and vi.shape[1] == 2:
+        # (N, 2) index pairs
+        rows = np.clip(vi[:, 0].astype(np.int64), 0, H - 1)
+        cols = np.clip(vi[:, 1].astype(np.int64), 0, W - 1)
+        samples = field4[rows, cols, :]
+    else:
+        # Flatten the whole grid
+        samples = field4.reshape(-1, 4)
+
+    rgba = np.empty((samples.shape[0], 4), dtype=np.float32)
+    rgba[:, 0] = samples[:, 0] * 0.5 + 0.5
+    rgba[:, 1] = samples[:, 1] * 0.5 + 0.5
+    rgba[:, 2] = np.clip(samples[:, 2], 0.0, 1.0)
+    rgba[:, 3] = np.clip(samples[:, 3], 0.0, 1.0)
+    # Stash the target attribute name for downstream mesh exporters that
+    # inspect this helper result (keeps the call site engine-agnostic).
+    try:
+        rgba.attr_name = str(color_attribute)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return rgba
 
 
 def register_pass_water_flow_speed() -> None:
@@ -1694,6 +1860,15 @@ class WaterNetwork:
                     seg_type = "stream"
 
                 sid = net._alloc_segment_id()
+                # Phase E — build braided polylines for wide channels
+                # (> 20 cells of channel width).  Threshold is expressed in
+                # world-unit width so non-unit cell sizes are handled.
+                braided = build_braided_polylines(
+                    segment_waypoints,
+                    channel_width=avg_w,
+                    braiding_width_threshold=20.0 * cell_size,
+                    seed=int(sid) ^ int(seed),
+                ) if seg_type in ("river", "stream") else []
                 seg = WaterSegment(
                     segment_id=sid,
                     source_node_id=src_nid,
@@ -1703,6 +1878,7 @@ class WaterNetwork:
                     avg_width=avg_w,
                     avg_depth=avg_d,
                     segment_type=seg_type,
+                    braided_polylines=braided,
                 )
                 net.segments[sid] = seg
 
@@ -2683,6 +2859,11 @@ class WaterNetwork:
             sd = asdict(s)
             # Waypoints stored as lists-of-lists for JSON compat
             sd["waypoints"] = [list(wp) for wp in sd["waypoints"]]
+            # Braided flow polylines (Phase E) — same list-of-lists encoding
+            sd["braided_polylines"] = [
+                [list(wp) for wp in bp]
+                for bp in (sd.get("braided_polylines") or [])
+            ]
             segments_list.append({k: _to_py(v) for k, v in sd.items()})
 
         contracts_list = []
@@ -2760,6 +2941,12 @@ class WaterNetwork:
             # Convert waypoints from lists back to tuples
             sd = dict(sd)
             sd["waypoints"] = [tuple(wp) for wp in sd["waypoints"]]
+            # Braided polylines (Phase E) — restore tuples for round-trip.
+            # Older snapshots without the key default to an empty list.
+            braided = sd.get("braided_polylines") or []
+            sd["braided_polylines"] = [
+                [tuple(wp) for wp in bp] for bp in braided
+            ]
             seg = WaterSegment(**sd)
             net.segments[seg.segment_id] = seg
 
@@ -3172,4 +3359,213 @@ def register_pass_river_convergence() -> None:
             ),
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase E AAA water upgrade — braided flow + flow continuity validator
+# ---------------------------------------------------------------------------
+
+
+def build_braided_polylines(
+    primary_waypoints: list[tuple[float, float, float]],
+    channel_width: float,
+    *,
+    braiding_width_threshold: float = 20.0,
+    max_branches: int = 3,
+    divergence_ratio: float = 0.18,
+    seed: int = 0,
+) -> list[list[tuple[float, float, float]]]:
+    """Split a wide channel into 2–3 braided flow polylines.
+
+    When the river is wider than ``braiding_width_threshold`` cells worth of
+    width, generate ``max_branches`` side polylines offset laterally from
+    the thalweg.  Each branch is offset by ``divergence_ratio * channel_width``
+    in alternating +/- perpendicular directions, with a smooth sine-taper
+    that pins the branch to the primary at the endpoints so nothing
+    disconnects at segment boundaries (RDR2 reference: braided channels
+    rejoin at the confluence).
+
+    Args:
+        primary_waypoints: The dominant thalweg polyline as (x, y, z) tuples.
+        channel_width: Total channel width in world units (metres).
+        braiding_width_threshold: Minimum width (m) before the channel
+            starts to braid.  Default 20.0.
+        max_branches: Maximum number of additional branches (2 or 3).
+        divergence_ratio: Lateral offset as a fraction of channel_width.
+        seed: RNG seed for deterministic phase jitter.
+
+    Returns:
+        List of lists of (x, y, z) tuples — one per branch.  Empty when
+        the channel is not wide enough for braiding.
+    """
+    if channel_width < float(braiding_width_threshold):
+        return []
+    n = len(primary_waypoints)
+    if n < 4:
+        return []
+
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    # Two or three branches alternating sides
+    n_branches = max(2, min(int(max_branches), 3))
+    offset = float(divergence_ratio) * float(channel_width)
+
+    # Arc-length along primary for sine-taper
+    arc = np.zeros(n, dtype=np.float64)
+    for i in range(1, n):
+        x0, y0, _ = primary_waypoints[i - 1]
+        x1, y1, _ = primary_waypoints[i]
+        arc[i] = arc[i - 1] + math.hypot(x1 - x0, y1 - y0)
+    total = float(arc[-1]) if arc[-1] > 0.0 else 1.0
+    s_norm = arc / total
+    # Taper pins offset = 0 at s=0 and s=1
+    taper = np.sin(np.pi * s_norm)
+
+    branches: list[list[tuple[float, float, float]]] = []
+    for b in range(n_branches):
+        side = 1.0 if (b % 2 == 0) else -1.0
+        # Alternate amplitude slightly so 3 branches differ
+        amp = offset * (1.0 - 0.3 * (b // 2))
+        phase = float(rng.uniform(0.0, math.pi * 0.5))
+        branch: list[tuple[float, float, float]] = []
+        for i in range(n):
+            if i == 0 or i == n - 1:
+                branch.append(tuple(primary_waypoints[i]))
+                continue
+            x, y, z = primary_waypoints[i]
+            # Perpendicular direction based on local tangent
+            if 0 < i < n - 1:
+                x_prev, y_prev, _ = primary_waypoints[i - 1]
+                x_next, y_next, _ = primary_waypoints[i + 1]
+                tx = x_next - x_prev
+                ty = y_next - y_prev
+            else:
+                tx = 1.0
+                ty = 0.0
+            tmag = math.hypot(tx, ty) or 1.0
+            # Perpendicular: rotate tangent 90° CCW
+            px = -ty / tmag
+            py = tx / tmag
+            disp = side * amp * float(taper[i]) * math.cos(phase + 2.0 * math.pi * s_norm[i])
+            branch.append((float(x + px * disp), float(y + py * disp), float(z)))
+        branches.append(branch)
+    return branches
+
+
+def validate_flow_direction_continuity(
+    stack: "Any",
+    *,
+    reversal_angle_deg: float = 90.0,
+    sample_stride: int = 2,
+) -> list[str]:
+    """Validate that flow direction is continuous along river polylines.
+
+    Asserts no direction reversal greater than ``reversal_angle_deg`` between
+    consecutive samples along each river segment.  Horizon Forbidden West and
+    RDR2 both require strict flow continuity for realistic water motion —
+    a back-flowing cell in the middle of a river reads as a visible glitch.
+
+    Samples are taken from the D8 ``flow_direction`` channel along each
+    ``WaterSegment`` waypoint polyline plus any ``braided_polylines``.
+
+    Args:
+        stack: TerrainMaskStack with ``flow_direction`` and a
+            ``water_network`` attribute (or ``stack.get("water_network")``).
+            When no WaterNetwork is attached, the validator falls back to
+            sweeping the entire ``flow_direction`` field and checking
+            4-neighbour continuity.
+        reversal_angle_deg: Threshold angle (degrees).  A delta greater
+            than this between consecutive samples is reported.
+        sample_stride: Sample every Nth waypoint along a polyline.
+
+    Returns:
+        List of human-readable issue strings.  Empty when all samples
+        flow continuously.
+    """
+    issues: list[str] = []
+
+    fd_field = None
+    if hasattr(stack, "get"):
+        fd_field = stack.get("flow_direction")
+    if fd_field is None:
+        fd_field = getattr(stack, "flow_direction", None)
+    if fd_field is None:
+        return ["flow_direction channel missing — cannot validate continuity"]
+
+    fd_arr = np.asarray(fd_field, dtype=np.int32)
+    H, W = fd_arr.shape
+    cs = float(getattr(stack, "cell_size", 1.0)) or 1.0
+    wox = float(getattr(stack, "world_origin_x", 0.0))
+    woy = float(getattr(stack, "world_origin_y", 0.0))
+
+    # Build the D8 unit direction LUT in world-space (east +x, north +y)
+    lut_fx = np.array(_D8_DX, dtype=np.float64)
+    lut_fy = np.array(
+        [-float(dr) / _d for (dr, dc), _d in zip(_D8_OFFSETS, _D8_DISTANCES)],
+        dtype=np.float64,
+    )
+    threshold_cos = math.cos(math.radians(reversal_angle_deg))
+
+    def _sample_polyline(poly: list[tuple[float, float, float]], tag: str) -> None:
+        if len(poly) < 2:
+            return
+        prev_vec: tuple[float, float] | None = None
+        for k in range(0, len(poly), max(1, int(sample_stride))):
+            wx, wy, _ = poly[k]
+            c = int(round((wx - wox) / cs))
+            r = int(round((wy - woy) / cs))
+            if not (0 <= r < H and 0 <= c < W):
+                continue
+            d = int(fd_arr[r, c])
+            if d < 0:
+                continue
+            vx, vy = float(lut_fx[d]), float(lut_fy[d])
+            if prev_vec is not None:
+                pvx, pvy = prev_vec
+                dot = pvx * vx + pvy * vy
+                if dot < threshold_cos:
+                    angle = math.degrees(math.acos(max(min(dot, 1.0), -1.0)))
+                    issues.append(
+                        f"{tag}: flow reversal {angle:.1f}° > {reversal_angle_deg:.1f}° "
+                        f"at waypoint index {k} (world={wx:.2f},{wy:.2f})"
+                    )
+            prev_vec = (vx, vy)
+
+    # Preferred: walk the attached WaterNetwork segments + braided polylines
+    water_network = None
+    if hasattr(stack, "get"):
+        water_network = stack.get("water_network")
+    if water_network is None:
+        water_network = getattr(stack, "water_network", None)
+    if water_network is not None and hasattr(water_network, "segments"):
+        for seg in water_network.segments.values():
+            if getattr(seg, "segment_type", "") in ("waterfall", "underground"):
+                continue
+            _sample_polyline(list(seg.waypoints), tag=f"segment_{seg.segment_id}")
+            for bi, bp in enumerate(getattr(seg, "braided_polylines", []) or []):
+                _sample_polyline(list(bp), tag=f"segment_{seg.segment_id}_braid_{bi}")
+    else:
+        # Fallback: check that every cell's D8 receiver does not point back
+        # at the source (>90° reversal on the 4-neighbour stencil).
+        for r in range(H):
+            for c in range(W):
+                d = int(fd_arr[r, c])
+                if d < 0:
+                    continue
+                dr, dc = _D8_OFFSETS[d]
+                rr, cc = r + dr, c + dc
+                if not (0 <= rr < H and 0 <= cc < W):
+                    continue
+                rd = int(fd_arr[rr, cc])
+                if rd < 0:
+                    continue
+                # Receiver flowing back at us?  d vs (d+4)%8
+                if rd == (d + 4) % 8:
+                    issues.append(
+                        f"fallback_scan: cell ({r},{c}) flows to ({rr},{cc}) which "
+                        f"flows back — 180° reversal"
+                    )
+                    if len(issues) > 16:
+                        issues.append("... (truncated)")
+                        return issues
+    return issues
 
