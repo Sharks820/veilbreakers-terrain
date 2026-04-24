@@ -257,6 +257,161 @@ def test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_ful
     ]
 
 
+def test_dag_blocks_unannotated_duplicate_producer():
+    """2026-04-23 wiring audit: register_pass must reject a second producer
+    of an already-produced channel unless the new pass explicitly declares
+    the channel in its ``overrides`` tuple.
+
+    Regression: two passes both claiming the same produces_channels entry
+    without annotation is exactly the hazard that motivated the
+    cloud_shadow dual-producer rename. Silencing that hazard via ad-hoc
+    registration order is no longer permitted.
+    """
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from blender_addon.handlers.terrain_semantics import (
+        ChannelOwnershipError,
+        PassDefinition,
+    )
+
+    def _noop_pass(state, region):  # pragma: no cover — registration-only
+        raise RuntimeError("not expected to run")
+
+    first = PassDefinition(
+        name="dupe_producer_first",
+        func=_noop_pass,
+        requires_channels=(),
+        produces_channels=("custom_test_channel",),
+        seed_namespace="dupe_producer_first",
+    )
+    # Annotated override — legitimate second writer.
+    second_annotated = PassDefinition(
+        name="dupe_producer_second_annotated",
+        func=_noop_pass,
+        requires_channels=(),
+        produces_channels=("custom_test_channel",),
+        overrides=("custom_test_channel",),
+        seed_namespace="dupe_producer_second_annotated",
+    )
+    # Unannotated — should raise.
+    second_bare = PassDefinition(
+        name="dupe_producer_second_bare",
+        func=_noop_pass,
+        requires_channels=(),
+        produces_channels=("custom_test_channel",),
+        seed_namespace="dupe_producer_second_bare",
+    )
+
+    TerrainPassController.clear_registry()
+    try:
+        TerrainPassController.register_pass(first)
+        # Legitimate annotated override should succeed.
+        TerrainPassController.register_pass(second_annotated)
+        # Unannotated duplicate producer must raise ChannelOwnershipError.
+        with pytest.raises(ChannelOwnershipError) as excinfo:
+            TerrainPassController.register_pass(second_bare)
+        # The error message must name both the offending pass and the
+        # channel so authors can fix the declaration quickly.
+        message = str(excinfo.value)
+        assert "dupe_producer_second_bare" in message
+        assert "custom_test_channel" in message
+        assert "overrides" in message
+    finally:
+        TerrainPassController.clear_registry()
+
+
+def test_optional_channels_run_before_consumer_when_available():
+    """optional_channels adds a soft DAG edge: when the producer exists the
+    scheduler runs it before the consumer; when it is absent the consumer
+    is still schedulable. scatter_intelligent is the canonical caller.
+    """
+    from blender_addon.handlers.terrain_pass_dag import PassDAG
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from blender_addon.handlers.terrain_semantics import PassDefinition
+
+    def _noop(state, region):  # pragma: no cover — ordering-only
+        raise RuntimeError("not expected to run")
+
+    producer = PassDefinition(
+        name="optional_producer_X",
+        func=_noop,
+        requires_channels=(),
+        produces_channels=("optional_channel_X",),
+    )
+    consumer = PassDefinition(
+        name="optional_consumer",
+        func=_noop,
+        requires_channels=(),
+        optional_channels=("optional_channel_X",),
+        produces_channels=("optional_consumer_out",),
+    )
+
+    # Case 1: producer is present — consumer depends on it.
+    dag_with = PassDAG([producer, consumer])
+    order_with = dag_with.topological_order()
+    assert order_with.index("optional_producer_X") < order_with.index("optional_consumer"), (
+        "When the optional producer is registered, it must come before the consumer"
+    )
+    deps = dag_with.dependencies("optional_consumer")
+    assert "optional_producer_X" in deps
+
+    # Case 2: producer is absent — consumer still schedulable with no deps
+    # from the optional channel (absence is legal, not an error).
+    dag_without = PassDAG([consumer])
+    order_without = dag_without.topological_order()
+    assert order_without == ["optional_consumer"]
+    deps_without = dag_without.dependencies("optional_consumer")
+    assert deps_without == set(), (
+        "An optional channel with no producer must NOT become a dependency edge"
+    )
+
+
+def test_cloud_shadow_renamed_channels_are_independent():
+    """2026-04-23 wiring audit: Bundle J owns sun_cloud_shadow (+ legacy
+    cloud_shadow alias) and Bundle K owns baked_cloud_shadow. The two
+    channels must be independent DAG-wise so neither pass overwrites the
+    other's output.
+    """
+    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from blender_addon.handlers.terrain_cloud_shadow import (
+        register_bundle_j_cloud_shadow_pass,
+    )
+    from blender_addon.handlers.terrain_shadow_clipmap_bake import (
+        register_bundle_k_shadow_clipmap_pass,
+    )
+
+    TerrainPassController.clear_registry()
+    try:
+        register_bundle_j_cloud_shadow_pass()
+        register_bundle_k_shadow_clipmap_pass()
+
+        j_def = TerrainPassController.PASS_REGISTRY["cloud_shadow"]
+        k_def = TerrainPassController.PASS_REGISTRY["shadow_clipmap"]
+
+        # Bundle J owns the new primary channel + legacy alias.
+        assert "sun_cloud_shadow" in j_def.produces_channels
+        assert "cloud_shadow" in j_def.produces_channels
+        # Bundle J MUST NOT claim Bundle K's baked channel.
+        assert "baked_cloud_shadow" not in j_def.produces_channels
+
+        # Bundle K owns the baked channel exclusively.
+        assert "baked_cloud_shadow" in k_def.produces_channels
+        # Bundle K MUST NOT write the legacy alias or Bundle J's new channel.
+        assert "cloud_shadow" not in k_def.produces_channels
+        assert "sun_cloud_shadow" not in k_def.produces_channels
+
+        # DAG view: no channel is produced by both passes — the dual-producer
+        # hazard that motivated the rename is resolved.
+        j_chans = set(j_def.produces_channels)
+        k_chans = set(k_def.produces_channels)
+        shared = j_chans & k_chans
+        assert shared == set(), (
+            f"Bundle J and Bundle K must not share any produces_channels entries "
+            f"(found overlap: {sorted(shared)!r})"
+        )
+    finally:
+        TerrainPassController.clear_registry()
+
+
 def test_handle_run_terrain_pass_skips_heightmap_injection_when_unity_export_opted_out():
     from blender_addon.handlers.environment import handle_run_terrain_pass
     from blender_addon.handlers.terrain_pipeline import TerrainPassController

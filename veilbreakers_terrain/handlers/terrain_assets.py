@@ -899,13 +899,23 @@ def register_bundle_e_passes() -> None:
             # Scatter is the LAST thing to consume terrain state: it reads
             # height + slope + wetness to drive viability, and also reads
             # optional masks (cliff_candidate, cave_candidate,
-            # waterfall_lip_candidate) via stack.get(...) — the optional
-            # reads are intentionally NOT declared as requires_channels so
-            # the pass remains runnable without the full geological chain.
-            # Bundle registration order guarantees those upstream passes
-            # register (and hence the DAG sees them as producers) before
-            # scatter; see terrain_master_registrar for the canonical order.
+            # waterfall_lip_candidate) via stack.get(...) so asset placement
+            # can react to cliffs/caves/waterfalls when they are present
+            # without failing when they are not.
             requires_channels=("height", "slope"),
+            # optional_channels (2026-04-23 wiring audit): soft ordering edge.
+            # When any of these upstream passes are registered, the DAG runs
+            # them before scatter so scatter sees their masks. If they are
+            # absent, scatter runs without them — the stack.get(...) reads
+            # inside the pass function return None and fall back to defaults.
+            # This is the canonical "if it exists, use it; if not, continue"
+            # pattern that ``requires_channels`` cannot express because that
+            # would make the upstream pass mandatory.
+            optional_channels=(
+                "cliff_candidate",
+                "cave_candidate",
+                "waterfall_lip_candidate",
+            ),
             produces_channels=("tree_instance_points", "detail_density"),
             seed_namespace="scatter_intelligent",
             requires_scene_read=True,
