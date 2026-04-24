@@ -539,6 +539,9 @@ def _collapse_detail_density(detail_dens_raw) -> "np.ndarray | None":
 def _density_reject(density_map, row_f: float, col_f: float, rng_val: float) -> bool:
     """Return True (reject) when density_map is below rng_val at (row_f, col_f).
 
+    Uses 4-tap bilinear sampling so a linearly-ramping density map yields
+    a monotonic gradient in acceptance probability (no stair-step artifacts).
+
     Parameters
     ----------
     density_map : np.ndarray (H, W) float32 or None
@@ -550,9 +553,24 @@ def _density_reject(density_map, row_f: float, col_f: float, rng_val: float) -> 
     """
     if density_map is None:
         return False
-    r = int(np.clip(row_f, 0, density_map.shape[0] - 1))
-    c = int(np.clip(col_f, 0, density_map.shape[1] - 1))
-    density_val = float(np.clip(density_map[r, c], 0.0, 1.0))
+    h = density_map.shape[0]
+    w = density_map.shape[1]
+    rf = float(np.clip(row_f, 0.0, h - 1))
+    cf = float(np.clip(col_f, 0.0, w - 1))
+    r0 = int(np.floor(rf))
+    c0 = int(np.floor(cf))
+    r1 = min(r0 + 1, h - 1)
+    c1 = min(c0 + 1, w - 1)
+    fr = rf - r0
+    fc = cf - c0
+    # 4-tap bilinear
+    v00 = float(density_map[r0, c0])
+    v01 = float(density_map[r0, c1])
+    v10 = float(density_map[r1, c0])
+    v11 = float(density_map[r1, c1])
+    v0 = v00 * (1.0 - fc) + v01 * fc
+    v1 = v10 * (1.0 - fc) + v11 * fc
+    density_val = float(np.clip(v0 * (1.0 - fr) + v1 * fr, 0.0, 1.0))
     return rng_val > density_val
 
 

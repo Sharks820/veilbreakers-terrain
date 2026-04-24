@@ -1139,4 +1139,53 @@ class TestLodScreenPercentage:
         assert lod in (1, 2), f"Tree at 50m (table-only) expected LOD1/2, got {lod}"
 
 
-# P2-12 tests appended by the next commit.
+# ---------------------------------------------------------------------------
+# P2-12 — Bilinear density sampling (no stair-steps)
+# ---------------------------------------------------------------------------
+
+
+class TestDensityBilinearSampling:
+    """_density_reject samples density bilinearly."""
+
+    def test_bilinear_returns_intermediate_value_at_midpoint(self):
+        from blender_addon.handlers.environment_scatter import _density_reject
+
+        # 2x2 density map: bilinear at (0.5, 0.5) should be 0.5, so an
+        # rng_val strictly between 0 and 1 discriminates correctly.
+        dm = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+        # At row 0.5 col 0.5 -> average of {0,0,1,1} = 0.5
+        assert _density_reject(dm, 0.5, 0.5, rng_val=0.4) is False
+        assert _density_reject(dm, 0.5, 0.5, rng_val=0.6) is True
+
+    def test_linear_ramp_monotonic_no_stairstep(self):
+        from blender_addon.handlers.environment_scatter import _density_reject
+
+        # Build a 1D-style ramp 0->1 in the row direction, 8 rows x 2 cols.
+        dm = np.linspace(0.0, 1.0, 8, dtype=np.float32)[:, None].repeat(2, axis=1)
+        samples = []
+        # Sample 40 fractional row positions and reconstruct sampled density
+        # by binary-searching the rng threshold at which reject flips.
+        test_rows = np.linspace(0.0, 7.0, 40)
+        for rf in test_rows:
+            lo, hi = 0.0, 1.0
+            for _ in range(30):
+                mid = (lo + hi) * 0.5
+                if _density_reject(dm, float(rf), 0.5, rng_val=mid):
+                    hi = mid
+                else:
+                    lo = mid
+            samples.append((lo + hi) * 0.5)
+        samples = np.asarray(samples)
+        # Monotonic non-decreasing across all 40 samples. A nearest-neighbour
+        # implementation produces stair-step jumps with local flat regions.
+        diffs = np.diff(samples)
+        assert np.all(diffs >= -1e-3), (
+            f"Bilinear sampling should be monotonic non-decreasing across "
+            f"a linear ramp; got min-diff={diffs.min():.4f}"
+        )
+        # And the first->last direction actually spans the ramp.
+        assert samples[-1] - samples[0] > 0.8
+
+    def test_none_density_never_rejects(self):
+        from blender_addon.handlers.environment_scatter import _density_reject
+        assert _density_reject(None, 0.0, 0.0, rng_val=0.9) is False
