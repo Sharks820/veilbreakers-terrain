@@ -1,0 +1,24 @@
+{
+  "tile_m": 1024.0,
+  "heightmap_min_m": -20.80850550450981,
+  "heightmap_max_m": 387.71939814796264,
+  "mountain_peak_z": 320.0,
+  "lake_water_level": 8.0,
+  "lake_radius_m": 150.0,
+  "waterfall_top_z": 140.0,
+  "cave_entry": [
+    0.0,
+    100.0,
+    180.0
+  ],
+  "cave_exit": [
+    400.0,
+    100.0,
+    180.0
+  ],
+  "trees_placed": 180,
+  "rocks_placed": 75,
+  "failures": 0,
+  "failure_stages": [],
+  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\VeilBreakers_Scene_v3.blend"
+}
