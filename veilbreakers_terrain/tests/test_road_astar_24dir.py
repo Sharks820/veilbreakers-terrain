@@ -2,7 +2,7 @@
 
 Covers:
   - _OFFSETS_24: exactly 24 direction tuples
-  - _astar: Rune's exact cost formula + optional cost_map (avgCost term)
+  - _legacy_astar: Rune's exact cost formula + optional cost_map (avgCost term)
   - _fill_8connected_gaps: handles up to 3-cell jumps
   - smooth_road_path / catmull_rom_to_bezier: corner duplication at >120 deg
 """
@@ -49,24 +49,25 @@ class TestOffsets24:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestRuneAstarFormula:
-    """Verify Rune's exact cost formula is used in _astar."""
+    """Verify Rune's exact cost formula is used in _legacy_astar."""
 
     def test_flat_move_sqrt2_no_cost_map(self):
         """Diagonal move on flat terrain: cost == sqrt(2)."""
         # Build a 5x5 flat heightmap
         hmap = np.zeros((10, 10), dtype=np.float64)
-        from veilbreakers_terrain.handlers._terrain_noise import _astar
-        path = _astar(hmap, (0, 0), (5, 5))
+        from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
+        path = _legacy_astar(hmap, (0, 0), (5, 5), cell_size=1.0)
         # Path should exist (not empty)
         assert len(path) >= 1
 
     def test_cost_map_none_backward_compat(self):
-        """_astar with cost_map=None behaves same as without keyword."""
+        """_legacy_astar with cost_map=None behaves same as without keyword."""
         hmap = np.random.RandomState(1).rand(16, 16).astype(np.float64)
-        from veilbreakers_terrain.handlers._terrain_noise import _astar
-        path_implicit = _astar(hmap, (0, 0), (15, 15))
-        path_explicit = _astar(hmap, (0, 0), (15, 15), cost_map=None)
+        from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
+        path_implicit = _legacy_astar(hmap, (0, 0), (15, 15), cell_size=1.0)
+        path_explicit = _legacy_astar(hmap, (0, 0), (15, 15), cost_map=None, cell_size=1.0)
         assert path_implicit == path_explicit
 
     def test_rune_formula_avgcost_term(self):
@@ -79,8 +80,8 @@ class TestRuneAstarFormula:
         cost_map = np.zeros((20, 20), dtype=np.float32)
         # High-cost vertical barrier in the middle, open at the bottom
         cost_map[0:15, 10] = 5.0
-        from veilbreakers_terrain.handlers._terrain_noise import _astar
-        path = _astar(hmap, (0, 0), (0, 19), cost_map=cost_map)
+        from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
+        path = _legacy_astar(hmap, (0, 0), (0, 19), cost_map=cost_map, cell_size=1.0)
         # All path cells should be within bounds
         for r, c in path:
             assert 0 <= r < 20 and 0 <= c < 20
@@ -88,22 +89,22 @@ class TestRuneAstarFormula:
     def test_cost_map_values_influence_path(self):
         """cost_map adds 12 * 0.5 * (c[r0,c0] + c[nr,nc]) to move_cost.
 
-        Ensure the _astar accepts cost_map without raising.
+        Ensure the _legacy_astar accepts cost_map without raising.
         """
         hmap = np.zeros((8, 8), dtype=np.float64)
         cost_map = np.ones((8, 8), dtype=np.float32)
-        from veilbreakers_terrain.handlers._terrain_noise import _astar
-        path = _astar(hmap, (0, 0), (7, 7), cost_map=cost_map)
+        from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
+        path = _legacy_astar(hmap, (0, 0), (7, 7), cost_map=cost_map, cell_size=1.0)
         assert len(path) >= 2
         # Start and end should be in or near the path
         assert path[0] == (0, 0)
         assert path[-1] == (7, 7)
 
     def test_path_reaches_destination(self):
-        """_astar path always ends at destination."""
+        """_legacy_astar path always ends at destination."""
         hmap = np.random.RandomState(99).rand(20, 20).astype(np.float64)
-        from veilbreakers_terrain.handlers._terrain_noise import _astar
-        path = _astar(hmap, (0, 0), (19, 19))
+        from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
+        path = _legacy_astar(hmap, (0, 0), (19, 19), cell_size=1.0)
         assert path[-1] == (19, 19)
 
 
@@ -134,11 +135,12 @@ class TestFill8ConnectedGaps:
         filled = _fill_8connected_gaps(raw)
         assert filled == raw
 
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_astar_path_is_8connected(self):
-        """After _astar (which calls _fill_8connected_gaps), path is 8-connected."""
+        """After _legacy_astar (which calls _fill_8connected_gaps), path is 8-connected."""
         hmap = np.random.RandomState(7).rand(16, 16).astype(np.float64)
-        from veilbreakers_terrain.handlers._terrain_noise import _astar
-        path = _astar(hmap, (0, 0), (15, 15))
+        from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
+        path = _legacy_astar(hmap, (0, 0), (15, 15), cell_size=1.0)
         for i in range(len(path) - 1):
             r0, c0 = path[i]
             r1, c1 = path[i + 1]

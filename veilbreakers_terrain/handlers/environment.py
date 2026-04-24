@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 from ._terrain_noise import (  # noqa: E402
     generate_heightmap,
     carve_river_path,
-    generate_road_path_grid,
+    generate_road_path_grid_legacy,
     _theoretical_max_amplitude,
     TERRAIN_PRESETS,
     BIOME_RULES,
@@ -2017,6 +2017,8 @@ def handle_generate_terrain(params: dict) -> dict:
             pipeline.append("cliffs")
         if ("caves" in pipeline or "cliffs" in pipeline) and "emit_overhang_meshes" not in pipeline:
             pipeline.append("emit_overhang_meshes")
+        if "waterfalls" in pipeline and "emit_particle_systems" not in pipeline:
+            pipeline.append("emit_particle_systems")
         pipeline.append("validation_minimal")
         controller_params["pipeline"] = pipeline
 
@@ -2997,6 +2999,19 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
                 len(pipeline),
             )
             pipeline.insert(insert_at, "emit_overhang_meshes")
+        if (
+            "waterfalls" in pipeline
+            and "emit_particle_systems" not in pipeline
+        ):
+            insert_at = next(
+                (
+                    idx
+                    for idx, pipeline_pass in enumerate(pipeline)
+                    if pipeline_pass.startswith("validation_")
+                ),
+                len(pipeline),
+            )
+            pipeline.insert(insert_at, "emit_particle_systems")
         if "validation_full" in pipeline and not unity_export_opt_out:
             insert_at = pipeline.index("validation_full")
             for prereq in ("materials_v2", "navmesh", "prepare_terrain_normals", "prepare_heightmap_raw_u16"):
@@ -5716,12 +5731,16 @@ def handle_generate_road(params: dict) -> dict:
         )
         path, graded, _ = _run_height_solver_in_world_space(
             heightmap,
-            generate_road_path_grid,
+            generate_road_path_grid_legacy,
             waypoints=waypoints,
             width=width,
             grade_strength=grade_strength,
             seed=seed,
             cost_map=road_cost_map,
+            # ``cell_size`` is now required by the legacy helper — plumb the
+            # terrain's world spacing so Rune's slope penalty scales correctly
+            # on non-1m tiles (P2-8 narrowing).
+            cell_size=float(cell_size),
         )
 
     water_level_raw = params.get("water_level")

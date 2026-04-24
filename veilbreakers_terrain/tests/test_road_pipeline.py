@@ -159,33 +159,41 @@ def _make_intent(waypoints=None, anchors=()):
 
 class TestPipelineUnification:
     def test_generate_road_path_grid_threads_cost_map_to_astar(self, monkeypatch):
+        import warnings as _warnings
         from veilbreakers_terrain.handlers import _terrain_noise as noise_mod
 
         captured: dict[str, np.ndarray | None] = {"cost_map": None}
 
-        def _fake_astar(
+        def _fake_legacy_astar(
             heightmap,
             source,
             dest,
+            *,
+            cell_size,
             slope_weight=5.0,
             height_weight=1.0,
             cost_map=None,
         ):
             captured["cost_map"] = cost_map
+            captured["cell_size"] = cell_size
             return [source, dest]
 
-        monkeypatch.setattr(noise_mod, "_astar", _fake_astar)
+        monkeypatch.setattr(noise_mod, "_legacy_astar", _fake_legacy_astar)
         hmap = np.zeros((8, 8), dtype=np.float64)
         cost_map = np.full((8, 8), 2.5, dtype=np.float32)
 
-        path, carved = noise_mod.generate_road_path_grid(
-            hmap,
-            [(0, 0), (7, 7)],
-            cost_map=cost_map,
-        )
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore", DeprecationWarning)
+            path, carved = noise_mod.generate_road_path_grid_legacy(
+                hmap,
+                [(0, 0), (7, 7)],
+                cost_map=cost_map,
+                cell_size=1.0,
+            )
 
         assert path == [(0, 0), (7, 7)]
         np.testing.assert_array_equal(captured["cost_map"], cost_map)
+        assert captured["cell_size"] == 1.0
         assert carved.shape == hmap.shape
 
     def test_twelve_step_road_mesh_specs_use_24dir_world_solver(self, monkeypatch):

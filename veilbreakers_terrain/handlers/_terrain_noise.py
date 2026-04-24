@@ -8,7 +8,10 @@ Provides:
   - compute_slope_map: Slope in degrees from heightmap gradients
   - compute_biome_assignments: Per-cell biome index from altitude/slope rules
   - carve_river_path: A* river channel carving on heightmap
-  - generate_road_path: Weighted A* road with terrain grading
+  - generate_road_path_grid_legacy: DEPRECATED grid-space A* road + grading
+    fallback retained only for environment.handle_generate_road disaster
+    recovery. New code must use road_network._astar_24dir via
+    compute_road_network.
   - TERRAIN_PRESETS: Parameter dicts for 10 terrain types
   - BIOME_RULES: Default dark-fantasy biome rules
 
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import warnings
 from typing import Any
 
 import numpy as np
@@ -508,6 +512,8 @@ def fbm_iq(
     p_y: float,
     octaves: int = 6,
     seed: int = 0,
+    lacunarity: float = 2.0,
+    gain: float = 0.5,
 ) -> float:
     """IQ gradient-accumulated fBm (Fix 11.2 / REQ-P11-004).
 
@@ -526,6 +532,10 @@ def fbm_iq(
         Number of fBm octaves (default 6).
     seed : int
         Deterministic seed.
+    lacunarity : float
+        Frequency multiplier per octave. Defaults preserve legacy behavior.
+    gain : float
+        Amplitude multiplier per octave. Defaults preserve legacy behavior.
 
     Returns
     -------
@@ -545,9 +555,9 @@ def fbm_iq(
         # Rotate by ~30° to prevent axis alignment (IQ pattern)
         cos30, sin30 = 0.8660254, 0.5
         p_x, p_y = (cos30 * p_x - sin30 * p_y), (sin30 * p_x + cos30 * p_y)
-        a *= 0.5
-        p_x *= 2.0
-        p_y *= 2.0
+        a *= gain
+        p_x *= lacunarity
+        p_y *= lacunarity
     return float(v)
 
 
@@ -731,6 +741,8 @@ def domain_warp_fbm(
     octaves: int = 6,
     warp_strength: float = 0.5,
     seed: int = 0,
+    lacunarity: float = 2.0,
+    gain: float = 0.5,
 ) -> float:
     """Three-level IQ domain warping fBm (Fix 11.3 / REQ-P11-004).
 
@@ -753,6 +765,10 @@ def domain_warp_fbm(
         Coordinate offset amplitude for each warp pass (in noise-space units).
     seed : int
         Deterministic seed.
+    lacunarity : float
+        Frequency multiplier passed through to each fBm level.
+    gain : float
+        Amplitude multiplier passed through to each fBm level.
 
     Returns
     -------
@@ -762,30 +778,31 @@ def domain_warp_fbm(
     # IQ canonical: q and r are 2D vectors (two independent fBm calls per pass).
     # Using fixed coordinate offsets (5.2, 1.3) / (1.7, 9.2) / (8.3, 2.8) from
     # IQ's shadertoy reference to break diagonal symmetry artifacts.
+    fbm_kwargs = {"octaves": octaves, "lacunarity": lacunarity, "gain": gain}
     # Pass 1: q = (fbm(p), fbm(p + (5.2, 1.3)))
-    q_x = fbm_iq(p_x, p_y, octaves=octaves, seed=seed)
-    q_y = fbm_iq(p_x + 5.2, p_y + 1.3, octaves=octaves, seed=seed + 17)
+    q_x = fbm_iq(p_x, p_y, seed=seed, **fbm_kwargs)
+    q_y = fbm_iq(p_x + 5.2, p_y + 1.3, seed=seed + 17, **fbm_kwargs)
 
     # Pass 2: r = (fbm(p + q*s + (1.7, 9.2)), fbm(p + q*s + (8.3, 2.8)))
     r_x = fbm_iq(
         p_x + q_x * warp_strength + 1.7,
         p_y + q_y * warp_strength + 9.2,
-        octaves=octaves,
         seed=seed + 1,
+        **fbm_kwargs,
     )
     r_y = fbm_iq(
         p_x + q_x * warp_strength + 8.3,
         p_y + q_y * warp_strength + 2.8,
-        octaves=octaves,
         seed=seed + 19,
+        **fbm_kwargs,
     )
 
     # Pass 3: result = fbm(p + r*s)
     return fbm_iq(
         p_x + r_x * warp_strength,
         p_y + r_y * warp_strength,
-        octaves=octaves,
         seed=seed + 2,
+        **fbm_kwargs,
     )
 
 
@@ -1256,8 +1273,6 @@ def generate_heightmap(
     ridged_blend = float(preset.get("ridged_blend", 0.0))
 
     gen = _make_noise_generator(seed)
-    ridged_gen = _make_noise_generator(seed ^ 0xA5A5A5A5)  # decorrelated ridged seed
-
     # Sample a one-cell halo so local post-noise filters like geological
     # constraints can be cropped back to the requested tile without breaking
     # adjacent world-origin seams.
@@ -1666,16 +1681,28 @@ def _fill_8connected_gaps(path: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return filled
 
 
-def _astar(
+def _legacy_astar(
     heightmap: np.ndarray,
     source: tuple[int, int],
     dest: tuple[int, int],
+    *,
+    cell_size: float,
     slope_weight: float = 5.0,   # kept for backward compat; ignored in Rune formula
     height_weight: float = 1.0,  # kept for backward compat; ignored in Rune formula
     cost_map: np.ndarray | None = None,
-    cell_size: float = 1.0,
 ) -> list[tuple[int, int]]:
-    """A* pathfinding on a heightmap using Rune Skovbo Johansen's exact cost formula.
+    """DEPRECATED 8/24-neighbor grid-space A* (Rune's exact cost formula).
+
+    Production roads route through ``road_network._astar_24dir`` via
+    ``compute_road_network``. ``_legacy_astar`` survives only because
+    ``carve_river_path`` still uses it for river channel layout and
+    ``generate_road_path_grid_legacy`` is the disaster-recovery fallback
+    invoked by ``environment.handle_generate_road`` when the 24-dir
+    world-space solver raises outside STRICT mode.
+
+    ``cell_size`` is now a **required keyword-only** argument so the
+    fallback pathway cannot silently use a unit-step assumption when the
+    terrain uses non-unit cell sizes.
 
     move_cost = flat_dist * (1 + (6 * slope)^2) + 12 * 0.5 * (cost_map[r0] + cost_map[nr])
 
@@ -1687,6 +1714,12 @@ def _astar(
     cell_size: world-space spacing of one grid step. The solver treats height
                deltas as world units, so slope and move cost must scale by this.
     """
+    warnings.warn(
+        "_legacy_astar is deprecated; use road_network._astar_24dir via "
+        "compute_road_network for production road routing.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     rows, cols = heightmap.shape
     sr, sc = source
     dr, dc = dest
@@ -1764,6 +1797,7 @@ def carve_river_path(
     depth: float = 0.05,
     seed: int = 0,
     meander_strength: float = 0.35,
+    cell_size: float = 1.0,
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
     """Carve a river channel from source to destination on a heightmap.
 
@@ -1804,7 +1838,22 @@ def carve_river_path(
     result = heightmap.copy()
     rows, cols = result.shape
 
-    path = _astar(result, source, dest, slope_weight=8.0, height_weight=2.0)
+    # P2-8: thread cell_size so the Rune slope penalty matches the tile's
+    # world spacing rather than silently assuming 1 m cells.
+    # Internal legitimate use — suppress the DeprecationWarning that
+    # ``_legacy_astar`` emits on public entry so river carving does not spam
+    # callers. River channel routing is a separate concern from the road
+    # pipeline (road routing must go through road_network._astar_24dir).
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        path = _legacy_astar(
+            result,
+            source,
+            dest,
+            slope_weight=8.0,
+            height_weight=2.0,
+            cell_size=float(cell_size),
+        )
 
     if not path:
         return path, result
@@ -1860,19 +1909,30 @@ def carve_river_path(
 # Road generation
 # ---------------------------------------------------------------------------
 
-def generate_road_path_grid(
+def generate_road_path_grid_legacy(
     heightmap: np.ndarray,
     waypoints: list[tuple[int, int]],
+    *,
+    cell_size: float,
     width: int = 3,
     grade_strength: float = 0.8,
     seed: int = 0,
     cost_map: np.ndarray | None = None,
+    strict_cell_size: bool = False,
 ) -> tuple[list[tuple[int, int]], np.ndarray]:
-    """Generate a road path between grid-space waypoints with terrain grading.
+    """DEPRECATED grid-space road + grading fallback.
 
-    Legacy grid-space API.  Prefer ``generate_road_path`` for new code, which
-    accepts world-space (x, y) coordinates and returns smoothed world-space
-    waypoints without mutating the heightmap.
+    Production roads route through ``road_network._astar_24dir`` via
+    ``compute_road_network``. This helper survives as the disaster-recovery
+    fallback invoked by ``environment.handle_generate_road`` when the 24-dir
+    world-space solver raises outside STRICT mode (see the narrowing work
+    on ``environment.py`` ``_run_height_solver_in_world_space``).
+
+    ``cell_size`` is now a **required keyword-only** argument. The Rune slope
+    penalty inside ``_legacy_astar`` is quadratic in ``(6 * slope)`` where
+    ``slope = rise / (flat_dist * cell_size)`` — silently defaulting to
+    1.0 m on a non-1 m tile under-penalises steep grades by up to 16× on
+    4 m tiles. Callers must thread world spacing explicitly.
 
     Uses weighted A* preferring low-slope routes. Flattens vertices
     within `width` cells of the path to the path's average height.
@@ -1883,6 +1943,8 @@ def generate_road_path_grid(
         2D heightmap with values in [0, 1].
     waypoints : list of (row, col)
         Ordered waypoints the road passes through.
+    cell_size : float
+        World-space size of one grid cell in metres (required).
     width : int
         Road width in cells.
     grade_strength : float
@@ -1893,6 +1955,9 @@ def generate_road_path_grid(
         Terrain routing cost overlay aligned to ``heightmap``. Higher values
         discourage the A* solver from crossing difficult cells such as water
         or hard rock.
+    strict_cell_size : bool
+        Retained for backward compatibility with the in-progress environment.py
+        narrowing; raises when ``cell_size`` is non-finite or ``None``.
 
     Returns
     -------
@@ -1900,6 +1965,26 @@ def generate_road_path_grid(
         full_path: list of (row, col) tuples.
         modified_heightmap: copy of heightmap with road graded.
     """
+    warnings.warn(
+        "generate_road_path_grid_legacy is deprecated; use "
+        "road_network.compute_road_network (24-dir world-space solver) for "
+        "production road routing.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    if cell_size is None or not math.isfinite(float(cell_size)) or cell_size <= 0.0:
+        if strict_cell_size:
+            raise ValueError(
+                "generate_road_path_grid_legacy: cell_size is required "
+                "and must be positive and finite; pass stack.cell_size or "
+                "explicit world-spacing."
+            )
+        # Permissive fallback only when strict_cell_size is False (for tests
+        # that still construct the legacy helper without a real world scale).
+        cell_size_used = 1.0
+    else:
+        cell_size_used = float(cell_size)
+
     result = heightmap.copy()
     rows, cols = result.shape
     full_path: list[tuple[int, int]] = []
@@ -1911,14 +1996,20 @@ def generate_road_path_grid(
 
     # Connect each pair of waypoints
     for i in range(len(waypoints) - 1):
-        segment = _astar(
-            snapshot,
-            waypoints[i],
-            waypoints[i + 1],
-            slope_weight=10.0,
-            height_weight=0.5,
-            cost_map=cost_map,
-        )
+        # Internal legitimate use — suppress the DeprecationWarning that
+        # ``_legacy_astar`` emits on public entry so the fallback pathway
+        # does not double-warn (the wrapper already warned above).
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            segment = _legacy_astar(
+                snapshot,
+                waypoints[i],
+                waypoints[i + 1],
+                slope_weight=10.0,
+                height_weight=0.5,
+                cost_map=cost_map,
+                cell_size=cell_size_used,
+            )
         if full_path and segment:
             # Avoid duplicate at junction
             full_path.extend(segment[1:])
@@ -1947,161 +2038,13 @@ def generate_road_path_grid(
     return full_path, result
 
 
-def generate_road_path(
-    heightmap: np.ndarray,
-    start_xy: tuple[float, float],
-    end_xy: tuple[float, float],
-    resolution_m: float = 1.0,
-    slope_penalty_scale: float = 0.1,
-) -> list[tuple[float, float]]:
-    """AAA-quality road path via A* with Rune-style cost and Catmull-Rom smoothing.
-
-    Implements the road routing algorithm used in titles such as Kingdom Come:
-    Deliverance and Rune Skovbo Johansen's GDC terrain reference:
-
-      - A* with cost ``f = g + h`` where g accumulates per-step terrain cost and
-        h is the Euclidean distance to the goal.
-      - Per-step cost: ``step_dist * (1 + slope_degrees**2 * slope_penalty_scale)``
-        — slope is penalised quadratically so the path strongly avoids steep
-        grades while remaining willing to climb gentle slopes.
-      - 24-directional movement (8 cardinal/diagonal + 8 knight + 8 extended
-        knight) producing natural curves without 45-degree grid bias.
-      - Valley snapping: after A* the path is post-processed to pull waypoints
-        toward local height minima within a small search radius.  Roads
-        naturally follow valleys and avoid exposed ridges.
-      - Catmull-Rom spline smoothing through the snapped grid waypoints,
-        converting the staircase A* path to a smooth world-space polyline.
-
-    Parameters
-    ----------
-    heightmap : np.ndarray
-        2D heightmap.  Cell ``[row, col]`` covers world position
-        ``(col * resolution_m, row * resolution_m)``.  Values may be in
-        any consistent unit; slope is computed from finite differences so
-        the absolute scale does not matter.
-    start_xy : tuple[float, float]
-        World-space ``(x, y)`` of the road start.
-    end_xy : tuple[float, float]
-        World-space ``(x, y)`` of the road end.
-    resolution_m : float
-        World-space size of one heightmap cell in metres (default 1.0).
-    slope_penalty_scale : float
-        Coefficient for the quadratic slope penalty.  Rune's reference uses
-        ``slope_degrees**2 * 0.1``; the default matches that value.
-
-    Returns
-    -------
-    list of (x, y) float tuples
-        Smoothed world-space waypoints along the road centre-line, starting
-        at *start_xy* and ending at *end_xy*.  The first and last points are
-        always the exact requested endpoints (clamped to the heightmap bounds).
-    """
-    rows, cols = heightmap.shape
-    res = max(float(resolution_m), 1e-6)
-
-    # Slope map in degrees from the original (un-mutated) heightmap
-    slope_deg = compute_slope_map_degrees(heightmap, cell_size=res)
-
-    # Convert world-space endpoints to grid (row, col)
-    def _xy_to_rc(xy: tuple[float, float]) -> tuple[int, int]:
-        x, y = xy
-        col = int(round(x / res))
-        row = int(round(y / res))
-        return (
-            max(0, min(row, rows - 1)),
-            max(0, min(col, cols - 1)),
-        )
-
-    src_rc = _xy_to_rc(start_xy)
-    dst_rc = _xy_to_rc(end_xy)
-
-    # --- A* with quadratic slope penalty --------------------------------
-    open_set: list[tuple[float, float, int, int]] = []
-    heapq.heappush(open_set, (0.0, 0.0, src_rc[0], src_rc[1]))
-    came_from: dict[tuple[int, int], tuple[int, int]] = {}
-    g_score: dict[tuple[int, int], float] = {src_rc: 0.0}
-
-    dr_goal, dc_goal = dst_rc
-
-    def _h(r: int, c: int) -> float:
-        # Octile-distance heuristic (admissible for 8-connected; slightly
-        # underestimates for knight moves — keeps A* admissible and fast).
-        ddx = abs(c - dc_goal)
-        ddy = abs(r - dr_goal)
-        return res * ((ddx + ddy) + (math.sqrt(2.0) - 2.0) * min(ddx, ddy))
-
-    while open_set:
-        _f, g, cr, cc = heapq.heappop(open_set)
-        if g > g_score.get((cr, cc), float("inf")):
-            continue
-        if cr == dr_goal and cc == dc_goal:
-            break
-        for nr, nc in _neighbors(cr, cc, rows, cols):
-            step_dist = math.sqrt(float((nr - cr) ** 2 + (nc - cc) ** 2)) * res
-            s_deg = float(slope_deg[nr, nc])
-            move_cost = step_dist * (1.0 + s_deg * s_deg * slope_penalty_scale)
-            tg = g + move_cost
-            if tg < g_score.get((nr, nc), float("inf")):
-                g_score[(nr, nc)] = tg
-                came_from[(nr, nc)] = (cr, cc)
-                heapq.heappush(open_set, (tg + _h(nr, nc), tg, nr, nc))
-
-    # Reconstruct grid path
-    grid_path: list[tuple[int, int]] = []
-    node = dst_rc
-    while node in came_from:
-        grid_path.append(node)
-        node = came_from[node]
-    grid_path.append(src_rc)
-    grid_path.reverse()
-
-    if not grid_path:
-        # No path found — return straight line
-        return [start_xy, end_xy]
-
-    # --- Valley snapping ------------------------------------------------
-    # For each interior waypoint, search a small neighbourhood and snap to
-    # the lowest cell within radius = 2 cells.  Roads naturally follow
-    # valleys rather than running along exposed ridges.
-    snapped: list[tuple[int, int]] = [grid_path[0]]
-    snap_radius = 2
-    for r, c in grid_path[1:-1]:
-        best_h = float(heightmap[r, c])
-        br, bc = r, c
-        for dr in range(-snap_radius, snap_radius + 1):
-            for dc in range(-snap_radius, snap_radius + 1):
-                nr2, nc2 = r + dr, c + dc
-                if 0 <= nr2 < rows and 0 <= nc2 < cols:
-                    h = float(heightmap[nr2, nc2])
-                    if h < best_h:
-                        best_h = h
-                        br, bc = nr2, nc2
-        snapped.append((br, bc))
-    snapped.append(grid_path[-1])
-
-    # Deduplicate consecutive identical points after snapping
-    deduped: list[tuple[int, int]] = [snapped[0]]
-    for pt in snapped[1:]:
-        if pt != deduped[-1]:
-            deduped.append(pt)
-
-    # --- Catmull-Rom smoothing -----------------------------------------
-    # Smooth the grid waypoints with a Catmull-Rom spline, then convert to
-    # world space.  We reuse the existing smooth_road_path helper which
-    # handles corner duplication + spline sampling.
-    smoothed_grid = smooth_road_path(deduped, samples_per_segment=10)
-
-    # Convert grid (row, col) back to world-space (x, y)
-    world_pts: list[tuple[float, float]] = [
-        (float(c) * res, float(r) * res) for r, c in smoothed_grid
-    ]
-
-    # Guarantee exact start/end endpoints
-    if world_pts:
-        world_pts[0] = start_xy
-        world_pts[-1] = end_xy
-
-    return world_pts
+# NOTE: ``generate_road_path`` (world-space 24-dir A* + Catmull-Rom smoothing)
+# was deleted 2026-04-23 per the deep-dive remediation guide. It was fully
+# dormant — the production path routes through
+# ``road_network._astar_24dir`` via ``compute_road_network``. Use
+# ``road_network._astar_24dir`` for new work; the grid-space legacy fallback
+# ``generate_road_path_grid_legacy`` below remains only for the
+# ``environment.handle_generate_road`` disaster-recovery path.
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 Tests _terrain_noise.py pure-logic functions: generate_heightmap,
 compute_slope_map, compute_biome_assignments, carve_river_path,
-generate_road_path, and TERRAIN_PRESETS.
+generate_road_path_grid_legacy, and TERRAIN_PRESETS.
 """
 
 import numpy as np
@@ -575,27 +575,32 @@ class TestCarveRiverPath:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestGenerateRoadPathGrid:
-    """Test generate_road_path_grid (legacy grid-space API): A* + terrain grading."""
+    """Test generate_road_path_grid_legacy (legacy grid-space fallback): A* + terrain grading."""
 
     def test_returns_path_and_heightmap(self):
         """Returns a tuple of (path, modified_heightmap)."""
-        from blender_addon.handlers._terrain_noise import generate_road_path_grid
+        from blender_addon.handlers._terrain_noise import (
+            generate_road_path_grid_legacy as generate_road_path_grid,
+        )
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, result = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (31, 31)], width=3
+            hmap, waypoints=[(0, 0), (31, 31)], width=3, cell_size=1.0
         )
         assert isinstance(path, list)
         assert isinstance(result, np.ndarray)
 
     def test_path_is_connected(self):
         """Road path forms a connected sequence of adjacent cells."""
-        from blender_addon.handlers._terrain_noise import generate_road_path_grid
+        from blender_addon.handlers._terrain_noise import (
+            generate_road_path_grid_legacy as generate_road_path_grid,
+        )
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, _ = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (31, 31)], width=3
+            hmap, waypoints=[(0, 0), (31, 31)], width=3, cell_size=1.0
         )
         assert len(path) >= 2
         for i in range(1, len(path)):
@@ -605,12 +610,14 @@ class TestGenerateRoadPathGrid:
 
     def test_road_flattens_terrain(self):
         """Road grading reduces height variation along the path."""
-        from blender_addon.handlers._terrain_noise import generate_road_path_grid
+        from blender_addon.handlers._terrain_noise import (
+            generate_road_path_grid_legacy as generate_road_path_grid,
+        )
 
         rng = np.random.RandomState(42)
         hmap = rng.rand(32, 32)
         path, result = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (31, 31)], width=3, grade_strength=0.8
+            hmap, waypoints=[(0, 0), (31, 31)], width=3, grade_strength=0.8, cell_size=1.0,
         )
         # Measure height variance along the path
         orig_heights = [float(hmap[r, c]) for r, c in path]
@@ -622,22 +629,26 @@ class TestGenerateRoadPathGrid:
 
     def test_result_values_in_bounds(self):
         """Road-graded heightmap values stay in [0, 1]."""
-        from blender_addon.handlers._terrain_noise import generate_road_path_grid
+        from blender_addon.handlers._terrain_noise import (
+            generate_road_path_grid_legacy as generate_road_path_grid,
+        )
 
         hmap = np.random.RandomState(42).rand(32, 32)
         _, result = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (31, 31)], width=3
+            hmap, waypoints=[(0, 0), (31, 31)], width=3, cell_size=1.0
         )
         assert result.min() >= 0.0
         assert result.max() <= 1.0
 
     def test_multi_waypoint_road(self):
         """Road with multiple waypoints connects all segments."""
-        from blender_addon.handlers._terrain_noise import generate_road_path_grid
+        from blender_addon.handlers._terrain_noise import (
+            generate_road_path_grid_legacy as generate_road_path_grid,
+        )
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, _ = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (16, 16), (31, 31)], width=3
+            hmap, waypoints=[(0, 0), (16, 16), (31, 31)], width=3, cell_size=1.0
         )
         assert len(path) > 10  # Should have a reasonable number of cells
 
@@ -654,20 +665,22 @@ class TestGenerateRoadPathGrid:
         one segment or two — a drifting implementation would show higher error
         on the multi-segment road.
         """
-        from blender_addon.handlers._terrain_noise import generate_road_path_grid
+        from blender_addon.handlers._terrain_noise import (
+            generate_road_path_grid_legacy as generate_road_path_grid,
+        )
 
         rng = np.random.RandomState(7)
         hmap = rng.rand(32, 32)
 
         # Single-segment road (no drift possible)
         path1, result1 = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (31, 31)], width=3, grade_strength=1.0
+            hmap, waypoints=[(0, 0), (31, 31)], width=3, grade_strength=1.0, cell_size=1.0,
         )
         mae1 = np.mean([abs(float(result1[r, c]) - float(hmap[r, c])) for r, c in path1])
 
         # Two-segment road passing through the midpoint (drift would inflate MAE)
         path2, result2 = generate_road_path_grid(
-            hmap, waypoints=[(0, 0), (16, 16), (31, 31)], width=3, grade_strength=1.0
+            hmap, waypoints=[(0, 0), (16, 16), (31, 31)], width=3, grade_strength=1.0, cell_size=1.0,
         )
         mae2 = np.mean([abs(float(result2[r, c]) - float(hmap[r, c])) for r, c in path2])
 
@@ -676,76 +689,9 @@ class TestGenerateRoadPathGrid:
         assert mae2 <= mae1 * 1.5 + 0.05
 
 
-class TestGenerateRoadPath:
-    """Test generate_road_path: AAA world-space road routing with Catmull-Rom smoothing."""
-
-    def test_returns_list_of_xy_tuples(self):
-        """Returns a list of (x, y) float tuples."""
-        from blender_addon.handlers._terrain_noise import generate_road_path
-
-        hmap = np.random.RandomState(42).rand(32, 32)
-        pts = generate_road_path(hmap, start_xy=(0.0, 0.0), end_xy=(31.0, 31.0))
-        assert isinstance(pts, list)
-        assert len(pts) >= 2
-        for item in pts:
-            assert len(item) == 2
-            assert isinstance(item[0], float)
-            assert isinstance(item[1], float)
-
-    def test_endpoints_match_requested(self):
-        """First and last waypoints match the requested start/end coordinates."""
-        from blender_addon.handlers._terrain_noise import generate_road_path
-
-        hmap = np.random.RandomState(42).rand(32, 32)
-        start = (3.0, 5.0)
-        end = (28.0, 27.0)
-        pts = generate_road_path(hmap, start_xy=start, end_xy=end)
-        assert pts[0] == start
-        assert pts[-1] == end
-
-    def test_avoids_steep_terrain(self):
-        """Path with slope penalty avoids a steep central ridge vs. one without."""
-        from blender_addon.handlers._terrain_noise import generate_road_path
-
-        # Build a flat heightmap with a steep diagonal ridge in the centre
-        hmap = np.zeros((40, 40), dtype=np.float64)
-        # Ridge: column 20, height 1.0 (steep drop to neighbours at 0.0)
-        hmap[:, 20] = 1.0
-        hmap[:, 19] = 0.5
-        hmap[:, 21] = 0.5
-
-        pts_penalised = generate_road_path(
-            hmap, start_xy=(0.0, 20.0), end_xy=(39.0, 20.0),
-            slope_penalty_scale=1.0,
-        )
-        pts_flat = generate_road_path(
-            hmap, start_xy=(0.0, 20.0), end_xy=(39.0, 20.0),
-            slope_penalty_scale=0.0,
-        )
-        # The penalised path should diverge more from the ridge column
-        ridge_crossings_penalised = sum(1 for x, _y in pts_penalised if abs(x - 20.0) < 0.5)
-        ridge_crossings_flat = sum(1 for x, _y in pts_flat if abs(x - 20.0) < 0.5)
-        # High penalty should yield fewer ridge-column waypoints
-        assert ridge_crossings_penalised <= ridge_crossings_flat + 2
-
-    def test_resolution_scales_output_coordinates(self):
-        """With resolution_m=2.0, output coordinates are ~2x the grid indices."""
-        from blender_addon.handlers._terrain_noise import generate_road_path
-
-        hmap = np.random.RandomState(99).rand(20, 20)
-        pts = generate_road_path(
-            hmap, start_xy=(0.0, 0.0), end_xy=(38.0, 38.0), resolution_m=2.0
-        )
-        # All x, y values should be within the world extent [0, 38]
-        for x, y in pts:
-            assert 0.0 <= x <= 40.0
-            assert 0.0 <= y <= 40.0
-
-    def test_heightmap_not_mutated(self):
-        """generate_road_path must not modify the input heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_road_path
-
-        hmap = np.random.RandomState(11).rand(24, 24)
-        original = hmap.copy()
-        generate_road_path(hmap, start_xy=(0.0, 0.0), end_xy=(23.0, 23.0))
-        np.testing.assert_array_equal(hmap, original)
+# NOTE: ``TestGenerateRoadPath`` (class exercising the deleted world-space
+# ``generate_road_path`` helper) was removed 2026-04-23 when the dormant
+# function was deleted per the deep-dive remediation guide. Production road
+# routing now goes through ``road_network.compute_road_network`` + the 24-dir
+# world-space solver — see ``test_road_astar_24dir.py`` and
+# ``test_road_pipeline.py`` for the live coverage.
