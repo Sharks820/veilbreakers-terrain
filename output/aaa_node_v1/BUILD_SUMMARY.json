@@ -1,0 +1,150 @@
+{
+  "seed": 43681,
+  "seed_hex": "0xAAA1",
+  "tile_size_m": 1024.0,
+  "cell_size_m": 1.0,
+  "resolution": 1025,
+  "biome": "dark_fantasy_forest",
+  "quality_profile": "hero_shot",
+  "heightmap_stats": {
+    "min": -22.51925607089365,
+    "max": 383.6983243654031,
+    "mean": 90.939025147136,
+    "sha256": "871295e78d1a3ac1bda9cb616203017e1f49cc0012578e4291afde2f44fa2a0f"
+  },
+  "determinism_ok": true,
+  "waterfall": {
+    "count": 1,
+    "top_xy": [
+      -150.0,
+      50.0
+    ],
+    "top_z": 140.0,
+    "bottom_z": 100.0,
+    "drop_m": 40.0
+  },
+  "lake": {
+    "center": [
+      100.0,
+      -300.0
+    ],
+    "radius_m": 150.0,
+    "water_level_m": 8.0,
+    "area_m2": 70685.83470577035
+  },
+  "river": {
+    "length_m": 895.1888121969287,
+    "spring_xy": [
+      -300.0,
+      250.0
+    ],
+    "exit_xy": [
+      120.0,
+      -500.0
+    ]
+  },
+  "cave": {
+    "entry_xyz": [
+      0.0,
+      100.0,
+      180.0
+    ],
+    "exit_xyz": [
+      400.0,
+      100.0,
+      180.0
+    ],
+    "radius_m": 6.0,
+    "traversable": true,
+    "pairing_strength": 0.7,
+    "archway_count": 2,
+    "carved_ok": true,
+    "spline_length_m": 440.00000000000006
+  },
+  "foliage": {
+    "instances_by_species": {
+      "dark_pine": 126,
+      "mossy_shrub": 69,
+      "dead_trunk": 50,
+      "thornwood_tree": 75
+    },
+    "total": 320,
+    "method": "fallback"
+  },
+  "particle_preview_count": 120,
+  "handler_exercise": {
+    "imports": {
+      "ok": true,
+      "count": 128
+    },
+    "env_generate_terrain": {
+      "ok": true,
+      "vertex_count": 16641,
+      "terrain_type": "mountains"
+    }
+  },
+  "validators": {
+    "validate_cave_opening_integration": {
+      "issues": [
+        "cave_opening_abrupt_cliff_change:cave_entry_south:max_jump=1.00 (>0.50) within 2 cells"
+      ],
+      "passed": false
+    },
+    "validate_flow_direction_continuity": {
+      "issues": [
+        "flow_direction channel missing \u2014 cannot validate continuity"
+      ],
+      "passed": false
+    },
+    "validate_cliff_silhouette_shape": {
+      "issues": [
+        "ValidationIssue(code='CLIFF_SILHOUETTE_TOO_BLOBBY', severity='hard', location=None, affected_feature='cliff', message='cliff silhouette isoperimetric ratio 0.785 > 0.500 \u2014 silhouette is too circular/featureless', remediation='Break up the cliff footprint with lobes, ledges, or re-entrants; avoid pancake-shaped plateaux.')",
+        "ValidationIssue(code='CLIFF_SILHOUETTE_TOO_UNIFORM', severity='hard', location=None, affected_feature='cliff', message='cliff face height std-dev 0.40 m < 2.50 m \u2014 silhouette reads as a flat wall', remediation='Add strata-band displacement, overhangs, or erosion variance to break up the face.')"
+      ],
+      "passed": false
+    }
+  },
+  "renders": [
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_hero_wide.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_SE.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_SW.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_N_peak.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_river_eye.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_cave_entry.png"
+  ],
+  "signature_render": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\render_Signature.png",
+  "turnaround_frames": [
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_000.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_001.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_002.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_003.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_004.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_005.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_006.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\turnaround_frames\\frame_007.png"
+  ],
+  "turnaround_mp4": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\TURNAROUND.mp4",
+  "feature_callouts": null,
+  "no_float_qc": {
+    "scanned": 320,
+    "reseated": 0,
+    "culled": 0,
+    "ok": 320,
+    "air_gap_max_m": 1.782077868028864e-05,
+    "embed_max_m": 0.0002628259920527398
+  },
+  "marketing_rotations": {
+    "rotated": 320
+  },
+  "auto_smooth_meshes_touched": 2,
+  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\VeilBreakers_AAA_Node_v1.blend",
+  "failures": [
+    {
+      "stage": "callouts_render",
+      "error": "RuntimeError('Error: Strips.new_effect: end frame not set\\n')",
+      "trace": "Traceback (most recent call last):\n  File \"C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\scripts\\build_aaa_node_v1.py\", line 1737, in main\n    callouts_path = _render_feature_callouts(OUT_DIR / \"FEATURE_CALLOUTS.png\",\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\scripts\\build_aaa_node_v1.py\", line 1095, in _render_feature_callouts\n    ts = ann_scene.sequence_editor.sequences.new_effect(\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: Error: Strips.new_effect: end frame not set\n\n"
+    }
+  ],
+  "warnings": [],
+  "wall_time_s": 375.3412528038025
+}
