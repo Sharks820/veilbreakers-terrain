@@ -254,3 +254,314 @@ def test_handle_generate_cave_error_path_returns_dict() -> None:
     assert "RuntimeError" in error_str, (
         f"error string must include the original exception class; got: {error_str!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase F — AAA cave system tests (2026-04-23)
+# ---------------------------------------------------------------------------
+
+
+def test_cave_entry_exit_on_different_faces() -> None:
+    """When traversable=True the cave must expose entry + exit + secondary
+    exit archway specs tagged to three distinct cliff faces so the player
+    can traverse through the mountain.
+    """
+    result = terrain_caves.handle_generate_cave(
+        _baseline_params(traversable=True, width=32, height=32, wall_height=8.0)
+    )
+    assert result["status"] in {"ok", "warning"}, result
+
+    archways = result["meta"]["archway_specs"]
+    # Must have entry + exit + secondary exit (3 archways minimum)
+    assert len(archways) >= 3, (
+        f"traversable=True must yield >=3 archways (entry+exit+secondary); "
+        f"got {len(archways)}"
+    )
+    roles = [a.get("role") for a in archways]
+    assert "entry" in roles, f"missing entry archway role; roles={roles}"
+    assert "exit" in roles, f"missing primary exit archway role; roles={roles}"
+    assert "exit_secondary" in roles, (
+        f"missing secondary exit archway role when traversable=True; roles={roles}"
+    )
+
+    # Each archway must carry a cliff_face tag, and the three tags must be
+    # distinct (different faces of the mountain).
+    faces = [a.get("cliff_face") for a in archways]
+    assert all(f is not None for f in faces), (
+        f"every archway must carry a cliff_face tag; got {faces}"
+    )
+    assert len(set(faces)) == len(faces), (
+        f"archway cliff_face tags must be distinct; got {faces}"
+    )
+
+
+def test_cave_speleothem_pairing_density() -> None:
+    """Higher pairing_strength must produce more stalagmite/column pairs
+    beneath the stalactite ceiling attachments.
+    """
+    # High pairing (1.0): every stalactite at a plausible drip line should
+    # spawn a stalagmite or column.
+    high = terrain_caves.handle_generate_cave(
+        _baseline_params(
+            seed=7, pairing_strength=1.0, wall_height=3.0, width=14, height=14,
+        )
+    )
+    # Low pairing (0.0): no pairings should be produced.
+    low = terrain_caves.handle_generate_cave(
+        _baseline_params(
+            seed=7, pairing_strength=0.0, wall_height=3.0, width=14, height=14,
+        )
+    )
+    assert high["status"] in {"ok", "warning"}, high
+    assert low["status"] in {"ok", "warning"}, low
+
+    def _counts(res) -> dict[str, int]:
+        c = {"stalactite": 0, "stalagmite": 0, "column": 0}
+        for prop in res.get("natural_props", []):
+            t = prop.get("prop_type")
+            if t in c:
+                c[t] += 1
+        return c
+
+    high_c = _counts(high)
+    low_c = _counts(low)
+
+    # Low pairing: zero stalagmites and zero columns
+    assert low_c["stalagmite"] == 0 and low_c["column"] == 0, (
+        f"pairing_strength=0.0 must produce no stalagmites/columns; got {low_c}"
+    )
+    # High pairing: more stalagmites+columns than low
+    assert (high_c["stalagmite"] + high_c["column"]) > (
+        low_c["stalagmite"] + low_c["column"]
+    ), (
+        f"pairing_strength=1.0 must yield more stag+col than 0.0; "
+        f"high={high_c}, low={low_c}"
+    )
+
+
+def test_cave_navigation_clearance_minimum() -> None:
+    """Every stalactite within the traversable spline corridor must clear
+    1.8 m of headroom above the spline floor.
+    """
+    result = terrain_caves.handle_generate_cave(
+        _baseline_params(
+            seed=11, traversable=True, min_nav_clearance_m=1.8,
+            wall_height=4.0, width=20, height=20,
+        )
+    )
+    assert result["status"] in {"ok", "warning"}, result
+
+    spline = [tuple(p) for p in result["meta"]["traversable_spline"]]
+    min_clear = float(result["meta"]["min_nav_clearance_m"])
+    assert min_clear == 1.8
+
+    # Walk every stalactite and check the tip Z is >= (spline_z + 1.8) when
+    # within 1.0 m XY of any spline waypoint.
+    violations: list[str] = []
+    for prop in result.get("natural_props", []):
+        if prop.get("prop_type") != "stalactite":
+            continue
+        tx, ty, tz = prop.get("tip_pos", (0.0, 0.0, 0.0))
+        # Nearest spline waypoint
+        nearest = min(
+            spline,
+            key=lambda s: (tx - s[0]) ** 2 + (ty - s[1]) ** 2,
+        )
+        d_xy = ((tx - nearest[0]) ** 2 + (ty - nearest[1]) ** 2) ** 0.5
+        if d_xy <= 1.0:
+            required = float(nearest[2]) + min_clear
+            # Allow tiny float slack
+            if tz + 1e-3 < required:
+                violations.append(
+                    f"stalactite tip_z={tz:.3f} < required={required:.3f} "
+                    f"(spline_z={nearest[2]:.3f}, d_xy={d_xy:.3f})"
+                )
+
+    assert not violations, (
+        "navigation clearance violations along traversable spline:\n  "
+        + "\n  ".join(violations)
+    )
+
+
+def test_cave_opening_material_seam_integration() -> None:
+    """validate_cave_opening_integration must return a list and flag
+    abrupt cliff_candidate jumps (>0.50) within 2 cells of the opening.
+    """
+    import numpy as np
+
+    # Build a synthetic mask stack with a single cave opening at (10,10).
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+
+    rows, cols = 24, 24
+    stack = TerrainMaskStack(
+        tile_size=max(rows, cols),
+        cell_size=1.0,
+        world_origin_x=-float(cols) * 0.5,
+        world_origin_y=-float(rows) * 0.5,
+        tile_x=0,
+        tile_y=0,
+        height=np.zeros((rows, cols), dtype=np.float32),
+        height_min_m=0.0,
+        height_max_m=1.0,
+    )
+
+    # Clean case: smooth cliff + cave_candidate at (10, 10), no abrupt jumps.
+    cliff = np.full((rows, cols), 0.6, dtype=np.float32)
+    tex = np.full((rows, cols), 0.2, dtype=np.float32)
+    cand = np.zeros((rows, cols), dtype=bool)
+    cand[9:12, 9:12] = True
+    stack.set("cliff_candidate", cliff, "caves")
+    stack.set("cave_wall_texture", tex, "caves")
+    stack.set("cave_candidate", cand, "caves")
+
+    clean_issues = terrain_caves.validate_cave_opening_integration(stack)
+    assert isinstance(clean_issues, list), (
+        f"validator must return a list, got {type(clean_issues)}"
+    )
+    assert not clean_issues, (
+        f"clean case should yield no issues; got {clean_issues}"
+    )
+
+    # Abrupt case: inject a massive cliff_candidate jump right next to opening.
+    cliff_bad = cliff.copy()
+    cliff_bad[10, 11] = 0.0  # drop from 0.6 to 0.0 → 0.60 jump > 0.50
+    stack.set("cliff_candidate", cliff_bad, "caves")
+
+    bad_issues = terrain_caves.validate_cave_opening_integration(stack)
+    assert any(
+        "abrupt_cliff_change" in s for s in bad_issues
+    ), (
+        f"validator should flag abrupt cliff change; got {bad_issues}"
+    )
+
+
+def test_cave_canyon_dual_exit_regression() -> None:
+    """Regression: commit e0945c3 ("canyon dual-exit tunnels") — the
+    ``generate_canyon_dual_exit`` helper must still exist, be callable, and
+    traversable=True on the adapter must surface an ``exit_secondary`` archway.
+    """
+    import math
+    import numpy as np
+
+    # Helper must exist in the public API
+    assert hasattr(terrain_caves, "generate_canyon_dual_exit"), (
+        "generate_canyon_dual_exit must remain in the public API"
+    )
+
+    # --- Direct regression of the helper -----------------------------------
+    # Build a synthetic stack with cliffs on east + west of the cave midpoint
+    # (canyon topology) and a long enough path to trip the depth heuristic.
+    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from blender_addon.handlers.terrain_caves import CaveStructure, CaveArchetype, make_archetype_spec
+
+    rows, cols = 80, 80
+    stack = TerrainMaskStack(
+        tile_size=max(rows, cols),
+        cell_size=1.0,
+        world_origin_x=-40.0,
+        world_origin_y=-40.0,
+        tile_x=0,
+        tile_y=0,
+        height=np.zeros((rows, cols), dtype=np.float32),
+        height_min_m=0.0,
+        height_max_m=1.0,
+    )
+    # Cliff mask: canyon walls on both east and west of midpoint (col=40).
+    # quad_r is 20% of path diagonal; need cliff cells in the quadrant
+    # sampling window on both sides.  Make it dense — full canyon wall.
+    cliff = np.zeros((rows, cols), dtype=np.float32)
+    cliff[:, :40] = 0.8   # entire west half is cliff (west canyon wall)
+    cliff[:, 41:] = 0.8   # entire east half is cliff (east canyon wall)
+    stack.set("cliff_candidate", cliff, "caves")
+
+    # Fake cave path: 50 m long east–west through canyon centre
+    path_world = [(-25.0 + i, 0.0, 0.0) for i in range(0, 51, 5)]
+    cave = CaveStructure(
+        cave_id="test",
+        archetype=CaveArchetype.KARST_SINKHOLE,
+        spec=make_archetype_spec(CaveArchetype.KARST_SINKHOLE),
+        entrance_world_pos=path_world[0],
+        path_world=path_world,
+        path_aabb=(-25.0, 0.0, 0.0, 25.0, 0.0, 0.0),
+    )
+    dual = terrain_caves.generate_canyon_dual_exit(stack, cave)
+    assert dual is not None, (
+        "generate_canyon_dual_exit must return a second exit for canyon "
+        "topology with >40 m path diagonal"
+    )
+    assert len(dual) == 3, "dual-exit must be a (wx, wy, wz) 3-tuple"
+
+    # --- Adapter-level regression: traversable=True surfaces secondary exit ---
+    result = terrain_caves.handle_generate_cave(
+        _baseline_params(traversable=True, wall_height=6.0, width=20, height=20)
+    )
+    assert result["status"] in {"ok", "warning"}, result
+    archway_specs = result["meta"]["archway_specs"]
+    roles = [a.get("role") for a in archway_specs]
+    assert "exit_secondary" in roles, (
+        f"traversable=True must emit exit_secondary; roles={roles}"
+    )
+
+
+def test_cave_stalactite_ceiling_regression() -> None:
+    """Regression: commit 7adfef1 (stalactite ceiling placement + navigation
+    clearance) — stalactite tip_z must be below the ceiling attachment Z
+    (pointing down) and the handler must surface entry/exit world positions.
+    """
+    result = terrain_caves.handle_generate_cave(_baseline_params(wall_height=4.0))
+    assert result["status"] in {"ok", "warning"}, result
+
+    # entry/exit positions present at top level (7adfef1 contract)
+    assert "entry_world_pos" in result, "entry_world_pos must be at top level"
+    assert "exit_world_pos" in result, "exit_world_pos must be at top level"
+    assert len(result["entry_world_pos"]) == 3
+
+    # stalactite tip_z < world_pos z (hangs downward from ceiling)
+    stalac = [
+        p for p in result.get("natural_props", [])
+        if p.get("prop_type") == "stalactite"
+    ]
+    assert stalac, "must produce at least one stalactite for this regression test"
+    for s in stalac:
+        wz = s["world_pos"][2]
+        tz = s["tip_pos"][2]
+        assert tz < wz, (
+            f"stalactite must hang down (tip below ceiling): "
+            f"ceil={wz:.3f} tip={tz:.3f}"
+        )
+
+
+def test_cave_interior_material_separate_from_exterior() -> None:
+    """Interior rendering material must be published separately from the
+    exterior surround/overhang material on the chamber mesh spec.  Interior
+    albedo must be darker and roughness higher than exterior.
+    """
+    result = terrain_caves.handle_generate_cave(_baseline_params())
+    chamber_spec = result["meta"]["chamber_mesh_spec"]
+
+    assert "interior_material" in chamber_spec, (
+        "chamber_mesh_spec must carry interior_material"
+    )
+    assert "exterior_material" in chamber_spec, (
+        "chamber_mesh_spec must carry exterior_material"
+    )
+    interior = chamber_spec["interior_material"]
+    exterior = chamber_spec["exterior_material"]
+
+    # Interior albedo mean < exterior albedo mean (darker)
+    int_mean = sum(interior["albedo_rgb"]) / 3.0
+    ext_mean = sum(exterior["albedo_rgb"]) / 3.0
+    assert int_mean < ext_mean, (
+        f"interior albedo ({int_mean:.3f}) must be darker than "
+        f"exterior ({ext_mean:.3f})"
+    )
+    # Interior roughness > exterior (damp rock)
+    assert interior["roughness"] > exterior["roughness"], (
+        f"interior roughness ({interior['roughness']}) must exceed "
+        f"exterior ({exterior['roughness']})"
+    )
+    # Damp normal variation: interior normal_scale should be larger
+    assert interior["normal_scale"] > exterior["normal_scale"], (
+        f"interior normal_scale ({interior['normal_scale']}) must exceed "
+        f"exterior ({exterior['normal_scale']})"
+    )

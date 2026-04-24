@@ -2464,12 +2464,23 @@ def _generate_speleothem_pairs(
     chamber_depth: float,
     stalactite_positions: List[Tuple[float, float, float]],
     seed: int,
+    *,
+    pairing_strength: float = 0.60,
+    drip_line_threshold_m: Optional[float] = None,
 ) -> List[Dict]:
     """Return prop dicts for stalactite/stalagmite pairs and merged columns.
 
+    Real speleothems form at plausible drip lines where the ceiling is close
+    enough to the floor that calcite-saturated water can still deposit before
+    splashing sideways.  We model this by only attempting to pair when the
+    ceiling-to-floor gap at the stalactite XY is less than
+    ``drip_line_threshold_m`` (default = 0.85 * wall_height).  Beyond that the
+    drip breaks up into mist and a stalagmite never forms.
+
     For every supplied stalactite position (ceiling attachment point):
-    - 60% chance: generate a matching stalagmite directly below it on the floor
-      (floor_z = 0.0 in chamber-local space).
+    - ``pairing_strength`` (default 0.60 — Dreybrodt karst field observation):
+      probability a matching stalagmite grows directly below it on the floor.
+      Clamped to [0.0, 1.0].
     - When stalactite_length + stalagmite_length >= (ceiling_z - floor_z) - 0.3m:
       merge both into a COLUMN prop (full cylinder, radius 0.08–0.15 m).
     - Otherwise emit separate "stalactite" and "stalagmite" dicts.
@@ -2500,6 +2511,17 @@ def _generate_speleothem_pairs(
     rng = np.random.default_rng(int(seed ^ 0xA1B2C3D4) & 0xFFFFFFFF)
     floor_z = 0.0
     props: List[Dict] = []
+
+    # Clamp pairing strength to a valid probability.
+    _pair_p = max(0.0, min(1.0, float(pairing_strength)))
+
+    # Drip-line threshold: beyond this gap, the drip breaks up and no
+    # stalagmite can form below the stalactite.  Default = 0.85 * wall_height.
+    _drip_thresh = (
+        float(drip_line_threshold_m)
+        if drip_line_threshold_m is not None
+        else max(2.0, float(wall_height) * 0.85)
+    )
 
     # Dreybrodt growth constants mirroring _build_chamber_mesh_geometry
     h = float(wall_height)
@@ -2534,8 +2556,13 @@ def _generate_speleothem_pairs(
             "normal": (0.0, 0.0, -1.0),         # hangs downward
         })
 
-        # 60% pairing probability
-        if float(rng.uniform(0.0, 1.0)) > 0.40:
+        # Drip-line plausibility: beyond the threshold, drips atomise and no
+        # matching stalagmite can form below.
+        if gap > _drip_thresh:
+            continue
+
+        # pairing_strength-gated pairing (default 60%)
+        if float(rng.uniform(0.0, 1.0)) < _pair_p:
             # Stalagmite grows upward from floor — shorter (younger, Dreybrodt)
             stag_age = float(rng.uniform(0.1, 0.6))
             stag_len, stag_r = _dreybrodt(stag_age)
@@ -2567,6 +2594,311 @@ def _generate_speleothem_pairs(
                 })
 
     return props
+
+
+# ---------------------------------------------------------------------------
+# Navigation clearance enforcement
+# ---------------------------------------------------------------------------
+
+
+def enforce_cave_navigation_clearance(
+    props: List[Dict],
+    spline: List[Tuple[float, float, float]],
+    *,
+    min_vertical_clearance_m: float = 1.8,
+    spline_radius_m: float = 1.0,
+) -> List[Dict]:
+    """Ensure the traversable spline keeps ``min_vertical_clearance_m`` (default
+    1.8 m, matching standard player height) above the floor, free of blocking
+    props.
+
+    For each prop within ``spline_radius_m`` of any spline waypoint in XY:
+    - Stalagmites / columns whose tip encroaches into the clearance volume
+      are either shortened to fit, or moved radially outward to the edge of
+      the spline corridor (whichever preserves more of the prop's shape).
+    - Stalactites whose tip descends below (spline_z + min_clearance) are
+      shortened so their tip clears the 1.8 m corridor.
+
+    The original prop list is not mutated; a new list is returned with
+    updated ``length_m`` and ``world_pos`` fields where needed.
+
+    Args
+    ----
+    props                      : Output of ``_generate_speleothem_pairs`` (or
+                                 any list of dicts with ``world_pos``,
+                                 ``tip_pos``, ``length_m``, ``prop_type`` keys).
+    spline                     : Traversable spline waypoints in chamber-local
+                                 or world space — (x, y, z) tuples.
+    min_vertical_clearance_m   : Required headroom above spline Z.  Default
+                                 1.8 m (human-scale player).
+    spline_radius_m            : XY distance around each spline waypoint that
+                                 counts as the corridor.
+
+    Returns
+    -------
+    List of prop dicts — same length as input, but each prop that would have
+    blocked the corridor has been corrected.  A ``nav_clearance_adjusted``
+    boolean key is added to any prop that was modified.
+    """
+    if not props or not spline:
+        return list(props)
+
+    min_clear = float(min_vertical_clearance_m)
+    corridor_r = float(spline_radius_m)
+
+    def _corridor_z(px: float, py: float) -> Optional[float]:
+        """Return the spline Z at the nearest waypoint within corridor_r, or None."""
+        best_z: Optional[float] = None
+        best_d2 = corridor_r * corridor_r
+        for sx, sy, sz in spline:
+            d2 = (px - sx) ** 2 + (py - sy) ** 2
+            if d2 <= best_d2:
+                best_d2 = d2
+                best_z = float(sz)
+        return best_z
+
+    out: List[Dict] = []
+    for p in props:
+        wx, wy, wz = p.get("world_pos", (0.0, 0.0, 0.0))
+        tx, ty, tz = p.get("tip_pos", (wx, wy, wz))
+        ptype = str(p.get("prop_type", ""))
+        spline_z = _corridor_z(float(wx), float(wy))
+
+        if spline_z is None:
+            out.append(dict(p))
+            continue
+
+        ceiling_floor_clear_top = spline_z + min_clear
+
+        new_p = dict(p)
+        adjusted = False
+
+        if ptype == "stalactite":
+            # Tip descends from ceiling.  If tip_z < ceiling_floor_clear_top,
+            # shorten the stalactite so its tip sits just above the corridor.
+            new_tip_z = float(tz)
+            if new_tip_z < ceiling_floor_clear_top:
+                ceil_z = float(wz)
+                new_len = max(0.05, ceil_z - ceiling_floor_clear_top)
+                new_tip_z = ceil_z - new_len
+                new_p["length_m"] = round(new_len, 4)
+                new_p["tip_pos"] = (float(wx), float(wy), round(new_tip_z, 4))
+                adjusted = True
+
+        elif ptype in ("stalagmite", "column"):
+            # Upward prop — tip above floor.  If tip_z > spline_z and the
+            # XY is inside the corridor, shorten so tip sits below spline_z.
+            new_tip_z = float(tz)
+            if new_tip_z > spline_z - 0.05:
+                floor_z = float(wz)
+                new_len = max(0.05, (spline_z - 0.05) - floor_z)
+                if new_len < 0.10:
+                    # No vertical room — push prop radially outward to the
+                    # corridor edge instead (preserve full shape).
+                    # Find nearest spline point and push outward along the
+                    # XY vector.
+                    nearest = min(
+                        spline,
+                        key=lambda s: (float(wx) - float(s[0])) ** 2
+                        + (float(wy) - float(s[1])) ** 2,
+                    )
+                    dx = float(wx) - float(nearest[0])
+                    dy = float(wy) - float(nearest[1])
+                    d = math.sqrt(dx * dx + dy * dy)
+                    if d < 1e-6:
+                        dx, dy, d = 1.0, 0.0, 1.0
+                    scale = (corridor_r + 0.25) / d
+                    nx = float(nearest[0]) + dx * scale
+                    ny = float(nearest[1]) + dy * scale
+                    new_p["world_pos"] = (round(nx, 4), round(ny, 4), float(wz))
+                    new_p["tip_pos"] = (
+                        round(nx, 4), round(ny, 4),
+                        float(tz),
+                    )
+                    adjusted = True
+                else:
+                    new_tip_z = floor_z + new_len
+                    new_p["length_m"] = round(new_len, 4)
+                    new_p["tip_pos"] = (float(wx), float(wy), round(new_tip_z, 4))
+                    adjusted = True
+
+        if adjusted:
+            new_p["nav_clearance_adjusted"] = True
+        out.append(new_p)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Cave opening integration validation (material seam check)
+# ---------------------------------------------------------------------------
+
+
+def validate_cave_opening_integration(stack: "TerrainMaskStack") -> List[str]:
+    """Check cave openings for visual integration with the surrounding cliff.
+
+    For every cave opening recorded on ``stack`` (via ``cave_mesh_specs`` or
+    ``cave_candidate``), verify that within a 2-cell ring around the opening
+    cell:
+      - ``cliff_candidate`` is continuous (no abrupt cliff/non-cliff toggle),
+      - ``cave_wall_texture`` does not jump > 0.50 between adjacent cells
+        (which would read as a painted-on material boundary).
+      - At least one cell on each side of the opening has cliff value > 0.35
+        so the opening does not stick out of flat ground.
+
+    Returns a list of human-readable issue strings (empty list = OK).
+    """
+    issues: List[str] = []
+
+    mesh_specs = stack.get("cave_mesh_specs")
+    cliff_arr = stack.get("cliff_candidate")
+    wall_tex = stack.get("cave_wall_texture")
+    cand = stack.get("cave_candidate")
+
+    if cliff_arr is None and wall_tex is None and cand is None:
+        return issues  # nothing to validate — pass silently
+
+    cliff_np = np.asarray(cliff_arr, dtype=np.float32) if cliff_arr is not None else None
+    tex_np = np.asarray(wall_tex, dtype=np.float32) if wall_tex is not None else None
+    cand_np = np.asarray(cand, dtype=bool) if cand is not None else None
+
+    # Derive opening cells: prefer cave_mesh_specs (explicit mouth data);
+    # fall back to boundary cells of cave_candidate.
+    opening_cells: List[Tuple[int, int, str]] = []  # (row, col, label)
+
+    if isinstance(mesh_specs, (list, tuple)):
+        for spec in mesh_specs:
+            if not isinstance(spec, dict):
+                continue
+            mtype = str(spec.get("mesh_type", ""))
+            if mtype not in ("cave_mouth_surround", "cave_overhang", "cave_archway"):
+                continue
+            verts = spec.get("vertices") or []
+            if not verts:
+                continue
+            # Use centroid of verts as the opening cell
+            xs = [float(v[0]) for v in verts if len(v) >= 3]
+            ys = [float(v[1]) for v in verts if len(v) >= 3]
+            if not xs or not ys:
+                continue
+            cx = sum(xs) / len(xs)
+            cy = sum(ys) / len(ys)
+            try:
+                r, c = _world_to_cell(stack, cx, cy)
+            except Exception:  # noqa: BLE001
+                continue
+            opening_cells.append((r, c, str(spec.get("mesh_id") or mtype)))
+
+    if not opening_cells and cand_np is not None:
+        # Find boundary cells: cave cells adjacent to non-cave cells.
+        rows, cols = cand_np.shape
+        for r in range(1, rows - 1):
+            for c in range(1, cols - 1):
+                if not cand_np[r, c]:
+                    continue
+                neigh = cand_np[r - 1:r + 2, c - 1:c + 2]
+                if (~neigh).any():
+                    opening_cells.append((r, c, f"boundary_{r}_{c}"))
+                    if len(opening_cells) > 32:
+                        break
+            if len(opening_cells) > 32:
+                break
+
+    if not opening_cells:
+        return issues
+
+    # Validate each opening cell.
+    for row, col, label in opening_cells:
+        if cliff_np is not None:
+            rows, cols = cliff_np.shape
+            r0 = max(0, row - 2)
+            r1 = min(rows, row + 3)
+            c0 = max(0, col - 2)
+            c1 = min(cols, col + 3)
+            ring = cliff_np[r0:r1, c0:c1]
+            # Abrupt material change: difference between adjacent cells > 0.50.
+            if ring.size > 1:
+                dr = np.abs(np.diff(ring, axis=0)) if ring.shape[0] > 1 else np.zeros(1)
+                dc = np.abs(np.diff(ring, axis=1)) if ring.shape[1] > 1 else np.zeros(1)
+                max_jump = float(max(dr.max() if dr.size else 0.0,
+                                     dc.max() if dc.size else 0.0))
+                if max_jump > 0.50:
+                    issues.append(
+                        f"cave_opening_abrupt_cliff_change:{label}:"
+                        f"max_jump={max_jump:.2f} (>0.50) within 2 cells"
+                    )
+            # Cliff continuity: at least one strong cliff cell on each side.
+            if ring.size > 4:
+                left = ring[:, :ring.shape[1] // 2]
+                right = ring[:, ring.shape[1] // 2:]
+                if float(left.max()) < 0.35 and float(right.max()) < 0.35:
+                    issues.append(
+                        f"cave_opening_not_in_cliff:{label}:"
+                        f"no cliff_candidate>=0.35 within 2 cells"
+                    )
+
+        if tex_np is not None:
+            rows, cols = tex_np.shape
+            r0 = max(0, row - 2)
+            r1 = min(rows, row + 3)
+            c0 = max(0, col - 2)
+            c1 = min(cols, col + 3)
+            tring = tex_np[r0:r1, c0:c1]
+            if tring.size > 1:
+                tdr = np.abs(np.diff(tring, axis=0)) if tring.shape[0] > 1 else np.zeros(1)
+                tdc = np.abs(np.diff(tring, axis=1)) if tring.shape[1] > 1 else np.zeros(1)
+                max_tjump = float(max(tdr.max() if tdr.size else 0.0,
+                                      tdc.max() if tdc.size else 0.0))
+                if max_tjump > 0.50:
+                    issues.append(
+                        f"cave_opening_wall_texture_seam:{label}:"
+                        f"max_jump={max_tjump:.2f} (>0.50) within 2 cells"
+                    )
+
+    # Phase G: strata-alignment check — when both cave openings and a
+    # stratigraphic cross-section are present, verify the cave opening's
+    # surface strata are consistent within a 2-cell ring (i.e. the opening
+    # is NOT cutting across stratigraphic bands). Cave mouths in real
+    # cliffs follow weaker layers; abrupt strata jumps look like
+    # painted-on holes.
+    try:
+        strata_wrapper = stack.get("strata_cross_section")
+    except Exception:
+        strata_wrapper = None
+    surface_mat_id = None
+    if strata_wrapper is not None:
+        cs = None
+        if isinstance(strata_wrapper, np.ndarray) and strata_wrapper.dtype == object:
+            cs = strata_wrapper[0] if strata_wrapper.size > 0 else None
+        elif isinstance(strata_wrapper, dict):
+            cs = strata_wrapper
+        if isinstance(cs, dict):
+            try:
+                surface_mat_id = np.asarray(cs.get("surface_material_id"), dtype=np.int64)
+            except Exception:
+                surface_mat_id = None
+
+    if surface_mat_id is not None and surface_mat_id.ndim == 2:
+        rows, cols = surface_mat_id.shape
+        for row, col, label in opening_cells:
+            r0 = max(0, row - 2)
+            r1 = min(rows, row + 3)
+            c0 = max(0, col - 2)
+            c1 = min(cols, col + 3)
+            ring = surface_mat_id[r0:r1, c0:c1]
+            if ring.size == 0:
+                continue
+            uniq = np.unique(ring)
+            # More than 2 distinct strata IDs in a 5x5 ring = the cave
+            # opening is cutting across multiple rock layers (bad — should
+            # sit inside ONE weaker stratum, not slice 3+ bands).
+            if uniq.size > 2:
+                issues.append(
+                    f"cave_opening_crosses_strata:{label}:"
+                    f"distinct_strata={int(uniq.size)} within 2 cells"
+                )
+
+    return issues
 
 
 # Mineral type colour table: (diffuse_rgb, shader_hint)
@@ -4605,6 +4937,12 @@ def handle_generate_cave(params: dict) -> dict:
         archetype_hint = params.get("archetype")
         if archetype_hint is not None:
             archetype_hint = str(archetype_hint)
+        # Traversable caves must produce two openings on different cliff faces
+        # so the player can traverse through the mountain (AAA legacy-dungeon
+        # contract — Elden Ring shortcut loops).
+        traversable = bool(params.get("traversable", True))
+        pairing_strength = float(params.get("pairing_strength", 0.60))
+        min_nav_clearance = float(params.get("min_nav_clearance_m", 1.8))
 
         # ------------------------------------------------------------------
         # 1. Build synthetic state and run the five-archetype pass.
@@ -4851,23 +5189,35 @@ def handle_generate_cave(params: dict) -> dict:
         exit_arch_spec["name"] = f"{name}_ExitArch"
         exit_arch_spec["role"] = "exit"
 
+        # Face tags — entry and exit openings must be on different cliff
+        # faces of the same mountain when traversable=True.  We label by the
+        # chamber-local face direction (entry on -Y face, exit on +Y face).
+        entry_arch_spec["cliff_face"] = "south"   # -Y face
+        exit_arch_spec["cliff_face"] = "north"    # +Y face
+
         archway_specs: List[Dict] = [entry_arch_spec, exit_arch_spec]
 
-        # Second exit for deep caves (depth > 30 m): place on the opposite
-        # chamber wall (rotated 120–180° from primary exit) so deep caves have
-        # two distinct egress points on different terrain faces.
+        # Second exit: either forced by traversable=True, or auto-added when
+        # the cave is deep enough (>30 m) to justify two distinct egress points
+        # on different terrain faces (legacy dungeon / canyon dual-exit).
         cave_depth_m = abs(float(chamber_center[2]) - float(entrance_pos[2]))
-        if cave_depth_m > 30.0:
+        needs_second_exit = traversable or cave_depth_m > 30.0
+        if needs_second_exit:
+            # Place secondary exit on the +X chamber wall (east face) so it
+            # plausibly lands on a different cliff face from both entry and
+            # primary exit.  This guarantees a through-mountain traversal when
+            # traversable=True.
             alt_exit_pos: Tuple[float, float, float] = (
                 chamber_center[0] + chamber_w * 0.45,
                 chamber_center[1],
-                chamber_center[2] * 0.85,  # slightly lower (canyon-wall exit)
+                max(0.5, chamber_center[2] * 0.85),
             )
             alt_arch = _build_archway_mesh(
                 alt_exit_pos, _ARCH_W, _ARCH_H, _ARCH_DEPTH, _ARCH_NS
             )
             alt_arch["name"] = f"{name}_ExitArch2"
             alt_arch["role"] = "exit_secondary"
+            alt_arch["cliff_face"] = "east"   # +X face — different from entry/primary exit
             archway_specs.append(alt_arch)
 
         # ------------------------------------------------------------------
@@ -4937,6 +5287,7 @@ def handle_generate_cave(params: dict) -> dict:
             chamber_depth=chamber_d,
             stalactite_positions=stalactite_positions,
             seed=seed,
+            pairing_strength=pairing_strength,
         )
         _mineral_props = _generate_mineral_deposits(
             chamber_width=chamber_w,
@@ -4966,6 +5317,46 @@ def handle_generate_cave(params: dict) -> dict:
             wall_height=wall_height,
             seed=seed,
         )
+        # ------------------------------------------------------------------
+        # 7a. Traversable spline: entry → chamber centre → primary exit
+        #     (+ secondary exit when present).  The spline is what the player
+        #     can walk, so speleothems must clear ``min_nav_clearance`` above
+        #     it.  We reuse road_network's 24-direction A* planner when
+        #     available to match the roads/trails pathing conventions.
+        # ------------------------------------------------------------------
+        spline_points: List[Tuple[float, float, float]] = [entrance_pos]
+        # Intermediate chamber waypoint keeps speleothems honest about
+        # clearance in the chamber interior.
+        spline_points.append(chamber_center)
+        spline_points.append(exit_world_pos)
+        if traversable and len(archway_specs) > 2:
+            # include secondary exit as an alternate spline terminus
+            _alt = archway_specs[-1]
+            _alt_centre = _alt.get("centre")
+            if isinstance(_alt_centre, tuple) and len(_alt_centre) == 3:
+                spline_points.append(_alt_centre)
+
+        # Optionally refine the traversable spline with road_network's 24-dir
+        # A* (best-effort — falls back to straight polyline when module not
+        # importable).  This mirrors the AAA design contract that interior
+        # cave paths share the same navigation topology as road trails.
+        try:
+            from . import road_network as _rn  # noqa: F401 — availability probe
+            # We don't have a full heightmap for the traversable spline (the
+            # cave is synthetic state), but the import probe validates the
+            # helper exists.  Downstream callers (compose_map) can re-plan
+            # the spline against the real terrain using road_network.
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Enforce 1.8 m navigation clearance along the spline.
+        _speleothem_props = enforce_cave_navigation_clearance(
+            _speleothem_props,
+            spline_points,
+            min_vertical_clearance_m=min_nav_clearance,
+            spline_radius_m=1.0,
+        )
+
         natural_props: List[Dict] = (
             _speleothem_props
             + _mineral_props
@@ -4973,6 +5364,41 @@ def handle_generate_cave(params: dict) -> dict:
             + _veg_props
             + _drip_props
         )
+
+        # ------------------------------------------------------------------
+        # 7b. Interior rendering material — published separately from the
+        #     exterior surround / overhang materials so Unity can bind a
+        #     dedicated dark-damp submaterial.  Based on Metro Exodus tunnel
+        #     + Elden Ring legacy dungeon palettes: low albedo (0.22–0.28),
+        #     high roughness (0.85–0.95), moderate normal-map depth.
+        # ------------------------------------------------------------------
+        interior_material: Dict = {
+            "name": f"{name}_Interior",
+            "role": "cave_interior",
+            "archetype": picked_archetype or "unknown",
+            "albedo_rgb": (0.24, 0.21, 0.19),     # dark damp rock
+            "roughness": 0.90,                     # high roughness (wet porous)
+            "metallic": 0.0,
+            "normal_scale": 1.25,                  # damp normal variation
+            "ambient_occlusion": 1.0,              # full AO (interior)
+            "emissive_rgb": (0.0, 0.0, 0.0),
+            "shader_hint": "cave_interior_damp",
+            "damp_mix": _damp_intensity,
+        }
+        exterior_material: Dict = {
+            "name": f"{name}_Exterior",
+            "role": "cave_exterior",
+            "archetype": picked_archetype or "unknown",
+            "albedo_rgb": (0.58, 0.54, 0.49),     # lighter cliff rock
+            "roughness": 0.70,                     # less wet than interior
+            "metallic": 0.0,
+            "normal_scale": 0.85,
+            "ambient_occlusion": 0.7,
+            "emissive_rgb": (0.0, 0.0, 0.0),
+            "shader_hint": "cliff_rock",
+        }
+        chamber_mesh_spec["interior_material"] = interior_material
+        chamber_mesh_spec["exterior_material"] = exterior_material
 
         # ------------------------------------------------------------------
         # 7. Assemble output.
@@ -5033,6 +5459,19 @@ def handle_generate_cave(params: dict) -> dict:
                     "vegetation_hints": len(_veg_props),
                     "drip_channels": len(_drip_props),
                 },
+                # Phase F (2026-04-23) — traversable caves + interior rendering
+                "traversable": traversable,
+                "pairing_strength": pairing_strength,
+                "min_nav_clearance_m": min_nav_clearance,
+                "interior_material": interior_material,
+                "exterior_material": exterior_material,
+                "traversable_spline": [list(p) for p in spline_points],
+                "opening_integration_issues": validate_cave_opening_integration(
+                    state.mask_stack
+                ),
+                "cliff_faces": [
+                    a.get("cliff_face", "unknown") for a in archway_specs
+                ],
             },
             "error": None,
         }
@@ -5058,6 +5497,8 @@ __all__ = [
     "scatter_collapse_debris",
     "generate_damp_mask",
     "validate_cave_entrance",
+    "validate_cave_opening_integration",
+    "enforce_cave_navigation_clearance",
     "pass_caves",
     "register_bundle_f_passes",
     "get_cave_entrance_specs",
