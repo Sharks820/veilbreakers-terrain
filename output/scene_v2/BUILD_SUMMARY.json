@@ -1,0 +1,15 @@
+{
+  "seed": 48879,
+  "tile_m": 200.0,
+  "resolution": 257,
+  "height_range_m": [
+    -7.6783833069431235,
+    20.902343476367495
+  ],
+  "water_level_m": -4.078383306943124,
+  "trees_placed": 90,
+  "rocks_placed": 55,
+  "grass_particles": 30000,
+  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v2\\VeilBreakers_Scene_v2.blend",
+  "render_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v2\\render_hero.png"
+}
