@@ -355,6 +355,12 @@ def register_bundle_l_fog_masks_pass() -> None:
             func=pass_fog_masks,
             requires_channels=("height",),
             produces_channels=("mist",),
+            # OVERRIDE: Bundle C's ``waterfalls`` writes a ``mist`` mask only
+            # around plunge basins. Bundle L's ``fog_masks`` rewrites ``mist``
+            # with the full volumetric fog-pool + valley-mist envelope that
+            # consumes the waterfall basin seeds and extends them into
+            # atmosphere-wide fog volumes.
+            overrides=("mist",),
             seed_namespace="fog_masks",
             requires_scene_read=False,
             description="Bundle L: volumetric fog pool + mist envelope",

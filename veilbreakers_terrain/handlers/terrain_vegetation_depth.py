@@ -1701,6 +1701,12 @@ def register_vegetation_depth_pass() -> None:
             func=pass_vegetation_depth,
             requires_channels=("height",),
             produces_channels=("detail_density",),
+            # OVERRIDE: Bundle E's ``scatter_intelligent`` writes a base
+            # ``detail_density`` dict from context-aware asset placement.
+            # Bundle O's ``vegetation_depth`` refines that with 4-layer
+            # stratification (canopy / sub-canopy / shrub / ground-cover) so
+            # the final density field reflects realistic vertical layering.
+            overrides=("detail_density",),
             seed_namespace="vegetation_depth",
             requires_scene_read=True,
             description="Bundle O — 4-layer vegetation stratification.",

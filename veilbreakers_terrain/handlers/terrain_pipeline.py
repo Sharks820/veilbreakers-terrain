@@ -101,6 +101,22 @@ def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]
 
     delta_channels = set(_DELTA_CHANNELS)
     seq_without_integrator = [name for name in seq if name != "integrate_deltas"]
+
+    # P2-5: surface unregistered pass names instead of silently skipping them.
+    # A typo or missing registration would otherwise cause delta integrators to
+    # land at the wrong position without any diagnostic.
+    unregistered = [
+        name for name in seq_without_integrator
+        if name not in TerrainPassController.PASS_REGISTRY
+    ]
+    if unregistered:
+        _log.warning(
+            "_normalize_delta_integration_sequence: skipping unregistered pass names %s "
+            "when locating delta producers; integrate_deltas placement may be suboptimal. "
+            "Register these passes or remove them from pass_sequence.",
+            sorted(set(unregistered)),
+        )
+
     producer_indexes = [
         idx
         for idx, name in enumerate(seq_without_integrator)
@@ -185,23 +201,32 @@ class TerrainPassController:
         # at register time instead of silently fighting over the channel at
         # run time.
         # ------------------------------------------------------------------
-        declared_overrides = set(getattr(definition, "overrides", ()) or ())
-        for ch in definition.produces_channels:
-            existing_producers = [
-                other.name
-                for other in cls.PASS_REGISTRY.values()
-                if other.name != definition.name and ch in other.produces_channels
-            ]
-            if existing_producers and ch not in declared_overrides:
-                raise ChannelOwnershipError(
-                    f"Pass '{definition.name}' declares produces_channels="
-                    f"{definition.produces_channels!r} but channel {ch!r} is "
-                    f"already produced by {existing_producers!r}. If this "
-                    f"overwrite is intentional, add overrides={{'{ch}'}} to "
-                    f"the PassDefinition. Otherwise pick a distinct channel "
-                    f"name (see cloud_shadow → sun_cloud_shadow/baked_cloud_shadow "
-                    f"rename for the canonical pattern)."
-                )
+        # Idempotency: if this exact pass name is already in the registry,
+        # treat this as a re-registration of the SAME pass (common when
+        # ``register_all_terrain_passes`` runs twice in a session: e.g. once
+        # when the registry is empty, and again when post-injection pipeline
+        # scanning finds a missing pass). The duplicate-producer check is
+        # only meaningful on the FIRST registration of a given pass name —
+        # on a re-register, the channel claims are identical to the previous
+        # round and do not introduce a new hazard.
+        if definition.name not in cls.PASS_REGISTRY:
+            declared_overrides = set(getattr(definition, "overrides", ()) or ())
+            for ch in definition.produces_channels:
+                existing_producers = [
+                    other.name
+                    for other in cls.PASS_REGISTRY.values()
+                    if other.name != definition.name and ch in other.produces_channels
+                ]
+                if existing_producers and ch not in declared_overrides:
+                    raise ChannelOwnershipError(
+                        f"Pass '{definition.name}' declares produces_channels="
+                        f"{definition.produces_channels!r} but channel {ch!r} is "
+                        f"already produced by {existing_producers!r}. If this "
+                        f"overwrite is intentional, add overrides={{'{ch}'}} to "
+                        f"the PassDefinition. Otherwise pick a distinct channel "
+                        f"name (see cloud_shadow → sun_cloud_shadow/baked_cloud_shadow "
+                        f"rename for the canonical pattern)."
+                    )
 
         if definition.name in cls.PASS_REGISTRY:
             existing = cls.PASS_REGISTRY[definition.name]

@@ -2582,6 +2582,12 @@ def register_bundle_c_passes() -> None:
                 "waterfall_velocity",
                 "particle_emitter_specs",
             ),
+            # OVERRIDE: Bundle F's ``caves`` pass writes a ``wet_rock`` mask for
+            # dripping/seeping surfaces inside caves. Bundle C's waterfall pass
+            # additionally stamps ``wet_rock`` along plunge-basin rims where
+            # spray keeps rock perpetually wet. Both producers are intentional;
+            # waterfall registers after caves so it takes final ownership.
+            overrides=("wet_rock",),
             seed_namespace="waterfalls",
             requires_scene_read=True,
             may_modify_geometry=False,

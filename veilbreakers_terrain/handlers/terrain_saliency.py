@@ -779,6 +779,12 @@ def register_saliency_pass() -> None:
             func=pass_saliency_refine,
             requires_channels=("height", "saliency_macro"),
             produces_channels=("saliency_macro",),
+            # OVERRIDE: ``structural_masks`` (Bundle A) seeds ``saliency_macro``
+            # from curvature/convexity/ridge geometry alone. Bundle H's
+            # ``saliency_refine`` deliberately overwrites it with the full
+            # 8-factor UE5-style tactical importance blend that accounts for
+            # sight lines, water proximity, and vantage coverage.
+            overrides=("saliency_macro",),
             seed_namespace="saliency_refine",
             may_modify_geometry=False,
             may_add_geometry=False,
