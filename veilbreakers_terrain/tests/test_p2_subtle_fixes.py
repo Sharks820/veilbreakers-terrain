@@ -153,15 +153,18 @@ def test_astar_cell_size_affects_slope_penalty():
     step_world doubles.  The overall per-step cost therefore differs
     non-trivially.
     """
-    from blender_addon.handlers._terrain_noise import _astar
+    import warnings as _warn
+    from blender_addon.handlers._terrain_noise import _legacy_astar
 
     rows, cols = 4, 20
     hmap = np.zeros((rows, cols), dtype=np.float64)
     for c in range(cols):
         hmap[:, c] = c / (cols - 1)
 
-    path_fine = _astar(hmap, (0, 0), (0, cols - 1), cell_size=1.0)
-    path_coarse = _astar(hmap, (0, 0), (0, cols - 1), cell_size=2.0)
+    with _warn.catch_warnings():
+        _warn.simplefilter("ignore", DeprecationWarning)
+        path_fine = _legacy_astar(hmap, (0, 0), (0, cols - 1), cell_size=1.0)
+        path_coarse = _legacy_astar(hmap, (0, 0), (0, cols - 1), cell_size=2.0)
     assert path_fine, "A* must return a path"
     assert path_coarse, "A* must return a path"
 
@@ -190,7 +193,7 @@ def test_generate_road_path_grid_threads_cell_size():
     changes the cost landscape enough to alter route choice on terrain
     with clear valley/ridge contrast.
     """
-    from blender_addon.handlers._terrain_noise import generate_road_path_grid
+    from blender_addon.handlers._terrain_noise import generate_road_path_grid_legacy as generate_road_path_grid
 
     size = 24
     yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing="ij")
@@ -203,8 +206,11 @@ def test_generate_road_path_grid_threads_cell_size():
     hmap = np.clip(hmap, 0.0, 1.0)
     waypoints = [(0, 2), (size - 1, size - 3)]
 
-    path_fine, _ = generate_road_path_grid(hmap, waypoints, width=2, cell_size=1.0)
-    path_coarse, _ = generate_road_path_grid(hmap, waypoints, width=2, cell_size=2.0)
+    import warnings as _warn
+    with _warn.catch_warnings():
+        _warn.simplefilter("ignore", DeprecationWarning)
+        path_fine, _ = generate_road_path_grid(hmap, waypoints, width=2, cell_size=1.0)
+        path_coarse, _ = generate_road_path_grid(hmap, waypoints, width=2, cell_size=2.0)
 
     assert path_fine, "A* must return a path for cell_size=1.0"
     assert path_coarse, "A* must return a path for cell_size=2.0"
@@ -214,14 +220,17 @@ def test_generate_road_path_grid_strict_cell_size_rejects_none():
     """Opt-in strict mode rejects missing cell_size rather than silently
     using the 1.0 default (fail-fast for production callers).
     """
-    from blender_addon.handlers._terrain_noise import generate_road_path_grid
+    from blender_addon.handlers._terrain_noise import generate_road_path_grid_legacy as generate_road_path_grid
 
     hmap = np.zeros((8, 8), dtype=np.float64)
-    with pytest.raises(ValueError, match="cell_size"):
-        generate_road_path_grid(
-            hmap,
-            [(0, 0), (7, 7)],
-            width=1,
-            cell_size=None,
-            strict_cell_size=True,
-        )
+    import warnings as _warn
+    with _warn.catch_warnings():
+        _warn.simplefilter("ignore", DeprecationWarning)
+        with pytest.raises(ValueError, match="cell_size"):
+            generate_road_path_grid(
+                hmap,
+                [(0, 0), (7, 7)],
+                width=1,
+                cell_size=None,
+                strict_cell_size=True,
+            )
