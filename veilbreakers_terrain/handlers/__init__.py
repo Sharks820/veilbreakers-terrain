@@ -1048,6 +1048,43 @@ def _build_command_handlers() -> Dict[str, Callable]:
         "handle_sculpt_terrain",
     )
 
+    # ------------------------------------------------------------------
+    # blender_capability_bridge.py — Phase J: thin MCP surface over the
+    # subset of Blender APIs terrain agents routinely need but had no
+    # first-class handler prior to the Phase J audit.
+    # ------------------------------------------------------------------
+    try:
+        _bcb = _il.import_module(f"{_pkg}.blender_capability_bridge")
+
+        def _wrap(fn_name: str) -> Callable:
+            fn = getattr(_bcb, fn_name)
+            return _make_signature_handler(fn)
+
+        handlers["blender_bmesh_op"] = _wrap("bmesh_op")
+        handlers["blender_modifier_add"] = _wrap("modifier_add")
+        handlers["blender_modifier_apply"] = _wrap("modifier_apply")
+        handlers["blender_modifier_remove"] = _wrap("modifier_remove")
+        handlers["blender_modifier_list"] = _wrap("modifier_list")
+        handlers["blender_uv_project"] = _wrap("uv_project")
+        handlers["blender_set_render_engine"] = _wrap("set_render_engine")
+        handlers["blender_render_still"] = _wrap("render_still")
+        handlers["blender_collection_create"] = _wrap("collection_create")
+        handlers["blender_collection_link_object"] = _wrap("collection_link_object")
+        handlers["blender_parent_set"] = _wrap("parent_set")
+        handlers["blender_empty_create"] = _wrap("empty_create")
+        handlers["blender_geometry_nodes_create_group"] = _wrap("geometry_nodes_create_group")
+        handlers["blender_geometry_nodes_add_node"] = _wrap("geometry_nodes_add_node")
+        handlers["blender_geometry_nodes_link_sockets"] = _wrap("geometry_nodes_link_sockets")
+        handlers["blender_geometry_nodes_assign_to_object"] = _wrap("geometry_nodes_assign_to_object")
+        handlers["blender_geometry_nodes_dump"] = _wrap("geometry_nodes_dump")
+        handlers["blender_addon_enable"] = _wrap("addon_enable")
+        handlers["blender_addon_disable"] = _wrap("addon_disable")
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "COMMAND_HANDLERS: failed to register blender_capability_bridge handlers: %r",
+            exc,
+        )
+
     return handlers
 
 

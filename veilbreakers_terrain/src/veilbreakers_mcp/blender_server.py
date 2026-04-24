@@ -137,6 +137,29 @@ _LOC_HANDLERS: Dict[str, str] = {
     "animate_trap_reset": "animation_trap_reset",
     "animate_shatter": "animation_shatter",
     "animate_wobble_collapse": "animation_wobble_collapse",
+    # ------------------------------------------------------------------
+    # Phase J — Blender capability bridge (bmesh ops, modifiers, UV,
+    # render, collections, geometry nodes, add-ons)
+    # ------------------------------------------------------------------
+    "bmesh_op": "blender_bmesh_op",
+    "modifier_add": "blender_modifier_add",
+    "modifier_apply": "blender_modifier_apply",
+    "modifier_remove": "blender_modifier_remove",
+    "modifier_list": "blender_modifier_list",
+    "uv_project": "blender_uv_project",
+    "render_engine": "blender_set_render_engine",
+    "render_still": "blender_render_still",
+    "collection_create": "blender_collection_create",
+    "collection_link": "blender_collection_link_object",
+    "parent_set": "blender_parent_set",
+    "empty_create": "blender_empty_create",
+    "gn_create_group": "blender_geometry_nodes_create_group",
+    "gn_add_node": "blender_geometry_nodes_add_node",
+    "gn_link_sockets": "blender_geometry_nodes_link_sockets",
+    "gn_assign_object": "blender_geometry_nodes_assign_to_object",
+    "gn_dump": "blender_geometry_nodes_dump",
+    "addon_enable": "blender_addon_enable",
+    "addon_disable": "blender_addon_disable",
 }
 
 
