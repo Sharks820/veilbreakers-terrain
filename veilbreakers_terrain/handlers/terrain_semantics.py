@@ -328,6 +328,12 @@ class TerrainMaskStack:
     gameplay_zone: Optional[np.ndarray] = None
     wind_field: Optional[np.ndarray] = None
     cloud_shadow: Optional[np.ndarray] = None
+    # Dual-producer channel rename (2026-04-23 wiring audit). The two
+    # procedural/baked cloud-shadow paths now write disjoint channels so the
+    # DAG can reason about them independently. The legacy ``cloud_shadow``
+    # channel above is kept as an alias populated by Bundle J only.
+    sun_cloud_shadow: Optional[np.ndarray] = None
+    baked_cloud_shadow: Optional[np.ndarray] = None
     traversability: Optional[np.ndarray] = None
     decal_density: Optional[Dict[str, np.ndarray]] = None
 
@@ -542,6 +548,8 @@ class TerrainMaskStack:
             "gameplay_zone",
             "wind_field",
             "cloud_shadow",
+            "sun_cloud_shadow",
+            "baked_cloud_shadow",
             "traversability",
             "strata_orientation",
             "rock_hardness",

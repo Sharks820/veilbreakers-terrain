@@ -297,8 +297,15 @@ def pass_cloud_shadow(
     )
 
     assert mask.shape == stack.height.shape, (
-        f"cloud_shadow shape {mask.shape} must match height {stack.height.shape}"
+        f"sun_cloud_shadow shape {mask.shape} must match height {stack.height.shape}"
     )
+    # Primary channel (post-2026-04-23 wiring audit rename): Bundle J owns the
+    # cheap/earlier procedural path as ``sun_cloud_shadow``. The legacy
+    # ``cloud_shadow`` key is preserved as an alias so older consumers (Unity
+    # export, ecosystem tests, god-ray hints) keep functioning unchanged — but
+    # Bundle K's baked path no longer participates in this alias, which is how
+    # the dual-producer DAG hazard is resolved.
+    stack.set("sun_cloud_shadow", mask, "cloud_shadow")
     stack.set("cloud_shadow", mask, "cloud_shadow")
 
     return PassResult(
@@ -306,7 +313,7 @@ def pass_cloud_shadow(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("cloud_shadow",),
+        produced_channels=("sun_cloud_shadow", "cloud_shadow"),
         metrics={
             "coverage_frac": float((mask > 0.5).mean()),
             "mean": float(mask.mean()),
@@ -327,7 +334,11 @@ def register_bundle_j_cloud_shadow_pass() -> None:
             name="cloud_shadow",
             func=pass_cloud_shadow,
             requires_channels=("height",),
-            produces_channels=("cloud_shadow",),
+            # Bundle J owns both the new primary channel (``sun_cloud_shadow``)
+            # and the legacy alias (``cloud_shadow``). Bundle K's
+            # ``shadow_clipmap`` now owns ``baked_cloud_shadow`` instead — see
+            # 2026-04-23 wiring audit for the dual-producer resolution.
+            produces_channels=("sun_cloud_shadow", "cloud_shadow"),
             seed_namespace="cloud_shadow",
             requires_scene_read=False,
             description="Bundle J: procedural cloud shadow mask",

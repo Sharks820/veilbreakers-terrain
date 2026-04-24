@@ -332,11 +332,17 @@ def test_export_shadow_clipmap_exr_and_sidecar(stack):
 
 
 def test_pass_shadow_clipmap_populates_cloud_shadow(state):
+    """Bundle K's shadow clipmap bake owns ``baked_cloud_shadow`` post-2026-04-23.
+
+    The legacy ``cloud_shadow`` channel is no longer written by Bundle K; that
+    channel is now owned by Bundle J's ``pass_cloud_shadow`` exclusively so the
+    DAG can reason about the two producers independently.
+    """
     from blender_addon.handlers.terrain_shadow_clipmap_bake import pass_shadow_clipmap
 
     result = pass_shadow_clipmap(state, None)
     assert result.status == "ok"
-    cs = state.mask_stack.get("cloud_shadow")
+    cs = state.mask_stack.get("baked_cloud_shadow")
     assert cs is not None
     assert cs.shape == state.mask_stack.height.shape
 
@@ -551,7 +557,10 @@ def test_bundle_k_passes_produce_unity_channels():
             produced.update(TerrainPassController.PASS_REGISTRY[name].produces_channels)
         assert "macro_color" in produced
         assert "roughness_variation" in produced
-        assert "cloud_shadow" in produced
+        # Post 2026-04-23 wiring audit: Bundle K writes ``baked_cloud_shadow``
+        # as its own independent channel; the legacy ``cloud_shadow`` alias is
+        # owned solely by Bundle J's ``pass_cloud_shadow`` now.
+        assert "baked_cloud_shadow" in produced
         assert "splatmap_weights_layer" in produced
     finally:
         TerrainPassController.clear_registry()

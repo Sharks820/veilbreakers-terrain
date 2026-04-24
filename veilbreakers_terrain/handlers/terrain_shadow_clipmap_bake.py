@@ -2,9 +2,11 @@
 
 Bakes a per-cell sun-shadow mask by ray-marching the heightmap along the
 sun direction. Produces a float32 (clipmap_res, clipmap_res) mask in [0, 1]
-(1 = fully lit, 0 = in shadow). Populates ``cloud_shadow`` channel when
-sun occlusion is used as a multiplier on top of cloud shadows (both fold
-into the shader AO path in Unity).
+(1 = fully lit, 0 = in shadow). Populates ``baked_cloud_shadow`` (the
+sun-occluded, pre-multiplied combination with any upstream procedural cloud
+mask); this is an independent channel from Bundle J's ``sun_cloud_shadow``
+so the two producers no longer collide in the DAG (see the 2026-04-23
+wiring audit for context).
 
 Shadow is baked at 4 cascaded clipmap levels (LOD0=fine → LOD3=coarse)
 and composited into a single output, matching the cascaded shadow map
@@ -436,13 +438,17 @@ def pass_shadow_clipmap(
     --------
     1. Call ``bake_shadow_clipmap`` (4 cascades: LOD0=fine, LOD3=coarse).
     2. Resample result back to heightmap resolution.
-    3. Store in stack channels ``shadow_map`` and ``cloud_shadow``.
+    3. Store in stack channels ``shadow_map`` and ``baked_cloud_shadow``.
     4. Export EXR to ``shadow_clipmap_export_path`` if set in hints
        (uses ``export_shadow_clipmap_exr`` with mini-EXR writer).
 
     Consumes: height
-    Produces: shadow_map  — (H, W) float32 [0,1] stored on the stack.
-              cloud_shadow — multiplied with existing cloud_shadow if present.
+    Produces: shadow_map         — (H, W) float32 [0,1] stored on the stack.
+              baked_cloud_shadow — sun-occluded result, multiplied against any
+                                   upstream ``sun_cloud_shadow`` (Bundle J). An
+                                   independent channel from ``cloud_shadow`` so
+                                   the DAG no longer has two producers for a
+                                   single channel.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -471,15 +477,25 @@ def pass_shadow_clipmap(
     else:
         resampled = shadow_map.astype(np.float32)
 
-    # Step 3: Store stack channels
+    # Step 3: Store stack channels.
+    #
+    # After the 2026-04-23 wiring audit the baked ray-marched result is written
+    # to ``baked_cloud_shadow`` instead of the dual-producer ``cloud_shadow``
+    # channel. Bundle J's ``pass_cloud_shadow`` owns the legacy ``cloud_shadow``
+    # alias on its own now, and consumers that want the combined sun-occluded
+    # cloud mask should multiply the two channels downstream.
     stack.set("shadow_map", resampled, "shadow_clipmap")
 
-    existing_cloud = stack.get("cloud_shadow")
-    if existing_cloud is not None:
-        combined = (np.asarray(existing_cloud, dtype=np.float32) * resampled).astype(np.float32)
+    existing_sun = stack.get("sun_cloud_shadow")
+    if existing_sun is None:
+        # Back-compat: if Bundle J's renamed channel is unpopulated, fall back
+        # to the legacy alias so older pipelines still combine correctly.
+        existing_sun = stack.get("cloud_shadow")
+    if existing_sun is not None:
+        combined = (np.asarray(existing_sun, dtype=np.float32) * resampled).astype(np.float32)
     else:
         combined = resampled.copy()
-    stack.set("cloud_shadow", combined, "shadow_clipmap")
+    stack.set("baked_cloud_shadow", combined, "shadow_clipmap")
 
     # Step 4: Export EXR if a path is provided in hints
     export_path_str = hints.get("shadow_clipmap_export_path", "")
@@ -489,7 +505,7 @@ def pass_shadow_clipmap(
         export_shadow_clipmap_exr(shadow_map, export_path)
         exported_path = str(export_path)
 
-    produced = ("shadow_map", "cloud_shadow")
+    produced = ("shadow_map", "baked_cloud_shadow")
 
     metrics: dict = {
         "sun_azimuth_rad": sun_az,
@@ -523,7 +539,11 @@ def register_bundle_k_shadow_clipmap_pass() -> None:
             name="shadow_clipmap",
             func=pass_shadow_clipmap,
             requires_channels=("height",),
-            produces_channels=("shadow_map", "cloud_shadow"),
+            # 2026-04-23 wiring audit: Bundle K's baked path writes its own
+            # independent ``baked_cloud_shadow`` channel now, leaving Bundle J
+            # sole owner of the ``cloud_shadow`` legacy alias. This resolves
+            # the dual-producer DAG hazard flagged by the audit.
+            produces_channels=("shadow_map", "baked_cloud_shadow"),
             seed_namespace="shadow_clipmap",
             requires_scene_read=False,
             description="Bundle K: vectorised horizon-scan sun shadow clipmap bake",
