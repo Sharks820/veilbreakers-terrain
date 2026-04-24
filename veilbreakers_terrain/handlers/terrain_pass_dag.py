@@ -179,10 +179,24 @@ class PassDAG:
         return list(self._passes.keys())
 
     def dependencies(self, pass_name: str) -> Set[str]:
-        """Return the set of pass names that produce channels ``pass_name`` consumes."""
+        """Return the set of pass names that produce channels ``pass_name`` consumes.
+
+        Includes hard dependencies from ``requires_channels`` (presence mandatory)
+        and soft dependencies from ``optional_channels`` (presence preferred).
+        Optional edges are added to the DAG only when the listed channel has at
+        least one registered producer — an optional channel with no producer is
+        silently skipped rather than raising, which is the entire point of
+        marking it optional.
+        """
         pdef = self._passes[pass_name]
         deps: Set[str] = set()
         for ch in pdef.requires_channels:
+            for producer in self._producers.get(ch, []):
+                if producer != pass_name and producer in self._passes:
+                    deps.add(producer)
+        # Optional edges: only add when the channel actually has a registered
+        # producer. Absence is legal and does NOT become a dependency edge.
+        for ch in getattr(pdef, "optional_channels", ()):
             for producer in self._producers.get(ch, []):
                 if producer != pass_name and producer in self._passes:
                     deps.add(producer)

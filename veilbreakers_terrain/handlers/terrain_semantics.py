@@ -1464,6 +1464,21 @@ class PassDefinition:
     func: Callable[["TerrainPipelineState", Optional[BBox]], PassResult]
     requires_channels: Tuple[str, ...] = ()
     produces_channels: Tuple[str, ...] = ()
+    # Soft-ordering dependencies (added 2026-04-23 wiring audit). A pass lists
+    # channels it *prefers* to consume when they are populated by some other
+    # registered pass, but will happily run without them. Unlike
+    # ``requires_channels``, absence is NOT an error — the DAG will simply
+    # schedule the optional producer first when available and skip the edge
+    # otherwise. Use this for "if the cliffs pass ran, read its mask; if not,
+    # fall through to a default" patterns like ``pass_scatter_intelligent``.
+    optional_channels: Tuple[str, ...] = ()
+    # Channels this pass intentionally overwrites (rather than being the sole
+    # first writer). Populated for legitimate secondary writers of shared
+    # channels (e.g. ``erosion`` overwrites ``height`` after ``macro_world``).
+    # When the DAG duplicate-producer check fires, every producer after the
+    # first must enumerate the channel names it overrides here — otherwise
+    # ``ChannelOwnershipError`` is raised at register time.
+    overrides: Tuple[str, ...] = ()
     requires_features: Tuple[str, ...] = ()
     idempotent: bool = True
     deterministic: bool = True
