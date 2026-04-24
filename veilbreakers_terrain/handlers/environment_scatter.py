@@ -797,6 +797,14 @@ def _filter_multipass_scatter_placements(
         placement_local["rotation"] = math.degrees(float(placement.get("rotation", 0.0))) % 360.0
         placement_local["moisture"] = moisture
         placement_local["altitude"] = altitude
+        # Preserve fine-grained species_id but normalise ``vegetation_type``
+        # to the legacy coarse category (tree/bush/grass/rock) so callers
+        # that assert on rule-vegetation_type keep working after the
+        # Phase-H catalog expansion.  Downstream renderers can still
+        # branch on ``species_id`` / ``unity_asset_path`` when present.
+        if "species_id" not in placement_local and placement.get("vegetation_type"):
+            placement_local["species_id"] = placement["vegetation_type"]
+        placement_local["vegetation_type"] = base_type
         scale_range = chosen_rule.get("scale_range")
         if (
             isinstance(scale_range, (tuple, list))
