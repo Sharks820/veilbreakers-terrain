@@ -97,10 +97,20 @@ def run(node: str) -> int:
             except Exception:
                 pass
         ts.text = text
-        ts.font_size = 42
-        ts.location = (u, v)
-        ts.align_x = "LEFT"
-        ts.align_y = "CENTER"
+        try:
+            ts.font_size = 42
+        except Exception:
+            pass
+        try:
+            ts.location = (u, v)
+        except Exception:
+            pass
+        for attr, val in (("align_x", "LEFT"), ("align_y", "CENTER")):
+            if hasattr(ts, attr):
+                try:
+                    setattr(ts, attr, val)
+                except Exception:
+                    pass
         try:
             ts.use_shadow = True
             ts.shadow_color = (0.0, 0.0, 0.0, 0.85)
