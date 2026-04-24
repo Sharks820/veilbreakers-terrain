@@ -2,9 +2,13 @@
 
 Phase 10 / Fixes 10.3, 10.8, 10.9 / REQ-P10-004, REQ-P10-005.
 
-12 tests:
-  Tests 1-6:  ravine_mask wet_rock boost + sample_macro_color + pass_compute_macro_color
+Tests:
+  Tests 1-4:  ravine_mask wet_rock boost + sample_macro_color
   Tests 7-12: apply_sdf_road_blend + compute_slope_material_weights SDF integration
+
+Tests 5-6 were removed when the orphan ``pass_compute_macro_color`` was deleted
+from ``terrain_pipeline.py`` (Bundle K owns the real ``pass_macro_color`` in
+``terrain_macro_color.py`` — see ``test_terrain_material_ceiling.py``).
 """
 
 from __future__ import annotations
@@ -19,9 +23,6 @@ from veilbreakers_terrain.handlers.terrain_semantics import (
     TerrainIntentState,
     TerrainPipelineState,
     BBox,
-)
-from veilbreakers_terrain.handlers.terrain_pipeline import (
-    pass_compute_macro_color,
 )
 from veilbreakers_terrain.handlers.terrain_materials_v2 import (
     RAVINE_THRESHOLD,
@@ -134,28 +135,11 @@ class TestSampleMacroColor:
         assert np.allclose(result[:, :, 1], 0.0), "Green channel should be 0.0"
         assert np.allclose(result[:, :, 2], 0.0), "Blue channel should be 0.0"
 
-    def test_5_pass_macro_color_shape(self):
-        """pass_compute_macro_color writes macro_color of shape (H, W, 3)."""
-        stack = _make_stack(size=16)
-        state = _make_state(stack)
-        result = pass_compute_macro_color(state, None)
-
-        assert result.status == "ok"
-        mc = stack.get("macro_color")
-        assert mc is not None, "macro_color should be written to stack"
-        assert mc.shape == (16, 16, 3), f"Expected (16,16,3), got {mc.shape}"
-
-    def test_6_pass_macro_color_fallback_is_white(self):
-        """pass_compute_macro_color with no authored macro_texture falls back to all-ones."""
-        stack = _make_stack(size=8)
-        state = _make_state(stack)
-        result = pass_compute_macro_color(state, None)
-
-        mc = stack.get("macro_color")
-        assert mc is not None
-        assert np.allclose(mc, 1.0), (
-            f"Fallback macro_color should be all-ones (white), got min={mc.min():.4f}"
-        )
+    # NOTE: former tests test_5_pass_macro_color_shape /
+    # test_6_pass_macro_color_fallback_is_white exercised the now-deleted
+    # ``terrain_pipeline.pass_compute_macro_color`` orphan. Bundle K owns the
+    # real macro_color pass (``terrain_macro_color.pass_macro_color``) and has
+    # dedicated coverage in ``test_terrain_material_ceiling.py``.
 
 
 # ---------------------------------------------------------------------------
