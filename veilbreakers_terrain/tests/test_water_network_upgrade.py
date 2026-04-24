@@ -293,3 +293,78 @@ def test_solve_outflow_produces_path():
     # Monotonic x since direction is east
     xs = [p[0] for p in path]
     assert xs == sorted(xs)
+
+
+# ---------------------------------------------------------------------------
+# P2-13 — Manning slope unit-convention guard (dimensionless rise/run)
+# ---------------------------------------------------------------------------
+
+
+class TestManningSlopeConvention:
+    """pass_water_flow_speed must assert slope is dimensionless rise/run."""
+
+    def _build_fake_stack_and_state(self, slope_array: np.ndarray | None, height: np.ndarray):
+        """Minimal mask-stack + state stand-in."""
+        rows, cols = height.shape
+        flow_dir = np.zeros((rows, cols), dtype=np.int8)
+        flow_acc = np.ones((rows, cols), dtype=np.float64)
+        water = np.ones((rows, cols), dtype=np.float32)
+
+        class _Stack:
+            def __init__(self):
+                self.height = height
+                self.cell_size = 1.0
+                self._channels = {
+                    "flow_direction": flow_dir,
+                    "flow_accumulation": flow_acc,
+                    "water_surface": water,
+                }
+                if slope_array is not None:
+                    self._channels["slope"] = slope_array
+
+            def get(self, key):
+                return self._channels.get(key)
+
+            def set(self, key, value, source=None):
+                self._channels[key] = value
+
+        class _State:
+            def __init__(self, stack):
+                self.mask_stack = stack
+
+        stack = _Stack()
+        return _State(stack), stack
+
+    def test_dimensionless_slope_passes(self):
+        from blender_addon.handlers._water_network import pass_water_flow_speed
+
+        height = np.linspace(0.0, 1.0, 64).astype(np.float64)
+        height = np.tile(height, (16, 1))  # 1m total rise over 64m
+        slope = np.full((16, 64), 0.015, dtype=np.float64)  # 1.5 % grade
+
+        state, stack = self._build_fake_stack_and_state(slope, height)
+        result = pass_water_flow_speed(state, None)
+        assert result.status == "ok"
+        assert "slope_max_dimensionless" in result.metrics
+        assert result.metrics["slope_max_dimensionless"] < 10.0
+
+    def test_radian_unit_error_raises(self):
+        """Feeding a radians-as-slope channel with huge magnitudes trips the assert."""
+        from blender_addon.handlers._water_network import pass_water_flow_speed
+
+        height = np.zeros((8, 8), dtype=np.float64)
+        # A "slope" array in bogus units — values of 25 indicate something
+        # other than rise/run (e.g., gradient of a steep world-height DEM).
+        bad_slope = np.full((8, 8), 25.0, dtype=np.float64)
+        state, stack = self._build_fake_stack_and_state(bad_slope, height)
+        with pytest.raises(AssertionError, match="Manning slope"):
+            pass_water_flow_speed(state, None)
+
+    def test_docstring_documents_unit_convention(self):
+        import inspect as _inspect
+        from blender_addon.handlers._water_network import pass_water_flow_speed
+
+        doc = _inspect.getdoc(pass_water_flow_speed) or ""
+        assert "dimensionless" in doc.lower(), (
+            "pass_water_flow_speed docstring must document unit convention"
+        )

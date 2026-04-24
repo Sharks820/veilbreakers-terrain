@@ -598,6 +598,13 @@ def pass_water_flow_speed(
     field is normalised so the 95th percentile equals 1.0.  Cells that are
     not water (water_surface == 0) are set to 0.0.
 
+    **Unit convention**: Manning expects the slope to be *dimensionless*
+    rise-over-run, i.e. ``sqrt((dz/dx)^2 + (dz/dy)^2)``.  It is NOT a
+    radian/degree angle — a 45° slope is 1.0, not π/4.  This pass guards
+    the convention with an ``assert slope_max < 10.0`` (< 1000 % grade)
+    so stale radian-unit channels are caught early and surfaced via the
+    ``slope_max_dimensionless`` diagnostic metric.
+
     Writes:
         flow_speed  — float32 (H, W) in [0, 1]; 0 = still, 1 = max velocity.
 
@@ -631,23 +638,39 @@ def pass_water_flow_speed(
     flow_dir_arr = np.asarray(flow_dir, dtype=np.int8)
     flow_acc_arr = np.asarray(flow_acc, dtype=np.float64)
 
-    # Slope: use stack if available, else central-difference approximation.
+    # Slope: always compute a dimensionless rise/run magnitude explicitly
+    # (sqrt((dz/dx)^2 + (dz/dy)^2)) so downstream Manning math is
+    # unit-consistent.  If a "slope" channel is already on the stack we
+    # use it (pass_structural_masks produces dimensionless slopes); otherwise
+    # we derive it from heights here.
+    h = np.asarray(stack.height, dtype=np.float64)
+    cs = float(stack.cell_size) if stack.cell_size else 1.0
+    dz_dy = np.gradient(h, cs, axis=0)
+    dz_dx = np.gradient(h, cs, axis=1)
+    slope_dimensionless = np.sqrt(dz_dx ** 2 + dz_dy ** 2)
+
     slope_raw = stack.get("slope")
     if slope_raw is not None:
         slope_arr = np.asarray(slope_raw, dtype=np.float64)
     else:
-        h = np.asarray(stack.height, dtype=np.float64)
-        cs = float(stack.cell_size) if stack.cell_size else 1.0
-        dz_dy = np.gradient(h, cs, axis=0)
-        dz_dx = np.gradient(h, cs, axis=1)
-        slope_arr = np.sqrt(dz_dx ** 2 + dz_dy ** 2)
+        slope_arr = slope_dimensionless
+
+    # Unit-convention guard: Manning expects *dimensionless* rise/run, not
+    # radians or degrees.  A dimensionless slope of 10 == 1000 % grade
+    # (vertical cliff is 1.0), so anything above that indicates a stale
+    # radian/degree channel was fed in upstream.
+    max_slope = float(np.max(slope_arr)) if slope_arr.size else 0.0
+    assert max_slope < 10.0, (
+        "Manning slope exceeded 1000% — unit convention error "
+        "(expected dimensionless rise/run, got max={:.3f})".format(max_slope)
+    )
 
     # Log-normalise accumulation so it doesn't dominate the product.
     log_acc = np.log1p(flow_acc_arr)
 
     # Manning proxy: V ∝ slope^0.5 * acc^0.3
-    # slope_arr is in [0, ∞) (rise/run or radians depending on source);
-    # clamp negatives to 0 before sqrt.
+    # slope_arr is dimensionless rise/run (NOT radians); clamp negatives
+    # to 0 before sqrt.
     slope_clamped = np.maximum(slope_arr, 0.0)
     speed_raw = _MANNING_K * (slope_clamped ** 0.5) * (log_acc ** 0.3)
 
@@ -686,6 +709,7 @@ def pass_water_flow_speed(
             "speed_max": float(speed_norm.max()),
             "speed_mean": float(speed_norm.mean()),
             "p95_raw": round(p95, 4),
+            "slope_max_dimensionless": round(max_slope, 4),
         },
         issues=[],
     )
