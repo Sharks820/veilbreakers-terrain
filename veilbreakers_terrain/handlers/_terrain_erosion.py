@@ -461,13 +461,19 @@ def apply_hydraulic_erosion_masks(
 
             if water < 0.001:
                 # Mass conservation (Benes et al. 2006): deposit remaining
-                # sediment at the particle's final position rather than
-                # discarding it.  Without this, every evaporated particle
-                # silently destroys material, violating mass balance and
-                # producing net-negative height drift at high iteration counts.
-                if sediment > 0.0 and 1 <= ix < cols - 2 and 1 <= iy < rows - 2:
-                    _deposit(result, ix, iy, fx, fy, sediment)
-                    _deposit(deposition_amount, ix, iy, fx, fy, sediment)
+                # sediment at the particle's FINAL position (new_px, new_py)
+                # rather than the pre-move cell.  The prior implementation
+                # used (ix, iy, fx, fy) which are still the PRE-move indices,
+                # silently shifting mass one cell upstream each evaporation
+                # and producing cumulative drift at high iteration counts.
+                if sediment > 0.0:
+                    fix_i = int(new_px)
+                    fiy_i = int(new_py)
+                    if 1 <= fix_i < cols - 2 and 1 <= fiy_i < rows - 2:
+                        ffx = new_px - fix_i
+                        ffy = new_py - fiy_i
+                        _deposit(result, fix_i, fiy_i, ffx, ffy, sediment)
+                        _deposit(deposition_amount, fix_i, fiy_i, ffx, ffy, sediment)
                 break
 
     # drainage → log1p of droplet count
