@@ -13,6 +13,7 @@ dist/
 venv/
 .env
 .env.local
+.env.tripo_studio
 
 # MCP config — contains API keys, never commit
 .mcp.json
