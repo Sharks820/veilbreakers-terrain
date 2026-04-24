@@ -4,40 +4,63 @@ Driver: [`scripts/tripo_batch_generate.py`](../scripts/tripo_batch_generate.py)
 Manifest: [`docs/TRIPO_FOLIAGE_MANIFEST_2026_04_24.md`](TRIPO_FOLIAGE_MANIFEST_2026_04_24.md)
 Ingest: [`scripts/batch_ingest_tripo_downloads.py`](../scripts/batch_ingest_tripo_downloads.py)
 
-This runbook drives the Tripo text-to-model API end-to-end to materialise all
-**26 prompts × 4 variations = 104 foliage assets**, then hands them off to the
+This runbook drives Tripo3D end-to-end to materialise all
+**33 prompts × 4 variations = 132 foliage assets**, then hands them off to the
 existing decimation / LOD / catalog pipeline.
 
----
+The driver supports **two backends**:
 
-## Status at time of writing (2026-04-24)
+| Backend  | Endpoint         | Credits used         | Auth                                  |
+|----------|------------------|----------------------|---------------------------------------|
+| `studio` | `/v2/web/`       | Subscription credits | `ory_kratos_session` cookie or JWT    |
+| `api`    | `/v2/openapi/`   | Pay-as-you-go API    | `TRIPO_API_KEY` Bearer token          |
 
-On the currently-configured account the API reports:
-
-```json
-{"balance": 0, "frozen": 0}
-```
-
-and a create-task probe returns:
-
-```json
-{"code": 2010, "message": "You don't have enough credit to create this task"}
-```
-
-**Therefore no assets can be generated yet.** The driver, ledger format,
-manifest parser, and tests are all in place and verified; the moment credit
-is topped up, a single command kicks off the full overnight run.
+`studio` is the default because the subscription credit pool is usually
+pre-paid and refills monthly. The `api` backend is the fallback for
+emergencies or when subscription credits are exhausted.
 
 ---
 
-## One-command invocation
+## Status at time of writing (2026-04-24, Phase I+++)
+
+| Backend  | State                                                                 |
+|----------|-----------------------------------------------------------------------|
+| `studio` | **Session cookie expired (~37 days old).** Re-extract from DevTools.  |
+| `api`    | Balance `$0`. Top up at https://platform.tripo3d.ai/billing.          |
+
+Current auth diagnostic is persisted to
+[`output/tripo_generation/STUDIO_AUTH_FAILED.log`](../output/tripo_generation/STUDIO_AUTH_FAILED.log)
+with the exact probe responses from Kratos, the Nuxt SSR page, and both the
+`/v2/web/` and `/v2/openapi/` balance endpoints.
+
+### Refreshing the studio session cookie
+
+1. Open https://studio.tripo3d.ai in a logged-in browser tab.
+2. DevTools → Application → Cookies → `studio.tripo3d.ai`.
+3. Copy the value of `ory_kratos_session`.
+4. Paste into `veilbreakers-terrain/.env.tripo_studio` as
+   `TRIPO_SESSION_COOKIE=<paste>`.
+
+The cookie auto-refreshes its embedded JWTs for ~25–30 days after that, no
+further action required.
+
+---
+
+## One-command invocation (studio backend — default)
 
 ```bash
-# Windows PowerShell / bash (both work)
+# Make sure .env.tripo_studio has a fresh TRIPO_SESSION_COOKIE
+cd veilbreakers-terrain
+python scripts/tripo_batch_generate.py --run-ingest
+```
+
+## One-command invocation (api backend — fallback)
+
+```bash
 export TRIPO_API_KEY="tsk_..."           # bash
 # $env:TRIPO_API_KEY = "tsk_..."         # PowerShell
 cd veilbreakers-terrain
-python scripts/tripo_batch_generate.py --run-ingest
+python scripts/tripo_batch_generate.py --backend api --run-ingest
 ```
 
 That single call:
@@ -118,6 +141,9 @@ assets/foliage/
 ## CLI flags
 
 ```
+--backend {api,studio} Which Tripo backend to hit (default: studio)
+--env-file PATH         dotenv file for TRIPO_SESSION_COOKIE (default: .env.tripo_studio)
+--studio-model-version  Studio model_version (default: v3.0-20250812)
 --manifest PATH         Manifest .md (default: docs/TRIPO_FOLIAGE_MANIFEST_2026_04_24.md)
 --output PATH           Output root (default: output/tripo_generation)
 --wave-size N           Prompts per wave (default: 8 -> 32 tasks)
