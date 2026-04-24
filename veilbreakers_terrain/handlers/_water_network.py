@@ -399,7 +399,108 @@ def _build_sine_generated_waypoints(
 # ---------------------------------------------------------------------------
 
 
-def priority_flood_d8(dem: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _resolve_flats_epsilon(
+    hmap: np.ndarray,
+    filled: np.ndarray,
+    epsilon: float = 1e-6,
+) -> np.ndarray:
+    """Apply Barnes 2014 "resolve flats" epsilon tilt to flat plateau regions.
+
+    On plateaus where ``filled[r, c] == hmap[r, c]`` AND an 8-connected
+    neighbour shares the same filled value, the priority-flood heap-order
+    tiebreak produces stripe artifacts in the flow-direction assignment.
+    Barnes (2014) fixes this by adding a tiny monotonic tilt that slopes
+    AWAY from the plateau rim and TOWARD the low-edge spill cell.
+
+    Implementation: multi-source BFS from every "low-edge" plateau cell
+    (a plateau cell with a neighbour strictly lower than the plateau
+    elevation) inward across the plateau; each cell gets
+    ``epsilon * distance_to_low_edge`` added to its filled value.  The
+    total tilt magnitude is far below any terrain tolerance.
+
+    Reference: Barnes, R., Lehman, C., Mulla, D. (2014).
+    https://doi.org/10.1016/j.cageo.2013.01.009
+    """
+    H, W = filled.shape
+    out = filled.copy()
+
+    # Cells where filled equals original (no depression fill applied) are
+    # candidates for flat detection.  Those sharing their filled value with
+    # at least one 8-connected neighbour constitute flat regions.
+    eq_terrain = np.isclose(out, hmap)
+    is_flat = np.zeros((H, W), dtype=bool)
+    for dr, dc in _D8_OFFSETS:
+        r_src = slice(max(0, dr), H + min(0, dr))
+        r_dst = slice(max(0, -dr), H + min(0, -dr))
+        c_src = slice(max(0, dc), W + min(0, dc))
+        c_dst = slice(max(0, -dc), W + min(0, -dc))
+        nb_eq = np.isclose(out[r_dst, c_dst], out[r_src, c_src])
+        is_flat[r_dst, c_dst] |= nb_eq
+    is_flat &= eq_terrain
+    if not is_flat.any():
+        return out
+
+    # Low-edge plateau cells: at least one neighbour has strictly lower
+    # filled elevation, so water can escape through them.
+    low_edge = np.zeros((H, W), dtype=bool)
+    for dr, dc in _D8_OFFSETS:
+        r_src = slice(max(0, dr), H + min(0, dr))
+        r_dst = slice(max(0, -dr), H + min(0, -dr))
+        c_src = slice(max(0, dc), W + min(0, dc))
+        c_dst = slice(max(0, -dc), W + min(0, -dc))
+        nb_lower = out[r_src, c_src] < out[r_dst, c_dst] - 1e-18
+        low_edge[r_dst, c_dst] |= nb_lower
+    low_edge &= is_flat
+
+    # Multi-source BFS across is_flat cells that share the SAME filled
+    # elevation as the seed low-edge cell, distance 0 at the low edge.
+    distance = np.full((H, W), -1, dtype=np.int32)
+    q: deque[tuple[int, int]] = deque()
+    for r, c in zip(*np.where(low_edge)):
+        distance[r, c] = 0
+        q.append((int(r), int(c)))
+
+    while q:
+        r, c = q.popleft()
+        d_here = distance[r, c]
+        for dr, dc in _D8_OFFSETS:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < H and 0 <= nc < W):
+                continue
+            if not is_flat[nr, nc]:
+                continue
+            if distance[nr, nc] >= 0:
+                continue
+            if not np.isclose(out[nr, nc], out[r, c]):
+                continue
+            distance[nr, nc] = d_here + 1
+            q.append((nr, nc))
+
+    # Apply epsilon * distance tilt; cells farthest from the rim get the
+    # largest boost so steepest descent points toward the low edge.
+    # Tilt uses distance-to-low-edge PLUS a tiny per-cell perturbation so
+    # that equidistant cells also differ (otherwise cells at the same BFS
+    # distance still share elevation).  The perturbation is index-based and
+    # far below the distance component, preserving topology while breaking
+    # every remaining tie.
+    H_, W_ = out.shape
+    rr, cc = np.meshgrid(
+        np.arange(H_, dtype=np.float64),
+        np.arange(W_, dtype=np.float64),
+        indexing='ij',
+    )
+    perturb = (rr * W_ + cc) / float(H_ * W_)  # in [0, 1)
+    tilt_mask = (distance >= 0) & is_flat
+    tilt_value = epsilon * (distance.astype(np.float64) + perturb)
+    out = np.where(tilt_mask, out + tilt_value, out)
+    return out
+
+
+def priority_flood_d8(
+    dem: np.ndarray,
+    *,
+    return_filled: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Barnes 2014 Priority-Flood watershed routing with D8 direction encoding.
 
     Fills depressions by routing through the lowest available spill point,
@@ -407,22 +508,22 @@ def priority_flood_d8(dem: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     Args:
         dem: 2D float elevation array.
+        return_filled: if True, also return the resolved-flats filled DEM
+            as the third tuple element.  The filled DEM applies Barnes
+            (2014) "resolve flats" epsilon tilt inside plateau regions so
+            no two adjacent cells share an identical filled elevation —
+            fixes P2-6 stripe artifacts in downstream flow-direction use.
 
     Returns:
-        (flow_direction, flow_accumulation):
-          flow_direction  -- (H, W) int8 array, values 0-7 (D8 index) or -1
-              for border/no-outflow cells. Direction encodes the neighbor this
-              cell drains TO:
-              0=N(-1,0), 1=NE(-1,+1), 2=E(0,+1), 3=SE(+1,+1),
-              4=S(+1,0), 5=SW(+1,-1), 6=W(0,-1), 7=NW(-1,-1)
-          flow_accumulation -- (H, W) float64 array, each cell's upstream
-              drainage area in cells (>= 1.0). Computed via topological sort
-              on the D8 tree.
+        ``(flow_direction, flow_accumulation)`` by default, or
+        ``(flow_direction, flow_accumulation, filled)`` when
+        ``return_filled=True``.
 
     Reference: Barnes, R., Lehman, C., Mulla, D. (2014). "Priority-flood: An
         optimal depression-filling and watershed-labeling algorithm for digital
         elevation models." Computers & Geosciences 62, 117-127.
-        Fix 7.3 / Fix 7.17 / REQ-P7-001 / REQ-P7-002
+        https://doi.org/10.1016/j.cageo.2013.01.009
+        Fix 7.3 / Fix 7.17 / REQ-P7-001 / REQ-P7-002 / P2-6
     """
     hmap = np.asarray(dem, dtype=np.float64)
     H, W = hmap.shape
@@ -463,8 +564,6 @@ def priority_flood_d8(dem: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             heapq.heappush(open_heap, (new_wl, nr, nc))
 
     # Compute flow accumulation via topological sort on the D8 tree.
-    # Sort cells by ascending water_level so upstream cells are processed first;
-    # iterate in reverse (highest water_level first) to propagate downhill.
     order = np.argsort(water_level.ravel()).astype(np.int32)
     rows_flat = order // W
     cols_flat = order % W
@@ -482,6 +581,11 @@ def priority_flood_d8(dem: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if 0 <= nr < H and 0 <= nc < W:
             flow_acc[nr, nc] += flow_acc[r_i, c_i]
 
+    if return_filled:
+        # P2-6: apply Barnes resolve-flats epsilon tilt for callers that
+        # need a truly-monotonic filled DEM inside plateau regions.
+        filled = _resolve_flats_epsilon(hmap, water_level)
+        return flow_dir, flow_acc, filled
     return flow_dir, flow_acc
 
 
