@@ -50,7 +50,6 @@ def _require_bpy() -> None:
 from ._scatter_engine import (
     poisson_disk_sample,
     lloyd_relax_points,
-    biome_filter_points,
     context_scatter,
     generate_breakable_variants,
 )
