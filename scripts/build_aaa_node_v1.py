@@ -1106,10 +1106,20 @@ def _render_feature_callouts(out_path: Path, node_label: str = "Node v1") -> str
             except Exception:
                 pass
         ts.text = text
-        ts.font_size = 40
-        ts.location = (u, v)
-        ts.align_x = "LEFT"
-        ts.align_y = "CENTER"
+        try:
+            ts.font_size = 40
+        except Exception:
+            pass
+        try:
+            ts.location = (u, v)
+        except Exception:
+            pass
+        for attr, val in (("align_x", "LEFT"), ("align_y", "CENTER")):
+            if hasattr(ts, attr):
+                try:
+                    setattr(ts, attr, val)
+                except Exception:
+                    pass
         try:
             ts.use_shadow = True
             ts.shadow_color = (0.0, 0.0, 0.0, 0.85)

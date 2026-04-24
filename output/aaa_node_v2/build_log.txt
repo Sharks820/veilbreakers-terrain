@@ -1,0 +1,892 @@
+Blender 4.5.8 LTS (hash d7359176d0d3 built 2026-03-17 01:33:41)
+Warning: 'import_mesh.hgt_handler' does not contain '_FH_' with prefix and suffix
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Begin registration.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Properties registered.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Verification - mesh_exporter exists: True
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Built-in presets initialised.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Panel/Operator classes registered.
+bl_ext.blender_org.easymesh_batch_exporter.export_indicators:INFO: Export indicator timer registered (interval: 5.0s, persistent)
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Export indicators registered.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Registration complete.
+02:03:13 - tripo_addon - [task.py:25] - INFO - TaskManager timer started
+02:03:13 - tripo_addon - [task.py:32] - INFO - WebSocket server started on port 60600
+02:03:13 - tripo_addon - [task.py:78] - INFO - TaskManager registered
+02:03:13 - tripo_addon - [ws_server.py:66] - ERROR - Error in event loop: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 60600): only one usage of each socket address (protocol/network address/port) is normally permitted
+02:03:13 - tripo_addon - [ws_server.py:77] - INFO - Event loop closed
+Registering RMKit Properties...
+bl_ext.blender_org.Modifier_List_Fork: Registered 62 classes
+INFO: Ucupaint 2.4.5 is registered!
+register_class(...):
+Warning: 'import_mesh.hgt_handler' does not contain '_FH_' with prefix and suffix
+-------Registering gflow-------
+[bl_ext.blender_org.terrainmixer] WARNING: Using legacy path-finding for older Blender version.
+UniV: Skipping registration in background mode
+Successfully registered mesh_exporter: <bpy_struct, PointerProperty("mesh_exporter") at 0x000001F881AB8B08>
+[Tripo3D] Log file: C:\Users\Conner\AppData\Local\Temp\tripo3d_blender_bridge.log
+ℹ️  blenderkit: Verbose is enabled [02:03:13.894, addon_updater.py:150]
+ℹ️  blenderkit: Read in JSON settings from file [02:03:13.894, addon_updater.py:150]
+ℹ️  blenderkit: Ports reordered so first port is now 62485 (previous index was 0) [02:03:13.894, client_lib.py:129]
+Info: Registering operator class: 'BLENDERMCP_OT_StartServer', bl_idname 'blendermcp.start_server' has been registered before, unregistering previous
+Info: Registering operator class: 'BLENDERMCP_OT_StopServer', bl_idname 'blendermcp.stop_server' has been registered before, unregistering previous
+BlenderMCP addon registered
+Reloading external rigs...
+Reloading external metarigs...
+register_class(...):
+Info: Registering operator class: 'BLENDERMCP_OT_StartServer', bl_idname 'blendermcp.start_server' has been registered before, unregistering previous
+register_class(...):
+Info: Registering operator class: 'BLENDERMCP_OT_StopServer', bl_idname 'blendermcp.stop_server' has been registered before, unregistering previous
+INFO: Ucupaint update routine is done in 0.00 ms!
+[GamiFlow] Scene Scene was saved in different version (0)
+Created history step b227a913-97b7-4edf-bf37-b3f8f8de0ac6
+ℹ️  blenderkit: Created new search history step [02:03:14.453, search.py:2525]
+ℹ️  blenderkit: No temporarily enabled addons to clean up [02:03:14.453, download.py:416]
+[AAA_NODE_V2] === Phase K+ ? v2 build starting (seed=0xAAA2) ===
+[AAA_NODE_V1] heightmap composed: shape=(1025, 1025), min=-22.52, max=383.70, mean=90.94
+[AAA_NODE_V2] seam locked to v1 north edge: min=319.88, max=383.70
+[AAA_NODE_V2] v2 heightmap composed: min=0.37, max=383.70, mean=99.40
+[AAA_NODE_V2] heightmap sha256: ee92732b43cf697e?
+[AAA_NODE_V1] heightmap composed: shape=(1025, 1025), min=-22.52, max=383.70, mean=90.94
+[AAA_NODE_V2] seam locked to v1 north edge: min=319.88, max=383.70
+[AAA_NODE_V2] v2 heightmap composed: min=0.37, max=383.70, mean=99.40
+[AAA_NODE_V1] heightmap composed: shape=(1025, 1025), min=-22.52, max=383.70, mean=90.94
+[AAA_NODE_V2] seam lock check: max row0 diff = 0.0000 m -> OK
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Begin unregistration.
+bl_ext.blender_org.easymesh_batch_exporter.export_indicators:INFO: Unregistering export indicators...
+bl_ext.blender_org.easymesh_batch_exporter.export_indicators:INFO: Export indicator timer unregistered.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Export indicators unregistered.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Panel/Operator classes unregistered.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Properties unregistered.
+bl_ext.blender_org.easymesh_batch_exporter:INFO: Unregistration complete.
+02:03:17 - tripo_addon - [task.py:61] - INFO - WebSocket server stop requested
+02:03:17 - tripo_addon - [task.py:68] - INFO - WebSocket thread will exit automatically (daemon)
+02:03:17 - tripo_addon - [task.py:86] - INFO - TaskManager unregistered
+bl_ext.blender_org.Modifier_List_Fork: Unregistered 62 classes
+INFO: Ucupaint 2.4.5 is unregistered!
+-------Unregistering gflow-------
+ℹ️  blenderkit: Unregistering BlenderKit add-on [02:03:17.084, __init__.py:2881]
+ℹ️  blenderkit: No temporarily enabled addons to clean up [02:03:17.084, download.py:416]
+Traceback (most recent call last):
+  File "C:\Program Files\Blender Foundation\Blender 4.5\4.5\scripts\modules\addon_utils.py", line 566, in disable
+    mod.unregister()
+  File "C:\Users\Conner\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\addon.py", line 2604, in unregister
+    bpy.utils.unregister_class(BLENDERMCP_OT_StartServer)
+RuntimeError: unregister_class(...):, missing bl_rna attribute from '_RNAMeta' instance (may not be registered)
+Exception in module unregister(): 'C:\\Users\\Conner\\AppData\\Roaming\\Blender Foundation\\Blender\\4.5\\scripts\\addons\\addon.py'
+[AAA_NODE_V2] v2 terrain mesh: 66049 verts
+[AAA_NODE_V1] no-float QC: {'scanned': 460, 'reseated': 389, 'culled': 46, 'ok': 25, 'air_gap_max_m': 254.4488213155372, 'embed_max_m': 2.9536482541330136}
+[AAA_NODE_V1] marketing rotations applied to 414 props
+Info: Saved as "VeilBreakers_AAA_Node_v2.blend"
+[AAA_NODE_V2] blend saved: C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\VeilBreakers_AAA_Node_v2.blend
+[AAA_NODE_V2] render CAM_hero_wide -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_hero_wide.png (CYCLES)
+Fra:1 Mem:44.25M (Peak 44.25M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_0
+Fra:1 Mem:44.26M (Peak 44.26M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_4
+Fra:1 Mem:44.26M (Peak 44.26M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_7
+Fra:1 Mem:44.26M (Peak 44.26M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_10
+Fra:1 Mem:44.26M (Peak 44.26M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_14
+Fra:1 Mem:44.26M (Peak 44.26M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_18
+Fra:1 Mem:44.26M (Peak 44.26M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_19
+Fra:1 Mem:44.27M (Peak 44.27M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_24
+Fra:1 Mem:44.27M (Peak 44.27M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_28
+Fra:1 Mem:44.27M (Peak 44.27M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_29
+Fra:1 Mem:44.27M (Peak 44.27M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_31
+Fra:1 Mem:44.28M (Peak 44.28M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_32
+Fra:1 Mem:44.28M (Peak 44.28M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_35
+Fra:1 Mem:44.28M (Peak 44.28M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_36
+Fra:1 Mem:44.28M (Peak 44.28M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_37
+Fra:1 Mem:44.29M (Peak 44.29M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_38
+Fra:1 Mem:44.29M (Peak 44.29M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_39
+Fra:1 Mem:44.29M (Peak 44.29M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_40
+Fra:1 Mem:44.29M (Peak 44.29M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_41
+Fra:1 Mem:44.29M (Peak 44.29M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_43
+Fra:1 Mem:44.30M (Peak 44.30M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_44
+Fra:1 Mem:44.30M (Peak 44.30M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_45
+Fra:1 Mem:44.30M (Peak 44.30M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_46
+Fra:1 Mem:44.30M (Peak 44.30M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_49
+Fra:1 Mem:44.30M (Peak 44.30M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_50
+Fra:1 Mem:44.31M (Peak 44.31M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_51
+Fra:1 Mem:44.31M (Peak 44.31M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_52
+Fra:1 Mem:44.31M (Peak 44.31M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_53
+Fra:1 Mem:44.31M (Peak 44.31M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_54
+Fra:1 Mem:44.31M (Peak 44.31M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_56
+Fra:1 Mem:44.31M (Peak 44.31M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_57
+Fra:1 Mem:44.32M (Peak 44.32M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_58
+Fra:1 Mem:44.32M (Peak 44.32M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_59
+Fra:1 Mem:44.32M (Peak 44.32M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_61
+Fra:1 Mem:44.32M (Peak 44.32M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_62
+Fra:1 Mem:44.33M (Peak 44.33M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_63
+Fra:1 Mem:44.33M (Peak 44.33M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_65
+Fra:1 Mem:44.33M (Peak 44.33M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_68
+Fra:1 Mem:44.33M (Peak 44.33M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_69
+Fra:1 Mem:44.33M (Peak 44.33M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_71
+Fra:1 Mem:44.33M (Peak 44.33M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_73
+Fra:1 Mem:44.34M (Peak 44.34M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_74
+Fra:1 Mem:44.34M (Peak 44.34M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_75
+Fra:1 Mem:44.34M (Peak 44.34M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_77
+Fra:1 Mem:44.34M (Peak 44.34M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_78
+Fra:1 Mem:44.34M (Peak 44.34M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_80
+Fra:1 Mem:44.35M (Peak 44.35M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_81
+Fra:1 Mem:44.35M (Peak 44.35M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_83
+Fra:1 Mem:44.35M (Peak 44.35M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_84
+Fra:1 Mem:44.35M (Peak 44.35M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_87
+Fra:1 Mem:44.35M (Peak 44.35M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_88
+Fra:1 Mem:44.36M (Peak 44.36M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_90
+Fra:1 Mem:44.36M (Peak 44.36M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_91
+Fra:1 Mem:44.36M (Peak 44.36M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_93
+Fra:1 Mem:44.36M (Peak 44.36M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_94
+Fra:1 Mem:44.37M (Peak 44.37M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_96
+Fra:1 Mem:44.37M (Peak 44.37M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_98
+Fra:1 Mem:44.37M (Peak 44.37M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_100
+Fra:1 Mem:44.37M (Peak 44.37M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_103
+Fra:1 Mem:44.37M (Peak 44.37M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_104
+Fra:1 Mem:44.37M (Peak 44.37M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_105
+Fra:1 Mem:44.38M (Peak 44.38M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_106
+Fra:1 Mem:44.38M (Peak 44.38M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_108
+Fra:1 Mem:44.38M (Peak 44.38M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_111
+Fra:1 Mem:44.38M (Peak 44.38M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_112
+Fra:1 Mem:44.38M (Peak 44.38M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_115
+Fra:1 Mem:44.39M (Peak 44.39M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_116
+Fra:1 Mem:44.39M (Peak 44.39M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_117
+Fra:1 Mem:44.39M (Peak 44.39M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_118
+Fra:1 Mem:44.39M (Peak 44.39M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_119
+Fra:1 Mem:44.39M (Peak 44.39M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_122
+Fra:1 Mem:44.40M (Peak 44.40M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_123
+Fra:1 Mem:44.40M (Peak 44.40M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_126
+Fra:1 Mem:44.40M (Peak 44.40M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_127
+Fra:1 Mem:44.40M (Peak 44.40M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_128
+Fra:1 Mem:44.40M (Peak 44.40M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_129
+Fra:1 Mem:44.41M (Peak 44.41M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_130
+Fra:1 Mem:44.41M (Peak 44.41M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_131
+Fra:1 Mem:44.41M (Peak 44.41M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_132
+Fra:1 Mem:44.41M (Peak 44.41M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_133
+Fra:1 Mem:44.41M (Peak 44.41M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_135
+Fra:1 Mem:44.41M (Peak 44.41M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_136
+Fra:1 Mem:44.42M (Peak 44.42M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_137
+Fra:1 Mem:44.42M (Peak 44.42M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_140
+Fra:1 Mem:44.42M (Peak 44.42M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_141
+Fra:1 Mem:44.42M (Peak 44.42M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_142
+Fra:1 Mem:44.42M (Peak 44.42M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_144
+Fra:1 Mem:44.43M (Peak 44.43M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_145
+Fra:1 Mem:44.43M (Peak 44.43M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_149
+Fra:1 Mem:44.43M (Peak 44.43M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_150
+Fra:1 Mem:44.43M (Peak 44.43M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_152
+Fra:1 Mem:44.44M (Peak 44.44M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_155
+Fra:1 Mem:44.44M (Peak 44.44M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_156
+Fra:1 Mem:44.44M (Peak 44.44M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_158
+Fra:1 Mem:44.44M (Peak 44.44M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_159
+Fra:1 Mem:44.44M (Peak 44.44M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_161
+Fra:1 Mem:44.45M (Peak 44.45M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_164
+Fra:1 Mem:44.45M (Peak 44.45M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_165
+Fra:1 Mem:44.45M (Peak 44.45M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_166
+Fra:1 Mem:44.45M (Peak 44.45M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_167
+Fra:1 Mem:44.45M (Peak 44.45M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_169
+Fra:1 Mem:44.46M (Peak 44.46M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_170
+Fra:1 Mem:44.46M (Peak 44.46M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_172
+Fra:1 Mem:44.46M (Peak 44.46M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_174
+Fra:1 Mem:44.46M (Peak 44.46M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_177
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_178
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_179
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_180
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_181
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_182
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_184
+Fra:1 Mem:44.47M (Peak 44.47M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_185
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_186
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_188
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_189
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_190
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_192
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_193
+Fra:1 Mem:44.48M (Peak 44.48M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_194
+Fra:1 Mem:44.49M (Peak 44.49M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_195
+Fra:1 Mem:44.49M (Peak 44.49M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_197
+Fra:1 Mem:44.49M (Peak 44.49M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_198
+Fra:1 Mem:44.49M (Peak 44.49M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_200
+Fra:1 Mem:44.50M (Peak 44.50M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_201
+Fra:1 Mem:44.50M (Peak 44.50M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_203
+Fra:1 Mem:44.50M (Peak 44.50M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_205
+Fra:1 Mem:44.50M (Peak 44.50M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_207
+Fra:1 Mem:44.51M (Peak 44.51M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_209
+Fra:1 Mem:44.51M (Peak 44.51M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_210
+Fra:1 Mem:44.51M (Peak 44.51M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_212
+Fra:1 Mem:44.51M (Peak 44.51M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_213
+Fra:1 Mem:44.51M (Peak 44.51M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_214
+Fra:1 Mem:44.51M (Peak 44.51M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_216
+Fra:1 Mem:44.52M (Peak 44.52M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_217
+Fra:1 Mem:44.52M (Peak 44.52M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_219
+Fra:1 Mem:44.52M (Peak 44.52M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_221
+Fra:1 Mem:44.52M (Peak 44.52M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_222
+Fra:1 Mem:44.52M (Peak 44.52M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_225
+Fra:1 Mem:44.53M (Peak 44.53M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_226
+Fra:1 Mem:44.53M (Peak 44.53M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_227
+Fra:1 Mem:44.53M (Peak 44.53M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_228
+Fra:1 Mem:44.53M (Peak 44.53M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_229
+Fra:1 Mem:44.53M (Peak 44.53M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_230
+Fra:1 Mem:44.53M (Peak 44.53M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_231
+Fra:1 Mem:44.54M (Peak 44.54M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_232
+Fra:1 Mem:44.54M (Peak 44.54M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_234
+Fra:1 Mem:44.54M (Peak 44.54M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_235
+Fra:1 Mem:44.54M (Peak 44.54M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_236
+Fra:1 Mem:44.54M (Peak 44.54M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_238
+Fra:1 Mem:44.55M (Peak 44.55M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_239
+Fra:1 Mem:44.55M (Peak 44.55M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_240
+Fra:1 Mem:44.55M (Peak 44.55M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_243
+Fra:1 Mem:44.55M (Peak 44.55M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_244
+Fra:1 Mem:44.55M (Peak 44.55M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_246
+Fra:1 Mem:44.56M (Peak 44.56M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_247
+Fra:1 Mem:44.56M (Peak 44.56M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_248
+Fra:1 Mem:44.56M (Peak 44.56M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_249
+Fra:1 Mem:44.56M (Peak 44.56M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_251
+Fra:1 Mem:44.56M (Peak 44.56M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_252
+Fra:1 Mem:44.57M (Peak 44.57M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_253
+Fra:1 Mem:44.57M (Peak 44.57M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_255
+Fra:1 Mem:44.57M (Peak 44.57M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_257
+Fra:1 Mem:44.57M (Peak 44.57M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_258
+Fra:1 Mem:44.57M (Peak 44.57M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_259
+Fra:1 Mem:44.57M (Peak 44.57M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_260
+Fra:1 Mem:44.58M (Peak 44.58M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_262
+Fra:1 Mem:44.58M (Peak 44.58M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_264
+Fra:1 Mem:44.58M (Peak 44.58M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_266
+Fra:1 Mem:44.58M (Peak 44.58M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_267
+Fra:1 Mem:44.58M (Peak 44.58M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_269
+Fra:1 Mem:44.59M (Peak 44.59M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_271
+Fra:1 Mem:44.59M (Peak 44.59M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_272
+Fra:1 Mem:44.59M (Peak 44.59M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_274
+Fra:1 Mem:44.60M (Peak 44.60M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_278
+Fra:1 Mem:44.60M (Peak 44.60M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_279
+Fra:1 Mem:44.60M (Peak 44.60M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_281
+Fra:1 Mem:44.60M (Peak 44.60M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_282
+Fra:1 Mem:44.60M (Peak 44.60M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_283
+Fra:1 Mem:44.60M (Peak 44.60M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_284
+Fra:1 Mem:44.61M (Peak 44.61M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_286
+Fra:1 Mem:44.61M (Peak 44.61M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_290
+Fra:1 Mem:44.61M (Peak 44.61M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_291
+Fra:1 Mem:44.61M (Peak 44.61M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_292
+Fra:1 Mem:44.62M (Peak 44.62M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_295
+Fra:1 Mem:44.62M (Peak 44.62M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_296
+Fra:1 Mem:44.62M (Peak 44.62M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_298
+Fra:1 Mem:44.62M (Peak 44.62M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_300
+Fra:1 Mem:44.62M (Peak 44.62M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_301
+Fra:1 Mem:44.62M (Peak 44.62M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_302
+Fra:1 Mem:44.63M (Peak 44.63M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_303
+Fra:1 Mem:44.63M (Peak 44.63M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_304
+Fra:1 Mem:44.63M (Peak 44.63M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_306
+Fra:1 Mem:44.63M (Peak 44.63M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_308
+Fra:1 Mem:44.64M (Peak 44.64M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_309
+Fra:1 Mem:44.64M (Peak 44.64M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_310
+Fra:1 Mem:44.64M (Peak 44.64M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_312
+Fra:1 Mem:44.64M (Peak 44.64M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_314
+Fra:1 Mem:44.64M (Peak 44.64M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_315
+Fra:1 Mem:44.64M (Peak 44.64M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_316
+Fra:1 Mem:44.65M (Peak 44.65M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_317
+Fra:1 Mem:44.65M (Peak 44.65M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_318
+Fra:1 Mem:44.65M (Peak 44.65M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_320
+Fra:1 Mem:44.65M (Peak 44.65M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_322
+Fra:1 Mem:44.66M (Peak 44.66M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_323
+Fra:1 Mem:44.66M (Peak 44.66M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_325
+Fra:1 Mem:44.66M (Peak 44.66M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_327
+Fra:1 Mem:44.66M (Peak 44.66M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_329
+Fra:1 Mem:44.66M (Peak 44.66M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_330
+Fra:1 Mem:44.67M (Peak 44.67M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_331
+Fra:1 Mem:44.67M (Peak 44.67M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_332
+Fra:1 Mem:44.67M (Peak 44.67M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_333
+Fra:1 Mem:44.67M (Peak 44.67M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_334
+Fra:1 Mem:44.67M (Peak 44.67M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_335
+Fra:1 Mem:44.67M (Peak 44.67M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_336
+Fra:1 Mem:44.68M (Peak 44.68M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_337
+Fra:1 Mem:44.68M (Peak 44.68M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_339
+Fra:1 Mem:44.68M (Peak 44.68M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_342
+Fra:1 Mem:44.68M (Peak 44.68M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_345
+Fra:1 Mem:44.68M (Peak 44.68M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_346
+Fra:1 Mem:44.68M (Peak 44.68M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_347
+Fra:1 Mem:44.69M (Peak 44.69M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_348
+Fra:1 Mem:44.69M (Peak 44.69M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_350
+Fra:1 Mem:44.69M (Peak 44.69M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_351
+Fra:1 Mem:44.69M (Peak 44.69M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_352
+Fra:1 Mem:44.69M (Peak 44.69M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_354
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_355
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_356
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_357
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_358
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_360
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_361
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_364
+Fra:1 Mem:44.70M (Peak 44.70M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_365
+Fra:1 Mem:44.71M (Peak 44.71M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_366
+Fra:1 Mem:44.71M (Peak 44.71M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_367
+Fra:1 Mem:44.71M (Peak 44.71M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_369
+Fra:1 Mem:44.71M (Peak 44.71M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_370
+Fra:1 Mem:44.71M (Peak 44.71M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Pond_2
+Fra:1 Mem:44.72M (Peak 44.72M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_373
+Fra:1 Mem:44.72M (Peak 44.72M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_374
+Fra:1 Mem:44.72M (Peak 44.72M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_375
+Fra:1 Mem:44.72M (Peak 44.72M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_376
+Fra:1 Mem:44.72M (Peak 44.72M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_377
+Fra:1 Mem:44.72M (Peak 44.72M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_378
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_379
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_381
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_382
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_383
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_384
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_385
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_387
+Fra:1 Mem:44.73M (Peak 44.73M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_389
+Fra:1 Mem:44.74M (Peak 44.74M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_393
+Fra:1 Mem:44.74M (Peak 44.74M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_394
+Fra:1 Mem:44.74M (Peak 44.74M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_395
+Fra:1 Mem:44.74M (Peak 44.74M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_397
+Fra:1 Mem:44.74M (Peak 44.74M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_398
+Fra:1 Mem:44.74M (Peak 44.74M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_399
+Fra:1 Mem:44.75M (Peak 44.75M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_400
+Fra:1 Mem:44.75M (Peak 44.75M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_404
+Fra:1 Mem:44.75M (Peak 44.75M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_405
+Fra:1 Mem:44.75M (Peak 44.75M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_407
+Fra:1 Mem:44.76M (Peak 44.76M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Pond_0
+Fra:1 Mem:44.76M (Peak 44.76M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_409
+Fra:1 Mem:44.76M (Peak 44.76M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_412
+Fra:1 Mem:44.76M (Peak 44.76M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_413
+Fra:1 Mem:44.76M (Peak 44.76M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_416
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_419
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_420
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_421
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_422
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_423
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_424
+Fra:1 Mem:44.77M (Peak 44.77M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_425
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_427
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_429
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_430
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_432
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_433
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_434
+Fra:1 Mem:44.78M (Peak 44.78M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_437
+Fra:1 Mem:44.79M (Peak 44.79M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Terrain_v2
+Fra:1 Mem:44.79M (Peak 44.79M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_439
+Fra:1 Mem:44.79M (Peak 44.79M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_440
+Fra:1 Mem:44.79M (Peak 44.79M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_442
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_443
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_444
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_445
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_446
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_447
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_448
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_449
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_451
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_452
+Fra:1 Mem:44.80M (Peak 44.80M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_453
+Fra:1 Mem:44.81M (Peak 44.81M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_454
+Fra:1 Mem:44.81M (Peak 44.81M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_455
+Fra:1 Mem:44.81M (Peak 44.81M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_456
+Fra:1 Mem:44.81M (Peak 44.81M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_457
+Fra:1 Mem:44.81M (Peak 44.81M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_458
+Fra:1 Mem:46.31M (Peak 46.31M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_459
+Fra:1 Mem:54.73M (Peak 55.74M) | Time:00:00.04 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Initializing
+Fra:1 Mem:40.48M (Peak 55.74M) | Time:00:00.05 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Waiting for render to start
+Fra:1 Mem:40.48M (Peak 55.74M) | Time:00:00.05 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene
+Fra:1 Mem:40.48M (Peak 55.74M) | Time:00:00.05 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Shaders
+Fra:1 Mem:40.48M (Peak 55.74M) | Time:00:00.05 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Loading render kernels (may take a few minutes the first time)
+Fra:1 Mem:40.57M (Peak 55.74M) | Time:00:00.05 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Procedurals
+Fra:1 Mem:40.57M (Peak 55.74M) | Time:00:00.05 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Background
+Fra:1 Mem:40.57M (Peak 55.74M) | Time:00:00.05 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Camera
+Fra:1 Mem:40.57M (Peak 55.74M) | Time:00:00.05 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Meshes Flags
+Fra:1 Mem:40.57M (Peak 55.74M) | Time:00:00.05 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects
+Fra:1 Mem:40.57M (Peak 55.74M) | Time:00:00.05 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects | Copying Transformations to device
+Fra:1 Mem:40.67M (Peak 55.74M) | Time:00:00.05 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Particle Systems
+Fra:1 Mem:40.67M (Peak 55.74M) | Time:00:00.05 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Particle Systems | Copying Particles to device
+Fra:1 Mem:40.67M (Peak 55.74M) | Time:00:00.05 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Meshes
+Fra:1 Mem:40.67M (Peak 55.74M) | Time:00:00.05 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects | Applying Static Transformations
+Fra:1 Mem:40.67M (Peak 55.74M) | Time:00:00.05 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Computing attributes
+Fra:1 Mem:41.54M (Peak 55.74M) | Time:00:00.05 | Mem:0.13M, Peak:0.13M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Copying Attributes to device
+Fra:1 Mem:41.49M (Peak 55.74M) | Time:00:00.05 | Mem:0.93M, Peak:0.93M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Building
+Fra:1 Mem:41.50M (Peak 55.74M) | Time:00:00.05 | Mem:0.93M, Peak:0.93M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Building BVH
+Fra:1 Mem:41.50M (Peak 55.74M) | Time:00:00.05 | Mem:5.08M, Peak:5.08M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Building BVH 0%
+Fra:1 Mem:41.50M (Peak 55.74M) | Time:00:00.05 | Mem:9.61M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Copying BVH to device
+Fra:1 Mem:41.50M (Peak 55.74M) | Time:00:00.05 | Mem:9.61M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Computing normals
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:9.61M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Copying Mesh to device
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects Flags
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Primitive Offsets
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Images
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Camera Volume
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lookup Tables
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.36M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lights
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.36M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lights | Computing tree
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Integrator
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Film
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lookup Tables
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Baking
+Fra:1 Mem:45.17M (Peak 55.74M) | Time:00:00.05 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Device | Writing constant memory
+Fra:1 Mem:45.18M (Peak 55.74M) | Time:00:00.05 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Loading denoising kernels (may take a few minutes the first time)
+Fra:1 Mem:45.18M (Peak 55.74M) | Time:00:00.05 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 0/64
+Fra:1 Mem:195.67M (Peak 195.67M) | Time:00:00.35 | Remaining:00:18.51 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 1/64
+Fra:1 Mem:258.95M (Peak 353.87M) | Time:00:22.08 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 64/64
+Fra:1 Mem:258.95M (Peak 353.87M) | Time:00:22.08 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Finished
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_hero_wide.png'
+Time: 00:22.40 (Saving: 00:00.30)
+
+[AAA_NODE_V2] render CAM_N_ridge -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_N_ridge.png (BLENDER_EEVEE_NEXT)
+Fra:1 Mem:114.63M (Peak 124.11M) | Time:00:00.83 | Rendering 1 / 64 samples
+Fra:1 Mem:114.63M (Peak 124.11M) | Time:00:00.91 | Rendering 25 / 64 samples
+Fra:1 Mem:114.63M (Peak 124.11M) | Time:00:00.98 | Rendering 50 / 64 samples
+Fra:1 Mem:114.63M (Peak 124.11M) | Time:00:01.02 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_N_ridge.png'
+Time: 00:01.21 (Saving: 00:00.14)
+
+[AAA_NODE_V2] render CAM_S_flatland -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_S_flatland.png (BLENDER_EEVEE_NEXT)
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.10 | Rendering 1 / 64 samples
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.19 | Rendering 25 / 64 samples
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.28 | Rendering 50 / 64 samples
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.32 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_S_flatland.png'
+Time: 00:00.50 (Saving: 00:00.14)
+
+[AAA_NODE_V2] render CAM_Transition -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_Transition.png (BLENDER_EEVEE_NEXT)
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.10 | Rendering 1 / 64 samples
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.18 | Rendering 25 / 64 samples
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.27 | Rendering 50 / 64 samples
+Fra:1 Mem:118.68M (Peak 124.14M) | Time:00:00.31 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_Transition.png'
+Time: 00:00.49 (Saving: 00:00.14)
+
+Fra:1 Mem:50.68M (Peak 50.68M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_0
+Fra:1 Mem:50.68M (Peak 50.68M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_7
+Fra:1 Mem:50.68M (Peak 50.68M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_9
+Fra:1 Mem:50.68M (Peak 50.68M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_10
+Fra:1 Mem:50.69M (Peak 50.68M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_14
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_15
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_18
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_21
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_22
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_25
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_27
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_29
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_30
+Fra:1 Mem:50.69M (Peak 50.69M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_32
+Fra:1 Mem:50.70M (Peak 50.70M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_33
+Fra:1 Mem:50.70M (Peak 50.70M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_35
+Fra:1 Mem:50.70M (Peak 50.70M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_36
+Fra:1 Mem:50.70M (Peak 50.70M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_38
+Fra:1 Mem:50.70M (Peak 50.70M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_39
+Fra:1 Mem:50.70M (Peak 50.70M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_41
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_43
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_44
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_45
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_46
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_49
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_50
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_51
+Fra:1 Mem:50.71M (Peak 50.71M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_52
+Fra:1 Mem:50.72M (Peak 50.72M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_54
+Fra:1 Mem:50.72M (Peak 50.72M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_55
+Fra:1 Mem:50.72M (Peak 50.72M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_57
+Fra:1 Mem:50.72M (Peak 50.72M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_58
+Fra:1 Mem:50.72M (Peak 50.72M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_60
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_62
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_63
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_64
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_66
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_67
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_68
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_69
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_71
+Fra:1 Mem:50.73M (Peak 50.73M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_75
+Fra:1 Mem:50.74M (Peak 50.74M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_76
+Fra:1 Mem:50.74M (Peak 50.74M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_77
+Fra:1 Mem:50.74M (Peak 50.74M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_79
+Fra:1 Mem:50.74M (Peak 50.74M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_80
+Fra:1 Mem:50.74M (Peak 50.74M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_83
+Fra:1 Mem:50.74M (Peak 50.74M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_84
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_86
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_88
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_89
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_90
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_91
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_92
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_94
+Fra:1 Mem:50.75M (Peak 50.75M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_95
+Fra:1 Mem:50.76M (Peak 50.76M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_96
+Fra:1 Mem:50.76M (Peak 50.76M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_100
+Fra:1 Mem:50.76M (Peak 50.76M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_103
+Fra:1 Mem:50.76M (Peak 50.76M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_105
+Fra:1 Mem:50.76M (Peak 50.76M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_106
+Fra:1 Mem:50.76M (Peak 50.76M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_107
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_109
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_111
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_112
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_113
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_115
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_117
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_119
+Fra:1 Mem:50.77M (Peak 50.77M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_122
+Fra:1 Mem:50.78M (Peak 50.78M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_123
+Fra:1 Mem:50.78M (Peak 50.78M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_126
+Fra:1 Mem:50.78M (Peak 50.78M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_127
+Fra:1 Mem:50.78M (Peak 50.78M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_130
+Fra:1 Mem:50.78M (Peak 50.78M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_131
+Fra:1 Mem:50.78M (Peak 50.78M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_132
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_134
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_136
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_137
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_138
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_139
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_141
+Fra:1 Mem:50.79M (Peak 50.79M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_142
+Fra:1 Mem:50.80M (Peak 50.80M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_144
+Fra:1 Mem:50.80M (Peak 50.80M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_145
+Fra:1 Mem:50.80M (Peak 50.80M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_146
+Fra:1 Mem:50.80M (Peak 50.80M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_149
+Fra:1 Mem:50.80M (Peak 50.80M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_150
+Fra:1 Mem:50.80M (Peak 50.80M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_152
+Fra:1 Mem:50.81M (Peak 50.81M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_155
+Fra:1 Mem:50.81M (Peak 50.81M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_157
+Fra:1 Mem:50.81M (Peak 50.81M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_158
+Fra:1 Mem:50.81M (Peak 50.81M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_159
+Fra:1 Mem:50.81M (Peak 50.81M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_160
+Fra:1 Mem:50.81M (Peak 50.81M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_163
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_164
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_167
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_168
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_169
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_170
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_171
+Fra:1 Mem:50.82M (Peak 50.82M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_173
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_176
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_177
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_178
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_180
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_181
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_182
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_183
+Fra:1 Mem:50.83M (Peak 50.83M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_185
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_188
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_189
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_190
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_192
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_193
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_195
+Fra:1 Mem:50.84M (Peak 50.84M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_196
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_197
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_198
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_199
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_200
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_201
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_203
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_204
+Fra:1 Mem:50.85M (Peak 50.85M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_205
+Fra:1 Mem:50.86M (Peak 50.86M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_207
+Fra:1 Mem:50.86M (Peak 50.86M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_208
+Fra:1 Mem:50.86M (Peak 50.86M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_209
+Fra:1 Mem:50.86M (Peak 50.86M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_211
+Fra:1 Mem:50.86M (Peak 50.86M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_213
+Fra:1 Mem:50.86M (Peak 50.86M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_214
+Fra:1 Mem:50.87M (Peak 50.87M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_215
+Fra:1 Mem:50.87M (Peak 50.87M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_217
+Fra:1 Mem:50.87M (Peak 50.87M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_220
+Fra:1 Mem:50.87M (Peak 50.87M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_221
+Fra:1 Mem:50.87M (Peak 50.87M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_222
+Fra:1 Mem:50.87M (Peak 50.87M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_224
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_225
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_229
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_230
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_231
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_232
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_234
+Fra:1 Mem:50.88M (Peak 50.88M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_235
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_236
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_237
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_238
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_239
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_240
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_242
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_243
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_244
+Fra:1 Mem:50.89M (Peak 50.89M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_246
+Fra:1 Mem:50.90M (Peak 50.90M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_247
+Fra:1 Mem:50.90M (Peak 50.90M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_248
+Fra:1 Mem:50.90M (Peak 50.90M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_250
+Fra:1 Mem:50.90M (Peak 50.90M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_252
+Fra:1 Mem:50.90M (Peak 50.90M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_253
+Fra:1 Mem:50.90M (Peak 50.90M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_254
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_256
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_257
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_259
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_261
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_262
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_264
+Fra:1 Mem:50.91M (Peak 50.91M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_265
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_267
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_268
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_270
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_271
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_272
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_277
+Fra:1 Mem:50.92M (Peak 50.92M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_278
+Fra:1 Mem:50.93M (Peak 50.93M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_279
+Fra:1 Mem:50.93M (Peak 50.93M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_282
+Fra:1 Mem:50.93M (Peak 50.93M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_284
+Fra:1 Mem:50.93M (Peak 50.93M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_286
+Fra:1 Mem:50.93M (Peak 50.93M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_290
+Fra:1 Mem:50.93M (Peak 50.93M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_291
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_293
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_294
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_295
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_296
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_298
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Sun
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_299
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Pond_2
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_301
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_303
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_304
+Fra:1 Mem:50.94M (Peak 50.94M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_305
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_306
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_309
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_311
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_312
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_313
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_314
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_315
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_317
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_318
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_319
+Fra:1 Mem:50.95M (Peak 50.95M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_323
+Fra:1 Mem:50.96M (Peak 50.96M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_324
+Fra:1 Mem:50.96M (Peak 50.96M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_326
+Fra:1 Mem:50.96M (Peak 50.96M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_327
+Fra:1 Mem:50.96M (Peak 50.96M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Pond_1
+Fra:1 Mem:50.96M (Peak 50.96M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_328
+Fra:1 Mem:50.96M (Peak 50.96M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Pond_0
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_329
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_330
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_331
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_332
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_335
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_337
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_338
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_339
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_340
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_342
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_345
+Fra:1 Mem:50.97M (Peak 50.97M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_346
+Fra:1 Mem:50.98M (Peak 50.98M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_348
+Fra:1 Mem:50.98M (Peak 50.98M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_349
+Fra:1 Mem:51.99M (Peak 51.99M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_350
+Fra:1 Mem:54.11M (Peak 54.11M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_352
+Fra:1 Mem:54.11M (Peak 54.11M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_353
+Fra:1 Mem:54.11M (Peak 54.11M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_354
+Fra:1 Mem:54.11M (Peak 54.11M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_356
+Fra:1 Mem:54.11M (Peak 54.11M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_357
+Fra:1 Mem:54.11M (Peak 54.11M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_359
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_360
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_362
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_364
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_366
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_367
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_368
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_370
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_373
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_374
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_375
+Fra:1 Mem:54.12M (Peak 54.12M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_376
+Fra:1 Mem:55.13M (Peak 55.13M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_377
+Fra:1 Mem:55.13M (Peak 55.13M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_378
+Fra:1 Mem:55.13M (Peak 55.13M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_381
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_382
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_384
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_385
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_387
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_389
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_391
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_392
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_393
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_394
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_396
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_397
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_398
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_399
+Fra:1 Mem:55.14M (Peak 55.14M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_401
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_404
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_406
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_407
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_409
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_412
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_413
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_416
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_417
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_418
+Fra:1 Mem:55.15M (Peak 55.15M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_419
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_420
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_422
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_423
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_424
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_425
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_426
+Fra:1 Mem:56.16M (Peak 56.16M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_428
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_429
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_431
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_432
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_433
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_434
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_435
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_438
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.02 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_439
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_water_lily_442
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_443
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_444
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_445
+Fra:1 Mem:56.17M (Peak 56.17M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_447
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_mossy_rock_448
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_449
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_452
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_453
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_455
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_ancient_oak_456
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_reed_cluster_458
+Fra:1 Mem:56.18M (Peak 56.18M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Synchronizing object | VB_Fol_v2_silver_birch_459
+Fra:1 Mem:56.19M (Peak 57.20M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Initializing
+Fra:1 Mem:41.93M (Peak 57.20M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Waiting for render to start
+Fra:1 Mem:41.93M (Peak 57.20M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene
+Fra:1 Mem:41.93M (Peak 57.20M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Shaders
+Fra:1 Mem:41.93M (Peak 57.20M) | Time:00:00.03 | Mem:0.00M, Peak:0.00M | VeilBreakers_AAA_Node_v2, ViewLayer | Loading render kernels (may take a few minutes the first time)
+Fra:1 Mem:42.03M (Peak 57.20M) | Time:00:00.03 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Procedurals
+Fra:1 Mem:42.03M (Peak 57.20M) | Time:00:00.03 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Background
+Fra:1 Mem:42.03M (Peak 57.20M) | Time:00:00.03 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Camera
+Fra:1 Mem:42.03M (Peak 57.20M) | Time:00:00.03 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Meshes Flags
+Fra:1 Mem:42.03M (Peak 57.20M) | Time:00:00.03 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects
+Fra:1 Mem:42.03M (Peak 57.20M) | Time:00:00.03 | Mem:0.01M, Peak:0.01M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects | Copying Transformations to device
+Fra:1 Mem:42.13M (Peak 57.20M) | Time:00:00.03 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Particle Systems
+Fra:1 Mem:42.13M (Peak 57.20M) | Time:00:00.03 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Particle Systems | Copying Particles to device
+Fra:1 Mem:42.13M (Peak 57.20M) | Time:00:00.03 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Meshes
+Fra:1 Mem:42.13M (Peak 57.20M) | Time:00:00.03 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects | Applying Static Transformations
+Fra:1 Mem:42.13M (Peak 57.20M) | Time:00:00.03 | Mem:0.11M, Peak:0.11M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Computing attributes
+Fra:1 Mem:42.99M (Peak 57.20M) | Time:00:00.03 | Mem:0.13M, Peak:0.13M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Copying Attributes to device
+Fra:1 Mem:42.95M (Peak 57.20M) | Time:00:00.03 | Mem:0.93M, Peak:0.93M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Building
+Fra:1 Mem:42.95M (Peak 57.20M) | Time:00:00.03 | Mem:0.93M, Peak:0.93M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Building BVH
+Fra:1 Mem:42.95M (Peak 57.20M) | Time:00:00.03 | Mem:5.08M, Peak:5.08M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Building BVH 0%
+Fra:1 Mem:42.95M (Peak 57.20M) | Time:00:00.04 | Mem:9.61M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Scene BVH | Copying BVH to device
+Fra:1 Mem:42.95M (Peak 57.20M) | Time:00:00.04 | Mem:9.61M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Computing normals
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:9.61M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Mesh | Copying Mesh to device
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Objects Flags
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Primitive Offsets
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Images
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Camera Volume
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lookup Tables
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.36M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lights
+Fra:1 Mem:46.62M (Peak 57.20M) | Time:00:00.04 | Mem:13.36M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lights | Computing tree
+Fra:1 Mem:46.63M (Peak 57.20M) | Time:00:00.04 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Integrator
+Fra:1 Mem:46.63M (Peak 57.20M) | Time:00:00.04 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Film
+Fra:1 Mem:46.63M (Peak 57.20M) | Time:00:00.04 | Mem:13.28M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Lookup Tables
+Fra:1 Mem:46.63M (Peak 57.20M) | Time:00:00.04 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Baking
+Fra:1 Mem:46.63M (Peak 57.20M) | Time:00:00.04 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Updating Device | Writing constant memory
+Fra:1 Mem:46.64M (Peak 57.20M) | Time:00:00.04 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Loading denoising kernels (may take a few minutes the first time)
+Fra:1 Mem:46.64M (Peak 57.20M) | Time:00:00.04 | Mem:13.37M, Peak:13.76M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 0/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:00.26 | Remaining:00:55.30 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 1/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:15.74 | Remaining:00:34.52 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 80/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:16.37 | Remaining:00:27.21 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 96/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:16.91 | Remaining:00:21.69 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 112/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:17.39 | Remaining:00:17.35 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 128/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:17.82 | Remaining:00:13.82 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 144/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:18.20 | Remaining:00:10.89 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 160/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:18.53 | Remaining:00:08.40 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 176/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:18.82 | Remaining:00:06.25 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 192/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:19.09 | Remaining:00:04.39 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 208/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:19.32 | Remaining:00:02.75 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 224/256
+Fra:1 Mem:197.12M (Peak 197.12M) | Time:00:19.53 | Remaining:00:01.29 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 240/256
+Fra:1 Mem:260.41M (Peak 355.33M) | Time:00:24.94 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Sample 256/256
+Fra:1 Mem:260.41M (Peak 355.33M) | Time:00:24.94 | Mem:163.66M, Peak:163.66M | VeilBreakers_AAA_Node_v2, ViewLayer | Finished
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_Signature.png'
+Time: 00:25.16 (Saving: 00:00.21)
+
+[AAA_NODE_V2] signature render -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\render_Signature.png
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.24 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.29 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.34 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.37 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_000.png'
+Time: 00:00.49 (Saving: 00:00.08)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.17 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.23 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.26 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_001.png'
+Time: 00:00.37 (Saving: 00:00.08)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.17 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.24 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.28 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_002.png'
+Time: 00:00.38 (Saving: 00:00.08)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.16 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.22 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.25 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_003.png'
+Time: 00:00.35 (Saving: 00:00.08)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.16 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.21 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.24 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_004.png'
+Time: 00:00.34 (Saving: 00:00.08)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.16 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.20 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.23 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_005.png'
+Time: 00:00.34 (Saving: 00:00.08)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.15 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.20 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.22 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_006.png'
+Time: 00:00.33 (Saving: 00:00.09)
+
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.11 | Rendering 1 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.15 | Rendering 25 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.20 | Rendering 50 / 64 samples
+Fra:1 Mem:101.14M (Peak 106.60M) | Time:00:00.23 | Rendering 64 / 64 samples
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\turnaround_frames\frame_007.png'
+Time: 00:00.34 (Saving: 00:00.08)
+
+Append frame 1
+Time: 00:00.02 (Saving: 00:00.01)
+
+Append frame 2
+Time: 00:00.02 (Saving: 00:00.01)
+
+Append frame 3
+Time: 00:00.02 (Saving: 00:00.01)
+
+Append frame 4
+Time: 00:00.02 (Saving: 00:00.01)
+
+Append frame 5
+Time: 00:00.02 (Saving: 00:00.00)
+
+Append frame 6
+Time: 00:00.02 (Saving: 00:00.01)
+
+Append frame 7
+Time: 00:00.02 (Saving: 00:00.01)
+
+Append frame 8
+Time: 00:00.02 (Saving: 00:00.01)
+
+[AAA_NODE_V1] turnaround mp4 -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\TURNAROUND.mp4
+Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\FEATURE_CALLOUTS.png'
+Time: 00:00.23 (Saving: 00:00.19)
+
+[AAA_NODE_V1] feature callouts -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\FEATURE_CALLOUTS.png
+[AAA_NODE_V2] SHOWCASE.md -> C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\aaa_node_v2\SHOWCASE.md
+[AAA_NODE_V2] === v2 build complete in 56.5s ? failures: 0 ===
+Exception ignored in: <function ImagePreviewCollection.__del__ at 0x000001F88097C4A0>
+Traceback (most recent call last):
+  File "C:\Program Files\Blender Foundation\Blender 4.5\4.5\scripts\modules\bpy\utils\previews.py", line 63, in __del__
+    raise ResourceWarning(
+ResourceWarning: <ImagePreviewCollection id=0x1f883483dd0[4], <super: <class 'ImagePreviewCollection'>, <ImagePreviewCollection object>>>: left open, remove with 'bpy.utils.previews.remove()'
+
+Blender quit

@@ -1,0 +1,71 @@
+{
+  "seed": 43682,
+  "seed_hex": "0xAAA2",
+  "tile_size_m": 1024.0,
+  "cell_size_m": 1.0,
+  "resolution": 1025,
+  "tile_origin": [
+    0.0,
+    1024.0
+  ],
+  "biome_primary": "dark_fantasy_forest",
+  "biome_secondary": "wetlands_flatland",
+  "ecotone_band_m": 120.0,
+  "heightmap_stats": {
+    "min": 0.3656829572418885,
+    "max": 383.6983243654031,
+    "mean": 99.39901882982353,
+    "sha256": "ee92732b43cf697e6c8088e08c0a861bd1d42b0e20bd08641bd7ac86b94caf9d"
+  },
+  "determinism_ok": true,
+  "seam_lock_ok": true,
+  "marsh": {
+    "count": 3,
+    "total_area_m2": 20401.50269241212
+  },
+  "foliage": {
+    "instances_by_species": {
+      "mossy_rock": 101,
+      "silver_birch": 75,
+      "water_lily": 44,
+      "reed_cluster": 97,
+      "ancient_oak": 143
+    },
+    "total": 460,
+    "method": "fallback"
+  },
+  "no_float_qc": {
+    "scanned": 460,
+    "reseated": 389,
+    "culled": 46,
+    "ok": 25,
+    "air_gap_max_m": 254.4488213155372,
+    "embed_max_m": 2.9536482541330136
+  },
+  "marketing_rotations": {
+    "rotated": 414
+  },
+  "renders": [
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\render_hero_wide.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\render_N_ridge.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\render_S_flatland.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\render_Transition.png"
+  ],
+  "signature_render": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\render_Signature.png",
+  "turnaround_frames": [
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_000.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_001.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_002.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_003.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_004.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_005.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_006.png",
+    "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\turnaround_frames\\frame_007.png"
+  ],
+  "turnaround_mp4": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\TURNAROUND.mp4",
+  "feature_callouts": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\FEATURE_CALLOUTS.png",
+  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2\\VeilBreakers_AAA_Node_v2.blend",
+  "failures": [],
+  "warnings": [],
+  "wall_time_s": 56.50292658805847
+}

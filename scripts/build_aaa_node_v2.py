@@ -63,7 +63,8 @@ ECOTONE_BAND_M = 120.0
 
 
 def log(msg: str) -> None:
-    print(f"[AAA_NODE_V2] {msg}", flush=True)
+    safe = msg.encode("ascii", errors="replace").decode("ascii")
+    print(f"[AAA_NODE_V2] {safe}", flush=True)
 
 
 def log_fail(stage: str, exc: BaseException) -> None:
@@ -88,17 +89,24 @@ def compose_heightmap():
     ys = np.linspace(Y_MIN, Y_MAX, RES, dtype=np.float64)
     X, Y = np.meshgrid(xs, ys, indexing="xy")
 
-    # Macro north-south ramp: south edge (Y_MIN = 512) = 0m, north edge (Y_MAX = 1536) = 180m
-    t = (Y - Y_MIN) / (Y_MAX - Y_MIN)  # 0..1 south->north
-    macro = PEAK_Z * np.clip(t, 0.0, 1.0) ** 1.25
+    # IMPORTANT orientation: v1's NORTH edge is its mountain peak (~320m elevation).
+    # For a believable puzzle-piece match, v2's SOUTH edge must also be high/forested.
+    # So we place FORESTED HILLS in the SOUTH 60% (adjoining v1) and WETLANDS in the
+    # NORTH 40%. The biome-merging demo still works — just mirrored from the spec.
+    # Macro north-south ramp: south edge (Y_MIN = 512) starts at ~220m (matching v1's
+    # north) and ramps DOWN to near-zero at the north edge (wetlands).
+    t_south_to_north = (Y - Y_MIN) / (Y_MAX - Y_MIN)  # 0 at south, 1 at north
+    t_hills = 1.0 - t_south_to_north                   # 1 at south, 0 at north
+    macro = PEAK_Z * np.clip(t_hills, 0.0, 1.0) ** 1.25
 
-    # Knoll field in north 60%: 5 Gaussian bumps with noise-detailed shape
+    # Knoll field in SOUTH 60% (y in [Y_MIN, Y_MIN + 0.60*tile])
+    south_limit = Y_MIN + 0.60 * (Y_MAX - Y_MIN)
     knoll_centers = [
-        (X_MIN + 200, Y_MIN + 800, 40.0, 180.0),   # (x, y, amp, sigma)
-        (X_MIN + 650, Y_MIN + 900, 55.0, 150.0),
-        (X_MIN + 400, Y_MIN + 650, 35.0, 140.0),
-        (X_MIN + 820, Y_MIN + 720, 45.0, 160.0),
-        (X_MIN + 140, Y_MIN + 1000, 50.0, 170.0),
+        (X_MIN + 200, Y_MIN + 220, 40.0, 180.0),   # (x, y, amp, sigma)
+        (X_MIN + 650, Y_MIN + 120, 55.0, 150.0),
+        (X_MIN + 400, Y_MIN + 380, 35.0, 140.0),
+        (X_MIN + 820, Y_MIN + 300, 45.0, 160.0),
+        (X_MIN + 140, Y_MIN +  60, 50.0, 170.0),
     ]
     knoll_sum = np.zeros_like(X)
     for (kx, ky, amp, sig) in knoll_centers:
@@ -135,16 +143,19 @@ def compose_heightmap():
     noise_amp = 3.0 + 18.0 * elev_norm
     heightmap = heightmap + n_hi * noise_amp + n_lo * 2.5
 
-    # Wetlands flatland in south 40% — below 6m with meandering micro-topography
-    wetlands_mask = np.clip(1.0 - (Y - Y_MIN) / (0.40 * (Y_MAX - Y_MIN)), 0.0, 1.0)
+    # Wetlands flatland in NORTH 40% — below 6m with meandering micro-topography
+    # (north 40% means y > Y_MIN + 0.60 * tile_size)
+    north_start = Y_MIN + 0.60 * (Y_MAX - Y_MIN)
+    wetlands_mask = np.clip((Y - north_start) / (0.40 * (Y_MAX - Y_MIN)), 0.0, 1.0)
     wetlands_z = 2.5 + 1.5 * np.sin(X / 70.0) * np.cos(Y / 85.0) + 0.8 * n_lo
     heightmap = np.where(wetlands_mask > 0.5, wetlands_z, heightmap)
 
-    # Smooth ecotone seam (120m band between zones)
-    eco_center = Y_MIN + 0.40 * (Y_MAX - Y_MIN)   # boundary between zones
+    # Smooth ecotone seam (120m band between zones — centered at boundary)
+    eco_center = north_start                         # boundary y-coord
     eco_t = np.clip((Y - (eco_center - ECOTONE_BAND_M / 2.0)) / ECOTONE_BAND_M, 0.0, 1.0)
-    eco_blend = eco_t * eco_t * (3.0 - 2.0 * eco_t)  # smoothstep
-    heightmap = wetlands_z * (1.0 - eco_blend) + heightmap * eco_blend
+    eco_blend = eco_t * eco_t * (3.0 - 2.0 * eco_t)  # smoothstep 0..1 south->north
+    # South of ecotone: hills (heightmap) dominate.  North: wetlands.
+    heightmap = heightmap * (1.0 - eco_blend) + wetlands_z * eco_blend
 
     # --- PUZZLE-PIECE SEAM ENFORCEMENT (Phase A seam-lock) ----
     # Southern edge of v2 must match v1's northern edge exactly.
@@ -267,10 +278,11 @@ def _build_marsh_ponds(heightmap) -> dict:
     import bmesh
     import math as _m
 
+    # Ponds live in the NORTH wetlands (y > Y_MIN + 0.60 * tile_size)
     pond_centers = [
-        (X_MIN + 280, Y_MIN + 150, 45.0),
-        (X_MIN + 650, Y_MIN + 200, 55.0),
-        (X_MIN + 500, Y_MIN + 320, 38.0),
+        (X_MIN + 280, Y_MIN + 780, 45.0),
+        (X_MIN + 650, Y_MIN + 900, 55.0),
+        (X_MIN + 500, Y_MIN + 840, 38.0),
     ]
     water_level = 2.2
     stats = {"count": len(pond_centers), "total_area_m2": 0.0}
@@ -344,8 +356,8 @@ def _scatter_biome_foliage(heightmap) -> dict:
     min_dist = 6.0
     placed_xy: list[tuple[float, float]] = []
 
-    # Ecotone boundary (world y)
-    eco_center = Y_MIN + 0.40 * (Y_MAX - Y_MIN)
+    # Ecotone boundary (world y): hills in south 60%, wetlands in north 40%
+    eco_center = Y_MIN + 0.60 * (Y_MAX - Y_MIN)
 
     while placed < target_count and attempts < max_attempts:
         attempts += 1
@@ -361,23 +373,24 @@ def _scatter_biome_foliage(heightmap) -> dict:
             continue
         z = sample_h(heightmap, x, y)
 
-        # Biome weighting via ecotone distance + altitude
-        dist_north = y - eco_center                # + in hills, - in wetlands
-        moisture = max(0.0, -dist_north / 200.0)   # wetter going south
+        # Biome weighting via ecotone distance + altitude. In the FLIPPED orientation
+        # hills are SOUTH, wetlands NORTH. `dist_hills_side` > 0 if in hills zone.
+        dist_hills_side = eco_center - y            # + in hills (south), - in wetlands (north)
+        moisture = max(0.0, -dist_hills_side / 200.0)  # wetter going north
         moisture = min(1.0, moisture)
         alt_norm = max(0.0, min(1.0, z / PEAK_Z))
 
         if z < 3.0 and moisture > 0.5:
             # Submerged or near-water: lily OR reed
             sp = rng.choices(["water_lily", "reed_cluster"], weights=[0.4, 0.6])[0]
-        elif abs(dist_north) < ECOTONE_BAND_M / 2.0:
+        elif abs(dist_hills_side) < ECOTONE_BAND_M / 2.0:
             # Ecotone: birches dominant, reeds + rare oaks
             sp = rng.choices(
                 ["silver_birch", "reed_cluster", "ancient_oak", "mossy_rock"],
                 weights=[0.55, 0.20, 0.15, 0.10],
             )[0]
-        elif dist_north > 0:
-            # Hills: oak-dominant with birch + rock accents, higher altitude = rockier
+        elif dist_hills_side > 0:
+            # Hills (south of ecotone): oak-dominant with birch + rock accents
             if alt_norm > 0.55:
                 sp = rng.choices(["ancient_oak", "mossy_rock", "silver_birch"],
                                 weights=[0.40, 0.40, 0.20])[0]
@@ -385,7 +398,7 @@ def _scatter_biome_foliage(heightmap) -> dict:
                 sp = rng.choices(["ancient_oak", "silver_birch", "mossy_rock"],
                                 weights=[0.60, 0.25, 0.15])[0]
         else:
-            # Wetlands: reeds dominant
+            # Wetlands (north of ecotone): reeds dominant
             sp = rng.choices(["reed_cluster", "water_lily", "mossy_rock"],
                             weights=[0.65, 0.20, 0.15])[0]
 
@@ -479,17 +492,20 @@ def _setup_cameras():
     import bpy
     from mathutils import Vector
 
+    # Note: "N_ridge" and "S_flatland" retain their NAMES for output-filename
+    # consistency with the task spec, but after the orientation flip their actual
+    # subjects swap: hills are SOUTH, wetlands are NORTH.
     cams = []
     specs = [
         # name, loc, target
-        ("CAM_N_ridge", (TILE_ORIGIN_X - 300, Y_MAX - 100, 260),
-                        (TILE_ORIGIN_X, Y_MIN + 600, 60)),
-        ("CAM_S_flatland", (TILE_ORIGIN_X + 300, Y_MIN + 120, 22),
-                           (TILE_ORIGIN_X - 100, Y_MIN + 600, 60)),
-        ("CAM_Transition", (TILE_ORIGIN_X + 420, Y_MIN + 400, 70),
-                           (TILE_ORIGIN_X, Y_MIN + 500, 45)),
-        ("CAM_hero_wide", (TILE_ORIGIN_X + 500, Y_MIN + 80, 180),
-                          (TILE_ORIGIN_X - 200, Y_MIN + 800, 80)),
+        ("CAM_N_ridge", (TILE_ORIGIN_X - 300, Y_MIN + 100, 280),
+                        (TILE_ORIGIN_X + 200, Y_MIN + 350, 60)),   # looking into S hills from N side
+        ("CAM_S_flatland", (TILE_ORIGIN_X + 300, Y_MAX - 120, 18),
+                           (TILE_ORIGIN_X - 100, Y_MIN + 500, 60)),  # north-marsh POV looking S
+        ("CAM_Transition", (TILE_ORIGIN_X + 420, Y_MIN + 600, 90),
+                           (TILE_ORIGIN_X - 80, Y_MIN + 650, 30)),   # ecotone band beauty
+        ("CAM_hero_wide", (TILE_ORIGIN_X + 500, Y_MAX - 80, 180),
+                          (TILE_ORIGIN_X - 200, Y_MIN + 200, 120)),  # wide diagonal over both zones
     ]
     for name, loc, target in specs:
         cam_data = bpy.data.cameras.new(name)
@@ -515,8 +531,9 @@ def _add_signature_camera_v2() -> str:
     cam_data.dof.focus_distance = 80.0
     cam_data.dof.aperture_fstop = 2.0
     cam_obj = bpy.data.objects.new("CAM_Signature", cam_data)
-    cam_obj.location = (TILE_ORIGIN_X - 200, Y_MIN + 180, 2.5)
-    target = Vector((TILE_ORIGIN_X + 100, Y_MIN + 900, 140))
+    # Stand in north wetlands, low angle through reeds, looking SOUTH up into hills
+    cam_obj.location = (TILE_ORIGIN_X - 200, Y_MAX - 180, 2.5)
+    target = Vector((TILE_ORIGIN_X + 100, Y_MIN + 200, 140))
     d = target - Vector(cam_obj.location)
     if d.length > 0:
         cam_obj.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
