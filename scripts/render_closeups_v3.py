@@ -68,6 +68,13 @@ def configure_render(samples: int = 48, res_x: int = 1920, res_y: int = 1080):
     except Exception:
         pass
     try:
+        prefs = bpy.context.preferences
+        cp = prefs.addons.get('cycles')
+        if cp:
+            cp.preferences.compute_device_type = 'OPTIX'
+            cp.preferences.get_devices()
+            for d in cp.preferences.devices:
+                d.use = True
         scn.cycles.device = "GPU"
     except Exception:
         pass
@@ -98,7 +105,7 @@ def main() -> int:
     # 2. Hero establishing shot (south, show lake + river + mountains)
     cam = _make_cam(
         "CAM_Hero2",
-        location=(-60.0, -700.0, 180.0),
+        location=(-60.0, -480.0, 180.0),
         target=(80.0, -80.0, 50.0),
         lens=32.0, clip_end=4000.0,
     )

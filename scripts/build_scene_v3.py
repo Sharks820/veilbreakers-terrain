@@ -63,6 +63,8 @@ CAVE_EXIT = (400.0, 100.0, 180.0)
 CAVE_RADIUS = 6.0
 MOUNTAIN_PEAK_Z = 320.0
 
+AZIMUTH_RAD = 2.356  # 135 degrees
+
 FAILURES: list[dict] = []
 
 
@@ -414,7 +416,7 @@ def make_water_material(name: str, tint=(0.04, 0.10, 0.18, 1),
     nt.links.new(geom.outputs["Position"], noise1.inputs["Vector"])
     vor = nt.nodes.new("ShaderNodeTexVoronoi")
     vor.location = (-600, -100)
-    vor.voronoi_dimensions = "3D"
+    vor.voronoi_dimensions = "2D"
     vor.inputs["Scale"].default_value = 14.0
     nt.links.new(geom.outputs["Position"], vor.inputs["Vector"])
     mix_r = nt.nodes.new("ShaderNodeMixRGB")
@@ -681,7 +683,9 @@ def carve_cave(terrain_obj):
             tv = tuple(p[k] - dense[idx - 1][k] for k in range(3))
         tl = math.sqrt(sum(x * x for x in tv)) or 1.0
         tv = tuple(x / tl for x in tv)
-        up = (0.0, 0.0, 1.0)
+        _Z = (0.0, 0.0, 1.0)
+        _X = (1.0, 0.0, 0.0)
+        up = _Z if abs(tv[0] * _Z[0] + tv[1] * _Z[1] + tv[2] * _Z[2]) < 0.95 else _X
         r = (tv[1] * up[2] - tv[2] * up[1], tv[2] * up[0] - tv[0] * up[2], tv[0] * up[1] - tv[1] * up[0])
         rl = math.sqrt(sum(x * x for x in r)) or 1.0
         r = tuple(x / rl for x in r)
@@ -717,7 +721,7 @@ def carve_cave(terrain_obj):
     mod.operation = "DIFFERENCE"
     mod.object = cave_obj
     try:
-        mod.solver = "FAST"
+        mod.solver = "MANIFOLD"
     except Exception:
         pass
     # Keep as live modifier — renders correctly in Cycles without apply overhead
@@ -939,7 +943,7 @@ def scatter_rocks(terrain_obj, hm, count: int = 80) -> int:
         wz = sample_h(hm, wx, wy)
         if wz < LAKE_WATER_LEVEL + 0.4:
             continue
-        if math.hypot(wx - LAKE_XY[0], wy - LAKE_XY[1]) < LAKE_RADIUS + 6.0:
+        if math.hypot(wx - LAKE_XY[0], wy - LAKE_XY[1]) < LAKE_RADIUS + 50.0:
             continue
         size = RNG.uniform(0.4, 2.5)
         obj = bpy.data.objects.new(f"VB_Rock_{placed:03d}", templates[RNG.randint(0, 3)])
@@ -994,7 +998,7 @@ def add_grass(terrain_obj, hm):
         wz = v.co.z
         wx, wy = v.co.x, v.co.y
         if (LAKE_WATER_LEVEL + 1.5) < wz < 52.0:
-            if math.hypot(wx - LAKE_XY[0], wy - LAKE_XY[1]) > LAKE_RADIUS + 10.0:
+            if math.hypot(wx - LAKE_XY[0], wy - LAKE_XY[1]) > LAKE_RADIUS + 48.0:
                 grass_vi.append(vi)
     if grass_vi:
         vg.add(grass_vi, 1.0, "REPLACE")
@@ -1052,7 +1056,7 @@ def setup_world():
     sky = nt.nodes.new("ShaderNodeTexSky")
     sky.sky_type = "NISHITA"
     sky.sun_elevation = math.radians(28)
-    sky.sun_rotation = math.radians(135)
+    sky.sun_rotation = AZIMUTH_RAD
     sky.sun_intensity = 0.15
     sky.air_density = 1.0
     sky.dust_density = 1.0
@@ -1068,7 +1072,7 @@ def setup_sun():
     sun.data.energy = 1.4
     sun.data.angle = math.radians(1.5)
     sun.data.color = (1.0, 0.88, 0.72)
-    sun.rotation_euler = (math.radians(55), 0, math.radians(35))
+    sun.rotation_euler = (math.radians(55), 0, AZIMUTH_RAD)
     # Cool fill from north so backlit mountain faces aren't pitch-black in orbit
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 100))
     fill = bpy.context.active_object
@@ -1087,7 +1091,7 @@ def setup_sun():
     bpy.ops.object.light_add(type="AREA", location=(0, 0, 700))
     sky_amb = bpy.context.active_object
     sky_amb.name = "VB_SkyAmb"
-    sky_amb.data.energy = 1200.0
+    sky_amb.data.energy = 250.0
     sky_amb.data.size = 2200.0
     sky_amb.data.color = (0.68, 0.80, 1.0)
     sky_amb.rotation_euler = (0, 0, 0)   # faces straight down
@@ -1116,7 +1120,7 @@ def setup_compositor():
     glare.glare_type = "FOG_GLOW"
     glare.quality = "HIGH"
     glare.mix = 0.05
-    glare.threshold = 2.0
+    glare.threshold = 0.8
     lens = nt.nodes.new("CompositorNodeLensdist")
     lens.use_fit = True
     for key, val in (("Distort", 0.015), ("Distortion", 0.015)):
@@ -1195,6 +1199,13 @@ def configure_render(samples: int = 64, res_x: int = 1920, res_y: int = 1080):
     except Exception:
         pass
     try:
+        prefs = bpy.context.preferences
+        cp = prefs.addons.get('cycles')
+        if cp:
+            cp.preferences.compute_device_type = 'OPTIX'
+            cp.preferences.get_devices()
+            for d in cp.preferences.devices:
+                d.use = True
         scn.cycles.device = "GPU"
     except Exception:
         pass
@@ -1207,10 +1218,10 @@ def render_to(filepath: Path):
 
 
 def render_orbit(out_dir: Path, frames: int = 8,
-                 radius: float = 640.0, height: float = 420.0):
+                 radius: float = 480.0, height: float = 420.0):
     orbit_dir = out_dir / "orbit"
     orbit_dir.mkdir(exist_ok=True)
-    configure_render(samples=24, res_x=1280, res_y=720)
+    configure_render(samples=96, res_x=1280, res_y=720)
     cam_data = bpy.data.cameras.new("CAM_Orbit")
     cam_data.lens = 35.0
     cam_data.clip_end = 4000.0
