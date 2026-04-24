@@ -2,7 +2,7 @@
 
 This manifest enumerates the Tripo AI prompts needed to produce the full
 foliage / scatter prop library for VeilBreakers. Each prompt yields the four
-variations Tripo ships per request. Total: **30 prompts × 4 variations = 120
+variations Tripo ships per request. Total: **33 prompts × 4 variations = 132
 assets**.
 
 ## How to use
@@ -451,28 +451,144 @@ Scatter species binding: `mushroom_glow`, `mushroom_log`,
 
 ---
 
+## N. Hero boulders (4 assets / 1 prompt × 4 variations)
+
+Poly budget: **2000-4000 tris / variant**.
+
+### N1. `hero_boulder_landmark`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: Large landmark boulder, 3-5 m diameter, dark-fantasy painterly, stratified
+> rock faces with moss kisses and water-stain runnels, occasional faint runic
+> carving half-weathered, desaturated teal-umber palette, matte PBR,
+> asymmetric hand-placed silhouette (not a sphere), game-ready mid-poly with
+> hero-read topology, pivot at bottom-face centre.
+
+Expected variations: (A) mossy forest boulder, (B) shattered cliff-fall
+boulder, (C) runic-carved ruin marker, (D) waterfall-polished river giant.
+
+Scatter species binding: `hero_boulder`.
+
+---
+
+## O. Hanging vines (4 assets / 1 prompt × 4 variations)
+
+Poly budget: **600-1000 tris / variant**.
+
+### O1. `vine_hanging_cliff`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: Hanging vine drape from cliff edge, 2-3 m length falling straight down,
+> dark-fantasy painterly, thick bundles of dark leaves with black veining and
+> lavender moss, teal-umber palette, matte PBR, alpha-card flowing
+> silhouette, game-ready low-poly with cross-card leaf bundles, pivot at top
+> anchor point.
+
+Expected variations: (A) dense leaf curtain, (B) sparse wispy strands,
+(C) with small pale flowers, (D) dead/wilted with rot patches.
+
+Scatter species binding: `vine_hanging`.
+
+---
+
+## P. Fences & walls (8 assets / 2 prompts × 4 variations)
+
+Poly budget: **900-1800 tris / variant**.
+
+### P1. `fence_wood_modular`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: 2 m modular wooden fence segment, dark-fantasy painterly, weathered
+> grey-brown posts with iron-rust banding, moss creeping up lower third,
+> 2 rails plus uneven pickets, damp PBR, slightly leaning silhouette,
+> game-ready mid-poly, pivot at base-left corner for tile-along placement.
+
+Expected variations: (A) intact, (B) broken picket gap, (C) moss-heavy
+overgrown, (D) charred from fire.
+
+Scatter species binding: `fence_wood`.
+
+### P2. `fence_stone_wall`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: 2 m modular dry-stone wall segment, dark-fantasy painterly, stacked
+> limestone and basalt rubble with moss and lichen seams, wet stone palette,
+> 60-100 cm tall, worn capstones, matte PBR, game-ready mid-poly, pivot at
+> base-left corner for tile-along placement.
+
+Expected variations: (A) intact, (B) partial collapse, (C) ivy-covered,
+(D) half-buried in earth.
+
+Scatter species binding: `fence_stone`.
+
+---
+
+## Q. Signposts (8 assets / 2 prompts × 4 variations)
+
+Poly budget: **700-1400 tris / variant**.
+
+### Q1. `sign_wooden_crossroads`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: Wooden crossroads signpost, dark-fantasy painterly, 2.5 m tall
+> weathered grey-oak post with 2-3 directional plank arrows, faded carved
+> runes, iron nails rusted, moss at base, damp PBR, game-ready mid-poly,
+> pivot at base centre.
+
+Expected variations: (A) two-arm, (B) three-arm, (C) one-arm broken off,
+(D) burnt/blackened.
+
+Scatter species binding: `sign_wooden`.
+
+### Q2. `sign_stone_waypoint`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: Dark-fantasy stone waypoint marker, knee-high standing stone 80 cm
+> tall, rounded weathered granite with shallow carved symbol (cross, spiral,
+> rune), moss in carved grooves, desaturated umber palette, matte PBR,
+> game-ready low-poly, pivot at base-face centre.
+
+Expected variations: (A) fresh carving, (B) heavily eroded, (C) toppled /
+tilted, (D) glowing rune inlay faint teal.
+
+Scatter species binding: `sign_stone_waypoint`.
+
+---
+
+## R. Plank walkways (4 assets / 1 prompt × 4 variations)
+
+Poly budget: **400-800 tris / variant**.
+
+### R1. `walkway_plank_swamp`
+> STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot. ASSET: 2 m modular wooden plank boardwalk segment over wet ground,
+> dark-fantasy painterly, 6-8 weathered oak planks laid across 2 rails,
+> individual planks warped and wet-stained, moss between planks, iron
+> nail heads, damp PBR, game-ready low-poly, pivot at centre-base for
+> tile-along placement.
+
+Expected variations: (A) straight, (B) with broken plank gap, (C) ivy
+crawling, (D) half-submerged in bog.
+
+Scatter species binding: `walkway_plank`.
+
+---
+
 ## Totals
 
 | Category         | Prompts | Assets |
 |------------------|---------|--------|
-| A. Grass         |  3      |   12   |
-| B. Small rocks   |  2      |    8   |
-| C. Boulders      |  2      |    8   |
-| D. Moss          |  2      |    8   |
-| E. Vines         |  1      |    4   |
-| F. Trees         |  4      |   16   |
-| G. Logs/stumps   |  2      |    8   |
-| H. Bushes        |  3      |   12   |
-| I. Water foliage |  2      |    8   |
-| J. Fences        |  1      |    4   |
-| K. Signposts     |  1      |    4   |
-| L. Walkways      |  1      |    4   |
-| M. Accent flora  |  2      |    8   |
-| **Total**        | **26**  | **104** |
+| A. Grass            |  3      |   12   |
+| B. Small rocks      |  2      |    8   |
+| C. Boulders         |  2      |    8   |
+| D. Moss             |  2      |    8   |
+| E. Vines            |  1      |    4   |
+| F. Trees            |  4      |   16   |
+| G. Logs/stumps      |  2      |    8   |
+| H. Bushes           |  3      |   12   |
+| I. Water foliage    |  2      |    8   |
+| J. Fences           |  1      |    4   |
+| K. Signposts        |  1      |    4   |
+| L. Walkways         |  1      |    4   |
+| M. Accent flora     |  2      |    8   |
+| N. Hero boulders    |  1      |    4   |
+| O. Hanging vines    |  1      |    4   |
+| P. Fences & walls   |  2      |    8   |
+| Q. Signposts (stone)|  2      |    8   |
+| R. Plank walkways   |  1      |    4   |
+| **Total**           | **33**  | **132** |
 
-> The brief said "~30 prompts × 4 = ~120 assets". We land at **26 prompts /
-> 104 assets** with every requested category covered; add additional prompts
-> in Phase J if biome variety requires it.
+> The brief said "~30 prompts × 4 = ~120 assets". Phase I++ lands at
+> **33 prompts / 132 assets** with every requested category covered plus the
+> 7 props flagged by the Phase H catalog audit (hero boulder, hanging vine,
+> wooden fence, stone wall, wooden sign, stone waypoint, plank walkway).
 
 ## Filename convention (for auto-category detection)
 
@@ -480,9 +596,11 @@ When you save downloads, the ingest script infers the category from the first
 category-keyword it matches in the filename. The keywords are:
 
 ```
-grass, pebble, gravel, boulder, moss_drape, moss, vine, log, stump,
-oak, birch, pine, dead_tree, tree, bramble, fern, heath, bush, reed,
-lily, fence, gate, signpost, walkway, cobble, path, flower, mushroom
+grass, pebble, gravel, hero_boulder, boulder, moss_drape, moss,
+vine_hanging, vine, log, stump, oak, birch, pine, dead_tree, tree,
+bramble, fern, heath, bush, reed, lily, fence_wood, fence_stone, fence,
+gate, sign_wooden, sign_stone_waypoint, signpost, walkway_plank,
+walkway, cobble, path, flower, mushroom
 ```
 
 Examples Tripo commonly emits:

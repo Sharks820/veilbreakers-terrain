@@ -1,0 +1,13 @@
+manifest_v2_ready: 2026-04-23T00:00:00
+total_prompts: 33
+total_tasks: 132
+new_prompts:
+  - hero_boulder_landmark       (N1, hero_boulder)
+  - vine_hanging_cliff          (O1, vine_hanging)
+  - fence_wood_modular          (P1, fence_wood)
+  - fence_stone_wall            (P2, fence_stone)
+  - sign_wooden_crossroads      (Q1, sign_wooden)
+  - sign_stone_waypoint         (Q2, sign_stone_waypoint)
+  - walkway_plank_swamp         (R1, walkway_plank)
+style_anchor: reinforced (STYLE: dark-fantasy painterly, damp weathered, desaturated teal-umber-copper palette, matte PBR, 1m scale, game-ready low-poly, clean alpha edges, neutral A-pose pivot.)
+driver_should: reload manifest.json on next loop

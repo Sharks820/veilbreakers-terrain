@@ -41,6 +41,7 @@ After the whole run, ingest:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -68,9 +69,11 @@ CATEGORY_TO_DISPLAY = {
     "grass": "grass",
     "pebble": "rock_small",
     "gravel": "rock_small",
+    "hero_boulder": "rock_boulder",
     "boulder": "rock_boulder",
     "moss": "moss",
     "moss_drape": "moss",
+    "vine_hanging": "vine",
     "vine": "vine",
     "log": "log",
     "stump": "log",
@@ -85,9 +88,14 @@ CATEGORY_TO_DISPLAY = {
     "bush": "bush",
     "reed": "water_foliage",
     "lily": "water_foliage",
+    "fence_wood": "structure",
+    "fence_stone": "structure",
     "fence": "structure",
     "gate": "structure",
+    "sign_wooden": "structure",
+    "sign_stone_waypoint": "structure",
     "signpost": "structure",
+    "walkway_plank": "terrain_tile",
     "walkway": "terrain_tile",
     "cobble": "terrain_tile",
     "path": "terrain_tile",
@@ -113,29 +121,20 @@ _PROMPT_ID_CATEGORY_OVERRIDES: dict[str, str] = {
     "walkway_cobbled": "walkway",
     "pebbles_streambed": "pebble",
     "gravel_ruin_debris": "gravel",
-}
-
-# Explicit prompt-id -> asset_category overrides for ambiguous manifest ids
-# (substring matches in ``_detect_category`` would mis-classify these).
-_PROMPT_ID_CATEGORY_OVERRIDES: dict[str, str] = {
-    "tree_oak_ancient": "oak",
-    "tree_birch_pale": "birch",
-    "tree_pine_black": "pine",
-    "tree_dead_claw": "dead_tree",
-    "log_fallen_mossy": "log",
-    "moss_stalactite_drape": "moss_drape",
-    "bush_bramble_thorn": "bramble",
-    "bush_fern_shadowleaf": "fern",
-    "bush_heath_bloom": "heath",
-    "walkway_cobbled": "walkway",
-    "pebbles_streambed": "pebble",
-    "gravel_ruin_debris": "gravel",
+    # Phase I++ additions (7 new prompts).
+    "hero_boulder_landmark": "hero_boulder",
+    "vine_hanging_cliff": "vine_hanging",
+    "fence_wood_modular": "fence_wood",
+    "fence_stone_wall": "fence_stone",
+    "sign_wooden_crossroads": "sign_wooden",
+    "sign_stone_waypoint": "sign_stone_waypoint",
+    "walkway_plank_swamp": "walkway_plank",
 }
 
 # Default safety rails.
 DEFAULT_COST_PER_TASK_USD = 0.30
 DEFAULT_HARD_COST_CAP_USD = 100.0
-DEFAULT_HARD_TASK_CAP = 104
+DEFAULT_HARD_TASK_CAP = 132
 DEFAULT_WAVE_SIZE = 8  # prompts per wave (×4 variations = 32 tasks)
 DEFAULT_MAX_IN_FLIGHT = 20
 DEFAULT_POLL_INTERVAL_S = 30.0
@@ -166,8 +165,15 @@ VARIATION_STYLES: dict[str, list[str]] = {
     "reed": ["dense reed bed", "bent windblown", "with seed heads", "broken half-dead"],
     "lily": ["single bloom", "many pads no flower", "closed bud", "wilting with algae"],
     "fence": ["intact line", "broken missing plank", "leaning collapsed", "gate with rusted hinges"],
+    "fence_wood": ["intact", "broken picket gap", "moss-heavy overgrown", "charred from fire"],
+    "fence_stone": ["intact", "partial collapse", "ivy-covered", "half-buried in earth"],
     "gate": ["intact", "half-broken", "rusted", "overgrown"],
     "signpost": ["upright intact", "leaning cracked", "double arrow crossroads", "broken stub"],
+    "sign_wooden": ["two-arm", "three-arm", "one-arm broken off", "burnt blackened"],
+    "sign_stone_waypoint": ["fresh carving", "heavily eroded", "toppled tilted", "glowing rune inlay faint teal"],
+    "hero_boulder": ["mossy forest boulder", "shattered cliff-fall boulder", "runic-carved ruin marker", "waterfall-polished river giant"],
+    "vine_hanging": ["dense leaf curtain", "sparse wispy strands", "with small pale flowers", "dead wilted with rot patches"],
+    "walkway_plank": ["straight", "with broken plank gap", "ivy crawling", "half-submerged in bog"],
     "walkway": ["dense cobble", "half-overgrown", "broken with cracks", "flooded puddles"],
     "cobble": ["dense cobble", "half-overgrown", "broken", "flooded"],
     "path": ["dense cobble", "half-overgrown", "broken", "flooded"],
@@ -469,6 +475,192 @@ class TripoClient:
         payload = self._request("GET", f"/task/{urllib.parse.quote(task_id)}")
         data = payload.get("data") if isinstance(payload, dict) else None
         return data or {}
+
+
+class TripoStudioBackend:
+    """Sync facade around the async :class:`TripoStudioClient` port.
+
+    Exposes the same ``create_text_to_model``/``get_task``/``get_balance``
+    surface as :class:`TripoClient` so :class:`TripoBatchDriver` stays agnostic
+    to which backend ships the requests.
+
+    Studio differences we normalise:
+      * One POST ``/task`` returns *four* ``task_ids`` (variants) instead of
+        one. We keep a per-prompt variant queue so subsequent ``create_…``
+        calls return the remaining variants without submitting again.
+      * Status strings are identical-ish (``queued``/``running``/``success``/
+        ``failed``/``banned``/``cancelled``) but the successful payload exposes
+        ``pbr_model`` and ``model`` at the top level, not under ``output``.
+      * Balance lives under ``/user/profile/payment`` with shape
+        ``{free_balance, purchased_balance, frozen, total_balance}``. We
+        surface ``total_balance`` (free + purchased) as ``balance`` for the
+        driver's pre-flight check.
+    """
+
+    def __init__(
+        self,
+        *,
+        session_cookie: str = "",
+        session_token: str = "",
+        api_log_path: Path | None = None,
+    ) -> None:
+        # Deferred import so ``--plan-only`` and API-mode runs don't require
+        # httpx (keeps CI lean).
+        try:
+            from veilbreakers_terrain.handlers.tripo_studio_client import (
+                TripoStudioClient,
+            )
+        except ImportError as exc:  # pragma: no cover - import-time failure
+            raise TripoError(
+                f"Cannot import TripoStudioClient: {exc}. "
+                "Install httpx: pip install httpx"
+            ) from exc
+        if not session_cookie and not session_token:
+            raise TripoError(
+                "Studio backend requires TRIPO_SESSION_COOKIE or "
+                "TRIPO_SESSION_TOKEN to be set."
+            )
+        self._client = TripoStudioClient(
+            session_cookie=session_cookie,
+            session_token=session_token,
+        )
+        self.api_key = "studio"
+        self.api_log_path = api_log_path
+        # prompt_text -> list[task_id] we still owe the driver.
+        self._pending_variants: dict[str, list[str]] = {}
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _run(self, coro):  # pragma: no cover - passthrough for asyncio
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        # If we're already inside a loop (e.g. test harness), create a new
+        # loop in a worker thread.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro).result()
+
+    def _log(self, action: str, payload: dict[str, Any]) -> None:
+        if self.api_log_path is None:
+            return
+        self.api_log_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": time.time(),
+            "backend": "studio",
+            "action": action,
+            "payload": _truncate(payload, 2000),
+        }
+        with self.api_log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    # ------------------------------------------------------------------
+    # TripoClient-compatible surface
+    # ------------------------------------------------------------------
+
+    def get_balance(self) -> dict[str, Any]:
+        """Return ``{"balance": <combined>, ...raw_studio_fields}``."""
+        try:
+            raw = self._run(self._client.get_balance())
+        except Exception as exc:
+            # Surface insufficient-credit shape for driver's detector.
+            msg = str(exc)
+            if "2010" in msg or "don't have enough credit" in msg:
+                raise TripoInsufficientCredit(msg) from exc
+            raise TripoError(f"studio balance error: {exc}") from exc
+        free = float(raw.get("free_balance", 0) or 0)
+        purchased = float(raw.get("purchased_balance", 0) or 0)
+        total = float(raw.get("total_balance", free + purchased) or (free + purchased))
+        norm = {
+            "balance": total,
+            "free_balance": free,
+            "purchased_balance": purchased,
+            "frozen": float(raw.get("frozen", 0) or 0),
+            "_raw": raw,
+        }
+        self._log("get_balance", norm)
+        return norm
+
+    def create_text_to_model(
+        self,
+        prompt: str,
+        *,
+        model_version: str = DEFAULT_MODEL_VERSION,
+        negative_prompt: str | None = None,
+        seed: int | None = None,
+        face_limit: int | None = None,
+    ) -> str:
+        """Submit (once per prompt) and return the next pending variant id.
+
+        The studio endpoint bills one task but yields 4 variants. We treat each
+        variant as a sibling :class:`TaskRecord` in the driver's ledger; this
+        method hands them out one-by-one so the driver's submit loop still
+        registers four ``task_id``s per prompt.
+        """
+        # Studio ignores our variation-style suffix inside the prompt but we
+        # keep it so api.log is useful. We dedupe by the *base* prompt: pre-
+        # stripping the " — variation N: …" tail the driver appends.
+        base_prompt = re.split(r"\s+—\s+variation\s+\d+", prompt)[0].strip()
+        queue = self._pending_variants.get(base_prompt)
+        if not queue:
+            body: dict[str, Any] = {
+                "type": "text_to_model",
+                "prompt": base_prompt,
+                "model_version": model_version,
+            }
+            if negative_prompt:
+                body["negative_prompt"] = negative_prompt
+            if seed is not None:
+                body["seed"] = int(seed)
+            if face_limit is not None:
+                body["face_limit"] = int(face_limit)
+            try:
+                task_ids = self._run(self._client.create_task(body))
+            except Exception as exc:
+                msg = str(exc)
+                if "2010" in msg or "don't have enough credit" in msg:
+                    raise TripoInsufficientCredit(msg) from exc
+                raise TripoError(f"studio create task: {exc}") from exc
+            queue = list(task_ids)
+            self._pending_variants[base_prompt] = queue
+            self._log("create_text_to_model", {"prompt": base_prompt, "task_ids": task_ids})
+        if not queue:
+            raise TripoError(f"studio returned no task_ids for prompt: {base_prompt}")
+        task_id = queue.pop(0)
+        return str(task_id)
+
+    def get_task(self, task_id: str) -> dict[str, Any]:
+        try:
+            data = self._run(self._client.get_task(task_id))
+        except Exception as exc:
+            msg = str(exc)
+            if "2010" in msg or "don't have enough credit" in msg:
+                raise TripoInsufficientCredit(msg) from exc
+            raise TripoError(f"studio poll: {exc}") from exc
+        # Normalise to the API client's shape so :class:`TripoBatchDriver`
+        # doesn't need a backend branch in its poll loop.
+        pbr = data.get("pbr_model")
+        model = data.get("model")
+        status = data.get("status")
+        normalised: dict[str, Any] = {
+            "task_id": task_id,
+            "status": status,
+            "message": data.get("message"),
+            "output": {},
+        }
+        if pbr:
+            normalised["output"]["pbr_model"] = pbr
+        if model:
+            normalised["output"]["model"] = model
+        # Preserve running_left_time for adaptive polling if the driver wants it.
+        if data.get("running_left_time") is not None:
+            normalised["running_left_time"] = data["running_left_time"]
+        self._log("get_task", {"task_id": task_id, "status": status})
+        return normalised
 
 
 def _truncate(obj: Any, limit: int) -> Any:
@@ -917,8 +1109,55 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--assets-root", type=Path, default=Path("assets/foliage"))
     p.add_argument("--blender", type=Path, default=None)
     p.add_argument("--synthetic-ingest", action="store_true")
+    p.add_argument(
+        "--backend",
+        choices=("api", "studio"),
+        default="studio",
+        help=(
+            "Which Tripo backend to hit. 'studio' uses /v2/web/ and "
+            "subscription credits (default). 'api' uses /v2/openapi/ and "
+            "purchased API credits via TRIPO_API_KEY."
+        ),
+    )
+    p.add_argument(
+        "--env-file",
+        type=Path,
+        default=Path(".env.tripo_studio"),
+        help="Path to a KEY=VALUE file with TRIPO_SESSION_COOKIE/TOKEN.",
+    )
+    p.add_argument(
+        "--studio-model-version",
+        type=str,
+        default="v3.0-20250812",
+        help="model_version for studio backend (default v3.0-20250812).",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Parse a dotenv-style ``KEY=VALUE`` file, no interpolation.
+
+    Silent-returns ``{}`` if the file is missing so callers can layer env
+    vars from multiple places. Comments (``#``) and blank lines are skipped.
+    """
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip surrounding quotes if present.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        out[key] = value
+    return out
 
 
 def _run_ingest(output_root: Path, assets_root: Path, *, blender: Path | None, synthetic: bool) -> int:
@@ -949,12 +1188,46 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    api_key = os.environ.get("TRIPO_API_KEY", "")
-    if not args.plan_only and not api_key:
-        print("ERROR: TRIPO_API_KEY is not set.", file=sys.stderr)
-        return 2
+    # Layer env from the dotenv file on top of the process env (process env
+    # wins so operators can still override via `export`).
+    file_env = _load_env_file(args.env_file)
+    for k, v in file_env.items():
+        os.environ.setdefault(k, v)
 
-    client = TripoClient(api_key or "plan-only")
+    backend = args.backend
+    model_version = args.model_version
+
+    client: Any
+    if backend == "studio":
+        session_cookie = os.environ.get("TRIPO_SESSION_COOKIE", "")
+        session_token = os.environ.get("TRIPO_SESSION_TOKEN", "")
+        if not args.plan_only and not session_cookie and not session_token:
+            print(
+                "ERROR: backend=studio requires TRIPO_SESSION_COOKIE "
+                "(preferred) or TRIPO_SESSION_TOKEN. Add it to "
+                f"{args.env_file} or export it.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.plan_only:
+            # plan-only doesn't hit the network so a dummy API-mode client is
+            # fine and avoids the httpx import.
+            client = TripoClient("plan-only")
+        else:
+            client = TripoStudioBackend(
+                session_cookie=session_cookie,
+                session_token=session_token,
+            )
+            # Studio uses a newer model version by default.
+            if model_version == DEFAULT_MODEL_VERSION:
+                model_version = args.studio_model_version
+    else:
+        api_key = os.environ.get("TRIPO_API_KEY", "")
+        if not args.plan_only and not api_key:
+            print("ERROR: TRIPO_API_KEY is not set.", file=sys.stderr)
+            return 2
+        client = TripoClient(api_key or "plan-only")
+
     config = DriverConfig(
         manifest_path=args.manifest,
         output_root=args.output,
@@ -966,7 +1239,7 @@ def main(argv: list[str] | None = None) -> int:
         cost_per_task_usd=args.cost_per_task,
         hard_cost_cap_usd=args.hard_cost_cap,
         hard_task_cap=args.hard_task_cap,
-        model_version=args.model_version,
+        model_version=model_version,
         plan_only=args.plan_only,
         single_wave=args.single_wave,
     )
