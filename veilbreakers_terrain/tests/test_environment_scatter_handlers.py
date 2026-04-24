@@ -1095,3 +1095,48 @@ class TestHaloScatter:
             halo_scatter_point_id(50.0, 50.0, seed=1, num_tiles=8)
             == halo_scatter_point_id(50.0, 50.0, seed=1, num_tiles=8)
         )
+
+
+# ---------------------------------------------------------------------------
+# P2-10 — LOD screen-percentage uses object radius
+# ---------------------------------------------------------------------------
+
+
+class TestLodScreenPercentage:
+    """_lod_for_distance honours object_radius_m via LOD_PRESETS."""
+
+    def test_small_bush_at_50m_is_far_lod(self):
+        from blender_addon.handlers.environment_scatter import _lod_for_distance
+
+        # 0.5m bush at 50m → screen_pct ≈ 0.01 → well below every
+        # vegetation LOD_PRESETS threshold → final LOD (3 = billboard/cull).
+        lod = _lod_for_distance(50.0, "bush", object_radius_m=0.5)
+        assert lod >= 2, f"Small bush at 50m should be LOD2+, got {lod}"
+
+    def test_large_tree_at_50m_is_lod0(self):
+        from blender_addon.handlers.environment_scatter import _lod_for_distance
+
+        # LOD_PRESETS["vegetation"]["screen_percentages"] = [1.0, 0.3, 0.08, 0.02].
+        # A radius large enough to give screen_pct >= 1.0 at 50 m is >= 50 m.
+        lod = _lod_for_distance(50.0, "tree", object_radius_m=55.0)
+        assert lod == 0, f"Huge tree at 50m should be LOD0, got {lod}"
+
+    def test_relative_sizing_bush_vs_tree_same_distance(self):
+        from blender_addon.handlers.environment_scatter import _lod_for_distance
+
+        bush_lod = _lod_for_distance(50.0, "bush", object_radius_m=0.5)
+        tree_lod = _lod_for_distance(50.0, "tree", object_radius_m=5.0)
+        assert bush_lod > tree_lod, (
+            f"A 0.5m bush at 50m must demote further than a 5m tree "
+            f"(bush_lod={bush_lod}, tree_lod={tree_lod})"
+        )
+
+    def test_fallback_to_distance_table_when_radius_absent(self):
+        from blender_addon.handlers.environment_scatter import _lod_for_distance
+
+        # No object_radius_m → legacy distance-only path.
+        lod = _lod_for_distance(50.0, "tree")
+        assert lod in (1, 2), f"Tree at 50m (table-only) expected LOD1/2, got {lod}"
+
+
+# P2-12 tests appended by the next commit.

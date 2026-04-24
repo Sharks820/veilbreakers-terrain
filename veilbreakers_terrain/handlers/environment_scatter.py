@@ -2162,11 +2162,57 @@ _LOD_THRESHOLDS: dict[str, tuple[float, float, float]] = {
 }
 
 
-def _lod_for_distance(dist: float, veg_type: str) -> int:
-    """Return LOD level (0–3) given Euclidean distance from the viewer.
+# Mapping from scatter species → lod_pipeline asset-type key, used when
+# ``object_radius_m`` is supplied so screen-percentage thresholds can be
+# sourced from the authoritative LOD_PRESETS table.
+_SCATTER_TO_ASSET_TYPE: dict[str, str] = {
+    "tree": "vegetation",
+    "bush": "vegetation",
+    "grass": "vegetation",
+    "rock": "prop_medium",
+    "default": "prop_medium",
+}
+
+
+def _lod_for_distance(
+    dist: float,
+    veg_type: str,
+    object_radius_m: float | None = None,
+) -> int:
+    """Return LOD level (0–3) given distance from viewer.
+
+    When ``object_radius_m`` is supplied, compute an estimated on-screen
+    size (``screen_pct_est = object_radius_m / max(dist, 1e-3)``) and
+    consult ``lod_pipeline.LOD_PRESETS`` for the species' screen-percentage
+    thresholds.  This makes a small bush at 50 m correctly demote to
+    LOD2 while a large tree at the same distance stays at LOD0.
+
+    Falls back to the legacy distance-only table when ``object_radius_m``
+    is not supplied or the species preset is unavailable.
 
     LOD0 < lod1_dist <= LOD1 < lod2_dist <= LOD2 < cull_dist <= LOD3
     """
+    if object_radius_m is not None and object_radius_m > 0.0:
+        try:
+            from veilbreakers_terrain.handlers.lod_pipeline import LOD_PRESETS
+            asset_type = _SCATTER_TO_ASSET_TYPE.get(
+                veg_type, _SCATTER_TO_ASSET_TYPE["default"]
+            )
+            preset = LOD_PRESETS.get(asset_type)
+            if preset is not None:
+                screen_pcts = preset.get("screen_percentages") or []
+                if screen_pcts:
+                    screen_pct_est = float(object_radius_m) / max(float(dist), 1e-3)
+                    # screen_pcts are in descending order, e.g. [1.0, 0.3, 0.08, 0.02].
+                    # LOD index = first index whose threshold we meet.
+                    for idx, threshold in enumerate(screen_pcts):
+                        if screen_pct_est >= float(threshold):
+                            return idx
+                    # Below every threshold → final LOD (billboard / cull).
+                    return len(screen_pcts) - 1 if len(screen_pcts) >= 4 else 3
+        except Exception:
+            pass  # fall through to distance-only table
+
     key = veg_type if veg_type in _LOD_THRESHOLDS else "default"
     lod1, lod2, cull = _LOD_THRESHOLDS[key]
     if dist < lod1:
