@@ -334,3 +334,78 @@ class TestPipelineUnification:
             hmap, intent, 1, 1, 1.0, 77
         )
         assert road_mask.sum() > 0, "Expected nonzero road_mask from two settlement anchors"
+
+
+# ---------------------------------------------------------------------------
+# P2-9 — Max-grade clamp on road centreline
+# ---------------------------------------------------------------------------
+
+
+class TestRoadMaxGradeClamp:
+    """Verify `_grade_road_path_in_world_space` clamps adjacent slopes."""
+
+    def _max_adjacent_grade_deg(self, heightmap: np.ndarray, path, cell_size: float) -> float:
+        import math as _math
+        max_tan = 0.0
+        for i in range(1, len(path)):
+            r0, c0 = path[i - 1]
+            r1, c1 = path[i]
+            dz = abs(float(heightmap[r1, c1]) - float(heightmap[r0, c0]))
+            run = _math.hypot(r1 - r0, c1 - c0) * cell_size
+            if run <= 0:
+                continue
+            max_tan = max(max_tan, dz / run)
+        return _math.degrees(_math.atan(max_tan))
+
+    def test_clamp_reduces_forced_steep_section(self):
+        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+
+        # 1 m cell_size, 20-cell east-west straight path with a forced ~45°
+        # cliff in the middle of an otherwise flat valley.
+        heightmap = np.zeros((3, 20), dtype=np.float64)
+        heightmap[1, :8] = 0.0
+        heightmap[1, 8:12] = 10.0  # 10m cliff — 45° jump between sample 7 and 8
+        heightmap[1, 12:] = 10.0
+        path = [(1, c) for c in range(20)]
+
+        # Pre-clamp: adjacent slope hits ~45°.
+        pre_deg = self._max_adjacent_grade_deg(heightmap, path, cell_size=1.0)
+        assert pre_deg > 40.0, f"Test fixture failed — expected steep pre slope, got {pre_deg}"
+
+        graded = _grade_road_path_in_world_space(
+            heightmap,
+            path,
+            width=1,
+            grade_strength=1.0,
+            max_grade_degrees=15.0,
+            cell_size=1.0,
+        )
+
+        post_deg = self._max_adjacent_grade_deg(graded, path, cell_size=1.0)
+        # Allow a small tolerance (smoothing can nudge it by a fraction of a degree).
+        assert post_deg <= 15.0 + 1.5, (
+            f"Max grade {post_deg}° exceeds 15° clamp"
+        )
+
+    def test_default_max_grade_is_15_degrees(self):
+        import inspect as _inspect
+        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+
+        sig = _inspect.signature(_grade_road_path_in_world_space)
+        assert "max_grade_degrees" in sig.parameters
+        assert sig.parameters["max_grade_degrees"].default == 15.0
+
+    def test_flat_path_unchanged_within_tolerance(self):
+        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+
+        heightmap = np.full((3, 10), 5.0, dtype=np.float64)
+        path = [(1, c) for c in range(10)]
+        graded = _grade_road_path_in_world_space(
+            heightmap,
+            path,
+            width=1,
+            grade_strength=1.0,
+            max_grade_degrees=15.0,
+            cell_size=1.0,
+        )
+        np.testing.assert_allclose(graded, heightmap, atol=1e-6)

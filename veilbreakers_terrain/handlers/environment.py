@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 import time
 import zlib
@@ -4146,8 +4147,26 @@ def _grade_road_path_in_world_space(
     *,
     width: int,
     grade_strength: float,
+    max_grade_degrees: float = 15.0,
+    cell_size: float = 1.0,
 ) -> np.ndarray:
-    """Apply the legacy road centreline grading pass in world-height space."""
+    """Apply the legacy road centreline grading pass in world-height space.
+
+    After blending toward target heights, the centreline elevation is swept
+    to clamp the rise/run between adjacent samples to ``tan(max_grade_degrees)``.
+    A smoothing pass distributes excess rise over surrounding samples so that
+    the clamp produces a ramp rather than a knife-edge.
+
+    Parameters
+    ----------
+    max_grade_degrees : float
+        Maximum allowable grade in degrees.  Defaults to 15 (arterial);
+        use 20 for local roads.
+    cell_size : float
+        World-space distance between adjacent grid cells (metres).  Used
+        to translate the path-sample spacing into a physical run for
+        grade calculations.  Defaults to 1.0.
+    """
     world_heightmap = np.asarray(heightmap, dtype=np.float64)
     if world_heightmap.ndim != 2:
         raise ValueError("heightmap must be a 2D array")
@@ -4164,10 +4183,91 @@ def _grade_road_path_in_world_space(
     rows, cols = result.shape
     half_w = max(int(math.ceil(float(width) * 0.5)), 0)
 
-    for r, c in path:
+    # ------------------------------------------------------------------
+    # Pre-compute a max-grade-constrained centreline elevation profile
+    # (operating in world-height space so the clamp is physically correct).
+    # ------------------------------------------------------------------
+    max_grade_rad = math.radians(max(0.0, float(max_grade_degrees)))
+    max_tan = math.tan(max_grade_rad) if max_grade_rad > 0.0 else 0.0
+    cs = max(float(cell_size), 1e-6)
+
+    # Valid centreline samples + their world-height values.
+    valid_idx: list[int] = []
+    world_vals: list[float] = []
+    for i, (r, c) in enumerate(path):
+        if 0 <= r < rows and 0 <= c < cols:
+            valid_idx.append(i)
+            world_vals.append(float(world_heightmap[r, c]))
+
+    clamped_world: dict[int, float] = {}
+    if len(valid_idx) >= 2 and max_tan > 0.0:
+        centre_arr = np.array(world_vals, dtype=np.float64)
+
+        # Run-length between consecutive valid samples in metres.
+        runs = np.empty(len(valid_idx) - 1, dtype=np.float64)
+        for k in range(len(valid_idx) - 1):
+            r0, c0 = path[valid_idx[k]]
+            r1, c1 = path[valid_idx[k + 1]]
+            runs[k] = max(math.hypot(r1 - r0, c1 - c0) * cs, 1e-6)
+
+        # Forward + backward clamp sweep (bidirectional) so the constrained
+        # profile matches from either endpoint.  Repeat until stable.
+        for _sweep in range(8):
+            changed = False
+            # Forward sweep
+            for k in range(len(centre_arr) - 1):
+                dz = centre_arr[k + 1] - centre_arr[k]
+                max_dz = max_tan * runs[k]
+                if dz > max_dz:
+                    centre_arr[k + 1] = centre_arr[k] + max_dz
+                    changed = True
+                elif dz < -max_dz:
+                    centre_arr[k + 1] = centre_arr[k] - max_dz
+                    changed = True
+            # Backward sweep
+            for k in range(len(centre_arr) - 2, -1, -1):
+                dz = centre_arr[k + 1] - centre_arr[k]
+                max_dz = max_tan * runs[k]
+                if dz > max_dz:
+                    centre_arr[k] = centre_arr[k + 1] - max_dz
+                    changed = True
+                elif dz < -max_dz:
+                    centre_arr[k] = centre_arr[k + 1] + max_dz
+                    changed = True
+            if not changed:
+                break
+
+        # Smoothing pass (3-tap) so the clamp produces a ramp rather than
+        # a knife-edge.  Interior only; endpoints preserved.
+        if len(centre_arr) >= 3:
+            smoothed = centre_arr.copy()
+            smoothed[1:-1] = 0.25 * centre_arr[:-2] + 0.5 * centre_arr[1:-1] + 0.25 * centre_arr[2:]
+            # Re-enforce the clamp after smoothing.
+            for k in range(len(smoothed) - 1):
+                dz = smoothed[k + 1] - smoothed[k]
+                max_dz = max_tan * runs[k]
+                if dz > max_dz:
+                    smoothed[k + 1] = smoothed[k] + max_dz
+                elif dz < -max_dz:
+                    smoothed[k + 1] = smoothed[k] - max_dz
+            centre_arr = smoothed
+
+        for k, i in enumerate(valid_idx):
+            clamped_world[i] = float(centre_arr[k])
+
+    # Build per-path-sample target heights in normalised space.
+    for i, (r, c) in enumerate(path):
         if not (0 <= r < rows and 0 <= c < cols):
             continue
-        target_h = float(snapshot[r, c])
+        if i in clamped_world:
+            world_h = clamped_world[i]
+            # Convert world height back to normalised space for the blend.
+            target_h = float(np.clip(transform.to_normalized(
+                np.array([[world_h]], dtype=np.float64)
+            )[0, 0], 0.0, 1.0))
+        else:
+            target_h = float(snapshot[r, c])
+
         for dr in range(-half_w, half_w + 1):
             for dc in range(-half_w, half_w + 1):
                 nr = r + dr
@@ -5604,6 +5704,8 @@ def handle_generate_road(params: dict) -> dict:
             path,
             width=width,
             grade_strength=float(grade_strength),
+            max_grade_degrees=float(params.get("max_grade_degrees", 15.0)),
+            cell_size=float(cell_size),
         )
         road_routing_method = str(road_network_result.get("routing_method", "astar_24dir"))
     except Exception:
