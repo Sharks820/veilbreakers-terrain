@@ -132,8 +132,11 @@ def test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read():
 
     assert result["ok"] is True
     assert [r["pass_name"] for r in result["results"]] == [
-        "macro_world",
+        "pass_generate_low_freq_hmap",
+        "terrain_labels",
         "structural_masks",
+        "pass_generate_high_freq_detail",
+        "pass_composite_hmap",
         "validation_minimal",
     ]
 

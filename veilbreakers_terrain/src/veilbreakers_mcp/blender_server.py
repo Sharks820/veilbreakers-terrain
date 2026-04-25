@@ -163,6 +163,13 @@ _LOC_HANDLERS: Dict[str, str] = {
     "gn_dump": "blender_geometry_nodes_dump",
     "addon_enable": "blender_addon_enable",
     "addon_disable": "blender_addon_disable",
+    # ------------------------------------------------------------------
+    # Tripo Studio — AI-powered 3D asset generation
+    # ------------------------------------------------------------------
+    "tripo_generate": "tripo_generate_asset",
+    "tripo_generate_image": "tripo_generate_from_image",
+    "tripo_balance": "tripo_balance",
+    "tripo_scatter": "tripo_scatter_catalog",
 }
 
 

@@ -415,25 +415,31 @@ def render_still(
     width: int = 512,
     height: int = 512,
     mode: str = "render",
+    thumbnail: bool = False,
 ) -> Dict[str, Any]:
     """Render a still image to ``output_path``.
 
     ``mode`` = ``"render"`` uses the active engine; ``"opengl"`` uses the
     viewport OpenGL renderer (faster, good for smoke tests).
-    Width/height are clamped to the terrain_blender_safety hard cap (64..507).
+    Width/height use the thumbnail cap (507) only for thumbnails. Full renders
+    use the visual-QA render cap (7680) so agent review can request 1080p/4K.
     """
     bpy, err = _require_bpy()
     if err:
         return err
-    try:
-        from .terrain_blender_safety import clamp_screenshot_size
-    except Exception:  # noqa: BLE001
-        def clamp_screenshot_size(v: int) -> int:
-            return max(64, min(507, int(v)))
 
-    width = int(clamp_screenshot_size(int(width)))
-    height = int(clamp_screenshot_size(int(height)))
     mode = mode.lower()
+    max_dim = 507 if thumbnail else 7680
+
+    def _clamp_dim(v: int) -> int:
+        try:
+            raw = int(v)
+        except (TypeError, ValueError):
+            raw = 64
+        return max(64, min(max_dim, raw))
+
+    width = _clamp_dim(width)
+    height = _clamp_dim(height)
     try:
         scene = bpy.context.scene
         scene.render.filepath = str(output_path)
@@ -448,7 +454,7 @@ def render_still(
         return {"status": "error", "error": "render_failed",
                 "message": str(exc), "mode": mode}
     return {"status": "ok", "path": str(output_path), "mode": mode,
-            "width": width, "height": height}
+            "width": width, "height": height, "thumbnail": bool(thumbnail)}
 
 
 # ---------------------------------------------------------------------------

@@ -2002,8 +2002,12 @@ class WaterNetwork:
         cs = self._cell_size
 
         # Determine tile grid dimensions
-        num_tiles_x = max(1, (cols + ts - 1) // ts)
-        num_tiles_y = max(1, (rows + ts - 1) // ts)
+        # Shared-vertex worlds are shaped ``tile_count * tile_size + 1``.
+        # Counting raw samples would produce a phantom extra tile at the far
+        # edge, so count intervals instead of vertices. Legacy non-shared
+        # shapes still resolve correctly.
+        num_tiles_x = max(1, ((cols - 1) + ts - 1) // ts)
+        num_tiles_y = max(1, ((rows - 1) + ts - 1) // ts)
 
         # Initialize empty contracts for all tiles
         for ty in range(num_tiles_y):
@@ -2064,8 +2068,10 @@ class WaterNetwork:
                 cx1, cy1 = _cell_center(r1, c1)
 
                 # Which tiles do start and end cells belong to?
-                tx0, ty0 = c0 // ts, r0 // ts
-                tx1, ty1 = c1 // ts, r1 // ts
+                tx0 = min(c0 // ts, num_tiles_x - 1)
+                ty0 = min(r0 // ts, num_tiles_y - 1)
+                tx1 = min(c1 // ts, num_tiles_x - 1)
+                ty1 = min(r1 // ts, num_tiles_y - 1)
 
                 if tx0 == tx1 and ty0 == ty1:
                     continue  # same tile, no crossing
@@ -2161,7 +2167,6 @@ class WaterNetwork:
                         # Flow goes east: exits tx_lo east edge, enters tx_hi west edge
                         entry_col = tx_hi * ts
                         entry_row = max(0, min(rows - 1, int(cross_cy / cs)))
-                        src_tile = (tx_lo, ty0)
                         tgt_tile = (tx_hi, ty0)
                         contract_out = _make_contract(
                             cross_cx, cross_cy, tgt_tile, (entry_row, entry_col)
@@ -2185,7 +2190,7 @@ class WaterNetwork:
                         )
                         contract_out.position = pos
                         contract_in = _make_contract(
-                            cross_cx, cross_cy, (tx_hi, ty0), (entry_row, tx_hi * ts + ts - 1)
+                            cross_cx, cross_cy, tgt_tile, (entry_row, entry_col)
                         )
                         contract_in.position = pos
                         _ensure_tile(tx_lo, ty0)
@@ -2237,7 +2242,7 @@ class WaterNetwork:
                         )
                         contract_out.position = pos
                         contract_in = _make_contract(
-                            cross_cx, cross_cy, (tx0, ty_hi), (ty_hi * ts + ts - 1, entry_col)
+                            cross_cx, cross_cy, tgt_tile_n, (entry_row, entry_col)
                         )
                         contract_in.position = pos
                         _ensure_tile(tx0, ty_lo)
@@ -2357,6 +2362,12 @@ class WaterNetwork:
                 nb_contracts = self.tile_contracts.get(nb_tile, {}).get(nb_edge, [])
 
                 for c in contracts:
+                    # _compute_tile_contracts stores both the source outflow
+                    # and receiver inflow. Only validate source outflows here;
+                    # otherwise every seam is counted twice and inbound records
+                    # are tested against the wrong neighbour direction.
+                    if c.target_tile != nb_tile:
+                        continue
                     total += 1
                     # Find best position match in the neighbour's inflow list
                     best: WaterEdgeContract | None = None

@@ -1992,7 +1992,11 @@ def handle_generate_terrain(params: dict) -> dict:
         }
         if params.get("viewport_vantage") is not None:
             controller_params["viewport_vantage"] = params.get("viewport_vantage")
-        pipeline = ["macro_world", "structural_masks"]
+        pipeline = [
+            "pass_generate_low_freq_hmap",
+            "terrain_labels",
+            "structural_masks",
+        ]
         controller_apply_caves = bool(params.get("controller_apply_caves", False))
         if erosion in ("hydraulic", "thermal", "both") or cave_candidates:
             controller_scene_read = dict(scene_read_payload or {})
@@ -2004,12 +2008,19 @@ def handle_generate_terrain(params: dict) -> dict:
         if erosion in ("hydraulic", "thermal", "both"):
             pipeline.append("pass_hydrology")
             pipeline.append("erosion")
+            pipeline.append("pass_generate_high_freq_detail")
+            pipeline.append("pass_composite_hmap")
             pipeline.append("structural_masks")
             controller_params["erosion_profile"] = (
                 "temperate" if erosion == "hydraulic"
                 else "arid" if erosion == "thermal"
                 else "temperate"
             )
+        if "pass_generate_high_freq_detail" not in pipeline:
+            pipeline.append("pass_generate_high_freq_detail")
+        if "pass_composite_hmap" not in pipeline:
+            pipeline.append("pass_composite_hmap")
+            pipeline.append("structural_masks")
         if cave_candidates and controller_apply_caves:
             pipeline.append("caves")
             pipeline.append("integrate_deltas")
@@ -2298,37 +2309,43 @@ def handle_generate_terrain_tile(params: dict) -> dict:
         world_center_y=world_center_y,
     )
 
-    # Apply neighbor seam boundary conditions before erosion so the hydraulic
-    # and thermal passes cannot erode away the locked border heights.
+    # Apply neighbor seam boundary conditions before erosion and reapply them
+    # after height mutations. Direction names use numpy grid convention shared
+    # by terrain_chunking/TerrainMaskStack: north=row 0, south=row -1,
+    # west=col 0, east=col -1.
     # neighbor_edges is an optional dict: {"north": [...], "south": [...],
     # "east": [...], "west": [...]} where each value is a 1-D list/array of
     # height floats matching the tile's W (north/south) or H (east/west) size.
     _neighbor_edges = params.get("neighbor_edges") or {}
-    if _neighbor_edges:
+    def _apply_neighbor_edge_locks(heightmap_in):
         _BLEND_W = [1.0, 0.6, 0.2]
-        _H, _W = heightmap.shape
+        _H, _W = heightmap_in.shape
         for _dir, _edge_raw in _neighbor_edges.items():
             _edge = np.asarray(_edge_raw, dtype=np.float32)
             if _dir == "north" and _edge.shape == (_W,):
-                heightmap[-1, :] = _edge
-                for _off, _w in enumerate(_BLEND_W[1:], 1):
-                    if _H - 1 - _off >= 0:
-                        heightmap[_H - 1 - _off, :] = _w * _edge + (1.0 - _w) * heightmap[_H - 1 - _off, :]
-            elif _dir == "south" and _edge.shape == (_W,):
-                heightmap[0, :] = _edge
+                heightmap_in[0, :] = _edge
                 for _off, _w in enumerate(_BLEND_W[1:], 1):
                     if _off < _H:
-                        heightmap[_off, :] = _w * _edge + (1.0 - _w) * heightmap[_off, :]
+                        heightmap_in[_off, :] = _w * _edge + (1.0 - _w) * heightmap_in[_off, :]
+            elif _dir == "south" and _edge.shape == (_W,):
+                heightmap_in[-1, :] = _edge
+                for _off, _w in enumerate(_BLEND_W[1:], 1):
+                    if _H - 1 - _off >= 0:
+                        heightmap_in[_H - 1 - _off, :] = _w * _edge + (1.0 - _w) * heightmap_in[_H - 1 - _off, :]
             elif _dir == "east" and _edge.shape == (_H,):
-                heightmap[:, -1] = _edge
+                heightmap_in[:, -1] = _edge
                 for _off, _w in enumerate(_BLEND_W[1:], 1):
                     if _W - 1 - _off >= 0:
-                        heightmap[:, _W - 1 - _off] = _w * _edge + (1.0 - _w) * heightmap[:, _W - 1 - _off]
+                        heightmap_in[:, _W - 1 - _off] = _w * _edge + (1.0 - _w) * heightmap_in[:, _W - 1 - _off]
             elif _dir == "west" and _edge.shape == (_H,):
-                heightmap[:, 0] = _edge
+                heightmap_in[:, 0] = _edge
                 for _off, _w in enumerate(_BLEND_W[1:], 1):
                     if _off < _W:
-                        heightmap[:, _off] = _w * _edge + (1.0 - _w) * heightmap[:, _off]
+                        heightmap_in[:, _off] = _w * _edge + (1.0 - _w) * heightmap_in[:, _off]
+        return heightmap_in
+
+    if _neighbor_edges:
+        heightmap = _apply_neighbor_edge_locks(heightmap)
 
     erosion_applied = False
     if erosion in ("hydraulic", "both"):
@@ -2353,11 +2370,15 @@ def handle_generate_terrain_tile(params: dict) -> dict:
             erosion_margin : erosion_margin + tile_size + 1,
             erosion_margin : erosion_margin + tile_size + 1,
         ]
+    if _neighbor_edges:
+        heightmap = _apply_neighbor_edge_locks(heightmap)
 
     flatten_zones = params.get("flatten_zones", None)
     if flatten_zones:
         from .terrain_advanced import flatten_multiple_zones
         heightmap = flatten_multiple_zones(heightmap, flatten_zones)
+        if _neighbor_edges:
+            heightmap = _apply_neighbor_edge_locks(heightmap)
 
     # Ask _resolve_height_range without local fallback; fall back to the
     # per-terrain-type estimator only when no explicit range was supplied.
@@ -2557,6 +2578,39 @@ def handle_generate_world_terrain(params: dict) -> dict:
             tile_params["tile_y"] = tile_y
             tile_params["world_id"] = world_id
             tile_params["batch_id"] = batch_id
+            neighbor_edges: dict[str, Any] = dict(tile_params.get("neighbor_edges") or {})
+            west_tile = next(
+                (
+                    t for t in tile_results
+                    if int(t.get("tile_x", -999999)) == tile_x - 1
+                    and int(t.get("tile_y", -999999)) == tile_y
+                    and t.get("heightmap_path")
+                ),
+                None,
+            )
+            north_tile = next(
+                (
+                    t for t in tile_results
+                    if int(t.get("tile_x", -999999)) == tile_x
+                    and int(t.get("tile_y", -999999)) == tile_y - 1
+                    and t.get("heightmap_path")
+                ),
+                None,
+            )
+            try:
+                if west_tile is not None and "west" not in neighbor_edges:
+                    west_h = np.load(west_tile["heightmap_path"])
+                    neighbor_edges["west"] = np.asarray(west_h)[:, -1].tolist()
+                if north_tile is not None and "north" not in neighbor_edges:
+                    north_h = np.load(north_tile["heightmap_path"])
+                    neighbor_edges["north"] = np.asarray(north_h)[-1, :].tolist()
+            except Exception as exc:
+                logger.warning(
+                    "handle_generate_world_terrain: failed to load neighbor edge for tile (%d,%d): %s",
+                    tile_x, tile_y, exc,
+                )
+            if neighbor_edges:
+                tile_params["neighbor_edges"] = neighbor_edges
             if tiles_x > 1 or tiles_y > 1:
                 tile_params["name"] = f"{base_name}_{tile_x}_{tile_y}"
             else:
@@ -2715,7 +2769,20 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     requested_pipeline = params.get("pipeline")
     requested_passes = list(requested_pipeline) if requested_pipeline is not None else []
     if not requested_passes:
-        requested_passes = [str(params.get("pass_name", "macro_world"))]
+        pass_name = params.get("pass_name")
+        if pass_name:
+            requested_passes = [str(pass_name)]
+        else:
+            requested_passes = [
+                "pass_generate_low_freq_hmap",
+                "terrain_labels",
+                "structural_masks",
+                "pass_generate_high_freq_detail",
+                "pass_composite_hmap",
+                "validation_minimal",
+            ]
+            if params.get("scene_read") is not None:
+                requested_passes[3:3] = ["pass_hydrology", "erosion"]
 
     # Ensure all requested passes are registered even for direct callers
     # importing this module without the handlers package side effects.
@@ -2906,6 +2973,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         protected_zones=tuple(protected_zones),
         water_system_spec=water_system_spec,
         quality_profile=quality_profile,
+        noise_profile=str(params.get("noise_profile", params.get("terrain_type", "mountains"))),
         erosion_profile=str(params.get("erosion_profile", "temperate")),
         scene_read=scene_read,
         composition_hints=composition_hints,
@@ -2979,10 +3047,16 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
 
     if pipeline is None and pass_name is None:
-        pipeline = ["macro_world", "structural_masks", "validation_minimal"]
+        pipeline = [
+            "pass_generate_low_freq_hmap",
+            "terrain_labels",
+            "structural_masks",
+            "pass_generate_high_freq_detail",
+            "pass_composite_hmap",
+            "validation_minimal",
+        ]
         if scene_read is not None:
-            pipeline.insert(2, "pass_hydrology")
-            pipeline.insert(3, "erosion")
+            pipeline[3:3] = ["pass_hydrology", "erosion"]
 
     if pipeline is not None:
         pipeline = list(pipeline)
@@ -4648,6 +4722,95 @@ def _derive_river_surface_levels(
         levels[idx] = max(levels[idx], min_allowed)
 
     return levels
+
+
+def _carve_river_banks_into_terrain(
+    *,
+    terrain_obj: Any,
+    path_points: list[tuple[float, float, float]],
+    width_world: float,
+    depth_world: float | None = None,
+    bank_width_world: float | None = None,
+) -> dict[str, Any]:
+    """Carve a path-based river bed into the terrain mesh before adding water.
+
+    This is the authoring bridge that prevents ``handle_create_water`` from
+    producing a glass sheet over untouched terrain. It maps the world-space
+    river path to the regular terrain grid, applies the existing banked river
+    profile, and writes the lowered bed back to the terrain mesh.
+    """
+    mesh = getattr(terrain_obj, "data", None)
+    vertices = list(getattr(mesh, "vertices", []) or [])
+    if len(vertices) < 4 or len(path_points) < 2:
+        return {"terrain_carved": False, "terrain_carve_reason": "insufficient_geometry"}
+
+    rows, cols = _detect_grid_dims_from_vertices(vertices)
+    if rows < 2 or cols < 2 or rows * cols != len(vertices):
+        return {"terrain_carved": False, "terrain_carve_reason": "non_grid_terrain"}
+
+    dims = getattr(terrain_obj, "dimensions", None)
+    loc = getattr(terrain_obj, "location", None)
+    try:
+        terrain_width = max(float(getattr(dims, "x")), 1e-6)
+        terrain_height = max(float(getattr(dims, "y")), 1e-6)
+        origin_x = float(getattr(loc, "x", 0.0))
+        origin_y = float(getattr(loc, "y", 0.0))
+    except (TypeError, ValueError):
+        return {"terrain_carved": False, "terrain_carve_reason": "invalid_transform"}
+
+    col_scale = (cols - 1) / terrain_width
+    row_scale = (rows - 1) / terrain_height
+    min_x = origin_x - terrain_width * 0.5
+    min_y = origin_y - terrain_height * 0.5
+    path_rc: list[tuple[int, int]] = []
+    for wx, wy, _wz in path_points:
+        col = int(round((float(wx) - min_x) * col_scale))
+        row = int(round((float(wy) - min_y) * row_scale))
+        row = max(0, min(rows - 1, row))
+        col = max(0, min(cols - 1, col))
+        if not path_rc or path_rc[-1] != (row, col):
+            path_rc.append((row, col))
+
+    if len(path_rc) < 2:
+        return {"terrain_carved": False, "terrain_carve_reason": "path_collapsed_to_one_cell"}
+
+    cell_size = max((terrain_width / max(cols - 1, 1) + terrain_height / max(rows - 1, 1)) * 0.5, 1e-6)
+    width_cells = max(float(width_world) / cell_size, 2.0)
+    bank_width_cells = (
+        max(float(bank_width_world) / cell_size, 1.5)
+        if bank_width_world is not None
+        else None
+    )
+    carve_depth = max(
+        float(depth_world) if depth_world is not None else float(width_world) * 0.32,
+        0.65,
+    )
+    base_heightmap = np.asarray([float(v.co.z) for v in vertices], dtype=np.float64).reshape(rows, cols)
+    carved = _apply_river_profile_to_heightmap(
+        base_heightmap=base_heightmap,
+        carved_heightmap=base_heightmap,
+        path=path_rc,
+        width_cells=width_cells,
+        depth_world=carve_depth,
+        bank_width_cells=bank_width_cells,
+    )
+    delta = base_heightmap - carved
+    affected = int(np.count_nonzero(np.abs(delta) > 1e-5))
+    if affected <= 0:
+        return {"terrain_carved": False, "terrain_carve_reason": "no_height_change"}
+
+    flat = carved.reshape(-1)
+    for idx, vert in enumerate(vertices):
+        vert.co.z = float(flat[idx])
+    if hasattr(mesh, "update"):
+        mesh.update()
+
+    return {
+        "terrain_carved": True,
+        "terrain_carve_affected_cells": affected,
+        "terrain_carve_depth": carve_depth,
+        "terrain_carve_width_cells": width_cells,
+    }
 
 
 def _sample_path_indices(
@@ -6911,6 +7074,22 @@ def handle_create_water(params: dict) -> dict:
     if preview_fast and len(path) > 6:
         cross_sections = min(cross_sections, 3)
 
+    terrain_carve_result: dict[str, Any] = {"terrain_carved": False}
+    if (
+        terrain_obj is not None
+        and path_points_raw is not None
+        and bool(params.get("carve_terrain", True))
+    ):
+        terrain_carve_result = _carve_river_banks_into_terrain(
+            terrain_obj=terrain_obj,
+            path_points=path,
+            width_world=width,
+            depth_world=params.get("carve_depth"),
+            bank_width_world=params.get("bank_width"),
+        )
+        if terrain_carve_result.get("terrain_carved"):
+            terrain_height_sampler = _build_terrain_world_height_sampler(terrain_obj)
+
     # -----------------------------------------------------------------------
     # Build cross-section mesh following the spline
     # -----------------------------------------------------------------------
@@ -7259,6 +7438,7 @@ def handle_create_water(params: dict) -> dict:
         "terminal_taper_rings": terminal_taper_rings if terminal_taper_enabled else 0,
         "water_depth": channel_depth,
         "has_volume_geometry": not surface_only,
+        **terrain_carve_result,
     }
 
 

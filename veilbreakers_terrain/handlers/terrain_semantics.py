@@ -1215,6 +1215,8 @@ class TerrainSceneRead:
     addon_version: Optional[Tuple[int, int, int]] = None
     lockable_anchors: Tuple[str, ...] = ()
     extended_at: float = 0.0
+    terrain_content_hash: Optional[str] = None
+    focal_direction: Optional[Tuple[float, float, float]] = None
 
 
 # ---------------------------------------------------------------------------

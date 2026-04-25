@@ -1,0 +1,501 @@
+File,Qualified Name,Current R12 Grade,Manual Grade,Action,Evidence Summary,Best Practice Gap,Output Proof Present
+veilbreakers_terrain/handlers/_terrain_depth.py,_fbm_noise2,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/_terrain_depth.py,_fbm_noise2._h,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=7,add direct tests,No
+veilbreakers_terrain/handlers/_terrain_depth.py,generate_cave_entrance_mesh,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/_terrain_noise.py,_PermTableNoise.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=17,wire/deprecate,Yes
+veilbreakers_terrain/handlers/_terrain_noise.py,_OpenSimplexWrapper.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=17,wire/deprecate,Yes
+veilbreakers_terrain/handlers/_water_network.py,WaterNetwork.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=16,wire/deprecate,Yes
+veilbreakers_terrain/handlers/_water_network.py,WaterNetwork.to_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=9,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/_water_network.py,WaterNetwork.from_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,_ease_in_cubic_tangent,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,_ease_out_cubic_tangent,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,_smooth_step_tangent,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,_make_kf,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_door_open_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_door_open;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_door_close_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_door_slam_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_door_slam_has_bounce;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_door_creak_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_gate_raise_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_gate_raise_reaches_height;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_gate_raise_keyframes._h,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=7,add direct tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_gate_raise_keyframes._dh,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_gate_lower_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_gate_lower_has_bounce;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_gate_lower_keyframes._h,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=7,add direct tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_gate_lower_keyframes._dh,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_drawbridge_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_shatter_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_wobble_collapse_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,_fire_val_tang,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_fire_flicker_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_fire_flicker_scale_varies|veilbreakers_terrain/tests/test_animation_environment.py::test_fire_has_sway;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_torch_sway_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,_stokes_drag_amp,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_flag_wind_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_flag_has_segments;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_banner_wind_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_chain_swing_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_rope_sway_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_trap_trigger_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_trap_trigger_fast;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_trap_reset_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_trap_idle_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_chest_open_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_chest_opens_to_angle;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_chest_open_keyframes._h,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=7,add direct tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_chest_open_keyframes._dh,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_lever_pull_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_switch_toggle_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,_candle_temp,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_candle_flicker_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_chandelier_sway_keyframes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/animation_environment.py,generate_windmill_rotate_keyframes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_animation_environment.py|veilbreakers_terrain/tests/test_animation_environment.py::test_windmill_rotates;contracts=dispatch_map,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/animation_environment.py,generate_env_keyframes,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/animation_gaits.py,Keyframe,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=2,wire/deprecate,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_permute,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_smooth,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_lerp,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_grad2,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_perlin2,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_perlin2._h,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=7,add direct tests,No
+veilbreakers_terrain/handlers/atmospheric_volumes.py,compute_atmospheric_placements,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,compute_atmospheric_placements._build_prob_map,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/atmospheric_volumes.py,compute_atmospheric_placements._sample_terrain_position,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/atmospheric_volumes.py,compute_volume_mesh_spec,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/atmospheric_volumes.py,_count_by_type,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/atmospheric_volumes.py,estimate_atmosphere_performance,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,_cross,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,_dot,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,_sub,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,_length,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/autonomous_loop.py,_normalize,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=4,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,_face_normal,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=5,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,_is_degenerate,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/autonomous_loop.py,_edge_key,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/autonomous_loop.py,_compute_edge_face_counts,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/autonomous_loop.py,_uv_triangle_area,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/autonomous_loop.py,_face_uv_area,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/autonomous_loop.py,_grade_worse_than,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/autonomous_loop.py,evaluate_mesh_quality,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,select_fix_action,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/autonomous_loop.py,select_fix_action._try,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_wang_hash,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_generate_shoreline_profile,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_generate_coastline_mesh,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_features_overlap,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_place_features,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_place_features._try_place,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_place_features._fetch_at,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_place_features._hardness_at,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,_place_features._density_weight,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/coastline.py,generate_coastline,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=2,prove production wiring,Yes
+veilbreakers_terrain/handlers/coastline.py,compute_wave_energy,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/coastline.py,detect_tidal_zones,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/coastline.py,pass_coastline,C+,C+,REVIEW_FOR_B,runtime_primary;tests=veilbreakers_terrain/tests/test_phase14_wave1.py::test_coastline_delta_written_when_erosion_disabled|veilbreakers_terrain/tests/test_terrain_geology.py::test_pass_coastline_populates_tidal;parent_contract=False,prove parent/runtime contract,Yes
+veilbreakers_terrain/handlers/environment.py,_require_bpy,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=3,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,rasterize_poi_mask,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/environment.py,_vector_xyz,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_coerce_optional_grid_channel,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_normalize_altitude_for_rule_range,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
+veilbreakers_terrain/handlers/environment.py,_build_tripo_fallback_prompt_info,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_build_tripo_environment_manifest,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,_resolve_terrain_tile_params,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,_write_json_manifest,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,_cleanup_written_artifacts,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,handle_generate_terrain,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_environment_handlers.py::test_controller_path_can_opt_in_to_cave_pipeline|veilbreakers_terrain/tests/test_environment_handlers.py::test_controller_path_forwards_quality_profile_hints_and_viewport_vantage|veilbreakers_terrain/tests/test_environment_handlers.py::test_controller_path_inserts_hydrology_before_erosion|veilbreakers_terrain/tests/test_environment_handlers.py::test_controller_path_threads_cave_candidates_but_defers_cave_pipeline_by_default|veilbreakers_terrain/tests/test_environment_handlers.py::test_generate_terrain_expected_keys|veilbreakers_terrain/tests/test_environment_handlers.py::test_generate_terrain_uses_controller_heightmap_as_source_of_truth;contracts=veilbreakers_terrain/handlers/__init__.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/environment.py,handle_generate_terrain_tile,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_environment_handlers.py::test_generate_terrain_tile_manifest_failure_cleans_export_artifacts|veilbreakers_terrain/tests/test_environment_handlers.py::test_generate_terrain_tile_writes_resume_manifest|veilbreakers_terrain/tests/test_environment_handlers.py::test_world_terrain_can_wrap_multiple_tiles|veilbreakers_terrain/tests/test_environment_handlers.py::test_world_terrain_manifest_write_failure_isolated|veilbreakers_terrain/tests/test_environment_handlers.py::test_world_terrain_partial_failure_preserves_requested_bounds_and_frontier|veilbreakers_terrain/tests/test_environment_handlers.py::test_world_terrain_wraps_tile_generation;contracts=veilbreakers_terrain/handlers/__init__.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/environment.py,handle_generate_terrain_tile._apply_neighbor_edge_locks,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,handle_run_terrain_pass,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read|veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_full|veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_injects_overhang_emit_phase_for_cliff_pipeline|veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers|veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_skips_heightmap_injection_when_unity_export_opted_out|veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_still_surfaces_truly_unknown_passes;contracts=veilbreakers_terrain/handlers/__init__.py|veilbreakers_terrain/handlers/terrain_pipeline.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/environment.py,handle_run_terrain_pass._serialize,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,handle_stitch_terrain_edges,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/environment.py,handle_stitch_terrain_edges._in_protected_zone,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,handle_stitch_terrain_edges._edge_vertices,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,handle_paint_terrain,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/environment.py,handle_paint_terrain._smoothstep_np,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_clamp01,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_smootherstep,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_point_segment_distance_2d,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/environment.py,_create_mesh_object_from_spec,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,_serialize_validation_issues,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_coerce_point3,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_offset_point3,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,handle_create_cave_entrance,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_environment_handlers.py::test_accepts_2d_location_and_parent_name_without_bpy_lookup|veilbreakers_terrain/tests/test_environment_handlers.py::test_rejects_invalid_style|veilbreakers_terrain/tests/test_environment_handlers.py::test_rejects_non_finite_location;contracts=veilbreakers_terrain/handlers/__init__.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/environment.py,_boundary_edges_from_faces,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_nearest_pot_plus_1,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,_stable_seed_offset,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment_scatter.py,LocationLayer.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=16,wire/deprecate,Yes
+veilbreakers_terrain/handlers/light_integration.py,_fp,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/light_integration.py,compute_probe_placements,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/light_integration.py,compute_light_placements,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/light_integration.py,_dist3,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/light_integration.py,_uf_find,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/light_integration.py,_uf_union,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/light_integration.py,merge_nearby_lights,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/light_integration.py,compute_light_budget,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh.py,_dist3d_sq,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/mesh.py,_dot3,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/mesh.py,_sub3,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/mesh.py,_normalize3,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/mesh.py,_select_by_box,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh.py,_select_by_sphere,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh.py,_select_by_plane,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh.py,_parse_selection_criteria,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh_smoothing.py,_build_adjacency,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/mesh_smoothing.py,_build_laplacian,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh_smoothing.py,_compute_face_normal,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh_smoothing.py,_build_sharp_vertex_mask,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh_smoothing.py,_build_boundary_vertex_mask,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh_smoothing.py,_laplacian_pass,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/mesh_smoothing.py,smooth_assembled_mesh,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/procedural_materials.py,_place,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/procedural_materials.py,_add_node,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/procedural_materials.py,_get_bsdf_input,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/procedural_materials.py,_build_normal_chain,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/procedural_materials.py,_make_channel_ext,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/procedural_materials.py,get_library_keys,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/procedural_materials.py,get_library_info,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,AddonVersionMismatch,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,AddonNotLoaded,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,StaleAddon,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_addon_health.py,_read_bl_info_version,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,assert_addon_loaded,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,assert_addon_version_matches,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,assert_handlers_registered,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,_import_addon_package,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,detect_stale_addon,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_addon_health.py,force_addon_reload,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,No
+veilbreakers_terrain/handlers/terrain_advanced.py,_detect_grid_dims,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,_cubic_bezier_point,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,_auto_control_points,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,evaluate_spline,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,distance_point_to_polyline,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,compute_falloff,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,_catmull_rom_point,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,_evaluate_catmull_rom_spline,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,compute_spline_deformation,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,handle_spline_deform,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,TerrainLayer,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=3,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,TerrainLayer.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=17,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,TerrainLayer.to_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=10,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,TerrainLayer.from_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=4,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,apply_layer_operation,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,flatten_layers,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,handle_terrain_layers,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,handle_terrain_layers._bump_version_and_serialize,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=17,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult.__array__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult.__sub__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult.__rsub__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult.max,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=62;refs=107,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,BrushResult.min,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=55;refs=93,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,compute_flow_map,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=4;refs=5,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,compute_flow_map._uf_find,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,_bilinear_sample,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_advanced.py,handle_terrain_stamp,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,handle_snap_to_terrain,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_advanced.py,flatten_terrain_zone,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,flatten_multiple_zones,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_advanced.py,handle_terrain_flatten_zone,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_assets.py,AssetRole,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,ViabilityFunction,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_assets.py,ViabilityFunction.__call__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=0,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,AssetContextRule,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=2,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,ClusterRule,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_assets.py,compute_viability,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,_poisson_in_mask,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_assets.py,_poisson_in_mask._gkey,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_assets.py,_protected_mask,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=6,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,_region_mask,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_assets.py,place_assets_by_zone,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,_cluster_around,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_assets.py,cluster_rocks_for_cliffs,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,cluster_rocks_for_waterfalls,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_assets.py,_build_detail_density,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_assets.py,register_bundle_e_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_assets.py;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,AudioReverbClass,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=2;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,_audio_cc_filter,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,_component_boundary_polygon,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,_sabine_rt60,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,_chamfer_distance_cells,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,_classify_raster,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,compute_audio_reverb_zones,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,compute_audio_zone_list,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,pass_audio_zones,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_environment_analysis_runtime_helpers.py::test_pass_audio_zones_publishes_audio_zone_list_opaque_channel|veilbreakers_terrain/tests/test_environment_analysis_runtime_helpers.py::test_pass_compute_audio_zones_is_alias_for_pass_audio_zones|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_audio_zones_metrics_contain_distribution|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_bundle_j_populates_unity_ready_channels|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_pass_audio_zones_populates_channel|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_unity_export_json_schemas;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_audio_zones.py,register_bundle_j_audio_zones_pass,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,BandedHeightmap,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_banded.py,BandedHeightmap.shape,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=77;refs=90,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,BandedHeightmap.band,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=6;refs=38,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,_coord_grids,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,_fbm_array,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,_band_sdf_normalize,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,compute_anisotropic_breakup,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,_kuwahara_filter,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,_kuwahara_filter._integral,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,_kuwahara_filter._box_stats,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,_kuwahara_filter._quadrant_stats,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,apply_anti_grain_smoothing,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded.py,_generate_macro_band,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,_generate_meso_band,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,_generate_micro_band,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,_generate_strata_band,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,_generate_warp_field,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,pass_banded_macro,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_banded.py,register_bundle_g_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_banded.py::test_banded_macro_registers_on_pass_controller|veilbreakers_terrain/tests/test_terrain_banded.py::test_banded_pass_writes_composite_into_stack_height;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_banded_advanced.py,compute_anisotropic_breakup,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded_advanced.py,_kuwahara_quadrant_stats,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_banded_advanced.py,_structure_tensor,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded_advanced.py,_structure_tensor._box_blur,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded_advanced.py,_anisotropic_kuwahara_filter,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_banded_advanced.py,apply_anti_grain_smoothing,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,CoordinateSystemError,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,BlenderBooleanUnsafe,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=2,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,assert_z_is_up,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,convert_y_up_to_z_up,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,convert_y_up_to_z_up._rot_x,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_blender_safety.py,convert_y_up_to_z_up._rot_y,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_blender_safety.py,convert_y_up_to_z_up._rot_z,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_blender_safety.py,convert_y_up_to_z_up._mat_mul,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_blender_safety.py,guard_z_up,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=1;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_blender_safety.py,guard_z_up.wrapper,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=6;refs=18,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,assert_boolean_safe,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,decimate_to_safe_count,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,recommend_boolean_solver,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,import_tripo_glb_serialized,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,get_tripo_import_log,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,clear_tripo_import_log,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,BudgetReport,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,BudgetReport.as_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,TerrainBudget,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,resolve_budget,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,_km2_from_stack,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,_count_unique_materials,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,_estimate_tri_count,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=0,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,_estimate_npz_mb,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,compute_tile_budget_usage,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,compute_budget_report,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,_issue_for,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,enforce_budget,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_bundle_j.py,register_bundle_j_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_ecosystem.py|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_bundle_j_does_not_touch_default_passes|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_bundle_j_passes_do_not_require_scene_read|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_bundle_j_passes_run_through_controller|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_register_bundle_j_passes_lands_all_eight;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_bundle_k.py,register_bundle_k_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_material_ceiling.py|veilbreakers_terrain/tests/test_terrain_material_ceiling.py::test_bundle_k_passes_produce_unity_channels|veilbreakers_terrain/tests/test_terrain_material_ceiling.py::test_register_bundle_k_passes;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_bundle_l.py,register_bundle_l_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_atmosphere.py|veilbreakers_terrain/tests/test_terrain_atmosphere.py::test_bundle_l_passes_have_distinct_seed_namespaces|veilbreakers_terrain/tests/test_terrain_atmosphere.py::test_register_bundle_l_passes_registers_all_three;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_bundle_n.py,get_bundle_n_runtime_contract,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_runtime_options,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_determinism_runs,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,bundle_n_runtime_requests_determinism,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_skip_runtime_hooks,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_attach_issues,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_merge_bundle_n_metrics,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_review_findings_from_intent,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_validation_issue_from_review_payload,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,_default_snapshot_id,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_bundle_n.py,register_bundle_n_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_deep_qa.py::test_bundle_n_registrar_is_callable;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_bundle_o.py,register_bundle_o_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py|veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py::test_bundle_o_supplemental_pass_contracts_are_declared|veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py::test_pass_vegetation_depth_deterministic_by_seed|veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py::test_pass_vegetation_depth_populates_detail_density|veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py::test_pass_vegetation_depth_region_scope_leaves_outside_unchanged|veilbreakers_terrain/tests/test_terrain_water_vegetation_depth.py::test_register_bundle_o_is_idempotent;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,compute_speleothem_growth,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,CaveArchetype,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=2;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,CaveArchetypeSpec,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_caves.py,make_archetype_spec,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,CaveStructure,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,_region_to_slice,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_protected_mask_for_caves,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,pick_cave_archetype,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,pick_cave_archetype._sample,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=3,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,build_mountainside_overhang,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,build_cave_mouth_surround,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_build_cave_entry_mesh_specs,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,carve_cave_volume,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,build_cave_entrance_frame,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,_generate_speleothem_pairs,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_generate_speleothem_pairs._dreybrodt,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,enforce_cave_navigation_clearance,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,enforce_cave_navigation_clearance._corridor_z,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_generate_mineral_deposits,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_generate_cave_pools,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_generate_drip_channels,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,generate_damp_mask,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,_find_entrance_candidates,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,_find_entrance_candidates._neighbourhood_slice,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_find_entrance_candidates._score_or_reject,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,pass_caves,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_cave_adapter.py|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_handle_generate_cave_error_path_returns_dict|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_handle_generate_cave_wraps_pass_caves|veilbreakers_terrain/tests/test_terrain_caves.py::test_validate_entrance_rejects_short_lip;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,register_bundle_f_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_caves.py::test_pass_caves_can_discover_candidates_from_cliff_signals|veilbreakers_terrain/tests/test_terrain_caves.py::test_pass_caves_empty_scene_read_still_ok|veilbreakers_terrain/tests/test_terrain_caves.py::test_pass_caves_populates_channels_and_structures|veilbreakers_terrain/tests/test_terrain_caves.py::test_pass_caves_region_scoping_filters_entrances|veilbreakers_terrain/tests/test_terrain_caves.py::test_pass_caves_requires_scene_read|veilbreakers_terrain/tests/test_terrain_caves.py::test_pass_caves_respects_protected_zones;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,get_cave_entrance_specs,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_build_synthetic_state,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_cone_verts_faces,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_face_normal,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=5,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_caves.py,_build_chamber_mesh_geometry,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_build_chamber_mesh_geometry._add_vert,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_build_chamber_mesh_geometry._dreybrodt_dims,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_build_chamber_mesh,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_bezier_cubic,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,_build_bezier_tunnel_geometry,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_caves.py,handle_generate_cave,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_cave_adapter.py|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_cave_canyon_dual_exit_regression|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_cave_entry_exit_on_different_faces|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_cave_interior_material_separate_from_exterior|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_cave_navigation_clearance_minimum|veilbreakers_terrain/tests/test_terrain_cave_adapter.py::test_cave_speleothem_pairing_density;contracts=veilbreakers_terrain/handlers/__init__.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,_atomic_npz_write,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,save_checkpoint,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,rollback_last_checkpoint,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,rollback_to,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,list_checkpoints,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,_serialize_value,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,_deserialize_value,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,_intent_to_dict,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_checkpoints.py,_intent_from_dict,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_checkpoints.py,save_preset,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,restore_preset,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints.py,autosave_after_pass,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,PresetLocked,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=3,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,lock_preset,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=2,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,unlock_preset,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=2,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,is_preset_locked,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,assert_preset_unlocked,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,save_every_n_operations,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=2,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,save_every_n_operations._atomic_npz_save,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,save_every_n_operations.wrapped,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=1;refs=7,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,save_every_n_operations.unpatch,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,_sanitize,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,generate_checkpoint_filename,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,_day_key,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,_week_key,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,enforce_retention_policy,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_checkpoints_ext.py,enforce_retention_policy._is_checkpoint,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_chunking.py,compute_terrain_chunks,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=5;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,build_tile_seam_contract,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,_blend_locked_edges,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,apply_seam_boundary_conditions,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,build_tile_batch_manifest,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,_empty_metadata,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_chunking.py,_coerce_jsonable_edge_samples,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,_hash_edge_samples,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_chunking.py,_compute_tile_contracts,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_cliffs.py,StrataLayer,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,TalusField,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,CliffStructure,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=3,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_cliffs.py,_smooth_contour_gaussian,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_fit_bspline_contour,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_moore_contour_all_components,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_trace_moore_boundary,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_trace_moore_boundary._backtrack_dir,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_label_connected_components,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_build_strata_layers,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_region_to_slice,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=2,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_extract_lip_polyline,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_postprocess_lip_polyline,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=0,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_sample_korcak_radii,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_cliffs.py,pass_emit_overhang_meshes,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=1,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_fbm2,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,_fbm2._h,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=7,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,pass_cliffs,C,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_cliffs.py::test_talus_field_disjoint_from_face_mask;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_cliffs.py,_protected_mask_for_cliffs,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_cliffs.py,register_bundle_b_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_cliffs.py::test_emit_overhang_meshes_publishes_mesh_layer_cache|veilbreakers_terrain/tests/test_terrain_cliffs.py::test_pass_cliffs_is_deterministic|veilbreakers_terrain/tests/test_terrain_cliffs.py::test_pass_cliffs_populates_cliff_candidate_channel|veilbreakers_terrain/tests/test_terrain_cliffs.py::test_pass_cliffs_records_structure_side_effects;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_cloud_shadow.py,_build_perm_table,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_cloud_shadow.py,compute_cloud_shadow_mask,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_cloud_shadow.py,pass_cloud_shadow,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_bundle_j_populates_unity_ready_channels|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_pass_cloud_shadow_populates|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_unity_export_manifest_writes_files|veilbreakers_terrain/tests/test_terrain_material_ceiling.py::test_bundle_k_passes_produce_unity_channels|veilbreakers_terrain/tests/test_terrain_material_ceiling.py::test_pass_shadow_clipmap_populates_cloud_shadow;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_cloud_shadow.py,register_bundle_j_cloud_shadow_pass,C+,C+,REVIEW_FOR_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_cloud_shadow_renamed_channels_are_independent;parent_contract=False,prove parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_decal_placement.py,DecalKind,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_decal_placement.py,_safe_norm,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_decal_placement.py,_log_norm,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_decal_placement.py,compute_decal_density,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_decal_placement.py,pass_decals,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_decal_density_populates_dict_channel_provenance|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_pass_decals_fills_dict_channel|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_unity_export_manifest_writes_files;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_decal_placement.py,register_bundle_j_decals_pass,C+,C+,REVIEW_FOR_B,runtime_primary;tests=veilbreakers_terrain/tests/test_phase14_wave1.py::test_decal_pass_definition_declares_channel;parent_contract=False,prove parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_delta_integrator.py,_collect_deltas,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_delta_integrator.py,pass_integrate_deltas,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_delta_integrator.py|veilbreakers_terrain/tests/test_delta_integrator.py::test_allowed_mutation_permits_delta|veilbreakers_terrain/tests/test_delta_integrator.py::test_cave_delta_applied_to_height|veilbreakers_terrain/tests/test_delta_integrator.py::test_hero_exclusion_combined_with_protected_zone|veilbreakers_terrain/tests/test_delta_integrator.py::test_metrics_report_delta_channels|veilbreakers_terrain/tests/test_delta_integrator.py::test_multiple_deltas_compose_additively;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_delta_integrator.py,register_integrator_pass,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_delta_integrator.py::test_run_pipeline_auto_inserts_integrator_after_delta_producer;contracts=veilbreakers_terrain/handlers/terrain_pipeline.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,DEMSource,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,DEMTile,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_dem_import.py,_synthetic_dem,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dem_import.py,_fill_nodata,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,_bilinear_resample_2d,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,_load_hgt,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,_load_geotiff,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dem_import.py,_load_geotiff.read_tag,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dem_import.py,_egm96_undulation_m,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,import_dem_tile,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dem_import.py,resample_dem_to_tile_grid,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_destructibility_patches.py,DestructibilityPatch,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_destructibility_patches.py,detect_destructibility_patches,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_determinism_ci.py,DeterminismRun,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_determinism_ci.py,_snapshot_channel_hashes,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_determinism_ci.py,_clone_state,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_determinism_ci.py,_hash_full_state,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_determinism_ci.py,run_determinism_check,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_determinism_ci.py,detect_determinism_regressions,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyRegion,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyRegion.touches_channel,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyRegion.merge,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=18,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyRegion.intersection,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=10,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=17,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree._ensure_sorted,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree.insert,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=4;refs=6,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree.remove,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=6;refs=12,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree.candidates,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=4;refs=21,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,_IntervalTree.rebuild,C,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=3;refs=4,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=2,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=17,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker._rebuild_indexes,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker._append_region,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.mark_dirty,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=3,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.mark_many,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker._sweep_merge,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker._sweep_merge._overlaps,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker._coalesce_inplace,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.get_dirty_regions,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.get_dirty_channels,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.clear,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=10;refs=22,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.is_clean,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.dirty_area,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.dirty_fraction,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,DirtyTracker.coalesce,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,attach_dirty_tracker,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_dirty_tracking.py,attach_dirty_tracker._hooked_set,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,EcotoneEdge.as_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=4,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_cross,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_sub,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_normalize,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=4,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_face_normal,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=5,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_compute_face_normals,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_lod1_faces,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,_fbm,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_natural_arch,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_natural_arch._arch_z,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_features.py,generate_natural_arch._arch_inner_z,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_features.py,generate_natural_arch._tapered_thickness,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_features.py,_arch_face_mat,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_geyser,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_sinkhole,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_floating_rocks,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_ice_formation,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_features.py,generate_ice_formation._build_hex_column,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_features.py,generate_lava_flow,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_fog_masks.py,compute_fog_pool_mask,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_fog_masks.py,compute_mist_envelope,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_fog_masks.py,pass_fog_masks,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_atmosphere.py|veilbreakers_terrain/tests/test_terrain_atmosphere.py::test_pass_fog_masks_populates_mist;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_fog_masks.py,register_bundle_l_fog_masks_pass,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,SpeciesSpec.to_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=10,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=16,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_footprint_surface.py,FootprintSurfacePoint,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_footprint_surface.py,compute_footprint_surface_data,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_framing.py,_bresenham_cells,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_framing.py,enforce_sightline,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_framing.py,pass_framing,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_composition.py::test_pass_framing_cuts_obstacles|veilbreakers_terrain/tests/test_terrain_composition.py::test_pass_framing_noop_when_no_features;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_framing.py,_framing_quality_gate,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_framing.py,register_framing_pass,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_composition.py::test_register_framing_pass;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,GameplayZoneType,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=2,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,_label_zones,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,_compute_cover_score,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,_compute_sky_exposure,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,_compute_choke_score,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,_compute_vantage_score,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,compute_gameplay_zones,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,compute_gameplay_zones._apply_zone_with_cc,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,_compute_gameplay_score_metrics,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,pass_gameplay_zones,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_bundle_j_populates_unity_ready_channels|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_pass_gameplay_zones_populates|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_unity_export_json_schemas|veilbreakers_terrain/tests/test_terrain_ecosystem.py::test_unity_export_manifest_writes_files;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_gameplay_zones.py,register_bundle_j_gameplay_zones_pass,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_geology_validator.py,register_bundle_i_passes,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_delta_integrator.py::test_run_pipeline_auto_inserts_integrator_after_stratigraphy|veilbreakers_terrain/tests/test_terrain_geology.py::test_bundle_i_declares_full_stratigraphy_channel_contract|veilbreakers_terrain/tests/test_terrain_geology.py::test_bundle_i_does_not_modify_default_passes|veilbreakers_terrain/tests/test_terrain_geology.py::test_register_bundle_i_passes_registers_all_five;contracts=veilbreakers_terrain/handlers/terrain_master_registrar.py,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_glacial.py,carve_u_valley,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=2,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_glacial.py,compute_snow_line,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_glacial.py,pass_glacial,C+,C+,REVIEW_FOR_B,runtime_primary;tests=veilbreakers_terrain/tests/test_phase14_wave1.py::test_glacial_delta_written_when_no_glacier_paths|veilbreakers_terrain/tests/test_terrain_geology.py::test_pass_glacial_populates_snow_line;parent_contract=False,prove parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_glacial.py,get_ice_formation_specs,D+,D+,WIRE_OR_DEPRECATE,orphan_candidate;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,GodRayHint,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=0;refs=1,wire/deprecate,No
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,GodRayHint.to_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=10,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,_normalize_sun_dir,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,_build_terrain_silhouette_shadow,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,compute_god_ray_hints,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,pass_god_ray_hints,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_atmosphere.py|veilbreakers_terrain/tests/test_terrain_atmosphere.py::test_pass_god_ray_hints_runs_without_cave_or_cloud;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
+veilbreakers_terrain/handlers/terrain_god_ray_hints.py,register_bundle_l_god_ray_hints_pass,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
+veilbreakers_terrain/handlers/terrain_golden_snapshots.py,GoldenSnapshot.to_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=10,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_golden_snapshots.py,GoldenSnapshot.from_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=4,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/terrain_hierarchy.py,FeatureTier,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=2;refs=1,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_hierarchy.py,FeatureTier.from_str,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=1,prove parent contract or inline,Yes

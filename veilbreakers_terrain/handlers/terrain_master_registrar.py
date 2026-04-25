@@ -199,7 +199,7 @@ def _register_all_terrain_passes_impl(
     # Bundle A — foundation (always required)
     from .terrain_pipeline import register_default_passes
 
-    register_default_passes()
+    register_default_passes(strict=strict)
     loaded.append("A")
 
     package_root = __package__ or __name__.rpartition(".")[0]
@@ -242,7 +242,8 @@ def _register_all_terrain_passes_impl(
         fn = _safe_import_registrar(module_path, attr)
         if fn is not None:
             # Snapshot registry before this bundle registers
-            before = set(TerrainPassController.PASS_REGISTRY.keys())
+            before_registry = dict(TerrainPassController.PASS_REGISTRY)
+            before = set(before_registry.keys())
             try:
                 fn()
                 loaded.append(label)
@@ -269,6 +270,21 @@ def _register_all_terrain_passes_impl(
                     logger.warning(msg)
                     if strict:
                         raise ValueError(msg)
+                seen_pass_names[pname] = label
+            overwritten_passes = [
+                pname
+                for pname in before.intersection(after)
+                if TerrainPassController.PASS_REGISTRY.get(pname) is not before_registry[pname]
+            ]
+            for pname in overwritten_passes:
+                msg = (
+                    f"Duplicate pass name {pname!r}: existing registration from "
+                    f"bundle {seen_pass_names.get(pname, 'unknown')!r} was overwritten "
+                    f"by bundle {label!r}. The later registration wins."
+                )
+                logger.warning(msg)
+                if strict:
+                    raise ValueError(msg)
                 seen_pass_names[pname] = label
         else:
             if strict:

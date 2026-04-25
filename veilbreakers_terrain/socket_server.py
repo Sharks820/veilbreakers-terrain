@@ -183,9 +183,22 @@ class BlenderMCPServer:
         """
         while self._queue:
             request = self._queue.pop(0)
+            if not isinstance(request, dict):
+                self._results.append({
+                    "status": "error",
+                    "error": "invalid_request",
+                    "message": f"request must be a dict, got {type(request).__name__}",
+                })
+                continue
             command = request.get("command", "")
-            params = request.get("params", {}) or {}
-            self._results.append(self.execute_command(command, params))
+            params = request.get("params", {})
+            if params is None:
+                params = {}
+            request_id = request.get("request_id", request.get("id"))
+            result = self.execute_command(command, params)
+            if request_id is not None:
+                result["request_id"] = request_id
+            self._results.append(result)
         # 0.01 seconds = 10 ms poll interval. See TIMER_INTERVAL_S.
         return TIMER_INTERVAL_S
 

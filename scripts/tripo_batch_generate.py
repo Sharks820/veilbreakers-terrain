@@ -42,11 +42,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -66,6 +68,7 @@ DEFAULT_MODEL_VERSION = "v2.5-20250123"
 # ``ingest_tripo_asset.CATEGORY_DISPLAY`` — duplicated here to avoid importing
 # the Blender-using script into the driver (keeps tests hermetic).
 CATEGORY_TO_DISPLAY = {
+    # Phase I — foliage / scatter
     "grass": "grass",
     "pebble": "rock_small",
     "gravel": "rock_small",
@@ -101,6 +104,48 @@ CATEGORY_TO_DISPLAY = {
     "path": "terrain_tile",
     "flower": "accent",
     "mushroom": "accent",
+    # Phase II — extended trees
+    "willow": "tree",
+    "fir": "tree",
+    "sapling": "tree",
+    # Phase II — cave zone
+    "stalactite": "cave_prop",
+    "stalagmite": "cave_prop",
+    "crystal_cave": "cave_prop",
+    "cave_bone": "cave_prop",
+    "cave_lichen": "cave_prop",
+    # Phase II — alpine / snow
+    "snowcap": "alpine_prop",
+    "icicle": "alpine_prop",
+    "frost_shrub": "alpine_prop",
+    "alpine_boulder": "rock_boulder",
+    "snow_drift": "alpine_prop",
+    # Phase II — ground micro-detail
+    "root_surface": "ground_detail",
+    "leaf_mound": "ground_detail",
+    "bone_scatter": "ground_detail",
+    "mud_puddle": "ground_detail",
+    # Phase II — ruin structures
+    "ruin_pillar": "ruin_prop",
+    "ruin_wall": "ruin_prop",
+    "ruin_arch": "ruin_prop",
+    "ruin_altar": "ruin_prop",
+    "ruin_block": "ruin_prop",
+    "cairn": "ruin_prop",
+    # Phase II — dark fantasy identity
+    "skull_stake": "dark_accent",
+    "corrupt_crystal": "dark_accent",
+    "monolith": "dark_accent",
+    "ritual_ground": "dark_accent",
+    "tendril": "dark_accent",
+    # Phase II — water / waterfall / mountain
+    "waterfall_rock": "water_foliage",
+    "spray_fern": "water_foliage",
+    "algae": "water_foliage",
+    "lotus": "water_foliage",
+    "scree": "rock_small",
+    "cliff_spire": "rock_boulder",
+    "overhang": "rock_boulder",
 }
 
 # Ordered longest-first so ``moss_drape`` beats ``moss``, etc.
@@ -129,6 +174,62 @@ _PROMPT_ID_CATEGORY_OVERRIDES: dict[str, str] = {
     "sign_wooden_crossroads": "sign_wooden",
     "sign_stone_waypoint": "sign_stone_waypoint",
     "walkway_plank_swamp": "walkway_plank",
+    # Phase II — extended grass (all map to generic "grass" for display)
+    "grass_alpine_frost": "grass",
+    "grass_cave_pale": "grass",
+    "grass_swamp_marsh": "grass",
+    "grass_riverbank_lush": "grass",
+    "grass_highland_moor": "grass",
+    "grass_shadow_dark": "grass",
+    "grass_beach_shore": "grass",
+    "grass_tall_overland": "grass",
+    # Phase II — extended trees
+    "tree_willow_weeping": "willow",
+    "tree_swamp_gnarled": "tree",
+    "tree_alpine_fir": "fir",
+    "tree_canopy_giant": "oak",
+    "tree_sapling_cluster": "sapling",
+    "tree_corrupted_shadow": "dead_tree",
+    # Phase II — cave zone
+    "cave_stalactite_cluster": "stalactite",
+    "cave_stalagmite_cluster": "stalagmite",
+    "cave_crystal_formation": "crystal_cave",
+    "cave_mushroom_giant": "mushroom",
+    "cave_bone_debris": "cave_bone",
+    "cave_wall_lichen": "cave_lichen",
+    # Phase II — alpine / snow
+    "rock_snowcap": "snowcap",
+    "icicle_cluster": "icicle",
+    "frost_shrub": "frost_shrub",
+    "boulder_alpine_snow": "alpine_boulder",
+    "snow_drift_mound": "snow_drift",
+    # Phase II — ground micro-detail
+    "root_gnarled_surface": "root_surface",
+    "leaf_mound_dead": "leaf_mound",
+    "bone_scatter_field": "bone_scatter",
+    "mud_puddle": "mud_puddle",
+    "mushroom_ring_fairy": "mushroom",
+    # Phase II — ruin structures
+    "ruin_broken_pillar": "ruin_pillar",
+    "ruin_crumbled_wall": "ruin_wall",
+    "ruin_collapsed_arch": "ruin_arch",
+    "ruin_altar_stone": "ruin_altar",
+    "ruin_carved_block": "ruin_block",
+    "ruin_burial_cairn": "cairn",
+    # Phase II — dark fantasy identity
+    "dark_skull_stake": "skull_stake",
+    "corrupt_crystal_shard": "corrupt_crystal",
+    "rune_monolith": "monolith",
+    "ritual_ground_circle": "ritual_ground",
+    "blight_tendril_growth": "tendril",
+    # Phase II — water / waterfall / mountain
+    "waterfall_moss_rock": "waterfall_rock",
+    "waterfall_spray_fern": "spray_fern",
+    "algae_mat_surface": "algae",
+    "lotus_dark_bloom": "lotus",
+    "scree_talus_pile": "scree",
+    "cliff_spire_rock": "cliff_spire",
+    "cliff_overhang_boulder": "overhang",
 }
 
 # Default safety rails.
@@ -179,6 +280,48 @@ VARIATION_STYLES: dict[str, list[str]] = {
     "path": ["dense cobble", "half-overgrown", "broken", "flooded"],
     "flower": ["tight cluster", "single stem", "closed bud", "wilting drooping"],
     "mushroom": ["small cluster", "tall lone", "shelf-on-log", "broken toppled"],
+    # Phase II — extended trees
+    "willow": ["full heavy drape", "sparse thin curtains", "riverside leaning", "half-dead rot patches"],
+    "fir": ["snow-laden heavy boughs", "clear dark spire", "broken top snow load", "grouped cluster 3 firs"],
+    "sapling": ["dense tight group", "spread loose group", "mixed sizes graduated", "one dead stem among living"],
+    # Phase II — cave zone
+    "stalactite": ["tight dense cluster", "3 large isolated spikes", "small drip-tip fine cluster", "broken stub remnants"],
+    "stalagmite": ["tall sharp-tip group", "short dome cluster", "single large boss column", "broken snapped tops"],
+    "crystal_cave": ["tall spike cluster", "low flat geode", "single large central prism", "shattered with debris"],
+    "cave_bone": ["dense compact pile", "spread scatter pattern", "with intact skull", "half-buried cave mud"],
+    "cave_lichen": ["circular dense mat", "irregular spreading patch", "with tiny mushroom sprouts", "dry flaking edges"],
+    # Phase II — alpine / snow
+    "snowcap": ["fresh heavy snow cap", "partial melt rock reveal", "icy glaze crust over rock", "wind-scoured bare rock"],
+    "icicle": ["dense straight cluster", "drip-melting long tapers", "thick stubby compact", "broken shards fallen"],
+    "frost_shrub": ["fully iced solid white", "partial thaw leaf reveal", "berries trapped in ice", "broken ice-shattered"],
+    "alpine_boulder": ["snow-heavy full cap", "partial melt pattern", "ice-veined deep cracks", "avalanche-scarred face"],
+    "snow_drift": ["smooth wave drift", "footprint-disturbed surface", "small drift with frost shrub", "melting edge reveal"],
+    # Phase II — ground micro-detail
+    "root_surface": ["tight knot cluster", "spreading fan roots", "root arch gap walkable", "half-buried moss-covered"],
+    "leaf_mound": ["deep heap mound", "wind-spread flat mat", "wet-matted damp press", "mushrooms sprouting beneath"],
+    "bone_scatter": ["compact group", "spread loose pattern", "rib cage arc formation", "lone small skull"],
+    "mud_puddle": ["dark still surface", "bubble-rippled active", "footprint-sunken edge", "half-dry cracked mud"],
+    # Phase II — ruin structures
+    "ruin_pillar": ["mid-height broken clean shear", "shattered top stump only", "toppled on ground", "carved rune bands"],
+    "ruin_wall": ["partial intact wall top", "half-collapsed rubble heap", "moss-heavy fully overgrown", "iron-grate inset"],
+    "ruin_arch": ["keystone still wedged", "keystone dropped centre", "one side fully collapsed", "half-buried in earth"],
+    "ruin_altar": ["intact with rust stain", "cracked down centre", "blood-rust drain channels", "toppled on its side"],
+    "ruin_block": ["decorative frieze carving", "symbol carved face", "uncarved worn blank", "fractured split face"],
+    "cairn": ["neat intact stacked", "partially toppled leaning", "moss-heavy overgrown", "iron stake through top"],
+    # Phase II — dark fantasy identity
+    "skull_stake": ["fresh skull clean on stake", "weathered lichen-kissed", "with chain wrap", "broken stake skull fallen"],
+    "corrupt_crystal": ["3-spike cluster", "single tall shard", "shattered ring spread", "ground-cracking emergence"],
+    "monolith": ["intact upright full runes", "tilted cracked", "runes glowing bright", "toppled broken with split"],
+    "ritual_ground": ["fresh carved clean", "worn and faded", "glowing fully activated", "cracked broken disc halves"],
+    "tendril": ["5-tendril cluster emerging", "low wide spreading mat", "single thick corrupted trunk", "dried dead black"],
+    # Phase II — water / waterfall / mountain
+    "waterfall_rock": ["fully mossed rounded", "water-channel carved deep", "small water pool at base", "fern in crack"],
+    "spray_fern": ["dense upright spray fan", "cascade lean over rock", "with tiny blue spray flowers", "half-submerged roots"],
+    "algae": ["dense flat full mat", "broken segment gaps", "tiny red algae dot accents", "edges curling up"],
+    "lotus": ["open full bloom", "closed tight bud", "wilting bruised petals", "seed pod head form"],
+    "scree": ["compact fresh pile", "spread flat scatter", "moss just starting", "lichen-patched old pile"],
+    "cliff_spire": ["straight vertical clean", "slight lean", "twin spires side by side", "broken top sheared"],
+    "overhang": ["clean overhang", "moss-heavy underside", "crack splitting through", "small cave pocket beneath"],
 }
 
 
@@ -505,7 +648,12 @@ class TripoStudioBackend:
         api_log_path: Path | None = None,
     ) -> None:
         # Deferred import so ``--plan-only`` and API-mode runs don't require
-        # httpx (keeps CI lean).
+        # httpx (keeps CI lean). Ensure the repo root is on sys.path so the
+        # script runs directly via `python scripts/tripo_batch_generate.py`
+        # without the package being pip-installed.
+        repo_root = str(Path(__file__).resolve().parents[1])
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
         try:
             from veilbreakers_terrain.handlers.tripo_studio_client import (
                 TripoStudioClient,
@@ -528,22 +676,23 @@ class TripoStudioBackend:
         self.api_log_path = api_log_path
         # prompt_text -> list[task_id] we still owe the driver.
         self._pending_variants: dict[str, list[str]] = {}
+        # Single persistent event loop in a daemon thread so httpx connections
+        # are never invalidated by asyncio.run() destroying the loop between calls.
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(
+            target=self._loop.run_forever,
+            daemon=True,
+            name="tripo-studio-loop",
+        )
+        self._loop_thread.start()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _run(self, coro):  # pragma: no cover - passthrough for asyncio
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-        # If we're already inside a loop (e.g. test harness), create a new
-        # loop in a worker thread.
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(asyncio.run, coro).result()
+    def _run(self, coro):
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return fut.result(timeout=120)
 
     def _log(self, action: str, payload: dict[str, Any]) -> None:
         if self.api_log_path is None:
@@ -572,9 +721,11 @@ class TripoStudioBackend:
             if "2010" in msg or "don't have enough credit" in msg:
                 raise TripoInsufficientCredit(msg) from exc
             raise TripoError(f"studio balance error: {exc}") from exc
+        wallet = raw.get("wallet") or {}
+        subscription_credits = float(wallet.get("total_credit", 0) or 0)
         free = float(raw.get("free_balance", 0) or 0)
         purchased = float(raw.get("purchased_balance", 0) or 0)
-        total = float(raw.get("total_balance", free + purchased) or (free + purchased))
+        total = subscription_credits or float(raw.get("total_balance", free + purchased) or (free + purchased))
         norm = {
             "balance": total,
             "free_balance": free,
@@ -1028,7 +1179,15 @@ class TripoBatchDriver:
                 try:
                     data = self.client.get_task(rec.task_id or "")
                 except TripoError as e:
-                    logger.warning("poll %s failed: %s", rec.task_id, e)
+                    msg = str(e)
+                    # Terminal API errors (content policy, invalid task, etc.)
+                    # should mark the task failed so the wave isn't stuck forever.
+                    terminal_codes = ("2004", "2001", "2002", "4040", "404")
+                    if any(code in msg for code in terminal_codes):
+                        logger.warning("poll %s terminal error — marking failed: %s", rec.task_id, e)
+                        self.ledger.touch(rec, status="failed", last_error=msg)
+                    else:
+                        logger.warning("poll %s failed: %s", rec.task_id, e)
                     continue
                 status = str(data.get("status") or "").lower()
                 if status in ("queued", "pending"):

@@ -404,17 +404,15 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
                 targets: List[Tuple[str, str]] = []
                 for child in ast.walk(node):
                     if isinstance(child, ast.Call) and extract_name(child.func) == "PassDefinition":
-                        target_name = ""
+                        target = None
                         for kw in child.keywords:
                             if kw.arg == "func":
-                                target_name = extract_name(kw.value) or ""
+                                target = resolve_call_target(file_name, kw.value, aliases, module_aliases, defs_by_file)
                                 break
-                        if not target_name and child.args:
-                            target_name = extract_name(child.args[0]) or ""
-                        if target_name:
-                            target = resolve_symbol(file_name, target_name, aliases, defs_by_file)
-                            if target:
-                                targets.append(target)
+                        if target is None and child.args:
+                            target = resolve_call_target(file_name, child.args[0], aliases, module_aliases, defs_by_file)
+                        if target:
+                            targets.append(target)
                         continue
                     if isinstance(child, ast.Call):
                         callee = resolve_call_target(file_name, child.func, aliases, module_aliases, defs_by_file)
@@ -447,22 +445,20 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
                     if target:
                         exposure[target].append("command_handler")
                 if call_name == "PassDefinition":
-                    target_name = ""
+                    target = None
                     for kw in node.keywords:
                         if kw.arg == "func":
-                            target_name = extract_name(kw.value) or ""
+                            target = resolve_call_target(file_name, kw.value, aliases, import_module_alias_map(tree), defs_by_file)
                             break
-                    if not target_name and node.args:
-                        target_name = extract_name(node.args[0]) or ""
-                    if target_name:
-                        target = resolve_symbol(file_name, target_name, aliases, defs_by_file)
-                        if target:
-                            if file_name == "terrain_pipeline.py":
-                                exposure[target].append("default_pass")
-                            elif file_name == "terrain_master_registrar.py":
-                                exposure[target].append("master_bundle_pass")
-                            else:
-                                exposure[target].append("module_registrar")
+                    if target is None and node.args:
+                        target = resolve_call_target(file_name, node.args[0], aliases, import_module_alias_map(tree), defs_by_file)
+                    if target:
+                        if file_name == "terrain_pipeline.py":
+                            exposure[target].append("default_pass")
+                        elif file_name == "terrain_master_registrar.py":
+                            exposure[target].append("master_bundle_pass")
+                        else:
+                            exposure[target].append("module_registrar")
             elif isinstance(node, ast.Assign):
                 for target_node in node.targets:
                     if (
@@ -472,6 +468,11 @@ def collect_runtime_exposure(defs_by_file: Dict[str, List[CallableDef]]) -> Defa
                     ):
                         if isinstance(node.value, ast.Call):
                             factory_name = extract_name(node.value.func) or ""
+                            if file_name == "__init__.py" and factory_name == "_wrap" and node.value.args:
+                                fn_name = extract_constant_string(node.value.args[0])
+                                if fn_name:
+                                    exposure[("blender_capability_bridge.py", fn_name)].append("command_handler")
+                                    continue
                             if factory_name == "_fail_closed":
                                 for record in defs_by_file.get(file_name, []):
                                     if record.name in {"_fail_closed", "_handler"}:

@@ -513,14 +513,37 @@ def world_region_dimensions(
 def _terrain_type_from_intent(intent) -> str:
     """Resolve terrain_type string from intent.noise_profile."""
     noise_profile = (intent.noise_profile if intent else None) or "dark_fantasy_default"
+    profile = str(noise_profile).strip().lower()
     terrain_type_map = {
         "dark_fantasy_default": "mountains",
         "temperate": "mountains",
         "arid": "desert",
         "arctic": "mountains",
         "coastal": "coastal",
+        "mountain": "mountains",
+        "mountains": "mountains",
+        "hill": "hills",
+        "hills": "hills",
+        "foothills": "hills",
+        "plain": "plains",
+        "plains": "plains",
+        "flat": "flat",
+        "flatland": "flat",
+        "cliff": "cliffs",
+        "cliffs": "cliffs",
+        "canyon": "canyon",
+        "desert": "desert",
+        "volcanic": "volcanic",
+        "swamp": "swamp",
+        "wetland": "swamp",
     }
-    return terrain_type_map.get(str(noise_profile), "mountains")
+    if profile in terrain_type_map:
+        return terrain_type_map[profile]
+    if profile.startswith("terrain:"):
+        terrain_type = profile.split(":", 1)[1].strip()
+        if terrain_type:
+            return terrain_type
+    return "mountains"
 
 
 def _apply_post_height_seams(
@@ -559,7 +582,7 @@ def pass_generate_low_freq_hmap(
         else (intent.seed if intent else 0)
     )
 
-    tile_size = int(stack.tile_size)
+    rows, cols = stack.height.shape
     cell_size = float(stack.cell_size)
     world_origin_x = float(stack.world_origin_x)
     world_origin_y = float(stack.world_origin_y)
@@ -571,9 +594,9 @@ def pass_generate_low_freq_hmap(
         hmap_low = np.asarray(existing_low, dtype=np.float32).copy()
     else:
         hmap_low = generate_world_heightmap(
-            width=tile_size,
-            height=tile_size,
-            scale=float(tile_size) * cell_size,
+            width=cols,
+            height=rows,
+            scale=float(max(rows, cols)) * cell_size,
             world_origin_x=world_origin_x,
             world_origin_y=world_origin_y,
             cell_size=cell_size,
@@ -621,7 +644,7 @@ def pass_generate_high_freq_detail(
         else (intent.seed if intent else 0)
     )
 
-    tile_size = int(stack.tile_size)
+    rows, cols = stack.height.shape
     cell_size = float(stack.cell_size)
     world_origin_x = float(stack.world_origin_x)
     world_origin_y = float(stack.world_origin_y)
@@ -629,22 +652,25 @@ def pass_generate_high_freq_detail(
 
     # Use seed+1 to decorrelate high-freq from base; use 2x finer scale
     hmap_high = generate_world_heightmap(
-        width=tile_size,
-        height=tile_size,
-        scale=float(tile_size) * cell_size * 0.5,
+        width=cols,
+        height=rows,
+        scale=float(max(rows, cols)) * cell_size * 0.5,
         world_origin_x=world_origin_x,
         world_origin_y=world_origin_y,
         cell_size=cell_size,
         seed=seed + 1,
         terrain_type=terrain_type,
         octaves=high_freq_octaves,
-        normalize=True,
+        normalize=False,
     ).astype(np.float32)
 
-    # Center high-freq around 0 (normalize is [0,1], shift to [-0.5, 0.5])
-    hmap_high = hmap_high - 0.5
+    # Center high-freq around 0 using this tile's mean, not min/max
+    # normalization. Per-tile normalization changes amplitude at borders and
+    # is explicitly seam-breaking for world-coordinate noise.
+    hmap_high = hmap_high - float(np.mean(hmap_high))
 
     stack.set("hmap_high_freq", hmap_high, "pass_generate_high_freq_detail")
+    _apply_post_height_seams(stack, "hmap_high_freq")
 
     elapsed = time.perf_counter() - t0
     return PassResult(

@@ -1,0 +1,81 @@
+name: Visual Testing Readiness Gate
+
+on:
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch: {}
+
+jobs:
+  visual-testing-readiness:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
+          pip install pillow
+
+      # The standard GitHub runner does not have Blender, so we pass
+      # --allow-no-blender. The gate will still fail on placeholder PNGs or a
+      # pixel-diff exceedance, which is exactly the plumbing signal CI needs.
+      # A real Blender-in-CI gate is tracked as a separate future workflow.
+      - name: Run visual testing readiness gate
+        id: visual_gate
+        continue-on-error: true
+        run: |
+          python scripts/visual_testing_readiness_gate.py --allow-no-blender
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload readiness artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-testing-readiness
+          path: |
+            output/visual_readiness/VISUAL_TESTING_READINESS.json
+            output/visual_readiness/VISUAL_TESTING_READINESS.md
+            output/visual_readiness/test_live_preview_thumbnail.png
+          if-no-files-found: warn
+
+      # Strict plumbing enforcement: fail CI when the gate detects a placeholder
+      # PNG or a pixel-diff exceedance, regardless of the allow-no-blender flag.
+      - name: Enforce artifact shape
+        run: |
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          p = Path("output/visual_readiness/VISUAL_TESTING_READINESS.json")
+          if not p.exists():
+              print("readiness JSON missing")
+              sys.exit(1)
+          data = json.loads(p.read_text(encoding="utf-8"))
+          required_keys = {
+              "ready_for_visual_testing",
+              "blockers",
+              "blender_runtime_detected",
+              "placeholder_png",
+              "pixel_diff_exceeded",
+              "perceptual_hash",
+              "captured_byte_length",
+              "requested_screenshot_shape",
+          }
+          missing = sorted(required_keys - data.keys())
+          if missing:
+              print(f"artifact missing keys: {missing}")
+              sys.exit(1)
+          if data.get("placeholder_png"):
+              print("FAIL: placeholder_png=true")
+              sys.exit(1)
+          if data.get("pixel_diff_exceeded"):
+              print("FAIL: pixel_diff_exceeded=true")
+              sys.exit(1)
+          print("artifact shape OK; blender_runtime_detected=",
+                data.get("blender_runtime_detected"))
+          PY

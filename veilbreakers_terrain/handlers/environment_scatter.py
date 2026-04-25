@@ -797,14 +797,12 @@ def _filter_multipass_scatter_placements(
         placement_local["rotation"] = math.degrees(float(placement.get("rotation", 0.0))) % 360.0
         placement_local["moisture"] = moisture
         placement_local["altitude"] = altitude
-        # Preserve fine-grained species_id but normalise ``vegetation_type``
-        # to the legacy coarse category (tree/bush/grass/rock) so callers
-        # that assert on rule-vegetation_type keep working after the
-        # Phase-H catalog expansion.  Downstream renderers can still
-        # branch on ``species_id`` / ``unity_asset_path`` when present.
+        # Preserve fine-grained species_id and vegetation_type for concrete
+        # species template selection. Legacy consumers can use base_type.
         if "species_id" not in placement_local and placement.get("vegetation_type"):
             placement_local["species_id"] = placement["vegetation_type"]
-        placement_local["vegetation_type"] = base_type
+        placement_local["base_type"] = base_type
+        placement_local.setdefault("vegetation_type", placement.get("vegetation_type", base_type))
         scale_range = chosen_rule.get("scale_range")
         if (
             isinstance(scale_range, (tuple, list))
@@ -3014,7 +3012,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
     templates: dict[str, bpy.types.Object] = {}
 
     # Collect unique vegetation types
-    veg_types_needed = set(p["vegetation_type"] for p in placements)
+    veg_types_needed = set(p.get("species_id") or p["vegetation_type"] for p in placements)
     for vt in veg_types_needed:
         templates[vt] = _create_vegetation_template(vt, template_coll)
 
@@ -3039,7 +3037,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
     terrain_half_y = terrain_height / 2.0
 
     for p in placements:
-        vt = p["vegetation_type"]
+        vt = p.get("species_id") or p["vegetation_type"]
         template = templates.get(vt)
         if template is None:
             continue
@@ -3095,7 +3093,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
                 float(p.get("prototype_id", 0)),
             )
             for p in placements
-            if p.get("vegetation_type") == "tree"
+            if p.get("base_type", p.get("vegetation_type")) == "tree"
         ]
         _tree_arr = (
             np.array(_tree_rows, dtype=np.float32).reshape(-1, 5)
@@ -3111,7 +3109,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
     # instances at load time.  Four tiers match the _LOD_THRESHOLDS model.
     lod_counts_by_type: dict[str, dict[str, int]] = {}
     for p in placements:
-        vt = p.get("vegetation_type", "unknown")
+        vt = p.get("species_id") or p.get("vegetation_type", "unknown")
         lod = p.get("lod", 0)
         if vt not in lod_counts_by_type:
             lod_counts_by_type[vt] = {"lod0": 0, "lod1": 0, "lod2": 0, "lod3": 0}

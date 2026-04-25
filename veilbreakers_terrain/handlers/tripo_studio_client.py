@@ -90,44 +90,105 @@ class TripoStudioClient:
             return 0.0
 
     async def _refresh_jwt(self) -> str:
-        """Get a fresh JWT by loading studio.tripo3d.ai with session cookie.
+        """Get a fresh JWT using the long-lived ory_kratos_session cookie.
 
-        The Nuxt SSR embeds a fresh JWT in the HTML when loaded with
-        the ory_kratos_session cookie. This is exactly what the browser
-        does on page load.
+        Tripo migrated JWT minting to the browser (client-side), so the
+        SSR page no longer embeds a JWT in HTML. We instead try the API
+        and Nuxt session endpoints the browser JS calls at page-load time,
+        then fall back to the original HTML scrape.
         """
         if not self._session_cookie:
             raise RuntimeError(
                 "Cannot refresh JWT: no session_cookie configured. "
                 "Set TRIPO_SESSION_COOKIE env var."
             )
-        headers = {"Cookie": f"ory_kratos_session={self._session_cookie}"}
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                "https://studio.tripo3d.ai/",
-                headers=headers,
-            )
-            body = resp.text
-            jwts = re.findall(
-                r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"
-                r"\.[A-Za-z0-9_-]{20,}",
-                body,
-            )
-            if not jwts:
-                raise RuntimeError(
-                    "Failed to extract JWT from studio page. "
-                    "Session cookie may have expired."
+        cookie_header = {"Cookie": f"ory_kratos_session={self._session_cookie}"}
+        jwt_pattern = re.compile(
+            r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"
+        )
+
+        def _pick_jwt(text: str) -> str:
+            """Return the longest JWT found in text (avoids fragment matches)."""
+            candidates = jwt_pattern.findall(text)
+            return max(candidates, key=len) if candidates else ""
+
+        async with httpx.AsyncClient(
+            timeout=15.0, follow_redirects=True
+        ) as client:
+            # 1. Ory Kratos session tokenization — the canonical path.
+            #    Tripo runs Kratos on auth.tripo3d.ai with session tokenization
+            #    enabled. GET /sessions/whoami with the session cookie returns
+            #    {"tokenized": "eyJ..."} — a signed JWT for the live session.
+            #    This is the same endpoint the browser JS calls to keep its
+            #    Bearer token fresh on a ~30-minute cycle.
+            try:
+                resp = await client.get(
+                    "https://auth.tripo3d.ai/sessions/whoami",
+                    headers=cookie_header,
                 )
-            jwt = jwts[0]
-            self._jwt = jwt
-            self._jwt_exp = self._parse_jwt_exp(jwt)
-            logger.info(
-                "Refreshed studio JWT, expires at %s",
-                time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(self._jwt_exp)
-                ),
-            )
-            return jwt
+                if resp.status_code == 200:
+                    data = resp.json()
+                    tokenized = data.get("tokenized", "")
+                    if tokenized and tokenized.startswith("eyJ"):
+                        logger.info("Refreshed JWT via Kratos sessions/whoami")
+                        self._jwt = tokenized
+                        self._jwt_exp = self._parse_jwt_exp(tokenized)
+                        return tokenized
+                    # Fallback: JWT might appear anywhere in the JSON body
+                    jwt = _pick_jwt(resp.text)
+                    if jwt:
+                        logger.info("Refreshed JWT via Kratos whoami body")
+                        self._jwt = jwt
+                        self._jwt_exp = self._parse_jwt_exp(jwt)
+                        return jwt
+            except Exception:
+                pass
+
+            # 2. Nuxt server-side session route variants
+            for path in (
+                "/api/_auth/session",
+                "/api/auth/session",
+                "/api/session",
+                "/api/auth/token",
+            ):
+                try:
+                    resp = await client.get(
+                        f"https://studio.tripo3d.ai{path}",
+                        headers=cookie_header,
+                    )
+                    if resp.status_code == 200:
+                        jwt = _pick_jwt(resp.text)
+                        if jwt:
+                            logger.info("Refreshed JWT via studio%s", path)
+                            self._jwt = jwt
+                            self._jwt_exp = self._parse_jwt_exp(jwt)
+                            return jwt
+                except Exception:
+                    pass
+
+            # 3. Original SSR HTML scrape (kept as last resort)
+            try:
+                resp = await client.get(
+                    "https://studio.tripo3d.ai/",
+                    headers=cookie_header,
+                )
+                jwt = _pick_jwt(resp.text)
+                if jwt:
+                    logger.info("Refreshed JWT via studio HTML page")
+                    self._jwt = jwt
+                    self._jwt_exp = self._parse_jwt_exp(jwt)
+                    return jwt
+            except Exception:
+                pass
+
+        raise RuntimeError(
+            "Failed to auto-refresh JWT from Tripo Studio. "
+            "The session cookie auth flow may have changed. "
+            "Manual fix: open studio.tripo3d.ai in Edge > F12 > Network tab > "
+            "click any api.tripo3d.ai GET/POST > Request Headers > "
+            "copy the value after 'Authorization: Bearer ' and set "
+            "TRIPO_SESSION_TOKEN=<token> in .env.tripo_studio."
+        )
 
     async def _get_valid_jwt(self) -> str:
         """Return a valid JWT, refreshing if needed."""

@@ -187,9 +187,43 @@ class TerrainPassController:
             present in the registry.
         """
         if not isinstance(definition, PassDefinition):
-            raise TypeError(
-                f"register_pass expects a PassDefinition, got {type(definition).__name__}"
-            )
+            # Tests and legacy Blender add-on callers can import this package
+            # through both ``blender_addon.handlers`` and
+            # ``veilbreakers_terrain.handlers``.  After hot-reload, that can
+            # leave two PassDefinition class objects with identical fields.
+            # Canonicalise that structural twin instead of rejecting it as a
+            # plain non-pass object.
+            if type(definition).__name__ == "PassDefinition":
+                try:
+                    definition = PassDefinition(
+                        name=definition.name,
+                        func=definition.func,
+                        requires_channels=tuple(getattr(definition, "requires_channels", ()) or ()),
+                        produces_channels=tuple(getattr(definition, "produces_channels", ()) or ()),
+                        optional_channels=tuple(getattr(definition, "optional_channels", ()) or ()),
+                        overrides=tuple(getattr(definition, "overrides", ()) or ()),
+                        requires_features=tuple(getattr(definition, "requires_features", ()) or ()),
+                        idempotent=bool(getattr(definition, "idempotent", True)),
+                        deterministic=bool(getattr(definition, "deterministic", True)),
+                        may_modify_geometry=bool(getattr(definition, "may_modify_geometry", False)),
+                        may_add_geometry=bool(getattr(definition, "may_add_geometry", False)),
+                        respects_protected_zones=bool(getattr(definition, "respects_protected_zones", True)),
+                        supports_region_scope=bool(getattr(definition, "supports_region_scope", True)),
+                        seed_namespace=str(getattr(definition, "seed_namespace", "") or ""),
+                        requires_scene_read=bool(getattr(definition, "requires_scene_read", False)),
+                        quality_gate=getattr(definition, "quality_gate", None),
+                        visual_validator=getattr(definition, "visual_validator", None),
+                        description=str(getattr(definition, "description", "") or ""),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    raise TypeError(
+                        "register_pass received a PassDefinition-shaped object "
+                        f"that could not be canonicalised: {exc}"
+                    ) from exc
+            else:
+                raise TypeError(
+                    f"register_pass expects a PassDefinition, got {type(definition).__name__}"
+                )
 
         # ------------------------------------------------------------------
         # Duplicate-producer enforcement (added 2026-04-23 wiring audit).
@@ -524,13 +558,15 @@ class TerrainPassController:
 
         if pass_sequence is None:
             pass_sequence = [
-                "macro_world",
+                "pass_generate_low_freq_hmap",
                 "terrain_labels",   # Fix 10.10 / REQ-P10-001: must be before structural_masks
                 "structural_masks",
-                "pass_hydrology",
-                "erosion",
+                "pass_generate_high_freq_detail",
+                "pass_composite_hmap",
                 "validation_minimal",
             ]
+            if getattr(self.state.intent, "scene_read", None) is not None:
+                pass_sequence[3:3] = ["pass_hydrology", "erosion"]
         else:
             pass_sequence = list(pass_sequence)
 
@@ -1002,7 +1038,7 @@ def _toposort_passes(
     return result
 
 
-def register_default_passes() -> None:
+def register_default_passes(*, strict: bool = False) -> None:
     """Register the Bundle A default passes on the controller with full DAG validation.
 
     Matches UE5 World Partition DAG registration semantics:
@@ -1159,7 +1195,7 @@ def register_default_passes() -> None:
 
         # ----- Register in topological order -----
         for definition in ordered:
-            TerrainPassController.register_pass(definition)
+            TerrainPassController.register_pass(definition, strict=strict)
 
         _log.info(
             "register_default_passes: registered %d passes in order: %s",

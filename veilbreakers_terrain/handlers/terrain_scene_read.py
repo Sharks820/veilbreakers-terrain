@@ -38,11 +38,19 @@ def _walk_scene() -> dict:
                 })
         result["hero_features"] = hero_features
 
-        # Find focal point from active camera
+        # Find focal point from active camera. Blender cameras look along
+        # local -Z; matrix_world.col[2] is local +Z and points backward.
         cam = bpy.context.scene.camera
         if cam:
-            result["focal_point"] = list(cam.location)
-            result["focal_direction"] = list(cam.matrix_world.col[2][:3])
+            backward = cam.matrix_world.col[2][:3]
+            forward = tuple(float(-v) for v in backward)
+            loc = tuple(float(v) for v in cam.location)
+            result["focal_direction"] = list(forward)
+            result["focal_point"] = [
+                loc[0] + forward[0] * 10.0,
+                loc[1] + forward[1] * 10.0,
+                loc[2] + forward[2] * 10.0,
+            ]
 
         # Waterfall chain empties
         waterfall_chains = []
@@ -172,6 +180,12 @@ def capture_scene_read(
         addon_version=tuple(addon_version) if addon_version is not None else None,
         lockable_anchors=tuple(lockable_anchors),
         extended_at=time.time(),
+        terrain_content_hash=terrain_content_hash,
+        focal_direction=(
+            tuple(float(x) for x in _live.get("focal_direction", ()))
+            if _live.get("focal_direction")
+            else None
+        ),
     )
     # Keep viewport_vantage in a WeakKeyDictionary sidecar — it is an
     # arbitrary object that may not be picklable, so it stays off the frozen
@@ -192,8 +206,9 @@ def get_extended_metadata(sr: TerrainSceneRead) -> Optional[dict]:
     return {
         "viewport_vantage": _VIEWPORT_VANTAGE.get(sr),
         "addon_version": sr.addon_version,
-        "terrain_content_hash": getattr(sr, "terrain_content_hash", None),
+        "terrain_content_hash": sr.terrain_content_hash,
         "lockable_anchors": sr.lockable_anchors,
+        "focal_direction": sr.focal_direction,
     }
 
 
@@ -267,6 +282,11 @@ def handle_capture_scene_read(params: dict) -> dict:
             else None
         ),
         "terrain_content_hash": extended.get("terrain_content_hash"),
+        "focal_direction": (
+            list(extended["focal_direction"])
+            if extended.get("focal_direction") is not None
+            else None
+        ),
         "lockable_anchors": list(extended.get("lockable_anchors", ())),
         "has_viewport_vantage": extended.get("viewport_vantage") is not None,
     }

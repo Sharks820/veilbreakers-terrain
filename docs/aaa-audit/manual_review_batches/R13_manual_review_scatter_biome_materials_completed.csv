@@ -1,0 +1,310 @@
+File,Qualified Name,Current R12 Grade,Manual Grade,Action,Evidence Summary,Best Practice Gap
+scripts/build_aaa_node_v1.py,_scatter_foliage,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v2.py,_make_tree,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v2.py,_scatter_trees,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v2.py,_scatter_rocks,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v2.py,_add_grass,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v3.py,make_broad_tree_mesh,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v3.py,scatter_trees,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v3.py,scatter_rocks,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v3.py,scatter_tripo_catalog,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v3.py,scatter_tripo_catalog._lod0,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_scene_v3.py,add_grass,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,detect_category,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,resolve_asset_id,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,build_job,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,extract_if_zip,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,load_catalog,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,write_catalog,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,register_asset,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,_read_synthetic_mesh,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,_write_synthetic_mesh,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,_stride_decimate,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,_bbox,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,run_synthetic_ingest,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,run_blender_ingest,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,ingest,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,_default_blender,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,_parse_args,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/ingest_tripo_asset.py,main,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,poisson_disk_sample,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,poisson_disk_sample._density_at,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,poisson_disk_sample._grid_idx,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,poisson_disk_sample._is_valid,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,lloyd_relax_points,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,context_scatter,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,context_scatter._map_sample,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,_weighted_choice,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,generate_breakable_variants,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,_build_geometry_op,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,_generate_fragments,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,_generate_debris,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,generate_sinkhole,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,generate_floating_rocks,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,generate_ice_formation,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,generate_lava_flow,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment.py,_sanitize_scatter_scale_range,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment.py,_infer_tripo_asset_class,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_require_bpy,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_assign_scatter_material,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_vegetation_rotation,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_prop_rotation,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_terrain_height_sampler,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_terrain_height_sampler._sample,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_world_to_terrain_uv,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_sample_heightmap_surface_world,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_sample_heightmap_world,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_terrain_axis_spacing_from_extent,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_terrain_cell_size_from_extent,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_collapse_detail_density,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_density_reject,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_stack_value,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_resize_scatter_map,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_normalize_scatter_signal,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_base_type,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_resolve_scatter_context_maps,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_localize_exclusion_zones,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_resolve_combat_clearings,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_sample_scalar_map,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_filter_multipass_scatter_placements,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_generate_multipass_scatter_placements,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_hero_excluded,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_wind_rotation_y,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_apply_sdf_exclusion,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_write_tree_instance_points,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_location_layer_rand2,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,LocationLayer,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,LocationLayer.generate,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,halo_scatter_point_id,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_create_template_collection,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_create_vegetation_template,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_add_leaf_card_canopy,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_add_leaf_card_canopy._atlas_uv,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_add_leaf_card_canopy._atlas_uv_flipped,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_add_leaf_card_canopy._add_card,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,create_leaf_card_tree,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_create_grass_card,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_create_grass_card._add_blade,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_create_grass_card._add_blade._rot,C,C,ADD_DIRECT_TESTS,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_rock_size_from_power_law,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_generate_combat_clearing,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_build_scatter_density_map,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_lod_for_distance,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._cell,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._density_at,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._height_at,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._slope_at,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._moisture_at,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._in_building,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._in_clearing,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._viewer_dist,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._scale_pm20,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._passes_species_constraints,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._near_tree,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_scatter_pass._passes_affinity,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,handle_scatter_vegetation,C,C,ADD_DIRECT_TESTS,w=primary;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,_create_prop_template,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,handle_scatter_props,C,C,ADD_DIRECT_TESTS,w=primary;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/environment_scatter.py,handle_create_breakable,C,C,ADD_DIRECT_TESTS,w=primary;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB.size_x,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB.size_y,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB.size_z,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB.diagonal,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB.volume,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AABB.center,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,LodVariant,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AssetMetadata,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,validate_asset_metadata,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,classify_size_from_bounds,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AssetContextRuleExt,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AssetContextRuleExt.effective_variance,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_asset_metadata.py,AssetContextRuleExt.blended_score,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_assets.py,classify_asset_role,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_assets.py,build_asset_context_rules,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_assets.py,scatter_debris_for_caves,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_assets.py,validate_asset_density_and_overlap,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_assets.py,_build_tree_instance_array,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_assets.py,pass_scatter_intelligent,C,C,ADD_DIRECT_TESTS,w=primary;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_budget_enforcer.py,_count_scatter_instances,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_caves.py,scatter_collapse_debris,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_caves.py,_generate_cave_vegetation,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,SpeciesSpec,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,_slope,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,species_ids_by_category,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,tripo_assets_required,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,manifest_entries,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,categories_covered,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,_derive_species_constraints,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest._maybe_reload,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest._load_locked,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.reload,C,C,ADD_DIRECT_TESTS,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.asset_ids,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.get_asset,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.assets_for_category,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.assets_for_species,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.choose_for_species,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.lod_paths,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.stats,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,get_default_asset_manifest,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,set_default_asset_manifest,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,resolve_tripo_asset,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_glacial.py,scatter_moraines,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_glacial.py,scatter_moraines._interp,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_quixel_ingest.py,ingest_quixel_asset,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_scatter_altitude_audit_linter.py,audit_scatter_altitude_conversion,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_scatter_altitude_audit_linter.py,_cli_main,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_unity_export.py,_build_foliage_scatter_manifest,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_unity_export.py,_tree_instances_json,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,VegetationLayer,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,VegetationLayers,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,VegetationLayers.understory_density,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,DisturbancePatch,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,Clearing,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,FallenLogSpec,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,FallenLogSpec.__iter__,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,_region_slice,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,_protected_mask,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,_normalize,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,compute_vegetation_layers,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,detect_disturbance_patches,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,place_clearings,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,place_clearings._grid_key,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,place_clearings._is_valid,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,place_fallen_logs,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,apply_edge_effects,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,apply_cultivated_zones,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,apply_cultivated_zones._apply_zone,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,apply_allelopathic_exclusion,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,pass_vegetation_depth,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=primary;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,register_vegetation_depth_pass,C,C,ADD_DIRECT_TESTS,w=primary;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,compute_emergent_grass_density,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,pass_emergent_grass,C,C,ADD_DIRECT_TESTS,w=primary;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/terrain_vegetation_depth.py,register_emergent_grass_pass,C,C,ADD_DIRECT_TESTS,w=primary;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,expand_lsystem,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_rotate_vector,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_TurtleState,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_TurtleState.copy,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,BranchSegment,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_reorthogonalize,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,interpret_lsystem,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_generate_cylinder_ring,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,branches_to_mesh,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,branches_to_mesh._add_edge,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,generate_roots,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,generate_lsystem_tree,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,generate_leaf_cards,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,bake_wind_vertex_colors,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_compute_impostor_atlas_views,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_quad_normal,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,generate_billboard_impostor,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_euler_deg_to_quaternion,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,_compute_species_bounds_radius,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_lsystem.py,prepare_gpu_instancing_export,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,_max_slope_for_category,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,compute_vegetation_placement,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,compute_vegetation_placement._sample_terrain,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,compute_vegetation_placement._competition_blocked,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,compute_vegetation_placement._register_placed,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,compute_wind_vertex_colors,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,get_seasonal_variant,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,build_vegetation_placement_spec,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/procedural_meshes.py,generate_tree_mesh,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,scatter: rendered species/density/LOD proof missing
+veilbreakers_terrain/procedural_meshes.py,generate_grass_clump_mesh,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,scatter: rendered species/density/LOD proof missing
+scripts/build_aaa_node_v2.py,_build_marsh_ponds,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+scripts/build_aaa_node_v2.py,_scatter_biome_foliage,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,resolve_biome_name,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,WorldMapSpec,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,generate_world_map_spec,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,_generate_corruption_map,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,_generate_corruption_map._fbm_grid,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,_box_filter_2d,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,_distance_from_mask,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_periglacial_patterns,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_desert_pavement,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_landslide_scars,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_reef_platform,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_tafoni_weathering,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_tafoni_weathering._place_cavities,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_tafoni_weathering._contagion_prob,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_biome_grammar.py,apply_geological_folds,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,biome_filter_points,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_scatter_engine.py,generate_swamp_terrain,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_terrain_depth.py,generate_biome_transition_mesh,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_terrain_depth.py,generate_biome_transition_mesh._boundary_warp_offset,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_terrain_depth.py,generate_biome_transition_mesh._sample_hmap,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_terrain_depth.py,generate_biome_transition_mesh._smoothstep,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_terrain_noise.py,compute_biome_assignments,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/_terrain_noise.py,voronoi_biome_distribution,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/environment.py,_apply_biome_season_profile,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/environment.py,get_vb_biome_preset,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/environment.py,handle_generate_multi_biome_world,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=primary;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/environment.py,_compute_vertex_colors_for_biome_map,C,C,ADD_DIRECT_TESTS,w=helper;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,EcotoneEdge,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,_find_adjacencies,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,_find_adjacencies._count_pairs,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,build_ecotone_graph,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,validate_ecotone_smoothness,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,pass_ecotones,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=primary;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_ecotone_graph.py,register_bundle_j_ecotones_pass,C,C,ADD_DIRECT_TESTS,w=primary;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_features.py,generate_swamp_terrain,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,species_for_biome,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_hot_reload.py,reload_biome_rules,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_hot_reload.py,HotReloadWatcher.watch_biome_rules,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,get_default_biome,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,get_biome_palette,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,compute_biome_transition,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,_biome_environment_params,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,handle_setup_terrain_biome,C,C,ADD_DIRECT_TESTS,w=primary;dt=N;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,_resolve_biome_palette_name,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,create_biome_terrain_material,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,handle_create_biome_terrain,C,C,ADD_DIRECT_TESTS,w=helper;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_morphology.py,list_templates_for_biome,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_palette_extract.py,palette_to_biome_mapping,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/terrain_quixel_ingest.py,_asset_matches_biome,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,_create_biome_vegetation_template,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,build_biome_density_map,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,biome: multi-system ecotone render proof missing
+veilbreakers_terrain/handlers/vegetation_system.py,scatter_biome_vegetation,C,C,ADD_DIRECT_TESTS,w=primary;dt=Y;call=Y;proof=N,biome: multi-system ecotone render proof missing
+scripts/build_aaa_node_v1.py,_assign_terrain_material,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+scripts/build_aaa_node_v2.py,_assign_terrain_material,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+scripts/build_scene_v2.py,_make_terrain_material,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+scripts/build_scene_v3.py,make_terrain_material,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/_terrain_noise.py,auto_splat_terrain,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/coastline.py,_compute_material_zones,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/coastline.py,_compute_material_zones._zone_to_idx,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,build_stone_material,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,build_wood_material,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,build_metal_material,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,build_organic_material,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,build_terrain_material,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,build_fabric_material,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,create_procedural_material,C,C,ADD_DIRECT_TESTS,w=helper;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/procedural_materials.py,handle_create_procedural_material,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=primary;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_caves.py,compute_cave_wall_texture,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_caves.py,_triplanar_uv,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_cliffs.py,_repose_for_material,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_features.py,_material_metadata,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_hot_reload.py,reload_material_rules,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_hot_reload.py,HotReloadWatcher.watch_material_rules,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,_get_material_def,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_materials.py,get_all_terrain_material_keys,D+,D+,WIRE_OR_DEPRECATE,w=orphan;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_materials_v2.py,triplanar_blend,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_materials_v2.py,compute_slope_material_weights,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_materials_v2.py,_build_material_channel_exts,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_materials_v2.py,register_bundle_b_material_passes,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=primary;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_quixel_ingest.py,_classify_texture,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_quixel_ingest.py,_bilinear_sample_texture,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_readability_bands.py,_band_texture,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,StochasticShaderTemplate,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,StochasticShaderTemplate.__post_init__,D+,D+,WIRE_OR_DEPRECATE,w=misswire;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,_tile_hash_2d,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,_tile_hash_2d._hash,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,build_stochastic_sampling_mask,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,export_unity_shader_template,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=helper;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,pass_stochastic_shader,C+,C+,ADD_LIVE_VISUAL_GOLDEN,w=primary;dt=Y;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_stochastic_shader.py,register_bundle_k_stochastic_shader_pass,C,C,ADD_DIRECT_TESTS,w=primary;dt=N;call=Y;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_validation.py,validate_material_coverage,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_validation.py,_material_channel_exts_for_validation,C,C,ADD_DIRECT_TESTS,w=helper;dt=N;call=N;proof=N,materials: engine/render PBR+texel proof missing
+veilbreakers_terrain/handlers/terrain_validation.py,validate_material_texel_density_coherency,C,C,WIRE_OR_DEPRECATE,w=testonly;dt=Y;call=N;proof=N,materials: engine/render PBR+texel proof missing

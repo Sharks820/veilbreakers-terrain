@@ -102,7 +102,7 @@ def handler_files(include_init: bool = True, tracked_only: bool = True) -> List[
     return sorted(files)
 
 
-def collect_callables(include_init: bool = True, tracked_only: bool = True) -> List[CallableDef]:
+def collect_callables(include_init: bool = True, tracked_only: bool = False) -> List[CallableDef]:
     out: List[CallableDef] = []
     for py in handler_files(include_init=include_init, tracked_only=tracked_only):
         tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"), filename=str(py))
