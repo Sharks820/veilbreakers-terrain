@@ -8,11 +8,11 @@ bl_ext.blender_org.easymesh_batch_exporter:INFO: Panel/Operator classes register
 bl_ext.blender_org.easymesh_batch_exporter.export_indicators:INFO: Export indicator timer registered (interval: 5.0s, persistent)
 bl_ext.blender_org.easymesh_batch_exporter:INFO: Export indicators registered.
 bl_ext.blender_org.easymesh_batch_exporter:INFO: Registration complete.
-02:03:13 - tripo_addon - [task.py:25] - INFO - TaskManager timer started
-02:03:13 - tripo_addon - [task.py:32] - INFO - WebSocket server started on port 60600
-02:03:13 - tripo_addon - [task.py:78] - INFO - TaskManager registered
-02:03:13 - tripo_addon - [ws_server.py:66] - ERROR - Error in event loop: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 60600): only one usage of each socket address (protocol/network address/port) is normally permitted
-02:03:13 - tripo_addon - [ws_server.py:77] - INFO - Event loop closed
+02:03:13 - retired_model_provider_addon - [task.py:25] - INFO - TaskManager timer started
+02:03:13 - retired_model_provider_addon - [task.py:32] - INFO - WebSocket server started on port 60600
+02:03:13 - retired_model_provider_addon - [task.py:78] - INFO - TaskManager registered
+02:03:13 - retired_model_provider_addon - [ws_server.py:66] - ERROR - Error in event loop: [Errno 10048] error while attempting to bind on address ('127.0.0.1', 60600): only one usage of each socket address (protocol/network address/port) is normally permitted
+02:03:13 - retired_model_provider_addon - [ws_server.py:77] - INFO - Event loop closed
 Registering RMKit Properties...
 bl_ext.blender_org.Modifier_List_Fork: Registered 62 classes
 INFO: Ucupaint 2.4.5 is registered!
@@ -22,7 +22,7 @@ Warning: 'import_mesh.hgt_handler' does not contain '_FH_' with prefix and suffi
 [bl_ext.blender_org.terrainmixer] WARNING: Using legacy path-finding for older Blender version.
 UniV: Skipping registration in background mode
 Successfully registered mesh_exporter: <bpy_struct, PointerProperty("mesh_exporter") at 0x000001F881AB8B08>
-[Tripo3D] Log file: C:\Users\Conner\AppData\Local\Temp\tripo3d_blender_bridge.log
+[retired_model_provider] Log file: C:\Users\Conner\AppData\Local\Temp\retired_model_provider_blender_bridge.log
 ℹ️  blenderkit: Verbose is enabled [02:03:13.894, addon_updater.py:150]
 ℹ️  blenderkit: Read in JSON settings from file [02:03:13.894, addon_updater.py:150]
 ℹ️  blenderkit: Ports reordered so first port is now 62485 (previous index was 0) [02:03:13.894, client_lib.py:129]
@@ -57,9 +57,9 @@ bl_ext.blender_org.easymesh_batch_exporter:INFO: Export indicators unregistered.
 bl_ext.blender_org.easymesh_batch_exporter:INFO: Panel/Operator classes unregistered.
 bl_ext.blender_org.easymesh_batch_exporter:INFO: Properties unregistered.
 bl_ext.blender_org.easymesh_batch_exporter:INFO: Unregistration complete.
-02:03:17 - tripo_addon - [task.py:61] - INFO - WebSocket server stop requested
-02:03:17 - tripo_addon - [task.py:68] - INFO - WebSocket thread will exit automatically (daemon)
-02:03:17 - tripo_addon - [task.py:86] - INFO - TaskManager unregistered
+02:03:17 - retired_model_provider_addon - [task.py:61] - INFO - WebSocket server stop requested
+02:03:17 - retired_model_provider_addon - [task.py:68] - INFO - WebSocket thread will exit automatically (daemon)
+02:03:17 - retired_model_provider_addon - [task.py:86] - INFO - TaskManager unregistered
 bl_ext.blender_org.Modifier_List_Fork: Unregistered 62 classes
 INFO: Ucupaint 2.4.5 is unregistered!
 -------Unregistering gflow-------

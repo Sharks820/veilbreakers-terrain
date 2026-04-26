@@ -51,7 +51,7 @@ This is the **worst-graded module group in the audit so far** — caves and clif
 **What it does:** Frozen dataclass holding per-archetype parameters. 13 fields, two of which (`ambient_light_factor`, `sculpt_mode`) are dead per master Section 8 LOW.
 **Reference:** Houdini cave archetype attribute set; UE5 PCG element parameter struct.
 **Bug/Gap:** **2 dead fields** (`ambient_light_factor`, `sculpt_mode`) — declared but read by NOBODY in the cave subsystem. Confirmed by grep across all caves/depth/entrance/atmospheric handlers — `ambient_light_factor` only appears in the spec dict and CSV docstring. Dead spec.
-**AAA gap:** missing material_slot, light_emitter_kind, decal_kit_id — needed for Tripo/Quixel ingest.
+**AAA gap:** missing material_slot, light_emitter_kind, decal_kit_id — needed for retired model provider/Quixel ingest.
 **Severity:** polish.
 **Upgrade to A:** wire `ambient_light_factor` to `pass_atmospheric_volumes` for cave ambient light placement; remove or wire `sculpt_mode`.
 
@@ -660,3 +660,4 @@ All produced; `pass_integrate_deltas` not registered → all DROPPED. Caves don'
 ---
 
 *Audited by Opus 4.7 ultrathink in a single 1M-context session, 2026-04-16. Cross-referenced against `docs/aaa-audit/GRADES.csv` (224 graded functions), `docs/TERRAIN_UPGRADE_MASTER_AUDIT.md` Sections 4/5/7/8/9 + Appendices A/B.4/C/D, prior-round Codex/Gemini/Opus consensus, NumPy 2.0 breaking-changes, scipy.ndimage performance benchmarks, Houdini Heightfield/Voxel SOP reference, UE5 Voxel Plugin reference, RDR2 cave authoring (GDC 2019), and Megascans cliff-scan visual baseline.*
+

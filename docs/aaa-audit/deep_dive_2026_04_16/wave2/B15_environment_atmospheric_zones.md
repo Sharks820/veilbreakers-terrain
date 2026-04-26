@@ -519,13 +519,13 @@ This is the giant. Grading clustered by section; bugs called out individually.
 | `_enhance_heightmap_relief` | 192 | B+ | B | Stretches relief only when below target span. `_TARGET_RELIEF_COVERAGE` table is per-terrain-type but absolute heights still land all over the place because input is normalized noise (0..1) not world-meters. |
 | `_temper_heightmap_spikes` | 217 | B | B− | Compresses 96th-99.7th percentile via tanh, then 88/12 blend with neighbourhood mean. Three magic constants (`0.72`, `0.28`, `0.88`, `0.12`) — no rationale. **Bug:** modifies mountains/volcanic/cliffs/chaotic only via `_SPIKE_PRONE_TERRAIN`; canyon biome lets spikes through. |
 
-### 11.2 Tripo manifest + biome presets (lines 491-575)
+### 11.2 retired model provider manifest + biome presets (lines 491-575)
 
 | Func | Line | Prior | New | Notes |
 |---|---:|---|---|---|
-| `_build_tripo_environment_manifest` | 491 | B+ | B | Hardcoded prompt table for 7 assets only. New biomes have nothing. Scales to game requires generative prompt synthesis. |
+| `_build_retired_model_provider_environment_manifest` | 491 | B+ | B | Hardcoded prompt table for 7 assets only. New biomes have nothing. Scales to game requires generative prompt synthesis. |
 | `_apply_biome_season_profile` | 524 | A− | B+ | Mutates input dict in place — caller surprise risk. |
-| `get_vb_biome_preset` | 546 | A− | B+ | Deep-copies preset, layers season — OK. Tripo manifest auto-attached. **Bug:** L562 imports `copy` inside function, costly per-call. |
+| `get_vb_biome_preset` | 546 | A− | B+ | Deep-copies preset, layers season — OK. retired model provider manifest auto-attached. **Bug:** L562 imports `copy` inside function, costly per-call. |
 
 ### 11.3 Validation + tile resolve (lines 577-682)
 
@@ -720,3 +720,4 @@ This is the giant. Grading clustered by section; bugs called out individually.
 ---
 
 **End of B15 deep re-audit.**
+

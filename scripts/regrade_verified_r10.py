@@ -264,10 +264,6 @@ def main() -> None:
             grade = cap_grade(grade, "C+")
             note_parts.append("Blender bridge command is runtime-exposed; behavior coverage and audit visibility still need expansion.")
 
-        if "tripo" in file_name.lower() or "tripo" in function.lower():
-            status_parts.append("TRIPO_DEFERRED")
-            note_parts.append("Tripo work intentionally deferred to the separate Claude/Tripo pass requested by the user.")
-
         unique_status = []
         for status in status_parts:
             if status and status not in unique_status:
@@ -276,7 +272,7 @@ def main() -> None:
         row[R10_GRADE] = grade
         row[R10_STATUS] = "|".join(unique_status) or "REVIEWED"
         row[R10_NOTES] = " ".join(note_parts)
-        if any(s in row[R10_STATUS] for s in ("DEGRADED", "ORPHAN", "TEST_ONLY", "NO_WIRING", "UNTRACKED", "LINE_STALE", "TRIPO_DEFERRED")):
+        if any(s in row[R10_STATUS] for s in ("DEGRADED", "ORPHAN", "TEST_ONLY", "NO_WIRING", "UNTRACKED", "LINE_STALE")):
             degraded += 1
         updates += 1
 

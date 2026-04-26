@@ -1,0 +1,12 @@
+
+===== callouts_render =====
+Traceback (most recent call last):
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_aaa_node_v1.py", line 1737, in main
+    callouts_path = _render_feature_callouts(OUT_DIR / "FEATURE_CALLOUTS.png",
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_aaa_node_v1.py", line 1095, in _render_feature_callouts
+    ts = ann_scene.sequence_editor.sequences.new_effect(
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Error: Strips.new_effect: end frame not set
+
+

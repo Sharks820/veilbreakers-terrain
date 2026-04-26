@@ -1,0 +1,45 @@
+{
+  "all_pass": false,
+  "fix_dispatch_id": null,
+  "issues": {
+    "critical": [],
+    "minor": []
+  },
+  "last_update_utc": "2026-04-24T06:49:39Z",
+  "max_rounds": 1,
+  "mode": "fail",
+  "node": "aaa_node_v1",
+  "round_num": 1,
+  "verdicts": [
+    {
+      "critical_issues": [],
+      "error": "opus_judge not wired \u2014 parent agent must override with Task dispatch",
+      "judge": "opus",
+      "minor_issues": [],
+      "praise": [],
+      "raw": "",
+      "score_of_10": null,
+      "verdict": "ERROR"
+    },
+    {
+      "critical_issues": [],
+      "error": "unexpected verdict value: ''",
+      "judge": "codex",
+      "minor_issues": [],
+      "praise": [],
+      "raw": "{\"error\":\"Missing BUILD_SUMMARY, six rendered view descriptions, and target JSON schema.\"}",
+      "score_of_10": null,
+      "verdict": "ERROR"
+    },
+    {
+      "critical_issues": [],
+      "error": "unexpected verdict value: ''",
+      "judge": "gemini",
+      "minor_issues": [],
+      "praise": [],
+      "raw": "{\n  \"aaa_quality\": false,\n  \"flagged_as_procedural\": true,\n  \"critique\": \"The input data (BUILD_SUMMARY and 6 rendered views) was not provided for evaluation. In a typical scenario without manual art passes, procedural generation often lacks intentional storytelling in prop placement, exhibits repeating texture patterns, and has unnatural erosion lines that a trained art director would flag.\"\n}\n",
+      "score_of_10": null,
+      "verdict": "ERROR"
+    }
+  ]
+}

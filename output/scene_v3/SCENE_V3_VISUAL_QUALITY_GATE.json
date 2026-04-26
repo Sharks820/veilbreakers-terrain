@@ -1,0 +1,212 @@
+{
+  "blocker_count": 0,
+  "blockers": [],
+  "bridge_bounds": {
+    "bbox": [
+      [
+        -105.44444274902344,
+        -81.35943603515625,
+        24.78663444519043
+      ],
+      [
+        -50.55556106567383,
+        -22.64056396484375,
+        30.8117733001709
+      ]
+    ],
+    "max_z": 30.8117733001709,
+    "min_z": 24.78663444519043,
+    "present": true,
+    "span_xy": 80.3784502815181,
+    "vertex_count": 4976
+  },
+  "closeup_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups",
+  "fallback_policy": {
+    "blank_or_low_resolution_render": "hard blocker",
+    "build_summary_failure": "hard blocker",
+    "external_asset_missing": "warning until asset manifest is available; blocker if density or visual evidence fails",
+    "procedural_tree_fallback": "allowed only when counted, rendered, and called out as fallback evidence"
+  },
+  "image_reports": {
+    "01_tile_overview": {
+      "byte_size": 2532870,
+      "color_bucket_count": 100,
+      "decoder": "blender",
+      "edge_density": 0.3978152929493545,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 77.95929359567818,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\01_tile_overview.png",
+      "requirement": "full node scope",
+      "std_luma": 49.16319524253742,
+      "width": 1920
+    },
+    "02_hero_establishing": {
+      "byte_size": 2736221,
+      "color_bucket_count": 137,
+      "decoder": "blender",
+      "edge_density": 0.39364448857994044,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 106.65475057870142,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\02_hero_establishing.png",
+      "requirement": "mountain pass, river, water body composition",
+      "std_luma": 35.4449543115009,
+      "width": 1920
+    },
+    "05_waterfall_closeup": {
+      "byte_size": 2448016,
+      "color_bucket_count": 78,
+      "decoder": "blender",
+      "edge_density": 0.06335650446871896,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 89.67545833333469,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\05_waterfall_closeup.png",
+      "requirement": "waterfall quality",
+      "std_luma": 14.432219178346902,
+      "width": 1920
+    },
+    "06_river_bank_entry": {
+      "byte_size": 2522865,
+      "color_bucket_count": 170,
+      "decoder": "blender",
+      "edge_density": 0.28579940417080435,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 99.35619521604794,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\06_river_bank_entry.png",
+      "requirement": "river depth and bank entry",
+      "std_luma": 56.92459451429569,
+      "width": 1920
+    },
+    "07_bridge_waterline": {
+      "byte_size": 2498801,
+      "color_bucket_count": 130,
+      "decoder": "blender",
+      "edge_density": 0.24587884806355512,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 97.01256983024616,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\07_bridge_waterline.png",
+      "requirement": "bridge anchoring over river",
+      "std_luma": 32.39860920777515,
+      "width": 1920
+    },
+    "08_bridge_approach_path": {
+      "byte_size": 2639976,
+      "color_bucket_count": 147,
+      "decoder": "blender",
+      "edge_density": 0.3592850049652433,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 110.39047878086349,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\08_bridge_approach_path.png",
+      "requirement": "bridge-to-path transition",
+      "std_luma": 35.492393707419865,
+      "width": 1920
+    },
+    "10_large_water_panorama": {
+      "byte_size": 2089109,
+      "color_bucket_count": 92,
+      "decoder": "blender",
+      "edge_density": 0.05243296921549156,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 190.46364853395676,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\10_large_water_panorama.png",
+      "requirement": "off-node large water continuation",
+      "std_luma": 24.4629483682092,
+      "width": 1920
+    },
+    "11_large_water_shoreline": {
+      "byte_size": 2175645,
+      "color_bucket_count": 90,
+      "decoder": "blender",
+      "edge_density": 0.12055610724925521,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 157.6674801311669,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\11_large_water_shoreline.png",
+      "requirement": "large water shoreline",
+      "std_luma": 63.18598163603541,
+      "width": 1920
+    },
+    "12_cliff_face": {
+      "byte_size": 2441527,
+      "color_bucket_count": 158,
+      "decoder": "blender",
+      "edge_density": 0.2895729890764647,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 127.3832635030847,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\12_cliff_face.png",
+      "requirement": "cliff and mountain material read",
+      "std_luma": 32.38623614700079,
+      "width": 1920
+    },
+    "13_mountain_peak_lookdown": {
+      "byte_size": 2584163,
+      "color_bucket_count": 180,
+      "decoder": "blender",
+      "edge_density": 0.4166832174776564,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 113.97579996141862,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\13_mountain_peak_lookdown.png",
+      "requirement": "mountain pass macro shape",
+      "std_luma": 53.51967277922542,
+      "width": 1920
+    },
+    "14_forest_bridge_side": {
+      "byte_size": 2502347,
+      "color_bucket_count": 128,
+      "decoder": "blender",
+      "edge_density": 0.33704071499503474,
+      "exists": true,
+      "height": 1080,
+      "issues": [],
+      "mean_luma": 105.33244290123412,
+      "path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\closeups\\14_forest_bridge_side.png",
+      "requirement": "forest-side scatter near bridge",
+      "std_luma": 32.731333813000454,
+      "width": 1920
+    }
+  },
+  "object_counts": {
+    "bridge": 1,
+    "grass": 2401,
+    "lake_or_large_water": 2,
+    "river": 5,
+    "road_or_path": 2,
+    "trees": 320,
+    "waterfall": 86
+  },
+  "required_closeups": {
+    "01_tile_overview": "full node scope",
+    "02_hero_establishing": "mountain pass, river, water body composition",
+    "05_waterfall_closeup": "waterfall quality",
+    "06_river_bank_entry": "river depth and bank entry",
+    "07_bridge_waterline": "bridge anchoring over river",
+    "08_bridge_approach_path": "bridge-to-path transition",
+    "10_large_water_panorama": "off-node large water continuation",
+    "11_large_water_shoreline": "large water shoreline",
+    "12_cliff_face": "cliff and mountain material read",
+    "13_mountain_peak_lookdown": "mountain pass macro shape",
+    "14_forest_bridge_side": "forest-side scatter near bridge"
+  },
+  "status": "pass",
+  "summary_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\scene_v3\\BUILD_SUMMARY.json",
+  "warning_count": 0,
+  "warnings": []
+}

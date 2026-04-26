@@ -1,0 +1,80 @@
+{
+  "run_utc": "2026-04-24T06:49:39Z",
+  "nodes": [
+    {
+      "node_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1",
+      "exists": true,
+      "rounds": [
+        {
+          "round_num": 1,
+          "timestamp": "2026-04-24T06:49:39Z",
+          "verdicts": [
+            {
+              "judge": "opus",
+              "verdict": "ERROR",
+              "score_of_10": null,
+              "critical_issues": [],
+              "minor_issues": [],
+              "praise": [],
+              "raw": "",
+              "error": "opus_judge not wired \u2014 parent agent must override with Task dispatch"
+            },
+            {
+              "judge": "codex",
+              "verdict": "ERROR",
+              "score_of_10": null,
+              "critical_issues": [],
+              "minor_issues": [],
+              "praise": [],
+              "raw": "{\"error\":\"Missing BUILD_SUMMARY, six rendered view descriptions, and target JSON schema.\"}",
+              "error": "unexpected verdict value: ''"
+            },
+            {
+              "judge": "gemini",
+              "verdict": "ERROR",
+              "score_of_10": null,
+              "critical_issues": [],
+              "minor_issues": [],
+              "praise": [],
+              "raw": "{\n  \"aaa_quality\": false,\n  \"flagged_as_procedural\": true,\n  \"critique\": \"The input data (BUILD_SUMMARY and 6 rendered views) was not provided for evaluation. In a typical scenario without manual art passes, procedural generation often lacks intentional storytelling in prop placement, exhibits repeating texture patterns, and has unnatural erosion lines that a trained art director would flag.\"\n}\n",
+              "error": "unexpected verdict value: ''"
+            }
+          ],
+          "all_pass": false,
+          "mode": "fail",
+          "fix_dispatch_id": null,
+          "issues": {
+            "critical": [],
+            "minor": []
+          }
+        }
+      ],
+      "final_verdicts": null,
+      "agreement_mode": null,
+      "signoff": null,
+      "started_utc": "2026-04-24T06:49:15Z",
+      "failure_to_agree": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v1\\FAILURE_TO_AGREE.md"
+    },
+    {
+      "node_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_v2",
+      "exists": false,
+      "rounds": [],
+      "final_verdicts": null,
+      "agreement_mode": null,
+      "signoff": null,
+      "started_utc": "2026-04-24T06:49:39Z",
+      "skipped": "node_dir does not exist yet"
+    },
+    {
+      "node_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_node_showcase",
+      "exists": false,
+      "rounds": [],
+      "final_verdicts": null,
+      "agreement_mode": null,
+      "signoff": null,
+      "started_utc": "2026-04-24T06:49:39Z",
+      "skipped": "node_dir does not exist yet"
+    }
+  ],
+  "gemini_probe_ok": true
+}

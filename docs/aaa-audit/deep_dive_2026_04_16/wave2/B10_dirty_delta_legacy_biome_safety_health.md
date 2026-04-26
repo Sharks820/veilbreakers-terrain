@@ -45,7 +45,7 @@ Reference docs consulted (Context7 + WebFetch):
 
 **Headline successes:**
 
-- `terrain_blender_safety.py` is genuinely AAA — small, focused, hard caps in module constants, explicit guards, threading.Lock for Tripo serialization, type-checked sentinels. **A-.**
+- `terrain_blender_safety.py` is genuinely AAA — small, focused, hard caps in module constants, explicit guards, threading.Lock for retired model provider serialization, type-checked sentinels. **A-.**
 - `BBox.intersects` (semantics) and `BBox.to_cell_slice` (cell-slice) are correct and reusable.
 - `pass_integrate_deltas` *correctly* respects protected zones via two channels (`hero_exclusion` + intent zones) AND honors `zone.permits()` opt-out — that part is genuinely well-engineered. **B+ on protected-zone semantics specifically.**
 - `_collect_deltas` correctly skips zero-only channels via `np.any(arr != 0.0)` — short-circuits trivial work.
@@ -420,7 +420,7 @@ Reference docs consulted (Context7 + WebFetch):
 - **What it does:** `(x, y, z) → (x, -z, y)` for position; Euler rotation: `(rx, ry, rz) → (rx, -rz, ry)`.
 - **Reference:** Standard Y-up to Z-up rotation: rotate -90° about X. Position: `(x, y, z) → (x, -z, y)` ✓. Euler: depends on order; for XYZ Euler the formula `(rx, -rz, ry)` is *approximate* — the correct conversion for arbitrary Euler order requires matrix conversion (build rotation matrix, multiply by axis-swap, decompose).
 - **Bug/gap:** **L61 Euler conversion is wrong for non-trivial rotations.** The correct formula is to convert Euler → rotation matrix → multiply by `R_x(-90°)` → decompose back to Euler. The simple component swap only works when input is axis-aligned.
-- **Severity:** MEDIUM-HIGH for assets with arbitrary orientation (Tripo GLBs); LOW if all imports are axis-aligned (typical).
+- **Severity:** MEDIUM-HIGH for assets with arbitrary orientation (retired model provider GLBs); LOW if all imports are axis-aligned (typical).
 - **Upgrade:** use `mathutils.Euler` or `scipy.spatial.transform.Rotation` to do the matrix multiply.
 
 ## 5.4 `guard_z_up` decorator (L65–75)
@@ -452,15 +452,15 @@ Reference docs consulted (Context7 + WebFetch):
 - **Bug/gap:** the 20000 threshold is hardcoded; Blender's actual recommendation depends on operation type (UNION vs DIFFERENCE), mesh manifoldness, normal consistency. For real Blender boolean stability the threshold should be tuned per-operation. Severity: LOW.
 - **Upgrade:** add `op_type` parameter; use 50k for UNION, 30k for DIFFERENCE, 20k for INTERSECT.
 
-## 5.9 `import_tripo_glb_serialized` (L157–190)
+## 5.9 `import_retired_model_provider_glb_serialized` (L157–190)
 - **Prior:** A. **My:** A. **AGREE.** Best function in the file.
 - **What it does:** Validates suffix + existence + serializes via `threading.Lock`.
-- **Reference:** Tripo bug feedback (`feedback_tripo_import_one_at_a_time.md`) — concurrent GLB imports crash Blender's gltf importer due to shared state in `bpy.ops.import_scene.gltf`. Lock-per-import is the canonical fix.
+- **Reference:** retired model provider bug feedback (`feedback_retired_model_provider_import_one_at_a_time.md`) — concurrent GLB imports crash Blender's gltf importer due to shared state in `bpy.ops.import_scene.gltf`. Lock-per-import is the canonical fix.
 - **Minor gap:**
   - **L173 docstring** lists 2 contracts (suffix + exists) but the implementation has 3 (lock is the third); doc says "two contracts" but lists three numbered items.
-  - **L187:** the `with _TRIPO_IMPORT_LOCK:` is held only for the dict mutation — in real Blender you'd also call `bpy.ops.import_scene.gltf(filepath=...)` inside; current headless stub doesn't show that. Comment acknowledges. Severity: LOW (intentional headless stub).
+  - **L187:** the `with _RETIRED_MODEL_PROVIDER_IMPORT_LOCK:` is held only for the dict mutation — in real Blender you'd also call `bpy.ops.import_scene.gltf(filepath=...)` inside; current headless stub doesn't show that. Comment acknowledges. Severity: LOW (intentional headless stub).
 
-## 5.10 `get_tripo_import_log` / `clear_tripo_import_log` (L193, L198)
+## 5.10 `get_retired_model_provider_import_log` / `clear_retired_model_provider_import_log` (L193, L198)
 - **My:** A. Test helpers, defensive copy on read, clear on write. Correct.
 
 ---
@@ -563,7 +563,7 @@ Hardcoded line numbers (793, 896, 1483, 1530) inside an audit module are guarant
 | `terrain_delta_integrator.py` | **B-** | `register_integrator_pass` (A-) | `pass_integrate_deltas` metric label (HIGH bug) |
 | `terrain_legacy_bug_fixes.py` | **C** | `_default_terrain_advanced_path` (B) | `audit_terrain_advanced_world_units` (C-) |
 | `_biome_grammar.py` | **C+** | `resolve_biome_name` (A-) | `_distance_from_mask` (D) + `_box_filter_2d` (D) |
-| `terrain_blender_safety.py` | **A-** | `import_tripo_glb_serialized` (A) | `convert_y_up_to_z_up` Euler (B+) |
+| `terrain_blender_safety.py` | **A-** | `import_retired_model_provider_glb_serialized` (A) | `convert_y_up_to_z_up` Euler (B+) |
 | `terrain_addon_health.py` | **C+** | `assert_addon_version_matches` (A-) | `detect_stale_addon` / `force_addon_reload` (C-) |
 
 ---
@@ -595,3 +595,4 @@ Hardcoded line numbers (793, 896, 1483, 1530) inside an audit module are guarant
 | Addon hot-reload | extension manifest hash + module reload | hda dependency graph | broken `from .. import __init__` (silent no-op) |
 
 Pattern: every system in this batch is correct *in intent*, undermined *in implementation* by either (a) Python loops where numpy/scipy vectorization is trivial, (b) closed-set whitelists where introspection is the AAA pattern, or (c) misleading variable/metric names that survive review because they happen to work. The `terrain_blender_safety.py` is the clear exception — small, focused, hard caps as constants, correct lock semantics. That's the model the rest should match.
+

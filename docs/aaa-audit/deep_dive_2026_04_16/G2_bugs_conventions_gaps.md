@@ -261,7 +261,7 @@ Per Blender 4.5 API: `ray_cast` on `Object` uses the unevaluated mesh; for modif
 | File | Function | Line | Stub Type | Severity |
 |---|---|---|---|---|
 | `terrain_cliffs.py` | `insert_hero_cliff_meshes` | 454 | Records intent only, no geometry | F-grade stub |
-| `terrain_blender_safety.py` | `import_tripo_glb_serialized` | (per master) | Thread lock wrapper, no `bpy.ops.import_scene.gltf()` | CRITICAL stub |
+| `terrain_blender_safety.py` | `import_retired_model_provider_glb_serialized` | (per master) | Thread lock wrapper, no `bpy.ops.import_scene.gltf()` | CRITICAL stub |
 | `terrain_water_variants.py` | `generate_braided_channels`, `detect_estuary`, `detect_karst_springs`, `detect_perched_lakes`, `detect_hot_springs`, `apply_seasonal_water_state` | (in module) | Defined but `pass_water_variants` only calls `detect_wetlands` + generic wetness; 7 helpers are dead | IMPORTANT |
 | `terrain_vegetation_depth.py` | `detect_disturbance_patches`, `place_clearings`, `place_fallen_logs`, `apply_edge_effects`, `apply_cultivated_zones`, `apply_allelopathic_exclusion` | (in module) | Defined but `pass_vegetation_depth` only calls `compute_vegetation_layers` | IMPORTANT |
 | `terrain_stratigraphy.py` | `apply_differential_erosion` | 195 | Function exists, never called by any pass | POLISH |
@@ -407,3 +407,4 @@ The non-AAA path `terrain_advanced.compute_erosion_brush:863-873` reduces "hydra
 **TOTAL net findings on HEAD (April 16 2026):** 30 confirmed + 14 new = **44 actionable code defects**, plus 11 spec gaps, 11 conventions to consolidate, 14 stubs/dead code.
 
 **Highest-leverage single fix:** registering `pass_integrate_deltas` in the default pass graph — unblocks caves, coastline, karst, wind erosion, and glacial features in one line of code (master audit Section 5 / GAP-06 / BUG-44).
+

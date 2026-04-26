@@ -1,0 +1,9 @@
+{
+  "foreground_blender_pid": 17592,
+  "blend_loaded": "output/aaa_node_v1/VeilBreakers_AAA_Node_v1.blend",
+  "hero_camera": "CAM_hero_wide",
+  "viewport_shading": "RENDERED",
+  "launch_command": "blender --python scripts/open_aaa_node_v1.py -- output/aaa_node_v1/VeilBreakers_AAA_Node_v1.blend",
+  "headless_build_exit": 0,
+  "headless_build_command": "blender --background --python scripts/build_aaa_node_v1.py"
+}

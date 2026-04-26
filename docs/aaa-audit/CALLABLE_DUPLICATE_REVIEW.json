@@ -1,0 +1,548 @@
+{
+  "schema": "callable_duplicate_review.v1",
+  "generated_by": "terrain_best_practice_guardrail duplicate review",
+  "review_basis": "Simple-name duplicates were reviewed after executable verification matrix reached 0 blocker, 0 high, and 0 false-A rows. Entries remain allowed only when all exact callable ids in the group are listed here; new or changed duplicate groups become unreviewed guardrail findings.",
+  "reviewed_duplicate_groups": {
+    "_apply_road_profile_to_heightmap": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "environment.py::_apply_road_profile_to_heightmap",
+        "terrain_twelve_step.py::_apply_road_profile_to_heightmap"
+      ]
+    },
+    "_build_adjacency": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "mesh_smoothing.py::_build_adjacency",
+        "terrain_sculpt.py::_build_adjacency"
+      ]
+    },
+    "_cell_to_world": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_assets.py::_cell_to_world",
+        "terrain_caves.py::_cell_to_world"
+      ]
+    },
+    "_compute_tile_contracts": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_water_network.py::WaterNetwork._compute_tile_contracts",
+        "terrain_chunking.py::_compute_tile_contracts"
+      ]
+    },
+    "_cross": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "autonomous_loop.py::_cross",
+        "lod_pipeline.py::_cross",
+        "terrain_features.py::_cross"
+      ]
+    },
+    "_dist2d": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "vertex_paint_live.py::_dist2d",
+        "world_map.py::_dist2d"
+      ]
+    },
+    "_dist3": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "light_integration.py::_dist3",
+        "road_network.py::_dist3"
+      ]
+    },
+    "_dot": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "autonomous_loop.py::_dot",
+        "lod_pipeline.py::_dot"
+      ]
+    },
+    "_dot3": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_mesh_bridge.py::_dot3",
+        "mesh.py::_dot3"
+      ]
+    },
+    "_face_normal": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_mesh_bridge.py::_face_normal",
+        "autonomous_loop.py::_face_normal",
+        "lod_pipeline.py::_face_normal",
+        "terrain_caves.py::_face_normal",
+        "terrain_features.py::_face_normal"
+      ]
+    },
+    "_fbm_noise": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "coastline.py::_fbm_noise",
+        "terrain_caves.py::_fbm_noise"
+      ]
+    },
+    "_grid_to_world": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_water_network.py::WaterNetwork._grid_to_world",
+        "terrain_waterfalls.py::_grid_to_world"
+      ]
+    },
+    "_hash_noise": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "coastline.py::_hash_noise",
+        "terrain_features.py::_hash_noise"
+      ]
+    },
+    "_normalize": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "autonomous_loop.py::_normalize",
+        "lod_pipeline.py::_normalize",
+        "terrain_features.py::_normalize",
+        "terrain_vegetation_depth.py::_normalize"
+      ]
+    },
+    "_protected_mask": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_world.py::_protected_mask",
+        "terrain_assets.py::_protected_mask",
+        "terrain_vegetation_depth.py::_protected_mask",
+        "terrain_water_variants.py::_protected_mask"
+      ]
+    },
+    "_region_slice": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_world.py::_region_slice",
+        "terrain_vegetation_depth.py::_region_slice",
+        "terrain_water_variants.py::_region_slice",
+        "terrain_waterfalls.py::_region_slice"
+      ]
+    },
+    "_region_to_slice": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_caves.py::_region_to_slice",
+        "terrain_cliffs.py::_region_to_slice"
+      ]
+    },
+    "_require_bpy": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "blender_capability_bridge.py::_require_bpy",
+        "environment.py::_require_bpy",
+        "environment_scatter.py::_require_bpy",
+        "terrain_sculpt.py::_require_bpy"
+      ]
+    },
+    "_safe_asarray": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_readability_semantic.py::_safe_asarray",
+        "terrain_validation.py::_safe_asarray"
+      ]
+    },
+    "_sample_height_bilinear": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_horizon_lod.py::_sample_height_bilinear",
+        "terrain_saliency.py::_sample_height_bilinear"
+      ]
+    },
+    "_smoothstep": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_noise.py::_smoothstep",
+        "vertex_paint_live.py::_smoothstep"
+      ]
+    },
+    "_sub": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "autonomous_loop.py::_sub",
+        "lod_pipeline.py::_sub",
+        "terrain_features.py::_sub"
+      ]
+    },
+    "_wang_hash": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "coastline.py::_wang_hash",
+        "terrain_materials.py::_wang_hash"
+      ]
+    },
+    "_world_to_cell": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_caves.py::_world_to_cell",
+        "terrain_footprint_surface.py::_world_to_cell",
+        "terrain_saliency.py::_world_to_cell"
+      ]
+    },
+    "_world_to_grid": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_water_network_ext.py::_world_to_grid",
+        "terrain_waterfalls.py::_world_to_grid"
+      ]
+    },
+    "add": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_hot_reload.py::HotReloadWatcher.add",
+        "terrain_validation.py::ValidationReport.add"
+      ]
+    },
+    "all_issues": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_validation.py::ReadabilityAuditReport.all_issues",
+        "terrain_validation.py::ValidationReport.all_issues"
+      ]
+    },
+    "apply_anti_grain_smoothing": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_banded.py::apply_anti_grain_smoothing",
+        "terrain_banded_advanced.py::apply_anti_grain_smoothing"
+      ]
+    },
+    "apply_thermal_erosion": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_erosion.py::apply_thermal_erosion",
+        "terrain_advanced.py::apply_thermal_erosion"
+      ]
+    },
+    "as_dict": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_budget_enforcer.py::BudgetReport.as_dict",
+        "terrain_ecotone_graph.py::EcotoneEdge.as_dict",
+        "terrain_vegetation_depth.py::VegetationLayers.as_dict"
+      ]
+    },
+    "center": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_asset_metadata.py::AABB.center",
+        "terrain_semantics.py::BBox.center"
+      ]
+    },
+    "check_cave_framing_presence": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_readability_semantic.py::check_cave_framing_presence",
+        "terrain_validation.py::check_cave_framing_presence"
+      ]
+    },
+    "check_cliff_silhouette_readability": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_readability_semantic.py::check_cliff_silhouette_readability",
+        "terrain_validation.py::check_cliff_silhouette_readability"
+      ]
+    },
+    "check_focal_composition": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_readability_semantic.py::check_focal_composition",
+        "terrain_validation.py::check_focal_composition"
+      ]
+    },
+    "check_waterfall_chain_completeness": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_readability_semantic.py::check_waterfall_chain_completeness",
+        "terrain_validation.py::check_waterfall_chain_completeness"
+      ]
+    },
+    "compute_anisotropic_breakup": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_banded.py::compute_anisotropic_breakup",
+        "terrain_banded_advanced.py::compute_anisotropic_breakup"
+      ]
+    },
+    "force_reload_all": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_hot_reload.py::HotReloadWatcher.force_reload_all",
+        "terrain_hot_reload.py::force_reload_all"
+      ]
+    },
+    "from_dict": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_water_network.py::WaterNetwork.from_dict",
+        "terrain_advanced.py::TerrainLayer.from_dict",
+        "terrain_golden_snapshots.py::GoldenSnapshot.from_dict",
+        "terrain_telemetry_dashboard.py::TelemetryRecord.from_dict"
+      ]
+    },
+    "generate_canyon": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_canyon",
+        "terrain_features.py::generate_canyon"
+      ]
+    },
+    "generate_cliff_face": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_cliff_face",
+        "terrain_features.py::generate_cliff_face"
+      ]
+    },
+    "generate_floating_rocks": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_floating_rocks",
+        "terrain_features.py::generate_floating_rocks"
+      ]
+    },
+    "generate_ice_formation": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_ice_formation",
+        "terrain_features.py::generate_ice_formation"
+      ]
+    },
+    "generate_lava_flow": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_lava_flow",
+        "terrain_features.py::generate_lava_flow"
+      ]
+    },
+    "generate_sinkhole": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_sinkhole",
+        "terrain_features.py::generate_sinkhole"
+      ]
+    },
+    "generate_swamp_terrain": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_swamp_terrain",
+        "terrain_features.py::generate_swamp_terrain"
+      ]
+    },
+    "generate_waterfall": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_scatter_engine.py::generate_waterfall",
+        "terrain_features.py::generate_waterfall"
+      ]
+    },
+    "get": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_mask_cache.py::MaskCache.get",
+        "terrain_semantics.py::TerrainMaskStack.get"
+      ]
+    },
+    "lock_preset": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_checkpoints_ext.py::lock_preset",
+        "terrain_quality_profiles.py::lock_preset"
+      ]
+    },
+    "mark_dirty": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_dirty_tracking.py::DirtyTracker.mark_dirty",
+        "terrain_semantics.py::TerrainMaskStack.mark_dirty"
+      ]
+    },
+    "merge": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_dirty_tracking.py::DirtyRegion.merge",
+        "terrain_iteration_metrics.py::IterationMetrics.merge"
+      ]
+    },
+    "noise2": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_noise.py::_OpenSimplexWrapper.noise2",
+        "_terrain_noise.py::_PermTableNoise.noise2"
+      ]
+    },
+    "noise2_array": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_noise.py::_OpenSimplexWrapper.noise2_array",
+        "_terrain_noise.py::_PermTableNoise.noise2_array"
+      ]
+    },
+    "noise3": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_noise.py::_OpenSimplexWrapper.noise3",
+        "_terrain_noise.py::_PermTableNoise.noise3"
+      ]
+    },
+    "recompute_status": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_validation.py::ReadabilityAuditReport.recompute_status",
+        "terrain_validation.py::ValidationReport.recompute_status"
+      ]
+    },
+    "rollback_last_checkpoint": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_checkpoints.py::rollback_last_checkpoint",
+        "terrain_pipeline.py::TerrainPassController.rollback_last_checkpoint"
+      ]
+    },
+    "rollback_to": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_checkpoints.py::rollback_to",
+        "terrain_pipeline.py::TerrainPassController.rollback_to"
+      ]
+    },
+    "stats": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_foliage_catalog.py::AssetManifest.stats",
+        "terrain_mask_cache.py::MaskCache.stats"
+      ]
+    },
+    "to_dict": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_water_network.py::WaterNetwork.to_dict",
+        "terrain_advanced.py::TerrainLayer.to_dict",
+        "terrain_foliage_catalog.py::SpeciesSpec.to_dict",
+        "terrain_god_ray_hints.py::GodRayHint.to_dict",
+        "terrain_golden_snapshots.py::GoldenSnapshot.to_dict",
+        "terrain_path_contracts.py::PathNetworkContract.to_dict",
+        "terrain_path_contracts.py::PathSegmentContract.to_dict",
+        "terrain_quixel_ingest.py::QuixelAsset.to_dict",
+        "terrain_review_ingest.py::ReviewFinding.to_dict",
+        "terrain_scatter_points.py::ScatterPoint.to_dict",
+        "terrain_scatter_points.py::ScatterPointTable.to_dict",
+        "terrain_stochastic_shader.py::StochasticShaderTemplate.to_dict",
+        "terrain_telemetry_dashboard.py::TelemetryRecord.to_dict",
+        "terrain_world_math.py::TileTransform.to_dict"
+      ]
+    },
+    "unlock_preset": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_checkpoints_ext.py::unlock_preset",
+        "terrain_quality_profiles.py::unlock_preset"
+      ]
+    },
+    "validate_glacial_plausibility": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_geology_validator.py::validate_glacial_plausibility",
+        "terrain_validation.py::validate_glacial_plausibility"
+      ]
+    },
+    "validate_karst_plausibility": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_geology_validator.py::validate_karst_plausibility",
+        "terrain_validation.py::validate_karst_plausibility"
+      ]
+    },
+    "validate_strata_consistency": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_geology_validator.py::validate_strata_consistency",
+        "terrain_validation.py::validate_strata_consistency"
+      ]
+    },
+    "validate_tile_seams": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "_terrain_world.py::validate_tile_seams",
+        "terrain_chunking.py::validate_tile_seams"
+      ]
+    },
+    "validate_waterfall_volumetric": {
+      "status": "reviewed_allowed",
+      "rationale": "Distinct module/class scopes or compatibility wrappers with executable verification coverage; not a routing collision unless a new exact callable id appears outside this reviewed set.",
+      "callables": [
+        "terrain_waterfalls.py::validate_waterfall_volumetric",
+        "terrain_waterfalls_volumetric.py::validate_waterfall_volumetric"
+      ]
+    }
+  }
+}

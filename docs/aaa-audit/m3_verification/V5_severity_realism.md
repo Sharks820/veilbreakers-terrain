@@ -151,12 +151,12 @@ For each terrain subsystem, "what a current AAA title ships" vs "what VeilBreake
 | Density per km² | PCG Density filter, supports density-per-unit-area with actual-area scaling | BUG-103: `max_features_per_km2` treated as raw count → PRIMARY capped at 1 | IMPORTANT |
 | World Partition HLOD | UE5 PCG auto-assigns actors to Data Layer + HLOD Layer | `lod_pipeline._setup_billboard_lod` stores metadata without baking (BUG-141) | HIGH |
 | Octahedral impostor | Fortnite 12×12=144 sub-frames 2048² RGBA + 1024² Normal+Depth | N-sided prism + JSON `next_steps` stub (BUG-137) | BLOCKER |
-| SpeedTree integration | SpeedTree Modeler + SDK + Library — 4K PBR, full season range, wind | Not present | POLISH (not always a blocker for dark-fantasy; Tripo+Blender is user's pipeline per profile) |
+| SpeedTree integration | SpeedTree Modeler + SDK + Library — 4K PBR, full season range, wind | Not present | POLISH (not always a blocker for dark-fantasy; retired model provider+Blender is user's pipeline per profile) |
 | Source: | https://dev.epicgames.com/documentation/en-us/unreal-engine/procedural-content-generation-overview ; https://store.speedtree.com/ | — | — |
 
 ### 4.6 Cliff / chamber mesh
 
-| Capability | AAA floor (UE5 voxel / Houdini VDB / Tripo scans) | VeilBreakers today | Gap |
+| Capability | AAA floor (UE5 voxel / Houdini VDB / retired model provider scans) | VeilBreakers today | Gap |
 |---|---|---|---|
 | Chamber geometry | Marching cubes on SDF (skimage), Dual Contouring (Schaefer-Warren 2004), or hand-sculpted Megascans | 8-vertex 6-quad axis-aligned invisible box (BUG-83 / BUG-139 — TWO copies) | BLOCKER (literal F-grade rubric) |
 | Cliff strata | Multi-octave noise + directional strata + overhangs + scanned Megascans | Single Gaussian-noise pass with sin mask + per-vertex Gaussian noise (speckle) | IMPORTANT |
@@ -211,3 +211,4 @@ Additional references *named in the brief* that were **not productively scrapeab
 ---
 
 *Agent V5 — M3 ultrathink verification wave — severity-realism lens — complete.*
+

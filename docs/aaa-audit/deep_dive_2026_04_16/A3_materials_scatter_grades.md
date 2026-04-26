@@ -307,10 +307,10 @@ AAA gap:
 upgrade to A: 
   - Add per-mesh material slot maps (`material_slots: List[str]` in MeshSpec).
   - Add `collision_hull` field auto-computed via convex hull.
-  - Add Tripo3D integration to upgrade hero props to actual sculpted geometry.
+  - Add retired_model_provider integration to upgrade hero props to actual sculpted geometry.
   - Replace box-projection UVs with smart-project (Blender side).
 
-The 22K-line file is **technically impressive engineering** (no library deps, fully testable, deterministic) but **artistically AA-tier**. For a real AAA dark-fantasy game you would Quixel Bridge / Tripo / Sketchfab the props, not generate them parametrically. These are perfectly fine as **prototype/blockout** geometry until art is done.
+The 22K-line file is **technically impressive engineering** (no library deps, fully testable, deterministic) but **artistically AA-tier**. For a real AAA dark-fantasy game you would Quixel Bridge / retired model provider / Sketchfab the props, not generate them parametrically. These are perfectly fine as **prototype/blockout** geometry until art is done.
 
 ## Module: vegetation_lsystem.py (1188 lines)
 
@@ -488,8 +488,8 @@ Power-of-two-plus-1 (Unity terrain dim convention). Trivial.
 ### `_compute_vertex_colors_for_biome_map` / `_stable_seed_offset` (lines 5390-5433) — B+
 Biome vertex color compute + deterministic seed offset.
 
-### `_build_tripo_environment_manifest` (line 491) — B-
-prior: C | what: builds Tripo3D upload manifest from `_TRIPO_ENVIRONMENT_PROMPTS` (only 7 entries). | bug: master audit notes 7 entries vs 43 referenced biome assets — 36 biomes have no Tripo prompt fallback. | upgrade to A: expand to 43+ entries OR add a fallback prompt template.
+### `_build_retired_model_provider_environment_manifest` (line 491) — B-
+prior: C | what: builds retired_model_provider upload manifest from `_RETIRED_MODEL_PROVIDER_ENVIRONMENT_PROMPTS` (only 7 entries). | bug: master audit notes 7 entries vs 43 referenced biome assets — 36 biomes have no retired model provider prompt fallback. | upgrade to A: expand to 43+ entries OR add a fallback prompt template.
 
 ### `_apply_biome_season_profile` / `get_vb_biome_preset` (lines 524-546) — B+
 Biome preset application. Clean.
@@ -1138,7 +1138,7 @@ mtime-sorted oldest-first deletion.
 
 13. **Procedural mesh library is AA-tier blockout geometry**. 250 generators with no PBR, no rigs, no proper UVs, no LODs baked in, no per-asset variation beyond seed → mesh. Strong as placeholder; insufficient as shipping geometry.
 
-14. **`_TRIPO_ENVIRONMENT_PROMPTS` has 7 entries vs 43 referenced biome assets** (master audit BUG-04). Confirmed in environment.py:491 build_tripo_environment_manifest.
+14. **`_RETIRED_MODEL_PROVIDER_ENVIRONMENT_PROMPTS` has 7 entries vs 43 referenced biome assets** (master audit BUG-04). Confirmed in environment.py:491 build_retired_model_provider_environment_manifest.
 
 ## NEW BUGS FOUND (BUG-50 through BUG-58)
 
@@ -1175,3 +1175,4 @@ mtime-sorted oldest-first deletion.
   - Unity HDRP Local Volumetric Fog — uses 3D density texture; `atmospheric_volumes.compute_volume_mesh_spec` returns mesh proxy geometry instead.
   - Recast NavMesh tile-based polygon bake — `terrain_navmesh_export.export_navmesh_json` writes area-ID descriptor only, no polygon mesh.
   - HISM (Hierarchical Instanced Static Mesh) UE5 / Unity DOTS instancing — `vegetation_lsystem.prepare_gpu_instancing_export` returns a JSON dict, not a binary HISM payload.
+

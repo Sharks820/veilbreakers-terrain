@@ -815,9 +815,9 @@ updates = {
     ('terrain_blender_safety.py', 'assert_boolean_safe'): 'A|2026-04-19: checks both operands against 60k limit; custom limit kwarg.',
     ('terrain_blender_safety.py', 'decimate_to_safe_count'): 'A-|2026-04-19: ratio = target/current; 0.01 floor; edge case current<=0 returns 1.0.',
     ('terrain_blender_safety.py', 'recommend_boolean_solver'): 'A-|2026-04-19: 5-rule decision tree: unknown/non-manifold/INTERSECT->EXACT; dense-manifold->FAST; small-manifold->EXACT; operation+manifold kwargs.',
-    ('terrain_blender_safety.py', 'import_tripo_glb_serialized'): 'A|2026-04-19: per-file lock inside loop; .glb/.gltf suffix guard; require_exists check.',
-    ('terrain_blender_safety.py', 'get_tripo_import_log'): 'A|2026-04-19: defensive copy of mutable log list.',
-    ('terrain_blender_safety.py', 'clear_tripo_import_log'): 'A|2026-04-19: one-liner test helper; direct list.clear().',
+    ('terrain_blender_safety.py', 'import_gltf_serialized'): 'A|2026-04-19: per-file lock inside loop; .glb/.gltf suffix guard; require_exists check.',
+    ('terrain_blender_safety.py', 'get_gltf_import_log'): 'A|2026-04-19: defensive copy of mutable log list.',
+    ('terrain_blender_safety.py', 'clear_gltf_import_log'): 'A|2026-04-19: one-liner test helper; direct list.clear().',
 
     # weathering.py (agent ac97906f)
     ('weathering.py', 'WEATHERING_PRESETS'): 'A|2026-04-19: 3 presets (light/medium/heavy); 6 fields each including age_factor; well-calibrated values.',

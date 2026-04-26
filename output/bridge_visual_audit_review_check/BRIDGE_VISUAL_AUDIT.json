@@ -1,0 +1,855 @@
+{
+  "blender_path": null,
+  "blender_runtime_detected": false,
+  "blocker_count": 0,
+  "blockers": [],
+  "bridge_visual_audit": "2026-04-26",
+  "note": "SVG/OBJ previews are generated in headless Python. This is not a substitute for Blender viewport review; when Blender is available, run these OBJ/spec variants through visual_qa_setup_camera and visual_qa_capture_screenshot.",
+  "variant_count": 8,
+  "variants": [
+    {
+      "face_count": 506,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 3.0,
+          "arch_count": 0,
+          "centerline_point_count": 2,
+          "centerline_points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              8.0,
+              0.0,
+              0.0
+            ]
+          ],
+          "curve_segment_count": 1,
+          "elevation_delta_m": 0.0,
+          "material_family": "wood",
+          "material_slots": [
+            "timber_planks",
+            "timber_stringers",
+            "wood_posts",
+            "wood_rails",
+            "approach_transition"
+          ],
+          "module_count": 4,
+          "module_length_m": 2.4,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "rail_geometry": "continuous_socketed_rails",
+          "requested_style": "wood",
+          "resolved_style": "timber_beam",
+          "span_m": 8.0,
+          "support_count": 5,
+          "support_footing_style": "waterbed_sill_footings",
+          "support_foundation_z": -1.6,
+          "supports_reach_foundation": true,
+          "swept_centerline": true,
+          "terminal_pillar_style": "medieval_newel_with_rail_sockets",
+          "width_m": 2.0
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 2.605,
+          "height": 2.32,
+          "width": 9.04
+        },
+        "end_pos": [
+          8.0,
+          0.0,
+          0.0
+        ],
+        "material_slots": [
+          "timber_planks",
+          "timber_stringers",
+          "wood_posts",
+          "wood_rails",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_timber_beam_swept",
+        "poly_count": 506,
+        "resolved_style": "timber_beam",
+        "span": 8.0,
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "wood",
+        "vertex_count": 616
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\wood_short_path.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\wood_short_path_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\wood_short_path_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\wood_short_path_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\wood_short_path_top.svg"
+      },
+      "variant": {
+        "end_pos": [
+          8.0,
+          0.0,
+          0.0
+        ],
+        "name": "wood_short_path",
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "wood",
+        "water_level": -0.6,
+        "waterbed_z": -1.6,
+        "width": 2.0
+      },
+      "vertex_count": 616
+    },
+    {
+      "face_count": 1234,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 3.5999999999999996,
+          "arch_count": 0,
+          "centerline_point_count": 2,
+          "centerline_points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              22.0,
+              0.0,
+              0.0
+            ]
+          ],
+          "curve_segment_count": 1,
+          "elevation_delta_m": 0.0,
+          "material_family": "wood",
+          "material_slots": [
+            "timber_planks",
+            "timber_stringers",
+            "wood_posts",
+            "wood_rails",
+            "approach_transition"
+          ],
+          "module_count": 10,
+          "module_length_m": 2.4,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "rail_geometry": "continuous_socketed_rails",
+          "requested_style": "wood",
+          "resolved_style": "timber_beam",
+          "span_m": 22.0,
+          "support_count": 10,
+          "support_footing_style": "waterbed_sill_footings",
+          "support_foundation_z": -1.8,
+          "supports_reach_foundation": true,
+          "swept_centerline": true,
+          "terminal_pillar_style": "medieval_newel_with_rail_sockets",
+          "width_m": 2.4
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 2.8049999999999997,
+          "height": 2.784,
+          "width": 23.04
+        },
+        "end_pos": [
+          22.0,
+          0.0,
+          0.0
+        ],
+        "material_slots": [
+          "timber_planks",
+          "timber_stringers",
+          "wood_posts",
+          "wood_rails",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_timber_beam_swept",
+        "poly_count": 1234,
+        "resolved_style": "timber_beam",
+        "span": 22.0,
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "wood",
+        "vertex_count": 1396
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\wood_long_stretched.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\wood_long_stretched_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\wood_long_stretched_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\wood_long_stretched_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\wood_long_stretched_top.svg"
+      },
+      "variant": {
+        "end_pos": [
+          22.0,
+          0.0,
+          0.0
+        ],
+        "name": "wood_long_stretched",
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "wood",
+        "water_level": -0.6,
+        "waterbed_z": -1.8,
+        "width": 2.4
+      },
+      "vertex_count": 1396
+    },
+    {
+      "face_count": 558,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 6.0,
+          "arch_count": 2,
+          "centerline_point_count": 2,
+          "centerline_points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              14.0,
+              0.0,
+              0.0
+            ]
+          ],
+          "curve_segment_count": 1,
+          "elevation_delta_m": 0.0,
+          "has_bottom": true,
+          "has_side_walls": true,
+          "material_family": "stone",
+          "material_slots": [
+            "stone_deck",
+            "stone_parapets",
+            "stone_arch_ribs",
+            "stone_abutments",
+            "approach_transition"
+          ],
+          "module_count": 4,
+          "module_length_m": 3.5,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "requested_style": "stone",
+          "resolved_style": "stone_arch",
+          "span_m": 14.0,
+          "stone_bridge_parts": [
+            "cobblestone_roadbed",
+            "vertical_spandrel_walls",
+            "parapet_capstones",
+            "abutments",
+            "piers",
+            "arch_barrel_underside"
+          ],
+          "support_count": 3,
+          "support_foundation_z": -2.8,
+          "supports_reach_foundation": true,
+          "surface_pattern": "cobblestone",
+          "swept_centerline": true,
+          "width_m": 4.0
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 3.6799999999999997,
+          "height": 5.08,
+          "width": 14.879999999999999
+        },
+        "end_pos": [
+          14.0,
+          0.0,
+          0.0
+        ],
+        "material_slots": [
+          "stone_deck",
+          "stone_parapets",
+          "stone_arch_ribs",
+          "stone_abutments",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_stone_arch_swept",
+        "poly_count": 558,
+        "resolved_style": "stone_arch",
+        "span": 14.0,
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "stone",
+        "vertex_count": 724
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\stone_short_road.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\stone_short_road_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\stone_short_road_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\stone_short_road_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\stone_short_road_top.svg"
+      },
+      "variant": {
+        "end_pos": [
+          14.0,
+          0.0,
+          0.0
+        ],
+        "name": "stone_short_road",
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "stone",
+        "water_level": -1.0,
+        "waterbed_z": -2.8,
+        "width": 4.0
+      },
+      "vertex_count": 724
+    },
+    {
+      "face_count": 1518,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 8.0,
+          "arch_count": 4,
+          "centerline_point_count": 2,
+          "centerline_points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              42.0,
+              0.0,
+              0.0
+            ]
+          ],
+          "curve_segment_count": 1,
+          "elevation_delta_m": 0.0,
+          "has_bottom": true,
+          "has_side_walls": true,
+          "material_family": "stone",
+          "material_slots": [
+            "stone_deck",
+            "stone_parapets",
+            "stone_arch_ribs",
+            "stone_abutments",
+            "approach_transition"
+          ],
+          "module_count": 12,
+          "module_length_m": 3.5,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "requested_style": "stone",
+          "resolved_style": "stone_viaduct",
+          "span_m": 42.0,
+          "stone_bridge_parts": [
+            "cobblestone_roadbed",
+            "vertical_spandrel_walls",
+            "parapet_capstones",
+            "abutments",
+            "piers",
+            "arch_barrel_underside"
+          ],
+          "support_count": 5,
+          "support_foundation_z": -3.2,
+          "supports_reach_foundation": true,
+          "surface_pattern": "cobblestone",
+          "swept_centerline": true,
+          "width_m": 5.5
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 4.08,
+          "height": 6.865,
+          "width": 42.78
+        },
+        "end_pos": [
+          42.0,
+          0.0,
+          0.0
+        ],
+        "material_slots": [
+          "stone_deck",
+          "stone_parapets",
+          "stone_arch_ribs",
+          "stone_abutments",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_stone_viaduct_swept",
+        "poly_count": 1518,
+        "resolved_style": "stone_viaduct",
+        "span": 42.0,
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "stone",
+        "vertex_count": 1944
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\stone_long_viaduct.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\stone_long_viaduct_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\stone_long_viaduct_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\stone_long_viaduct_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\stone_long_viaduct_top.svg"
+      },
+      "variant": {
+        "end_pos": [
+          42.0,
+          0.0,
+          0.0
+        ],
+        "name": "stone_long_viaduct",
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "stone",
+        "water_level": -1.2,
+        "waterbed_z": -3.2,
+        "width": 5.5
+      },
+      "vertex_count": 1944
+    },
+    {
+      "face_count": 288,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 2.4000000000000004,
+          "arch_count": 0,
+          "material_family": "wood",
+          "material_slots": [
+            "timber_planks",
+            "rope_rails",
+            "rope_posts",
+            "approach_transition"
+          ],
+          "module_count": 6,
+          "module_length_m": 3.5,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "requested_style": "rope",
+          "resolved_style": "rope",
+          "span_m": 18.867962264113206,
+          "support_count": 2,
+          "width_m": 1.6
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 1.6583981132056589,
+          "height": 10.929530640941408,
+          "width": 16.215251569498623
+        },
+        "end_pos": [
+          16.0,
+          10.0,
+          3.0
+        ],
+        "material_slots": [
+          "timber_planks",
+          "rope_rails",
+          "rope_posts",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_rope",
+        "poly_count": 288,
+        "resolved_style": "rope",
+        "span": 18.867962264113206,
+        "start_pos": [
+          0.0,
+          0.0,
+          2.0
+        ],
+        "style": "rope",
+        "vertex_count": 384
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\rope_diagonal_elevated.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\rope_diagonal_elevated_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\rope_diagonal_elevated_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\rope_diagonal_elevated_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\rope_diagonal_elevated_top.svg"
+      },
+      "variant": {
+        "end_pos": [
+          16.0,
+          10.0,
+          3.0
+        ],
+        "name": "rope_diagonal_elevated",
+        "start_pos": [
+          0.0,
+          0.0,
+          2.0
+        ],
+        "style": "rope",
+        "width": 1.6
+      },
+      "vertex_count": 384
+    },
+    {
+      "face_count": 130,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 6.300000000000001,
+          "arch_count": 0,
+          "material_family": "wood",
+          "material_slots": [
+            "bridge_deck",
+            "bridge_hardware",
+            "approach_transition"
+          ],
+          "module_count": 4,
+          "module_length_m": 3.5,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "requested_style": "drawbridge",
+          "resolved_style": "drawbridge",
+          "span_m": 12.649110640673518,
+          "support_count": 2,
+          "width_m": 4.2
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 0.17692820323027553,
+          "height": 7.9844698518121575,
+          "width": 13.328156617270722
+        },
+        "end_pos": [
+          12.0,
+          -4.0,
+          0.5
+        ],
+        "material_slots": [
+          "bridge_deck",
+          "bridge_hardware",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_drawbridge",
+        "poly_count": 130,
+        "resolved_style": "drawbridge",
+        "span": 12.649110640673518,
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "drawbridge",
+        "vertex_count": 164
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\drawbridge_wide.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\drawbridge_wide_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\drawbridge_wide_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\drawbridge_wide_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\drawbridge_wide_top.svg"
+      },
+      "variant": {
+        "end_pos": [
+          12.0,
+          -4.0,
+          0.5
+        ],
+        "name": "drawbridge_wide",
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "drawbridge",
+        "width": 4.2
+      },
+      "vertex_count": 164
+    },
+    {
+      "face_count": 774,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 3.3000000000000003,
+          "arch_count": 0,
+          "centerline_point_count": 3,
+          "centerline_points": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              6.0,
+              3.0,
+              0.4
+            ],
+            [
+              12.0,
+              0.0,
+              0.8
+            ]
+          ],
+          "curve_segment_count": 2,
+          "elevation_delta_m": 0.8,
+          "material_family": "wood",
+          "material_slots": [
+            "timber_planks",
+            "timber_stringers",
+            "wood_posts",
+            "wood_rails",
+            "approach_transition"
+          ],
+          "module_count": 6,
+          "module_length_m": 2.4,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "rail_geometry": "continuous_socketed_rails",
+          "requested_style": "wood",
+          "resolved_style": "timber_beam",
+          "span_m": 13.440238093129155,
+          "support_count": 7,
+          "support_footing_style": "waterbed_sill_footings",
+          "support_foundation_z": -1.8,
+          "supports_reach_foundation": true,
+          "swept_centerline": true,
+          "terminal_pillar_style": "medieval_newel_with_rail_sockets",
+          "width_m": 2.2
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 3.6050000000000004,
+          "height": 5.349187542905884,
+          "width": 13.874719392335823
+        },
+        "end_pos": [
+          12.0,
+          0.0,
+          0.8
+        ],
+        "material_slots": [
+          "timber_planks",
+          "timber_stringers",
+          "wood_posts",
+          "wood_rails",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_timber_beam_swept",
+        "poly_count": 774,
+        "resolved_style": "timber_beam",
+        "span": 13.440238093129155,
+        "start_pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "style": "wood",
+        "vertex_count": 900
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\wood_curved_shallow_water.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\wood_curved_shallow_water_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\wood_curved_shallow_water_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\wood_curved_shallow_water_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\wood_curved_shallow_water_top.svg"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            6.0,
+            3.0,
+            0.4
+          ],
+          [
+            12.0,
+            0.0,
+            0.8
+          ]
+        ],
+        "name": "wood_curved_shallow_water",
+        "style": "wood",
+        "water_level": -0.6,
+        "waterbed_z": -1.8,
+        "width": 2.2
+      },
+      "vertex_count": 900
+    },
+    {
+      "face_count": 1158,
+      "issues": [],
+      "metadata": {
+        "bridge_profile": {
+          "approach_transition_m": 7.5,
+          "arch_count": 3,
+          "centerline_point_count": 3,
+          "centerline_points": [
+            [
+              0.0,
+              0.0,
+              5.0
+            ],
+            [
+              14.0,
+              -4.0,
+              3.0
+            ],
+            [
+              28.0,
+              1.5,
+              1.0
+            ]
+          ],
+          "curve_segment_count": 2,
+          "elevation_delta_m": -4.0,
+          "has_bottom": true,
+          "has_side_walls": true,
+          "material_family": "stone",
+          "material_slots": [
+            "stone_deck",
+            "stone_parapets",
+            "stone_arch_ribs",
+            "stone_abutments",
+            "approach_transition"
+          ],
+          "module_count": 9,
+          "module_length_m": 3.5,
+          "path_to_bridge_rules": [
+            "match road/path width at both abutments",
+            "reserve approach_transition material on both banks",
+            "keep deck above water by validated clearance contract",
+            "place supports only on banks or shallow pier points"
+          ],
+          "requested_style": "stone",
+          "resolved_style": "stone_viaduct",
+          "span_m": 29.870929362192587,
+          "stone_bridge_parts": [
+            "cobblestone_roadbed",
+            "vertical_spandrel_walls",
+            "parapet_capstones",
+            "abutments",
+            "piers",
+            "arch_barrel_underside"
+          ],
+          "support_count": 4,
+          "support_foundation_z": -4.5,
+          "supports_reach_foundation": true,
+          "surface_pattern": "cobblestone",
+          "swept_centerline": true,
+          "width_m": 5.0
+        },
+        "category": "terrain_depth",
+        "dimensions": {
+          "depth": 10.379999999999999,
+          "height": 11.669836283914702,
+          "width": 30.546978316756196
+        },
+        "end_pos": [
+          28.0,
+          1.5,
+          1.0
+        ],
+        "material_slots": [
+          "stone_deck",
+          "stone_parapets",
+          "stone_arch_ribs",
+          "stone_abutments",
+          "approach_transition"
+        ],
+        "name": "TerrainBridge_stone_viaduct_swept",
+        "poly_count": 1158,
+        "resolved_style": "stone_viaduct",
+        "span": 29.870929362192587,
+        "start_pos": [
+          0.0,
+          0.0,
+          5.0
+        ],
+        "style": "stone",
+        "vertex_count": 1484
+      },
+      "obj_path": "output\\bridge_visual_audit_review_check\\variants\\stone_curved_deep_water_high_to_low.obj",
+      "preview_paths": {
+        "approach": "output\\bridge_visual_audit_review_check\\variants\\stone_curved_deep_water_high_to_low_approach.svg",
+        "isometric": "output\\bridge_visual_audit_review_check\\variants\\stone_curved_deep_water_high_to_low_isometric.svg",
+        "side": "output\\bridge_visual_audit_review_check\\variants\\stone_curved_deep_water_high_to_low_side.svg",
+        "top": "output\\bridge_visual_audit_review_check\\variants\\stone_curved_deep_water_high_to_low_top.svg"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            5.0
+          ],
+          [
+            14.0,
+            -4.0,
+            3.0
+          ],
+          [
+            28.0,
+            1.5,
+            1.0
+          ]
+        ],
+        "name": "stone_curved_deep_water_high_to_low",
+        "style": "stone",
+        "water_level": -2.0,
+        "waterbed_z": -4.5,
+        "width": 5.0
+      },
+      "vertex_count": 1484
+    }
+  ]
+}

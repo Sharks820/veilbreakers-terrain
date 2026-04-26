@@ -1,0 +1,29 @@
+{
+  "allow_no_blender": true,
+  "blender_runtime_detected": false,
+  "blockers": [
+    "placeholder_png",
+    "no_blender_runtime"
+  ],
+  "captured_byte_length": 0,
+  "location_mismatches": {},
+  "material_contract_ok": true,
+  "missing_commands": [],
+  "noncallable_commands": [],
+  "note": "Headless dispatch wiring checked. blender_runtime_detected=false means the next gate must be run inside Blender/headless Blender for real renders; the captured PNG, PHash, and pixel-diff fields only carry meaning when a real Blender runtime is present.",
+  "perceptual_hash": "raw:missing",
+  "pixel_diff": {
+    "compared": false
+  },
+  "pixel_diff_exceeded": false,
+  "placeholder_png": true,
+  "probe_failures": {},
+  "ready_for_visual_testing": false,
+  "reference_perceptual_hash": null,
+  "reference_present": false,
+  "requested_screenshot_shape": [
+    320,
+    180
+  ],
+  "screenshot_contract_ok": true
+}

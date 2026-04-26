@@ -91,8 +91,8 @@ veilbreakers_terrain/handlers/environment.py,rasterize_poi_mask,C,C,WIRE_OR_DEPR
 veilbreakers_terrain/handlers/environment.py,_vector_xyz,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
 veilbreakers_terrain/handlers/environment.py,_coerce_optional_grid_channel,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
 veilbreakers_terrain/handlers/environment.py,_normalize_altitude_for_rule_range,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
-veilbreakers_terrain/handlers/environment.py,_build_tripo_fallback_prompt_info,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
-veilbreakers_terrain/handlers/environment.py,_build_tripo_environment_manifest,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
+veilbreakers_terrain/handlers/environment.py,_build_retired_model_provider_fallback_prompt_info,C,C,ADD_DIRECT_TESTS,helper_reachable;no_direct_tests;refs=1,add direct tests,No
+veilbreakers_terrain/handlers/environment.py,_build_retired_model_provider_environment_manifest,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/environment.py,_resolve_terrain_tile_params,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/environment.py,_write_json_manifest,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/environment.py,_cleanup_written_artifacts,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
@@ -255,9 +255,9 @@ veilbreakers_terrain/handlers/terrain_blender_safety.py,guard_z_up.wrapper,D+,D+
 veilbreakers_terrain/handlers/terrain_blender_safety.py,assert_boolean_safe,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/terrain_blender_safety.py,decimate_to_safe_count,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/terrain_blender_safety.py,recommend_boolean_solver,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=2,prove parent contract or inline,Yes
-veilbreakers_terrain/handlers/terrain_blender_safety.py,import_tripo_glb_serialized,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
-veilbreakers_terrain/handlers/terrain_blender_safety.py,get_tripo_import_log,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
-veilbreakers_terrain/handlers/terrain_blender_safety.py,clear_tripo_import_log,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,import_retired_model_provider_glb_serialized,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,get_retired_model_provider_import_log,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
+veilbreakers_terrain/handlers/terrain_blender_safety.py,clear_retired_model_provider_import_log,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=1,prove production wiring,Yes
 veilbreakers_terrain/handlers/terrain_budget_enforcer.py,BudgetReport,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
 veilbreakers_terrain/handlers/terrain_budget_enforcer.py,BudgetReport.as_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=3,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/terrain_budget_enforcer.py,TerrainBudget,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
@@ -464,7 +464,7 @@ veilbreakers_terrain/handlers/terrain_fog_masks.py,compute_mist_envelope,C+,C+,P
 veilbreakers_terrain/handlers/terrain_fog_masks.py,pass_fog_masks,C+,B,PROMOTE_TO_B,runtime_primary;tests=veilbreakers_terrain/tests/test_terrain_atmosphere.py|veilbreakers_terrain/tests/test_terrain_atmosphere.py::test_pass_fog_masks_populates_mist;contracts=PassSpec.func,none; maintain runtime wiring + direct tests + parent/runtime contract,Yes
 veilbreakers_terrain/handlers/terrain_fog_masks.py,register_bundle_l_fog_masks_pass,C,C,ADD_DIRECT_TESTS,runtime_primary;no_direct_tests;refs=2,add direct runtime tests,No
 veilbreakers_terrain/handlers/terrain_foliage_catalog.py,SpeciesSpec.to_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=10,prove parent contract or inline,Yes
-veilbreakers_terrain/handlers/terrain_foliage_catalog.py,TripoAssetManifest.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=16,wire/deprecate,Yes
+veilbreakers_terrain/handlers/terrain_foliage_catalog.py,retired model providerAssetManifest.__init__,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=16;refs=16,wire/deprecate,Yes
 veilbreakers_terrain/handlers/terrain_footprint_surface.py,FootprintSurfacePoint,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=1;refs=1,wire/deprecate,Yes
 veilbreakers_terrain/handlers/terrain_footprint_surface.py,compute_footprint_surface_data,C,C,WIRE_OR_DEPRECATE,test_only_or_unwired;tests=1;refs=0,prove production wiring,Yes
 veilbreakers_terrain/handlers/terrain_framing.py,_bresenham_cells,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=1;refs=1,prove parent contract or inline,Yes
@@ -499,3 +499,4 @@ veilbreakers_terrain/handlers/terrain_golden_snapshots.py,GoldenSnapshot.to_dict
 veilbreakers_terrain/handlers/terrain_golden_snapshots.py,GoldenSnapshot.from_dict,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=4,prove parent contract or inline,Yes
 veilbreakers_terrain/handlers/terrain_hierarchy.py,FeatureTier,D+,D+,WIRE_OR_DEPRECATE,missing_wiring_row;tests=2;refs=1,wire/deprecate,Yes
 veilbreakers_terrain/handlers/terrain_hierarchy.py,FeatureTier.from_str,C+,C+,PROVE_PARENT_CONTRACT_OR_INLINE,helper_reachable;direct_tests=2;refs=1,prove parent contract or inline,Yes
+

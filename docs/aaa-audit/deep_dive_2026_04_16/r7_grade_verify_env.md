@@ -93,7 +93,7 @@ Raises ValueError if tiled_world=True without explicit range. The fail-fast beha
 | 1433 | _enhance_heightmap_relief | A- | A- | YES | p5/p95 percentile stretch; sign-aware (line 209 center calc) |
 | 1434 | _temper_heightmap_spikes | A- | A- | YES | tanh compression + neighborhood blend; gate via `_SPIKE_PRONE_TERRAIN` at line 224 |
 | 1435 | _apply_biome_season_profile | A- | A- | YES | Season overlay correct (lines 524-543); no season-key validation |
-| 1436 | get_vb_biome_preset | A- | A- | YES | Deepcopy + season + tripo manifest injection; tripo manifest gated on `scatter_rules` presence not export_context (line 565) |
+| 1436 | get_vb_biome_preset | A- | A- | YES | Deepcopy + season + retired_model_provider manifest injection; retired_model_provider manifest gated on `scatter_rules` presence not export_context (line 565) |
 | 1437 | _validate_terrain_params | A | A | YES | Resolution/terrain_type/erosion validation with clear messages (lines 587-608) |
 | 1438 | _resolve_terrain_tile_params | A- | A- | YES | Mutual-constraint enforcement (lines 647-649); world_origin assumes square tiles (line 658-659) |
 | 1439 | _export_heightmap_raw | A | A | YES | float64→uint16 LE + flipud + shared range (lines 684-727) |
@@ -249,3 +249,4 @@ IDs 58 (A-), 59 (B+), 60 (B), 61 (B), 62 (B+), 63 (A-), 64 (B+), 65 (B+), 66 (A-
 4. **Silent-except discipline.** Across env.py there are ~15 `except Exception: pass` or `except Exception: logger.debug(...)` blocks. Most are justified "best-effort non-critical attr write" for Blender stub compatibility, but the material-creation ones (IDs 1455, 1456, and the one in `handle_generate_multi_biome_world` line 5351) would benefit from explicit fallback material instead of silent skip.
 
 5. **Coverage is complete.** No missed top-level functions. The 68 entries match the 68 source-level `def` declarations exactly. Nested helpers (`_to_bbox`, `_serialize`, `_coerce_facing_direction`, `_edge_vertices`, `_blend_loop_color`, `_shore_factor`, `_sample`, `_candidate_score`) are intentionally not audited as they are local closures.
+

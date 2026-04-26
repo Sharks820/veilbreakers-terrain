@@ -5,9 +5,10 @@ cross-references against GRADES_VERIFIED.csv, and fails if uncovered callables
 exceed the locked baseline count (ratchet mechanism).
 
 Usage:
-    python scripts/callable_census_gate.py           # check against lock
-    python scripts/callable_census_gate.py --update  # write new lock baseline
-    python scripts/callable_census_gate.py --report  # print full uncovered list
+    python scripts/callable_census_gate.py                 # check against lock
+    python scripts/callable_census_gate.py --update        # write new lock baseline
+    python scripts/callable_census_gate.py --report        # print full uncovered list
+    python scripts/callable_census_gate.py --strict-zero   # fail unless every callable is graded
 
 Exit codes:
     0  — covered or at/below baseline
@@ -17,6 +18,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import sys
@@ -24,7 +26,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-from grade_audit_shared import collect_callables
+try:
+    from grade_audit_shared import collect_callables
+except ModuleNotFoundError:
+    from scripts.grade_audit_shared import collect_callables
 
 CSV_PATH = Path(__file__).resolve().parent.parent / "docs" / "aaa-audit" / "GRADES_VERIFIED.csv"
 LOCK_PATH = Path(__file__).resolve().parent / "callable_census_gate.lock"
@@ -148,19 +153,42 @@ def _print_report(result: CensusResult) -> None:
             print(f"  {e.filename}:{e.lineno}  {e.func_name}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--update", action="store_true", help="Write the current uncovered count as the ratchet baseline.")
+    parser.add_argument("--report", action="store_true", help="Print the full callable census report.")
+    parser.add_argument(
+        "--strict-zero",
+        action="store_true",
+        help="Fail unless every scanned callable has an explicit grade row. This is the AAA readiness gate.",
+    )
+    return parser.parse_args()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    args = set(sys.argv[1:])
-    update_mode = "--update" in args
-    report_mode = "--report" in args
+    args = parse_args()
+    update_mode = args.update
+    report_mode = args.report or args.strict_zero
 
     result = run_census()
 
     if report_mode or update_mode:
         _print_report(result)
+
+    if args.strict_zero:
+        if result.uncovered:
+            print(
+                f"FAIL: strict callable coverage requires 0 uncovered callables; "
+                f"found {result.uncovered_count}.",
+                file=sys.stderr,
+            )
+            return 1
+        print("PASS: strict callable coverage has 0 uncovered callables.")
+        return 0
 
     if update_mode:
         _write_lock(result)

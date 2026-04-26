@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v2.py", line 715, in <module>
+    main()
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v2.py", line 666, in main
+    _setup_compositor()
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_scene_v2.py", line 620, in _setup_compositor
+    cbal.lift = (0.98, 0.99, 1.02, 1)
+    ^^^^^^^^^
+ValueError: bpy_struct: item.attr = val: sequences of dimension 0 should contain 3 items, not 4

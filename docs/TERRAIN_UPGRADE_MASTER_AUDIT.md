@@ -105,7 +105,7 @@ Agent 3 performed a full boundary scan. Summary:
 
 1. **Dispatcher surface exists; remaining gap is partial handler exposure.** `handlers/__init__.py` now exports a live `COMMAND_HANDLERS` dict. The current wiring gap is narrower: some terrain/scatter functions such as `handle_scatter_vegetation` / `scatter_biome_vegetation` are still not exposed through that dispatcher.
 2. **Zero visual pipeline wiring** — no `bpy.data.cameras.new`, no `scene.render.engine =`, no `bpy.ops.render.render`, no `scene.world =` across all 114 handler modules. Section 10 (master audit) remains fully valid.
-3. **Tripo GLB import still a stub** — `terrain_blender_safety.py:157-190` is a lock+validate wrapper; no `bpy.ops.import_scene.gltf(...)` call. ~36 scatter asset IDs unmapped.
+3. **retired model provider GLB import still a stub** — `terrain_blender_safety.py:157-190` is a lock+validate wrapper; no `bpy.ops.import_scene.gltf(...)` call. ~36 scatter asset IDs unmapped.
 4. **OpenSimplex wrapper bug is closed; residual noise-stack review remains open.** `_OpenSimplexWrapper` routing was fixed on 2026-04-18. The current open noise gaps are OpenSimplex2S parity review, Voronoise / IQ-domain-warp additions, Phacelle adoption review, and the 256-cell permutation-wrap risk in the fallback path.
 5. **Two hot-path Python loops not yet vectorized:** `_terrain_depth.detect_cliff_edges` (every terrain generate, `scipy.ndimage.label` = 50-500×) and `_water_network` pit detection at `:200-212` (`scipy.ndimage.minimum_filter` = 50-200×). Extend Fix 4.8 to cover both.
 
@@ -347,7 +347,7 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
 
 - **Strong / still current**
   - No real Blender scene setup: no camera/light/world/render/color-management/compositor pipeline is implemented in this repo.
-  - `import_tripo_glb_serialized()` is still a serializer/validator stub, not a real Blender importer.
+  - `import_retired_model_provider_glb_serialized()` is still a serializer/validator stub, not a real Blender importer.
   - The orphan-module list is largely correct.
   - Several mask-stack write gaps are real: `hero_exclusion`, `biome_id`, `physics_collider_mask`, `ambient_occlusion_bake`, `pool_deepening_delta`, `strat_erosion_delta`.
   - Major convention conflicts are real: slope units, grid/world conversion, thermal talus units, duplicate `WaterfallVolumetricProfile`.
@@ -421,7 +421,7 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
 - Duplicate `WaterfallVolumetricProfile` definitions with incompatible fields.
 
 **Section 8 claims that are real**
-- Tripo GLB import is still missing as an actual Blender import path.
+- retired model provider GLB import is still missing as an actual Blender import path.
 - `falloff` dead-code complaint is real in its narrowed form.
 - `ErosionStrategy` exists in profiles/contracts but is not dispatched in live pipeline logic.
 - `pool_deepening_delta`, `sediment_accumulation_at_base`, and `strat_erosion_delta` are genuine implementation gaps.
@@ -448,18 +448,18 @@ This addendum verifies the April 15, 2026 Opus audit against the current reposit
 - Section 9 is internally inconsistent: the Tier 1 list and Wave 3 list do not match.
 - SciPy-based suggestions (`ndimage.label`, EDT) are not "easy wins" in the current repo state: SciPy use is already conditional in some code, but it is still undeclared in packaging and not a consistent baseline dependency.
 
-### Sections 10 and 11 — Visual / Blender / Tripo
+### Sections 10 and 11 — Visual / Blender / retired model provider
 
 **Still true**
 - There is no committed Blender scene setup for camera, light, world, color management, viewport shading, compositor, or render capture in this repo.
 - There are no committed `.blend`, `.glb`, `.gltf`, `.hdr`, or `.exr` assets to audit for actual visual quality.
-- `import_tripo_glb_serialized()` remains a lock/validation wrapper rather than an importer.
-- `_TRIPO_ENVIRONMENT_PROMPTS` contains only 7 prompt entries, while `VB_BIOME_PRESETS` references 43 unique scatter asset ids.
+- `import_retired_model_provider_glb_serialized()` remains a lock/validation wrapper rather than an importer.
+- `_RETIRED_MODEL_PROVIDER_ENVIRONMENT_PROMPTS` contains only 7 prompt entries, while `VB_BIOME_PRESETS` references 43 unique scatter asset ids.
 
 **More nuanced than the original audit**
 - Visual setup is missing, but materials are not weak by default. The repo already contains substantial procedural material work, including a more serious water shader path than the original summary implies.
 - Atmospheric tooling is mostly compute/export data, not Blender volumetric scene authoring.
-- Add-on usage is effectively none in repo code, but generic LOD/collision/billboard tooling already exists and is simply not wired into a Tripo import path.
+- Add-on usage is effectively none in repo code, but generic LOD/collision/billboard tooling already exists and is simply not wired into a retired model provider import path.
 - The "21+ scatter asset types have no mesh generator" claim undershoots the current repo state if measured against direct generator coverage; the current uncovered count is higher.
 - The repo does have fallback primitive instancing for unmapped props/vegetation, so "no generator" does not mean "cannot place anything at all."
 
@@ -488,10 +488,10 @@ The original audit focused on terrain quality gaps, but the current extracted re
 
 - **Houdini benchmark:** SideFX `HeightField Erode` exposes iterative hydraulic + thermal erosion, debris layers, water layers, bedrock, strata-aware erodability, flow outputs, and simulation controls. This is the level of system depth the repo is being compared against for "AAA-grade" erosion.
   - https://www.sidefx.com/docs/houdini/nodes/sop/heightfield_erode-.html
-- **Tripo Studio workflow:** Tripo’s official Blender Bridge connects Blender directly to the Tripo Studio front page. If the goal is to continue using Studio-side credits rather than rebuild everything through a separate API flow, that official bridge path is the most aligned reference workflow.
-  - https://www.tripo3d.ai/blog/tripo-dcc-bridge-for-blender
-- **Tripo API workflow:** the official `tripo3d` Python SDK exists separately from the Studio/browser bridge. The codebase currently does not implement that SDK or its import/budget pipeline.
-  - https://pypi.org/project/tripo3d/
+- **retired model provider Studio workflow:** retired model provider’s official Blender Bridge connects Blender directly to the retired model provider Studio front page. If the goal is to continue using Studio-side credits rather than rebuild everything through a separate API flow, that official bridge path is the most aligned reference workflow.
+  - https://www.retired_model_provider.ai/blog/retired_model_provider-dcc-bridge-for-blender
+- **retired model provider API workflow:** the official `retired_model_provider` Python SDK exists separately from the Studio/browser bridge. The codebase currently does not implement that SDK or its import/budget pipeline.
+  - https://pypi.org/project/retired_model_provider/
 
 ### Codex Recommendation
 
@@ -500,7 +500,7 @@ Treat the Opus document below as a useful draft, not as a source of truth. The c
 1. Fix the objectively real bugs and convention conflicts.
 2. Correct the stale wiring claims in this master audit so future work does not chase already-fixed problems.
 3. Address repo-extraction/test drift (`animation_environment`, `vertex_paint_live`, `autonomous_loop`, addon metadata, legacy handler surfaces) alongside terrain-quality work.
-4. Build a real Blender scene/render setup and a real Tripo import boundary if visual quality is a release criterion.
+4. Build a real Blender scene/render setup and a real retired model provider import boundary if visual quality is a release criterion.
 
 **Date:** 2026-04-15
 **Auditors:** 20 Opus 4.6 agents (6 code audits, 5 deep research, 6 gap analyses, 1 A-grade verification, 2 verification passes)
@@ -671,7 +671,7 @@ X2's Context7 pass on BUG-16..50 + BUG-60 surfaced **5 cross-cutting meta-findin
 8. [Spec-vs-Implementation Gaps](#8-spec-vs-implementation-gaps)
 9. [NumPy Vectorization Targets](#9-numpy-vectorization-targets)
 10. [Visual/Camera/Rendering Gaps](#10-visualcamerarendering-gaps)
-11. [Tripo Prop Pipeline Gaps](#11-tripo-prop-pipeline-gaps)
+11. [retired model provider Prop Pipeline Gaps](#11-retired_model_provider-prop-pipeline-gaps)
 12. [Dead Channels & Data](#12-dead-channels--data)
 13. [Upgrade Wave Plan](#13-upgrade-wave-plan)
 14. [Node/Chunk/Seam Continuity (G3 Round 3)](#14-nodechunkseam-continuity-g3-round-3-finding)
@@ -714,7 +714,7 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **12 orphaned modules** (entire files never imported by production code)
 - **48 NumPy vectorization targets** (8 easy 50-500x speedup wins via scipy.ndimage)
 - **Zero visual pipeline** (no camera, no lights, no world, no render config, no color management)
-- **Tripo import boundary is still a stub** (metadata/prompt wiring exists, but there is still no actual GLB import)
+- **retired model provider import boundary is still a stub** (metadata/prompt wiring exists, but there is still no actual GLB import)
 - **Top 5 cross-confirmed blockers (3+ independent agents):**
   1. `pass_integrate_deltas` not registered → 5 geological deltas discarded (A1+A2+G1+G2+B3+B5+B6+B18 — 8 agents)
   2. `check_*_readability` crashes on first call → entire readability audit suite is a guaranteed TypeError (A1+G1+B9)
@@ -1248,8 +1248,8 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **Severity:** IMPORTANT (wrong silhouette; rubric example of "F-grade-by-shape").
 - **Fix:** Replace with sculpted skull asset OR carve eye sockets via boolean subtraction.
 - **Source:** A4 Top-10 worst #3.
-- **Context7 verification (R5, 2026-04-16):** [Asset-pipeline decision — content rather than algorithm | Verdict: NOT-IN-CONTEXT7 | Source snippet: per VeilBreakers AAA standards (Tripo + Blender pipeline noted in user profile), procedural primitive composition is never acceptable for hero assets. Industry standard for skull pile is Megascans / Tripo-generated mesh + scatter system. Boolean subtraction is the correct algorithmic fix if procedural is required: `bmesh.ops.boolean(bm, target=skull_bm, cutter=eye_socket_sphere, op="DIFFERENCE")`.]
-- **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED | **`bmesh.ops.boolean` DOES NOT EXIST in Blender's bmesh.ops** (R5 master referenced it — error caught by A5); booleans run via `bpy.ops.object.modifier_add(type='BOOLEAN')` on Object-level, or via `pymeshlab`/`open3d`/`manifold3d`; Tripo hero asset + Megascans scatter is canonical AAA path. | **Revised fix:** PREFERRED: Tripo-generated skull + scatter. FALLBACK: Object-level boolean modifier (`modifier_add(type='BOOLEAN')`, `operation='DIFFERENCE'`, `modifier_apply`), then triangulate + remove_doubles + recalc_face_normals. | **Reference:** https://docs.blender.org/api/current/bpy.ops.object.html#bpy.ops.object.modifier_add | Agent: A5
+- **Context7 verification (R5, 2026-04-16):** [Asset-pipeline decision — content rather than algorithm | Verdict: NOT-IN-CONTEXT7 | Source snippet: per VeilBreakers AAA standards (retired model provider + Blender pipeline noted in user profile), procedural primitive composition is never acceptable for hero assets. Industry standard for skull pile is Megascans / retired model provider-generated mesh + scatter system. Boolean subtraction is the correct algorithmic fix if procedural is required: `bmesh.ops.boolean(bm, target=skull_bm, cutter=eye_socket_sphere, op="DIFFERENCE")`.]
+- **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED | **`bmesh.ops.boolean` DOES NOT EXIST in Blender's bmesh.ops** (R5 master referenced it — error caught by A5); booleans run via `bpy.ops.object.modifier_add(type='BOOLEAN')` on Object-level, or via `pymeshlab`/`open3d`/`manifold3d`; retired model provider hero asset + Megascans scatter is canonical AAA path. | **Revised fix:** PREFERRED: retired model provider-generated skull + scatter. FALLBACK: Object-level boolean modifier (`modifier_add(type='BOOLEAN')`, `operation='DIFFERENCE'`, `modifier_apply`), then triangulate + remove_doubles + recalc_face_normals. | **Reference:** https://docs.blender.org/api/current/bpy.ops.object.html#bpy.ops.object.modifier_add | Agent: A5
 
 ### BUG-72 — `_water_network.get_tile_water_features` dead lookups + tile_size param mismatch
 - **File:** `_water_network.py:881-882`
@@ -1346,7 +1346,7 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **Fix:** Subtract 0.5 in `_world_to_cell` to match `_cell_to_world`'s `+0.5`.
 - **Source:** B3.
 - **Context7 verification (R5, 2026-04-16):** [Same convention conflict as BUG-79 — internal | Verdict: NOT-IN-CONTEXT7 | Source snippet: master fix consolidates to cell-CENTER convention. As noted in BUG-79 verification, Unity/UE conventions are cell-CORNER. Recommend pinning the convention CHOICE explicitly in `terrain_coords.py` (single source of truth) and routing both `terrain_caves` functions through it. The math fix `subtract 0.5 in _world_to_cell` is internally consistent; just verify the chosen convention matches the export-target engine.]
-- **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED (direction corrected) | **R5 master fix direction WRONG for Unity export target**: current `_cell_to_world` uses `+0.5` (center), `_world_to_cell` uses `floor(x/size)` (corner) — INCOMPATIBLE; Unity TerrainData.GetHeight + UE ALandscape are cell-CORNER; VeilBreakers Tripo+Blender→Unity pipeline per user profile means CORRECT fix is DROP `+0.5` from `_cell_to_world` (NOT add `-0.5` to `_world_to_cell`). | **Revised fix:** Consolidate to `terrain_coords.py` with `CELL_ORIGIN: Literal['corner','center'] = 'corner'` (Unity-compatible); rewrite both `_world_to_cell` and `_cell_to_world` through helper; audit CONFLICT-03 cluster in one sweep; hypothesis property-test round-trip. | **Reference:** https://trac.osgeo.org/gdal/wiki/rfc33_gtiff_pixelispoint | Agent: A3+A4
+- **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED (direction corrected) | **R5 master fix direction WRONG for Unity export target**: current `_cell_to_world` uses `+0.5` (center), `_world_to_cell` uses `floor(x/size)` (corner) — INCOMPATIBLE; Unity TerrainData.GetHeight + UE ALandscape are cell-CORNER; VeilBreakers retired model provider+Blender→Unity pipeline per user profile means CORRECT fix is DROP `+0.5` from `_cell_to_world` (NOT add `-0.5` to `_world_to_cell`). | **Revised fix:** Consolidate to `terrain_coords.py` with `CELL_ORIGIN: Literal['corner','center'] = 'corner'` (Unity-compatible); rewrite both `_world_to_cell` and `_cell_to_world` through helper; audit CONFLICT-03 cluster in one sweep; hypothesis property-test round-trip. | **Reference:** https://trac.osgeo.org/gdal/wiki/rfc33_gtiff_pixelispoint | Agent: A3+A4
 
 ### BUG-83 — `terrain_caves._build_chamber_mesh` is the rubric F-grade hidden 6-face box
 - **File:** `terrain_caves.py:1079`
@@ -1354,7 +1354,7 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **Severity:** F (literal rubric example).
 - **Fix:** Generate true chamber mesh — wall rings extruded around path, floor plate with rubble, ceiling with stalactite hooks. Or marching-cubes-on-SDF voxel volume. Even icosphere-with-noise beats this.
 - **Source:** B3 (also referenced in Section 16 honesty cluster).
-- **Context7 verification (R5, 2026-04-16):** [Mesh generation — content-pipeline architecture | Verdict: NOT-IN-CONTEXT7 | Source snippet: marching-cubes is `skimage.measure.marching_cubes(volume, level=0)` (scikit-image library) or `mcubes.marching_cubes(sdf, isovalue)` (`PyMCubes` package). Industry standard for procedural caves: Houdini SDF + VDB volumes (`pyopenvdb`), Unreal Voxel Plugin (Sandbox 4.27+), or marching cubes from custom SDF. For VeilBreakers AAA target: hand-sculpted Tripo asset is best; if procedural is required, marching-cubes-on-SDF with stalactite-noise overlay is the algorithmic fix. F-grade rubric correctly invoked.]
+- **Context7 verification (R5, 2026-04-16):** [Mesh generation — content-pipeline architecture | Verdict: NOT-IN-CONTEXT7 | Source snippet: marching-cubes is `skimage.measure.marching_cubes(volume, level=0)` (scikit-image library) or `mcubes.marching_cubes(sdf, isovalue)` (`PyMCubes` package). Industry standard for procedural caves: Houdini SDF + VDB volumes (`pyopenvdb`), Unreal Voxel Plugin (Sandbox 4.27+), or marching cubes from custom SDF. For VeilBreakers AAA target: hand-sculpted retired model provider asset is best; if procedural is required, marching-cubes-on-SDF with stalactite-noise overlay is the algorithmic fix. F-grade rubric correctly invoked.]
 - **MCP best-practice research (R5+, 2026-04-16):** [WebSearch + scikit-image v0.25/0.26 docs] | https://scikit-image.org/docs/stable/auto_examples/edges/plot_marching_cubes.html ; https://scikit-image.org/docs/stable/api/skimage.measure.html | *Lewiner et al. algorithm in skimage is "faster, resolves ambiguities, and guarantees topologically correct results"; supports anisotropic voxel spacing via `spacing=(dx,dy,dz)` kwarg. PyMCubes alternative offers `marching_cubes_func` for SDF directly without pre-voxelization* | **CONFIRMED via MCP** — both libraries production-grade. **BETTER FIX:** prefer `skimage.measure.marching_cubes(sdf_volume, level=0, spacing=(cell_size,)*3)` (returns `verts, faces, normals, values` directly) over PyMCubes for terrain (skimage is already a dep-tier scientific package); use PyMCubes ONLY for pure-SDF cave systems where pre-voxelization wastes memory. **[Added by M1 MCP research, 2026-04-16]**
 - **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED-STRONGER | skimage MC Lewiner is topologically correct but NOT guaranteed manifold on overlapping SDF unions; AAA studios (Naughty Dog, Guerrilla, SSM) use Houdini VDB pipeline OR Dual Contouring (Schaefer-Warren 2004) to preserve sharp cave/ledge features; `allow_degenerate` default True emits zero-area tris. | **Revised fix:** Use `mcubes.marching_cubes_func` (lazy SDF eval) or `skimage.measure.marching_cubes(sdf, level=0.0, spacing=(cell_size,)*3, allow_degenerate=False, gradient_direction='descent')`; AAA-ceiling: Dual Contouring or Houdini VDB; post-process with `trimesh.repair.fix_normals` + `fill_holes`. | **Reference:** https://scikit-image.org/docs/stable/auto_examples/edges/plot_marching_cubes.html | Agent: A3
 
@@ -1950,7 +1950,7 @@ The original 4-round audit (Opus + Codex + Gemini consensus) graded based on "do
 - **CSV cite:** Row #147, FINAL GRADE = D, R6 = DISPUTE.
 - **Fix:** Start from a solid rock-mass blockout box, boolean-subtract an elliptical tunnel via `bmesh.ops.boolean(bm, target=rock_bm, cutter=tunnel_bm, op="DIFFERENCE")`, then apply per-layer strata displacement and wind-erosion noise on the underside so the shape reads as eroded sandstone. Pillars need scalloped bases and asymmetric erosion. Remove the dead `random.Random(seed)` line.
 - **Source:** V2 CSV cross-check (CSV row #147 R6 notes).
-- **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED (under-spec) | **`bmesh.ops.boolean` DOES NOT EXIST** (second R5 error caught); real AAA pipeline is Houdini HeightField Erode 3.0 → Boolean → VDB Reshape SDF → Remesh (two-stage Hydro + Thermal erosion, Feature Size per stage); Tripo/Megascans hero asset is 10× faster and higher-fidelity for VeilBreakers. | **Revised fix:** PREFERRED: Tripo/Megascans asset + Blender scatter with weathering decals. FALLBACK: pymeshlab `generate_boolean_difference` + fractal displacement + quadric decimation; remove dead `_ = random.Random(seed)` at :951. | **Reference:** https://www.sidefx.com/docs/houdini/nodes/sop/heightfield_erode.html | Agent: A5
+- **R7 MCP verification (2026-04-16, M2 Opus 4.7 deep-dive via Firecrawl/Exa/Tavily/Microsoft-Learn):** CONFIRMED (under-spec) | **`bmesh.ops.boolean` DOES NOT EXIST** (second R5 error caught); real AAA pipeline is Houdini HeightField Erode 3.0 → Boolean → VDB Reshape SDF → Remesh (two-stage Hydro + Thermal erosion, Feature Size per stage); retired model provider/Megascans hero asset is 10× faster and higher-fidelity for VeilBreakers. | **Revised fix:** PREFERRED: retired model provider/Megascans asset + Blender scatter with weathering decals. FALLBACK: pymeshlab `generate_boolean_difference` + fractal displacement + quadric decimation; remove dead `_ = random.Random(seed)` at :951. | **Reference:** https://www.sidefx.com/docs/houdini/nodes/sop/heightfield_erode.html | Agent: A5
 
 ### BUG-134 — `terrain_sculpt.compute_raise_displacements` is 3-line world-Z displacement (no normal, no clamp, no accumulation, no pressure)
 - **File:** `terrain_sculpt.py:97`
@@ -2272,8 +2272,8 @@ Every dataclass graded A/A-. 50+ mask stack channels, Unity export manifest, SHA
 ### terrain_pipeline.py — A-
 Contract enforcement, deterministic seed derivation (SHA-256), protected zone masking, quality gate infrastructure, checkpoint/rollback. Missing: parallel dispatch, dependency DAG.
 
-### environment.py — B+ (Split: infrastructure A-, Tripo C+)
-Water mesh generation, road system, river carving, heightmap export are all strong (A-). Pipeline orchestration is good. But 5435-line monolith needs splitting. Tripo prompt/manifest wiring exists, while the actual import boundary is still a stub.
+### environment.py — B+ (Split: infrastructure A-, retired model provider C+)
+Water mesh generation, road system, river carving, heightmap export are all strong (A-). Pipeline orchestration is good. But 5435-line monolith needs splitting. retired model provider prompt/manifest wiring exists, while the actual import boundary is still a stub.
 
 ### terrain_materials.py — B+
 4-layer height-blend materials are the right architecture. Stone recipe with strata + Voronoi is good. Missing: real textures (all procedural), tri-planar for cliffs, smoothstep transitions (uses hard linear thresholds).
@@ -2556,7 +2556,7 @@ G1 verified all 22 modules listed above are STILL ORPHAN on HEAD `064f8d5` (no p
 | `vegetation_system.py` | `bake_wind_colors` path (line 720) | param accepted, discarded with `_ = params.get(...)` |
 | `terrain_advanced.py` | `compute_erosion_brush` wind/thermal modes | hardcoded params (BUG-38) |
 | `_terrain_noise.py` | `_OpenSimplexWrapper.noise2/noise2_array` (line 164) | imported real opensimplex, never invoked (BUG-23) |
-| `terrain_blender_safety.py` | `import_tripo_glb_serialized` | thread lock wrapper, no `bpy.ops.import_scene.gltf()` (master Section 8 CRITICAL) |
+| `terrain_blender_safety.py` | `import_retired_model_provider_glb_serialized` | thread lock wrapper, no `bpy.ops.import_scene.gltf()` (master Section 8 CRITICAL) |
 
 ### Session-6 Orphaned Modules (2026-04-18)
 
@@ -2768,7 +2768,7 @@ G1 verified all 22 modules listed above are STILL ORPHAN on HEAD `064f8d5` (no p
 |-----|------|---------------|
 | Volumetric waterfall mesh | WaterfallVolumetricProfile defines thickness/curvature/taper + validators exist | NO mesh generator. _terrain_depth.py uses flat quads |
 | Cave entrance geometry | 4 generators return cave dicts with position/width/height | NO geometry carved. Caves are invisible metadata |
-| Tripo GLB import | import_tripo_glb_serialized (terrain_blender_safety.py) | Just a thread lock. NO bpy.ops.import_scene.gltf call |
+| retired model provider GLB import | import_retired_model_provider_glb_serialized (terrain_blender_safety.py) | Just a thread lock. NO bpy.ops.import_scene.gltf call |
 
 ### MODERATE (9)
 | Gap | Detail |
@@ -3050,14 +3050,14 @@ The toolkit generates sophisticated geometry and materials but drops them into a
 
 ---
 
-## 11. TRIPO PROP PIPELINE GAPS
+## 11. RETIRED_MODEL_PROVIDER PROP PIPELINE GAPS
 
 ### Current State
-- `_TRIPO_ENVIRONMENT_PROMPTS` has 7 entries — need 25+
-- `import_tripo_glb_serialized` is a thread lock, NOT an importer
+- `_RETIRED_MODEL_PROVIDER_ENVIRONMENT_PROMPTS` has 7 entries — need 25+
+- `import_retired_model_provider_glb_serialized` is a thread lock, NOT an importer
 - LOD pipeline exists and works (`lod_pipeline.py`)
 - Scatter system is production-quality (Poisson disk, viability, biome rules)
-- 36 of 43 scatter asset types in `VB_BIOME_PRESETS` have no Tripo prompt
+- 36 of 43 scatter asset types in `VB_BIOME_PRESETS` have no retired model provider prompt
 - 21+ scatter asset types have no mesh generator at all
 
 ### Missing Assets by Category
@@ -3072,7 +3072,7 @@ The toolkit generates sophisticated geometry and materials but drops them into a
 ### Missing Pipeline Steps
 1. Actual GLB import via `bpy.ops.import_scene.gltf()`
 2. Y-up to Z-up coordinate conversion
-3. Vertex budget enforcement (Tripo returns 2-5x over budget)
+3. Vertex budget enforcement (retired model provider returns 2-5x over budget)
 4. Material override (VeilBreakers dark fantasy color grading)
 5. LOD chain generation from imported mesh
 6. Collision mesh extraction
@@ -3082,8 +3082,8 @@ The toolkit generates sophisticated geometry and materials but drops them into a
 ### Missing Asset Roles
 `AssetRole` enum needs: WATER_VEGETATION, STRUCTURAL_PROP, LIGHTING_PROP, INTERACTIVE_PROP
 
-### Tripo API Details
-- SDK: `pip install tripo3d`, API v2.5
+### retired model provider API Details
+- SDK: `pip install retired_model_provider`, API v2.5
 - Cost: ~30 credits/asset, ~90 sec generation
 - 100-prop library = ~$12-20/month (Professional tier, 3000 credits)
 - `face_limit` parameter for poly budget control
@@ -3217,7 +3217,7 @@ Smoothstep slope transitions, noise-driven material assignment (not round-robin)
 ### Wave 11: Coast + Atmosphere + Water Network (14 functions)
 Real noise for coastline, Dean beach profiles, terrain-aware fog placement, Leopold+Manning calibration, D-infinity flow, Priority-Flood lakes.
 
-### Wave 12: Tripo + Scatter Expansion (10 functions)
+### Wave 12: retired model provider + Scatter Expansion (10 functions)
 GLB import pipeline, 25+ prompts, water vegetation scatter, asset roles, post-import processing, biome preset expansion.
 
 ---
@@ -3839,7 +3839,7 @@ Compared to AAA targets (Megascans hero asset ~50-200K tris with 4K PBR, SpeedTr
 
 The **~700 procedural-mesh bugs catalogued across BUG-60..100 + BUG-200..471** (per master Appendix C and the partition reports) are **NOT terrain-pipeline bugs**. They are architecture/prop/weapon/animal/dungeon-dressing bugs that landed in this repo by historical accident.
 
-> **Relocation target (per Conner directive 2026-04-16):** Move `procedural_meshes.py` (and any other non-terrain handlers identified) BACK to the **architecture pipeline in the broader VeilBreakers toolkit** — not a standalone repo, not deletion. The file appears vestigial from earlier toolkit-merge work that pulled architecture/prop generators into the terrain repo by mistake. The architecture pipeline is the proper home for procedural prop/building/weapon/animal/dungeon-dressing generators. Tripo + Blender remains the intended terrain *asset* workflow.
+> **Relocation target (per Conner directive 2026-04-16):** Move `procedural_meshes.py` (and any other non-terrain handlers identified) BACK to the **architecture pipeline in the broader VeilBreakers toolkit** — not a standalone repo, not deletion. The file appears vestigial from earlier toolkit-merge work that pulled architecture/prop generators into the terrain repo by mistake. The architecture pipeline is the proper home for procedural prop/building/weapon/animal/dungeon-dressing generators. retired model provider + Blender remains the intended terrain *asset* workflow.
 
 Concretely, the bugs should be:
 
@@ -3852,7 +3852,7 @@ Concretely, the bugs should be:
 - `terrain_*.py` (113 handler files)
 - `_terrain_*.py` (5 internal helpers)
 - `_water_network*.py`, `_biome_grammar.py`, `_scatter_engine.py` (already terrain-domain)
-- `coastline.py`, `environment.py` (terrain authoring + Tripo wiring; `environment.py` itself wants splitting per B15 §11)
+- `coastline.py`, `environment.py` (terrain authoring + retired model provider wiring; `environment.py` itself wants splitting per B15 §11)
 - `vegetation_*.py`, `lod_pipeline.py` (terrain-adjacent; vegetation is on terrain)
 
 ### What moves out (destination: architecture pipeline in the VeilBreakers toolkit, per Conner directive 2026-04-16)
@@ -6216,3 +6216,4 @@ Future implementations in the merged tracks above should explicitly note the ref
 - **Toolkit → audit import:** bridge approaches / retaining walls / terrain-grounded transitions belong in road/cliff/cave implementation planning, not only in mesh polish.
 - **Toolkit → audit import:** macro-color breakup must stay separate from micro detail and should remain visible in readability / visual-QA gates.
 - **Toolkit → audit import:** cave mouths, mountain passes, and terrain-framing transitions are part of authored traversal readability, which fits the user’s RPG target and should remain represented in future phase work.
+

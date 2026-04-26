@@ -951,11 +951,11 @@ Returns ratio. Edge cases handled.
 ### `recommend_boolean_solver` (line 143) — Grade: A
 'FAST' for >20k verts, 'EXACT' otherwise. Matches Blender's Boolean modifier guidance.
 
-### `import_tripo_glb_serialized` (line 157) — Grade: A
+### `import_retired_model_provider_glb_serialized` (line 157) — Grade: A
 Lock-protected serialized import with suffix validation + existence check. Headless-mode-compatible (records log).
-**Bug/Gap:** the `with _TRIPO_IMPORT_LOCK:` is INSIDE the for-loop — locks per file (correct for serialization). Multiple parallel callers serialize correctly.
+**Bug/Gap:** the `with _RETIRED_MODEL_PROVIDER_IMPORT_LOCK:` is INSIDE the for-loop — locks per file (correct for serialization). Multiple parallel callers serialize correctly.
 
-### `get_tripo_import_log` / `clear_tripo_import_log` — Grade: A
+### `get_retired_model_provider_import_log` / `clear_retired_model_provider_import_log` — Grade: A
 Test helpers.
 
 ---
@@ -1231,3 +1231,4 @@ Additional verification (background, not new lookups):
 I read every line of every public function in all 30 files plus all load-bearing private helpers. Where prior R1/R2 grades existed I either AGREED (~75% of overlap) or DISPUTED with evidence (the readability checks F-grade is novel; the `_distance_from_mask` D-grade is novel; several B+ grades pulled to B for documented Python-loop bottlenecks the prior agents marked too generously).
 
 The semantics + pipeline + DAG infrastructure is genuinely strong (A- to A) and would be defensible at a Houdini/UE5 design-review. The numerical leaf helpers (basin detection, chunking LOD, biome distance/box) are F-tier in execution speed compared to scipy and require concrete fixes before any AAA-shipped-game claim is defensible. The 5 readability-validator F-grade bugs are blockers that need to land before the next CI run.
+

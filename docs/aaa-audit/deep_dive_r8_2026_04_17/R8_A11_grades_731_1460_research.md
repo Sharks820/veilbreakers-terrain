@@ -40,7 +40,7 @@ The following rows carry an A or B grade whose implementation is functionally co
 | 772 | `write_profile_jsons` | C+ | Correctly flagged — `"mcp-toolkit"` ancestor-walk hardcoded for wrong repo | Unity/UE5 config paths come from `projectRoot` env var | **C+ — AGREE** |
 | 776 | `IterationMetrics` | C | Dead module paradox correctly identified; A-grade impl is unwired | — | **C — AGREE**, will become **A** when Fix 6.2 ships |
 | 785 | `recommend_boolean_solver` | B | Hardcoded 20k threshold is correct flag | Blender boolean reliability curves are more nuanced but threshold heuristic is industry norm | **B — AGREE** |
-| 786 | `import_tripo_glb_serialized` | A | Has serialization lock; but **no timeout** — a deadlocked import blocks forever | Blender's own background import API ships with 60s default timeout | **A-** (add timeout) |
+| 786 | `import_retired_model_provider_glb_serialized` | A | Has serialization lock; but **no timeout** — a deadlocked import blocks forever | Blender's own background import API ships with 60s default timeout | **A-** (add timeout) |
 | 803 | `capture_scene_read` | B+ | `id(sr)` recycling bug correctly flagged (real CPython behavior) | Houdini's `hou.Geometry` uses `uuid.uuid4()` per capture | **B+ — AGREE** |
 | 814 | `read_user_vantage` | B+ | `r = 40.0` default arbitrary — R6 flagged | UE5 `FSceneView` derives from FOV + near-plane distance | **B+ — AGREE** |
 | 817 | `is_in_frustum` | B+ | Square-FOV assumption; correctly flagged | Any real renderer uses aspect-ratio'd horizontal-FOV | **B+ — AGREE** |
@@ -577,3 +577,4 @@ Approximate distribution by major bracket (sampling ~730 rows):
 ---
 
 **End of R8-A11 report.**
+

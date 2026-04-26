@@ -14,14 +14,14 @@ It does not promote rows to B without direct runtime, test, and visual proof.
 ## Actions
 - KEEP_AS_TOOLING_ADD_CI_GATE_OR_DEPRECATE: 264
 - RELOCATE_ASSET_LIBRARY_OR_PROVE_SCATTER_RENDER_PATH: 259
-- DEFER_TRIPO_OWNER_ADD_CLI_AND_LEDGER_TESTS: 57
+- DEFER_RETIRED_MODEL_PROVIDER_OWNER_ADD_CLI_AND_LEDGER_TESTS: 57
 - ADD_LIVE_BLENDER_GOLDEN_ARTIFACTS: 54
 - RELOCATE_OR_ADD_HELPER_CONTRACT_TESTS: 29
 - ADD_DISPATCH_TABLE_COVERAGE_GATE: 2
 
 ## Largest Files
 - veilbreakers_terrain/procedural_meshes.py: 288
-- scripts/tripo_batch_generate.py: 57
+- scripts/retired_model_provider_batch_generate.py: 57
 - scripts/build_master_callable_audit.py: 46
 - scripts/scan_callable_wiring.py: 42
 - scripts/generate_strict_grade_audit.py: 36
@@ -36,3 +36,4 @@ It does not promote rows to B without direct runtime, test, and visual proof.
 ## Manual Conclusion
 
 The generic script/other batch remains below B. The dominant runtime_other block is `veilbreakers_terrain/procedural_meshes.py`, a pure MeshSpec prop/asset library. It is reachable through `_mesh_bridge.py` for some scatter/prop paths, but that is not the same as verified AAA terrain generation. The correct remediation is to relocate/scope-exempt the non-terrain library or add explicit MeshSpec contract, LOD/material, scatter placement, and visual golden tests for the reachable subset.
+

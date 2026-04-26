@@ -1,0 +1,636 @@
+{
+  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\bridge_visual_audit.blend",
+  "blender_runtime_detected": true,
+  "blockers": [],
+  "variant_count": 5,
+  "variants": [
+    {
+      "bbox": {
+        "max": [
+          8.520000457763672,
+          1.159999966621399,
+          2.005000114440918
+        ],
+        "min": [
+          -0.5199999809265137,
+          -1.159999966621399,
+          -1.399999976158142
+        ],
+        "size": [
+          9.040000438690186,
+          2.319999933242798,
+          3.40500009059906
+        ]
+      },
+      "endpoint_distance_m": {
+        "end": 0.6415995615226862,
+        "start": 0.6415995840219217
+      },
+      "issues": [],
+      "object_name": "BRIDGE_wood_short_path",
+      "profile": {
+        "approach_transition_m": 3.0,
+        "arch_count": 0,
+        "centerline_point_count": 2,
+        "centerline_points": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ],
+          [
+            8.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "curve_segment_count": 1,
+        "elevation_delta_m": 0.0,
+        "input_centerline_point_count": 2,
+        "input_centerline_points": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ],
+          [
+            8.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "material_family": "wood",
+        "material_slots": [
+          "timber_planks",
+          "timber_stringers",
+          "wood_posts",
+          "wood_rails",
+          "approach_transition"
+        ],
+        "module_count": 4,
+        "module_length_m": 2.4,
+        "path_to_bridge_rules": [
+          "match road/path width at both abutments",
+          "reserve approach_transition material on both banks",
+          "keep deck above water by validated clearance contract",
+          "place supports only on banks or shallow pier points"
+        ],
+        "rail_geometry": "continuous_light_rails",
+        "requested_style": "wood",
+        "resolved_style": "timber_beam",
+        "span_m": 8.0,
+        "support_count": 5,
+        "support_footing_style": "waterbed_sill_footings",
+        "support_foundation_z": -1.4,
+        "supports_reach_foundation": true,
+        "swept_centerline": true,
+        "terminal_pillar_style": "simple_newel_caps",
+        "width_m": 2.0
+      },
+      "render_paths": {
+        "approach_a": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_short_path_approach_a.png",
+        "approach_b": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_short_path_approach_b.png",
+        "overview": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_short_path_overview.png",
+        "side_waterline": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_short_path_side_waterline.png"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ],
+          [
+            8.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "name": "wood_short_path",
+        "style": "wood",
+        "water_level": 0.0,
+        "waterbed_z": -1.4,
+        "width": 2.0
+      }
+    },
+    {
+      "bbox": {
+        "max": [
+          66.93736267089844,
+          4.099999904632568,
+          3.005000114440918
+        ],
+        "min": [
+          53.06264114379883,
+          -1.2217875719070435,
+          -1.7999999523162842
+        ],
+        "size": [
+          13.87472152709961,
+          5.321787476539612,
+          4.805000066757202
+        ]
+      },
+      "endpoint_distance_m": {
+        "end": 0.7060838194729352,
+        "start": 0.7060837878170019
+      },
+      "issues": [],
+      "object_name": "BRIDGE_wood_curved_shallow_water",
+      "profile": {
+        "approach_transition_m": 3.3000000000000003,
+        "arch_count": 0,
+        "centerline_point_count": 3,
+        "centerline_points": [
+          [
+            54.0,
+            0.0,
+            1.4
+          ],
+          [
+            60.0,
+            3.0,
+            1.7
+          ],
+          [
+            66.0,
+            0.0,
+            2.0
+          ]
+        ],
+        "curve_segment_count": 2,
+        "elevation_delta_m": 0.6000000000000001,
+        "input_centerline_point_count": 3,
+        "input_centerline_points": [
+          [
+            54.0,
+            0.0,
+            1.4
+          ],
+          [
+            60.0,
+            3.0,
+            1.7
+          ],
+          [
+            66.0,
+            0.0,
+            2.0
+          ]
+        ],
+        "material_family": "wood",
+        "material_slots": [
+          "timber_planks",
+          "timber_stringers",
+          "wood_posts",
+          "wood_rails",
+          "approach_transition"
+        ],
+        "module_count": 6,
+        "module_length_m": 2.4,
+        "path_to_bridge_rules": [
+          "match road/path width at both abutments",
+          "reserve approach_transition material on both banks",
+          "keep deck above water by validated clearance contract",
+          "place supports only on banks or shallow pier points"
+        ],
+        "rail_geometry": "continuous_light_rails",
+        "requested_style": "wood",
+        "resolved_style": "timber_beam",
+        "span_m": 13.429817571359635,
+        "support_count": 7,
+        "support_footing_style": "waterbed_sill_footings",
+        "support_foundation_z": -1.8,
+        "supports_reach_foundation": true,
+        "swept_centerline": true,
+        "terminal_pillar_style": "simple_newel_caps",
+        "width_m": 2.2
+      },
+      "render_paths": {
+        "approach_a": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_curved_shallow_water_approach_a.png",
+        "approach_b": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_curved_shallow_water_approach_b.png",
+        "overview": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_curved_shallow_water_overview.png",
+        "side_waterline": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\wood_curved_shallow_water_side_waterline.png"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            1.4
+          ],
+          [
+            6.0,
+            3.0,
+            1.7
+          ],
+          [
+            12.0,
+            0.0,
+            2.0
+          ]
+        ],
+        "name": "wood_curved_shallow_water",
+        "style": "wood",
+        "water_level": 0.0,
+        "waterbed_z": -1.8,
+        "width": 2.2
+      }
+    },
+    {
+      "bbox": {
+        "max": [
+          150.33999633789062,
+          3.432499885559082,
+          3.880000114440918
+        ],
+        "min": [
+          107.55999755859375,
+          -3.432499885559082,
+          -3.0
+        ],
+        "size": [
+          42.779998779296875,
+          6.864999771118164,
+          6.880000114440918
+        ]
+      },
+      "endpoint_distance_m": {
+        "end": 0.4328964378122109,
+        "start": 0.4328964378122109
+      },
+      "issues": [],
+      "object_name": "BRIDGE_stone_long_viaduct",
+      "profile": {
+        "approach_transition_m": 8.0,
+        "arch_count": 4,
+        "centerline_point_count": 3,
+        "centerline_points": [
+          [
+            108.0,
+            0.0,
+            3.0
+          ],
+          [
+            126.0,
+            0.0,
+            3.0
+          ],
+          [
+            150.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "curve_segment_count": 2,
+        "elevation_delta_m": 0.0,
+        "has_bottom": true,
+        "has_side_walls": true,
+        "input_centerline_point_count": 3,
+        "input_centerline_points": [
+          [
+            108.0,
+            0.0,
+            3.0
+          ],
+          [
+            126.0,
+            0.0,
+            3.0
+          ],
+          [
+            150.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "material_family": "stone",
+        "material_slots": [
+          "stone_deck",
+          "stone_parapets",
+          "stone_arch_ribs",
+          "stone_abutments",
+          "approach_transition"
+        ],
+        "module_count": 12,
+        "module_length_m": 3.5,
+        "path_to_bridge_rules": [
+          "match road/path width at both abutments",
+          "reserve approach_transition material on both banks",
+          "keep deck above water by validated clearance contract",
+          "place supports only on banks or shallow pier points"
+        ],
+        "requested_style": "stone",
+        "resolved_style": "stone_viaduct",
+        "span_m": 42.0,
+        "stone_bridge_parts": [
+          "cobblestone_roadbed",
+          "vertical_spandrel_walls",
+          "parapet_capstones",
+          "abutments",
+          "piers",
+          "arch_barrel_underside"
+        ],
+        "support_count": 5,
+        "support_foundation_z": -3.0,
+        "supports_reach_foundation": true,
+        "surface_pattern": "cobblestone",
+        "swept_centerline": true,
+        "width_m": 5.5
+      },
+      "render_paths": {
+        "approach_a": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_long_viaduct_approach_a.png",
+        "approach_b": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_long_viaduct_approach_b.png",
+        "overview": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_long_viaduct_overview.png",
+        "side_waterline": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_long_viaduct_side_waterline.png"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ],
+          [
+            18.0,
+            0.0,
+            3.0
+          ],
+          [
+            42.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "name": "stone_long_viaduct",
+        "style": "stone",
+        "water_level": 0.0,
+        "waterbed_z": -3.0,
+        "width": 5.5
+      }
+    },
+    {
+      "bbox": {
+        "max": [
+          205.41549682617188,
+          4.523654937744141,
+          6.380000114440918
+        ],
+        "min": [
+          174.86965942382812,
+          -7.1459736824035645,
+          -3.5
+        ],
+        "size": [
+          30.54583740234375,
+          11.669628620147705,
+          9.880000114440918
+        ]
+      },
+      "endpoint_distance_m": {
+        "end": 0.4104822565929785,
+        "start": 0.41048388689124315
+      },
+      "issues": [],
+      "object_name": "BRIDGE_stone_curved_deep_water_high_to_low",
+      "profile": {
+        "approach_transition_m": 7.5,
+        "arch_count": 3,
+        "centerline_point_count": 3,
+        "centerline_points": [
+          [
+            176.0,
+            0.0,
+            5.5
+          ],
+          [
+            190.0,
+            -4.0,
+            3.8
+          ],
+          [
+            204.0,
+            1.5,
+            2.0
+          ]
+        ],
+        "curve_segment_count": 2,
+        "elevation_delta_m": -3.5,
+        "has_bottom": true,
+        "has_side_walls": true,
+        "input_centerline_point_count": 3,
+        "input_centerline_points": [
+          [
+            176.0,
+            0.0,
+            5.5
+          ],
+          [
+            190.0,
+            -4.0,
+            3.8
+          ],
+          [
+            204.0,
+            1.5,
+            2.0
+          ]
+        ],
+        "material_family": "stone",
+        "material_slots": [
+          "stone_deck",
+          "stone_parapets",
+          "stone_arch_ribs",
+          "stone_abutments",
+          "approach_transition"
+        ],
+        "module_count": 9,
+        "module_length_m": 3.5,
+        "path_to_bridge_rules": [
+          "match road/path width at both abutments",
+          "reserve approach_transition material on both banks",
+          "keep deck above water by validated clearance contract",
+          "place supports only on banks or shallow pier points"
+        ],
+        "requested_style": "stone",
+        "resolved_style": "stone_viaduct",
+        "span_m": 29.808054204616973,
+        "stone_bridge_parts": [
+          "cobblestone_roadbed",
+          "vertical_spandrel_walls",
+          "parapet_capstones",
+          "abutments",
+          "piers",
+          "arch_barrel_underside"
+        ],
+        "support_count": 4,
+        "support_foundation_z": -3.5,
+        "supports_reach_foundation": true,
+        "surface_pattern": "cobblestone",
+        "swept_centerline": true,
+        "width_m": 5.0
+      },
+      "render_paths": {
+        "approach_a": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_curved_deep_water_high_to_low_approach_a.png",
+        "approach_b": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_curved_deep_water_high_to_low_approach_b.png",
+        "overview": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_curved_deep_water_high_to_low_overview.png",
+        "side_waterline": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\stone_curved_deep_water_high_to_low_side_waterline.png"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            5.5
+          ],
+          [
+            14.0,
+            -4.0,
+            3.8
+          ],
+          [
+            28.0,
+            1.5,
+            2.0
+          ]
+        ],
+        "name": "stone_curved_deep_water_high_to_low",
+        "style": "stone",
+        "water_level": 0.0,
+        "waterbed_z": -3.5,
+        "width": 5.0
+      }
+    },
+    {
+      "bbox": {
+        "max": [
+          246.22999572753906,
+          1.1660000085830688,
+          4.795000076293945
+        ],
+        "min": [
+          229.77000427246094,
+          -1.1660000085830688,
+          2.881351947784424
+        ],
+        "size": [
+          16.459991455078125,
+          2.3320000171661377,
+          1.9136481285095215
+        ]
+      },
+      "endpoint_distance_m": {
+        "end": 0.7664750762005894,
+        "start": 0.7664750762005894
+      },
+      "issues": [],
+      "object_name": "BRIDGE_rope_straight_sway_bridge",
+      "profile": {
+        "anchored_to_banks": true,
+        "approach_transition_m": 2.55,
+        "arch_count": 0,
+        "catenary_sag_m": 0.72,
+        "centerline_point_count": 2,
+        "centerline_points": [
+          [
+            230.0,
+            0.0,
+            3.0
+          ],
+          [
+            246.0,
+            0.0,
+            3.4
+          ]
+        ],
+        "curve_segment_count": 1,
+        "elevation_delta_m": 0.3999999999999999,
+        "input_centerline_point_count": 3,
+        "input_centerline_points": [
+          [
+            230.0,
+            0.0,
+            3.0
+          ],
+          [
+            238.0,
+            0.0,
+            2.2
+          ],
+          [
+            246.0,
+            0.0,
+            3.4
+          ]
+        ],
+        "material_family": "wood",
+        "material_slots": [
+          "timber_planks",
+          "rope_rails",
+          "rope_posts",
+          "approach_transition"
+        ],
+        "module_count": 5,
+        "module_length_m": 3.5,
+        "path_to_bridge_rules": [
+          "match road/path width at both abutments",
+          "reserve approach_transition material on both banks",
+          "keep deck above water by validated clearance contract",
+          "place supports only on banks or shallow pier points"
+        ],
+        "requested_style": "rope",
+        "resolved_style": "rope",
+        "rope_bridge_parts": [
+          "main_catenary_ropes",
+          "hand_ropes",
+          "vertical_suspenders",
+          "timber_plank_deck",
+          "bank_anchor_frames",
+          "sway_animation_contract"
+        ],
+        "rope_physics_model": "catenary_sag_with_sway_metadata",
+        "rope_planform": "straight_bank_to_bank",
+        "span_m": 16.004999218994044,
+        "support_count": 2,
+        "support_foundation_z": -1.6,
+        "supports_reach_foundation": false,
+        "sway_amplitude_m": 0.192,
+        "sway_enabled": true,
+        "sway_frequency_hz": 0.33,
+        "swept_centerline": true,
+        "unsupported_mid_control_points_ignored": true,
+        "width_m": 1.7
+      },
+      "render_paths": {
+        "approach_a": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\rope_straight_sway_bridge_approach_a.png",
+        "approach_b": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\rope_straight_sway_bridge_approach_b.png",
+        "overview": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\rope_straight_sway_bridge_overview.png",
+        "side_waterline": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\bridge_visual_audit\\blender\\rope_straight_sway_bridge_side_waterline.png"
+      },
+      "variant": {
+        "control_points": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ],
+          [
+            8.0,
+            0.0,
+            2.2
+          ],
+          [
+            16.0,
+            0.0,
+            3.4
+          ]
+        ],
+        "name": "rope_straight_sway_bridge",
+        "style": "rope",
+        "water_level": 0.0,
+        "waterbed_z": -1.6,
+        "width": 1.7
+      }
+    }
+  ]
+}

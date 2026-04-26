@@ -32,7 +32,7 @@ These 49 functions are a **vast catalogue of procedural Blender meshes** glued t
 **Best in range:** L8589 `generate_sacrificial_circle_mesh` (B), L9006 `generate_bone_throne_mesh` (B-), L9101 `generate_dark_obelisk_mesh` (B-), L8919 `generate_blood_fountain_mesh` (B), L8355 `generate_well_mesh` (B), L9942 `generate_scroll_mesh` (rolled, B-), L11253 `generate_chandelier_mesh` (B- despite the bug). These have actual silhouette intent.
 
 **Critical structural bugs (apply to ~30+ functions):**
-- BUG-309 (CRITICAL): No bmesh used anywhere. No welded shared verts. No normals or UVs at gen time. No tri-fan ngon repair. Output is raw quad-soup that requires external `_enhance_mesh_detail` post-pass to be even Tripo-compatible. Most functions skip even that post-pass.
+- BUG-309 (CRITICAL): No bmesh used anywhere. No welded shared verts. No normals or UVs at gen time. No tri-fan ngon repair. Output is raw quad-soup that requires external `_enhance_mesh_detail` post-pass to be even retired model provider-compatible. Most functions skip even that post-pass.
 - BUG-315 (HIGH): `_merge_meshes` does not weld coincident vertices — every primitive's verts are concatenated, leaving billions of T-junctions and z-fighting at every joint. AAA pipelines would have a vertex weld + manifold cleanup pass.
 - BUG-316 (HIGH): Z-fighting risk — many decorative elements (rune plates, plank-strips, hinges, rivets) sit at depth offsets of 0.001–0.005m. At 1m view distance with FP32 depth this is fine, but at 50m+ in-engine it will shimmer. AAA standard would either cut these into the parent mesh or use decals.
 - BUG-317 (MEDIUM): No LODs generated. AAA expects at minimum LOD0/LOD1/LOD2 with explicit triangle budgets per LOD tier. This file only emits one density.
@@ -572,3 +572,4 @@ The range produces **silhouette-intent blockouts** suitable for greybox / placeh
 ---
 
 **End of P3 deep dive.** 49/49 functions graded. 39 new bugs (BUG-300–BUG-338) logged.
+

@@ -96,22 +96,6 @@ def classify(row: dict[str, str]) -> dict[str, str]:
             ),
         }
 
-    if file_path == "scripts/tripo_batch_generate.py":
-        return {
-            "R13 Manual Grade": "C",
-            "R13 Manual Action": "DEFER_TRIPO_OWNER_ADD_CLI_AND_LEDGER_TESTS",
-            "R13 Evidence": (
-                "Manual code read: Tripo batch driver is documented, journaled, "
-                "rate-limited, and external-service oriented. User stated Tripo is "
-                "being finished separately, so this row is reviewed but not remediated "
-                "inside this pass."
-            ),
-            "R13 Best Practice Gap": (
-                "Before B: hermetic CLI tests for plan/resume/retry/cost caps plus "
-                "ingest golden checks against the foliage catalog."
-            ),
-        }
-
     if file_path in SCENE_BUILD_TOOLS:
         return {
             "R13 Manual Grade": "C",

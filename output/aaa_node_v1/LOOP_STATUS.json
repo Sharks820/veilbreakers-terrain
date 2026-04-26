@@ -1,0 +1,12 @@
+{
+  "phase": "L",
+  "status": "waiting_for_phase_k",
+  "round_num": 0,
+  "opus_verdict": null,
+  "codex_verdict": null,
+  "issues_to_fix": [],
+  "fix_agent_dispatched": false,
+  "started_utc": "2026-04-23T05:27:00Z",
+  "last_update_utc": "2026-04-23T05:27:00Z",
+  "notes": "Monitor armed (task bxy6l5jqt) polling every 90s for BUILD_SUMMARY.json or BUILD_FAILURE.log"
+}

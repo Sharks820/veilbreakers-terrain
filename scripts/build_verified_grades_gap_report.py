@@ -50,6 +50,15 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_GRADE_FILE,
         help="Path to the grade CSV source. Defaults to docs/aaa-audit/GRADES_VERIFIED.csv.",
     )
+    parser.add_argument("--fail-on-missing", action="store_true", help="Exit non-zero when any callable has no exact grade row.")
+    parser.add_argument("--fail-on-stale", action="store_true", help="Exit non-zero when the grade CSV contains stale non-class rows.")
+    parser.add_argument("--fail-on-name-only", action="store_true", help="Exit non-zero when any callable is matched by global simple-name fallback.")
+    parser.add_argument("--fail-on-ambiguous", action="store_true", help="Exit non-zero when any callable grade match is ambiguous.")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enable all failure checks: missing, stale, name-only, and ambiguous rows.",
+    )
     return parser.parse_args()
 
 
@@ -179,6 +188,29 @@ def main() -> int:
 
     print(f"wrote {out_csv}")
     print(f"wrote {out_md}")
+
+    strict = args.strict
+    failures: list[str] = []
+    if (args.fail_on_missing or strict) and coverage["MISSING"]:
+        failures.append(f"missing callable grades: {coverage['MISSING']}")
+    if (args.fail_on_stale or strict) and stale_rows:
+        failures.append(f"stale grade rows: {len(stale_rows)}")
+    if (args.fail_on_name_only or strict) and coverage["NAME_ONLY_MATCH"]:
+        failures.append(f"name-only grade matches: {coverage['NAME_ONLY_MATCH']}")
+    if (args.fail_on_ambiguous or strict) and (
+        coverage["AMBIGUOUS_FILE_MATCH"] or coverage["AMBIGUOUS_NAME_MATCH"]
+    ):
+        failures.append(
+            "ambiguous grade matches: "
+            f"{coverage['AMBIGUOUS_FILE_MATCH'] + coverage['AMBIGUOUS_NAME_MATCH']}"
+        )
+
+    if failures:
+        print("FAIL: strict grade coverage gate found blockers:")
+        for failure in failures:
+            print(f"  - {failure}")
+        return 1
+
     return 0
 
 

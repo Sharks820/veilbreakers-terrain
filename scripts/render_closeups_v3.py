@@ -13,6 +13,7 @@ Run:
 from __future__ import annotations
 
 import math
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -23,13 +24,15 @@ from mathutils import Vector, Euler
 OUT_DIR = Path(__file__).resolve().parents[1] / "output" / "scene_v3" / "closeups"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-LAKE_XY = (100.0, -300.0)
-LAKE_RADIUS = 150.0
+LAKE_XY = (120.0, -315.0)
+LAKE_RADIUS = 210.0
 LAKE_WATER_LEVEL = 8.0
-CAVE_ENTRY = (0.0, 100.0, 180.0)
-CAVE_EXIT = (400.0, 100.0, 180.0)
-WATERFALL_XY = (-150.0, 50.0)
-WATERFALL_TOP_Z = 140.0
+CAVE_ENTRY = (282.0, 80.0, 78.0)
+CAVE_EXIT = (432.0, 132.0, 110.0)
+WATERFALL_XY = (-238.0, 174.0)
+WATERFALL_TOP_Z = 32.0
+BRIDGE_A = (-104.0, -24.0)
+BRIDGE_B = (-52.0, -80.0)
 
 
 def _look_at(cam: bpy.types.Object, target: tuple) -> None:
@@ -53,7 +56,7 @@ def _make_cam(name: str, location: tuple, target: tuple,
     return cam
 
 
-def configure_render(samples: int = 48, res_x: int = 1920, res_y: int = 1080):
+def configure_render(samples: int = 96, res_x: int = 1920, res_y: int = 1080):
     scn = bpy.context.scene
     scn.render.engine = "CYCLES"
     scn.cycles.samples = samples
@@ -63,21 +66,49 @@ def configure_render(samples: int = 48, res_x: int = 1920, res_y: int = 1080):
     scn.render.resolution_percentage = 100
     scn.render.image_settings.file_format = "PNG"
     scn.view_settings.view_transform = "AgX"
+    scn.view_settings.exposure = 0.0
+    scn.view_settings.gamma = 1.0
     try:
         scn.view_settings.look = "AgX - Medium High Contrast"
     except Exception:
         pass
     try:
         prefs = bpy.context.preferences
-        cp = prefs.addons.get('cycles')
+        cp = prefs.addons.get("cycles")
         if cp:
-            cp.preferences.compute_device_type = 'OPTIX'
+            cp.preferences.compute_device_type = os.environ.get("VB_CYCLES_DEVICE_TYPE", "OPTIX")
             cp.preferences.get_devices()
-            for d in cp.preferences.devices:
-                d.use = True
-        scn.cycles.device = "GPU"
-    except Exception:
-        pass
+            gpu_enabled = False
+            for device in cp.preferences.devices:
+                is_cpu = device.type == "CPU"
+                device.use = not (is_cpu and os.environ.get("VB_DISABLE_CYCLES_CPU_DEVICE", "1") == "1")
+                gpu_enabled = gpu_enabled or (device.use and not is_cpu)
+            if gpu_enabled:
+                scn.cycles.device = "GPU"
+    except Exception as exc:
+        print(f"[closeup] cycles device setup warning: {exc!r}", flush=True)
+
+
+def ensure_closeup_fill_light() -> None:
+    existing = bpy.data.objects.get("VB_Closeup_Verification_Fill")
+    if existing:
+        bpy.data.objects.remove(existing, do_unlink=True)
+    light_data = bpy.data.lights.new("VB_Closeup_Verification_Fill", type="AREA")
+    light_data.energy = 450.0
+    light_data.size = 90.0
+    light = bpy.data.objects.new("VB_Closeup_Verification_Fill", light_data)
+    bpy.context.collection.objects.link(light)
+    light.location = (-310.0, -190.0, 260.0)
+
+    existing = bpy.data.objects.get("VB_Waterfall_Verification_Fill")
+    if existing:
+        bpy.data.objects.remove(existing, do_unlink=True)
+    wf_data = bpy.data.lights.new("VB_Waterfall_Verification_Fill", type="AREA")
+    wf_data.energy = 720.0
+    wf_data.size = 42.0
+    wf_light = bpy.data.objects.new("VB_Waterfall_Verification_Fill", wf_data)
+    bpy.context.collection.objects.link(wf_light)
+    wf_light.location = (-170.0, 94.0, 76.0)
 
 
 def render_shot(label: str, cam: bpy.types.Object) -> None:
@@ -89,7 +120,8 @@ def render_shot(label: str, cam: bpy.types.Object) -> None:
 
 
 def main() -> int:
-    configure_render(samples=48, res_x=1920, res_y=1080)
+    configure_render(samples=int(os.environ.get("VB_CLOSEUP_SAMPLES", "96")), res_x=1920, res_y=1080)
+    ensure_closeup_fill_light()
 
     shots: list[tuple[str, bpy.types.Object]] = []
 
@@ -123,18 +155,18 @@ def main() -> int:
     # 4. Cave interior — inside the tunnel looking toward exit
     cam = _make_cam(
         "CAM_CaveInterior",
-        location=(120.0, 105.0, 178.0),
+        location=(330.0, 102.0, 88.0),
         target=(CAVE_EXIT[0], CAVE_EXIT[1], CAVE_EXIT[2]),
         lens=28.0, clip_end=600.0,
     )
     shots.append(("04_cave_interior_to_exit", cam))
 
-    # 5. Waterfall — close, slightly above, looking at cascade
+    # 5. Waterfall — lit oblique verification of cascade, plunge pool, and rock walls
     cam = _make_cam(
         "CAM_Waterfall",
-        location=(WATERFALL_XY[0] - 40.0, WATERFALL_XY[1] - 18.0, WATERFALL_TOP_Z + 12.0),
-        target=(WATERFALL_XY[0], WATERFALL_XY[1], WATERFALL_TOP_Z - 20.0),
-        lens=35.0, clip_end=800.0,
+        location=(-166.0, 82.0, 48.0),
+        target=(-222.0, 146.0, 16.0),
+        lens=42.0, clip_end=800.0,
     )
     shots.append(("05_waterfall_closeup", cam))
 
@@ -142,67 +174,96 @@ def main() -> int:
     # Lower river section ~y=0, player just entering water from the earthen bank
     cam = _make_cam(
         "CAM_RiverBankEntry",
-        location=(-50.0, -20.0, 48.0),   # on top of earthen bank, ~4m above water
-        target=(-25.0, -55.0, 40.0),      # looking downriver toward water surface
-        lens=24.0, clip_end=400.0,
+        location=(-122.0, -48.0, 37.0),
+        target=(-72.0, -54.0, 28.0),
+        lens=32.0, clip_end=400.0,
     )
     shots.append(("06_river_bank_entry", cam))
 
-    # 7. River bank exit — at lake mouth, swimmer perspective emerging from water
+    # 7. Bridge waterline — verify the bridge is anchored and spans the river.
+    cam = _make_cam(
+        "CAM_BridgeWaterline",
+        location=(-134.0, -112.0, 43.0),
+        target=(-78.0, -52.0, 27.0),
+        lens=46.0, clip_end=600.0,
+    )
+    shots.append(("07_bridge_waterline", cam))
+
+    # 8. Bridge approach — path, rail/deck connection, and forest-side transition.
+    cam = _make_cam(
+        "CAM_BridgeApproach",
+        location=(-170.0, -146.0, 42.0),
+        target=(-78.0, -52.0, 19.0),
+        lens=35.0, clip_end=700.0,
+    )
+    shots.append(("08_bridge_approach_path", cam))
+
+    # 9. River bank exit — at large off-node water mouth, swimmer perspective.
     cam = _make_cam(
         "CAM_LakeBankExit",
         location=(LAKE_XY[0] - LAKE_RADIUS * 0.95, LAKE_XY[1] + 20.0, LAKE_WATER_LEVEL + 1.8),
         target=(LAKE_XY[0] - LAKE_RADIUS * 1.25, LAKE_XY[1] + 35.0, LAKE_WATER_LEVEL + 3.0),
         lens=28.0, clip_end=300.0,
     )
-    shots.append(("07_lake_bank_exit", cam))
+    shots.append(("09_large_water_bank_exit", cam))
 
-    # 8. Lake panorama — mid-lake height looking across to mountain backdrop
+    # 10. Large water panorama — ambiguous ocean/lake continuation to next node.
     cam = _make_cam(
         "CAM_LakePanorama",
         location=(LAKE_XY[0] - 80.0, LAKE_XY[1] - 120.0, 50.0),
         target=(LAKE_XY[0], LAKE_XY[1] + 100.0, 160.0),
         lens=28.0, clip_end=2000.0,
     )
-    shots.append(("08_lake_panorama", cam))
+    shots.append(("10_large_water_panorama", cam))
 
-    # 9. Lake shoreline — at beach ring, looking out over water (player standing on shore)
+    # 11. Shoreline — coastal edge without committing to ocean vs large lake.
     cam = _make_cam(
         "CAM_LakeShoreline",
-        location=(LAKE_XY[0] + LAKE_RADIUS * 1.15, LAKE_XY[1], LAKE_WATER_LEVEL + 4.0),
-        target=(LAKE_XY[0] - 30.0, LAKE_XY[1], LAKE_WATER_LEVEL + 1.0),
-        lens=35.0, clip_end=600.0,
+        location=(LAKE_XY[0] + LAKE_RADIUS * 1.23, LAKE_XY[1] + 18.0, LAKE_WATER_LEVEL + 8.5),
+        target=(LAKE_XY[0] + 4.0, LAKE_XY[1] - 6.0, LAKE_WATER_LEVEL + 0.9),
+        lens=42.0, clip_end=600.0,
     )
-    shots.append(("09_lake_shoreline", cam))
+    shots.append(("11_large_water_shoreline", cam))
 
-    # 10. Cliff face — south face of mountain, showing cliff band detail
+    # 12. Cliff face — south face of mountain, showing cliff band detail
     cam = _make_cam(
         "CAM_CliffFace",
-        location=(80.0, -120.0, 130.0),
-        target=(80.0, 20.0, 140.0),
-        lens=50.0, clip_end=600.0,
+        location=(150.0, -155.0, 165.0),
+        target=(60.0, 16.0, 148.0),
+        lens=56.0, clip_end=700.0,
     )
-    shots.append(("10_cliff_face", cam))
+    shots.append(("12_cliff_face", cam))
 
-    # 11. Mountain peak — looking down from summit toward flatland + lake
+    # 13. Mountain peak — looking down from summit toward flatland + water body.
     cam = _make_cam(
         "CAM_MountainPeak",
         location=(-50.0, 350.0, 340.0),
         target=(80.0, -180.0, 30.0),
         lens=24.0, clip_end=3000.0,
     )
-    shots.append(("11_mountain_peak_lookdown", cam))
+    shots.append(("13_mountain_peak_lookdown", cam))
 
-    # 12. Forest canopy — among treetops on the forested slope
+    # 14. Forest canopy — forested bridge-side approach near the low pass.
     cam = _make_cam(
         "CAM_ForestCanopy",
-        location=(-180.0, 150.0, 110.0),
-        target=(-120.0, 50.0, 60.0),
+        location=(-204.0, -136.0, 72.0),
+        target=(-130.0, -82.0, 34.0),
         lens=35.0, clip_end=500.0,
     )
-    shots.append(("12_forest_canopy", cam))
+    shots.append(("14_forest_bridge_side", cam))
 
     # Render all shots
+    requested_labels = {
+        item.strip()
+        for item in os.environ.get("VB_CLOSEUP_LABELS", "").split(",")
+        if item.strip()
+    }
+    if requested_labels:
+        shots = [(label, cam) for label, cam in shots if label in requested_labels]
+        missing = sorted(requested_labels - {label for label, _cam in shots})
+        if missing:
+            raise RuntimeError(f"Unknown closeup labels requested: {missing}")
+
     errors = 0
     for label, cam in shots:
         try:

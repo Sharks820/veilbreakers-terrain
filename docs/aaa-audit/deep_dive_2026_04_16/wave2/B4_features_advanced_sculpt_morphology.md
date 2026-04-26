@@ -153,7 +153,7 @@ This file is the **single biggest AAA gap** in the audit scope. Every "hero feat
   - No caller in `terrain_morphology.get_natural_arch_specs` validates that the arch will actually fit at the chosen rim site — they're floating.
 - **AAA gap:** This is a stress-test asset, not a hero feature. Shipping AAA arches are sculpts, not parametric.
 - **Severity:** High — geology violation visible from any angle.
-- **Upgrade:** Replace pillar-boxes with cliff-fused fin walls; introduce horizontal strata noise on tube radius; deprecate this for a Tripo/Megascan asset library lookup instead.
+- **Upgrade:** Replace pillar-boxes with cliff-fused fin walls; introduce horizontal strata noise on tube radius; deprecate this for a retired model provider/Megascan asset library lookup instead.
 
 ---
 
@@ -1048,3 +1048,4 @@ The function `get_natural_arch_specs` uses scipy-style Laplacian as a curvature 
 - [UnityTerrainErosionGPU — bshishov shallow-water + hydraulic on compute shaders](https://github.com/bshishov/UnityTerrainErosionGPU)
 - [Photogrammetry inside Red Dead Redemption 2 — Sergii Rudavin / ArtStation](https://www.artstation.com/artwork/q928ay)
 - [Blender Python API 4.5 reference (Context7)](https://docs.blender.org/api/4.5/)
+

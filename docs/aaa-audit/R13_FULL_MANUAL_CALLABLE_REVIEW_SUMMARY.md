@@ -48,7 +48,7 @@ A B grade is not accepted for visual/terrain-producing callables without output 
 - KEEP_AS_TOOLING_ADD_CI_GATE_OR_DEPRECATE: 264
 - RELOCATE_ASSET_LIBRARY_OR_PROVE_SCATTER_RENDER_PATH: 259
 - DEPRECATE_OR_REMOVE: 65
-- DEFER_TRIPO_OWNER_ADD_CLI_AND_LEDGER_TESTS: 57
+- DEFER_RETIRED_MODEL_PROVIDER_OWNER_ADD_CLI_AND_LEDGER_TESTS: 57
 - ADD_LIVE_BLENDER_GOLDEN_ARTIFACTS: 54
 - PROMOTE_TO_B: 36
 - RELOCATE_OR_ADD_HELPER_CONTRACT_TESTS: 29
@@ -56,7 +56,7 @@ A B grade is not accepted for visual/terrain-producing callables without output 
 - ADD_CI_GATE_OR_WIRE: 19
 - REVIEW_FOR_B: 14
 - ADD_DISPATCH_TABLE_COVERAGE_GATE: 2
-- EXTERNAL_TRIPO_DEPENDENCY: 1
+- EXTERNAL_RETIRED_MODEL_PROVIDER_DEPENDENCY: 1
 
 ## Strict Interpretation
 
@@ -101,3 +101,4 @@ Most rows remain below B because they lack direct production-output proof. For w
 - veilbreakers_terrain/handlers/terrain_framing.py::pass_framing (manual=B, strict=C+)
 - veilbreakers_terrain/handlers/terrain_gameplay_zones.py::pass_gameplay_zones (manual=B, strict=C+)
 - veilbreakers_terrain/handlers/terrain_god_ray_hints.py::pass_god_ray_hints (manual=B, strict=C+)
+
