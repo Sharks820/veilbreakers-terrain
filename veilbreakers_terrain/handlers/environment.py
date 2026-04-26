@@ -75,6 +75,13 @@ from .terrain_waterfalls_volumetric import (  # noqa: E402
 from ._water_network import WaterNetwork  # noqa: E402
 from .road_network import compute_road_network  # noqa: E402
 from .terrain_semantics import TerrainMaskStack, WorldHeightTransform  # noqa: E402
+from .terrain_path_contracts import (  # noqa: E402
+    PathNetworkContract,
+    PathSegmentContract,
+    infer_continuation_edge,
+    material_stack_for_path,
+    validate_path_network_contract,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +613,7 @@ VB_BIOME_PRESETS: dict[str, dict] = {
 }
 
 
-_TRIPO_ENVIRONMENT_PROMPTS: dict[str, dict[str, Any]] = {
+_EXTERNAL_MODEL_PROMPTS: dict[str, dict[str, Any]] = {
     "boulder": {
         "prompt": "low poly alpine boulder, grassy summer cliff biome, weathered stone, subtle moss, game ready environment prop",
         "asset_class": "rock_large",
@@ -857,7 +864,7 @@ def _sanitize_scatter_scale_range(raw_value: Any) -> list[float]:
     return [lo, hi]
 
 
-def _infer_tripo_asset_class(asset_name: str, rule: dict[str, Any]) -> str:
+def _infer_model_asset_class(asset_name: str, rule: dict[str, Any]) -> str:
     explicit = str(rule.get("asset_class", "")).strip()
     if explicit:
         return explicit
@@ -880,13 +887,13 @@ def _infer_tripo_asset_class(asset_name: str, rule: dict[str, Any]) -> str:
     return "ground_cover"
 
 
-def _build_tripo_fallback_prompt_info(
+def _build_model_fallback_prompt_info(
     asset_name: str,
     biome_name: str,
     season: str,
     rule: dict[str, Any],
 ) -> dict[str, Any]:
-    asset_class = _infer_tripo_asset_class(asset_name, rule)
+    asset_class = _infer_model_asset_class(asset_name, rule)
     readable_name = asset_name.replace("_", " ").replace("-", " ").strip() or "environment prop"
     biome_label = biome_name.replace("_", " ").strip() or "fantasy wilderness"
     season_label = season.replace("_", " ").strip() if season else "summer"
@@ -923,11 +930,11 @@ def _build_tripo_fallback_prompt_info(
         ),
         "asset_class": asset_class,
         "suggested_max_vertices": max_vertices,
-        "preferred_source": "tripo_fallback",
+        "preferred_source": "external_model_fallback",
     }
 
 
-def _build_tripo_environment_manifest(
+def _build_external_model_environment_manifest(
     biome_name: str,
     scatter_rules: list[dict[str, Any]],
     *,
@@ -935,7 +942,7 @@ def _build_tripo_environment_manifest(
     scene_bounds: dict[str, float] | None = None,
     terrain_height_scale: float = 20.0,
 ) -> list[dict[str, Any]]:
-    """Build a full Tripo AI asset manifest from biome scatter rules.
+    """Build a provider-neutral model asset manifest from biome scatter rules.
 
     B+ upgrade: full manifest including mesh assets, material assignments,
     LOD specs, environment lighting hints, and scene bounds. Comparable to
@@ -960,8 +967,8 @@ def _build_tripo_environment_manifest(
             Used to derive z_min/z_max when scene_bounds is not provided.
 
     Returns:
-        List of manifest dicts, one per scatter rule that has a known Tripo
-        prompt entry, each containing full LOD/material/lighting spec.
+        List of manifest dicts, one per scatter rule, each containing full
+        LOD/material/lighting spec.
     """
     # LOD distance table by asset class (metres at 1080p, UE5 reference values)
     _LOD_DISTANCES: dict[str, list[float]] = {
@@ -1018,9 +1025,9 @@ def _build_tripo_environment_manifest(
         asset_name = str(rule.get("asset", "")).strip()
         if not asset_name:
             continue
-        prompt_info = _TRIPO_ENVIRONMENT_PROMPTS.get(asset_name)
+        prompt_info = _EXTERNAL_MODEL_PROMPTS.get(asset_name)
         if prompt_info is None:
-            prompt_info = _build_tripo_fallback_prompt_info(
+            prompt_info = _build_model_fallback_prompt_info(
                 asset_name,
                 biome_name,
                 resolved_season,
@@ -1051,7 +1058,7 @@ def _build_tripo_environment_manifest(
         manifest.append({
             "asset": asset_name,
             "asset_class": asset_class,
-            "preferred_source": str(prompt_info.get("preferred_source", "tripo")),
+            "preferred_source": str(prompt_info.get("preferred_source", "external_model")),
             "prompt": prompt_info["prompt"],
             "biome": biome_name,
             "season": resolved_season,
@@ -1113,9 +1120,9 @@ def get_vb_biome_preset(
     resolved = _apply_biome_season_profile(resolved, season)
     if (
         "scatter_rules" in resolved
-        and "tripo_asset_manifest" not in resolved
+        and "external_model_asset_manifest" not in resolved
     ):
-        resolved["tripo_asset_manifest"] = _build_tripo_environment_manifest(
+        resolved["external_model_asset_manifest"] = _build_external_model_environment_manifest(
             biome_name,
             resolved.get("scatter_rules", []),
             season=resolved.get("season") or season,
@@ -4871,7 +4878,6 @@ def _collect_bridge_spans(
     if start_idx is not None and end_idx is not None:
         spans.append({"start_index": start_idx, "end_index": end_idx})
 
-    clearance = 0.22 + max(width_m, 0.0) * 0.05
     resolved: list[dict[str, Any]] = []
     for span in spans:
         start_index = max(0, span["start_index"] - 1)
@@ -4904,7 +4910,16 @@ def _collect_bridge_spans(
             float(water_level),
             float(graded_heightmap[r0, c0]),
             float(graded_heightmap[r1, c1]),
-        ) + clearance
+        )
+        max_water_depth_m = 0.0
+        for sample_index in range(start_index, end_index + 1):
+            sr, sc = path[sample_index]
+            max_water_depth_m = max(
+                max_water_depth_m,
+                float(water_level) - float(base_heightmap[sr, sc]),
+            )
+        clearance = max(0.75, 0.22 + max(width_m, 0.0) * 0.05, max_water_depth_m * 0.5)
+        deck_z += clearance
         span_length = math.hypot(x1 - x0, y1 - y0)
         style = "rope" if width_m <= 2.5 and span_length >= 8.0 else "stone_arch"
         resolved.append(
@@ -4916,9 +4931,90 @@ def _collect_bridge_spans(
                 "start_pos": (x0, y0, deck_z),
                 "end_pos": (x1, y1, deck_z),
                 "clearance": clearance,
+                "water_depth_m": max(0.0, max_water_depth_m),
             }
         )
     return resolved
+
+
+def _build_generated_road_path_contract(
+    *,
+    terrain_name: str,
+    full_path_world: list[tuple[float, float, float]],
+    bridge_spans: list[dict[str, Any]],
+    terrain_bounds: tuple[float, float, float, float],
+    surface_key: str,
+    road_width_m: float,
+    max_grade_degrees: float,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Build an AI-readable path/road/bridge contract for env_generate_road."""
+    max_grade = math.tan(math.radians(float(max_grade_degrees)))
+    segment_type = "path" if str(surface_key).lower() in {"trail", "path", "dirt_path", "dirt"} else "road"
+    segments: list[PathSegmentContract] = []
+    if len(full_path_world) >= 2:
+        points = tuple(
+            (float(x), float(y), float(z))
+            for x, y, z in full_path_world
+        )
+        min_x, min_y, max_x, max_y = terrain_bounds
+        edge_tolerance = max(1.0, min(max_x - min_x, max_y - min_y) * 0.02)
+        segments.append(
+            PathSegmentContract(
+                segment_id="route_0",
+                segment_type=segment_type,  # type: ignore[arg-type]
+                points=points,
+                width_m=float(road_width_m),
+                material_stack=material_stack_for_path(surface_key),
+                continuation_edge=infer_continuation_edge(
+                    points,
+                    terrain_bounds,
+                    tolerance_m=edge_tolerance,
+                ),
+                max_grade=max_grade,
+                metadata={"surface": surface_key, "terrain_name": terrain_name},
+            )
+        )
+
+        for bridge_index, span in enumerate(bridge_spans):
+            bridge_points = (
+                tuple(float(v) for v in span["start_pos"]),
+                tuple(float(v) for v in span["end_pos"]),
+            )
+            bridge_span_m = math.dist(bridge_points[0], bridge_points[1])
+            segments.append(
+                PathSegmentContract(
+                    segment_id=f"bridge_{bridge_index}",
+                    segment_type="bridge",
+                    points=bridge_points,  # type: ignore[arg-type]
+                    width_m=max(float(road_width_m) * 0.92, 1.25),
+                    material_stack=material_stack_for_path(
+                        str(span.get("style", surface_key)),
+                        bridge=True,
+                    ),
+                    continuation_edge=infer_continuation_edge(
+                        bridge_points,  # type: ignore[arg-type]
+                        terrain_bounds,
+                        tolerance_m=edge_tolerance,
+                    ),
+                    crosses_water=True,
+                    water_depth_m=float(span.get("water_depth_m", 0.0)),
+                    bridge_required=True,
+                    bridge_span_m=bridge_span_m,
+                    bridge_clearance_m=float(span.get("clearance", 0.75)),
+                    max_grade=max_grade,
+                    metadata={
+                        "surface": surface_key,
+                        "style": str(span.get("style", "")),
+                        "material_key": str(span.get("material_key", "")),
+                    },
+                )
+            )
+
+    network = PathNetworkContract(
+        node_id=str(terrain_name),
+        segments=tuple(segments),
+    )
+    return network.to_dict(), validate_path_network_contract(network)
 
 
 def _ensure_grounded_road_material(material_name: str, road_material_key: str) -> Any:
@@ -5877,12 +5973,13 @@ def handle_generate_road(params: dict) -> dict:
             seed=seed,
             rdp_epsilon=road_route_rdp_epsilon,
         )
+        max_grade_degrees = float(params.get("max_grade_degrees", 15.0))
         graded = _grade_road_path_in_world_space(
             heightmap,
             path,
             width=width,
             grade_strength=float(grade_strength),
-            max_grade_degrees=float(params.get("max_grade_degrees", 15.0)),
+            max_grade_degrees=max_grade_degrees,
             cell_size=float(cell_size),
         )
         road_routing_method = str(road_network_result.get("routing_method", "astar_24dir"))
@@ -5905,12 +6002,18 @@ def handle_generate_road(params: dict) -> dict:
             # on non-1m tiles (P2-8 narrowing).
             cell_size=float(cell_size),
         )
+        max_grade_degrees = float(params.get("max_grade_degrees", 15.0))
 
     water_level_raw = params.get("water_level")
     water_level = float(water_level_raw) if water_level_raw is not None else None
     terrain_only_surfaces = {"trail", "path", "dirt_path", "dirt"}
     low_profile_surfaces = set(terrain_only_surfaces)
-    allow_bridges = bool(params.get("allow_bridges", requested_surface not in terrain_only_surfaces))
+    allow_bridges = bool(
+        params.get(
+            "allow_bridges",
+            water_level is not None or requested_surface not in terrain_only_surfaces,
+        )
+    )
     crown_height_m = max(cell_size * 0.04, 0.03)
     ditch_depth_m = max(cell_size * 0.10, 0.08)
     if requested_surface in terrain_only_surfaces:
@@ -6012,6 +6115,20 @@ def handle_generate_road(params: dict) -> dict:
         terrain_origin_x=terrain_origin_x,
         terrain_origin_y=terrain_origin_y,
     )
+    path_network_contract, path_network_contract_issues = _build_generated_road_path_contract(
+        terrain_name=terrain_name,
+        full_path_world=full_path_world,
+        bridge_spans=bridge_spans,
+        terrain_bounds=(
+            float(terrain_origin_x) - float(terrain_width) * 0.5,
+            float(terrain_origin_y) - float(terrain_height) * 0.5,
+            float(terrain_origin_x) + float(terrain_width) * 0.5,
+            float(terrain_origin_y) + float(terrain_height) * 0.5,
+        ),
+        surface_key=requested_surface,
+        road_width_m=road_width_world,
+        max_grade_degrees=max_grade_degrees,
+    )
     bridge_mask = [False] * len(path)
     forced_indices: set[int] = set()
     for span in bridge_spans:
@@ -6041,13 +6158,16 @@ def handle_generate_road(params: dict) -> dict:
             "road_vertex_count": 0,
             "surface": requested_surface,
             "surface_mode": "terrain_only",
-            "bridge_count": 0,
+            "bridge_count": len(bridge_spans),
+            "bridge_span_count": len(bridge_spans),
             "bridge_object_names": [],
             "road_mask_shape": list(road_mask.shape),
             "road_mask_nonzero": int(road_mask.sum()),
             "terrain_cost_context_used": road_cost_map is not None,
             "terrain_cost_source": road_cost_source,
             "road_routing_method": road_routing_method,
+            "path_network_contract": path_network_contract,
+            "path_network_contract_issues": path_network_contract_issues,
             "protected_cells_skipped": protected_cells_skipped,
             "affected_cells": len(path),
             "duration_seconds": round(_duration, 4),
@@ -6150,6 +6270,7 @@ def handle_generate_road(params: dict) -> dict:
         "road_vertex_count": len(road_mesh_data.vertices),
         "surface": requested_surface,
         "bridge_count": len(bridge_object_names),
+        "bridge_span_count": len(bridge_spans),
         "bridge_object_names": bridge_object_names,
         "splatmap_layer": "VB_TerrainSplatmap",
         "road_mask_shape": list(road_mask.shape),
@@ -6157,6 +6278,8 @@ def handle_generate_road(params: dict) -> dict:
         "terrain_cost_context_used": road_cost_map is not None,
         "terrain_cost_source": road_cost_source,
         "road_routing_method": road_routing_method,
+        "path_network_contract": path_network_contract,
+        "path_network_contract_issues": path_network_contract_issues,
         "protected_cells_skipped": protected_cells_skipped,
         "affected_cells": len(path),
         "duration_seconds": round(_duration, 4),
@@ -6825,7 +6948,7 @@ def _build_level_water_surface_from_terrain(
         )
         bottom_z = min(water_level_f - target_depth, terrain_z - 0.22)
         shoreline_drop = max(0.0, 0.88 - shore_factor) * min(max(water_depth * 0.035, 0.03), 0.16)
-        surface_z = water_level_f - shoreline_drop
+        surface_z = max(water_level_f - shoreline_drop, terrain_z + 0.02)
         top_verts[index] = bm.verts.new((wx, wy, surface_z))
         _vert_count += 1
         if not surface_only:

@@ -295,6 +295,7 @@ class TerrainMaskStack:
     foam: Optional[np.ndarray] = None
     mist: Optional[np.ndarray] = None
     wet_rock: Optional[np.ndarray] = None
+    riverbed_caustics: Optional[np.ndarray] = None
     tidal: Optional[np.ndarray] = None
     waterfall_velocity: Optional[np.ndarray] = None
     # Manning-based flow speed per cell — float32 (H, W) in [0, 1].

@@ -2318,7 +2318,16 @@ def pass_waterfalls(
     stack.set("mist", mist, "waterfalls")
     stack.set("wet_rock", wet_rock, "waterfalls")
 
-    # 7b. Publish particle-emitter seed specs for the VFX exporter.
+    # 7b-caustics: wire compute_riverbed_caustics (previously orphaned).
+    # Beer-Lambert caustic map: I_bed(d) = I_surface * exp(-k * d).
+    try:
+        from ._water_network_ext import compute_riverbed_caustics as _caustics
+        caustic_map = _caustics(stack, seed=derived_seed)
+        stack.set("riverbed_caustics", caustic_map, "waterfalls")
+    except Exception:
+        pass  # caustics are an enhancement; never block the pass
+
+    # 7c. Publish particle-emitter seed specs for the VFX exporter.
     # AAA req #10 wiring fix (Phase R9+): the ``terrain_waterfalls_volumetric``
     # module has always known how to build physically-scaled particle seed
     # zones, but nothing downstream consumed them. We now serialise each
@@ -2343,6 +2352,7 @@ def pass_waterfalls(
         "mist",
         "wet_rock",
         "waterfall_velocity",
+        "riverbed_caustics",
     ]
     if particle_emitter_specs:
         produced.append("particle_emitter_specs")

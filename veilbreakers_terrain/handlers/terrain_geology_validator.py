@@ -57,10 +57,12 @@ def validate_strata_consistency(
         return issues
 
     # Smoothed orientation (4-neighbor mean, not including self)
-    up = np.roll(arr, shift=1, axis=0)
-    down = np.roll(arr, shift=-1, axis=0)
-    left = np.roll(arr, shift=1, axis=1)
-    right = np.roll(arr, shift=-1, axis=1)
+    # Edge-reflect padding prevents toroidal seam contamination from np.roll.
+    _padded = np.pad(arr, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    up    = _padded[:-2, 1:-1]
+    down  = _padded[2:,  1:-1]
+    left  = _padded[1:-1, :-2]
+    right = _padded[1:-1, 2:]
     avg = (up + down + left + right) / 4.0
 
     # Normalize both

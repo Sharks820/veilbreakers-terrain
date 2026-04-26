@@ -307,8 +307,10 @@ def apply_differential_erosion(
         _offsets = [(-1, -1), (-1, 0), (-1, 1),
                     ( 0, -1), ( 0, 0), ( 0, 1),
                     ( 1, -1), ( 1, 0), ( 1, 1)]
+        # Edge-reflect padding prevents toroidal seam contamination.
+        _hp = np.pad(h, 1, mode="edge")
         neighbourhood_mean = np.mean(
-            np.stack([np.roll(np.roll(h, dr, axis=0), dc, axis=1)
+            np.stack([_hp[1 + dr:1 + dr + H, 1 + dc:1 + dc + W]
                       for dr, dc in _offsets], axis=0),
             axis=0,
         )
@@ -333,7 +335,8 @@ def apply_differential_erosion(
     #    Proxy: where hardness increases sharply going upward (positive
     #    vertical gradient of hardness), the soft cell is being undercut.
     # ------------------------------------------------------------------
-    hardness_above = np.roll(hardness, -1, axis=0)  # cell one row "higher"
+    # Edge-reflect: last row repeats rather than wrapping to row 0.
+    hardness_above = np.pad(hardness, ((0, 1), (0, 0)), mode="edge")[1:]
     hardness_contrast = np.clip(hardness_above - hardness, 0.0, 1.0)
     soft = np.clip(1.0 - hardness, 0.0, 1.0)
     undercut = undercutting_strength * soft * hardness_contrast
