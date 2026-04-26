@@ -250,10 +250,17 @@ def run_production_passes(heightmap):
 # ---------------------------------------------------------------------------
 # Stage 3 — Blender mesh construction
 # ---------------------------------------------------------------------------
+def _look_at(cam_obj, target_xyz):
+    """Point a camera object at a world-space target using to_track_quat."""
+    from mathutils import Vector
+    direction = Vector(target_xyz) - Vector(cam_obj.location)
+    rot_quat = direction.to_track_quat("-Z", "Y")
+    cam_obj.rotation_euler = rot_quat.to_euler()
+
+
 def build_blender_scene(heightmap, stack):
     try:
         import bpy
-        import bmesh
         import mathutils
     except ImportError:
         _log("Not running inside Blender — skipping mesh build.")
@@ -264,159 +271,140 @@ def build_blender_scene(heightmap, stack):
     _log("Building Blender scene...")
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
-    # --- Delete defaults ---
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
 
-    # --- Terrain mesh ---
+    # --- Terrain mesh — from_pydata (fast, step=2 → 512² faces) ---
     _log("  Creating terrain mesh...")
-    mesh = bpy.data.meshes.new("Terrain_AAA_v3")
-    bm = bmesh.new()
-
+    step = 2
     xs = np.linspace(X_MIN, X_MAX, RES)
     ys = np.linspace(Y_MIN, Y_MAX, RES)
+    rows_s = list(range(0, RES, step))
+    cols_s = list(range(0, RES, step))
+    nr, nc = len(rows_s), len(cols_s)
 
-    # Build vertices in strips for efficiency
-    vert_grid = []
-    for row in range(RES):
-        vrow = []
-        for col in range(RES):
-            z = float(heightmap[row, col])
-            v = bm.verts.new((xs[col], ys[row], z))
-            vrow.append(v)
-        vert_grid.append(vrow)
+    verts = [(float(xs[c]), float(ys[r]), float(heightmap[r, c]))
+             for r in rows_s for c in cols_s]
+    faces = [(ri * nc + ci,
+              ri * nc + ci + 1,
+              (ri + 1) * nc + ci + 1,
+              (ri + 1) * nc + ci)
+             for ri in range(nr - 1) for ci in range(nc - 1)]
 
-    bm.verts.ensure_lookup_table()
-
-    # Faces (quads, strip by strip)
-    step = max(1, RES // 256)  # downsample to ~256² faces for preview
-    for row in range(0, RES - step, step):
-        for col in range(0, RES - step, step):
-            v0 = vert_grid[row][col]
-            v1 = vert_grid[row][col + step]
-            v2 = vert_grid[row + step][col + step]
-            v3 = vert_grid[row + step][col]
-            try:
-                bm.faces.new((v0, v1, v2, v3))
-            except ValueError:
-                pass
-
-    bm.to_mesh(mesh)
-    bm.free()
+    mesh = bpy.data.meshes.new("Terrain_AAA_v3")
+    mesh.from_pydata(verts, [], faces)
     mesh.update()
 
     terrain_obj = bpy.data.objects.new("Terrain_AAA_v3", mesh)
     bpy.context.scene.collection.objects.link(terrain_obj)
     _log(f"  terrain mesh: {len(mesh.vertices)} verts / {len(mesh.polygons)} faces")
 
-    # --- Material: splatmap-driven PBR (dark fantasy) ---
+    # --- Material: height-driven color ramp (dark fantasy stone strata) ---
     mat = bpy.data.materials.new("TerrainMat_AAA_v3")
     mat.use_nodes = True
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
 
-    output = nodes.new("ShaderNodeOutputMaterial")
-    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-    output.location = (400, 0)
-    bsdf.location = (0, 0)
-    links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+    output  = nodes.new("ShaderNodeOutputMaterial");  output.location  = (700, 0)
+    bsdf    = nodes.new("ShaderNodeBsdfPrincipled");  bsdf.location    = (400, 0)
+    cramp   = nodes.new("ShaderNodeValToRGB");        cramp.location   = (100, 0)
+    mrange  = nodes.new("ShaderNodeMapRange");        mrange.location  = (-150, 0)
+    sep     = nodes.new("ShaderNodeSeparateXYZ");     sep.location     = (-350, 0)
+    geo     = nodes.new("ShaderNodeNewGeometry");     geo.location     = (-550, 0)
 
-    # Dark-fantasy base color (desaturated dark stone)
-    bsdf.inputs["Base Color"].default_value = (0.08, 0.07, 0.06, 1.0)
-    bsdf.inputs["Roughness"].default_value = 0.85
-    bsdf.inputs["Metallic"].default_value = 0.0
+    links.new(geo.outputs["Position"],    sep.inputs["Vector"])
+    links.new(sep.outputs["Z"],           mrange.inputs["Value"])
+    mrange.inputs["From Min"].default_value = -10.0
+    mrange.inputs["From Max"].default_value = 200.0
+    links.new(mrange.outputs["Result"],   cramp.inputs["Fac"])
+    links.new(cramp.outputs["Color"],     bsdf.inputs["Base Color"])
+    links.new(bsdf.outputs["BSDF"],       output.inputs["Surface"])
 
+    # Dark-fantasy strata: gorge floor → mid stone → cliff peak
+    elems = cramp.color_ramp.elements
+    elems[0].position = 0.0;  elems[0].color = (0.03, 0.04, 0.05, 1.0)  # wet gorge
+    elems[1].position = 1.0;  elems[1].color = (0.22, 0.18, 0.14, 1.0)  # cliff peak
+    mid = elems.new(0.35);    mid.color = (0.10, 0.08, 0.07, 1.0)        # mid stone
+
+    bsdf.inputs["Roughness"].default_value = 0.88
+    bsdf.inputs["Metallic"].default_value  = 0.0
     terrain_obj.data.materials.append(mat)
 
-    # --- Water surface (river in gorge) ---
+    # --- Water surface — proper quad grid at GORGE_WATER_LEVEL ---
     _log("  Creating water surface...")
-    water_verts = []
-    water_faces = []
-    ws = RES // 4  # coarse water grid
-    wxs = np.linspace(-120.0, 120.0, ws)
-    wys = np.linspace(-350.0, 350.0, ws)
-    for ri, wy in enumerate(wys):
-        for ci, wx in enumerate(wxs):
-            # Only place water inside gorge where terrain is below gorge water level
-            row_idx = int((wy - Y_MIN) / TILE_SIZE_M * (RES - 1))
-            col_idx = int((wx - X_MIN) / TILE_SIZE_M * (RES - 1))
-            row_idx = max(0, min(RES - 1, row_idx))
-            col_idx = max(0, min(RES - 1, col_idx))
-            terrain_z = float(heightmap[row_idx, col_idx])
-            # Z-fight fix: surface_z = max(water_level, terrain_z + 0.02)
-            surface_z = max(GORGE_WATER_LEVEL, terrain_z + 0.02)
-            if terrain_z < GORGE_WATER_LEVEL:
-                water_verts.append((float(wx), float(wy), surface_z))
+    wg = 64  # 64×64 grid spans gorge
+    wxs_g = np.linspace(-155.0, 155.0, wg)
+    wys_g = np.linspace(-460.0, 460.0, wg)
+    w_verts = [(float(wx), float(wy), GORGE_WATER_LEVEL)
+               for wy in wys_g for wx in wxs_g]
+    w_faces = [(ri * wg + ci,
+                ri * wg + ci + 1,
+                (ri + 1) * wg + ci + 1,
+                (ri + 1) * wg + ci)
+               for ri in range(wg - 1) for ci in range(wg - 1)]
 
-    if water_verts:
-        water_mesh = bpy.data.meshes.new("Water_Gorge")
-        water_mesh.from_pydata(water_verts, [], [])
-        water_obj = bpy.data.objects.new("Water_Gorge", water_mesh)
-        bpy.context.scene.collection.objects.link(water_obj)
+    water_mesh = bpy.data.meshes.new("Water_Gorge")
+    water_mesh.from_pydata(w_verts, [], w_faces)
+    water_mesh.update()
+    water_obj = bpy.data.objects.new("Water_Gorge", water_mesh)
+    bpy.context.scene.collection.objects.link(water_obj)
 
-        water_mat = bpy.data.materials.new("WaterMat_AAA")
-        water_mat.use_nodes = True
-        wnodes = water_mat.node_tree.nodes
-        wlinks = water_mat.node_tree.links
-        wnodes.clear()
-        wout = wnodes.new("ShaderNodeOutputMaterial")
-        wglass = wnodes.new("ShaderNodeBsdfPrincipled")
-        wout.location = (400, 0)
-        wglass.location = (0, 0)
-        # Beer-Lambert: dark teal at depth
-        wglass.inputs["Base Color"].default_value = (0.02, 0.12, 0.18, 1.0)
-        wglass.inputs["Roughness"].default_value = 0.04
-        wglass.inputs["Transmission Weight"].default_value = 0.95
-        wglass.inputs["IOR"].default_value = 1.333
-        wlinks.new(wglass.outputs["BSDF"], wout.inputs["Surface"])
-        water_mat.blend_method = "BLEND"
-        water_obj.data.materials.append(water_mat)
-        _log(f"  water surface: {len(water_verts)} verts")
+    water_mat = bpy.data.materials.new("WaterMat_AAA")
+    water_mat.use_nodes = True
+    wn = water_mat.node_tree.nodes
+    wl = water_mat.node_tree.links
+    wn.clear()
+    wout   = wn.new("ShaderNodeOutputMaterial"); wout.location   = (400, 0)
+    wbsdf  = wn.new("ShaderNodeBsdfPrincipled"); wbsdf.location  = (0, 0)
+    wbsdf.inputs["Base Color"].default_value          = (0.02, 0.12, 0.18, 1.0)
+    wbsdf.inputs["Roughness"].default_value           = 0.04
+    wbsdf.inputs["Transmission Weight"].default_value = 0.92
+    wbsdf.inputs["IOR"].default_value                 = 1.333
+    wl.new(wbsdf.outputs["BSDF"], wout.inputs["Surface"])
+    water_obj.data.materials.append(water_mat)
+    _log(f"  water: {len(w_verts)} verts / {len(w_faces)} faces")
 
-    # --- Lighting (dark fantasy: overcast + one fill) ---
+    # --- Lighting ---
     _log("  Setting up lighting...")
     sun = bpy.data.lights.new("Sun_KeyLight", type="SUN")
-    sun.energy = 3.5
-    sun.color = (0.95, 0.88, 0.78)
+    sun.energy = 3.5;  sun.color = (0.95, 0.88, 0.78)
     sun.angle = math.radians(3.0)
     sun_obj = bpy.data.objects.new("Sun_KeyLight", sun)
     sun_obj.rotation_euler = (math.radians(55), 0.0, math.radians(-35))
     bpy.context.scene.collection.objects.link(sun_obj)
 
     fill = bpy.data.lights.new("Sky_Fill", type="SUN")
-    fill.energy = 0.8
-    fill.color = (0.55, 0.62, 0.75)
+    fill.energy = 0.8;  fill.color = (0.55, 0.62, 0.75)
     fill_obj = bpy.data.objects.new("Sky_Fill", fill)
     fill_obj.rotation_euler = (math.radians(15), 0.0, math.radians(145))
     bpy.context.scene.collection.objects.link(fill_obj)
 
-    # World: dark overcast sky
     world = bpy.data.worlds.new("DarkFantasyWorld")
     bpy.context.scene.world = world
     world.use_nodes = True
-    bg = world.node_tree.nodes["Background"]
-    bg.inputs["Color"].default_value = (0.04, 0.05, 0.07, 1.0)
-    bg.inputs["Strength"].default_value = 0.6
+    world.node_tree.nodes["Background"].inputs["Color"].default_value    = (0.04, 0.05, 0.07, 1.0)
+    world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.6
 
-    # --- Cameras (4 angles + aerial) ---
+    # --- Cameras — look_at driven, no manual euler guesswork ---
     _log("  Placing cameras...")
+    # (name, position, look_at_target, lens)
     cam_specs = [
-        ("Cam_Gorge_Overview", (-50.0, -400.0, 280.0), (math.radians(55), 0.0, math.radians(15))),
-        ("Cam_Cliff_Face",     (350.0, -100.0, 150.0), (math.radians(45), 0.0, math.radians(-120))),
-        ("Cam_River_Approach", (-200.0, 150.0, 90.0),  (math.radians(30), 0.0, math.radians(20))),
-        ("Cam_Aerial",         (0.0,  0.0, 900.0),     (math.radians(5),  0.0, 0.0)),
-        ("Cam_Waterfall",      (-80.0, 50.0, 100.0),   (math.radians(25), 0.0, math.radians(85))),
+        ("Cam_Gorge_Overview", (-50.0,  -420.0, 270.0), (  0.0,   0.0,  35.0), 35.0),
+        ("Cam_Cliff_Face",     (-80.0,     0.0,  70.0), (300.0,   0.0, 100.0), 50.0),  # west→east cliff
+        ("Cam_River_Approach", (-280.0,  180.0, 110.0), (  0.0,  20.0,  25.0), 35.0),
+        ("Cam_Aerial",         (  0.0,     0.0, 900.0), (  0.0,   0.0,   0.0), 28.0),
+        ("Cam_Waterfall",      ( -30.0,  -200.0, 200.0), (  0.0,  60.0,  10.0), 35.0),
     ]
     cameras = []
-    for name, loc, rot in cam_specs:
+    for name, loc, target, lens in cam_specs:
         cd = bpy.data.cameras.new(name)
-        cd.lens = 35.0
+        cd.lens = lens
         cd.clip_end = 5000.0
         co = bpy.data.objects.new(name, cd)
         co.location = loc
-        co.rotation_euler = rot
         bpy.context.scene.collection.objects.link(co)
+        _look_at(co, target)
         cameras.append(co)
 
     # --- Render settings ---

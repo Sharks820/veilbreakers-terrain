@@ -1,0 +1,27 @@
+{
+  "script": "build_terrain_aaa_node_v3.py",
+  "seed": "0xaaa3",
+  "tile_size_m": 1024.0,
+  "resolution": 1025,
+  "heightmap_min_m": -10.0,
+  "heightmap_max_m": 200.0,
+  "water_level_coastal_m": 3.0,
+  "water_level_gorge_m": 14.0,
+  "wiring_fixes_applied": [
+    "compute_riverbed_caustics wired to waterfall pass",
+    "terrain_cliffs talus_boulder_placements added to produces_channels",
+    "Z-fight fix: surface_z = max(water_level, terrain_z + 0.02)",
+    "np.roll seam bugs fixed: terrain_geology_validator + terrain_stratigraphy",
+    "8 dead generators removed from _scatter_engine.py"
+  ],
+  "channels_produced": {
+    "slope": "present (len=1025)",
+    "cliff_candidate": "present (len=1025)",
+    "foam": "present (len=1025)",
+    "mist": "present (len=1025)",
+    "wet_rock": "present (len=1025)",
+    "riverbed_caustics": "present (len=1025)",
+    "waterfall_velocity": "present (len=1025)"
+  },
+  "failures": []
+}
