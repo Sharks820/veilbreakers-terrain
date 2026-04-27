@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 import random
+import warnings
 from typing import Any
 
 try:
@@ -1125,6 +1126,11 @@ def scatter_biome_vegetation(
     Returns dict with: name, instance_count, vegetation_types, biome, season,
                        lod_distribution, species_density.
     """
+    warnings.warn(
+        "scatter_biome_vegetation is deprecated; use handle_scatter_vegetation",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     biome_name = params.get("biome_name")
     if not biome_name:
         raise ValueError("'biome_name' is required")

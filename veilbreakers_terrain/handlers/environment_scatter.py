@@ -58,7 +58,7 @@ from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERAT
 from .vegetation_lsystem import generate_billboard_impostor
 from .lod_pipeline import generate_lod_chain
 from .terrain_semantics import WorldHeightTransform
-from .terrain_scatter_points import ScatterPoint, ScatterPointTable
+from .terrain_scatter_points import ScatterPoint, ScatterPointTable, validate_scatter_point_table
 
 logger = logging.getLogger(__name__)
 
@@ -2928,6 +2928,71 @@ def _scatter_pass(
             "lod2": counts.get(2, 0),
             "lod3": counts.get(3, 0),
         }
+
+    # ------------------------------------------------------------------
+    # C-3: Convert placement list to canonical ScatterPointTable and
+    # validate.  Callers that need the raw list still get it via the
+    # return value; the validated table is attached to each placement
+    # dict as "scatter_manifest" is surfaced by handle_scatter_vegetation.
+    # ------------------------------------------------------------------
+    _scatter_points: list[ScatterPoint] = []
+    for _p in placements:
+        _pos2 = _p.get("position", (0.0, 0.0))
+        _alt = float(_p.get("altitude", 0.0))
+        _pos3: tuple[float, float, float] = (float(_pos2[0]), float(_pos2[1]), _alt * terrain_size)
+        _raw_scale = float(_p.get("scale", 1.0))
+        _scale3: tuple[float, float, float] = (_raw_scale, _raw_scale, _raw_scale)
+        # Convert yaw rotation (radians, around Z) to unit quaternion (x,y,z,w)
+        _rot = float(_p.get("rotation", 0.0))
+        _half = _rot * 0.5
+        _orient: tuple[float, float, float, float] = (0.0, 0.0, math.sin(_half), math.cos(_half))
+        _lod_int = int(_p.get("lod", 0))
+        _lod_bucket = f"lod{_lod_int}"
+        _species = str(_p.get("species_id", _p.get("vegetation_type", "unknown")))
+        _veg_type = str(_p.get("vegetation_type", "unknown"))
+        _scatter_points.append(
+            ScatterPoint(
+                position=_pos3,
+                normal=(0.0, 0.0, 1.0),
+                orient=_orient,
+                scale=_scale3,
+                prototype_id=_veg_type,
+                species_id=_species,
+                biome_id=str(_p.get("biome", biome)),
+                density=max(0.0, min(1.0, float(_p.get("moisture", 0.5)))),
+                seed=seed,
+                slope=float(_p.get("altitude", 0.0)),
+                height_m=_pos3[2],
+                mask_sources=(f"scatter_pass:{pass_type}",),
+                lod_bucket=_lod_bucket,
+                wind_profile="none",
+                source_layer=pass_type,
+                point_mode="exact_instance",
+                metadata={
+                    "moisture": float(_p.get("moisture", 0.0)),
+                    "gpu_instance": bool(_p.get("gpu_instance", True)),
+                },
+            )
+        )
+
+    _scatter_table = ScatterPointTable(
+        points=tuple(_scatter_points),
+        source=f"scatter_pass:{pass_type}",
+    )
+    _validation_issues = validate_scatter_point_table(_scatter_table)
+    if _validation_issues:
+        logger.warning(
+            "ScatterPointTable validation issues (%d): %s",
+            len(_validation_issues),
+            _validation_issues[:5],
+        )
+
+    # Attach the serialised manifest to every placement dict so downstream
+    # callers (handle_scatter_vegetation result dict) can surface it.
+    _manifest = _scatter_table.to_dict()
+    _manifest["format"] = "ScatterPointTable"
+    for _p in placements:
+        _p["scatter_manifest"] = _manifest
 
     return placements
 

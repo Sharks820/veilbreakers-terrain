@@ -232,7 +232,14 @@ class TestBlenderServerDispatch:
 # Fix 9.7 — scatter handlers registered in COMMAND_HANDLERS (BUG-S9-015)
 # ---------------------------------------------------------------------------
 class TestScatterCommandHandlers:
-    """Verify scatter_vegetation and scatter_biome_vegetation are in COMMAND_HANDLERS."""
+    """Verify scatter_vegetation (canonical path) is in COMMAND_HANDLERS.
+
+    scatter_biome_vegetation was removed from COMMAND_HANDLERS in C-1 (dedup
+    scatter path fix); handle_scatter_vegetation is now the single canonical
+    entry point.  The underlying scatter_biome_vegetation function still exists
+    in vegetation_system but emits a DeprecationWarning and is no longer
+    registered as an MCP command.
+    """
 
     def test_scatter_vegetation_registered(self) -> None:
         assert "scatter_vegetation" in COMMAND_HANDLERS, (
@@ -244,14 +251,10 @@ class TestScatterCommandHandlers:
             "COMMAND_HANDLERS['scatter_vegetation'] is not callable"
         )
 
-    def test_scatter_biome_vegetation_registered(self) -> None:
-        assert "scatter_biome_vegetation" in COMMAND_HANDLERS, (
-            "scatter_biome_vegetation missing from COMMAND_HANDLERS"
-        )
-
-    def test_scatter_biome_vegetation_callable(self) -> None:
-        assert callable(COMMAND_HANDLERS["scatter_biome_vegetation"]), (
-            "COMMAND_HANDLERS['scatter_biome_vegetation'] is not callable"
+    def test_scatter_biome_vegetation_not_in_command_handlers(self) -> None:
+        """C-1: scatter_biome_vegetation must NOT be registered; use scatter_vegetation."""
+        assert "scatter_biome_vegetation" not in COMMAND_HANDLERS, (
+            "scatter_biome_vegetation should have been removed from COMMAND_HANDLERS (C-1)"
         )
 
     def test_scatter_props_registered(self) -> None:

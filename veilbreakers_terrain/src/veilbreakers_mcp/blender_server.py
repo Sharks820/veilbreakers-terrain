@@ -75,7 +75,7 @@ _LOC_HANDLERS: Dict[str, str] = {
     "quality_profile_list": "terrain_list_quality_profiles",
     "quality_profile_apply": "terrain_apply_quality_profile",
     "scatter_vegetation": "scatter_vegetation",
-    "scatter_biome_vegetation": "scatter_biome_vegetation",
+    "scatter_biome_vegetation": "scatter_vegetation",  # C-1: deprecated; rerouted to canonical handler
     "scatter_props": "scatter_props",
     "scatter_breakable": "scatter_create_breakable",
     # ------------------------------------------------------------------
