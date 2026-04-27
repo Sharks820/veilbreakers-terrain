@@ -31,9 +31,11 @@ Rules honored (see TERRAIN_AGENT_PROTOCOL.md):
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field, replace  # noqa: E402
@@ -2140,6 +2142,70 @@ def validate_waterfall_volumetric(
 # ---------------------------------------------------------------------------
 
 
+def rasterize_channel_to_atlas(
+    arr: "np.ndarray",
+    atlas_path: str,
+    *,
+    bit_depth: int = 8,
+    flip_vertical: bool = True,
+) -> bool:
+    """Write a float32 [0,1] numpy array to a PNG atlas file.
+
+    Tries PIL, then imageio, then falls back to .npy + sidecar JSON so the
+    call never raises. Returns True if a PNG was written, False if only the
+    npy fallback was used.
+    """
+    try:
+        arr_np = np.asarray(arr, dtype=np.float32)
+        if arr_np.ndim != 2:
+            return False
+        if flip_vertical:
+            arr_np = arr_np[::-1, :]
+        target = Path(atlas_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if bit_depth == 16:
+            quantized = (np.clip(arr_np, 0.0, 1.0) * 65535.0).astype(np.uint16)
+        else:
+            quantized = (np.clip(arr_np, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+        # Try PIL first
+        try:
+            from PIL import Image as _PILImage  # type: ignore[import]
+            mode = "I;16" if bit_depth == 16 else "L"
+            img = _PILImage.fromarray(quantized, mode=mode if bit_depth == 8 else "I")
+            if bit_depth == 16:
+                img = _PILImage.fromarray(quantized.astype(np.int32), mode="I")
+            img.save(str(target))
+            return True
+        except Exception:
+            pass
+
+        # Try imageio
+        try:
+            import imageio  # type: ignore[import]
+            imageio.imwrite(str(target), quantized)
+            return True
+        except Exception:
+            pass
+
+        # Fallback: raw numpy + sidecar JSON
+        npy_path = target.with_suffix(".npy")
+        np.save(str(npy_path), np.clip(arr_np, 0.0, 1.0))
+        npy_path.with_suffix(".json").write_text(
+            json.dumps({
+                "source": atlas_path,
+                "bit_depth": bit_depth,
+                "shape": list(arr_np.shape),
+                "dtype": "float32_npy",
+                "flip_vertical": flip_vertical,
+            })
+        )
+        return False
+    except Exception:
+        return False
+
+
 def _region_slice(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -2321,12 +2387,31 @@ def pass_waterfalls(
 
     # 7b-caustics: wire compute_riverbed_caustics (previously orphaned).
     # Beer-Lambert caustic map: I_bed(d) = I_surface * exp(-k * d).
+    caustic_map = None
     try:
         from ._water_network_ext import compute_riverbed_caustics as _caustics
         caustic_map = _caustics(stack, seed=derived_seed)
         stack.set("riverbed_caustics", caustic_map, "waterfalls")
     except Exception:
         pass  # caustics are an enhancement; never block the pass
+
+    # 7d. Rasterize water atlas channels to PNG files for Unity material binding.
+    # Atlas paths stored on stack so terrain_unity_export can bind shader props.
+    _atlas_base = str(getattr(stack, "atlas_output_dir", "export/atlases"))
+    rasterize_channel_to_atlas(foam, f"{_atlas_base}/water_foam.png", bit_depth=8)
+    stack.set("foam_atlas_path", f"{_atlas_base}/water_foam.png", "waterfalls")
+    if caustic_map is not None:
+        rasterize_channel_to_atlas(caustic_map, f"{_atlas_base}/water_caustics.png", bit_depth=8)
+        stack.set("caustic_atlas_path", f"{_atlas_base}/water_caustics.png", "waterfalls")
+    # Depth atlas: normalize bathymetry channel if present (16-bit for precision)
+    _depth_arr = stack.get("bathymetry") if hasattr(stack, "get") else None
+    if _depth_arr is None:
+        _depth_arr = stack.get("water_depth") if hasattr(stack, "get") else None
+    if _depth_arr is not None:
+        _d = np.asarray(_depth_arr, dtype=np.float32)
+        _d_max = float(_d.max()) or 1.0
+        rasterize_channel_to_atlas(_d / _d_max, f"{_atlas_base}/water_depth.png", bit_depth=16)
+        stack.set("water_depth_atlas_path", f"{_atlas_base}/water_depth.png", "waterfalls")
 
     # 7c. Publish particle-emitter seed specs for the VFX exporter.
     # AAA req #10 wiring fix (Phase R9+): the ``terrain_waterfalls_volumetric``
@@ -2354,7 +2439,12 @@ def pass_waterfalls(
         "wet_rock",
         "waterfall_velocity",
         "riverbed_caustics",
+        "foam_atlas_path",
     ]
+    if caustic_map is not None:
+        produced.append("caustic_atlas_path")
+    if _depth_arr is not None:
+        produced.append("water_depth_atlas_path")
     if particle_emitter_specs:
         produced.append("particle_emitter_specs")
 
