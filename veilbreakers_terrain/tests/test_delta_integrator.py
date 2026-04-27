@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     ProtectedZoneSpec,
     TerrainIntentState,
@@ -67,7 +67,7 @@ class TestDeltaIntegratorWaterfallDelta:
     """Waterfall pool delta must depress terrain height."""
 
     def test_waterfall_delta_applied_to_height(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack()
         h_before = stack.height.copy()
@@ -91,7 +91,7 @@ class TestDeltaIntegratorCaveDelta:
     """Cave height delta must carve terrain."""
 
     def test_cave_delta_applied_to_height(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack()
         h_before = stack.height.copy()
@@ -114,7 +114,7 @@ class TestDeltaIntegratorAdditiveComposition:
     """Multiple deltas must compose additively, not last-writer-wins."""
 
     def test_multiple_deltas_compose_additively(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack()
         h_before = stack.height.copy()
@@ -145,7 +145,7 @@ class TestDeltaIntegratorNoDeltas:
     """When no deltas exist, height must be unchanged."""
 
     def test_no_deltas_height_unchanged(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack()
         h_before = stack.height.copy()
@@ -161,7 +161,7 @@ class TestDeltaIntegratorMetrics:
     """Integration pass must report metrics about applied deltas."""
 
     def test_metrics_report_delta_channels(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack()
         delta = np.zeros_like(stack.height)
@@ -180,7 +180,7 @@ class TestDeltaIntegratorStratErosionDelta:
     """Stratigraphic erosion delta must be applied."""
 
     def test_strat_erosion_delta_applied(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack()
         h_before = stack.height.copy()
@@ -232,7 +232,7 @@ class TestDeltaIntegratorProtectedZones:
     """Protected zones from state.intent must zero out deltas."""
 
     def test_protected_zone_blocks_delta(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack(size=16, base_height=100.0)
         h_before = stack.height.copy()
@@ -266,7 +266,7 @@ class TestDeltaIntegratorProtectedZones:
         assert stack.height[15, 15] == pytest.approx(h_before[15, 15] - 5.0)
 
     def test_allowed_mutation_permits_delta(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack(size=16, base_height=100.0)
         h_before = stack.height.copy()
@@ -292,7 +292,7 @@ class TestDeltaIntegratorProtectedZones:
         )
 
     def test_hero_exclusion_combined_with_protected_zone(self):
-        from blender_addon.handlers.terrain_delta_integrator import pass_integrate_deltas
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import pass_integrate_deltas
 
         stack = _make_stack(size=16, base_height=100.0)
         h_before = stack.height.copy()
@@ -335,9 +335,9 @@ class TestDeltaIntegratorPipelineSequencing:
     """Controller pipelines should normalize integrate_deltas after delta writers."""
 
     def test_run_pipeline_auto_inserts_integrator_after_delta_producer(self):
-        from blender_addon.handlers.terrain_delta_integrator import register_integrator_pass
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
-        from blender_addon.handlers.terrain_semantics import PassDefinition, PassResult
+        from veilbreakers_terrain.handlers.terrain_delta_integrator import register_integrator_pass
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
 
         def _produce_delta(state, region):
             delta = np.zeros_like(state.mask_stack.height, dtype=np.float32)
@@ -408,8 +408,8 @@ class TestDeltaIntegratorPipelineSequencing:
         assert results[-1].metrics["height_3_3"] == pytest.approx(96.0)
 
     def test_run_pipeline_auto_inserts_integrator_after_stratigraphy(self):
-        from blender_addon.handlers.terrain_geology_validator import register_bundle_i_passes
-        from blender_addon.handlers.terrain_pipeline import (
+        from veilbreakers_terrain.handlers.terrain_geology_validator import register_bundle_i_passes
+        from veilbreakers_terrain.handlers.terrain_pipeline import (
             TerrainPassController,
             register_default_passes,
         )
