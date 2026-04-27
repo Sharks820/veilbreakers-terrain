@@ -780,7 +780,7 @@ def generate_waterfall(
 
     # Sheet geometry parameters
     sheet_horiz_segs = max(4, int(width * 2))   # >= 4 horizontal segments
-    sheet_vert_segs = max(6, int(height * 1.5))
+    sheet_vert_segs = max(6, math.ceil(height * 48.0))  # 48 verts/m per WaterfallVolumetricProfile
     lip_thickness = 0.30   # metres at the top
     plunge_thickness = 0.05  # metres at the bottom
 
