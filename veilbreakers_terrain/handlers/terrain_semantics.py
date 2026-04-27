@@ -393,6 +393,10 @@ class TerrainMaskStack:
     heightmap_raw_u16: Optional[np.ndarray] = None
     # Unity-space terrain normal field. float32 shape (H, W, 3), Y-up vectors.
     terrain_normals: Optional[np.ndarray] = None
+    # PBR ambient-occlusion accumulated by quixel_ingest / material passes. float32 (H, W).
+    terrain_ao: Optional[np.ndarray] = None
+    # Height/parallax displacement accumulated by quixel_ingest. float32 (H, W).
+    terrain_displacement: Optional[np.ndarray] = None
     # Navmesh area classification: walkable/unwalkable/jump/climb per cell.
     navmesh_area_id: Optional[np.ndarray] = None
     # Physics collider tag: solid / trigger / nocollide.

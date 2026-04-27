@@ -207,7 +207,7 @@ class _StubStack:
 def _full_valid_stack():
     """Return a StubStack with all REQUIRED_STACK_CHANNELS in-range."""
     return _StubStack(
-        heightmap=np.array([0.0, 500.0, 9000.0], dtype=np.float32),
+        height=np.array([0.0, 500.0, 9000.0], dtype=np.float32),
         water_surface_mask=np.array([0.0, 0.5, 1.0], dtype=np.float32),
         water_depth_m=np.array([0.0, 100.0, 500.0], dtype=np.float32),
         cliff_mask=np.array([0.0, 0.5, 1.0], dtype=np.float32),
@@ -238,12 +238,12 @@ class TestValidateChannelManifest:
     def test_out_of_range_value_detected(self):
         """A channel whose max exceeds the declared bound is reported in out_of_range."""
         stack = _full_valid_stack()
-        # heightmap max is 9000.0; push well beyond it
-        stack.heightmap = np.array([0.0, 99999.0], dtype=np.float32)
+        # height max is 9000.0; push well beyond it
+        stack.height = np.array([0.0, 99999.0], dtype=np.float32)
         result = validate_channel_manifest(stack)
         assert result["valid"] is False
-        assert "heightmap" in result["out_of_range"]
-        assert any("out_of_range:heightmap" in s for s in result["issues"])
+        assert "height" in result["out_of_range"]
+        assert any("out_of_range:height" in s for s in result["issues"])
 
     def test_custom_required_channels_overrides_default(self):
         """Passing a custom spec only validates the channels in that spec."""

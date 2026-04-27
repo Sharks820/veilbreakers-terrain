@@ -334,7 +334,7 @@ def handle_visual_qa_set_shading(
 # Maps channel name → (dtype_family, (min_value, max_value))
 # dtype_family is "float" or "bool".
 REQUIRED_STACK_CHANNELS: Dict[str, Tuple[str, Tuple[float, float]]] = {
-    "heightmap":           ("float", (0.0, 9000.0)),
+    "height":              ("float", (0.0, 9000.0)),
     "water_surface_mask":  ("float", (0.0, 1.0)),
     "water_depth_m":       ("float", (0.0, 500.0)),
     "cliff_mask":          ("float", (0.0, 1.0)),

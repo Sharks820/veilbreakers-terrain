@@ -876,7 +876,7 @@ def register_water_variants_pass() -> None:
             # downstream passes (wildlife_zones, scatter_intelligent)
             # see fresh values after this pass runs.
             requires_channels=("height", "slope"),
-            produces_channels=("water_surface", "wetness"),
+            produces_channels=("water_surface", "wetness", "water_surface_mask"),
             # OVERRIDE: ``erosion`` writes a hydraulic ``wetness`` field first;
             # Bundle O's water_variants refines that into final surface/wetness
             # values that account for braided channels, estuaries, and wetland

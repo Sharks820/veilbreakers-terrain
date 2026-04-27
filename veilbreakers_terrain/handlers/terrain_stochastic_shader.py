@@ -964,9 +964,17 @@ def export_unity_shader_template(
 
     payload: Dict[str, Any] = {
         "schema": "veilbreakers.terrain.stochastic_shader/v1",
-        "shader_name": f"VeilBreakers/TerrainLit_Stochastic_{tpl['template_id']}",
+        "shader_name": (
+            f"VeilBreakers/TerrainLit_HexStochastic_{tpl['template_id']}"
+            if tpl.get("tiling_mode") == "hex"
+            else f"VeilBreakers/TerrainLit_Stochastic_{tpl['template_id']}"
+        ),
         "shader_asset_path": str(shader_path),
-        "shader_graph_type": "ShaderGraph/TerrainLit_Stochastic",
+        "shader_graph_type": (
+            "ShaderGraph/TerrainLit_HexStochastic"
+            if tpl.get("tiling_mode") == "hex"
+            else "ShaderGraph/TerrainLit_Stochastic"
+        ),
         "template": tpl,
         "properties": properties,
         "stochastic_params": stochastic_params,
