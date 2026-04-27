@@ -1076,12 +1076,36 @@ def _road_segment_mesh_spec(
             "total_width": shoulder_hw * 2,
         },
         "material_hint": "terrain_road_compacted",
+        "layers": [
+            {"name": "bedrock", "thickness": 0.40, "material": "rock_base"},
+            {"name": "stone",   "thickness": 0.25, "material": "cobble"},
+            {"name": "gravel",  "thickness": 0.15, "material": "gravel_road"},
+            {"name": "dirt",    "thickness": 0.10, "material": "packed_dirt"},
+        ],
     }
 
 
 # ---------------------------------------------------------------------------
 # 10. Bridge mesh spec
 # ---------------------------------------------------------------------------
+
+
+def _catmull_rom_tangent(
+    p_prev: tuple, p0: tuple, p1: tuple, p_next: tuple,
+) -> tuple:
+    """C1-continuous Catmull-Rom tangent at p0→p1 junction.
+
+    Replaces finite-difference (p_next - p_prev).normalized() with the
+    standard Catmull-Rom formula 0.5*((p1-p_prev) + (p_next-p0)), giving
+    C1 continuity at module boundaries and eliminating faceted rail breaks.
+    """
+    tx = 0.5 * ((p1[0] - p_prev[0]) + (p_next[0] - p0[0]))
+    ty = 0.5 * ((p1[1] - p_prev[1]) + (p_next[1] - p0[1]))
+    tz = 0.5 * ((p1[2] - p_prev[2]) + (p_next[2] - p0[2]))
+    mag = math.sqrt(tx * tx + ty * ty + tz * tz)
+    if mag < 1e-9:
+        return (0.0, 0.0, 1.0)
+    return (tx / mag, ty / mag, tz / mag)
 
 
 def _bridge_mesh_spec(bridge: dict) -> dict:
@@ -1110,13 +1134,29 @@ def _bridge_mesh_spec(bridge: dict) -> dict:
         deck_end,
     ]
 
+    # Catmull-Rom tangents for C1-continuous rail geometry at module boundaries
+    p_prev = (sx - (ex - sx) * 0.25, sy - (ey - sy) * 0.25, sz - (ez - sz) * 0.25)
+    p_next = (ex + (ex - sx) * 0.25, ey + (ey - sy) * 0.25, ez + (ez - sz) * 0.25)
+    rail_tangent_start = _catmull_rom_tangent(p_prev, deck_start, support_points[1], deck_end)
+    rail_tangent_end   = _catmull_rom_tangent(deck_start, support_points[1], deck_end, p_next)
+
+    # Pier detail: masonry components at each support point
+    pier_detail = {
+        "plinth":   {"shape": "truncated_cone", "h": 0.3, "r_top": 1.0, "r_base": 1.4},
+        "astragal": {"shape": "ring", "h": 0.15, "r_offset": 0.05},
+        "cutwater": {"shape": "wedge", "side": "upstream", "depth": 0.6, "angle_deg": 35},
+    }
+
     return {
         "type": "terrain_bridge",
         "vertices": deck_spec["vertices"],
         "faces": deck_spec["faces"],
         "road_type": bridge.get("road_type", "main"),
         "cross_section": deck_spec.get("cross_section", {}),
+        "layers": deck_spec.get("layers", []),
         "support_points": support_points,
+        "pier_detail": pier_detail,
+        "rail_tangents": [rail_tangent_start, rail_tangent_end],
         "material_hint": "bridge_deck",
     }
 
