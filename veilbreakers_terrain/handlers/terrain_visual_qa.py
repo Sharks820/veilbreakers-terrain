@@ -17,7 +17,9 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 _HAS_BPY = False
 try:
@@ -325,6 +327,104 @@ def handle_visual_qa_set_shading(
         return {"status": "error", "message": str(e)}
 
 
+# ---------------------------------------------------------------------------
+# V-1: Channel validation
+# ---------------------------------------------------------------------------
+
+# Maps channel name → (dtype_family, (min_value, max_value))
+# dtype_family is "float" or "bool".
+REQUIRED_STACK_CHANNELS: Dict[str, Tuple[str, Tuple[float, float]]] = {
+    "heightmap":           ("float", (0.0, 9000.0)),
+    "water_surface_mask":  ("float", (0.0, 1.0)),
+    "water_depth_m":       ("float", (0.0, 500.0)),
+    "cliff_mask":          ("float", (0.0, 1.0)),
+    "talus_mask":          ("float", (0.0, 1.0)),
+    "strata_mask":         ("float", (0.0, 1.0)),
+}
+
+
+def validate_stack_channels(
+    stack: Any,
+    required_channels: Optional[Dict[str, Tuple[str, Tuple[float, float]]]] = None,
+) -> Dict[str, Any]:
+    """Validate required channels on a TerrainMaskStack-like object."""
+    if required_channels is None:
+        required_channels = REQUIRED_STACK_CHANNELS
+
+    missing: List[str] = []
+    dtype_mismatch: List[str] = []
+    range_violations: List[str] = []
+    checked: int = 0
+
+    for channel, (dtype_family, (lo, hi)) in required_channels.items():
+        arr = getattr(stack, channel, None)
+        if arr is None:
+            missing.append(channel)
+            continue
+
+        try:
+            arr = np.asarray(arr)
+        except Exception:
+            missing.append(channel)
+            continue
+
+        if arr.size == 0:
+            checked += 1
+            continue
+
+        # dtype check
+        if dtype_family == "float":
+            if not np.issubdtype(arr.dtype, np.floating):
+                dtype_mismatch.append(channel)
+                checked += 1
+                continue
+        elif dtype_family == "bool":
+            if arr.dtype != np.bool_:
+                dtype_mismatch.append(channel)
+                checked += 1
+                continue
+
+        # range check
+        arr_min = float(np.nanmin(arr))
+        arr_max = float(np.nanmax(arr))
+        if arr_min < lo or arr_max > hi:
+            range_violations.append(channel)
+
+        checked += 1
+
+    ok = not missing and not dtype_mismatch and not range_violations
+    return {
+        "ok": ok,
+        "missing": missing,
+        "dtype_mismatch": dtype_mismatch,
+        "range_violations": range_violations,
+        "checked": checked,
+    }
+
+
+def handle_visual_qa_validate_channels(
+    stack: Any,
+    required_channels: Optional[Dict[str, Tuple[str, Tuple[float, float]]]] = None,
+) -> Dict[str, Any]:
+    """Handler wrapping validate_stack_channels with try/except for pipeline use."""
+    try:
+        result = validate_stack_channels(stack, required_channels=required_channels)
+        issues: List[str] = (
+            [f"missing:{c}" for c in result["missing"]]
+            + [f"dtype_mismatch:{c}" for c in result["dtype_mismatch"]]
+            + [f"range_violation:{c}" for c in result["range_violations"]]
+        )
+        return {
+            "status": "ok",
+            "ok": result["ok"],
+            "missing": result["missing"],
+            "issues": issues,
+            "checked": result["checked"],
+        }
+    except Exception as exc:
+        return {"status": "error", "ok": False, "message": str(exc), "issues": []}
+
+
 def handle_visual_qa_capture_screenshot(
     filepath: str,
     width: int = 1920,
@@ -363,3 +463,6 @@ def handle_visual_qa_capture_screenshot(
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# NOTE: register handle_visual_qa_validate_channels in handlers/__init__.py COMMAND_HANDLERS

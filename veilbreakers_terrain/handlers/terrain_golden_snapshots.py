@@ -357,6 +357,126 @@ def seed_golden_library(
     return snapshots
 
 
+# ---------------------------------------------------------------------------
+# V-2: Scenario-based golden checks
+# ---------------------------------------------------------------------------
+
+# Each entry: channel → callable(array) → (ok: bool, reason: str)
+# Defined as a plain dict of scenario name → spec dict so callers can extend.
+SCENARIO_GOLDENS: Dict[str, Dict[str, Any]] = {
+    "water_present": {
+        "channel": "water_surface_mask",
+        "description": "Some water exists (mean > 0.01)",
+    },
+    "cliff_present": {
+        "channel": "cliff_mask",
+        "description": "At least one cliff pixel exists (max > 0.5)",
+    },
+    "heightmap_range": {
+        "channel": "heightmap",
+        "description": "Terrain has relief (max - min > 50.0)",
+    },
+    "no_water_seam": {
+        "channel": "water_depth_m",
+        "description": "No abrupt seam at tile edges (edge std < 0.2)",
+    },
+}
+
+
+def _run_scenario(name: str, spec: Dict[str, Any], stack: Any) -> Dict[str, Any]:
+    """Run a single named scenario check against *stack*; return {ok, reason}."""
+    channel: str = spec["channel"]
+    arr = getattr(stack, channel, None)
+    if arr is None:
+        return {"ok": False, "reason": f"channel '{channel}' missing from stack"}
+
+    try:
+        arr = np.asarray(arr, dtype=float)
+    except Exception as exc:
+        return {"ok": False, "reason": f"could not convert '{channel}' to array: {exc}"}
+
+    if arr.size == 0:
+        return {"ok": False, "reason": f"channel '{channel}' is empty"}
+
+    if name == "water_present":
+        mean_val = float(np.nanmean(arr))
+        ok = mean_val > 0.01
+        reason = f"mean={mean_val:.4f} ({'pass' if ok else 'fail, need > 0.01'})"
+        return {"ok": ok, "reason": reason}
+
+    if name == "cliff_present":
+        max_val = float(np.nanmax(arr))
+        ok = max_val > 0.5
+        reason = f"max={max_val:.4f} ({'pass' if ok else 'fail, need > 0.5'})"
+        return {"ok": ok, "reason": reason}
+
+    if name == "heightmap_range":
+        relief = float(np.nanmax(arr)) - float(np.nanmin(arr))
+        ok = relief > 50.0
+        reason = f"relief={relief:.2f} ({'pass' if ok else 'fail, need > 50.0'})"
+        return {"ok": ok, "reason": reason}
+
+    if name == "no_water_seam":
+        # Check that edge rows/cols have low std (no abrupt discontinuity)
+        if arr.ndim < 2:
+            return {"ok": False, "reason": "array must be 2-D for seam check"}
+        edge_values = np.concatenate([
+            arr[0, :].ravel(),
+            arr[-1, :].ravel(),
+            arr[:, 0].ravel(),
+            arr[:, -1].ravel(),
+        ])
+        edge_std = float(np.nanstd(edge_values))
+        ok = edge_std < 0.2
+        reason = f"edge_std={edge_std:.4f} ({'pass' if ok else 'fail, need < 0.2'})"
+        return {"ok": ok, "reason": reason}
+
+    return {"ok": False, "reason": f"unknown scenario '{name}'"}
+
+
+def run_scenario_goldens(
+    stack: Any,
+    scenarios: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Iterate scenario goldens, run each check, and return a summary dict."""
+    if scenarios is None:
+        scenarios = SCENARIO_GOLDENS
+
+    results: Dict[str, Dict[str, Any]] = {}
+    passed = 0
+    failed = 0
+
+    for name, spec in scenarios.items():
+        outcome = _run_scenario(name, spec, stack)
+        results[name] = outcome
+        if outcome.get("ok"):
+            passed += 1
+        else:
+            failed += 1
+
+    return {
+        "passed": passed,
+        "failed": failed,
+        "total": passed + failed,
+        "results": results,
+    }
+
+
+def handle_run_scenario_goldens(
+    stack: Any,
+    scenarios: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Handler wrapper for run_scenario_goldens with try/except."""
+    try:
+        result = run_scenario_goldens(stack, scenarios=scenarios)
+        return {
+            "status": "ok",
+            **result,
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc), "passed": 0, "failed": 0, "total": 0, "results": {}}
+
+
 __all__ = [
     "PIPELINE_VERSION",
     "GoldenSnapshot",
@@ -364,4 +484,7 @@ __all__ = [
     "load_golden_snapshot",
     "compare_against_golden",
     "seed_golden_library",
+    "SCENARIO_GOLDENS",
+    "run_scenario_goldens",
+    "handle_run_scenario_goldens",
 ]
