@@ -594,10 +594,12 @@ def apply_structural_settling(
 
         # ---- 1. Subsidence: differential vertical compaction ----------------
         # Neighbourhood mean height (3×3 box filter approximation via shifts).
+        _h_pad = np.pad(h, 1, mode="edge")
         h_nbhd = (
-            np.roll(h, 1, 0) + np.roll(h, -1, 0)
-            + np.roll(h, 1, 1) + np.roll(h, -1, 1)
+            _h_pad[:-2, 1:-1] + _h_pad[2:, 1:-1]
+            + _h_pad[1:-1, :-2] + _h_pad[1:-1, 2:]
         ) / 4.0
+        # np.pad edge mode prevents toroidal tile-seam contamination
 
         # softness_factor: cells below neighbourhood mean = soft sediment (→ 1)
         #                  cells above neighbourhood mean = bedrock (→ 0)

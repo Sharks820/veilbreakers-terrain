@@ -545,11 +545,13 @@ def detect_disturbance_patches(
             nbhd_mean = _ndimage.uniform_filter(veg_idx, size=5)
         else:
             # Simple shift-average fallback
+            _vi_pad = np.pad(veg_idx, 2, mode="edge")
             nbhd_mean = (
-                np.roll(veg_idx, 2, axis=0) + np.roll(veg_idx, -2, axis=0)
-                + np.roll(veg_idx, 2, axis=1) + np.roll(veg_idx, -2, axis=1)
+                _vi_pad[:-4, 2:-2] + _vi_pad[4:, 2:-2]
+                + _vi_pad[2:-2, :-4] + _vi_pad[2:-2, 4:]
                 + veg_idx
             ) / 5.0
+            # np.pad edge mode prevents toroidal tile-seam contamination
         # NDVI drop: locally low index surrounded by high-index neighbours
         ndvi_drop_mask = (veg_idx < 0.15) & (nbhd_mean > 0.35)
         disturbed |= ndvi_drop_mask
@@ -565,10 +567,12 @@ def detect_disturbance_patches(
     else:
         # Variance via shift arithmetic (cheap 3×3 approximation)
         h_s = height
+        _hs_pad = np.pad(h_s, 1, mode="edge")
         nbhd = (
-            np.roll(h_s, 1, 0) + np.roll(h_s, -1, 0)
-            + np.roll(h_s, 1, 1) + np.roll(h_s, -1, 1)
+            _hs_pad[:-2, 1:-1] + _hs_pad[2:, 1:-1]
+            + _hs_pad[1:-1, :-2] + _hs_pad[1:-1, 2:]
         ) / 4.0
+        # np.pad edge mode prevents toroidal tile-seam contamination
         roughness = np.abs(h_s - nbhd).astype(np.float32)
 
     r_mean = float(roughness.mean())

@@ -343,16 +343,13 @@ def _detect_cliff_edges_stub(
         for _ in range(rows + cols):  # upper bound on label propagation depth
             changed = False
             for dr, dc in _d8_shifts:
-                shifted = np.roll(np.roll(labels, dr, axis=0), dc, axis=1)
-                # Clear border wrap-around artefacts
-                if dr < 0:
-                    shifted[rows + dr:, :] = 0
-                elif dr > 0:
-                    shifted[:dr, :] = 0
-                if dc < 0:
-                    shifted[:, cols + dc:] = 0
-                elif dc > 0:
-                    shifted[:, :dc] = 0
+                # np.pad edge mode prevents toroidal tile-seam contamination
+                _lpad = np.pad(labels, 1, mode="edge")
+                r0 = 1 + dr  # shift by dr in row axis (pad offset = 1)
+                c0 = 1 + dc  # shift by dc in col axis
+                shifted = _lpad[r0:r0 + rows, c0:c0 + cols].copy()
+                # Edge cells that were padded from themselves carry their own label,
+                # which is correct — no zeroing needed (no fake cross-border label).
                 # Propagate minimum non-zero label from neighbour
                 update_mask = cliff_mask & (shifted > 0) & (
                     (labels == 0) | (shifted < labels)
@@ -449,14 +446,15 @@ def _detect_cave_candidates_stub(
     # ------------------------------------------------------------------ #
     # (b) Concavity mask — strongly negative Laplacian                    #
     # ------------------------------------------------------------------ #
+    _hpad = np.pad(world_hmap, 1, mode="edge")
     lap = (
-        np.roll(world_hmap, 1, axis=0)
-        + np.roll(world_hmap, -1, axis=0)
-        + np.roll(world_hmap, 1, axis=1)
-        + np.roll(world_hmap, -1, axis=1)
+        _hpad[:-2, 1:-1] + _hpad[2:, 1:-1]
+        + _hpad[1:-1, :-2] + _hpad[1:-1, 2:]
         - 4.0 * world_hmap
     )
-    # Zero border artefacts from np.roll wrapping
+    # np.pad edge mode prevents toroidal tile-seam contamination
+    # Border cells have zero Laplacian contribution (edge-reflected neighbours
+    # equal themselves, so the Laplacian is zero there — mark explicitly).
     lap[0, :] = 0.0
     lap[-1, :] = 0.0
     lap[:, 0] = 0.0
@@ -483,15 +481,14 @@ def _detect_cave_candidates_stub(
     access_threshold = 35.0
     accessible_face = np.zeros((rows, cols), dtype=bool)
 
+    _spad = np.pad(slope_deg, 1, mode="edge")
     for shift_axis, shift_dir in ((0, 1), (0, -1), (1, 1), (1, -1)):
-        neighbour_slope = np.roll(slope_deg, shift_dir, axis=shift_axis)
+        r0 = 1 + (shift_dir if shift_axis == 0 else 0)
+        c0 = 1 + (shift_dir if shift_axis == 1 else 0)
+        neighbour_slope = _spad[r0:r0 + rows, c0:c0 + cols]
         accessible_face |= (neighbour_slope < access_threshold)
-
-    # Clear border rows/cols where roll wraps incorrectly
-    accessible_face[0, :] = False
-    accessible_face[-1, :] = False
-    accessible_face[:, 0] = False
-    accessible_face[:, -1] = False
+    # np.pad edge mode prevents toroidal tile-seam contamination
+    # Border cells reflect their own slope — no false cross-border neighbours.
 
     abc_mask = ab_mask & accessible_face
     if not abc_mask.any():
