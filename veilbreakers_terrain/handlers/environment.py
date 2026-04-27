@@ -20,6 +20,7 @@ import math
 import os
 import re
 import time
+import warnings
 import zlib
 from collections import deque
 from pathlib import Path
@@ -6045,7 +6046,7 @@ def handle_generate_road(params: dict) -> dict:
 
     road_route_rdp_epsilon = float(params.get("rdp_epsilon", max(cell_size * 0.5, 0.75)))
     road_routing_method = "legacy_grid"
-    _road_strict = os.environ.get("VEILBREAKERS_ROAD_STRICT", "").strip() == "1"
+    _road_strict = os.environ.get("VEILBREAKERS_ROAD_STRICT", "1").strip() != "0"
     _road_fallback_reason: str = ""
     try:
         path, road_network_result = _solve_road_path_with_network(
@@ -6069,6 +6070,7 @@ def handle_generate_road(params: dict) -> dict:
             cell_size=float(cell_size),
         )
         road_routing_method = str(road_network_result.get("routing_method", "astar_24dir"))
+        print("[roads] using AAA 24-dir A* routing (VEILBREAKERS_ROAD_STRICT=1)", flush=True)
     except (LookupError, ValueError, RuntimeError) as _road_exc:
         if _road_strict:
             raise
@@ -6079,6 +6081,12 @@ def handle_generate_road(params: dict) -> dict:
             exc_info=True,
         )
         road_routing_method = "legacy_fallback"
+        warnings.warn(
+            "VEILBREAKERS_ROAD_STRICT=0: using legacy grid-space A* road routing; "
+            "set VEILBREAKERS_ROAD_STRICT=1 (default) for AAA 24-dir routing",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         path, graded, _ = _run_height_solver_in_world_space(
             heightmap,
             generate_road_path_grid_legacy,
