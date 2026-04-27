@@ -826,6 +826,85 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result["road_routing_method"] == "astar_24dir"
         assert result["road_mask"][0][0] in (0, 1)
         assert result["road_sdf_dist"][0][0] >= 0.0
+        assert result["path_network_contract_issues"] == []
+        assert result["path_network_contract"]["format"] == "PathNetworkContract"
+        route_segment = result["path_network_contract"]["segments"][0]
+        assert route_segment["segment_id"] == "route_0"
+        assert route_segment["continuation_edge"] == "east"
+        assert {"road_core", "road_edge", "approach_transition"} <= set(route_segment["material_stack"])
+
+    @pytest.mark.parametrize("surface", ["dirt", "path", "trail"])
+    def test_terrain_only_roads_still_report_bridge_contract_for_water_crossing(self, surface):
+        from blender_addon.handlers import environment as env_mod
+
+        class _Verts(list):
+            def ensure_lookup_table(self):
+                return None
+
+        class _BM:
+            def __init__(self):
+                self.verts = _Verts(
+                    SimpleNamespace(co=SimpleNamespace(z=float(z)))
+                    for z in (0.0, 0.0, 0.0, 0.0)
+                )
+
+            def from_mesh(self, mesh):
+                return None
+
+            def to_mesh(self, mesh):
+                return None
+
+            def free(self):
+                return None
+
+        class _Mesh:
+            def update(self):
+                return None
+
+        terrain_obj = SimpleNamespace(
+            data=_Mesh(),
+            dimensions=SimpleNamespace(x=4.0, y=4.0),
+            location=SimpleNamespace(x=0.0, y=0.0),
+        )
+
+        def _fake_compute_road_network(waypoints, **kwargs):
+            return {
+                "routes": [
+                    {
+                        "points": [
+                            (-2.0, -2.0, 0.0),
+                            (2.0, 2.0, 0.0),
+                        ]
+                    }
+                ],
+                "routing_method": "astar_24dir",
+            }
+
+        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+             patch.object(env_mod.bmesh, "new", return_value=_BM()), \
+             patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
+             patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
+             patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_paint_road_mask_on_terrain"), \
+             patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
+            result = env_mod.handle_generate_road(
+                {
+                    "terrain_name": "Terrain",
+                    "waypoints": [(0, 0), (1, 1)],
+                    "surface": surface,
+                    "water_level": 1.5,
+                }
+            )
+
+        bridge_segments = [
+            segment for segment in result["path_network_contract"]["segments"]
+            if segment["segment_type"] == "bridge"
+        ]
+        assert bridge_segments
+        assert result["path_network_contract_issues"] == []
+        assert result["bridge_count"] == len(bridge_segments)
+        assert result["bridge_span_count"] == len(bridge_segments)
 
     def _road_handler_fixtures(self, env_mod):
         """Shared mock fixtures for road-fallback tests.
@@ -2787,8 +2866,8 @@ class TestVBBiomePresets:
         preset["resolution"] = 9999
         assert VB_BIOME_PRESETS["thornwood_forest"]["resolution"] != 9999
 
-    def test_build_tripo_environment_manifest_falls_back_for_unknown_assets(self):
-        from blender_addon.handlers.environment import _build_tripo_environment_manifest
+    def test_build_external_model_environment_manifest_falls_back_for_unknown_assets(self):
+        from blender_addon.handlers.environment import _build_external_model_environment_manifest
 
         scene_bounds = {
             "x_min": 0.0,
@@ -2798,7 +2877,7 @@ class TestVBBiomePresets:
             "y_max": 64.0,
             "z_max": 20.0,
         }
-        manifest = _build_tripo_environment_manifest(
+        manifest = _build_external_model_environment_manifest(
             "thornwood_forest",
             [
                 {
@@ -2815,7 +2894,7 @@ class TestVBBiomePresets:
         assert len(manifest) == 1
         entry = manifest[0]
         assert entry["asset"] == "ancient_spire"
-        assert entry["preferred_source"] == "tripo_fallback"
+        assert entry["preferred_source"] == "external_model_fallback"
         assert entry["asset_class"] == "rock_large"
         assert "ancient spire" in entry["prompt"]
         assert "winter" in entry["prompt"]
@@ -2859,7 +2938,7 @@ class TestVBBiomePresets:
                 for rule in preset.get("scatter_rules", [])
                 if str(rule.get("asset", "")).strip()
             )
-            assert len(preset.get("tripo_asset_manifest", [])) == expected
+            assert len(preset.get("external_model_asset_manifest", [])) == expected
 
     def test_biome_preset_resolves_in_validate(self):
         """A biome name resolves to valid terrain params via _validate_terrain_params.

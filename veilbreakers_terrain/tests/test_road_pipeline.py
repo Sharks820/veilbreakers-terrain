@@ -344,6 +344,85 @@ class TestPipelineUnification:
         assert road_mask.sum() > 0, "Expected nonzero road_mask from two settlement anchors"
 
 
+class TestRoadPathNetworkContracts:
+    def test_compute_road_network_emits_bridge_path_contract(self):
+        from veilbreakers_terrain.handlers.road_network import compute_road_network
+
+        result = compute_road_network(
+            [(-5.0, 0.0, 2.0), (5.0, 0.0, 2.0)],
+            water_level=2.5,
+            seed=12,
+            heightmap=np.zeros((8, 8), dtype=np.float32),
+            terrain_bounds=(-10.0, -10.0, 10.0, 10.0),
+            use_astar=False,
+            connection_strategy="chain",
+        )
+
+        contract = result["path_network_contract"]
+        bridge_segments = [
+            segment for segment in contract["segments"]
+            if segment["segment_type"] == "bridge"
+        ]
+
+        assert result["path_network_contract_issues"] == []
+        assert contract["format"] == "PathNetworkContract"
+        assert bridge_segments, "Expected a bridge contract for the water crossing"
+        assert bridge_segments[0]["bridge_span_m"] > 0.0
+        assert bridge_segments[0]["bridge_clearance_m"] >= 0.75
+        assert "approach_transition" in bridge_segments[0]["material_stack"]
+
+    def test_compute_road_network_contract_marks_continuation_edge_and_materials(self):
+        from veilbreakers_terrain.handlers.road_network import compute_road_network
+
+        result = compute_road_network(
+            [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0)],
+            seed=7,
+            terrain_bounds=(0.0, -5.0, 10.0, 5.0),
+            use_astar=False,
+            connection_strategy="chain",
+        )
+
+        contract = result["path_network_contract"]
+        route_segment = next(
+            segment for segment in contract["segments"]
+            if segment["segment_id"] == "route_0"
+        )
+
+        assert result["path_network_contract_issues"] == []
+        assert route_segment["continuation_edge"] == "east"
+        assert {"road_core", "road_edge", "approach_transition"} <= set(route_segment["material_stack"])
+
+    def test_compute_road_network_estimates_underwater_bridge_depth_without_heightmap(self):
+        from veilbreakers_terrain.handlers.road_network import compute_road_network
+
+        result = compute_road_network(
+            [(-5.0, 0.0, 1.0), (5.0, 0.0, 1.0)],
+            water_level=3.0,
+            seed=12,
+            use_astar=False,
+            connection_strategy="chain",
+        )
+
+        bridge_segment = next(
+            segment for segment in result["path_network_contract"]["segments"]
+            if segment["segment_type"] == "bridge"
+        )
+
+        assert result["path_network_contract_issues"] == []
+        assert bridge_segment["water_depth_m"] == pytest.approx(2.0)
+        assert bridge_segment["bridge_clearance_m"] >= 1.0
+
+    def test_continuation_edge_uses_start_edge_when_route_ends_inside_node(self):
+        from blender_addon.handlers.terrain_path_contracts import infer_continuation_edge
+
+        edge = infer_continuation_edge(
+            [(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)],
+            (0.0, -5.0, 10.0, 5.0),
+        )
+
+        assert edge == "west"
+
+
 # ---------------------------------------------------------------------------
 # P2-9 — Max-grade clamp on road centreline
 # ---------------------------------------------------------------------------

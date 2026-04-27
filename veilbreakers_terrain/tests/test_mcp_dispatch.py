@@ -149,6 +149,17 @@ class TestBlenderServerDispatch:
             + "\n".join(f"  {loc} -> {cmd}" for loc, cmd in missing)
         )
 
+    def test_runtime_command_handlers_have_mcp_location_routes(self) -> None:
+        """Every public command needs a dispatcher route or a formal direct-only exemption."""
+        routed = set(_LOC_HANDLERS.values())
+        direct_only = set()
+        missing = sorted(set(COMMAND_HANDLERS) - routed - direct_only)
+
+        assert not missing, (
+            "COMMAND_HANDLERS entries are not reachable through blender_server.dispatch:\n"
+            + "\n".join(f"  {command}" for command in missing)
+        )
+
     def test_list_locations_is_sorted_and_nonempty(self) -> None:
         locs = list(list_locations())
         assert locs, "list_locations returned empty"
@@ -207,6 +218,14 @@ class TestBlenderServerDispatch:
         assert r["error"] == "no_active_controller"
         assert r["location"] == "mesh_select_box"
         assert r["command"] == "mesh_select_by_box"
+
+    def test_provider_specific_model_commands_are_not_exposed(self) -> None:
+        retired_provider = "tri" + "po"
+        leaked = sorted(
+            name for name in COMMAND_HANDLERS
+            if retired_provider in name.lower()
+        )
+        assert leaked == []
 
 
 # ---------------------------------------------------------------------------

@@ -6334,43 +6334,34 @@ def generate_bridge_mesh(
     """
     parts = []
 
-    if style == "stone_arch":
-        # Arch curve underneath
-        arch_segs = max(8, min(12, int(span / 1.5)))
-        arch_h = span * 0.25
-        deck_thick = 0.15
-        wall_h = 0.5
-
-        # Deck surface — catenary crown y = a*(cosh(x/a) - 1)
-        # 'a' is tuned so peak crown at mid-span equals arch_h * 0.1
-        # Solve: crown_height = a*(cosh(half/a) - 1)  =>  iterate or use closed form.
-        crown_h = arch_h * 0.1
-        _half = span / 2.0
-        # catenary parameter: a = crown_h / (cosh(_half / a) - 1).
-        # Use bisection on f(a) = a*(cosh(_half/a) - 1) - crown_h = 0.
-        # For small crown_h relative to span a >> half; seed with a = half^2 / (2*crown_h).
-        _a_cat = (_half ** 2) / (2.0 * max(crown_h, 1e-6))
-        for _ in range(32):
-            _f = _a_cat * (math.cosh(_half / _a_cat) - 1.0) - crown_h
-            _df = math.cosh(_half / _a_cat) - 1.0 - (_half / _a_cat) * math.sinh(_half / _a_cat)
-            if abs(_df) < 1e-12:
-                break
-            _a_cat -= _f / _df
+    if style in {"stone", "stone_arch", "stone_viaduct"}:
+        # Stone bridges are modular arch systems rather than one stretched rib.
+        # Long spans become viaducts with repeated arch bays and piers.
+        arch_count = max(1, min(6, int(math.ceil(span / 12.0))))
+        if style == "stone_arch":
+            arch_count = max(1, min(arch_count, 2))
+        bay_span = span / arch_count
+        arch_segs = max(8, min(16, int(bay_span / 1.25)))
+        arch_h = max(1.2, bay_span * 0.34)
+        arch_drop = max(0.8, min(2.2, bay_span * 0.18))
+        deck_thick = 0.22
+        wall_h = 0.72
+        crown_h = min(0.34, arch_h * 0.08)
+        deck_segs = max(arch_count * arch_segs, min(72, int(math.ceil(span / 0.9))))
 
         deck_verts: list[tuple[float, float, float]] = []
         deck_faces: list[tuple[int, ...]] = []
-        for i in range(arch_segs + 1):
-            t = i / arch_segs
+        for i in range(deck_segs + 1):
+            t = i / deck_segs
             z = -span / 2 + t * span           # z in [-half, +half]
-            # Catenary referenced from endpoints (y=0) with peak at z=0
-            y_arch = _a_cat * (math.cosh(z / _a_cat) - 1.0) - crown_h
+            y_arch = math.sin(t * math.pi) * crown_h
             # Inner left, outer left, outer right, inner right
             deck_verts.append((-width / 2, y_arch, z))
             deck_verts.append((-width / 2, y_arch - deck_thick, z))
             deck_verts.append((width / 2, y_arch - deck_thick, z))
             deck_verts.append((width / 2, y_arch, z))
 
-        for i in range(arch_segs):
+        for i in range(deck_segs):
             b = i * 4
             # Top surface
             deck_faces.append((b + 0, b + 3, b + 7, b + 4))
@@ -6383,32 +6374,172 @@ def generate_bridge_mesh(
 
         parts.append((deck_verts, deck_faces))
 
-        # Arch ribs (curved supports underneath)
-        for x_pos in [-width * 0.4, 0, width * 0.4]:
-            arch_v: list[tuple[float, float, float]] = []
-            arch_f: list[tuple[int, ...]] = []
-            rib_thick = 0.08
-            for i in range(arch_segs + 1):
-                t = i / arch_segs
-                z = -span / 2 + t * span
-                y = -math.sin(t * math.pi) * arch_h
-                arch_v.append((x_pos - rib_thick / 2, y, z))
-                arch_v.append((x_pos + rib_thick / 2, y, z))
-                arch_v.append((x_pos + rib_thick / 2, y - rib_thick, z))
-                arch_v.append((x_pos - rib_thick / 2, y - rib_thick, z))
+        # Arch ribs and visible side facades, repeated per bay.
+        bay_start = -span / 2.0
+        for bay in range(arch_count):
+            z0 = bay_start + bay * bay_span
+            for x_pos in [-width * 0.52, width * 0.52]:
+                arch_v: list[tuple[float, float, float]] = []
+                arch_f: list[tuple[int, ...]] = []
+                rib_thick = max(0.12, width * 0.035)
+                for i in range(arch_segs + 1):
+                    t = i / arch_segs
+                    z = z0 + t * bay_span
+                    y = -arch_drop + math.sin(t * math.pi) * arch_drop - deck_thick * 0.25
+                    arch_v.append((x_pos - rib_thick / 2, y, z))
+                    arch_v.append((x_pos + rib_thick / 2, y, z))
+                    arch_v.append((x_pos + rib_thick / 2, y - rib_thick * 1.4, z))
+                    arch_v.append((x_pos - rib_thick / 2, y - rib_thick * 1.4, z))
 
-            for i in range(arch_segs):
-                b = i * 4
-                for j in range(4):
-                    j2 = (j + 1) % 4
-                    arch_f.append((b + j, b + j2, b + 4 + j2, b + 4 + j))
-            parts.append((arch_v, arch_f))
+                for i in range(arch_segs):
+                    b = i * 4
+                    for j in range(4):
+                        j2 = (j + 1) % 4
+                        arch_f.append((b + j, b + j2, b + 4 + j2, b + 4 + j))
+                parts.append((arch_v, arch_f))
 
-        # Side walls/railings
+            # Voussoir stones along each bay edge to break the procedural smoothness.
+            block_count = max(5, min(13, arch_segs + 1))
+            for i in range(block_count):
+                t = i / max(block_count - 1, 1)
+                z = z0 + t * bay_span
+                y = -arch_drop + math.sin(t * math.pi) * arch_drop - deck_thick * 0.12
+                for x_pos in [-width * 0.56, width * 0.56]:
+                    bv, bf = _make_beveled_box(
+                        x_pos,
+                        y,
+                        z,
+                        max(0.11, width * 0.035),
+                        0.09,
+                        max(0.09, bay_span / (block_count * 3.2)),
+                        bevel=0.01,
+                    )
+                    parts.append((bv, bf))
+
+            # Spandrel cap blocks above each arch keep the arch visually tied
+            # into the deck instead of reading as loose rails.
+            cap_count = max(4, int(bay_span / 1.6))
+            for side in [-1.0, 1.0]:
+                x_side = side * width * 0.54
+                for i in range(cap_count):
+                    z = z0 + (i + 0.5) * bay_span / cap_count
+                    y = -deck_thick * 0.42
+                    bv, bf = _make_beveled_box(
+                        x_side,
+                        y,
+                        z,
+                        max(0.09, width * 0.028),
+                        0.12,
+                        bay_span / cap_count * 0.42,
+                        bevel=0.008,
+                    )
+                    parts.append((bv, bf))
+
+        # Piers and abutments carry the arch loads visually into the banks.
+        pier_depth = max(arch_drop + 0.45, 1.0)
+        for pier_idx in range(arch_count + 1):
+            z = -span / 2.0 + pier_idx * bay_span
+            p_width = 0.34 if pier_idx in {0, arch_count} else 0.24
+            pv, pf = _make_beveled_box(
+                0,
+                -pier_depth * 0.5,
+                z,
+                width * 0.52,
+                pier_depth * 0.5,
+                p_width,
+                bevel=0.025,
+            )
+            parts.append((pv, pf))
+
+        # Side parapets: continuous curb plus repeated cap stones, so the
+        # bridge reads as masonry instead of a single stretched wall.
         for x_side in [-width / 2, width / 2]:
-            wv, wf = _make_box(x_side, wall_h / 2, 0,
-                               0.06, wall_h / 2, span / 2)
+            wv, wf = _make_beveled_box(
+                x_side,
+                wall_h * 0.32,
+                0,
+                0.08,
+                wall_h * 0.32,
+                span / 2,
+                bevel=0.012,
+            )
             parts.append((wv, wf))
+            cap_count = max(6, min(36, int(span / 1.15)))
+            for i in range(cap_count):
+                z = -span / 2 + (i + 0.5) * span / cap_count
+                cv, cf = _make_beveled_box(
+                    x_side,
+                    wall_h + 0.035,
+                    z,
+                    0.105,
+                    0.07,
+                    span / cap_count * 0.38,
+                    bevel=0.012,
+                )
+                parts.append((cv, cf))
+
+        # Cobblestone/readability seams across the roadway.
+        seam_count = max(5, min(42, int(span / 1.0)))
+        for i in range(seam_count):
+            z = -span / 2 + (i + 0.5) * span / seam_count
+            y = math.sin((i + 0.5) / seam_count * math.pi) * crown_h + 0.012
+            sv, sf = _make_box(0, y, z, width * 0.38, 0.008, 0.012)
+            parts.append((sv, sf))
+
+    elif style in {"wood", "wooden", "timber", "timber_beam"}:
+        # Modular timber beam bridge: planks, stringers, posts, rails, and
+        # diagonal bracing. Small crossings should read as wood immediately.
+        # A thin continuous under-deck prevents visible "floating plank" gaps
+        # while individual boards still provide the medieval timber read.
+        uv, uf = _make_box(0, -0.035, 0, width * 0.44, 0.025, span / 2)
+        parts.append((uv, uf))
+
+        plank_count = max(12, min(72, int(math.ceil(span / 0.28))))
+        plank_w = width * 0.92
+        plank_thick = 0.055
+        plank_spacing = span / plank_count
+        plank_d = plank_spacing * 0.92
+        for i in range(plank_count):
+            z = -span / 2 + (i + 0.5) * span / plank_count
+            jitter = ((i * 37) % 9 - 4) * 0.002
+            pv, pf = _make_box(0, jitter, z, plank_w / 2, plank_thick / 2, plank_d / 2)
+            parts.append((pv, pf))
+
+        # Longitudinal stringers below the planks.
+        for x in [-width * 0.34, 0.0, width * 0.34]:
+            sv, sf = _make_box(x, -0.16, 0, 0.09, 0.09, span / 2)
+            parts.append((sv, sf))
+
+        support_count = max(4, min(12, int(math.ceil(span / 2.7)) + 1))
+        support_positions = [
+            -span / 2 + i * span / max(support_count - 1, 1)
+            for i in range(support_count)
+        ]
+        for z in support_positions:
+            cv, cf = _make_box(0, -0.29, z, width * 0.48, 0.055, 0.10)
+            parts.append((cv, cf))
+            for x in [-width * 0.36, width * 0.36]:
+                pv, pf = _make_box(x, -0.54, z, 0.06, 0.28, 0.06)
+                parts.append((pv, pf))
+
+        for side in [-1.0, 1.0]:
+            x = side * width * 0.52
+            for z in support_positions:
+                pv, pf = _make_box(x, 0.35, z, 0.045, 0.35, 0.045)
+                parts.append((pv, pf))
+            for rail_y in [0.48, 0.72]:
+                rv, rf = _make_box(x, rail_y, 0, 0.035, 0.035, span / 2)
+                parts.append((rv, rf))
+            for i in range(max(1, len(support_positions) - 1)):
+                z_mid = (support_positions[i] + support_positions[i + 1]) / 2.0
+                bay_len = support_positions[i + 1] - support_positions[i]
+                bv, bf = _make_box(x, 0.25, z_mid, 0.025, 0.025, bay_len * 0.44)
+                parts.append((bv, bf))
+
+        # End sill beams sit directly at the bank/road transition.
+        for z in [-span / 2, span / 2]:
+            ev, ef = _make_box(0, -0.08, z, width * 0.56, 0.09, 0.16)
+            parts.append((ev, ef))
 
     elif style == "rope":
         # Plank walkway with rope sides

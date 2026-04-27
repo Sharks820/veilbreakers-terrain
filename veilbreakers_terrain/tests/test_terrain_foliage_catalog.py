@@ -19,15 +19,17 @@ import numpy as np
 import pytest
 
 from blender_addon.handlers.terrain_foliage_catalog import (
+    AssetManifest,
     EXPECTED_CATEGORIES,
     FOLIAGE_SPECIES_CATALOG,
     SPECIES_CONSTRAINTS_FROM_CATALOG,
     SpeciesSpec,
     categories_covered,
+    external_model_assets_required,
     manifest_entries,
+    resolve_model_asset,
     species_for_biome,
     species_ids_by_category,
-    tripo_assets_required,
 )
 from blender_addon.handlers.environment_scatter import (
     _SPECIES_CONSTRAINTS,
@@ -94,12 +96,12 @@ class TestFoliageCatalogCoverage:
         json.dumps(out)  # must not raise
         assert set(out.keys()) == set(FOLIAGE_SPECIES_CATALOG.keys())
 
-    def test_tripo_asset_list_non_empty_and_documented(self):
-        required = tripo_assets_required()
-        assert len(required) > 0, "Expected Phase-I Tripo handoff species"
+    def test_external_model_asset_list_non_empty_and_documented(self):
+        required = external_model_assets_required()
+        assert len(required) > 0, "Expected external model handoff species"
         for sid in required:
             assert FOLIAGE_SPECIES_CATALOG[sid].notes, (
-                f"{sid} flagged for Tripo but missing notes for Phase-I agent"
+                f"{sid} flagged for external modeling but missing handoff notes"
             )
 
     def test_species_constraints_merged_into_scatter(self):
@@ -260,7 +262,95 @@ class TestFoliageManifestIntegration:
         out = _build_foliage_scatter_manifest()
         assert "species" in out
         assert "categories_covered" in out
-        assert "tripo_assets_required" in out
+        assert "external_model_assets_required" in out
         assert set(out["species"].keys()) == set(FOLIAGE_SPECIES_CATALOG.keys())
         # Categories must be complete
         assert set(out["categories_covered"]) >= set(EXPECTED_CATEGORIES)
+
+
+class TestAssetManifestRuntimeContract:
+    def test_asset_manifest_returns_defensive_copies_for_category_lookups(self):
+        manifest = AssetManifest(
+            overrides={
+                "oak_lod0": {
+                    "asset_id": "oak_lod0",
+                    "category": "oak",
+                    "display_category": "tree",
+                    "lods": [{"path": "Assets/Oak_LOD0.glb"}],
+                    "pbr_maps": {
+                        "base_color": "oak_base.png",
+                        "normal": "oak_n.png",
+                        "roughness": "oak_r.png",
+                    },
+                }
+            }
+        )
+
+        first = manifest.assets_for_category("oak")[0]
+        first["category"] = "corrupted"
+        first["lods"][0]["path"] = "corrupted.glb"
+
+        second = manifest.assets_for_category("oak")[0]
+
+        assert second["category"] == "oak"
+        assert second["lods"][0]["path"] == "Assets/Oak_LOD0.glb"
+
+    def test_resolve_model_asset_returns_defensive_copy(self):
+        manifest = AssetManifest(
+            overrides={
+                "oak_lod0": {
+                    "asset_id": "oak_lod0",
+                    "category": "oak",
+                    "display_category": "tree",
+                    "lods": [{"path": "Assets/Oak_LOD0.glb"}],
+                }
+            }
+        )
+
+        resolved = resolve_model_asset("tree_oak", manifest=manifest)
+        resolved["asset_id"] = "corrupted"
+
+        again = resolve_model_asset("tree_oak", manifest=manifest)
+
+        assert again["asset_id"] == "oak_lod0"
+
+    def test_asset_manifest_stats_reports_catalog_readiness(self):
+        manifest = AssetManifest(
+            overrides={
+                "oak_lod0": {
+                    "asset_id": "oak_lod0",
+                    "category": "oak",
+                    "display_category": "tree",
+                    "lods": [{"path": "Assets/Oak_LOD0.glb"}],
+                    "pbr_maps": {
+                        "base_color": "oak_base.png",
+                        "normal": "oak_n.png",
+                        "roughness": "oak_r.png",
+                        "height": "oak_h.png",
+                    },
+                }
+            }
+        )
+
+        stats = manifest.stats()
+
+        assert stats["asset_count"] == 1
+        assert stats["species_total"] >= len(FOLIAGE_SPECIES_CATALOG)
+        assert stats["species_bound"] >= 1
+        assert "oak" in stats["categories"]
+
+    def test_asset_manifest_deep_copies_constructor_overrides(self):
+        overrides = {
+            "oak_lod0": {
+                "asset_id": "oak_lod0",
+                "category": "oak",
+                "display_category": "tree",
+                "lods": [{"path": "Assets/Oak_LOD0.glb"}],
+            }
+        }
+        manifest = AssetManifest(overrides=overrides)
+
+        overrides["oak_lod0"]["lods"][0]["path"] = "corrupted.glb"
+        resolved = resolve_model_asset("tree_oak", manifest=manifest)
+
+        assert resolved["lods"][0]["path"] == "Assets/Oak_LOD0.glb"

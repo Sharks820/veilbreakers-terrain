@@ -348,6 +348,207 @@ class TestTerrainBridgeMesh:
         assert mean_z >= 3.0, f"Mean Z {mean_z} too low for z=5 elevation"
         assert max(zs) >= 4.5, "Max Z should be near bridge elevation"
 
+    def test_wood_bridge_uses_timber_profile_and_approach_contract(self):
+        result = generate_terrain_bridge_mesh(
+            start_pos=(0, 0, 0),
+            end_pos=(8, 0, 0),
+            width=2.0,
+            style="wood",
+        )
+
+        meta = result["metadata"]
+
+        assert meta["bridge_profile"]["resolved_style"] == "timber_beam"
+        assert meta["bridge_profile"]["material_family"] == "wood"
+        assert meta["bridge_profile"]["module_count"] >= 3
+        assert meta["bridge_profile"]["approach_transition_m"] > 0.0
+        assert "timber_planks" in meta["bridge_profile"]["material_slots"]
+        assert "approach_transition" in meta["bridge_profile"]["material_slots"]
+
+    def test_timber_bridge_deck_has_no_large_visual_disconnects(self):
+        result = generate_terrain_bridge_mesh(
+            start_pos=(0, 0, 0),
+            end_pos=(22, 0, 0),
+            width=2.4,
+            style="wood",
+        )
+
+        intervals = []
+        for face in result["faces"]:
+            verts = [result["vertices"][index] for index in face]
+            xs = [float(v[0]) for v in verts]
+            ys = [float(v[1]) for v in verts]
+            zs = [float(v[2]) for v in verts]
+            if max(ys) - min(ys) < 1.2:
+                continue
+            z_mid = sum(zs) / len(zs)
+            if -0.08 <= z_mid <= 0.18:
+                intervals.append((min(xs), max(xs)))
+
+        assert intervals, "timber deck must expose connected walkable deck faces"
+        intervals.sort()
+        merged = [intervals[0]]
+        for start, end in intervals[1:]:
+            prev_start, prev_end = merged[-1]
+            if start <= prev_end:
+                merged[-1] = (prev_start, max(prev_end, end))
+            else:
+                merged.append((start, end))
+
+        gaps = [
+            merged[index + 1][0] - merged[index][1]
+            for index in range(len(merged) - 1)
+        ]
+        assert (max(gaps) if gaps else 0.0) <= 0.14
+
+    def test_long_stone_bridge_uses_multi_arch_profile(self):
+        result = generate_terrain_bridge_mesh(
+            start_pos=(0, 0, 0),
+            end_pos=(36, 0, 0),
+            width=5.0,
+            style="stone",
+        )
+
+        meta = result["metadata"]
+
+        assert meta["bridge_profile"]["resolved_style"] == "stone_viaduct"
+        assert meta["bridge_profile"]["material_family"] == "stone"
+        assert meta["bridge_profile"]["arch_count"] >= 3
+        assert meta["bridge_profile"]["support_count"] >= 4
+        assert "stone_arch_ribs" in meta["bridge_profile"]["material_slots"]
+        assert "stone_abutments" in meta["bridge_profile"]["material_slots"]
+
+    def test_curved_bridge_records_centerline_and_segment_modules(self):
+        result = generate_terrain_bridge_mesh(
+            control_points=[
+                (0.0, 0.0, 0.0),
+                (6.0, 3.0, 0.5),
+                (12.0, 0.0, 1.25),
+            ],
+            width=2.4,
+            style="wood",
+        )
+
+        meta = result["metadata"]
+
+        assert meta["bridge_profile"]["centerline_point_count"] == 3
+        assert meta["bridge_profile"]["curve_segment_count"] == 2
+        assert meta["bridge_profile"]["elevation_delta_m"] == pytest.approx(1.25)
+        assert meta["bridge_profile"]["swept_centerline"] is True
+        assert meta["bridge_profile"]["module_count"] >= 4
+        validate_mesh_spec(result, "bridge_curved_centerline")
+
+    def test_curved_bridge_is_single_swept_path_not_segment_splice(self):
+        result = generate_terrain_bridge_mesh(
+            control_points=[
+                (0.0, 0.0, 0.0),
+                (6.0, 3.0, 0.5),
+                (12.0, 0.0, 1.25),
+            ],
+            width=2.4,
+            style="wood",
+        )
+
+        meta = result["metadata"]["bridge_profile"]
+
+        assert meta["swept_centerline"] is True
+        assert "curved" not in result["metadata"]["name"].lower()
+        assert "swept" in result["metadata"]["name"].lower()
+
+        xs = [float(v[0]) for v in result["vertices"]]
+        ys = [float(v[1]) for v in result["vertices"]]
+        zs = [float(v[2]) for v in result["vertices"]]
+        assert min(xs) <= -0.1
+        assert max(xs) >= 12.1
+        assert max(ys) - min(ys) >= 4.0
+        assert max(zs) - min(zs) <= 3.0
+
+    def test_straight_bridge_with_waterbed_uses_swept_support_contract(self):
+        result = generate_terrain_bridge_mesh(
+            start_pos=(0.0, 0.0, 0.0),
+            end_pos=(18.0, 0.0, 0.0),
+            width=2.4,
+            style="wood",
+            water_level=-0.6,
+            waterbed_z=-1.8,
+        )
+
+        profile = result["metadata"]["bridge_profile"]
+        zs = [float(vertex[2]) for vertex in result["vertices"]]
+
+        assert profile["swept_centerline"] is True
+        assert profile["supports_reach_foundation"] is True
+        assert profile["support_foundation_z"] == pytest.approx(-1.8)
+        assert min(zs) <= -1.75
+
+    def test_rope_bridge_control_points_use_catenary_rope_profile_not_stone(self):
+        result = generate_terrain_bridge_mesh(
+            control_points=[
+                (0.0, 0.0, 3.0),
+                (8.0, 2.5, 2.2),
+                (16.0, 0.0, 3.4),
+            ],
+            width=1.7,
+            style="rope",
+            water_level=0.0,
+            waterbed_z=-1.6,
+        )
+
+        profile = result["metadata"]["bridge_profile"]
+
+        assert profile["resolved_style"] == "rope"
+        assert profile["swept_centerline"] is True
+        assert profile["rope_physics_model"] == "catenary_sag_with_sway_metadata"
+        assert profile["sway_enabled"] is True
+        assert profile["sway_amplitude_m"] > 0.0
+        assert "main_catenary_ropes" in profile["rope_bridge_parts"]
+        assert "vertical_suspenders" in profile["rope_bridge_parts"]
+        assert "stone_bridge_parts" not in profile
+
+    def test_rope_bridge_ignores_unsupported_mid_curve_without_support_towers(self):
+        result = generate_terrain_bridge_mesh(
+            control_points=[
+                (0.0, 0.0, 3.0),
+                (8.0, 4.0, 2.2),
+                (16.0, 0.0, 3.4),
+            ],
+            width=1.7,
+            style="rope",
+            water_level=0.0,
+            waterbed_z=-1.6,
+        )
+
+        profile = result["metadata"]["bridge_profile"]
+        centerline = profile["centerline_points"]
+        ys = [float(point[1]) for point in centerline]
+        mesh_ys = [float(vertex[1]) for vertex in result["vertices"]]
+
+        assert profile["rope_planform"] == "straight_bank_to_bank"
+        assert profile["unsupported_mid_control_points_ignored"] is True
+        assert profile["input_centerline_point_count"] == 3
+        assert profile["centerline_point_count"] == 2
+        assert max(abs(y) for y in ys) <= 1e-6
+        assert max(mesh_ys) - min(mesh_ys) <= 2.4
+
+    def test_curved_stone_bridge_declares_masonry_components(self):
+        result = generate_terrain_bridge_mesh(
+            control_points=[
+                (0.0, 0.0, 5.0),
+                (14.0, -4.0, 3.0),
+                (28.0, 1.5, 1.0),
+            ],
+            width=5.0,
+            style="stone",
+        )
+
+        profile = result["metadata"]["bridge_profile"]
+
+        assert profile["surface_pattern"] == "cobblestone"
+        assert profile["has_side_walls"] is True
+        assert profile["has_bottom"] is True
+        assert "vertical_spandrel_walls" in profile["stone_bridge_parts"]
+        assert "arch_barrel_underside" in profile["stone_bridge_parts"]
+
 
 # ---------------------------------------------------------------------------
 # Cross-generator tests

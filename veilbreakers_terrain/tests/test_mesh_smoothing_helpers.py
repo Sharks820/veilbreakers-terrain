@@ -2,8 +2,42 @@
 
 from __future__ import annotations
 
+import builtins
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import pytest
+
+
+def test_mesh_smoothing_imports_when_scipy_is_unavailable(monkeypatch):
+    """Blender add-on registration must not lose this callable without SciPy."""
+
+    source = Path(__file__).resolve().parents[1] / "handlers" / "mesh_smoothing.py"
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ModuleNotFoundError("No module named 'scipy'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+    spec = importlib.util.spec_from_file_location("_mesh_smoothing_no_scipy", source)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(module)
+
+    result = module.smooth_assembled_mesh(
+        [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (4.0, 0.0, 0.0)],
+        [(0, 1, 2)],
+        smooth_iterations=1,
+        blend_factor=0.5,
+        taubin_mu=0.0,
+        preserve_boundary=False,
+    )
+    assert len(result) == 3
 
 
 def test_build_laplacian_computes_average_neighbor_delta():

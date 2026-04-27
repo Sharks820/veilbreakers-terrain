@@ -395,6 +395,54 @@ class TestMultipassScatterIntegration:
             x, y = item["position"]
             assert not (40.0 <= x <= 60.0 and 40.0 <= y <= 60.0)
 
+    def test_category_mapped_catalog_species_still_respect_building_exclusion(self, monkeypatch):
+        from blender_addon.handlers import environment_scatter as scatter_mod
+
+        def fake_scatter_pass(*args, **kwargs):
+            if kwargs.get("pass_type") != "debris":
+                return []
+            return [
+                {
+                    "position": (0.0, 0.0),
+                    "vegetation_type": "talus_boulder",
+                    "category": "boulder",
+                    "altitude": 0.5,
+                    "moisture": 0.2,
+                    "rotation": 0.0,
+                },
+                {
+                    "position": (25.0, 0.0),
+                    "vegetation_type": "talus_boulder",
+                    "category": "boulder",
+                    "altitude": 0.5,
+                    "moisture": 0.2,
+                    "rotation": 0.0,
+                },
+            ]
+
+        monkeypatch.setattr(scatter_mod, "_scatter_pass", fake_scatter_pass)
+
+        hm = np.full((64, 64), 0.3, dtype=np.float32)
+        slope = np.zeros_like(hm)
+        placements = scatter_mod._generate_multipass_scatter_placements(
+            heightmap=hm,
+            slope_map=slope,
+            terrain_width=100.0,
+            terrain_height=100.0,
+            biome="prairie",
+            rules=self._rules(),
+            seed=21,
+            separation_scale=1.0,
+            max_tilt_angle=45.0,
+            building_zones_world=[(-10.0, -10.0, 10.0, 10.0)],
+            terrain_origin_x=0.0,
+            terrain_origin_y=0.0,
+        )
+
+        assert [item["position"] for item in placements] == [(75.0, 50.0)]
+        assert placements[0]["species_id"] == "talus_boulder"
+        assert placements[0]["vegetation_type"] == "rock"
+
     def test_generate_multipass_scatter_placements_filters_to_requested_types(self):
         from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
 
@@ -426,6 +474,137 @@ class TestMultipassScatterIntegration:
 
         assert len(placements) > 0
         assert {item["vegetation_type"] for item in placements} == {"tree"}
+
+    def test_multipass_placements_convert_to_canonical_scatter_point_table(self):
+        from blender_addon.handlers.environment_scatter import (
+            _build_scatter_point_table_from_placements,
+        )
+        from blender_addon.handlers.terrain_scatter_points import (
+            validate_scatter_point_table,
+        )
+
+        placements = [
+            {
+                "position": (25.0, 30.0),
+                "rotation": 90.0,
+                "rotation_y": 1.25,
+                "scale": 1.4,
+                "vegetation_type": "tree",
+                "species_id": "tree_oak",
+                "altitude": 0.25,
+                "moisture": 0.6,
+                "lod": 1,
+                "prototype_id": 3,
+            }
+        ]
+
+        table = _build_scatter_point_table_from_placements(
+            placements,
+            terrain_width=100.0,
+            terrain_height=80.0,
+            terrain_origin_x=10.0,
+            terrain_origin_y=20.0,
+            biome_id="forest",
+            height_min=5.0,
+            height_range=40.0,
+            seed=17,
+        )
+
+        assert table.format == "ScatterPointTable"
+        assert validate_scatter_point_table(table) == []
+        point = table.points[0]
+        assert point.position == pytest.approx((-15.0, 10.0, 15.0))
+        assert point.prototype_id == "3"
+        assert point.species_id == "tree_oak"
+        assert point.biome_id == "forest"
+        assert point.wind_profile == "tree"
+        assert point.mask_sources == ("multipass_scatter", "species:tree_oak", "biome:forest")
+
+    def test_scatter_point_table_prefers_actual_instance_transform_metadata(self):
+        from blender_addon.handlers.environment_scatter import (
+            _build_scatter_point_table_from_placements,
+        )
+
+        placements = [
+            {
+                "position": (25.0, 30.0),
+                "world_position": (101.0, 202.0, 33.0),
+                "normal": (-0.2, 0.1, 0.97),
+                "orient": (0.1, 0.2, 0.3, 0.9),
+                "rotation": 0.0,
+                "scale": 1.0,
+                "vegetation_type": "tree",
+                "species_id": "tree_oak",
+                "altitude": 0.25,
+            }
+        ]
+
+        table = _build_scatter_point_table_from_placements(
+            placements,
+            terrain_width=100.0,
+            terrain_height=80.0,
+            terrain_origin_x=10.0,
+            terrain_origin_y=20.0,
+            biome_id="forest",
+            height_min=5.0,
+            height_range=40.0,
+            seed=17,
+        )
+
+        point = table.points[0]
+
+        assert point.position == pytest.approx((101.0, 202.0, 33.0))
+        assert point.height_m == pytest.approx(33.0)
+        assert point.normal == pytest.approx((-0.2, 0.1, 0.97))
+        assert point.orient == pytest.approx((0.1, 0.2, 0.3, 0.9))
+
+    def test_catalog_category_placements_map_to_coarse_rules_without_dropping(self):
+        from blender_addon.handlers.environment_scatter import _filter_multipass_scatter_placements
+
+        placements = [
+            {
+                "position": (0.0, 0.0),
+                "vegetation_type": "talus_boulder",
+                "category": "boulder",
+                "altitude": 0.5,
+                "moisture": 0.2,
+                "rotation": 0.0,
+            },
+            {
+                "position": (5.0, 0.0),
+                "vegetation_type": "reeds",
+                "category": "water_foliage",
+                "altitude": 0.2,
+                "moisture": 0.9,
+                "rotation": 0.0,
+            },
+            {
+                "position": (-5.0, 0.0),
+                "vegetation_type": "log_fallen",
+                "category": "log",
+                "altitude": 0.2,
+                "moisture": 0.5,
+                "rotation": 0.0,
+            },
+        ]
+
+        filtered = _filter_multipass_scatter_placements(
+            placements,
+            rules=self._rules(),
+            terrain_width=80.0,
+            terrain_height=80.0,
+            slope_map=np.zeros((8, 8), dtype=np.float32),
+            moisture_map=None,
+            max_tilt_angle=45.0,
+            seed=9,
+            apply_rule_density=True,
+        )
+
+        species = {item["species_id"] for item in filtered}
+        base_types = {item["vegetation_type"] for item in filtered}
+
+        assert {"talus_boulder", "reeds", "log_fallen"} <= species
+        assert {"rock", "grass", "tree"} <= base_types
 
 
 class TestScatterPropsLogic:

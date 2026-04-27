@@ -5,7 +5,7 @@ Covers every module from Addendum 1.A.1:
   - terrain_viewport_sync (ViewportVantage + freshness + frustum)
   - terrain_reference_locks (lock/unlock/drift)
   - terrain_addon_health (version + registration)
-  - terrain_blender_safety (Z-up, screenshot cap, boolean safety, Tripo serial)
+  - terrain_blender_safety (Z-up, screenshot cap, boolean safety, GLTF serial)
   - terrain_scene_read (capture_scene_read snapshot)
 """
 
@@ -760,29 +760,29 @@ def test_recommend_solver_dense_uses_fast():
     assert recommend_boolean_solver(1000, 1000) == "EXACT"
 
 
-def test_tripo_serialized_preserves_order():
+def test_gltf_serialized_preserves_order():
     from blender_addon.handlers.terrain_blender_safety import (
-        clear_tripo_import_log,
-        get_tripo_import_log,
-        import_tripo_glb_serialized,
+        clear_gltf_import_log,
+        get_gltf_import_log,
+        import_gltf_serialized,
     )
 
-    clear_tripo_import_log()
+    clear_gltf_import_log()
     paths = [Path(f"mock_{i}.glb") for i in range(5)]
     # Paths don't exist in the unit-test sandbox; exercise the
     # serialization contract without the existence check.
-    result = import_tripo_glb_serialized(paths, require_exists=False)
-    log = get_tripo_import_log()
+    result = import_gltf_serialized(paths, require_exists=False)
+    log = get_gltf_import_log()
     assert [str(p) for p in result] == [str(p) for p in paths]
     assert len(log) == 5
 
 
-def test_tripo_serial_empty_list_ok():
+def test_gltf_serial_empty_list_ok():
     from blender_addon.handlers.terrain_blender_safety import (
-        import_tripo_glb_serialized,
+        import_gltf_serialized,
     )
 
-    assert import_tripo_glb_serialized([]) == []
+    assert import_gltf_serialized([]) == []
 
 
 # ---------------------------------------------------------------------------
