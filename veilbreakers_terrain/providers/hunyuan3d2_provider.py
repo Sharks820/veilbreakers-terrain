@@ -158,17 +158,19 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
             ) from exc
 
         src = self._hf_endpoint if self._mode == _MODE_HF_ENDPOINT else self._hf_space
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"verbose": False}
         if self._hf_token:
-            kwargs["hf_token"] = self._hf_token
+            kwargs["token"] = self._hf_token
         logger.debug("[hunyuan3d2] connecting gradio_client to %s", src)
         return Client(src, **kwargs)
 
     def _build_predict_kwargs(self, request: AssetGenerationRequest) -> dict:
         from gradio_client import handle_file  # type: ignore
 
+        # When an image is provided, set caption=None: passing text+image together
+        # triggers a NameError in the Space's multimodal code path.
         kwargs: dict[str, Any] = {
-            "caption": request.prompt,
+            "caption": None if request.image_path is not None else request.prompt,
             "steps": 30 if request.quality == "high" else 5,
             "guidance_scale": 5.0,
             "seed": request.seed if request.seed is not None else 1234,
@@ -187,6 +189,8 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         client = self._get_gradio_client()
         kwargs = self._build_predict_kwargs(request)
 
+        # Attempt shape+texture; fall back to shape-only if the public Space has
+        # texture generation disabled (returns NameError via AppError).
         api_name = _API_SHAPE_AND_TEXTURE if request.texture else _API_SHAPE_ONLY
         logger.info(
             "[hunyuan3d2] calling %s for species=%s",
@@ -194,24 +198,46 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
             request.species_id,
         )
 
-        result = client.predict(api_name=api_name, **kwargs)
+        try:
+            result = client.predict(api_name=api_name, **kwargs)
+        except Exception as exc:
+            if request.texture and "NameError" in str(exc):
+                logger.warning(
+                    "[hunyuan3d2] /generation_all unavailable on public Space "
+                    "(texture generation disabled server-side); falling back to shape-only"
+                )
+                api_name = _API_SHAPE_ONLY
+                result = client.predict(api_name=api_name, **kwargs)
+            else:
+                raise
+
         logger.debug("[hunyuan3d2] raw result type=%s", type(result))
+
+        def _extract_path(val) -> Optional[str]:
+            """gradio_client returns File components as dicts or plain strings."""
+            if val is None:
+                return None
+            if isinstance(val, dict):
+                return val.get("value") or val.get("path") or val.get("name")
+            return str(val)
 
         glb_src: Optional[str] = None
         if isinstance(result, (list, tuple)):
-            if request.texture and len(result) >= 2:
-                if result[1] is not None:
-                    glb_src = str(result[1])
-                else:
-                    raise RuntimeError(
-                        f"[hunyuan3d2] generation_all returned no textured mesh "
-                        f"for species {request.species_id} (white_mesh={result[0]!r}). "
-                        f"Retry, or call with texture=False."
+            if request.texture and api_name == _API_SHAPE_AND_TEXTURE and len(result) >= 2:
+                glb_src = _extract_path(result[1])
+                if not glb_src:
+                    logger.warning(
+                        "[hunyuan3d2] generation_all returned no textured mesh for %s; "
+                        "using white mesh",
+                        request.species_id,
                     )
+                    glb_src = _extract_path(result[0])
             else:
-                glb_src = str(result[0])
+                glb_src = _extract_path(result[0])
         elif isinstance(result, str):
             glb_src = result
+        elif isinstance(result, dict):
+            glb_src = _extract_path(result)
         else:
             raise RuntimeError(
                 f"[hunyuan3d2] unexpected predict() return type {type(result)}: {result!r}"
