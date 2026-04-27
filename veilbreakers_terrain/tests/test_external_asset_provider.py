@@ -252,3 +252,46 @@ def test_hunyuan3d2_exported_from_providers_package():
     from veilbreakers_terrain.providers import Hunyuan3D2Provider
 
     assert Hunyuan3D2Provider.provider_id == "hunyuan3d2"
+
+
+# ---------------------------------------------------------------------------
+# MeshyProvider — ABC conformance + key validation (no network required)
+# ---------------------------------------------------------------------------
+
+def test_meshy_provider_id():
+    """MeshyProvider.provider_id must be 'meshy'."""
+    from veilbreakers_terrain.providers.meshy_provider import MeshyProvider
+
+    assert MeshyProvider.provider_id == "meshy"
+
+
+def test_meshy_no_key_raises(monkeypatch):
+    """MeshyProvider() must raise RuntimeError when MESHY_API_KEY is unset."""
+    from veilbreakers_terrain.providers.meshy_provider import MeshyProvider
+
+    monkeypatch.delenv("MESHY_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="MESHY_API_KEY not set"):
+        MeshyProvider()
+
+
+def test_meshy_is_subclass():
+    """MeshyProvider must be a concrete subclass of ExternalAssetProvider."""
+    from veilbreakers_terrain.providers.meshy_provider import MeshyProvider
+
+    assert issubclass(MeshyProvider, ExternalAssetProvider)
+
+
+def test_meshy_has_abc_methods():
+    """MeshyProvider must implement all three ABC abstract methods."""
+    from veilbreakers_terrain.providers.meshy_provider import MeshyProvider
+
+    assert callable(getattr(MeshyProvider, "submit", None))
+    assert callable(getattr(MeshyProvider, "poll", None))
+    assert callable(getattr(MeshyProvider, "download", None))
+
+
+def test_meshy_exported_from_providers_package():
+    """MeshyProvider must be importable from the providers package __init__."""
+    from veilbreakers_terrain.providers import MeshyProvider
+
+    assert MeshyProvider.provider_id == "meshy"

@@ -5,6 +5,7 @@ from .external_asset_provider import (
     JobStatus,
 )
 from .hunyuan3d2_provider import Hunyuan3D2Provider
+from .meshy_provider import MeshyProvider
 
 __all__ = [
     "AssetGenerationRequest",
@@ -12,4 +13,5 @@ __all__ = [
     "ExternalAssetProvider",
     "JobStatus",
     "Hunyuan3D2Provider",
+    "MeshyProvider",
 ]
