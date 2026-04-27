@@ -1454,6 +1454,16 @@ def pass_bathymetry(
 
     stack.set("bathymetry", bathymetry, "bathymetry")
     stack.set("water_depth_zone", water_depth_zone, "bathymetry")
+    # W-2 producer: emit water_surface_elevation_m so downstream
+    # pass_water_depth (and any other elevation-aware consumer) can read
+    # the per-cell water-surface elevation in world metres.  Dry cells
+    # remain at their terrain height (water_surface_elev == h there) so
+    # depth = max(ws - h, 0) correctly evaluates to 0.
+    stack.set(
+        "water_surface_elevation_m",
+        water_surface_elev.astype(np.float32),
+        "bathymetry",
+    )
 
     wet_count = int(wet_mask.sum())
     max_depth = float(bathymetry.max())
@@ -1472,7 +1482,7 @@ def pass_bathymetry(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height", "water_surface"),
-        produced_channels=("bathymetry", "water_depth_zone"),
+        produced_channels=("bathymetry", "water_depth_zone", "water_surface_elevation_m"),
         metrics={
             "wet_cells": wet_count,
             "max_depth_m": round(max_depth, 3),
@@ -1491,7 +1501,7 @@ def register_bathymetry_pass() -> None:
             name="bathymetry",
             func=pass_bathymetry,
             requires_channels=("height", "water_surface"),
-            produces_channels=("bathymetry", "water_depth_zone"),
+            produces_channels=("bathymetry", "water_depth_zone", "water_surface_elevation_m"),
             seed_namespace="bathymetry",
             requires_scene_read=False,
             description=(

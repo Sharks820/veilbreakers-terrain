@@ -1001,7 +1001,11 @@ def pass_water_depth(
     stack = state.mask_stack
 
     ws_elev = stack.get("water_surface_elevation_m")
-    height = stack.get("height_m") or stack.get("height")
+    # Cannot use ``a or b`` on numpy arrays — ndarray truthy raises
+    # ValueError ("ambiguous").  Use explicit None check instead.
+    height = stack.get("height_m")
+    if height is None:
+        height = stack.get("height")
 
     if ws_elev is None or height is None:
         return PassResult(
@@ -1014,20 +1018,17 @@ def pass_water_depth(
     ws_arr = _np.asarray(ws_elev, dtype=_np.float32)
     h_arr = _np.asarray(height, dtype=_np.float32)
 
-    depth = _np.maximum(ws_arr - h_arr, 0.0)
-    # water_depth_m and shoreline_blend are not yet declared as dataclass fields
-    # in TerrainMaskStack (W-2 addition).  Use object.__setattr__ to store them
-    # as dynamic attributes so they are readable via stack.get() without
-    # requiring a terrain_semantics.py change.  This matches the pattern used
-    # by import_neighbor_edge for seam-edge arrays.
-    object.__setattr__(stack, "water_depth_m", _np.ascontiguousarray(depth))
-    stack.populated_by_pass["water_depth_m"] = "pass_water_depth"
+    depth = _np.ascontiguousarray(_np.maximum(ws_arr - h_arr, 0.0).astype(_np.float32))
+    # water_depth_m and shoreline_blend are now declared dataclass fields on
+    # TerrainMaskStack (commit e2b8043) and registered in _ARRAY_CHANNELS, so
+    # the canonical stack.set(...) path provides version stamping + dirty
+    # channel tracking.
+    stack.set("water_depth_m", depth, "pass_water_depth")
 
     # Shoreline blend: smooth 0.5 m transition zone, cubic smoothstep
     shoreline_blend = _np.clip(depth / 0.5, 0.0, 1.0)
-    shoreline_blend = shoreline_blend * shoreline_blend * (3.0 - 2.0 * shoreline_blend)
-    object.__setattr__(stack, "shoreline_blend", _np.ascontiguousarray(shoreline_blend))
-    stack.populated_by_pass["shoreline_blend"] = "pass_water_depth"
+    shoreline_blend = (shoreline_blend * shoreline_blend * (3.0 - 2.0 * shoreline_blend)).astype(_np.float32)
+    stack.set("shoreline_blend", _np.ascontiguousarray(shoreline_blend), "pass_water_depth")
 
     return PassResult(
         pass_name="pass_water_depth",

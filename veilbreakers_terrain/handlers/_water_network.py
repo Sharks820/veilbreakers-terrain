@@ -1616,6 +1616,10 @@ class WaterNetwork:
         self._heightmap_shape: tuple[int, int] = (0, 0)
         # Velocity field (populated by from_heightmap when compute_velocity=True)
         self._velocity_field: dict[str, np.ndarray] | None = None
+        # Seam-continuity validation summary (populated by from_heightmap via
+        # validate_seam_continuity()).  None until validation has run; safe to
+        # read on a freshly-constructed network without raising AttributeError.
+        self._seam_validation_result: dict | None = None
 
     # ------------------------------------------------------------------
     # Private helpers
