@@ -499,7 +499,7 @@ def test_anchor_locks_are_isolated_per_thread():
     def _worker() -> None:
         lock_anchor(TerrainAnchor(name="X", world_position=(5.0, 5.0, 5.0)))
         worker_result["locked"] = is_locked("X")
-        from blender_addon.handlers import terrain_reference_locks as locks_mod
+        from veilbreakers_terrain.handlers import terrain_reference_locks as locks_mod
         worker_result["position"] = locks_mod._lock_registry()["X"].world_position
         clear_all_locks()
 

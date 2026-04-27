@@ -148,7 +148,7 @@ def test_scene_budget_validator_flags_over_and_under_budget():
 
 
 def test_handle_generate_lods_accepts_billboard_spec_tuple(monkeypatch):
-    from blender_addon.handlers import lod_pipeline
+    from veilbreakers_terrain.handlers import lod_pipeline
 
     vertices, faces = _cube_mesh()
     billboard_spec = {
@@ -251,7 +251,7 @@ def test_handle_generate_lods_accepts_billboard_spec_tuple(monkeypatch):
 
 
 def test_procedural_material_library_contracts_and_dispatch():
-    from blender_addon.handlers import COMMAND_HANDLERS
+    from veilbreakers_terrain.handlers import COMMAND_HANDLERS
     from veilbreakers_terrain.handlers.procedural_materials import (
         GENERATORS,
         MATERIAL_LIBRARY,

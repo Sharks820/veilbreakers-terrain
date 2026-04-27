@@ -1693,8 +1693,8 @@ def _build_cliff_overhang_mesh_specs(
     for cliff in cliffs:
         # Serialize per-stratum color bands so the material pass can apply
         # geological colour without re-computing hardness from scratch.
-        if cliff.strata_layers:
-            cumulative_z = float(cliff.min_height_m)
+        if getattr(cliff, "strata_layers", None):
+            cumulative_z = float(getattr(cliff, "min_height_m", 0.0))
             strata_bands = []
             for sl in cliff.strata_layers:
                 strata_bands.append({

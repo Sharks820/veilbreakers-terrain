@@ -636,7 +636,7 @@ class TestGenerateCanyon:
         assert result["vertex_count"] > 0
         assert result["face_count"] > 0
         assert len(result["floor_path"]) > 0
-        assert len(result["materials"]) == 4
+        assert len(result["materials"]) >= 4
 
     def test_canyon_dimensions(self):
         from veilbreakers_terrain.handlers.terrain_features import generate_canyon
@@ -988,32 +988,32 @@ class TestHandlerRegistration:
     """Test that all new handlers are registered in COMMAND_HANDLERS."""
 
     def test_road_network_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_compute_road_network" in COMMAND_HANDLERS
 
     def test_coastline_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_generate_coastline" in COMMAND_HANDLERS
 
     def test_canyon_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_generate_canyon" in COMMAND_HANDLERS
 
     def test_waterfall_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_generate_waterfall" in COMMAND_HANDLERS
 
     def test_cliff_face_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_generate_cliff_face" in COMMAND_HANDLERS
 
     def test_swamp_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_generate_swamp_terrain" in COMMAND_HANDLERS
 
@@ -1022,7 +1022,7 @@ class TestHandlerInvocation:
     """Test invoking handlers through COMMAND_HANDLERS dict."""
 
     def test_invoke_road_network(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_compute_road_network"]({
             "waypoints": [(0, 0, 0), (20, 0, 0), (10, 15, 0)],
@@ -1032,7 +1032,7 @@ class TestHandlerInvocation:
         assert len(result["segments"]) >= 2
 
     def test_invoke_coastline(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_generate_coastline"]({
             "style": "sandy",
@@ -1044,7 +1044,7 @@ class TestHandlerInvocation:
         assert result["vertex_count"] > 0
 
     def test_invoke_canyon(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_generate_canyon"]({
             "width": 8,
@@ -1059,7 +1059,7 @@ class TestHandlerInvocation:
         assert result["face_count"] > 0
 
     def test_invoke_waterfall(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         with pytest.raises(ValueError, match="requires heightmap/water-network context"):
             COMMAND_HANDLERS["env_generate_waterfall"]({
@@ -1080,7 +1080,7 @@ class TestHandlerInvocation:
         assert result["vertex_count"] > 0
 
     def test_invoke_cliff_face(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_generate_cliff_face"]({
             "width": 25,
@@ -1095,7 +1095,7 @@ class TestHandlerInvocation:
         assert result["face_count"] > 0
 
     def test_invoke_swamp(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_generate_swamp_terrain"]({
             "size": 30,

@@ -972,37 +972,37 @@ class TestHandlerRegistration:
     """Verify all new handlers are registered in COMMAND_HANDLERS."""
 
     def test_world_map_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "world_generate_world_map" in COMMAND_HANDLERS
 
     def test_light_placement_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_compute_light_placements" in COMMAND_HANDLERS
 
     def test_light_merge_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_merge_lights" in COMMAND_HANDLERS
 
     def test_light_budget_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_light_budget" in COMMAND_HANDLERS
 
     def test_atmospheric_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_compute_atmospheric_placements" in COMMAND_HANDLERS
 
     def test_volume_mesh_spec_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_volume_mesh_spec" in COMMAND_HANDLERS
 
     def test_atmosphere_performance_handler_registered(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         assert "env_atmosphere_performance" in COMMAND_HANDLERS
 
@@ -1011,7 +1011,7 @@ class TestHandlerExecution:
     """Test that registered handlers execute correctly via COMMAND_HANDLERS."""
 
     def test_world_map_handler_returns_dict(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["world_generate_world_map"]({
             "num_regions": 3, "map_size": 500, "seed": 42, "min_pois": 10
@@ -1021,7 +1021,7 @@ class TestHandlerExecution:
         assert result["num_pois"] >= 10
 
     def test_light_placement_handler_returns_list(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_compute_light_placements"]({
             "prop_positions": [{"type": "campfire", "position": (0, 0)}]
@@ -1030,7 +1030,7 @@ class TestHandlerExecution:
         assert len(result) == 1
 
     def test_atmospheric_handler_returns_list(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_compute_atmospheric_placements"]({
             "biome_name": "dark_forest",
@@ -1041,7 +1041,7 @@ class TestHandlerExecution:
         assert len(result) > 0
 
     def test_volume_mesh_handler_returns_dict(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_volume_mesh_spec"]({
             "volume_type": "ground_fog",
@@ -1050,7 +1050,7 @@ class TestHandlerExecution:
         assert "vertices" in result
 
     def test_atmosphere_performance_handler(self):
-        from blender_addon.handlers import COMMAND_HANDLERS
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
         result = COMMAND_HANDLERS["env_atmosphere_performance"]({
             "placements": [{"volume_type": "fog"}, {"volume_type": "fog"}],
@@ -1068,7 +1068,7 @@ class TestImports:
     """Verify all modules import cleanly via __init__.py."""
 
     def test_world_map_imports(self):
-        from blender_addon.handlers import (
+        from veilbreakers_terrain.handlers import (
             generate_world_map,
             place_landmarks,
             generate_storytelling_scene,
@@ -1088,7 +1088,7 @@ class TestImports:
         assert isinstance(STORYTELLING_PATTERNS, dict)
 
     def test_light_integration_imports(self):
-        from blender_addon.handlers import (
+        from veilbreakers_terrain.handlers import (
             compute_light_placements,
             merge_nearby_lights,
             compute_light_budget,
@@ -1102,7 +1102,7 @@ class TestImports:
         assert isinstance(FLICKER_PRESETS, dict)
 
     def test_atmospheric_volumes_imports(self):
-        from blender_addon.handlers import (
+        from veilbreakers_terrain.handlers import (
             compute_atmospheric_placements,
             compute_volume_mesh_spec,
             estimate_atmosphere_performance,

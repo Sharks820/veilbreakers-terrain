@@ -17,7 +17,7 @@ from veilbreakers_terrain.handlers.terrain_semantics import (
     TerrainPipelineState,
     TerrainSceneRead,
 )
-from blender_addon.handlers import terrain_masks
+from veilbreakers_terrain.handlers import terrain_masks
 
 
 # ---------------------------------------------------------------------------

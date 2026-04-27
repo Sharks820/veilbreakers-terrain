@@ -341,9 +341,9 @@ def _build_full_bpy_stubs():
 # Import handler modules normally (conftest stubs handle bpy/bmesh/mathutils)
 # ---------------------------------------------------------------------------
 
-from blender_addon.handlers import _terrain_noise as terrain_noise  # noqa: E402
+from veilbreakers_terrain.handlers import _terrain_noise as terrain_noise  # noqa: E402
 auto_splat_terrain = terrain_noise.auto_splat_terrain
-from blender_addon.handlers import environment as _environment_mod  # noqa: E402
+from veilbreakers_terrain.handlers import environment as _environment_mod  # noqa: E402
 from veilbreakers_terrain.handlers.environment import handle_create_water  # noqa: E402
 
 

@@ -123,7 +123,7 @@ def test_visual_qa_math_contracts_are_deterministic():
 
 def test_visual_qa_headless_handlers_report_not_applied(monkeypatch):
     _ensure_allowed_root(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     monkeypatch.setattr(vqa, "_HAS_BPY", False)
 
@@ -158,7 +158,7 @@ def test_visual_qa_headless_handlers_report_not_applied(monkeypatch):
 def test_visual_qa_blender_stub_applies_camera_shading_and_screenshot(monkeypatch):
     root = _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     render_calls: list = []
     opengl_calls: list = []
@@ -194,7 +194,7 @@ def test_visual_qa_blender_stub_applies_camera_shading_and_screenshot(monkeypatc
 def test_camera_aims_at_origin_via_quaternion(monkeypatch):
     _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     render_calls: list = []
     opengl_calls: list = []
@@ -240,7 +240,7 @@ def test_camera_aims_at_origin_via_quaternion(monkeypatch):
 def test_render_respects_render_max_not_thumbnail_cap(monkeypatch):
     root = _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     render_calls: list = []
     opengl_calls: list = []
@@ -260,7 +260,7 @@ def test_render_respects_render_max_not_thumbnail_cap(monkeypatch):
 def test_capture_viewport_uses_ops_render_opengl_by_default(monkeypatch):
     root = _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     render_calls: list = []
     opengl_calls: list = []
@@ -285,7 +285,7 @@ def test_capture_viewport_uses_ops_render_opengl_by_default(monkeypatch):
 def test_capture_rejects_filepath_outside_allowed_root(monkeypatch):
     _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     render_calls: list = []
     opengl_calls: list = []
@@ -304,7 +304,7 @@ def test_capture_rejects_filepath_outside_allowed_root(monkeypatch):
 def test_camera_clip_end_accommodates_km_terrain(monkeypatch):
     _ensure_allowed_root(monkeypatch)
     _install_functional_mathutils(monkeypatch)
-    from blender_addon.handlers import terrain_visual_qa as vqa
+    from veilbreakers_terrain.handlers import terrain_visual_qa as vqa
 
     render_calls: list = []
     opengl_calls: list = []

@@ -427,8 +427,18 @@ def erosion_filter(
     # HeightField Erode and World Creator's hydraulic erosion presets.
     # The adjustment is small for well-tuned configs (onset + normalization
     # usually keeps the mean near zero) but prevents accumulating bias.
-    height_delta_mean = float(height_delta.mean())
-    height_delta = height_delta - height_delta_mean
+    #
+    # Chunk-parallel mode: when the caller supplies explicit height_min/height_max
+    # the tile is a sub-region of a larger world evaluated at its exact world
+    # coordinates. The DC removal must be skipped in this case — each sub-tile
+    # has a different local mean, so removing it independently would create
+    # seams between neighbouring chunks. The global pipeline is responsible for
+    # a single DC removal pass over the assembled full-world height_delta.
+    _chunk_parallel = (height_min is not None) and (height_max is not None)
+    height_delta_mean = 0.0
+    if not _chunk_parallel:
+        height_delta_mean = float(height_delta.mean())
+        height_delta = height_delta - height_delta_mean
 
     # Derived depth channels
     erosion_depth = np.maximum(-height_delta, 0.0)    # where material was removed

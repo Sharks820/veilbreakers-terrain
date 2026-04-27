@@ -183,6 +183,19 @@ _LOC_HANDLERS: Dict[str, str] = {
     "gn_dump": "blender_geometry_nodes_dump",
     "addon_enable": "blender_addon_enable",
     "addon_disable": "blender_addon_disable",
+    # ------------------------------------------------------------------
+    # Environment feature generators
+    # ------------------------------------------------------------------
+    "floating_rocks": "env_generate_floating_rocks",
+    "geyser": "env_generate_geyser",
+    "ice_formation": "env_generate_ice_formation",
+    "lava_flow": "env_generate_lava_flow",
+    "natural_arch": "env_generate_natural_arch",
+    "sinkhole": "env_generate_sinkhole",
+    # ------------------------------------------------------------------
+    # Biome terrain
+    # ------------------------------------------------------------------
+    "biome_terrain": "terrain_create_biome_terrain",
 }
 
 

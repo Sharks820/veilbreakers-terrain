@@ -2001,8 +2001,7 @@ def handle_generate_terrain(params: dict) -> dict:
         if params.get("viewport_vantage") is not None:
             controller_params["viewport_vantage"] = params.get("viewport_vantage")
         pipeline = [
-            "pass_generate_low_freq_hmap",
-            "terrain_labels",
+            "macro_world",
             "structural_masks",
         ]
         controller_apply_caves = bool(params.get("controller_apply_caves", False))
@@ -2016,19 +2015,12 @@ def handle_generate_terrain(params: dict) -> dict:
         if erosion in ("hydraulic", "thermal", "both"):
             pipeline.append("pass_hydrology")
             pipeline.append("erosion")
-            pipeline.append("pass_generate_high_freq_detail")
-            pipeline.append("pass_composite_hmap")
             pipeline.append("structural_masks")
             controller_params["erosion_profile"] = (
                 "temperate" if erosion == "hydraulic"
                 else "arid" if erosion == "thermal"
                 else "temperate"
             )
-        if "pass_generate_high_freq_detail" not in pipeline:
-            pipeline.append("pass_generate_high_freq_detail")
-        if "pass_composite_hmap" not in pipeline:
-            pipeline.append("pass_composite_hmap")
-            pipeline.append("structural_masks")
         if cave_candidates and controller_apply_caves:
             pipeline.append("caves")
             pipeline.append("integrate_deltas")
@@ -6053,6 +6045,8 @@ def handle_generate_road(params: dict) -> dict:
 
     road_route_rdp_epsilon = float(params.get("rdp_epsilon", max(cell_size * 0.5, 0.75)))
     road_routing_method = "legacy_grid"
+    _road_strict = os.environ.get("VEILBREAKERS_ROAD_STRICT", "").strip() == "1"
+    _road_fallback_reason: str = ""
     try:
         path, road_network_result = _solve_road_path_with_network(
             heightmap,
@@ -6075,12 +6069,16 @@ def handle_generate_road(params: dict) -> dict:
             cell_size=float(cell_size),
         )
         road_routing_method = str(road_network_result.get("routing_method", "astar_24dir"))
-    except Exception:
+    except (LookupError, ValueError, RuntimeError) as _road_exc:
+        if _road_strict:
+            raise
+        _road_fallback_reason = f"{type(_road_exc).__name__}: {_road_exc}"
         logger.warning(
             "Road-network route solve failed for %s; falling back to legacy grid solver",
             terrain_name,
             exc_info=True,
         )
+        road_routing_method = "legacy_fallback"
         path, graded, _ = _run_height_solver_in_world_space(
             heightmap,
             generate_road_path_grid_legacy,
@@ -6265,6 +6263,8 @@ def handle_generate_road(params: dict) -> dict:
             "duration_seconds": round(_duration, 4),
             "pass_name": "generate_road",
         }
+        if _road_fallback_reason:
+            result["fallback_reason"] = _road_fallback_reason
         if bool(params.get("return_road_channels", False)):
             result["road_mask"] = road_mask.tolist()
             result["road_sdf_dist"] = road_sdf_dist.tolist()
@@ -6377,6 +6377,8 @@ def handle_generate_road(params: dict) -> dict:
         "duration_seconds": round(_duration, 4),
         "pass_name": "generate_road",
     }
+    if _road_fallback_reason:
+        result["fallback_reason"] = _road_fallback_reason
     if bool(params.get("return_road_channels", False)):
         result["road_mask"] = road_mask.tolist()
         result["road_sdf_dist"] = road_sdf_dist.tolist()

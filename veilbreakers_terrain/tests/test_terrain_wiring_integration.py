@@ -105,7 +105,7 @@ def _fresh_controller():
 
 
 def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
-    from blender_addon.handlers import _terrain_world as world_mod
+    from veilbreakers_terrain.handlers import _terrain_world as world_mod
 
     def _fake_hydraulic(height, iterations, seed, hero_exclusion=None, erodibility_map=None):
         arr = np.asarray(height, dtype=np.float64)

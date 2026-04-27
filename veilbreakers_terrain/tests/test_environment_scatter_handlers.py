@@ -396,7 +396,7 @@ class TestMultipassScatterIntegration:
             assert not (40.0 <= x <= 60.0 and 40.0 <= y <= 60.0)
 
     def test_category_mapped_catalog_species_still_respect_building_exclusion(self, monkeypatch):
-        from blender_addon.handlers import environment_scatter as scatter_mod
+        from veilbreakers_terrain.handlers import environment_scatter as scatter_mod
 
         def fake_scatter_pass(*args, **kwargs):
             if kwargs.get("pass_type") != "debris":

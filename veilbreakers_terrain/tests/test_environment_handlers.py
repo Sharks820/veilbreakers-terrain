@@ -412,7 +412,7 @@ class TestRoadTerrainProfiling:
             assert abs(c1 - c0) <= 1
 
     def test_solve_road_path_with_network_accepts_2d_route_points(self, monkeypatch):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         def _fake_compute_road_network(*args, **kwargs):
             return {
@@ -496,7 +496,7 @@ class TestRoadTerrainProfiling:
 
 class TestRoadHandlerTerrainAwareRouting:
     def test_handle_generate_road_threads_derived_cost_map_to_solver(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_twelve_step import _build_road_cost_map
 
         captured: dict[str, object] = {}
@@ -584,7 +584,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result["road_mask_nonzero"] > 0
 
     def test_handle_generate_road_prefers_explicit_cost_map(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         captured: dict[str, object] = {}
 
@@ -659,7 +659,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result["terrain_cost_source"] == "explicit_cost_map"
 
     def test_handle_generate_road_sanitizes_explicit_cost_map_nonfinite_values(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         captured: dict[str, object] = {}
 
@@ -758,7 +758,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert not second.exists()
 
     def test_handle_generate_road_can_return_road_channels(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         class _Verts(list):
             def ensure_lookup_table(self):
@@ -835,7 +835,7 @@ class TestRoadHandlerTerrainAwareRouting:
 
     @pytest.mark.parametrize("surface", ["dirt", "path", "trail"])
     def test_terrain_only_roads_still_report_bridge_contract_for_water_crossing(self, surface):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         class _Verts(list):
             def ensure_lookup_table(self):
@@ -947,7 +947,7 @@ class TestRoadHandlerTerrainAwareRouting:
 
     def test_road_fallback_triggers_on_value_error_and_annotates_result(self, monkeypatch):
         """LookupError/ValueError/RuntimeError should fall back + annotate result."""
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         monkeypatch.delenv("VEILBREAKERS_ROAD_STRICT", raising=False)
 
@@ -985,7 +985,7 @@ class TestRoadHandlerTerrainAwareRouting:
 
     def test_road_fallback_does_not_swallow_unexpected_exception(self, monkeypatch):
         """Exceptions outside the narrow whitelist must propagate (not fall back)."""
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         monkeypatch.delenv("VEILBREAKERS_ROAD_STRICT", raising=False)
 
@@ -1017,7 +1017,7 @@ class TestRoadHandlerTerrainAwareRouting:
 
     def test_road_strict_env_flag_re_raises_narrowed_exception(self, monkeypatch):
         """VEILBREAKERS_ROAD_STRICT=1 re-raises instead of falling back."""
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         monkeypatch.setenv("VEILBREAKERS_ROAD_STRICT", "1")
 
@@ -1307,7 +1307,7 @@ class TestHandlerReturnDictKeys:
         assert arr.max() <= 65535
 
     def test_handle_export_heightmap_writes_metadata_sidecar(self, tmp_path):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         class _Verts(list):
             def ensure_lookup_table(self):
@@ -1356,7 +1356,7 @@ class TestHandlerReturnDictKeys:
 
 class TestControllerTerrainPath:
     def test_generate_terrain_uses_controller_heightmap_as_source_of_truth(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.full((3, 3), 2.0, dtype=np.float64)
@@ -1438,7 +1438,7 @@ class TestControllerTerrainPath:
         assert result["water_network_present"] is False
 
     def test_controller_path_threads_cave_candidates_but_defers_cave_pipeline_by_default(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
@@ -1508,7 +1508,7 @@ class TestControllerTerrainPath:
         assert result["cave_pipeline_deferred"] is True
 
     def test_controller_path_can_opt_in_to_cave_pipeline(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
@@ -1576,7 +1576,7 @@ class TestControllerTerrainPath:
         assert result["cave_pipeline_deferred"] is False
 
     def test_controller_path_inserts_hydrology_before_erosion(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
@@ -1641,7 +1641,7 @@ class TestControllerTerrainPath:
         ]
 
     def test_controller_path_forwards_quality_profile_hints_and_viewport_vantage(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
@@ -1702,7 +1702,7 @@ class TestControllerTerrainPath:
 
 class TestWorldTerrainGeneration:
     def test_generate_terrain_tile_writes_resume_manifest(self, tmp_path):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         heightmap = np.array(
             [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
@@ -1747,7 +1747,7 @@ class TestWorldTerrainGeneration:
 
     def test_world_terrain_wraps_tile_generation(self):
         """handle_generate_world_terrain delegates to tiled generation for compatibility."""
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         with patch.object(env_mod, "handle_generate_terrain_tile", return_value={"name": "X", "tile_x": 0, "tile_y": 0}):
             result = env_mod.handle_generate_world_terrain({"name": "X"})
@@ -1757,7 +1757,7 @@ class TestWorldTerrainGeneration:
         assert result["compatibility_mode"] == "world_to_tile_wrapper"
 
     def test_world_terrain_can_wrap_multiple_tiles(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=lambda params: {
             "name": params["name"],
@@ -1777,7 +1777,7 @@ class TestWorldTerrainGeneration:
         }
 
     def test_world_terrain_writes_batch_manifest_and_frontier(self, tmp_path):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
         def _fake_tile(params):
@@ -1827,7 +1827,7 @@ class TestWorldTerrainGeneration:
         assert {"tile_x": 2, "tile_y": 0} in batch_manifest["frontier_tiles"]
 
     def test_generate_terrain_tile_manifest_failure_cleans_export_artifacts(self, tmp_path):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         heightmap = np.array(
             [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
@@ -1882,7 +1882,7 @@ class TestWorldTerrainGeneration:
         assert not (tmp_path / "TileFail_tile_manifest.json").exists()
 
     def test_world_terrain_manifest_write_failure_isolated(self, tmp_path):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
         def _fake_tile(params):
@@ -1936,7 +1936,7 @@ class TestWorldTerrainGeneration:
         assert "manifest write failed" in result["batch_manifest_error"]
 
     def test_world_terrain_partial_failure_preserves_requested_bounds_and_frontier(self, tmp_path):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
         def _fake_tile(params):
@@ -1998,7 +1998,7 @@ class TestWorldTerrainGeneration:
 
 
 def test_execute_terrain_pipeline_wires_water_network_and_spec():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     height = np.linspace(16.0, 0.0, 9 * 9, dtype=np.float64).reshape(9, 9)
     execution = env_mod._execute_terrain_pipeline(
@@ -2028,7 +2028,7 @@ def test_execute_terrain_pipeline_wires_water_network_and_spec():
 
 
 def test_execute_terrain_pipeline_rejects_invalid_region_bounds():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     height = np.zeros((9, 9), dtype=np.float64)
     with pytest.raises(ValueError, match="max >= min"):
@@ -2044,7 +2044,7 @@ def test_execute_terrain_pipeline_rejects_invalid_region_bounds():
 
 
 def test_handle_generate_waterfall_materializes_object_and_threads_direction():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     captured: dict[str, object] = {}
 
@@ -2099,7 +2099,7 @@ def test_handle_generate_waterfall_materializes_object_and_threads_direction():
 
 
 def test_handle_generate_waterfall_normalizes_facing_direction():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     captured: dict[str, object] = {}
 
@@ -2126,7 +2126,7 @@ def test_handle_generate_waterfall_normalizes_facing_direction():
 
 
 def test_handle_generate_waterfall_can_require_heightmap_context():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     with pytest.raises(ValueError, match="requires heightmap/water-network context"):
         env_mod.handle_generate_waterfall(
@@ -2148,7 +2148,7 @@ def test_handle_generate_waterfall_can_require_heightmap_context():
 
 
 def test_handle_generate_waterfall_publishes_functional_contract():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     result = env_mod.handle_generate_waterfall(
         {
@@ -2167,7 +2167,7 @@ def test_handle_generate_waterfall_publishes_functional_contract():
 
 
 def test_handle_generate_waterfall_validates_authored_functional_names():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     result = env_mod.handle_generate_waterfall(
         {
@@ -2184,7 +2184,7 @@ def test_handle_generate_waterfall_validates_authored_functional_names():
     assert "WATERFALL_FUNCTIONAL_OBJECT_MISSING" in issue_codes
 
 def test_multi_biome_world_uses_mesh_backed_scatter_helper():
-    from blender_addon.handlers import environment as env_mod
+    from veilbreakers_terrain.handlers import environment as env_mod
 
     class _ColorDatum:
         def __init__(self):
@@ -2291,7 +2291,7 @@ class TestCreateCaveEntranceHandler:
             handle_create_cave_entrance({"style": "sci_fi"})
 
     def test_accepts_2d_location_and_parent_name_without_bpy_lookup(self):
-        from blender_addon.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers import environment as env_mod
 
         fake_spec = {
             "vertices": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],

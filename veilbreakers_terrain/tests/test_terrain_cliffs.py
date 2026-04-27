@@ -646,7 +646,7 @@ def test_height_blend_weights_active_in_materials():
     configured on any material channel. P1-8 was marked resolved —
     this test prevents silent regression."""
     import inspect
-    from blender_addon.handlers import terrain_materials_v2
+    from veilbreakers_terrain.handlers import terrain_materials_v2
 
     src = inspect.getsource(terrain_materials_v2.pass_materials)
     assert "compute_height_blended_weights" in src

@@ -96,7 +96,7 @@ _install_bpy_stub()
 # Imports (after bpy stub installed)
 # ---------------------------------------------------------------------------
 
-from blender_addon.handlers import terrain_caves  # noqa: E402
+from veilbreakers_terrain.handlers import terrain_caves  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ def test_handle_generate_cave_compose_map_param_shape() -> None:
 
 def test_handle_generate_cave_registered_in_command_handlers() -> None:
     """Test 4 — handler registered as terrain_generate_cave in COMMAND_HANDLERS."""
-    from blender_addon.handlers import COMMAND_HANDLERS
+    from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 
     assert "terrain_generate_cave" in COMMAND_HANDLERS, (
         "terrain_generate_cave must be registered in COMMAND_HANDLERS "

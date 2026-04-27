@@ -792,7 +792,7 @@ def _compute_material_zones(
 def generate_coastline(
     length: float = 200.0,
     width: float = 50.0,
-    style: str = "rocky",
+    style: str = "sandy",
     resolution: int = 64,
     seed: int = 42,
 ) -> dict[str, Any]:

@@ -378,7 +378,7 @@ class TestTimerConfiguration:
     def test_timer_interval_is_10ms(self):
         """Socket server timer should use 10ms (0.01s) poll interval."""
         import inspect
-        from blender_addon import socket_server
+        from veilbreakers_terrain import socket_server
 
         source = inspect.getsource(socket_server.BlenderMCPServer._process_commands)
         # The method returns the poll interval -- should be 0.01
