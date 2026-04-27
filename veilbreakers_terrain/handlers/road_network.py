@@ -22,6 +22,14 @@ import math
 import random
 from typing import Any
 
+from .terrain_path_contracts import (
+    PathNetworkContract,
+    PathSegmentContract,
+    infer_continuation_edge,
+    material_stack_for_path,
+    validate_path_network_contract,
+)
+
 try:
     import numpy as np
     from scipy.spatial import Delaunay
@@ -364,6 +372,30 @@ def _simplify_path_rdp(path: list, epsilon: float = 0.5) -> list:
         return left[:-1] + right
     else:
         return [start, end]
+
+
+def _subdivide_long_segments(path: list, max_seg_m: float = 5.0) -> list:
+    """Re-insert linearly-interpolated midpoints on any segment > max_seg_m.
+
+    Prevents mesh gaps after aggressive RDP simplification on steep terrain.
+    """
+    if len(path) < 2:
+        return path
+    out = [path[0]]
+    for i in range(len(path) - 1):
+        a, b = path[i], path[i + 1]
+        dist = _dist3(a, b)
+        if dist > max_seg_m:
+            n_segs = math.ceil(dist / max_seg_m)
+            for k in range(1, n_segs):
+                t = k / n_segs
+                out.append((
+                    a[0] + t * (b[0] - a[0]),
+                    a[1] + t * (b[1] - a[1]),
+                    a[2] + t * (b[2] - a[2]),
+                ))
+        out.append(b)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -862,7 +894,7 @@ def _sample_heightmap(heightmap, terrain_bounds, wx, wy) -> float | None:
 
 
 _BRIDGE_VALLEY_DEPTH_M = 2.0
-_BRIDGE_WATER_CLEARANCE_M = 0.5
+_BRIDGE_WATER_CLEARANCE_M = 0.75
 
 
 def _detect_bridges(
@@ -878,6 +910,7 @@ def _detect_bridges(
     for seg in segments:
         start3d, end3d, width, road_type = seg
         needs_bridge = False
+        max_water_depth_m = 0.0
 
         for s in range(PROFILE_SAMPLES + 1):
             t = s / PROFILE_SAMPLES
@@ -887,24 +920,31 @@ def _detect_bridges(
 
             if road_z < water_level:
                 needs_bridge = True
-                break
+                max_water_depth_m = max(
+                    max_water_depth_m,
+                    float(water_level) - float(road_z),
+                )
 
             if heightmap is not None and terrain_bounds is not None:
                 terrain_z = _sample_heightmap_bilinear(
                     heightmap, terrain_bounds, wx, wy
                 )
                 if terrain_z is not None:
+                    max_water_depth_m = max(
+                        max_water_depth_m,
+                        float(water_level) - float(terrain_z),
+                    )
                     gap = road_z - terrain_z
                     if gap > _BRIDGE_VALLEY_DEPTH_M:
                         needs_bridge = True
-                        break
 
         if not needs_bridge:
             continue
 
+        clearance_m = max(_BRIDGE_WATER_CLEARANCE_M, max_water_depth_m * 0.5)
         deck_z = max(
             max(start3d[2], end3d[2]),
-            water_level + _BRIDGE_WATER_CLEARANCE_M,
+            water_level + clearance_m,
         )
         deck_start = (start3d[0], start3d[1], deck_z)
         deck_end = (end3d[0], end3d[1], deck_z)
@@ -913,6 +953,8 @@ def _detect_bridges(
             "deck_end": deck_end,
             "width": width,
             "road_type": road_type,
+            "water_depth_m": max(0.0, max_water_depth_m),
+            "bridge_clearance_m": clearance_m,
         })
 
     return bridges
@@ -1079,6 +1121,95 @@ def _bridge_mesh_spec(bridge: dict) -> dict:
     }
 
 
+def _segment_type_for_road_tier(road_type: str) -> str:
+    if str(road_type).lower() in {"trail", "path", "dirt_track"}:
+        return "path"
+    return "road"
+
+
+def _path_network_contract_for_result(
+    *,
+    routes: list[dict[str, Any]],
+    bridges: list[dict[str, Any]],
+    terrain_bounds: tuple[float, float, float, float] | None,
+    node_id: str,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Build the AI-readable road/path/bridge contract for this network."""
+    contract_segments: list[PathSegmentContract] = []
+    edge_tolerance = 1.0
+    if terrain_bounds is not None:
+        min_x, min_y, max_x, max_y = terrain_bounds
+        edge_tolerance = max(1.0, min(max_x - min_x, max_y - min_y) * 0.02)
+
+    for route in routes:
+        points = tuple(
+            (float(point[0]), float(point[1]), float(point[2]))
+            for point in route.get("points", [])
+        )
+        if len(points) < 2:
+            continue
+        route_index = int(route.get("connection_index", len(contract_segments)))
+        road_type = str(route.get("road_type_tier", route.get("road_type", "path")))
+        max_grade_pct = _MAX_GRADE_BY_TYPE.get(road_type, _AASHTO_MAX_TRAIL_GRADE_PCT)
+        contract_segments.append(
+            PathSegmentContract(
+                segment_id=f"route_{route_index}",
+                segment_type=_segment_type_for_road_tier(road_type),  # type: ignore[arg-type]
+                points=points,
+                width_m=float(route.get("width", _WIDTH_BY_TYPE.get(road_type, _TRAVEL_WIDTH_M))),
+                material_stack=material_stack_for_path(road_type),
+                continuation_edge=infer_continuation_edge(
+                    points,
+                    terrain_bounds,
+                    tolerance_m=edge_tolerance,
+                ),
+                max_grade=float(max_grade_pct) / 100.0,
+                metadata={
+                    "road_type": str(route.get("road_type", road_type)),
+                    "road_type_tier": road_type,
+                    "start_index": int(route.get("start_index", -1)),
+                    "end_index": int(route.get("end_index", -1)),
+                },
+            )
+        )
+
+    for bridge_index, bridge in enumerate(bridges):
+        points = (
+            tuple(float(v) for v in bridge["deck_start"]),
+            tuple(float(v) for v in bridge["deck_end"]),
+        )
+        road_type = str(bridge.get("road_type", "main"))
+        contract_segments.append(
+            PathSegmentContract(
+                segment_id=f"bridge_{bridge_index}",
+                segment_type="bridge",
+                points=points,  # type: ignore[arg-type]
+                width_m=float(bridge.get("width", _TRAVEL_WIDTH_M)),
+                material_stack=material_stack_for_path(road_type, bridge=True),
+                continuation_edge=infer_continuation_edge(
+                    points,  # type: ignore[arg-type]
+                    terrain_bounds,
+                    tolerance_m=edge_tolerance,
+                ),
+                crosses_water=True,
+                water_depth_m=float(bridge.get("water_depth_m", 0.0)),
+                bridge_required=True,
+                bridge_span_m=_dist2(points[0], points[1]),
+                bridge_clearance_m=float(
+                    bridge.get("bridge_clearance_m", _BRIDGE_WATER_CLEARANCE_M)
+                ),
+                max_grade=float(_MAX_GRADE_BY_TYPE.get(road_type, _AASHTO_MAX_VEHICLE_GRADE_PCT)) / 100.0,
+                metadata={"road_type": road_type},
+            )
+        )
+
+    network = PathNetworkContract(
+        node_id=node_id,
+        segments=tuple(contract_segments),
+    )
+    return network.to_dict(), validate_path_network_contract(network)
+
+
 # ---------------------------------------------------------------------------
 # 11. Main API
 # ---------------------------------------------------------------------------
@@ -1092,7 +1223,7 @@ def compute_road_network(
     cost_map=None,
     anchor_kinds: list | None = None,
     use_astar: bool = True,
-    rdp_epsilon: float = 1.0,
+    rdp_epsilon: float = 0.25,
     terrain_bounds=None,
     connection_strategy: str = "mst",
 ) -> dict:
@@ -1141,6 +1272,12 @@ def compute_road_network(
         routing_method ("astar_24dir" | "mst_straight" | "chain_straight").
     """
     if not waypoints:
+        path_contract, path_contract_issues = _path_network_contract_for_result(
+            routes=[],
+            bridges=[],
+            terrain_bounds=None,
+            node_id="road_network",
+        )
         return {
             "waypoint_count": 0,
             "segments": [],
@@ -1152,10 +1289,18 @@ def compute_road_network(
             "switchbacks": [],
             "worn_paths": [],
             "routing_method": "none",
+            "path_network_contract": path_contract,
+            "path_network_contract_issues": path_contract_issues,
         }
 
     n = len(waypoints)
     if n == 1:
+        path_contract, path_contract_issues = _path_network_contract_for_result(
+            routes=[],
+            bridges=[],
+            terrain_bounds=None,
+            node_id="road_network",
+        )
         return {
             "waypoint_count": 1,
             "segments": [],
@@ -1167,6 +1312,8 @@ def compute_road_network(
             "switchbacks": [],
             "worn_paths": [],
             "routing_method": "none",
+            "path_network_contract": path_contract,
+            "path_network_contract_issues": path_contract_issues,
         }
 
     # Resolve heightmap + terrain bounds
@@ -1258,6 +1405,10 @@ def compute_road_network(
         )
         road_type = _classify_road_type(cost, max_cost)
         road_type_ext = _classify_road_type_extended(cost, max_cost, gradient_deg, traffic)
+        # 2-waypoint chains have a single MST edge so cost==max_cost → ratio=1.0 → "trail".
+        # Floor to gravel_road so minimal road networks get a proper vehicle tier.
+        if n <= 2 and road_type_ext == "trail":
+            road_type_ext = "gravel_road"
         width = _WIDTH_BY_TYPE.get(road_type_ext, _TRAVEL_WIDTH_M)
 
         # AASHTO max grade for this tier
@@ -1275,8 +1426,10 @@ def compute_road_network(
                 max_grade_pct=max_grade_pct,
                 cost_map=cost_map,
             )
-            # Simplify dense A* grid path with RDP
+            # Simplify dense A* grid path with RDP, then re-subdivide any
+            # segment longer than 5 m so road quads have no visible gaps.
             path_pts = _simplify_path_rdp(raw_path, epsilon=rdp_epsilon)
+            path_pts = _subdivide_long_segments(path_pts, max_seg_m=5.0)
         else:
             path_pts = [start_wp, end_wp]
 
@@ -1344,6 +1497,13 @@ def compute_road_network(
         )
         bridge_mesh_specs = [_bridge_mesh_spec(b) for b in bridges]
 
+    path_contract, path_contract_issues = _path_network_contract_for_result(
+        routes=routes,
+        bridges=bridges,
+        terrain_bounds=resolved_terrain_bounds,
+        node_id="road_network",
+    )
+
     return {
         "waypoint_count": n,
         "segments": segments,
@@ -1355,6 +1515,8 @@ def compute_road_network(
         "switchbacks": switchbacks,
         "worn_paths": worn_paths,
         "routing_method": routing_method,
+        "path_network_contract": path_contract,
+        "path_network_contract_issues": path_contract_issues,
     }
 
 

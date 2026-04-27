@@ -6937,9 +6937,11 @@ def _build_level_water_surface_from_terrain(
             max_visual_depth,
         ),
     )
+    _vertex_depth: dict[int, float] = {}
     for index in sorted(used_vertex_indices):
         wx, wy, terrain_z = world_points[index]
         local_depth = max(water_level_f - terrain_z, 0.0)
+        _vertex_depth[index] = local_depth
         shore_factor = _shore_factor(index)
         target_depth = max(
             local_depth + 0.45,
@@ -6974,9 +6976,12 @@ def _build_level_water_surface_from_terrain(
             shoreline_faces += 1
         for loop, idx, shore_factor in zip(face.loops, quad_indices, shore_factors):
             wx, wy, _wz = world_points[idx]
-            shallow_fac = 1.0 - shore_factor
-            foam = max(0.0, min(1.0, (shallow_fac - 0.24) / 0.28))
-            loop[flow_layer] = (shallow_fac, 0.5, 0.5, foam)
+            # Beer-Lambert depth absorption: exp(-k*d). k=0.35 gives ~83% transmission
+            # at 0.5m, 17% at 5m. Result approaches 1 at the surface (shallow) and 0
+            # in deep water, driving the deep→shallow colour mix correctly.
+            beer_fac = math.exp(-0.35 * _vertex_depth.get(idx, 0.0))
+            foam = max(0.0, min(1.0, (beer_fac - 0.24) / 0.28))
+            loop[flow_layer] = (beer_fac, 0.5, 0.5, foam)
             loop[uv_layer].uv = (wx / uv_tile, wy / uv_tile)
             # FlowData: R=flow_x, G=flow_z, B=speed, A=depth_factor (1=shallow)
             fx, fz, spd = _flow_cache.get(idx, (0.0, 1.0, 0.32))
@@ -6984,7 +6989,7 @@ def _build_level_water_surface_from_terrain(
                 (fx + 1.0) * 0.5,   # R: remap [-1,1] → [0,1]
                 (fz + 1.0) * 0.5,   # G: remap [-1,1] → [0,1]
                 spd,                 # B: Manning speed [0,1]
-                shallow_fac,         # A: depth_factor (1=shallow edge, 0=deep)
+                beer_fac,            # A: depth_factor — Beer-Lambert exp(-0.35*d)
             )
 
     if not surface_only:

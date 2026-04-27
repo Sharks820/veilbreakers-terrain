@@ -183,13 +183,14 @@ def poisson_disk_sample(
             nx = px + math.cos(angle) * dist
             ny = py + math.sin(angle) * dist
 
-            # Candidate's own local radius governs acceptance
+            # Candidate's own local density governs its minimum separation — using
+            # max(r_parent, r_cand) was blocking dense-zone candidates seeded from
+            # sparse parents, producing hard forest walls. Candidates are accepted
+            # by their own local radius so density gradients feather smoothly.
             cand_density = _density_at(nx, ny)
             r_cand = min_distance / max(cand_density, 0.05)
-            # Use the more conservative (larger) of parent/candidate radius
-            r_check = max(r_parent, r_cand)
 
-            if _is_valid(nx, ny, r_check):
+            if _is_valid(nx, ny, r_cand):
                 new_idx = len(points)
                 points.append((nx, ny))
                 grid[_grid_idx(nx, ny)] = new_idx
@@ -427,8 +428,8 @@ def biome_filter_points(
         # Map world position to heightmap indices
         u = x / width
         v = y / depth
-        col_idx = int(u * (cols - 1))
-        row_idx = int(v * (rows - 1))
+        col_idx = int(round(u * (cols - 1)))
+        row_idx = int(round(v * (rows - 1)))
         col_idx = max(0, min(col_idx, cols - 1))
         row_idx = max(0, min(row_idx, rows - 1))
 
