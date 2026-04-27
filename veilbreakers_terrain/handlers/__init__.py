@@ -730,9 +730,19 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 thumbnail=bool(payload.get("thumbnail", False)),
             )
 
+        def _handle_visual_qa_validate_channels(params: dict) -> dict:
+            payload = params or {}
+            stack = payload.get("stack")
+            required_channels = payload.get("required_channels")
+            return _vqa.handle_visual_qa_validate_channels(
+                stack=stack,
+                required_channels=required_channels,
+            )
+
         handlers["visual_qa_setup_camera"] = _handle_visual_qa_setup_camera
         handlers["visual_qa_set_shading"] = _handle_visual_qa_set_shading
         handlers["visual_qa_capture_screenshot"] = _handle_visual_qa_capture_screenshot
+        handlers["visual_qa_validate_channels"] = _handle_visual_qa_validate_channels
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "COMMAND_HANDLERS: failed to register terrain_visual_qa handlers: %r",
@@ -1083,12 +1093,8 @@ def _build_command_handlers() -> Dict[str, Callable]:
         "handle_create_breakable",
     )
 
-    # vegetation_system.py — biome vegetation scatter
-    _try_register(
-        "scatter_biome_vegetation",
-        f"{_pkg}.vegetation_system",
-        "scatter_biome_vegetation",
-    )
+    # vegetation_system.scatter_biome_vegetation is deprecated (C-1):
+    # removed from COMMAND_HANDLERS; handle_scatter_vegetation is the canonical path.
 
     # ------------------------------------------------------------------
     # Additional public Blender utility handlers

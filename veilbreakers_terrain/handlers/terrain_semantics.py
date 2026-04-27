@@ -618,6 +618,10 @@ class TerrainMaskStack:
             "water_label",
             "cliff_label",
             "strata_height",
+            # Rasterized cliff masks (CL-2) — emitted by pass_cliffs §5c
+            "cliff_mask",
+            "talus_mask",
+            "strata_mask",
             # Hero feature live-preview influence overlay (Bundle M edit_hero_feature)
             "hero_feature_preview",
             # Bundle I AAA geology channels (terrain_stratigraphy upgrade)
