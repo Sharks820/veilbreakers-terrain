@@ -58,6 +58,7 @@ from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERAT
 from .vegetation_lsystem import generate_billboard_impostor
 from .lod_pipeline import generate_lod_chain
 from .terrain_semantics import WorldHeightTransform
+from .terrain_scatter_points import ScatterPoint, ScatterPointTable
 
 logger = logging.getLogger(__name__)
 
@@ -618,14 +619,41 @@ def _normalize_scatter_signal(signal_raw, *, log_scale: bool = False) -> "np.nda
     return (arr / max_val).astype(np.float32, copy=False)
 
 
-def _scatter_base_type(vegetation_type: str) -> str:
+_CATEGORY_TO_SCATTER_BASE: dict[str, str] = {
+    "grass": "grass",
+    "accent_foliage": "grass",
+    "moss": "grass",
+    "vine": "grass",
+    "water_foliage": "grass",
+    "bush": "bush",
+    "tree": "tree",
+    "log": "tree",
+    "stump": "tree",
+    "small_rock": "rock",
+    "boulder": "rock",
+    "fence": "rock",
+    "sign": "rock",
+    "walkway": "rock",
+}
+
+
+def _scatter_base_type(vegetation_type: str, category: str = "") -> str:
     """Map concrete vegetation ids back to the coarse scatter categories."""
+    cat = str(category or "").strip()
+    if cat in _CATEGORY_TO_SCATTER_BASE:
+        return _CATEGORY_TO_SCATTER_BASE[cat]
     if vegetation_type.startswith("grass"):
         return "grass"
     if vegetation_type.startswith("tree"):
         return "tree"
     if vegetation_type.startswith("rock"):
         return "rock"
+    if vegetation_type.startswith(("talus_", "hero_boulder", "pebbles", "gravel")):
+        return "rock"
+    if vegetation_type.startswith(("moss_", "vine_", "reeds", "lily_", "algae", "submerged_", "flowers", "ferns", "mushrooms", "clovers")):
+        return "grass"
+    if vegetation_type.startswith(("log_", "stump_")):
+        return "tree"
     if vegetation_type.startswith(("bush", "shrub")):
         return "bush"
     return vegetation_type
@@ -752,7 +780,10 @@ def _filter_multipass_scatter_placements(
             rule_index.setdefault(veg_type, []).append(rule)
 
     for placement in placements_centered:
-        base_type = _scatter_base_type(str(placement.get("vegetation_type", "")))
+        base_type = _scatter_base_type(
+            str(placement.get("vegetation_type", "")),
+            str(placement.get("category", "")),
+        )
         matching_rules = rule_index.get(base_type)
         if not matching_rules:
             continue
@@ -802,7 +833,7 @@ def _filter_multipass_scatter_placements(
         if "species_id" not in placement_local and placement.get("vegetation_type"):
             placement_local["species_id"] = placement["vegetation_type"]
         placement_local["base_type"] = base_type
-        placement_local.setdefault("vegetation_type", placement.get("vegetation_type", base_type))
+        placement_local["vegetation_type"] = base_type
         scale_range = chosen_rule.get("scale_range")
         if (
             isinstance(scale_range, (tuple, list))
@@ -815,6 +846,110 @@ def _filter_multipass_scatter_placements(
         filtered.append(placement_local)
 
     return filtered
+
+
+def _yaw_deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
+    half = math.radians(float(yaw_deg)) * 0.5
+    return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+def _normal_from_gradients(dzdx: float, dzdy: float) -> tuple[float, float, float]:
+    nx, ny, nz = -float(dzdx), -float(dzdy), 1.0
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length <= 1.0e-8:
+        return (0.0, 0.0, 1.0)
+    return (nx / length, ny / length, nz / length)
+
+
+def _euler_xyz_to_quat(rx: float, ry: float, rz: float) -> tuple[float, float, float, float]:
+    """Convert XYZ Euler radians to quaternion tuple (x, y, z, w)."""
+    cx = math.cos(float(rx) * 0.5)
+    sx = math.sin(float(rx) * 0.5)
+    cy = math.cos(float(ry) * 0.5)
+    sy = math.sin(float(ry) * 0.5)
+    cz = math.cos(float(rz) * 0.5)
+    sz = math.sin(float(rz) * 0.5)
+    return (
+        sx * cy * cz + cx * sy * sz,
+        cx * sy * cz - sx * cy * sz,
+        cx * cy * sz + sx * sy * cz,
+        cx * cy * cz - sx * sy * sz,
+    )
+
+
+def _build_scatter_point_table_from_placements(
+    placements: list[dict[str, Any]],
+    *,
+    terrain_width: float,
+    terrain_height: float,
+    terrain_origin_x: float,
+    terrain_origin_y: float,
+    biome_id: str,
+    height_min: float,
+    height_range: float,
+    seed: int,
+) -> ScatterPointTable:
+    """Convert handler placements into the canonical scatter point table."""
+    terrain_half_x = terrain_width * 0.5
+    terrain_half_y = terrain_height * 0.5
+    points: list[ScatterPoint] = []
+    for index, placement in enumerate(placements):
+        local_x, local_y = placement["position"]
+        species_id = str(
+            placement.get("species_id")
+            or placement.get("vegetation_type")
+            or "unknown"
+        )
+        base_type = str(placement.get("base_type") or placement.get("vegetation_type") or species_id)
+        scale = float(placement.get("scale", 1.0))
+        altitude_norm = float(placement.get("altitude", 0.0))
+        height_m = height_min + altitude_norm * height_range
+        world_position = placement.get("world_position")
+        if (
+            not isinstance(world_position, (tuple, list))
+            or len(world_position) < 3
+        ):
+            world_position = (
+                float(local_x) - terrain_half_x + terrain_origin_x,
+                float(local_y) - terrain_half_y + terrain_origin_y,
+                float(height_m),
+            )
+        else:
+            height_m = float(world_position[2])
+        normal = placement.get("normal", (0.0, 0.0, 1.0))
+        if not isinstance(normal, (tuple, list)) or len(normal) < 3:
+            normal = (0.0, 0.0, 1.0)
+        orient = placement.get("orient")
+        if not isinstance(orient, (tuple, list)) or len(orient) < 4:
+            orient = _yaw_deg_to_quat(float(placement.get("rotation", 0.0)))
+        lod_index = int(placement.get("lod", 0))
+        wind_profile = "tree" if base_type == "tree" or species_id.startswith("tree_") else base_type
+        points.append(
+            ScatterPoint(
+                position=(float(world_position[0]), float(world_position[1]), float(world_position[2])),
+                normal=(float(normal[0]), float(normal[1]), float(normal[2])),
+                orient=(float(orient[0]), float(orient[1]), float(orient[2]), float(orient[3])),
+                scale=(scale, scale, scale),
+                prototype_id=str(placement.get("prototype_id", species_id)),
+                species_id=species_id,
+                biome_id=str(biome_id),
+                density=float(placement.get("density", 1.0)),
+                seed=int(placement.get("seed", int(seed) + index)),
+                slope=float(placement.get("slope", 0.0)),
+                height_m=float(height_m),
+                mask_sources=("multipass_scatter", f"species:{species_id}", f"biome:{biome_id}"),
+                lod_bucket=f"lod{min(max(lod_index, 0), 3)}",
+                wind_profile=wind_profile,
+                source_layer="environment_scatter",
+                point_mode="exact_instance",
+                metadata={
+                    "base_type": base_type,
+                    "moisture": float(placement.get("moisture", 0.0)),
+                    "rotation_y": float(placement.get("rotation_y", 0.0)),
+                },
+            )
+        )
+    return ScatterPointTable(points=tuple(points), source="environment_scatter")
 
 
 def _generate_multipass_scatter_placements(
@@ -901,7 +1036,7 @@ def _generate_multipass_scatter_placements(
         viewer_origin=viewer_origin_local,
     )
 
-    return _filter_multipass_scatter_placements(
+    filtered = _filter_multipass_scatter_placements(
         structure + ground_cover + debris,
         rules=rules,
         terrain_width=terrain_width,
@@ -912,6 +1047,19 @@ def _generate_multipass_scatter_placements(
         seed=seed,
         apply_rule_density=apply_rule_density,
     )
+    if not building_zones_world:
+        return filtered
+    terrain_half_x = terrain_width * 0.5
+    terrain_half_y = terrain_height * 0.5
+    out: list[dict[str, Any]] = []
+    for item in filtered:
+        local_x, local_y = item["position"]
+        wx = float(local_x) - terrain_half_x + terrain_origin_x
+        wy = float(local_y) - terrain_half_y + terrain_origin_y
+        if any(min_x <= wx <= max_x and min_y <= wy <= max_y for min_x, min_y, max_x, max_y in building_zones_world):
+            continue
+        out.append(item)
+    return out
 
 
 def _hero_excluded(
@@ -2537,7 +2685,10 @@ def _scatter_pass(
         tree_cell_set: set[tuple[int, int]] = set()
         if tree_positions:
             cell_span = max(terrain_width / max(cols, 1), terrain_height / max(rows, 1), 1e-6)
-            exclusion_cells = max(1, int(1.0 / cell_span))
+            # Exclusion radius in metres (typical tree drip-line). Formula was
+            # `1.0/cell_span` which is dimensionally inverted — it gives <1 cell
+            # on coarse terrain. Correct form: desired_metres / cell_span.
+            exclusion_cells = max(1, int(3.0 / cell_span))
             for tx, ty in tree_positions:
                 u = (tx + terrain_half_x) / max(terrain_width, 1e-6)
                 v = (ty + terrain_half_y) / max(terrain_height, 1e-6)
@@ -3075,6 +3226,13 @@ def handle_scatter_vegetation(params: dict) -> dict:
             base_rot[1] + slope_roll * 0.7,
             base_rot[2],
         )
+        p["world_position"] = (float(wx), float(wy), float(wz))
+        p["normal"] = _normal_from_gradients(dzdx, dzdy)
+        p["orient"] = _euler_xyz_to_quat(
+            float(instance.rotation_euler[0]),
+            float(instance.rotation_euler[1]),
+            float(instance.rotation_euler[2]),
+        )
         s = p["scale"]
         instance.scale = (s, s, s)
 
@@ -3116,11 +3274,24 @@ def handle_scatter_vegetation(params: dict) -> dict:
         key = f"lod{min(lod, 3)}"
         lod_counts_by_type[vt][key] = lod_counts_by_type[vt].get(key, 0) + 1
 
+    scatter_point_table = _build_scatter_point_table_from_placements(
+        placements,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        terrain_origin_x=terrain_origin_x,
+        terrain_origin_y=terrain_origin_y,
+        biome_id=biome_key,
+        height_min=height_min,
+        height_range=height_range,
+        seed=seed,
+    )
+
     return {
         "name": scatter_coll_name,
         "instance_count": total_instances,
         "vegetation_types": veg_counts,
         "lod_instance_counts": lod_counts_by_type,
+        "scatter_point_table": scatter_point_table.to_dict(),
         "bounds": {
             "width": terrain_width,
             "depth": terrain_height,
