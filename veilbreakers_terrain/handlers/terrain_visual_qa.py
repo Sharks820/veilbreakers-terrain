@@ -402,6 +402,53 @@ def validate_stack_channels(
     }
 
 
+def validate_channel_manifest(
+    stack: Any,
+    required_channels: Optional[Dict[str, Tuple[str, Tuple[float, float]]]] = None,
+) -> Dict[str, Any]:
+    """Public API: validate required channels on a stack object.
+
+    Parameters
+    ----------
+    stack:
+        Any object that exposes terrain channel arrays as attributes (e.g. a
+        ``TerrainMaskStack``).  Each channel is retrieved via ``getattr``.
+    required_channels:
+        Mapping of ``channel_name -> (dtype_family, (min_val, max_val))``.
+        Defaults to :data:`REQUIRED_STACK_CHANNELS` when ``None``.
+
+    Returns
+    -------
+    dict with keys:
+        ``valid`` (bool)
+            True when no issues were found.
+        ``missing`` (list[str])
+            Channel names absent from the stack or not array-convertible.
+        ``out_of_range`` (list[str])
+            Channel names whose values exceed the declared min/max bounds.
+        ``issues`` (list[str])
+            Human-readable summary lines (``missing:<name>``,
+            ``dtype_mismatch:<name>``, ``out_of_range:<name>``).
+    """
+    raw = validate_stack_channels(stack, required_channels=required_channels)
+
+    # Merge dtype_mismatch into out_of_range to match the simplified public contract
+    out_of_range: List[str] = raw["range_violations"] + raw["dtype_mismatch"]
+
+    issues: List[str] = (
+        [f"missing:{c}" for c in raw["missing"]]
+        + [f"dtype_mismatch:{c}" for c in raw["dtype_mismatch"]]
+        + [f"out_of_range:{c}" for c in raw["range_violations"]]
+    )
+
+    return {
+        "valid": raw["ok"],
+        "missing": raw["missing"],
+        "out_of_range": out_of_range,
+        "issues": issues,
+    }
+
+
 def handle_visual_qa_validate_channels(
     stack: Any,
     required_channels: Optional[Dict[str, Tuple[str, Tuple[float, float]]]] = None,

@@ -1883,8 +1883,27 @@ def _setup_billboard_lod(
         ``True`` if billboard LOD was wired up, ``False`` if the template was
         skipped (too few vertices or not a tree type).
     """
-    # Lazy import to avoid circular-init cost
-    from .vegetation_lsystem import generate_billboard_impostor
+    # C-4/L-3: generate_billboard_impostor is from the deprecated D-grade L-system
+    # pipeline.  Use a local deprecation shim identical to the one in
+    # environment_scatter.py so callers are warned to migrate to the N-view
+    # Blender atlas bake in Phase 9C of the 12-phase plan.
+    import warnings as _warnings_lod
+    try:
+        from .vegetation_lsystem import generate_billboard_impostor as _gbi_raw
+        def generate_billboard_impostor(*args, **kwargs):  # type: ignore[misc]
+            _warnings_lod.warn(
+                "generate_billboard_impostor is deprecated (L-3/C-4); "
+                "implement N-view Blender atlas bake in Phase 9C.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return _gbi_raw(*args, **kwargs)
+    except ImportError:
+        def generate_billboard_impostor(*args, **kwargs):  # type: ignore[misc]
+            raise NotImplementedError(
+                "vegetation_lsystem.generate_billboard_impostor unavailable (L-3); "
+                "implement N-view Blender atlas bake in Phase 9C of the 12-phase plan."
+            )
 
     if veg_type not in _TREE_VEG_TYPES:
         return False

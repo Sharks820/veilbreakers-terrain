@@ -13,6 +13,8 @@ import pytest
 from veilbreakers_terrain.handlers.terrain_visual_qa import (
     compare_render_to_golden,
     handle_visual_qa_compare_render,
+    validate_channel_manifest,
+    REQUIRED_STACK_CHANNELS,
 )
 
 _GOLDEN_SCENARIOS_DIR = Path(__file__).parent / "golden_scenarios"
@@ -188,3 +190,91 @@ class TestGoldenScenarioFixtures:
         assert data["_scenario"] == scenario_file.stem, (
             f"_scenario '{data['_scenario']}' does not match filename '{scenario_file.stem}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# V-1: validate_channel_manifest
+# ---------------------------------------------------------------------------
+
+class _StubStack:
+    """Minimal stack stub: attributes set via constructor kwargs."""
+
+    def __init__(self, **channels):
+        for name, value in channels.items():
+            setattr(self, name, value)
+
+
+def _full_valid_stack():
+    """Return a StubStack with all REQUIRED_STACK_CHANNELS in-range."""
+    return _StubStack(
+        heightmap=np.array([0.0, 500.0, 9000.0], dtype=np.float32),
+        water_surface_mask=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        water_depth_m=np.array([0.0, 100.0, 500.0], dtype=np.float32),
+        cliff_mask=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        talus_mask=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        strata_mask=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+    )
+
+
+class TestValidateChannelManifest:
+
+    def test_valid_stack_passes(self):
+        """A stack with all required channels in-range returns valid=True."""
+        result = validate_channel_manifest(_full_valid_stack())
+        assert result["valid"] is True
+        assert result["missing"] == []
+        assert result["out_of_range"] == []
+        assert result["issues"] == []
+
+    def test_missing_channel_detected(self):
+        """A stack missing one channel reports it in 'missing' and 'issues'."""
+        stack = _full_valid_stack()
+        del stack.cliff_mask  # remove attribute entirely
+        result = validate_channel_manifest(stack)
+        assert result["valid"] is False
+        assert "cliff_mask" in result["missing"]
+        assert any("missing:cliff_mask" in s for s in result["issues"])
+
+    def test_out_of_range_value_detected(self):
+        """A channel whose max exceeds the declared bound is reported in out_of_range."""
+        stack = _full_valid_stack()
+        # heightmap max is 9000.0; push well beyond it
+        stack.heightmap = np.array([0.0, 99999.0], dtype=np.float32)
+        result = validate_channel_manifest(stack)
+        assert result["valid"] is False
+        assert "heightmap" in result["out_of_range"]
+        assert any("out_of_range:heightmap" in s for s in result["issues"])
+
+    def test_custom_required_channels_overrides_default(self):
+        """Passing a custom spec only validates the channels in that spec."""
+        custom_spec = {
+            "heightmap": ("float", (0.0, 9000.0)),
+        }
+        # Stack only has 'heightmap'; default spec would flag others as missing,
+        # but with the custom spec the result should be valid.
+        stack = _StubStack(heightmap=np.array([0.0, 1000.0], dtype=np.float32))
+        result = validate_channel_manifest(stack, required_channels=custom_spec)
+        assert result["valid"] is True
+        assert result["missing"] == []
+
+    def test_result_always_has_required_keys(self):
+        """The return dict always contains the four documented keys."""
+        result = validate_channel_manifest(_StubStack())
+        for key in ("valid", "missing", "out_of_range", "issues"):
+            assert key in result, f"Missing key: {key!r}"
+
+    def test_valid_is_bool(self):
+        """'valid' key is a strict bool, not just truthy."""
+        result = validate_channel_manifest(_full_valid_stack())
+        assert isinstance(result["valid"], bool)
+
+    def test_multiple_missing_channels_all_reported(self):
+        """Every missing channel appears in both 'missing' and 'issues'."""
+        stack = _StubStack()  # no attributes at all
+        result = validate_channel_manifest(stack)
+        assert result["valid"] is False
+        for ch in REQUIRED_STACK_CHANNELS:
+            assert ch in result["missing"], f"{ch} not in missing"
+            assert any(f"missing:{ch}" in s for s in result["issues"]), (
+                f"missing:{ch} not in issues"
+            )

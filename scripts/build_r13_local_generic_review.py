@@ -32,7 +32,8 @@ SCRIPT_CI_TOOLS = {
 }
 
 SCENE_BUILD_TOOLS = {
-    "scripts/build_aaa_node_v1.py",
+    # build_aaa_node_v1.py and v2.py deleted; v4 is the current scene build script.
+    "scripts/build_terrain_aaa_node_v4.py",
     "scripts/build_scene_v3.py",
     "scripts/phase_l_triple_judge.py",
 }
