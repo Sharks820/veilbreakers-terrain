@@ -1696,16 +1696,19 @@ def compute_erosion_brush(
                 noise_map = np.abs(rng_np.normal(0.0, 0.3, size=(rows, cols)))
                 erosion_map = noise_map * brush_weight_map * 0.05
                 delta -= erosion_map
-                # Deposit one cell downwind; zero out the wrap-around edge.
-                deposit = np.roll(erosion_map, shift=(_row_shift, _col_shift), axis=(0, 1))
-                if _row_shift > 0:
-                    deposit[0, :] = 0.0
-                elif _row_shift < 0:
-                    deposit[-1, :] = 0.0
-                if _col_shift > 0:
-                    deposit[:, 0] = 0.0
-                elif _col_shift < 0:
-                    deposit[:, -1] = 0.0
+                # Deposit one cell downwind using edge-pad shift (no toroidal
+                # wrap-around — material that exits the tile boundary is lost).
+                _pad_r0 = max(_row_shift, 0)
+                _pad_r1 = max(-_row_shift, 0)
+                _pad_c0 = max(_col_shift, 0)
+                _pad_c1 = max(-_col_shift, 0)
+                _ep = np.pad(erosion_map,
+                             ((_pad_r0, _pad_r1), (_pad_c0, _pad_c1)),
+                             mode="constant", constant_values=0.0)
+                # Slice back to (rows, cols) offset by the shift direction.
+                _sr = _pad_r1  # source-row start in padded array
+                _sc = _pad_c1  # source-col start in padded array
+                deposit = _ep[_sr:_sr + rows, _sc:_sc + cols]
                 delta += deposit
 
             eroded_this = np.maximum(-delta, 0.0)
