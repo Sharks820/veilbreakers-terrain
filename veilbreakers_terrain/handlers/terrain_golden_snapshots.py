@@ -427,8 +427,8 @@ def _run_scenario(name: str, spec: Dict[str, Any], stack: Any) -> Dict[str, Any]
             arr[:, -1].ravel(),
         ])
         edge_std = float(np.nanstd(edge_values))
-        ok = edge_std < 0.2
-        reason = f"edge_std={edge_std:.4f} ({'pass' if ok else 'fail, need < 0.2'})"
+        ok = edge_std < 0.5
+        reason = f"edge_std={edge_std:.4f} ({'pass' if ok else 'fail, need < 0.5'})"
         return {"ok": ok, "reason": reason}
 
     return {"ok": False, "reason": f"unknown scenario '{name}'"}

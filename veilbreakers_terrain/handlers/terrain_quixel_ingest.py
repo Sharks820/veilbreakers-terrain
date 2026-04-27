@@ -240,29 +240,30 @@ def _load_texture_as_float(path, channels: int = 3) -> np.ndarray:
 
     arr: np.ndarray
 
+    orig_dtype = np.dtype("uint8")  # default; overwritten below
     try:
         import imageio  # type: ignore
-        raw = np.asarray(imageio.v3.imread(str(path))).astype(np.float32)
+        raw_arr = np.asarray(imageio.v3.imread(str(path)))
+        orig_dtype = raw_arr.dtype
+        raw = raw_arr.astype(np.float32)
     except ImportError:
         try:
             from PIL import Image as _Image  # type: ignore
-            raw = np.asarray(_Image.open(str(path))).astype(np.float32)
+            raw_arr = np.asarray(_Image.open(str(path)))
+            orig_dtype = raw_arr.dtype
+            raw = raw_arr.astype(np.float32)
         except ImportError as exc:
             raise ImportError(
                 "_load_texture_as_float requires 'imageio' or 'Pillow'; "
                 "install one of them: pip install imageio[ffmpeg] or pip install Pillow"
             ) from exc
 
-    # Normalise integer dtypes to [0, 1]
-    if raw.dtype == np.float32 and raw.max() > 1.0 + 1e-5:
-        # EXR / HDR may already be linear float — only normalise if clearly uint range
-        pass
-    else:
-        # Map uint8 → /255, uint16 → /65535, float already in [0,1]
-        pass
-    # Robust normalisation: detect integer-like range
-    if raw.max() > 2.0:
-        raw = raw / (np.iinfo(np.uint16).max if raw.max() > 256.0 else 255.0)
+    # Normalise to [0, 1] using orig_dtype so uint16 with max<256 is handled correctly
+    if np.issubdtype(orig_dtype, np.integer):
+        raw = raw / float(np.iinfo(orig_dtype).max)
+    elif raw.max() > 2.0:
+        # Float image with HDR values — clamp/scale to [0,1] range assuming uint8 origin
+        raw = raw / 255.0
 
     # Ensure 3-D (H, W, C)
     if raw.ndim == 2:

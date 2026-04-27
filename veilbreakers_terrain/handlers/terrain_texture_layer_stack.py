@@ -60,7 +60,7 @@ class TerrainTextureLayerStack:
                 issues.append(f"{layer.layer_id}: missing displacement, set no_displacement_reason if intentional")
             if layer.weight_map is not None:
                 w = layer.weight_map
-                if not (0.0 <= w.min() and w.max() <= 1.0 + 1e-5):
+                if not (-1e-5 <= w.min() and w.max() <= 1.0 + 1e-5):
                     issues.append(f"{layer.layer_id}: weight_map out of [0,1] range")
         return issues
 
