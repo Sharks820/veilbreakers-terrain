@@ -2930,11 +2930,24 @@ def _scatter_pass(
         }
 
     # ------------------------------------------------------------------
-    # C-3: Convert placement list to canonical ScatterPointTable and
-    # validate.  Callers that need the raw list still get it via the
-    # return value; the validated table is attached to each placement
-    # dict as "scatter_manifest" is surfaced by handle_scatter_vegetation.
+    # C-3 (R2): Convert placement list to canonical ScatterPointTable and
+    # validate.  The manifest itself is *not* attached per-placement —
+    # that would duplicate a 100-1000 KB dict onto every point.  Instead
+    # the canonical table is rebuilt downstream by
+    # _build_scatter_point_table_from_placements() (in
+    # handle_scatter_vegetation) using world-space coordinates; this pass
+    # only flags validation issues early so an upstream caller using the
+    # raw _scatter_pass output sees the warning at scatter time.
     # ------------------------------------------------------------------
+    # Try to lazily resolve catalog wind profiles per species so the
+    # ScatterPoint carries the right wind hint instead of "none".
+    try:
+        from .terrain_foliage_catalog import (
+            FOLIAGE_SPECIES_CATALOG as _C3_CATALOG,
+        )
+    except Exception:  # noqa: BLE001
+        _C3_CATALOG = {}  # type: ignore[assignment]
+
     _scatter_points: list[ScatterPoint] = []
     for _p in placements:
         _pos2 = _p.get("position", (0.0, 0.0))
@@ -2947,9 +2960,35 @@ def _scatter_pass(
         _half = _rot * 0.5
         _orient: tuple[float, float, float, float] = (0.0, 0.0, math.sin(_half), math.cos(_half))
         _lod_int = int(_p.get("lod", 0))
-        _lod_bucket = f"lod{_lod_int}"
+        _lod_bucket = f"lod{max(0, min(_lod_int, 3))}"
         _species = str(_p.get("species_id", _p.get("vegetation_type", "unknown")))
         _veg_type = str(_p.get("vegetation_type", "unknown"))
+        # Pull wind profile from the catalog when available; default to "none".
+        _spec = _C3_CATALOG.get(_species) if _C3_CATALOG else None
+        _wind_profile = str(getattr(_spec, "wind_profile", "none") or "none") if _spec else "none"
+        # Read true slope (degrees) at the placement cell.  ``slope`` on a
+        # ScatterPoint must be slope, not altitude — the previous version
+        # mis-assigned altitude here, breaking validators that rely on
+        # ``slope`` for cliff-rejection.
+        _slope_deg = 0.0
+        try:
+            if slope_map is not None:
+                _rows, _cols = slope_map.shape
+                _row_f = ((_pos2[1] + (terrain_height or terrain_size) * 0.5) /
+                          max(terrain_height or terrain_size, 1e-6)) * (_rows - 1)
+                _col_f = ((_pos2[0] + (terrain_width or terrain_size) * 0.5) /
+                          max(terrain_width or terrain_size, 1e-6)) * (_cols - 1)
+                _r = int(max(0, min(_rows - 1, _row_f)))
+                _c = int(max(0, min(_cols - 1, _col_f)))
+                _slope_deg = float(slope_map[_r, _c])
+        except Exception:  # noqa: BLE001
+            _slope_deg = 0.0
+        # Density: this point's *placement density*.  When the placement
+        # carries an explicit "density" key (set by upstream rules) we use
+        # it; otherwise fall back to 1.0 (placed = full density).  Moisture
+        # belongs in metadata, not on density.
+        _density = float(_p.get("density", 1.0))
+        _density = max(0.0, min(1.0, _density))
         _scatter_points.append(
             ScatterPoint(
                 position=_pos3,
@@ -2959,13 +2998,13 @@ def _scatter_pass(
                 prototype_id=_veg_type,
                 species_id=_species,
                 biome_id=str(_p.get("biome", biome)),
-                density=max(0.0, min(1.0, float(_p.get("moisture", 0.5)))),
+                density=_density,
                 seed=seed,
-                slope=float(_p.get("altitude", 0.0)),
+                slope=_slope_deg,
                 height_m=_pos3[2],
                 mask_sources=(f"scatter_pass:{pass_type}",),
                 lod_bucket=_lod_bucket,
-                wind_profile="none",
+                wind_profile=_wind_profile,
                 source_layer=pass_type,
                 point_mode="exact_instance",
                 metadata={
@@ -2986,13 +3025,6 @@ def _scatter_pass(
             len(_validation_issues),
             _validation_issues[:5],
         )
-
-    # Attach the serialised manifest to every placement dict so downstream
-    # callers (handle_scatter_vegetation result dict) can surface it.
-    _manifest = _scatter_table.to_dict()
-    _manifest["format"] = "ScatterPointTable"
-    for _p in placements:
-        _p["scatter_manifest"] = _manifest
 
     return placements
 

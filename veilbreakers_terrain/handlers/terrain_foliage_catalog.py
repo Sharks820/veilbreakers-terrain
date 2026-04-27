@@ -135,22 +135,27 @@ class SpeciesSpec:
     requires_external_model_asset: bool = False
     notes: str = ""
 
-    # LOD and rendering
+    # LOD and rendering — AAA defaults: 15m → LOD0, 40m → LOD1, 80m → LOD2,
+    # billboard beyond.  Matches UE5 Foliage Mode + Unity HDRP detail-mesh defaults.
     lod_paths: Tuple[str, ...] = ()          # (lod0.fbx, lod1.fbx, lod2.fbx)
-    lod_distances_m: Tuple[float, ...] = ()  # transition distances in meters
+    lod_distances_m: Tuple[float, ...] = (15.0, 40.0, 80.0)
     impostor_atlas_path: str = ""            # cross-billboard impostor texture
     impostor_uv_strip_count: int = 0         # how many views in the impostor atlas
     collision_proxy_path: str = ""           # convex hull proxy mesh
-    max_tris_lod0: int = 50_000             # polygon budget for LOD0
+    max_tris_lod0: int = 50_000              # polygon budget for LOD0
 
     # Wind and animation
     wind_profile: str = "none"              # "none", "grass", "shrub", "tree_soft", "tree_stiff"
     wind_bend_scale: float = 0.0            # 0.0 = no wind, 1.0 = full wind response
 
-    # Scatter constraints
-    slope_max_deg: float = 45.0             # max slope for placement
-    altitude_min_m: float = -100.0
-    altitude_max_m: float = 5000.0
+    # Scatter constraints — DEPRECATED secondary slope/altitude bands.  These
+    # are kept for downstream tools that prefer degrees + tolerance scalars,
+    # but the canonical bands are ``min_/max_slope_rad`` and
+    # ``min_/max_altitude_m`` above.  Authors must keep the two pairs in
+    # sync; ``__post_init__`` raises if they conflict.
+    slope_max_deg: float = 45.0             # max slope for placement (mirror of max_slope_rad)
+    altitude_min_m: float = -100.0          # mirror of min_altitude_m (loose default)
+    altitude_max_m: float = 5000.0          # mirror of max_altitude_m (loose default)
     wetness_tolerance: float = 0.5          # 0=dry only, 1=wet ok
 
     def to_dict(self) -> Dict[str, Any]:

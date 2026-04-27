@@ -67,6 +67,7 @@ _LOC_HANDLERS: Dict[str, str] = {
     "visual_setup_camera": "visual_qa_setup_camera",
     "visual_set_shading": "visual_qa_set_shading",
     "visual_capture_screenshot": "visual_qa_capture_screenshot",
+    "visual_validate_channels": "visual_qa_validate_channels",
     "terrain_sculpt": "terrain_sculpt",
     "terrain_lods": "terrain_generate_lods",
     "terrain_biome_setup": "terrain_setup_biome",
