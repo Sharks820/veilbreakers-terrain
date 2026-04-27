@@ -1,3 +1,4 @@
+# DEPRECATED: superseded by build_scene_v3.py. Will be removed in a future cleanup.
 """build_scene_v2.py — honest-scope single-scene Blender build.
 
 Run:

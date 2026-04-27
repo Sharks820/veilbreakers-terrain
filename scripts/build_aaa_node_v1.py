@@ -1,3 +1,5 @@
+# DEPRECATED: superseded by build_terrain_aaa_node_v4.py (and v5). Will be removed in a future cleanup.
+# NOTE: build_aaa_node_v2.py still imports this module for seam-lock utilities; do not delete until v2 is also removed.
 """Phase K — First AAA terrain node v1 build.
 
 Produces a 1km x 1km tile with:

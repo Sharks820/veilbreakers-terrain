@@ -1,3 +1,4 @@
+# DEPRECATED: superseded by build_terrain_aaa_node_v4.py (and v5). Will be removed in a future cleanup.
 """Phase K+ — Second AAA terrain node v2 build.
 
 Produces a 1km x 1km tile focused on biome merging + puzzle-piece seam alignment:
