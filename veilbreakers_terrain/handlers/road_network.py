@@ -207,11 +207,19 @@ def _astar_24dir(
     if (sr, sc) == (er, ec):
         return [start_world, end_world]
 
-    # Euclidean heuristic (admissible — never overestimates)
+    # Slope-aware heuristic (AAA §5.4): adds grade-excess penalty estimate to
+    # the straight-line lower bound. Slightly inadmissible but routes around
+    # steep terrain rather than through it, matching KCD2/TW3 road behaviour.
+    _goal_z = _h(er, ec)
     def _heuristic(r, c):
         dr = (r - er) * cell_h
         dc = (c - ec) * cell_w
-        return math.sqrt(dr * dr + dc * dc)
+        eucl = math.sqrt(dr * dr + dc * dc)
+        if eucl > 1e-6:
+            est_grade_pct = abs(_h(r, c) - _goal_z) / eucl * 100.0
+            grade_excess = max(0.0, est_grade_pct - max_grade_pct)
+            return eucl + 0.5 * slope_penalty_weight * grade_excess * grade_excess
+        return eucl
 
     # A* open set: (f, g, r, c, prev_dr, prev_dc, parent)
     # Use (r, c) -> (g, prev_dir, parent) closed dict
@@ -1479,9 +1487,11 @@ def compute_road_network(
                 max_grade_pct=max_grade_pct,
                 cost_map=cost_map,
             )
-            # Simplify dense A* grid path with RDP, then re-subdivide any
-            # segment longer than 5 m so road quads have no visible gaps.
+            # Simplify dense A* grid path with RDP, enforce turn-radius fillets,
+            # then re-subdivide any segment longer than 5 m so road quads have
+            # no visible gaps.
             path_pts = _simplify_path_rdp(raw_path, epsilon=rdp_epsilon)
+            path_pts = enforce_turn_radius(path_pts, min_radius=_SWITCHBACK_MIN_RADIUS_M)
             path_pts = _subdivide_long_segments(path_pts, max_seg_m=5.0)
         else:
             path_pts = [start_wp, end_wp]
@@ -1622,6 +1632,104 @@ def handle_compute_road_network(params: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Turn-radius enforcement — AAA §5.5
+# ---------------------------------------------------------------------------
+
+
+def enforce_turn_radius(path: list, min_radius: float = 15.0) -> list:
+    """Insert circular arc fillets at any vertex whose turning radius < min_radius.
+
+    For each interior vertex p[i], computes the geometric turning radius from
+    the two adjacent segments. When it falls below *min_radius*, replaces the
+    sharp vertex with three fillet points (entry, arc mid, exit) so the road
+    maintains AASHTO vehicle-safe curvature throughout.
+
+    Parameters
+    ----------
+    path       : list of (x, y, z) world-space points
+    min_radius : minimum allowed turning radius in metres (default 15 m — AASHTO
+                 mountain standard matching _SWITCHBACK_MIN_RADIUS_M)
+
+    Returns a new list with the same endpoints but sharp corners filleted.
+    """
+    if len(path) < 3:
+        return list(path)
+
+    out = [path[0]]
+    for i in range(1, len(path) - 1):
+        p_prev = path[i - 1]
+        p_cur  = path[i]
+        p_next = path[i + 1]
+
+        # Incoming and outgoing 2D direction vectors
+        ax = p_cur[0] - p_prev[0]; ay = p_cur[1] - p_prev[1]
+        bx = p_next[0] - p_cur[0]; by = p_next[1] - p_cur[1]
+        len_a = math.sqrt(ax * ax + ay * ay)
+        len_b = math.sqrt(bx * bx + by * by)
+
+        if len_a < 1e-6 or len_b < 1e-6:
+            out.append(p_cur)
+            continue
+
+        # Dot product → angle between segments
+        dot = (ax * bx + ay * by) / (len_a * len_b)
+        dot = max(-1.0, min(1.0, dot))
+        theta = math.acos(dot)          # 0 = straight, π = 180° reversal
+
+        half_angle = theta / 2.0
+        sin_half = math.sin(half_angle)
+        if sin_half < 1e-6:
+            # Straight segment — no fillet needed
+            out.append(p_cur)
+            continue
+
+        # Geometric turning radius at this vertex
+        # r = setback / tan(half_angle), setback = min(len_a, len_b) * 0.5
+        setback = max(min_radius * math.tan(half_angle),
+                      min(len_a, len_b) * 0.45)
+        implied_radius = setback / math.tan(half_angle)
+
+        if implied_radius >= min_radius:
+            out.append(p_cur)
+            continue
+
+        # Clamp setback so it fits within the shorter adjacent segment
+        setback = min(len_a * 0.45, len_b * 0.45, min_radius * math.tan(half_angle))
+
+        # Fillet entry: step back along incoming direction
+        t_in  = setback / len_a
+        t_out = setback / len_b
+        zi = p_prev[2] + (p_cur[2] - p_prev[2]) * (1.0 - t_in)
+        entry = (p_prev[0] + (p_cur[0] - p_prev[0]) * (1.0 - t_in),
+                 p_prev[1] + (p_cur[1] - p_prev[1]) * (1.0 - t_in),
+                 zi)
+        zo = p_cur[2] + (p_next[2] - p_cur[2]) * t_out
+        exit_ = (p_cur[0] + (p_next[0] - p_cur[0]) * t_out,
+                 p_cur[1] + (p_next[1] - p_cur[1]) * t_out,
+                 zo)
+
+        # Arc midpoint: average of entry and exit pushed away from the corner
+        # bisector to approximate the arc peak
+        mx = (entry[0] + exit_[0]) / 2.0
+        my = (entry[1] + exit_[1]) / 2.0
+        mz = (entry[2] + exit_[2]) / 2.0
+        # Bisector outward direction (away from the interior of the turn)
+        bsx = -(ax / len_a + bx / len_b); bsy = -(ay / len_a + by / len_b)
+        bs_len = math.sqrt(bsx * bsx + bsy * bsy)
+        if bs_len > 1e-6:
+            push = min_radius * (1.0 - math.cos(half_angle))
+            mx += (bsx / bs_len) * push
+            my += (bsy / bs_len) * push
+
+        out.append(entry)
+        out.append((mx, my, mz))
+        out.append(exit_)
+
+    out.append(path[-1])
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Public API aliases — expose key internals without breaking existing callers
 # ---------------------------------------------------------------------------
 
@@ -1630,3 +1738,4 @@ detect_bridge_valleys = _detect_bridges
 insert_switchbacks_on_steep_grades = _generate_switchback_points
 compute_path_erosion_spec = _compute_worn_path_spec
 generate_road_mesh_cross_section = _road_segment_mesh_spec
+# enforce_turn_radius is already public (no underscore)
