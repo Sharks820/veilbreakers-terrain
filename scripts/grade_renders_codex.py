@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# Resolve codex binary at import time so subprocess.run doesn't rely on PATH
+# (Python's subprocess PATH ≠ bash/shell PATH on Windows).
+_CODEX_BIN = shutil.which("codex") or shutil.which("codex.cmd") or "codex"
+
 GRADING_PROMPT = """You are a AAA game art director grading terrain renders for a dark fantasy game (VeilBreakers).
-Grade this image on a letter scale (A through F) across these specific dimensions:
+Grade the attached image on a letter scale (A through F) across these specific dimensions:
 
 1. **Terrain Shape Quality** (A-F): Does the heightfield look natural? Are there plausible ridges, valleys, gorge cuts, and
    cliffs? Are there banding artifacts, grid patterns, or unnaturally uniform slopes?
@@ -40,8 +45,6 @@ Grade this image on a letter scale (A through F) across these specific dimension
 
 For each dimension, state the grade then one sentence of specific evidence from the image.
 End with: "PASS" if overall >= B-, or "FAIL" if overall < B-.
-
-Image: {image_path}
 """
 
 
@@ -57,7 +60,8 @@ def _run_codex_grade(image_path: Path, dry_run: bool = False) -> dict:
 
     try:
         result = subprocess.run(
-            ["codex", "exec", "--model", "gpt-5.5", prompt],
+            [_CODEX_BIN, "exec", "--model", "gpt-5.5", "-i", str(image_path)],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=120,
@@ -95,7 +99,7 @@ def main() -> int:
 
     results = []
     for img in renders:
-        print(f"[grade] → {img.name}", flush=True)
+        print(f"[grade] -> {img.name}", flush=True)
         r = _run_codex_grade(img, dry_run=args.dry_run)
         results.append(r)
         verdict = "PASS" if r.get("passed") else "FAIL" if r.get("status") == "ok" else r.get("status", "?")
@@ -114,7 +118,7 @@ def main() -> int:
     }
     report_path = build_dir / "GRADE_REPORT.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(f"[grade] DONE — {passed}/{len(results)} passed. Report: {report_path}", flush=True)
+    print(f"[grade] DONE - {passed}/{len(results)} passed. Report: {report_path}", flush=True)
     return 0 if passed == len(results) else 1
 
 
