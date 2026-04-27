@@ -164,6 +164,7 @@ def rasterize_poi_mask(
 _VALID_TERRAIN_TYPES = frozenset(TERRAIN_PRESETS.keys())
 _VALID_EROSION_MODES = frozenset({"none", "hydraulic", "thermal", "both"})
 _MAX_RESOLUTION = 4096  # 8192 can OOM Blender; 4096 is practical AAA limit
+_MIN_WATER_ELEVATION_M = 0.04  # prevents Z-fighting with terrain mesh
 _DEFAULT_NOISE_SCALE_FACTORS: dict[str, float] = {
     "mountains": 0.24,
     "hills": 0.32,
@@ -7080,7 +7081,7 @@ def _build_level_water_surface_from_terrain(
         )
         bottom_z = min(water_level_f - target_depth, terrain_z - 0.22)
         shoreline_drop = max(0.0, 0.88 - shore_factor) * min(max(water_depth * 0.035, 0.03), 0.16)
-        surface_z = max(water_level_f - shoreline_drop, terrain_z + 0.02)
+        surface_z = max(water_level_f - shoreline_drop, terrain_z + _MIN_WATER_ELEVATION_M)
         top_verts[index] = bm.verts.new((wx, wy, surface_z))
         _vert_count += 1
         if not surface_only:

@@ -56,6 +56,7 @@ from .terrain_semantics import (  # noqa: E402
 # ---------------------------------------------------------------------------
 _G: float = 9.81          # m/s² gravitational acceleration
 _MANNING_N: float = 0.04  # Manning's roughness for natural rock channel
+_MIN_WATER_ELEVATION_M: float = 0.04  # minimum water surface offset above terrain to prevent Z-fighting
 # Manning's equation: V = (1/n) * R^(2/3) * S^(1/2)
 # For waterfall lip, R ≈ hydraulic radius; we approximate R from drainage area.
 
@@ -151,7 +152,7 @@ def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict]":
         for c in range(cols):
             x = world_origin_x + c * cell_size
             y = world_origin_y + r * cell_size
-            z = float(height[r, c])
+            z = float(height[r, c]) + _MIN_WATER_ELEVATION_M
             vertices.append({
                 "position": [x, y, z],
                 "foam_alpha": float(foam_alpha_grid[r, c]),

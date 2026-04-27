@@ -1354,6 +1354,19 @@ def compute_road_network(
             max_y = max(ys) + 50.0
             resolved_terrain_bounds = (min_x, min_y, max_x, max_y)
 
+    # Auto-apply water cost penalty when water_level is supplied.
+    # Routes around open water; adds 1e6 cost so A* bridges or bypasses.
+    if water_level is not None and hmap is not None and hasattr(hmap, 'shape'):
+        import numpy as np
+        water_mask = hmap < float(water_level)
+        if water_mask.any():
+            water_cost = np.zeros(hmap.shape, dtype=np.float32)
+            water_cost[water_mask] = 1e6
+            if cost_map is not None and hasattr(cost_map, 'shape') and cost_map.shape == water_cost.shape:
+                cost_map = cost_map + water_cost
+            else:
+                cost_map = water_cost
+
     # Build anchor traffic weights
     _TRAFFIC_WEIGHTS: dict[str, float] = {
         "settlement": 3.0,
@@ -1566,3 +1579,14 @@ def handle_compute_road_network(params: dict) -> dict:
         terrain_bounds=terrain_bounds,
         connection_strategy=connection_strategy,
     )
+
+
+# ---------------------------------------------------------------------------
+# Public API aliases — expose key internals without breaking existing callers
+# ---------------------------------------------------------------------------
+
+route_path_astar = _astar_24dir
+detect_bridge_valleys = _detect_bridges
+insert_switchbacks_on_steep_grades = _generate_switchback_points
+compute_path_erosion_spec = _compute_worn_path_spec
+generate_road_mesh_cross_section = _road_segment_mesh_spec
