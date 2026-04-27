@@ -1243,15 +1243,17 @@ def export_unity_manifest(
         encoding="raw_u16_le",
         flip_vertical=False,
     )
-    # Apply OpenGL→DirectX/HDRP normal map Y-flip before writing so Unity HDRP
-    # Terrain Lit reads correct normals without a per-material fixup toggle.
-    terrain_normals_hdrp = _flip_normal_y(np.asarray(stack.terrain_normals, dtype=np.float32))
+    # Write world-space unit normals directly as raw float32.  _flip_normal_y
+    # applies a packed-normal-map G-flip (1-y) which is only correct for
+    # [0,1]-packed tangent-space textures; applying it to [-1,1] world-space
+    # vectors corrupts the magnitudes (lengths go from 1.0 to ~1.4).
+    # _zup_to_unity_vectors already handles the Blender→Unity axis swap.
     _write_raw_array(
         files,
         output_dir,
         filename="terrain_normals.bin",
         channel="terrain_normals",
-        arr=terrain_normals_hdrp,
+        arr=np.asarray(stack.terrain_normals, dtype=np.float32),
         encoding="raw_vec3_f32_le",
     )
     splatmap_files = _write_splatmap_groups(files, output_dir, stack)

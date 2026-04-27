@@ -187,24 +187,52 @@ def detect_stale_addon() -> bool:
     return False
 
 
+def _is_live_blender() -> bool:
+    """Return True only when running inside a real Blender session.
+
+    Detects stub/mock bpy by checking that bpy.app.version is an actual
+    integer tuple — stubs return MagicMock objects for attribute access.
+    """
+    import sys
+    bpy_mod = sys.modules.get("bpy")
+    if bpy_mod is None:
+        return False
+    try:
+        ver = bpy_mod.app.version
+        return (
+            isinstance(ver, tuple)
+            and len(ver) == 3
+            and isinstance(ver[0], int)
+        )
+    except Exception:
+        return False
+
+
 def force_addon_reload() -> bool:
     """Reload the addon package in dependency order and re-register handlers.
 
-    Sub-modules are reloaded in reverse import order (leaves first) to avoid
-    forward-reference errors. The package root is reloaded last. If the
-    package exposes ``register()`` it is called after reload to re-bind any
-    Blender operators.
+    Sub-modules are reloaded in forward discovery order (leaves-first:
+    sys.modules preserves insertion order and base modules like
+    terrain_semantics are inserted before dependents like terrain_pipeline).
+    The package root is reloaded last. If the package exposes ``register()``
+    it is called after reload to re-bind any Blender operators.
 
     In a live Blender session this is equivalent to disabling and re-enabling
     the addon via ``bpy.ops.preferences.addon_disable`` /
-    ``bpy.ops.preferences.addon_enable``, but works in headless mode too
-    because it drives ``importlib.reload`` directly.
+    ``bpy.ops.preferences.addon_enable``.
 
     Returns:
-        ``True`` on success, ``False`` in headless mode or if an error occurs.
+        ``True`` on success, ``False`` in headless/stub mode or on error.
     """
     import importlib
     import sys
+
+    # Guard: skip entirely when bpy is a test stub. Reloading modules in
+    # headless mode corrupts class identity (e.g. PassResult gets two
+    # instances across terrain_semantics and terrain_pipeline) and causes
+    # isinstance checks to fail in subsequent tests.
+    if not _is_live_blender():
+        return False
 
     try:
         _live = _import_addon_package()
@@ -212,15 +240,17 @@ def force_addon_reload() -> bool:
         pkg_name = _live.__name__
         pkg_prefix = pkg_name + "."
 
-        # Collect all sub-modules that are already in sys.modules.
+        # Collect sub-modules in sys.modules insertion order — base modules
+        # (leaves) appear first because they were imported earliest.
         sub_mods = [
             m
             for name, m in list(sys.modules.items())
             if name.startswith(pkg_prefix) and m is not None
         ]
-        # Reload sub-modules leaves-first (reverse discovery order approximates
-        # dependency depth without a full topo-sort).
-        for mod in reversed(sub_mods):
+        # Reload leaves-first (forward order): base modules like
+        # terrain_semantics reload before dependents like terrain_pipeline,
+        # so dependents pick up the freshly re-created class objects.
+        for mod in sub_mods:
             try:
                 importlib.reload(mod)
             except Exception:

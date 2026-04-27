@@ -1051,13 +1051,15 @@ def register_pass_water_depth() -> None:
         PassDefinition(
             name="pass_water_depth",
             func=pass_water_depth,
-            requires_channels=("water_surface_elevation_m",),
+            requires_channels=(),
+            optional_channels=("water_surface_elevation_m",),
             produces_channels=("water_depth_m", "shoreline_blend"),
             seed_namespace="",
             requires_scene_read=False,
             description=(
                 "W-2: compute water_depth_m = max(ws_elev - height, 0) and "
-                "shoreline_blend smoothstep. Runs after pass_hydrology."
+                "shoreline_blend smoothstep. Skips gracefully when "
+                "water_surface_elevation_m is absent."
             ),
         )
     )

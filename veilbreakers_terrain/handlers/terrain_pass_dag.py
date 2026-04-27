@@ -65,6 +65,11 @@ def _merge_pass_outputs(
             )
 
     for channel in definition.produces_channels:
+        # Skipped passes legitimately omit their outputs (e.g. pass_water_depth
+        # when water_surface_elevation_m is absent).  Don't error on missing
+        # channels for skipped results — the channel simply stays unset.
+        if source_result.status == "skipped":
+            continue
         # Use stack.get() so we only accept channels that are actually populated,
         # not arbitrary attributes that happen to share the name (hasattr would
         # match __class__, __dict__, etc.).  Raises PassDAGError with a clear

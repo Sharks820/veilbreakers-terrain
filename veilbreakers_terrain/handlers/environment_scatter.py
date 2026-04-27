@@ -52,6 +52,9 @@ from ._scatter_engine import (
     lloyd_relax_points,
     context_scatter,
     generate_breakable_variants,
+    cluster_density_map,
+    edge_scatter,
+    apply_collision_exclusion,
 )
 from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
@@ -2650,6 +2653,7 @@ def _scatter_pass(
         tree_sep = _SPECIES_CONSTRAINTS["tree"]["min_sep"] * max(float(separation_scale), 1e-3)
         _raw_tree_candidates = poisson_disk_sample(
             terrain_width, terrain_height, tree_sep, seed=seed,
+            density_map=density_map,
         )
         tree_candidates = lloyd_relax_points(
             _raw_tree_candidates, terrain_width, terrain_height,
@@ -2661,6 +2665,7 @@ def _scatter_pass(
         bush_sep = _SPECIES_CONSTRAINTS["bush"]["min_sep"] * max(float(separation_scale), 1e-3)
         bush_candidates = poisson_disk_sample(
             terrain_width, terrain_height, bush_sep, seed=seed + 1,
+            density_map=density_map,
         )
 
         for pos in tree_candidates:
@@ -2709,6 +2714,7 @@ def _scatter_pass(
         grass_sep = _SPECIES_CONSTRAINTS["grass"]["min_sep"] * max(float(separation_scale), 1e-3)
         grass_candidates = poisson_disk_sample(
             terrain_width, terrain_height, grass_sep, seed=seed + 2,
+            density_map=density_map,
         )
         biome_grass = biome if biome in _GRASS_BIOME_SPECS else "prairie"
 
@@ -2763,6 +2769,7 @@ def _scatter_pass(
         rock_sep = _SPECIES_CONSTRAINTS["rock"]["min_sep"] * max(float(separation_scale), 1e-3)
         rock_candidates = poisson_disk_sample(
             terrain_width, terrain_height, rock_sep, seed=seed + 3,
+            density_map=density_map,
         )
         for pos in rock_candidates:
             wx = pos[0] - terrain_half_x
@@ -2872,6 +2879,7 @@ def _scatter_pass(
         _species_seed = seed + 101 + _idx
         _candidates = poisson_disk_sample(
             terrain_width, terrain_height, _sep, seed=_species_seed,
+            density_map=density_map,
         )
         _spec_row = _SPECIES_CONSTRAINTS.get(_sid, {})
         _lod_hint_dist = float(_spec.lod_viewer_distance_m)

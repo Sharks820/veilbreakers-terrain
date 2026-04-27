@@ -1162,12 +1162,205 @@ def _generate_debris(
 # Canonical implementations live in terrain_features.py and are wired.
 
 
+# ---------------------------------------------------------------------------
+# Forest Pack Pro — Cluster Mode equivalent
+# ---------------------------------------------------------------------------
+
+def cluster_density_map(
+    width: float,
+    depth: float,
+    resolution: int,
+    cluster_size: float,
+    noise_amount: float = 0.2,
+    seed: int = 0,
+) -> "Any":
+    """Return a [0,1] cluster weight map using layered fBm noise.
+
+    Equivalent to Forest Pack Pro's Cluster Mode distribution.
+    Values near 1.0 = dense cluster center.
+    Values near 0.0 = inter-cluster gaps.
+    noise_amount blends toward uniform to let rogue items appear outside clusters.
+
+    Parameters
+    ----------
+    width, depth : float
+        World dimensions. Cluster frequency scales with cluster_size.
+    resolution : int
+        Output raster resolution (resolution x resolution).
+    cluster_size : float
+        Radius of cluster centers in world units. Smaller = tighter clusters.
+    noise_amount : float
+        0.0 = sharp cluster boundaries; 1.0 = fully uniform (no clusters).
+        Matches Forest Pack's "Noise %" parameter.
+    seed : int
+        Reproducibility seed.
+
+    Returns
+    -------
+    np.ndarray (resolution, resolution) float32 in [0, 1].
+    """
+    if not _HAS_NUMPY:
+        raise RuntimeError("cluster_density_map requires numpy")
+
+    rng = _np_engine.random.default_rng(seed)
+    xs = _np_engine.linspace(0, width / max(cluster_size, 1e-6), resolution)
+    ys = _np_engine.linspace(0, depth / max(cluster_size, 1e-6), resolution)
+    xx, yy = _np_engine.meshgrid(xs, ys)
+
+    # 4-octave fBm — matches Forest Pack's "Cluster" fractal noise
+    freq, amp, total = 1.0, 1.0, 0.0
+    noise = _np_engine.zeros((resolution, resolution), dtype=_np_engine.float32)
+    for _ in range(4):
+        phase_x = float(rng.uniform(0, 2 * math.pi))
+        phase_y = float(rng.uniform(0, 2 * math.pi))
+        noise += float(amp) * 0.5 * (
+            _np_engine.sin(xx * freq * 2 * math.pi + phase_x).astype(_np_engine.float32)
+            * _np_engine.sin(yy * freq * 2 * math.pi + phase_y).astype(_np_engine.float32)
+            + 1.0
+        )
+        total += amp
+        freq *= 2.0
+        amp *= 0.5
+
+    cluster_map = (noise / max(total, 1e-9)).astype(_np_engine.float32)
+    # Blend toward 1.0 by noise_amount so rogue items appear outside cluster centres
+    result = cluster_map * (1.0 - float(noise_amount)) + float(noise_amount)
+    return _np_engine.clip(result, 0.0, 1.0).astype(_np_engine.float32)
+
+
+# ---------------------------------------------------------------------------
+# Forest Pack Pro — Edge Mode equivalent
+# ---------------------------------------------------------------------------
+
+def edge_scatter(
+    polyline: "list[tuple[float, float]]",
+    spacing: float,
+    jitter: float = 0.1,
+    seed: int = 0,
+) -> "list[tuple[float, float, float]]":
+    """Place points at equal arc-length intervals along a polyline.
+
+    Equivalent to Forest Pack Pro's Edge Mode distribution.
+    Items are aligned to the edge tangent direction.
+
+    Parameters
+    ----------
+    polyline : list of (x, y) tuples
+        World-space vertices defining the edge path.
+    spacing : float
+        Arc-length distance between successive items in world units.
+    jitter : float
+        Gaussian sigma for perpendicular position noise (metres).
+        0 = perfectly on-edge; 0.1 matches Forest Pack's default.
+    seed : int
+        Reproducibility seed.
+
+    Returns
+    -------
+    list of (x, y, angle_deg) tuples
+        x, y = world position; angle_deg = edge tangent direction in degrees.
+    """
+    rng = random.Random(seed)
+    results: list[tuple[float, float, float]] = []
+    accumulated = 0.0
+
+    for i in range(len(polyline) - 1):
+        x0, y0 = polyline[i]
+        x1, y1 = polyline[i + 1]
+        seg_len = math.hypot(x1 - x0, y1 - y0)
+        if seg_len < 1e-9:
+            continue
+        angle_deg = math.degrees(math.atan2(y1 - y0, x1 - x0))
+        cos_a = (x1 - x0) / seg_len
+        sin_a = (y1 - y0) / seg_len
+
+        while accumulated <= seg_len:
+            t = accumulated / seg_len
+            along = x0 + t * (x1 - x0)
+            up_t = y0 + t * (y1 - y0)
+            # Gaussian jitter perpendicular to edge direction
+            j = rng.gauss(0.0, jitter) if jitter > 0.0 else 0.0
+            px = along + j * (-sin_a)
+            py = up_t + j * cos_a
+            results.append((px, py, angle_deg))
+            accumulated += spacing
+
+        accumulated -= seg_len
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Forest Pack Pro — Collision system equivalent
+# ---------------------------------------------------------------------------
+
+def apply_collision_exclusion(
+    placements: "list[dict]",
+    collision_radii: "dict[str, float]",
+    default_radius: float = 1.5,
+) -> "list[dict]":
+    """Remove placements violating inter-species bounding-sphere separation.
+
+    Matches Forest Pack Pro's Collision system exactly: bounding-sphere only,
+    spatial hash for O(n) average complexity. First-placed wins on collision.
+
+    Two items collide when:
+        dist(center_A, center_B) < radius_A + radius_B
+
+    Parameters
+    ----------
+    placements : list of dicts with "position" key (x, y) and "vegetation_type" key.
+    collision_radii : dict mapping vegetation_type → world-unit bounding radius.
+    default_radius : float
+        Fallback radius for unknown vegetation types (metres).
+
+    Returns
+    -------
+    list of dicts — subset of placements with all collisions resolved.
+    """
+    if not placements:
+        return []
+
+    max_r = max(collision_radii.values(), default=default_radius)
+    cell = max_r * 2.0
+    grid: dict[tuple[int, int], list[int]] = {}
+    kept: list[dict] = []
+
+    for pl in placements:
+        px, py = float(pl["position"][0]), float(pl["position"][1])
+        r = collision_radii.get(str(pl.get("vegetation_type", "")), default_radius)
+        gx, gy = int(px / cell), int(py / cell)
+        collision = False
+        for dg in range(-2, 3):
+            if collision:
+                break
+            for dh in range(-2, 3):
+                if collision:
+                    break
+                for k in grid.get((gx + dg, gy + dh), []):
+                    ox, oy = float(kept[k]["position"][0]), float(kept[k]["position"][1])
+                    or_ = collision_radii.get(
+                        str(kept[k].get("vegetation_type", "")), default_radius
+                    )
+                    if math.hypot(px - ox, py - oy) < (r + or_):
+                        collision = True
+                        break
+        if not collision:
+            grid.setdefault((gx, gy), []).append(len(kept))
+            kept.append(pl)
+
+    return kept
+
+
 __all__ = [
     "poisson_disk_sample",
     "lloyd_relax_points",
     "biome_filter_points",
     "context_scatter",
     "generate_breakable_variants",
+    "cluster_density_map",
+    "edge_scatter",
+    "apply_collision_exclusion",
     "PROP_AFFINITY",
     "BREAKABLE_PROPS",
 ]

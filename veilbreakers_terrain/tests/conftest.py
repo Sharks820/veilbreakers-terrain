@@ -99,13 +99,17 @@ for _mod_name in _BLENDER_MODS:
 
 @pytest.fixture(autouse=True)
 def _reset_pass_registry():
-    """Clear TerrainPassController registry before and after every test.
+    """Save, clear, and restore TerrainPassController registry around every test.
 
-    Prevents pass registrations from one test leaking into the next, which
-    caused transient ordering failures in the full suite (D-10 invariant).
+    Clears before each test so registrations from one test don't leak into the
+    next (D-10 invariant), but restores the original state afterwards so that
+    tests relying on a pre-populated registry from module-level registration
+    still see their passes in subsequent tests.
     """
+    original: dict = {}
     try:
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+        original = dict(TerrainPassController.PASS_REGISTRY)
         TerrainPassController.clear_registry()
     except Exception:
         pass
@@ -113,5 +117,6 @@ def _reset_pass_registry():
     try:
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         TerrainPassController.clear_registry()
+        TerrainPassController.PASS_REGISTRY.update(original)
     except Exception:
         pass
