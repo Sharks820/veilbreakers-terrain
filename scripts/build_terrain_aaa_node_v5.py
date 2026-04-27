@@ -755,6 +755,30 @@ def write_summary(heightmap, stack):
     return summary
 
 
+def write_generation_manifest() -> None:
+    """Write POI positions for render_closeups camera labeling."""
+    manifest = {
+        "poi": {
+            "lake_center": {"x": 0.0, "y": -400.0},
+            "lake_radius": 150.0,
+            "water_level": float(WATER_LEVEL),
+            "cave_entry": {"x": 280.0, "y": 80.0, "z": 75.0},
+            "cave_exit": {"x": 430.0, "y": 130.0, "z": 108.0},
+            "waterfall": {"x": -18.0, "y": 100.0, "z": 36.0},
+            "bridge_a": {"x": -30.0, "y": -20.0},
+            "bridge_b": {"x": 20.0, "y": -70.0},
+        },
+        "tile_size_m": TILE_SIZE_M,
+        "water_level_coastal_m": WATER_LEVEL,
+        "water_level_gorge_m": GORGE_WATER_LEVEL,
+        "seed": hex(SEED),
+        "script": "build_terrain_aaa_node_v5.py",
+    }
+    manifest_path = OUT_DIR / "generation_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    _log(f"Generation manifest written: {manifest_path}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -766,6 +790,7 @@ def main():
     stack = run_production_passes(heightmap)
     build_blender_scene(heightmap, stack)
     summary = write_summary(heightmap, stack)
+    write_generation_manifest()
 
     elapsed = time.perf_counter() - t0
     status = "PASS" if not FAILURES else f"PARTIAL ({len(FAILURES)} failures)"

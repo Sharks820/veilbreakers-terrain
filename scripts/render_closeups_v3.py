@@ -32,6 +32,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MANIFEST_CANDIDATES = [
+    _REPO_ROOT / "output" / "aaa_node_v5" / "generation_manifest.json",
     _REPO_ROOT / "output" / "aaa_node_v4" / "generation_manifest.json",
     _REPO_ROOT / "output" / "scene_v3" / "generation_manifest.json",
 ]
