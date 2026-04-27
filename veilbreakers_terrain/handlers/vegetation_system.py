@@ -1426,4 +1426,349 @@ def scatter_biome_vegetation(
     if _mask_stack is not None:
         build_biome_density_map(_mask_stack, biome_name)
 
+    # Wave 5 — emit foliage placement manifest when requested.
+    # See docs/FOLIAGE_WAVE5_RESEARCH.md for the schema.
+    if params.get("emit_manifest"):
+        mesh_library_path = params.get("mesh_library_path")
+        if mesh_library_path is None:
+            raise ValueError(
+                "emit_manifest=True requires 'mesh_library_path' in params"
+            )
+        from pathlib import Path as _Path
+
+        mesh_library = load_mesh_library(mesh_library_path)
+        manifest = build_foliage_placement_manifest(
+            spec=spec,
+            mesh_library=mesh_library,
+            stack=_mask_stack,
+            biome_name=biome_name,
+            season=season,
+        )
+        manifest_out_path = params.get("manifest_out_path")
+        if manifest_out_path is None:
+            manifest_out_path = (
+                _Path(mesh_library_path).parent / "foliage_placement_manifest.json"
+            )
+        write_foliage_placement_manifest(manifest, manifest_out_path)
+        result["manifest_path"] = str(manifest_out_path)
+
     return result
+
+
+# ===========================================================================
+# Wave 5 — foliage placement manifest emission.
+#
+# Pure-logic, Blender-free helpers that translate the placement spec produced
+# by :func:`build_vegetation_placement_spec` into a Unity / Forest Pack /
+# 3ds Max compatible manifest. Schema documented in
+# ``docs/FOLIAGE_WAVE5_RESEARCH.md`` (section "foliage_placement_manifest.json
+# Schema"). Schema version: 1.0.
+# ===========================================================================
+
+
+def load_mesh_library(library_path: "str | Any") -> dict[str, dict[str, Any]]:
+    """Load the Assets/Foliage manifest of pre-authored mesh assets.
+
+    The library file is a JSON sidecar in the foliage assets directory that
+    artists update when they add or remove FBX files.
+
+    Returns:
+        dict keyed by ``species_key`` (e.g. ``"tree_veil_healthy"``) to a
+        dict with at least ``mesh_asset_path``, ``lod_meshes``, ``category``
+        and ``unity_render_mode``. Unknown / missing fields are left intact
+        so the manifest can grow forward-compatibly.
+
+    Raises:
+        FileNotFoundError: if the path does not exist.
+        ValueError: if the file is not valid JSON or the structure is wrong.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    p = _Path(library_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"mesh library not found: {p}")
+    try:
+        raw = _json.loads(p.read_text(encoding="utf-8"))
+    except _json.JSONDecodeError as exc:
+        raise ValueError(f"mesh library {p} is not valid JSON: {exc}") from exc
+
+    if isinstance(raw, dict) and "species" in raw:
+        species = raw["species"]
+    elif isinstance(raw, list):
+        species = {entry["species_key"]: entry for entry in raw if "species_key" in entry}
+    elif isinstance(raw, dict):
+        species = raw
+    else:
+        raise ValueError(f"mesh library {p} has unrecognised structure")
+
+    required = ("mesh_asset_path", "category")
+    out: dict[str, dict[str, Any]] = {}
+    for key, entry in species.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"mesh library entry for {key!r} is not a dict")
+        for field in required:
+            if field not in entry:
+                raise ValueError(
+                    f"mesh library entry {key!r} missing required field {field!r}"
+                )
+        # Defaults for optional fields so manifest emission stays simple.
+        entry.setdefault("lod_meshes", [])
+        entry.setdefault("atlas_path", None)
+        entry.setdefault("unity_render_mode", "terrain_tree")
+        entry.setdefault("forestpack_reference_layer", f"FP_REF_{key}")
+        entry.setdefault("wind_color_baked", False)
+        entry.setdefault("physics_collider", "none")
+        out[str(key)] = entry
+    return out
+
+
+def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
+    """Compute a per-cell signed-distance-from-cliff in metres."""
+    if stack is None or np is None:
+        return None
+    cliff = getattr(stack, "cliff_label", None)
+    if cliff is None:
+        return None
+    try:
+        from scipy.ndimage import distance_transform_edt as _edt  # type: ignore
+    except Exception:
+        return None
+    cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+    arr = np.asarray(cliff)
+    return _edt(arr == 0).astype(np.float32) * cell_size
+
+
+def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
+    """Compute distance-from-water in metres using bathymetry."""
+    if stack is None or np is None:
+        return None
+    bathy = getattr(stack, "bathymetry", None)
+    if bathy is None:
+        return None
+    try:
+        from scipy.ndimage import distance_transform_edt as _edt  # type: ignore
+    except Exception:
+        return None
+    cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+    return _edt(np.asarray(bathy, dtype=np.float32) <= 0).astype(np.float32) * cell_size
+
+
+def _world_to_cell(stack: Any, wx: float, wy: float) -> "tuple[int, int]":
+    cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+    ox = float(getattr(stack, "world_origin_x", 0.0) or 0.0)
+    oy = float(getattr(stack, "world_origin_y", 0.0) or 0.0)
+    height = getattr(stack, "height", None)
+    if height is None:
+        return 0, 0
+    h, w = height.shape
+    ix = int((wx - ox) / cell_size)
+    iy = int((wy - oy) / cell_size)
+    ix = max(0, min(w - 1, ix))
+    iy = max(0, min(h - 1, iy))
+    return iy, ix
+
+
+def build_foliage_placement_manifest(
+    spec: dict[str, Any],
+    mesh_library: dict[str, dict[str, Any]],
+    stack: Any,
+    *,
+    biome_name: str,
+    season: str | None = None,
+    schema_version: str = "1.0",
+    sdf_road_min_m: float = 1.5,
+    sdf_cliff_min_m: float = 0.8,
+    water_edge_min_m: float = 0.5,
+    lod_distances_m: list[float] | None = None,
+) -> dict[str, Any]:
+    """Convert a placement spec into the Wave 5 manifest schema.
+
+    Args:
+        spec: Output of :func:`build_vegetation_placement_spec` — must
+            contain ``placements`` with ``position``, ``rotation``,
+            ``scale``, ``mesh_name`` (= species key) per entry.
+        mesh_library: Output of :func:`load_mesh_library`.
+        stack: TerrainMaskStack (optional). When provided, SDF exclusion
+            is applied against ``road_sdf_dist`` / ``cliff_label`` /
+            ``bathymetry`` and positions are normalised into Unity's
+            0..1 terrain space.
+        biome_name: Primary biome name embedded in the manifest.
+        season: Optional season variant string.
+        schema_version: Pinned for forward compatibility.
+        sdf_road_min_m / sdf_cliff_min_m / water_edge_min_m: SDF
+            exclusion thresholds in metres. See research doc for
+            rationale.
+        lod_distances_m: 4-element [lod0_m, lod1_m, lod2_m, lod3_m]; we
+            default to the VeilBreakers scale (15/35/60/200 m).
+
+    Returns:
+        The manifest dict, ready for :func:`write_foliage_placement_manifest`.
+    """
+    import time as _time
+
+    if lod_distances_m is None:
+        lod_distances_m = [15.0, 35.0, 60.0, 200.0]
+
+    placements = list(spec.get("placements", []))
+
+    # Build mesh_library list, only species we actually have entries for.
+    species_seen: list[str] = []
+    species_to_id: dict[str, int] = {}
+    library_entries: list[dict[str, Any]] = []
+    dropped_species: set[str] = set()
+    for p in placements:
+        species_key = p.get("mesh_name") or f"{p.get('type', 'unknown')}_{p.get('style', 'default')}"
+        if species_key in species_to_id:
+            continue
+        if species_key not in mesh_library:
+            dropped_species.add(species_key)
+            continue
+        entry = dict(mesh_library[species_key])
+        entry["mesh_id"] = len(library_entries)
+        entry["species_key"] = species_key
+        library_entries.append(entry)
+        species_to_id[species_key] = entry["mesh_id"]
+        species_seen.append(species_key)
+
+    if dropped_species:
+        # Don't crash — Wave 5 says warn and drop.
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Dropping placements for species without mesh_library entries: %s",
+            sorted(dropped_species),
+        )
+
+    # Stack-derived exclusion SDFs (computed lazily; None when no stack).
+    cliff_sdf = _derive_cliff_sdf_m(stack)
+    water_sdf = _derive_water_edge_sdf_m(stack)
+    road_sdf = getattr(stack, "road_sdf_dist", None) if stack is not None else None
+    hero_excl = getattr(stack, "hero_exclusion", None) if stack is not None else None
+
+    # Terrain extents for normalised position.
+    if stack is not None and getattr(stack, "height", None) is not None:
+        h, w = stack.height.shape
+        cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+        ox = float(getattr(stack, "world_origin_x", 0.0) or 0.0)
+        oy = float(getattr(stack, "world_origin_y", 0.0) or 0.0)
+        extent_x = w * cell_size
+        extent_y = h * cell_size
+        height_min = float(stack.height.min())
+        height_max = float(stack.height.max())
+        height_span = max(height_max - height_min, 1e-6)
+        tile_x = int(getattr(stack, "tile_x", 0) or 0)
+        tile_y = int(getattr(stack, "tile_y", 0) or 0)
+        tile_size = int(getattr(stack, "tile_size", w) or w)
+    else:
+        h = w = 1024
+        cell_size = 1.0
+        ox = oy = 0.0
+        extent_x = extent_y = 1024.0
+        height_min = 0.0
+        height_max = 100.0
+        height_span = 100.0
+        tile_x = tile_y = 0
+        tile_size = 1024
+
+    instances: list[dict[str, Any]] = []
+    species_density: dict[str, int] = {}
+    lod_distribution: dict[str, int] = {"0": 0, "1": 0, "2": 0, "3": 0}
+
+    for p in placements:
+        species_key = p.get("mesh_name") or f"{p.get('type', 'unknown')}_{p.get('style', 'default')}"
+        if species_key not in species_to_id:
+            continue
+        wx, wy, wz = p["position"]
+
+        # SDF exclusions.
+        if stack is not None:
+            iy, ix = _world_to_cell(stack, float(wx), float(wy))
+            if road_sdf is not None and float(road_sdf[iy, ix]) < sdf_road_min_m:
+                continue
+            if cliff_sdf is not None and float(cliff_sdf[iy, ix]) < sdf_cliff_min_m:
+                continue
+            if water_sdf is not None and float(water_sdf[iy, ix]) < water_edge_min_m:
+                continue
+            if hero_excl is not None and float(hero_excl[iy, ix]) > 0.5:
+                continue
+
+        # Normalised position for Unity TerrainData.SetTreeInstances.
+        norm_x = max(0.0, min(1.0, (float(wx) - ox) / max(extent_x, 1e-6)))
+        norm_z = max(0.0, min(1.0, (float(wy) - oy) / max(extent_y, 1e-6)))
+        norm_y = max(0.0, min(1.0, (float(wz) - height_min) / height_span))
+
+        scale = float(p.get("scale", 1.0))
+        rotation_deg = float(p.get("rotation", 0.0))
+        rotation_rad = math.radians(rotation_deg)
+        lod_level = int(p.get("lod_level", 0))
+
+        instances.append(
+            {
+                "i": len(instances),
+                "mesh_id": species_to_id[species_key],
+                "position_world": [float(wx), float(wy), float(wz)],
+                "position_terrain_norm": [norm_x, norm_y, norm_z],
+                "rotation_y_rad": rotation_rad,
+                "scale": scale,
+                "scale_xyz": [scale, scale, scale],
+                "lod_level": lod_level,
+                "lod_hint_sampler_tier": int(p.get("lod_hint", 0)),
+                "biome": p.get("biome") or biome_name,
+                "category": p.get("category") or library_entries[species_to_id[species_key]].get("category"),
+                "moisture": float(p.get("moisture", 0.0)),
+                "tint_rgb": list(p.get("tint_rgb", [1.0, 1.0, 1.0])),
+                "color_variation_seed": int(p.get("color_variation_seed", random.randint(0, 2**31 - 1))),
+            }
+        )
+        species_density[species_key] = species_density.get(species_key, 0) + 1
+        lod_distribution[str(lod_level)] = lod_distribution.get(str(lod_level), 0) + 1
+
+    return {
+        "schema_version": schema_version,
+        "generated_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        "terrain": {
+            "tile_x": tile_x,
+            "tile_y": tile_y,
+            "tile_size": tile_size,
+            "cell_size": cell_size,
+            "world_origin": [ox, oy],
+            "world_extent": [extent_x, extent_y],
+            "height_min_m": height_min,
+            "height_max_m": height_max,
+        },
+        "biome": biome_name,
+        "season": season,
+        "lod_distances_m": lod_distances_m,
+        "camera_reference": list(spec.get("camera_position") or [extent_x * 0.5, extent_y * 0.5, 0.0]),
+        "mesh_library": library_entries,
+        "instances": instances,
+        "instance_count": len(instances),
+        "species_density": species_density,
+        "lod_distribution": lod_distribution,
+        "exclusion_sources": {
+            "road_sdf_min_m": sdf_road_min_m,
+            "cliff_sdf_min_m": sdf_cliff_min_m,
+            "water_edge_min_m": water_edge_min_m,
+            "hero_exclusion_used": hero_excl is not None,
+            "poi_radius_used_m": 0.0,
+        },
+    }
+
+
+def write_foliage_placement_manifest(manifest: dict[str, Any], out_path: Any) -> Any:
+    """Atomic JSON write (tmp + rename). Returns the written :class:`Path`."""
+    import json as _json
+    import os as _os
+    import string as _string
+    import random as _random
+    from pathlib import Path as _Path
+
+    p = _Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    suffix = "".join(_random.choices(_string.ascii_letters + _string.digits, k=8))
+    tmp = p.with_name(f".{p.name}.{suffix}.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        _json.dump(manifest, fh, indent=2, sort_keys=True)
+    _os.replace(tmp, p)
+    return p
