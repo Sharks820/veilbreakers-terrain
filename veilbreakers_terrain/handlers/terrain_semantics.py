@@ -295,6 +295,15 @@ class TerrainMaskStack:
     flow_direction: Optional[np.ndarray] = None
     flow_accumulation: Optional[np.ndarray] = None
     water_surface: Optional[np.ndarray] = None
+    # W-1 canonical channels — unambiguous successors to the dual-semantics
+    # water_surface field.  water_surface_mask is binary (0/1 float32);
+    # water_surface_elevation_m is world-space metres.  Emitted by
+    # terrain_water_variants alongside the legacy water_surface for compat.
+    water_surface_mask: Optional[np.ndarray] = None
+    water_surface_elevation_m: Optional[np.ndarray] = None
+    # W-2 channels — derived from water_surface_elevation_m by pass_water_depth.
+    water_depth_m: Optional[np.ndarray] = None
+    shoreline_blend: Optional[np.ndarray] = None
     foam: Optional[np.ndarray] = None
     mist: Optional[np.ndarray] = None
     wet_rock: Optional[np.ndarray] = None
@@ -553,6 +562,10 @@ class TerrainMaskStack:
             "flow_direction",
             "flow_accumulation",
             "water_surface",
+            "water_surface_mask",
+            "water_surface_elevation_m",
+            "water_depth_m",
+            "shoreline_blend",
             "foam",
             "mist",
             "wet_rock",
