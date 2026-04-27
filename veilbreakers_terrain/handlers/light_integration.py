@@ -189,7 +189,9 @@ def compute_probe_placements(
         cell_size: World metres per cell.
         world_origin_x: World X of cell (0,0) corner.
         world_origin_y: World Y of cell (0,0) corner.
-        water_surface: Optional (H, W) float array in [0,1]; >0.5 = water.
+        water_surface: Optional (H, W) binary mask float array; >0.5 = water.
+            Pass ``stack.get("water_surface_mask")`` here (W-1 fix); the legacy
+            ``water_surface`` attribute is a binary mask with the same semantics.
         feature_positions: Optional list of (x, y, z) world positions.
         max_probes: Maximum number of probes to place.
         min_probe_spacing_m: Minimum world-metre spacing between probes.

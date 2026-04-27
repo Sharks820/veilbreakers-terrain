@@ -342,11 +342,21 @@ class ProceduralGrassSystem:
         if poi is not None:
             mask *= (np.asarray(poi) == 0).astype(np.float32)
 
-        # Water surface exclusion: cells where height < water_surface are submerged.
-        water_surface = _stack_attr(stack, "water_surface")
-        if water_surface is not None:
-            ws = np.asarray(water_surface, dtype=np.float32)
+        # Water surface exclusion: submerged cells cannot place grass.
+        # W-1 fix: prefer water_surface_elevation_m for the height comparison.
+        # Fall back to water_surface_mask (binary) when elevation is absent.
+        ws_elev = _stack_attr(stack, "water_surface_elevation_m")
+        if ws_elev is not None:
+            # Elevation path: exclude cells where terrain height < water surface height.
+            ws = np.asarray(ws_elev, dtype=np.float32)
             mask *= (height >= ws).astype(np.float32)
+        else:
+            # Binary mask path: water_surface_mask > 0 means cell IS water — exclude it.
+            ws_mask = _stack_attr(stack, "water_surface_mask")
+            if ws_mask is None:
+                ws_mask = _stack_attr(stack, "water_surface")
+            if ws_mask is not None:
+                mask *= (np.asarray(ws_mask, dtype=np.float32) <= 0.0).astype(np.float32)
 
         # Road SDF: stack.road_sdf_dist is precomputed in metres.
         road_sdf = _stack_attr(stack, "road_sdf_dist")

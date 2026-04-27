@@ -730,8 +730,9 @@ def pass_water_flow_speed(
         flow_direction, flow_accumulation
 
     Reads (optional):
-        slope          — if absent, approximated from height via central diffs
-        water_surface  — if present, non-water cells are zeroed
+        slope                — if absent, approximated from height via central diffs
+        water_surface_mask   — if present, non-water cells are zeroed (preferred)
+        water_surface        — legacy fallback binary mask (deprecated; use water_surface_mask)
 
     Must run AFTER pass_hydrology (and pass_structural_masks when slope is
     needed).  Registered in the hydrology bundle so the pipeline can insert it
@@ -793,7 +794,11 @@ def pass_water_flow_speed(
     speed_raw = _MANNING_K * (slope_clamped ** 0.5) * (log_acc ** 0.3)
 
     # Normalise: 95th percentile = 1.0
-    water_mask_raw = stack.get("water_surface")
+    # W-1 fix: prefer the unambiguous water_surface_mask channel (binary);
+    # fall back to legacy water_surface for backwards compatibility.
+    water_mask_raw = stack.get("water_surface_mask")
+    if water_mask_raw is None:
+        water_mask_raw = stack.get("water_surface")
     if water_mask_raw is not None:
         water_mask = np.asarray(water_mask_raw, dtype=np.float64) > 0.0
         water_vals = speed_raw[water_mask]
@@ -811,7 +816,7 @@ def pass_water_flow_speed(
     else:
         speed_norm = np.zeros_like(speed_raw, dtype=np.float32)
 
-    # Zero out non-water cells when water_surface is available.
+    # Zero out non-water cells when water_surface_mask is available.
     if water_mask is not None:
         speed_norm[~water_mask] = 0.0
 
@@ -1916,6 +1921,10 @@ class WaterNetwork:
 
         # Step 9: compute tile edge contracts
         net._compute_tile_contracts(hmap, flow_dir, flow_acc, traced_paths, river_threshold)
+
+        # Step 10 (W-4 fix): validate seam continuity immediately after contracts
+        # are built so seam_valid flags are populated before any downstream reads.
+        net._seam_validation_result = net.validate_seam_continuity()
 
         return net
 

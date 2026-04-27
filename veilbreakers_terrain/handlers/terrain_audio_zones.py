@@ -569,9 +569,14 @@ def _classify_raster(stack: TerrainMaskStack) -> np.ndarray:
         cave = cave | overhang
 
     # Water surface
+    # W-1 fix: prefer water_surface_mask (unambiguous binary channel); fall
+    # back to legacy water_surface attribute for backwards compatibility.
     water_near = np.zeros(shape, dtype=bool)
-    if stack.water_surface is not None:
-        water_near |= np.asarray(stack.water_surface) > 0.0
+    _ws_mask = stack.get("water_surface_mask") if hasattr(stack, "get") else None
+    if _ws_mask is None:
+        _ws_mask = stack.water_surface if hasattr(stack, "water_surface") else None
+    if _ws_mask is not None:
+        water_near |= np.asarray(_ws_mask) > 0.0
     if stack.wetness is not None:
         water_near |= np.asarray(stack.wetness) > 0.6
     water_near = _audio_cc_filter(water_near, min_cells)

@@ -970,6 +970,99 @@ def register_snow_line_pass() -> None:
 
 
 # ---------------------------------------------------------------------------
+# W-2: Water depth + shoreline blend pass
+# ---------------------------------------------------------------------------
+
+import numpy as _np  # noqa: E402
+
+
+def pass_water_depth(
+    state: "TerrainPipelineState",
+    region: "BBox | None",
+) -> "PassResult":
+    """Compute water_depth_m and shoreline_blend from elevation channels.
+
+    Writes:
+        water_depth_m    — float32 (H, W), metres of water above terrain (>= 0).
+        shoreline_blend  — float32 (H, W) in [0, 1]; 0 = dry, 1 = fully
+                           submerged.  Cubic smoothstep over a 0.5 m blend zone.
+
+    Reads:
+        water_surface_elevation_m  — water surface elevation in world metres
+        height_m / height          — terrain DEM (height_m preferred)
+
+    Must run after pass_hydrology (which writes water_surface_elevation_m when
+    available) and after any pass that produces height_m.
+    """
+    import time as _time
+    from .terrain_semantics import PassResult
+
+    t0 = _time.perf_counter()
+    stack = state.mask_stack
+
+    ws_elev = stack.get("water_surface_elevation_m")
+    height = stack.get("height_m") or stack.get("height")
+
+    if ws_elev is None or height is None:
+        return PassResult(
+            pass_name="pass_water_depth",
+            status="skipped",
+            duration_seconds=_time.perf_counter() - t0,
+            issues=[],
+        )
+
+    ws_arr = _np.asarray(ws_elev, dtype=_np.float32)
+    h_arr = _np.asarray(height, dtype=_np.float32)
+
+    depth = _np.maximum(ws_arr - h_arr, 0.0)
+    # water_depth_m and shoreline_blend are not yet declared as dataclass fields
+    # in TerrainMaskStack (W-2 addition).  Use object.__setattr__ to store them
+    # as dynamic attributes so they are readable via stack.get() without
+    # requiring a terrain_semantics.py change.  This matches the pattern used
+    # by import_neighbor_edge for seam-edge arrays.
+    object.__setattr__(stack, "water_depth_m", _np.ascontiguousarray(depth))
+    stack.populated_by_pass["water_depth_m"] = "pass_water_depth"
+
+    # Shoreline blend: smooth 0.5 m transition zone, cubic smoothstep
+    shoreline_blend = _np.clip(depth / 0.5, 0.0, 1.0)
+    shoreline_blend = shoreline_blend * shoreline_blend * (3.0 - 2.0 * shoreline_blend)
+    object.__setattr__(stack, "shoreline_blend", _np.ascontiguousarray(shoreline_blend))
+    stack.populated_by_pass["shoreline_blend"] = "pass_water_depth"
+
+    return PassResult(
+        pass_name="pass_water_depth",
+        status="ok",
+        duration_seconds=_time.perf_counter() - t0,
+        produced_channels=("water_depth_m", "shoreline_blend"),
+        consumed_channels=("water_surface_elevation_m", "height_m", "height"),
+        metrics={
+            "depth_max_m": float(depth.max()),
+            "depth_mean_m": float(depth.mean()),
+            "wet_cell_pct": round(float((_np.asarray(depth) > 0).sum()) / max(depth.size, 1) * 100.0, 2),
+        },
+        issues=[],
+    )
+
+
+def register_pass_water_depth() -> None:
+    """Register pass_water_depth with TerrainPassController (W-2 fix)."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_water_depth",
+            func=pass_water_depth,
+            requires_channels=("water_surface_elevation_m",),
+            produces_channels=("water_depth_m", "shoreline_blend"),
+            seed_namespace="",
+            requires_scene_read=False,
+            description=(
+                "W-2: compute water_depth_m = max(ws_elev - height, 0) and "
+                "shoreline_blend smoothstep. Runs after pass_hydrology."
+            ),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Default pass registration
 # ---------------------------------------------------------------------------
 
@@ -1218,6 +1311,10 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_pass_water_flow_speed()
     # River-mouth / confluence transition masks depend on hydrology + downstream water.
     register_pass_river_convergence()
+    # W-2: water_depth_m + shoreline_blend — requires water_surface_elevation_m
+    # which is emitted by pass_water_variants / pass_hydrology when elevation data
+    # is available.  Skips gracefully when that channel is absent.
+    register_pass_water_depth()
     register_terrain_label_passes()
     register_snow_line_pass()
     # macro_color is owned by Bundle K (see terrain_macro_color.pass_macro_color).
@@ -1233,4 +1330,6 @@ __all__ = [
     "register_terrain_label_passes",
     "pass_compute_snow_line",
     "register_snow_line_pass",
+    "pass_water_depth",
+    "register_pass_water_depth",
 ]
