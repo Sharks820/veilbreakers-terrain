@@ -1,0 +1,194 @@
+"""Tests for ExternalAssetProvider ABC and AssetJobResult/AssetGenerationRequest contracts."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from veilbreakers_terrain.providers.external_asset_provider import (
+    AssetGenerationRequest,
+    AssetJobResult,
+    ExternalAssetProvider,
+    JobStatus,
+)
+
+
+# ---------------------------------------------------------------------------
+# Stub provider for testing the ABC interface
+# ---------------------------------------------------------------------------
+
+class _StubProvider(ExternalAssetProvider):
+    provider_id = "stub"
+
+    def __init__(self, final_status: JobStatus = JobStatus.COMPLETED, fail_download: bool = False):
+        self._final_status = final_status
+        self._fail_download = fail_download
+        self._calls: list[str] = []
+
+    def submit(self, request: AssetGenerationRequest) -> str:
+        self._calls.append("submit")
+        return "stub-job-001"
+
+    def poll(self, job_id: str) -> JobStatus:
+        self._calls.append("poll")
+        return self._final_status
+
+    def download(self, job_id: str, dest_dir: Path, *, species_id: str) -> Path:
+        self._calls.append("download")
+        if self._fail_download:
+            raise RuntimeError("download intentionally failed")
+        p = dest_dir / f"{species_id}.glb"
+        p.write_bytes(b"FAKE_GLB")
+        return p
+
+
+# ---------------------------------------------------------------------------
+# AssetGenerationRequest
+# ---------------------------------------------------------------------------
+
+def test_request_defaults():
+    req = AssetGenerationRequest(species_id="oak_01", prompt="dark oak tree")
+    assert req.texture is True
+    assert req.require_pbr is True
+    assert req.target_tris == 50_000
+    assert req.quality == "high"
+    assert req.image_path is None
+    assert req.seed is None
+
+
+def test_request_extra_is_empty_dict_by_default():
+    req = AssetGenerationRequest(species_id="rock_01", prompt="mossy rock")
+    assert req.extra == {}
+    req2 = AssetGenerationRequest(species_id="rock_02", prompt="dry rock")
+    req.extra["foo"] = 1
+    assert "foo" not in req2.extra  # no shared mutable default
+
+
+# ---------------------------------------------------------------------------
+# JobStatus
+# ---------------------------------------------------------------------------
+
+def test_job_status_values():
+    assert JobStatus.COMPLETED == "completed"
+    assert JobStatus.FAILED == "failed"
+    assert JobStatus.PENDING == "pending"
+    assert JobStatus.PROCESSING == "processing"
+
+
+# ---------------------------------------------------------------------------
+# validate() — no real GLB file so trimesh/pygltflib will raise load errors
+# ---------------------------------------------------------------------------
+
+def test_validate_missing_file():
+    provider = _StubProvider()
+    result = provider.validate(
+        Path("/nonexistent/fake.glb"),
+        species_id="test_01",
+        require_pbr=False,
+    )
+    assert isinstance(result, AssetJobResult)
+    assert result.validated is False
+    # Either trimesh raises a load error, or the library isn't installed — both produce an issue
+    has_issue = any(
+        ("load_error" in issue or "not_installed" in issue or "pbr_check_error" in issue)
+        for issue in result.validation_issues
+    )
+    assert has_issue, f"Expected load/install issue in {result.validation_issues}"
+
+
+def test_validate_returns_provider_id():
+    provider = _StubProvider()
+    result = provider.validate(Path("/fake.glb"), species_id="oak", require_pbr=False)
+    assert result.provider == "stub"
+    assert result.species_id == "oak"
+
+
+def test_validate_require_pbr_false_skips_channel_check():
+    provider = _StubProvider()
+    result = provider.validate(Path("/fake.glb"), species_id="oak", require_pbr=False)
+    missing_pbr = [i for i in result.validation_issues if "missing_pbr_channels" in i]
+    assert missing_pbr == [], "require_pbr=False should not flag missing channels"
+
+
+# ---------------------------------------------------------------------------
+# generate_blocking() fast-path tests (using stub)
+# ---------------------------------------------------------------------------
+
+def test_generate_blocking_completed(tmp_path: Path):
+    provider = _StubProvider(final_status=JobStatus.COMPLETED)
+    req = AssetGenerationRequest(species_id="fern_01", prompt="dark fern", require_pbr=False)
+    result = provider.generate_blocking(req, tmp_path, poll_interval_s=0.0)
+    assert result.job_id == "stub-job-001"
+    assert result.species_id == "fern_01"
+    assert "submit" in provider._calls
+    assert "poll" in provider._calls
+    assert "download" in provider._calls
+
+
+def test_generate_blocking_failed_raises():
+    provider = _StubProvider(final_status=JobStatus.FAILED)
+    req = AssetGenerationRequest(species_id="rock_02", prompt="boulder", require_pbr=False)
+    with tempfile.TemporaryDirectory() as td:
+        with pytest.raises(RuntimeError, match="failed"):
+            provider.generate_blocking(req, Path(td), poll_interval_s=0.0)
+
+
+def test_generate_blocking_timeout_raises():
+    provider = _StubProvider(final_status=JobStatus.PROCESSING)
+    req = AssetGenerationRequest(species_id="tree_01", prompt="pine", require_pbr=False)
+    with tempfile.TemporaryDirectory() as td:
+        with pytest.raises(TimeoutError):
+            provider.generate_blocking(req, Path(td), poll_interval_s=0.0, timeout_s=0.001)
+
+
+# ---------------------------------------------------------------------------
+# catalog() writes JSON
+# ---------------------------------------------------------------------------
+
+def test_catalog_writes_json(tmp_path: Path):
+    provider = _StubProvider()
+    glb = tmp_path / "oak_01.glb"
+    glb.write_bytes(b"GLB")
+    result = AssetJobResult(
+        job_id="job-1",
+        provider="stub",
+        species_id="oak_01",
+        glb_path=glb,
+        pbr_channels=["BASE_COLOR", "NORMAL", "ROUGHNESS"],
+        poly_count=12000,
+        validated=True,
+        validation_issues=[],
+    )
+    catalog_path = tmp_path / "catalog.json"
+    provider.catalog(result, catalog_path)
+    assert catalog_path.exists()
+    data = json.loads(catalog_path.read_text())
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["species_id"] == "oak_01"
+    assert data[0]["validated"] is True
+
+
+def test_catalog_appends_multiple(tmp_path: Path):
+    provider = _StubProvider()
+    catalog_path = tmp_path / "catalog.json"
+    for i in range(3):
+        glb = tmp_path / f"spec_{i}.glb"
+        glb.write_bytes(b"GLB")
+        result = AssetJobResult(
+            job_id=f"job-{i}",
+            provider="stub",
+            species_id=f"spec_{i}",
+            glb_path=glb,
+            pbr_channels=[],
+            poly_count=1000,
+            validated=False,
+            validation_issues=["test"],
+        )
+        provider.catalog(result, catalog_path)
+    data = json.loads(catalog_path.read_text())
+    assert len(data) == 3
+    assert [d["species_id"] for d in data] == ["spec_0", "spec_1", "spec_2"]
