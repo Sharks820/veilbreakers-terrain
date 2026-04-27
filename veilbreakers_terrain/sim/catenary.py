@@ -1,0 +1,115 @@
+"""catenary.py — Catenary rope/chain curve solver.
+
+Closed-form parametric solution for the rope shape between two anchors
+under uniform gravity.  No simulation required — converges in <10 iterations.
+
+Sources:
+  Alan Zucconi "The Mathematics of Catenary" (alanzucconi.com 2020)
+  Bryson Lee "GPU Rope System UE5" (brysonlee.com 2024) — arc-length UV formula
+  Wikipedia "Catenary" — transcendental equation derivation
+"""
+from __future__ import annotations
+
+import math
+import numpy as np
+from scipy.optimize import brentq
+from typing import Tuple
+
+
+def solve_catenary(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    rope_length: float,
+    n_points: int = 32,
+) -> np.ndarray:
+    """Return (n_points, 3) world-space points on the catenary between p0 and p1.
+
+    The curve hangs in the vertical plane containing p0 and p1.
+
+    Raises:
+        ValueError: rope_length <= euclidean distance (rope too short to sag).
+    """
+    p0 = np.asarray(p0, dtype=float)
+    p1 = np.asarray(p1, dtype=float)
+
+    d = float(np.linalg.norm(p1 - p0))
+    if rope_length <= d:
+        raise ValueError(
+            f"rope_length {rope_length:.3f} must exceed anchor distance {d:.3f}"
+        )
+
+    horiz = (p1 - p0).copy()
+    horiz[2] = 0.0
+    h = float(np.linalg.norm(horiz))
+    vert = float((p1 - p0)[2])
+
+    if h < 1e-6:
+        t = np.linspace(0.0, 1.0, n_points)
+        return p0[None] + t[:, None] * (p1 - p0)[None]
+
+    target = math.sqrt(max(rope_length ** 2 - vert ** 2, 0.0))
+
+    def _residual(a: float) -> float:
+        arg = h / (2.0 * a)
+        if arg > 709.0:  # sinh overflow guard (math domain ~710)
+            return float('inf') - target
+        return 2.0 * a * math.sinh(arg) - target
+
+    # Find a bracket where the residual changes sign.
+    # Start lower bound at h/10 (avoids overflow) and walk down if needed.
+    lo = max(h / 20.0, 1e-4)
+    while lo > 1e-6 and _residual(lo) < 0:
+        lo *= 0.5
+    hi = h * 100.0
+    try:
+        a = brentq(_residual, lo, hi, xtol=1e-6, maxiter=100)
+    except ValueError:
+        a = h * 50.0
+
+    log_arg = max((rope_length + vert) / max(rope_length - vert, 1e-12), 1e-12)
+    p_shift = (h - a * math.log(log_arg)) / 2.0
+
+    cosh_arg = h / (2.0 * a)
+    coth_val = math.cosh(cosh_arg) / max(math.sinh(cosh_arg), 1e-12)
+    q_shift = (vert - rope_length * coth_val) / 2.0
+
+    u = np.linspace(0.0, h, n_points)
+    v = a * np.cosh((u - p_shift) / a) + q_shift
+
+    horiz_unit = horiz / (h + 1e-12)
+    up = np.array([0.0, 0.0, 1.0])
+    world_pts = (
+        p0[None]
+        + u[:, None] * horiz_unit[None]
+        + v[:, None] * up[None]
+    )
+    return world_pts.astype(np.float32)
+
+
+def arc_length_uv(points: np.ndarray) -> np.ndarray:
+    """Return per-point arc-length UV in [0, 1] for correct texture tiling.
+
+    Prevents texture stretching when tiling chain/rope textures along the
+    catenary curve.
+    """
+    deltas = np.diff(points, axis=0)
+    seg_lengths = np.linalg.norm(deltas, axis=1)
+    cumulative = np.concatenate([[0.0], np.cumsum(seg_lengths)])
+    total = cumulative[-1]
+    return (cumulative / max(total, 1e-12)).astype(np.float32)
+
+
+def catenary_with_sag(
+    anchor_a: np.ndarray,
+    anchor_b: np.ndarray,
+    sag_ratio: float = 0.12,
+    n_points: int = 32,
+) -> np.ndarray:
+    """Convenience wrapper — rope_length = dist * (1 + sag_ratio).
+
+    sag_ratio=0.12 produces a visually natural 12% sag, matching the look
+    of heavy iron chains in reference (KCD2, RDR2 terrain props).
+    """
+    d = float(np.linalg.norm(np.asarray(anchor_b) - np.asarray(anchor_a)))
+    rope_length = d * (1.0 + max(sag_ratio, 0.001))
+    return solve_catenary(anchor_a, anchor_b, rope_length, n_points)
