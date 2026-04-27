@@ -230,8 +230,13 @@ def compute_god_ray_hints(
     # ------------------------------------------------------------------
     shadow_f = shadow_mask.astype(np.float32)
     # Gradient of shadow mask: high values at lit/shadow edges.
-    shad_grad_r = np.abs(shadow_f - np.roll(shadow_f, 1, 0))
-    shad_grad_c = np.abs(shadow_f - np.roll(shadow_f, 1, 1))
+    # np.pad edge mode prevents toroidal tile-seam contamination — np.roll
+    # would wrap the shadow from the opposite border and produce a false
+    # high-gradient stripe at every tile seam, causing visible god-ray shafts
+    # right at the seam.
+    _sf_pad = np.pad(shadow_f, 1, mode="edge")
+    shad_grad_r = np.abs(shadow_f - _sf_pad[:-2, 1:-1])
+    shad_grad_c = np.abs(shadow_f - _sf_pad[1:-1, :-2])
     boundary_score = np.clip(shad_grad_r + shad_grad_c, 0.0, 1.0)
 
     # Only score cells that are LIT (not in shadow) — shafts come from the
@@ -239,8 +244,9 @@ def compute_god_ray_hints(
     lit_mask = (~shadow_mask).astype(np.float32)
 
     # Cloud-shadow edge bonus: same principle, additional modulation.
-    cs_grad_r = np.abs(cs - np.roll(cs, 1, 0))
-    cs_grad_c = np.abs(cs - np.roll(cs, 1, 1))
+    _cs_pad = np.pad(cs, 1, mode="edge")
+    cs_grad_r = np.abs(cs - _cs_pad[:-2, 1:-1])
+    cs_grad_c = np.abs(cs - _cs_pad[1:-1, :-2])
     cs_edge = np.clip(cs_grad_r + cs_grad_c, 0.0, 1.0)
 
     # ------------------------------------------------------------------

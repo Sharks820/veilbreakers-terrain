@@ -1070,12 +1070,19 @@ def check_cliff_silhouette_readability(
         flat_idx = np.flatnonzero(mask.ravel())
         if flat_idx.size > 0:
             labels.ravel()[flat_idx] = flat_idx.astype(np.int64) + 1
-        # Propagate minimum labels until stable
+        # Propagate minimum labels until stable.
+        # np.pad edge mode prevents toroidal tile-seam contamination — np.roll
+        # would wrap labels across the seam and could falsely merge two
+        # disjoint components that happen to touch opposite borders.
+        rows_lab, cols_lab = labels.shape
         changed = True
         while changed:
             new_labels = labels.copy()
+            _lpad = np.pad(labels, 1, mode="edge")
             for dr, dc in ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)):
-                shifted = np.roll(np.roll(labels, dr, axis=0), dc, axis=1)
+                r0 = 1 - dr
+                c0 = 1 - dc
+                shifted = _lpad[r0:r0 + rows_lab, c0:c0 + cols_lab]
                 improve = mask & (shifted > 0) & ((new_labels == 0) | (shifted < new_labels))
                 new_labels[improve] = shifted[improve]
             changed = bool(np.any(new_labels != labels))

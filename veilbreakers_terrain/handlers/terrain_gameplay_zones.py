@@ -103,18 +103,28 @@ def _compute_cover_score(h: np.ndarray, cell_size: float) -> np.ndarray:
     cover1 = np.zeros_like(h, dtype=np.float64)
     cover2 = np.zeros_like(h, dtype=np.float64)
 
-    # Ring r=1: the 8 direct neighbours
+    rows_h, cols_h = h.shape
+
+    # Ring r=1: the 8 direct neighbours.
+    # np.pad edge mode prevents toroidal tile-seam contamination — np.roll
+    # would wrap heights across the seam and report false cover from cells
+    # on the opposite tile edge, biasing AI cover/exposure scoring at borders.
+    _h_pad1 = np.pad(h, 1, mode="edge")
     offsets_r1 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
     for dr, dc in offsets_r1:
-        shifted = np.roll(np.roll(h, dr, axis=0), dc, axis=1)
-        # Edge-wrap artefacts: mask boundary strips
+        r0 = 1 - dr
+        c0 = 1 - dc
+        shifted = _h_pad1[r0:r0 + rows_h, c0:c0 + cols_h]
         cover1 += (shifted >= h + agent_height).astype(np.float64)
     cover1 /= 8.0
 
     # Ring r=2: shift by 2 cells diagonally / orthogonally (approximation)
+    _h_pad2 = np.pad(h, 2, mode="edge")
     offsets_r2 = [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2)]
     for dr, dc in offsets_r2:
-        shifted = np.roll(np.roll(h, dr, axis=0), dc, axis=1)
+        r0 = 2 - dr
+        c0 = 2 - dc
+        shifted = _h_pad2[r0:r0 + rows_h, c0:c0 + cols_h]
         cover2 += (shifted >= h + agent_height).astype(np.float64)
     cover2 /= 8.0
 

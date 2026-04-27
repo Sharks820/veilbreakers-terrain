@@ -283,9 +283,10 @@ def _detect_cliff_edges_stub(
       Heightfield Mask By Feature cliff mode.
 
     Pure-numpy fallback (no SciPy):
-      Uses a fully vectorized flood-fill via iterative ``np.roll``-based label
-      propagation — no Python per-cell loops.  Converges in O(max_component_diameter)
-      passes (typically ≤ sqrt(N) for well-connected cliff bands).
+      Uses a fully vectorized flood-fill via iterative ``np.pad``-based label
+      propagation (edge-mode pad to avoid tile-seam toroidal wrap) — no Python
+      per-cell loops.  Converges in O(max_component_diameter) passes
+      (typically ≤ sqrt(N) for well-connected cliff bands).
 
     Algorithm:
       1. Compute gradient magnitude via ``np.gradient``, scale by ``1/cell_size``

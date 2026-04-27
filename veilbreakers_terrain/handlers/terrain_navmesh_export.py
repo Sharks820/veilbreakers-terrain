@@ -261,10 +261,15 @@ def compute_traversability(
         from scipy.ndimage import generic_filter
         h_std = generic_filter(h, np.std, size=3, mode="nearest")
     except ImportError:
-        # Approximate via roll-based sum of squared deviations
+        # Approximate via edge-padded sum (5-cell neighbourhood mean).
+        # np.pad edge mode prevents toroidal tile-seam contamination — np.roll
+        # would wrap heights across the seam and produce false high-variance
+        # cells at tile borders, biasing navmesh costs at every seam.
+        _h_pad = np.pad(h, 1, mode="edge")
         h_mean_local = (
-            np.roll(h, 1, 0) + np.roll(h, -1, 0) +
-            np.roll(h, 1, 1) + np.roll(h, -1, 1) + h
+            _h_pad[:-2, 1:-1] + _h_pad[2:, 1:-1]
+            + _h_pad[1:-1, :-2] + _h_pad[1:-1, 2:]
+            + h
         ) / 5.0
         h_std = np.sqrt(np.clip(
             (h - h_mean_local) ** 2, 0.0, None
