@@ -2653,6 +2653,27 @@ def pass_cliffs(
                 f"drip_verts={len(overhang_spec['drip_edge_verts'])}"
             )
 
+    # 5c. Rasterize cliff-related masks to the stack so downstream passes
+    # (terrain_audio_zones, terrain_assets, terrain_caves) don't re-derive them.
+    cliff_mask_arr = candidate.copy().astype(np.float32)
+
+    h, w = candidate.shape[:2]
+    talus_arr = np.zeros((h, w), dtype=np.float32)
+    strata_arr = np.zeros((h, w), dtype=np.float32)
+
+    for cliff in cliffs:
+        # Accumulate talus apron mask — stored as bool on CliffStructure
+        if cliff.talus_mask is not None:
+            talus_arr = np.maximum(talus_arr, cliff.talus_mask.astype(np.float32))
+        # Accumulate strata mask — use face_mask for cliffs that have strata layers,
+        # because strata band data is computed per-cliff but not stored pixel-wise.
+        if cliff.strata_layers and cliff.face_mask is not None:
+            strata_arr = np.maximum(strata_arr, cliff.face_mask.astype(np.float32))
+
+    stack.set("cliff_mask", cliff_mask_arr, "cliff_pass")
+    stack.set("talus_mask", talus_arr, "cliff_pass")
+    stack.set("strata_mask", strata_arr, "cliff_pass")
+
     # 6. Record intent for hero mesh insertion (no geometry yet)
     insert_hero_cliff_meshes(state, cliffs)
     cliff_mesh_specs = _build_cliff_overhang_mesh_specs(cliffs, stack)
@@ -2686,7 +2707,10 @@ def pass_cliffs(
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("slope", "saliency_macro"),
-        produced_channels=("cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs"),
+        produced_channels=(
+            "cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs",
+            "cliff_mask", "talus_mask", "strata_mask",
+        ),
         metrics={
             "candidate_cells": int(candidate.sum()),
             "cliff_count": len(cliffs),

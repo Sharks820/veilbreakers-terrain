@@ -261,6 +261,9 @@ class TerrainMaskStack:
     # Hero candidate masks (Pass 3)
     cliff_candidate: Optional[np.ndarray] = None
     cliff_contour_spline: Optional[np.ndarray] = None
+    cliff_mask: Optional[np.ndarray] = None       # float32 (H,W) — rasterized cliff cells (CL-2)
+    talus_mask: Optional[np.ndarray] = None       # float32 (H,W) — accumulated scree aprons (CL-2)
+    strata_mask: Optional[np.ndarray] = None      # float32 (H,W) — cliff face cells with strata (CL-2)
     cave_candidate: Optional[np.ndarray] = None
     cave_height_delta: Optional[np.ndarray] = None
     cave_wall_texture: Optional[np.ndarray] = None
