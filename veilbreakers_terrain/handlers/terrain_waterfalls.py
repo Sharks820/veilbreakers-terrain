@@ -2326,29 +2326,31 @@ def pass_waterfalls(
     # then returns to normal (God of War / real canyon hydrology reference).
     # Formula (AAA spec): speed_boost = 1.0 + 0.5 * exp(-cell_dist / 5.0)
     # Applied to flow_speed channel over 10-cell downstream buffer per chain.
-    flow_speed = stack.get("flow_speed") if hasattr(stack, "get") else None
-    if flow_speed is not None:
-        flow_speed = np.asarray(flow_speed, dtype=np.float32).copy()
-        cs_m = float(stack.cell_size)
-        for chain in chains:
-            # Walk the outflow path and apply boost per cell
-            outflow_pts = list(chain.outflow)
-            n_boost_cells = min(10, len(outflow_pts))
-            pool_gx = _world_to_grid(
-                stack,
-                chain.pool.world_position[0],
-                chain.pool.world_position[1],
+    _flow_speed_raw = stack.get("flow_speed") if hasattr(stack, "get") else None
+    if _flow_speed_raw is None:
+        flow_speed = np.zeros(stack.height.shape, dtype=np.float32)
+    else:
+        flow_speed = np.asarray(_flow_speed_raw, dtype=np.float32).copy()
+    cs_m = float(stack.cell_size)
+    for chain in chains:
+        # Walk the outflow path and apply boost per cell
+        outflow_pts = list(chain.outflow)
+        n_boost_cells = min(10, len(outflow_pts))
+        pool_gx = _world_to_grid(
+            stack,
+            chain.pool.world_position[0],
+            chain.pool.world_position[1],
+        )
+        for step_i, (wx, wy, _wz) in enumerate(outflow_pts[:n_boost_cells]):
+            gr, gc = _world_to_grid(stack, wx, wy)
+            if not (0 <= gr < h_shape[0] and 0 <= gc < h_shape[1]):
+                continue
+            cell_dist = float(step_i)  # distance in cells from pool
+            boost = 1.0 + 0.5 * math.exp(-cell_dist / 5.0)
+            flow_speed[gr, gc] = float(
+                np.clip(flow_speed[gr, gc] * boost, 0.0, 15.0)
             )
-            for step_i, (wx, wy, _wz) in enumerate(outflow_pts[:n_boost_cells]):
-                gr, gc = _world_to_grid(stack, wx, wy)
-                if not (0 <= gr < h_shape[0] and 0 <= gc < h_shape[1]):
-                    continue
-                cell_dist = float(step_i)  # distance in cells from pool
-                boost = 1.0 + 0.5 * math.exp(-cell_dist / 5.0)
-                flow_speed[gr, gc] = float(
-                    np.clip(flow_speed[gr, gc] * boost, 0.0, 15.0)
-                )
-        stack.set("flow_speed", flow_speed, "waterfalls")
+    stack.set("flow_speed", flow_speed, "waterfalls")
 
     # 6. Wet-rock mask
     wet_rock = compute_wet_rock_mask(stack, _water_net, radius_m=3.0)
@@ -2700,7 +2702,6 @@ def register_bundle_c_passes() -> None:
                 "particle_emitter_specs",
                 "foam_atlas_path",
                 "caustic_atlas_path",
-                "water_depth_atlas_path",
                 "riverbed_caustics",
                 "flow_speed",
             ),

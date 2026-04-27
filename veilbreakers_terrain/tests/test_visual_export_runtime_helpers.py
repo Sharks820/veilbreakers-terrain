@@ -88,8 +88,10 @@ def test_advanced_value_noise_and_kuwahara_quadrant_stats_are_deterministic():
 
     assert np.allclose(n1, n2)
     assert n1.min() >= -1.0 and n1.max() <= 1.0
-    assert len(stats) == 8
-    assert all(arr.shape == (4, 4) for arr in stats)
+    # API returns (means, variances) each shaped (4, H, W) — 4 quadrants stacked
+    means, variances = stats
+    assert means.shape == (4, 4, 4)
+    assert variances.shape == (4, 4, 4)
     assert all(np.isfinite(arr).all() for arr in stats)
 
 

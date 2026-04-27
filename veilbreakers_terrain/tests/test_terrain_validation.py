@@ -668,7 +668,7 @@ def test_pass_validation_full_triggers_rollback_on_hard_fail(
 
 
 def test_bind_active_controller_isolated_per_thread():
-    from blender_addon.handlers import terrain_validation as validation_mod
+    from veilbreakers_terrain.handlers import terrain_validation as validation_mod
 
     main_controller = object()
     worker_controller = object()
