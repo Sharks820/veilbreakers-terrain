@@ -2383,6 +2383,14 @@ def pass_waterfalls(
     stack.set("waterfall_lip_candidate", lip_mask, "waterfalls")
     stack.set("foam", foam, "water_foam_pass")
     stack.set("mist", mist, "waterfalls")
+    # Step 7: Convert 2D mist mask to fog volume descriptor for engine VolumetricFogVolume.
+    mist_fog_volume = {
+        "mask_2d":     mist,
+        "height_m":    3.0,
+        "density_max": 0.6,
+        "color":       (0.7, 0.75, 0.8),
+    }
+    stack.set("mist_fog_volume", mist_fog_volume, "waterfalls")
     stack.set("wet_rock", wet_rock, "waterfalls")
 
     # 7b-caustics: wire compute_riverbed_caustics (previously orphaned).
@@ -2426,6 +2434,10 @@ def pass_waterfalls(
         stack.set("particle_emitter_specs", particle_emitter_specs, "waterfalls")
     # AAA req #6: export velocity field as float2 channel
     stack.set("waterfall_velocity", vel_field, "waterfalls")
+    # Step 10: Wire flow speed to wave amplitude (5 cm displacement per m/s).
+    # Vertex color layout: R=flow_x, G=wave_amp, B=flow_y, A=foam.
+    wave_amp = np.linalg.norm(vel_field, axis=-1) * 0.05
+    stack.set("wave_amplitude_per_vertex", wave_amp.astype(np.float32), "waterfalls")
 
     issues = validate_waterfall_system(chains)
     hard = [i for i in issues if i.is_hard()]
@@ -2436,8 +2448,10 @@ def pass_waterfalls(
         "waterfall_pool_delta",
         "foam",
         "mist",
+        "mist_fog_volume",
         "wet_rock",
         "waterfall_velocity",
+        "wave_amplitude_per_vertex",
         "riverbed_caustics",
         "foam_atlas_path",
     ]
@@ -2679,9 +2693,15 @@ def register_bundle_c_passes() -> None:
                 "waterfall_pool_delta",
                 "foam",
                 "mist",
+                "mist_fog_volume",
                 "wet_rock",
                 "waterfall_velocity",
+                "wave_amplitude_per_vertex",
                 "particle_emitter_specs",
+                "foam_atlas_path",
+                "caustic_atlas_path",
+                "water_depth_atlas_path",
+                "riverbed_caustics",
             ),
             # OVERRIDE: Bundle F's ``caves`` pass writes a ``wet_rock`` mask for
             # dripping/seeping surfaces inside caves. Bundle C's waterfall pass

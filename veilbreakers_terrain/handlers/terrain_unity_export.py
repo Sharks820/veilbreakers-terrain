@@ -506,6 +506,18 @@ def _water_shader_manifest_json(
     except Exception:  # pragma: no cover
         has_flow_dir = False
 
+    # Bind rasterized atlas paths produced by pass_waterfalls (Step 4 AAA wiring).
+    # Falls back to static asset-path convention when the pass hasn't run.
+    foam_atlas_path: Optional[str] = None
+    caustic_atlas_path: Optional[str] = None
+    water_depth_atlas_path: Optional[str] = None
+    try:
+        foam_atlas_path = stack.get("foam_atlas_path") if hasattr(stack, "get") else None
+        caustic_atlas_path = stack.get("caustic_atlas_path") if hasattr(stack, "get") else None
+        water_depth_atlas_path = stack.get("water_depth_atlas_path") if hasattr(stack, "get") else None
+    except Exception:  # pragma: no cover
+        pass
+
     def _common_material(
         name: str,
         base_color: List[float],
@@ -516,7 +528,7 @@ def _water_shader_manifest_json(
             "material_id": name,
             "base_color": base_color,
             "deep_color": deep_color,
-            "caustic_texture": f"Caustics/{name}_caustic.png",
+            "caustic_texture": caustic_atlas_path or f"Caustics/{name}_caustic.png",
             "caustic_tiling": 4.0 if hero else 2.0,
             "caustic_strength": 0.75 if hero else 0.5,
             "normal_map": f"Normals/{name}_normal.png",
@@ -525,7 +537,7 @@ def _water_shader_manifest_json(
             "flow_map_texture": f"Flow/{name}_flowmap.png" if not has_flow_dir else None,
             "flow_speed_multiplier": 1.0,
             "foam_channel": "vertex_alpha" if has_foam else None,
-            "foam_texture": f"Foam/{name}_foam.png",
+            "foam_texture": foam_atlas_path or f"Foam/{name}_foam.png",
             "transparency_curve": [
                 {"depth_m": 0.0, "alpha": 0.35},
                 {"depth_m": 0.5, "alpha": 0.55},
@@ -580,6 +592,11 @@ def _water_shader_manifest_json(
         "unity_scale_factor": UNITY_SCALE_FACTOR,
         "hero_profile": hero,
         "materials": materials,
+        "shader_textures": {
+            "foam_texture":    foam_atlas_path,
+            "caustic_texture": caustic_atlas_path,
+            "_WaterDepthTex":  water_depth_atlas_path,
+        },
         "shader_integration_notes": {
             "unity_hdrp": (
                 "Plug materials into HDRP Water Surface. Use Color2 vertex "

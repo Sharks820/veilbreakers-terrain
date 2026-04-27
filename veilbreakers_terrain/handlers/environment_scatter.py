@@ -2880,6 +2880,8 @@ def _scatter_pass(
             wy = pos[1] - terrain_half_y
             if not _passes_species_constraints(_sid, pos):
                 continue
+            if _in_building(wx, wy) or _in_clearing(wx, wy):
+                continue
             if not _passes_affinity(_spec_row, pos, wx, wy):
                 continue
             # density + biome multiplier

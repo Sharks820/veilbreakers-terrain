@@ -92,18 +92,13 @@ def sample_world_height(
     normalize: bool = False,
     **kwargs: Any,
 ) -> float:
-    """Sample a deterministic height at a world coordinate."""
-    if width == 1 and height == 1:
-        return _sample_single_height(
-            world_x,
-            world_y,
-            scale=scale,
-            cell_size=cell_size,
-            seed=seed,
-            terrain_type=terrain_type,
-            normalize=normalize,
-            **kwargs,
-        )
+    """Sample a deterministic height at a world coordinate.
+
+    Always routes through ``generate_world_heightmap`` so the 3-layer
+    macro+meso+micro blend is identical regardless of window size — a single
+    point query returns the same value as the same point queried inside a
+    larger window.
+    """
     hmap = generate_world_heightmap(
         width=width,
         height=height,
