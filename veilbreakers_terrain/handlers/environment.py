@@ -3417,6 +3417,14 @@ def handle_generate_waterfall(params: dict) -> dict:
             )
             result["functional_objects_materialized"] = bool(created_names)
             result["functional_objects_created"] = created_names
+            # Materialise actual volumetric mist object at the mist anchor position.
+            mist_pos = result.get("functional_object_positions", {}).get("mist_volume")
+            if mist_pos is not None:
+                _materialise_mist_volume(
+                    mist_pos,
+                    parent=obj,
+                    height_m=float(result.get("height", 3.0)),
+                )
         except Exception:
             logger.debug(
                 "Failed to publish waterfall functional objects for %s",
@@ -3908,6 +3916,17 @@ def handle_carve_river(params: dict) -> dict:
     width = params.get("width", 2)
     depth = params.get("depth", 0.05)
     seed = params.get("seed", 0)
+
+    # Manning-based width: if flow_accumulation is supplied, override static width.
+    flow_acc = params.get("flow_accumulation")
+    if flow_acc is not None:
+        try:
+            from ._water_network import compute_river_width
+            cell_size_m = float(params.get("cell_size_m", 1.0))
+            width_m = compute_river_width(float(flow_acc))
+            width = max(1, int(round(width_m / cell_size_m)))
+        except Exception:
+            pass  # fall back to static width
 
     obj = bpy.data.objects.get(terrain_name)
     if obj is None:
@@ -5577,6 +5596,78 @@ def _publish_waterfall_functional_objects(
     return created
 
 
+def _materialise_mist_volume(
+    mist_pos: list | tuple,
+    *,
+    parent: Any | None = None,
+    height_m: float = 3.0,
+    collection: Any | None = None,
+) -> Any | None:
+    """Create a volumetric mist mesh at *mist_pos* using PrincipalVolume shader.
+
+    The mist volume is a cube scaled to approximate the spray cone above a
+    waterfall impact pool. Returns the Blender object or None when bpy is
+    unavailable. The object is parented to *parent* when provided so it
+    moves with the waterfall.
+    """
+    if bpy is None:
+        return None
+    try:
+        import bmesh as _bmesh
+
+        col = collection or getattr(
+            getattr(bpy, "context", None) and bpy.context.collection, "", None
+        )
+        if col is None and hasattr(bpy, "context") and bpy.context is not None:
+            col = bpy.context.collection
+
+        # Half-extent: 60% of drop height for width, 40% for vertical rise
+        hw = max(0.4, float(height_m) * 0.60)
+        hh = max(0.3, float(height_m) * 0.40)
+
+        mesh_data = bpy.data.meshes.new("MistVolume_mesh")
+        bm = _bmesh.new()
+        _bmesh.ops.create_cube(bm, size=1.0)
+        bm.to_mesh(mesh_data)
+        bm.free()
+
+        mist_obj = bpy.data.objects.new("WaterfallMist", mesh_data)
+        mist_obj.location = tuple(float(v) for v in mist_pos[:3])
+        mist_obj.scale = (hw, hw, hh)
+        if col is not None:
+            col.objects.link(mist_obj)
+        if parent is not None:
+            mist_obj.parent = parent
+            mat_inv = getattr(mist_obj, "matrix_parent_inverse", None)
+            if mat_inv is not None and hasattr(parent, "matrix_world"):
+                try:
+                    mist_obj.matrix_parent_inverse = parent.matrix_world.inverted()
+                except Exception:
+                    pass
+
+        # Volume scatter material for waterfall mist
+        mat = bpy.data.materials.new("MistVolume_mat")
+        mat.use_nodes = True
+        if mat.node_tree:
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+            nodes.clear()
+            out = nodes.new("ShaderNodeOutputMaterial")
+            out.location = (300, 0)
+            vol = nodes.new("ShaderNodeVolumePrincipled")
+            vol.location = (100, 0)
+            vol.inputs["Density"].default_value = 0.04
+            vol.inputs["Anisotropy"].default_value = 0.30
+            if vol.inputs.get("Scatter Color") is not None:
+                vol.inputs["Scatter Color"].default_value = (0.95, 0.97, 1.0, 1.0)
+            links.new(vol.outputs["Volume"], out.inputs["Volume"])
+        mesh_data.materials.append(mat)
+        mist_obj["vb_waterfall_role"] = "mist_volume"
+        return mist_obj
+    except Exception:
+        return None
+
+
 def handle_create_cave_entrance(params: dict) -> dict:
     """Create a terrain-facing cave entrance mesh object from the pure generator.
 
@@ -6488,6 +6579,45 @@ def _ensure_water_material(
         normal_input = bsdf.inputs.get("Normal")
         if normal_input:
             links.new(bump_node.outputs["Normal"], normal_input)
+
+        # Riverbed caustics: Voronoi-distance emission that fakes refracted light
+        # patterns on the riverbed. Only wired for full-volume water (not surface_only
+        # preview mode). Strength 0.06 is just above perceptible without oversaturating.
+        if not surface_only:
+            try:
+                caus_coord = nodes.new("ShaderNodeTexCoord")
+                caus_coord.location = (-640, -400)
+                caus_vor = nodes.new("ShaderNodeTexVoronoi")
+                caus_vor.location = (-440, -400)
+                if hasattr(caus_vor, "voronoi_dimensions"):
+                    caus_vor.voronoi_dimensions = "3D"
+                caus_vor.inputs["Scale"].default_value = 6.0
+                if caus_vor.inputs.get("Randomness") is not None:
+                    caus_vor.inputs["Randomness"].default_value = 0.85
+                links.new(caus_coord.outputs["Generated"], caus_vor.inputs["Vector"])
+                caus_ramp = nodes.new("ShaderNodeValToRGB")
+                caus_ramp.location = (-220, -400)
+                if hasattr(caus_ramp, "color_ramp"):
+                    caus_ramp.color_ramp.elements[0].position = 0.50
+                    caus_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+                    caus_ramp.color_ramp.elements[1].position = 0.72
+                    caus_ramp.color_ramp.elements[1].color = (0.22, 0.32, 0.38, 1.0)
+                dist_out = caus_vor.outputs.get("Distance")
+                if dist_out is not None and caus_ramp.inputs.get("Fac") is not None:
+                    links.new(dist_out, caus_ramp.inputs["Fac"])
+                caus_emit = nodes.new("ShaderNodeEmission")
+                caus_emit.location = (10, -380)
+                caus_emit.inputs["Strength"].default_value = 0.06
+                if caus_ramp.outputs.get("Color") is not None:
+                    links.new(caus_ramp.outputs["Color"], caus_emit.inputs["Color"])
+                caus_add = nodes.new("ShaderNodeAddShader")
+                caus_add.location = (200, -200)
+                links.new(bsdf.outputs["BSDF"], caus_add.inputs[0])
+                links.new(caus_emit.outputs["Emission"], caus_add.inputs[1])
+                links.new(caus_add.outputs["Shader"], output.inputs["Surface"])
+            except Exception:
+                pass  # noqa: L2-04 best-effort caustic wiring
+
     return mat
 
 
@@ -6980,7 +7110,10 @@ def _build_level_water_surface_from_terrain(
             # at 0.5m, 17% at 5m. Result approaches 1 at the surface (shallow) and 0
             # in deep water, driving the deep→shallow colour mix correctly.
             beer_fac = math.exp(-0.35 * _vertex_depth.get(idx, 0.0))
-            foam = max(0.0, min(1.0, (beer_fac - 0.24) / 0.28))
+            # Smoothstep arc instead of flat linear ramp — gives organic foam
+            # accumulation: slow at deep/shallow extremes, peak around mid-shore.
+            _ft = max(0.0, min(1.0, (beer_fac - 0.24) / 0.28))
+            foam = _ft * _ft * (3.0 - 2.0 * _ft)
             loop[flow_layer] = (beer_fac, 0.5, 0.5, foam)
             loop[uv_layer].uv = (wx / uv_tile, wy / uv_tile)
             # FlowData: R=flow_x, G=flow_z, B=speed, A=depth_factor (1=shallow)
