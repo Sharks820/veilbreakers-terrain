@@ -298,6 +298,18 @@ class TerrainMaskStack:
     riverbed_caustics: Optional[np.ndarray] = None
     tidal: Optional[np.ndarray] = None
     waterfall_velocity: Optional[np.ndarray] = None
+    # Float32 (H, W): per-cell wave displacement amplitude in metres.
+    # Derived from waterfall_velocity magnitude * 0.05 (5 cm per m/s).
+    # Bound to vertex color G channel for water shader tessellation input.
+    wave_amplitude_per_vertex: Optional[np.ndarray] = None
+    # Fog volume descriptor for waterfall mist zones (engine-side VolumetricFogVolume).
+    # Dict with keys: mask_2d (H,W ndarray), height_m (float), density_max (float), color (tuple).
+    mist_fog_volume: Optional[Dict[str, Any]] = None
+    # Resolved PNG atlas paths written by rasterize_channel_to_atlas in pass_waterfalls.
+    # Bound into water_shader_manifest.json shader_textures block for Unity/Unreal import.
+    foam_atlas_path: Optional[str] = None
+    caustic_atlas_path: Optional[str] = None
+    water_depth_atlas_path: Optional[str] = None
     # Manning-based flow speed per cell — float32 (H, W) in [0, 1].
     # 0 = still water, 1 = max velocity (95th-percentile normalised).
     # Formula: speed = 0.8 * slope^0.5 * accumulation^0.3; n ≈ 0.035 (river).
@@ -625,6 +637,10 @@ class TerrainMaskStack:
             # Water depth channels (Pass 5 supplement — bathymetry + gameplay zones)
             "bathymetry",
             "water_depth_zone",
+            # AAA water wiring — wave amplitude per vertex (Steps 7-12)
+            "wave_amplitude_per_vertex",
+            # Water shader channels (riverbed caustics)
+            "riverbed_caustics",
         ),
     )
 
@@ -771,6 +787,8 @@ class TerrainMaskStack:
         "lod_bias":               ("f", 2),
         "ambient_occlusion_bake": ("f", 2),
         "albedo_shift_rgb":       ("f", 3),
+        "wave_amplitude_per_vertex": ("f", 2),
+        "riverbed_caustics":         ("f", 2),
     }
 
     _OPAQUE_CHANNELS: ClassVar[Tuple[str, ...]] = (
@@ -780,6 +798,11 @@ class TerrainMaskStack:
         "audio_zone_list",
         "particle_emitter_specs",
         "talus_boulder_placements",
+        # Water atlas paths (str) and fog volume descriptor (dict)
+        "mist_fog_volume",
+        "foam_atlas_path",
+        "caustic_atlas_path",
+        "water_depth_atlas_path",
     )
 
     def set(self, channel: str, value: Any, pass_name: str) -> None:
