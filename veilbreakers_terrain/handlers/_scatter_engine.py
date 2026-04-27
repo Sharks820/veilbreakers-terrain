@@ -673,8 +673,10 @@ def context_scatter(
     """
     rng = random.Random(seed)
 
-    # min_distance inversely proportional to density
-    min_dist = max(1.0, 3.0 / max(prop_density, 0.01))
+    # min_distance inversely proportional to density.
+    # scalar=0.9 gives ~3m separation at prop_density=0.3 (moderate density).
+    # Old scalar=3.0 produced 10m separation at 0.3, making areas feel empty.
+    min_dist = max(1.0, 0.9 / max(prop_density, 0.01))
     candidates = poisson_disk_sample(area_size, area_size, min_dist, seed=seed)
 
     # Pre-compute EDT exclusion distances if scipy available
