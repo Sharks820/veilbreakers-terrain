@@ -23,7 +23,7 @@ import math
 
 import pytest
 
-from blender_addon.handlers.terrain_materials import (
+from veilbreakers_terrain.handlers.terrain_materials import (
     BIOME_PALETTES,
     BIOME_PALETTES_V2,
     REQUIRED_LAYER_KEYS,
@@ -116,7 +116,7 @@ class TestBiomePaletteStructure:
         "crystal_cavern", "deep_forest",
     }
 
-    def test_all_14_biomes_present(self):
+    def test_all_16_biomes_present(self):
         assert len(BIOME_PALETTES_V2) == 16
 
     def test_expected_biome_names(self):
@@ -332,7 +332,7 @@ class TestV1PaletteNewBiomes:
     NEW_BIOMES = ["desert", "coastal", "grasslands", "mushroom_forest",
                   "crystal_cavern", "deep_forest"]
 
-    def test_v1_has_14_biomes(self):
+    def test_v1_has_16_biomes(self):
         assert len(BIOME_PALETTES) == 16
 
     @pytest.mark.parametrize("biome_name", NEW_BIOMES)
@@ -608,7 +608,7 @@ class TestBiomeTransition:
         # verifies the noise function itself is deterministic and different
         # from the no-noise case by checking the blend t values differ.
         # We verify this structurally: noise output varies with position.
-        from blender_addon.handlers.terrain_materials import _simple_noise_2d
+        from veilbreakers_terrain.handlers.terrain_materials import _simple_noise_2d
 
         noise_values = set()
         for y_i in range(5):
@@ -806,8 +806,8 @@ class TestTerrainMaterialDedup:
         mock_bpy.data.materials.get = mock_materials_get
         mock_bpy.data.materials.new = mock_materials_new
 
-        with patch("blender_addon.handlers.terrain_materials.bpy", mock_bpy):
-            from blender_addon.handlers.terrain_materials import create_biome_terrain_material
+        with patch("veilbreakers_terrain.handlers.terrain_materials.bpy", mock_bpy):
+            from veilbreakers_terrain.handlers.terrain_materials import create_biome_terrain_material
             # First call -- creates new
             create_biome_terrain_material("thornwood_forest")
             # Second call -- should reuse existing
@@ -836,8 +836,8 @@ class TestTerrainMaterialDedup:
         from unittest.mock import MagicMock, patch
 
         mock_bpy = MagicMock()
-        with patch("blender_addon.handlers.terrain_materials.bpy", mock_bpy):
-            from blender_addon.handlers.terrain_materials import create_biome_terrain_material
+        with patch("veilbreakers_terrain.handlers.terrain_materials.bpy", mock_bpy):
+            from veilbreakers_terrain.handlers.terrain_materials import create_biome_terrain_material
 
             with pytest.raises(ValueError, match="Unknown biome"):
                 create_biome_terrain_material("not_a_real_biome")

@@ -16,7 +16,7 @@ import pytest
 
 
 def _make_stack(tile_size=16, cell_size=1.0, seed=0):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
     h = rng.normal(loc=100.0, scale=5.0, size=(tile_size, tile_size)).astype(np.float64)
@@ -32,7 +32,7 @@ def _make_stack(tile_size=16, cell_size=1.0, seed=0):
 
 
 def _make_intent(stack, protected_zones=(), hero_specs=(), composition_hints=None):
-    from blender_addon.handlers.terrain_semantics import BBox, TerrainIntentState
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState
 
     extent = float(stack.tile_size) * float(stack.cell_size)
     return TerrainIntentState(
@@ -52,7 +52,7 @@ def _make_intent(stack, protected_zones=(), hero_specs=(), composition_hints=Non
 
 
 def test_height_finite_ok_for_clean_stack():
-    from blender_addon.handlers.terrain_validation import validate_height_finite
+    from veilbreakers_terrain.handlers.terrain_validation import validate_height_finite
 
     stack = _make_stack()
     intent = _make_intent(stack)
@@ -60,7 +60,7 @@ def test_height_finite_ok_for_clean_stack():
 
 
 def test_height_finite_fails_on_nan():
-    from blender_addon.handlers.terrain_validation import validate_height_finite
+    from veilbreakers_terrain.handlers.terrain_validation import validate_height_finite
 
     stack = _make_stack()
     stack.height[2, 2] = np.nan
@@ -77,14 +77,14 @@ def test_height_finite_fails_on_nan():
 
 
 def test_height_range_ok_normal_terrain():
-    from blender_addon.handlers.terrain_validation import validate_height_range
+    from veilbreakers_terrain.handlers.terrain_validation import validate_height_range
 
     stack = _make_stack()
     assert validate_height_range(stack, _make_intent(stack)) == []
 
 
 def test_height_range_fails_on_flat_terrain():
-    from blender_addon.handlers.terrain_validation import validate_height_range
+    from veilbreakers_terrain.handlers.terrain_validation import validate_height_range
 
     stack = _make_stack()
     stack.height[:] = 50.0
@@ -93,7 +93,7 @@ def test_height_range_fails_on_flat_terrain():
 
 
 def test_height_range_fails_on_implausible_values():
-    from blender_addon.handlers.terrain_validation import validate_height_range
+    from veilbreakers_terrain.handlers.terrain_validation import validate_height_range
 
     stack = _make_stack()
     stack.height[0, 0] = 1e6
@@ -107,7 +107,7 @@ def test_height_range_fails_on_implausible_values():
 
 
 def test_slope_distribution_ok():
-    from blender_addon.handlers.terrain_validation import validate_slope_distribution
+    from veilbreakers_terrain.handlers.terrain_validation import validate_slope_distribution
 
     stack = _make_stack()
     stack.slope = np.random.default_rng(0).uniform(0.0, 1.0, stack.height.shape)
@@ -116,7 +116,7 @@ def test_slope_distribution_ok():
 
 
 def test_slope_distribution_fails_uniform():
-    from blender_addon.handlers.terrain_validation import validate_slope_distribution
+    from veilbreakers_terrain.handlers.terrain_validation import validate_slope_distribution
 
     stack = _make_stack()
     stack.slope = np.full(stack.height.shape, 0.5, dtype=np.float64)
@@ -125,7 +125,7 @@ def test_slope_distribution_fails_uniform():
 
 
 def test_slope_distribution_info_when_missing():
-    from blender_addon.handlers.terrain_validation import validate_slope_distribution
+    from veilbreakers_terrain.handlers.terrain_validation import validate_slope_distribution
 
     stack = _make_stack()
     issues = validate_slope_distribution(stack, _make_intent(stack))
@@ -133,7 +133,7 @@ def test_slope_distribution_info_when_missing():
 
 
 def test_check_focal_composition_respects_radian_slope_units():
-    from blender_addon.handlers.terrain_validation import check_focal_composition
+    from veilbreakers_terrain.handlers.terrain_validation import check_focal_composition
 
     stack = _make_stack()
     stack.slope = np.full(stack.height.shape, np.radians(35.0), dtype=np.float32)
@@ -147,8 +147,8 @@ def test_check_focal_composition_respects_radian_slope_units():
 
 
 def test_protected_zones_ok_with_baseline():
-    from blender_addon.handlers.terrain_semantics import BBox, ProtectedZoneSpec
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_protected_zones_untouched,
     )
 
@@ -162,8 +162,8 @@ def test_protected_zones_ok_with_baseline():
 
 
 def test_protected_zones_hard_fail_on_mutation():
-    from blender_addon.handlers.terrain_semantics import BBox, ProtectedZoneSpec
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_protected_zones_untouched,
     )
 
@@ -180,8 +180,8 @@ def test_protected_zones_hard_fail_on_mutation():
 
 
 def test_protected_zones_info_when_no_baseline():
-    from blender_addon.handlers.terrain_semantics import BBox, ProtectedZoneSpec
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_protected_zones_untouched,
     )
 
@@ -198,7 +198,7 @@ def test_protected_zones_info_when_no_baseline():
 
 
 def test_seam_ok_smooth_edges():
-    from blender_addon.handlers.terrain_validation import validate_tile_seam_continuity
+    from veilbreakers_terrain.handlers.terrain_validation import validate_tile_seam_continuity
 
     stack = _make_stack(tile_size=16)
     # Replace with a smooth gradient so edges are mellow
@@ -208,7 +208,7 @@ def test_seam_ok_smooth_edges():
 
 
 def test_seam_fails_on_nan_edge():
-    from blender_addon.handlers.terrain_validation import validate_tile_seam_continuity
+    from veilbreakers_terrain.handlers.terrain_validation import validate_tile_seam_continuity
 
     stack = _make_stack(tile_size=16)
     stack.height[0, :] = np.nan
@@ -222,7 +222,7 @@ def test_seam_fails_on_nan_edge():
 
 
 def test_mass_conservation_ok():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_erosion_mass_conservation,
     )
 
@@ -234,7 +234,7 @@ def test_mass_conservation_ok():
 
 
 def test_mass_conservation_soft_fail_imbalance():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_erosion_mass_conservation,
     )
 
@@ -246,7 +246,7 @@ def test_mass_conservation_soft_fail_imbalance():
 
 
 def test_mass_conservation_info_when_unpopulated():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_erosion_mass_conservation,
     )
 
@@ -261,8 +261,8 @@ def test_mass_conservation_info_when_unpopulated():
 
 
 def test_hero_feature_ok_when_mask_populated():
-    from blender_addon.handlers.terrain_semantics import HeroFeatureSpec
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_semantics import HeroFeatureSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_hero_feature_placement,
     )
 
@@ -280,8 +280,8 @@ def test_hero_feature_ok_when_mask_populated():
 
 
 def test_hero_feature_hard_fail_when_channel_missing():
-    from blender_addon.handlers.terrain_semantics import HeroFeatureSpec
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_semantics import HeroFeatureSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_hero_feature_placement,
     )
 
@@ -298,8 +298,8 @@ def test_hero_feature_hard_fail_when_channel_missing():
 
 
 def test_hero_feature_hard_fail_when_signature_missing():
-    from blender_addon.handlers.terrain_semantics import HeroFeatureSpec
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_semantics import HeroFeatureSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_hero_feature_placement,
     )
 
@@ -322,7 +322,7 @@ def test_hero_feature_hard_fail_when_signature_missing():
 
 
 def test_material_coverage_ok():
-    from blender_addon.handlers.terrain_validation import validate_material_coverage
+    from veilbreakers_terrain.handlers.terrain_validation import validate_material_coverage
 
     stack = _make_stack(tile_size=16)
     weights = np.zeros((16, 16, 4), dtype=np.float32)
@@ -335,7 +335,7 @@ def test_material_coverage_ok():
 
 
 def test_material_coverage_fails_sum_mismatch():
-    from blender_addon.handlers.terrain_validation import validate_material_coverage
+    from veilbreakers_terrain.handlers.terrain_validation import validate_material_coverage
 
     stack = _make_stack(tile_size=16)
     weights = np.zeros((16, 16, 3), dtype=np.float32)
@@ -347,7 +347,7 @@ def test_material_coverage_fails_sum_mismatch():
 
 
 def test_material_coverage_soft_fail_layer_dominates():
-    from blender_addon.handlers.terrain_validation import validate_material_coverage
+    from veilbreakers_terrain.handlers.terrain_validation import validate_material_coverage
 
     stack = _make_stack(tile_size=16)
     weights = np.zeros((16, 16, 2), dtype=np.float32)
@@ -359,14 +359,14 @@ def test_material_coverage_soft_fail_layer_dominates():
 
 
 def test_material_coverage_skipped_when_not_populated():
-    from blender_addon.handlers.terrain_validation import validate_material_coverage
+    from veilbreakers_terrain.handlers.terrain_validation import validate_material_coverage
 
     stack = _make_stack(tile_size=16)
     assert validate_material_coverage(stack, _make_intent(stack)) == []
 
 
 def test_material_texel_density_validator_accepts_default_two_layer_stack():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_material_texel_density_coherency,
     )
 
@@ -383,7 +383,7 @@ def test_material_texel_density_validator_accepts_default_two_layer_stack():
 
 
 def test_material_texel_density_validator_flags_below_tier():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_material_texel_density_coherency,
     )
 
@@ -401,7 +401,7 @@ def test_material_texel_density_validator_flags_below_tier():
 
 
 def test_material_texel_density_validator_uses_quality_profile_default_ratio():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         validate_material_texel_density_coherency,
     )
 
@@ -418,7 +418,7 @@ def test_material_texel_density_validator_uses_quality_profile_default_ratio():
 
 
 def test_cliff_screen_coverage_validator_reads_composition_hints():
-    from blender_addon.handlers.terrain_validation import validate_cliff_screen_coverage
+    from veilbreakers_terrain.handlers.terrain_validation import validate_cliff_screen_coverage
 
     stack = _make_stack(tile_size=16)
     intent = _make_intent(
@@ -431,7 +431,7 @@ def test_cliff_screen_coverage_validator_reads_composition_hints():
 
 
 def test_cliff_components_do_not_wrap_across_tile_edges():
-    from blender_addon.handlers.terrain_validation import check_cliff_silhouette_readability
+    from veilbreakers_terrain.handlers.terrain_validation import check_cliff_silhouette_readability
 
     stack = _make_stack(tile_size=8)
     cliff = np.zeros(stack.height.shape, dtype=np.float32)
@@ -453,7 +453,7 @@ def test_cliff_components_do_not_wrap_across_tile_edges():
 
 
 def test_issue_category_routes_mat_prefix_to_materials():
-    from blender_addon.handlers.terrain_validation import _issue_category
+    from veilbreakers_terrain.handlers.terrain_validation import _issue_category
 
     assert _issue_category("MAT_TEXEL_DENSITY_INCOHERENT") == "materials"
 
@@ -464,7 +464,7 @@ def test_issue_category_routes_mat_prefix_to_materials():
 
 
 def test_channel_dtypes_ok():
-    from blender_addon.handlers.terrain_validation import validate_channel_dtypes
+    from veilbreakers_terrain.handlers.terrain_validation import validate_channel_dtypes
 
     stack = _make_stack()
     stack.slope = np.zeros(stack.height.shape, dtype=np.float32)
@@ -472,7 +472,7 @@ def test_channel_dtypes_ok():
 
 
 def test_channel_dtypes_accepts_semantic_mask_kinds():
-    from blender_addon.handlers.terrain_validation import validate_channel_dtypes
+    from veilbreakers_terrain.handlers.terrain_validation import validate_channel_dtypes
 
     stack = _make_stack()
     stack.ridge = np.zeros(stack.height.shape, dtype=bool)
@@ -482,7 +482,7 @@ def test_channel_dtypes_accepts_semantic_mask_kinds():
 
 
 def test_channel_dtypes_fails_wrong_kind():
-    from blender_addon.handlers.terrain_validation import validate_channel_dtypes
+    from veilbreakers_terrain.handlers.terrain_validation import validate_channel_dtypes
 
     stack = _make_stack()
     # heightmap_raw_u16 must be unsigned, not float
@@ -497,7 +497,7 @@ def test_channel_dtypes_fails_wrong_kind():
 
 
 def test_unity_export_hard_fail_when_channels_missing():
-    from blender_addon.handlers.terrain_validation import validate_unity_export_ready
+    from veilbreakers_terrain.handlers.terrain_validation import validate_unity_export_ready
 
     stack = _make_stack()
     issues = validate_unity_export_ready(stack, _make_intent(stack))
@@ -507,7 +507,7 @@ def test_unity_export_hard_fail_when_channels_missing():
 
 
 def test_unity_export_opt_out_is_info_only():
-    from blender_addon.handlers.terrain_validation import validate_unity_export_ready
+    from veilbreakers_terrain.handlers.terrain_validation import validate_unity_export_ready
 
     stack = _make_stack()
     intent = _make_intent(stack, composition_hints={"unity_export_opt_out": True})
@@ -516,7 +516,7 @@ def test_unity_export_opt_out_is_info_only():
 
 
 def test_unity_export_ok_when_channels_populated():
-    from blender_addon.handlers.terrain_validation import validate_unity_export_ready
+    from veilbreakers_terrain.handlers.terrain_validation import validate_unity_export_ready
 
     stack = _make_stack()
     shape = stack.height.shape
@@ -532,7 +532,7 @@ def test_unity_export_ok_when_channels_populated():
 
 
 def test_run_validation_suite_aggregates_issues():
-    from blender_addon.handlers.terrain_validation import run_validation_suite
+    from veilbreakers_terrain.handlers.terrain_validation import run_validation_suite
 
     stack = _make_stack()
     stack.height[0, 0] = np.nan
@@ -543,7 +543,7 @@ def test_run_validation_suite_aggregates_issues():
 
 
 def test_run_validation_suite_ok_when_clean():
-    from blender_addon.handlers.terrain_validation import run_validation_suite
+    from veilbreakers_terrain.handlers.terrain_validation import run_validation_suite
 
     stack = _make_stack()
     stack.slope = np.random.default_rng(0).uniform(0, 1, stack.height.shape)
@@ -557,7 +557,7 @@ def test_run_validation_suite_ok_when_clean():
 
 
 def test_run_validation_suite_surfaces_material_texel_density_issues():
-    from blender_addon.handlers.terrain_validation import run_validation_suite
+    from veilbreakers_terrain.handlers.terrain_validation import run_validation_suite
 
     stack = _make_stack()
     stack.slope = np.random.default_rng(0).uniform(0, 1, stack.height.shape)
@@ -577,7 +577,7 @@ def test_run_validation_suite_surfaces_material_texel_density_issues():
 
 
 def test_run_validation_suite_custom_validators():
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_validation import (
         run_validation_suite,
         validate_height_finite,
     )
@@ -599,8 +599,8 @@ def test_run_validation_suite_custom_validators():
 
 @pytest.fixture
 def _build_controller_with_checkpoint():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainPipelineState,
@@ -627,19 +627,22 @@ def _build_controller_with_checkpoint():
 
 
 def test_pass_validation_full_returns_pass_result(_build_controller_with_checkpoint):
-    from blender_addon.handlers.terrain_validation import pass_validation_full
+    from veilbreakers_terrain.handlers.terrain_validation import pass_validation_full
 
     controller, _ = _build_controller_with_checkpoint()
     result = pass_validation_full(controller.state, None)
     assert result.pass_name == "validation_full"
-    assert result.status in ("ok", "warning", "failed")
+    assert result.status in ("ok", "warning"), (
+        f"pass_validation_full returned '{result.status}' on a clean stack — "
+        "validation must not fail on well-formed input"
+    )
 
 
 def test_pass_validation_full_triggers_rollback_on_hard_fail(
     _build_controller_with_checkpoint,
 ):
-    from blender_addon.handlers.terrain_checkpoints import save_checkpoint
-    from blender_addon.handlers.terrain_validation import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_validation import (
         bind_active_controller,
         pass_validation_full,
     )
@@ -693,8 +696,8 @@ def test_bind_active_controller_isolated_per_thread():
 
 
 def test_register_bundle_d_passes_adds_validation_full():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_validation import register_bundle_d_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_validation import register_bundle_d_passes
 
     TerrainPassController.clear_registry()
     register_bundle_d_passes()
