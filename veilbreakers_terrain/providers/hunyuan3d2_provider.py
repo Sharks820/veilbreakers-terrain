@@ -179,7 +179,13 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         # --- in-process job registry for submit/poll/download shim ---
         # Maps synthetic job_id -> (thread, result_holder)
         # result_holder is a dict with keys: "status", "glb_path", "error"
+        # _jobs_lock guards both the registry mutation and per-holder
+        # status reads so poll()/download() never observe a torn write
+        # from the worker thread.  Without this, CPython's GIL happens
+        # to make the single-key write atomic but the Python memory
+        # model does not guarantee it across implementations.
         self._jobs: Dict[str, Tuple[threading.Thread, dict]] = {}
+        self._jobs_lock = threading.Lock()
 
         logger.info(
             "[hunyuan3d2] mode=%s space=%s endpoint=%s",
@@ -290,7 +296,20 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         if isinstance(result, (list, tuple)):
             if request.texture and len(result) >= 2:
                 # generation_all: index 1 = textured mesh (index 0 = white/untextured)
-                glb_src = str(result[1]) if result[1] is not None else str(result[0])
+                if result[1] is not None:
+                    glb_src = str(result[1])
+                else:
+                    # The Space failed to texture — degrading to the white mesh
+                    # would silently strip PBR.  Loud-fail instead so the caller
+                    # can retry or pick another provider; AAA pipelines must
+                    # never substitute an untextured mesh for a textured one
+                    # without consent.
+                    raise RuntimeError(
+                        f"[hunyuan3d2] generation_all returned no textured mesh "
+                        f"for species {request.species_id}; the HF Space likely "
+                        f"failed mid-texturing (white_mesh={result[0]!r}). "
+                        f"Retry, or call with texture=False to accept shape only."
+                    )
             else:
                 # shape_generation or fallback: index 0 = mesh file
                 glb_src = str(result[0])
@@ -341,18 +360,22 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         tmp_dir = Path(tempfile.mkdtemp(prefix=f"hy3d_{job_id[:8]}_"))
 
         def _run():
-            holder["status"] = JobStatus.PROCESSING
+            with self._jobs_lock:
+                holder["status"] = JobStatus.PROCESSING
             try:
                 glb = self._hf_generate_blocking(request, tmp_dir)
-                holder["glb_path"] = glb
-                holder["status"] = JobStatus.COMPLETED
+                with self._jobs_lock:
+                    holder["glb_path"] = glb
+                    holder["status"] = JobStatus.COMPLETED
             except Exception as exc:
                 logger.error("[hunyuan3d2] job %s failed: %s", job_id, exc)
-                holder["error"] = exc
-                holder["status"] = JobStatus.FAILED
+                with self._jobs_lock:
+                    holder["error"] = exc
+                    holder["status"] = JobStatus.FAILED
 
         t = threading.Thread(target=_run, daemon=True, name=f"hy3d-{job_id[:8]}")
-        self._jobs[job_id] = (t, holder)
+        with self._jobs_lock:
+            self._jobs[job_id] = (t, holder)
         t.start()
         logger.info(
             "[hunyuan3d2] queued job %s for species %s (mode=%s)",
@@ -371,11 +394,12 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         if self._mode == _MODE_LOCAL:
             return self._local_poll(job_id)
 
-        entry = self._jobs.get(job_id)
-        if entry is None:
-            raise KeyError(f"[hunyuan3d2] unknown job_id {job_id!r}")
-        _thread, holder = entry
-        return holder["status"]
+        with self._jobs_lock:
+            entry = self._jobs.get(job_id)
+            if entry is None:
+                raise KeyError(f"[hunyuan3d2] unknown job_id {job_id!r}")
+            _thread, holder = entry
+            return holder["status"]
 
     def download(self, job_id: str, dest_dir: Path, *, species_id: str) -> Path:
         """Copy the completed GLB from the thread's temp dir to dest_dir.
@@ -386,17 +410,26 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         if self._mode == _MODE_LOCAL:
             return self._local_download(job_id, dest_dir, species_id=species_id)
 
-        entry = self._jobs.get(job_id)
-        if entry is None:
-            raise KeyError(f"[hunyuan3d2] unknown job_id {job_id!r}")
-        thread, holder = entry
+        with self._jobs_lock:
+            entry = self._jobs.get(job_id)
+            if entry is None:
+                raise KeyError(f"[hunyuan3d2] unknown job_id {job_id!r}")
+            thread, holder = entry
         thread.join()  # wait for completion if still running
 
-        if holder["status"] == JobStatus.FAILED:
+        with self._jobs_lock:
+            status = holder["status"]
+            error = holder.get("error")
+            glb_tmp = holder.get("glb_path")
+        if status == JobStatus.FAILED:
             raise RuntimeError(
-                f"[hunyuan3d2] job {job_id} failed: {holder['error']}"
+                f"[hunyuan3d2] job {job_id} failed: {error}"
             )
-        glb_tmp: Path = holder["glb_path"]
+        if glb_tmp is None:
+            raise RuntimeError(
+                f"[hunyuan3d2] job {job_id} completed without a glb_path "
+                f"(status={status})"
+            )
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_file = dest_dir / glb_tmp.name
         if glb_tmp != dest_file:
@@ -439,9 +472,46 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
                 max_tris=max_tris,
             )
 
-        # Direct blocking path for HF Space / Endpoint
+        # Direct blocking path for HF Space / Endpoint.
+        # gradio_client.predict() has no native timeout — wrap it in a thread
+        # bounded by timeout_s so a stuck Space queue cannot hang the pipeline
+        # indefinitely.  AAA pipelines must always have a hard ceiling.
         dest_dir.mkdir(parents=True, exist_ok=True)
-        glb_path = self._hf_generate_blocking(request, dest_dir)
+
+        result_box: dict[str, Any] = {"glb": None, "exc": None}
+
+        def _runner() -> None:
+            try:
+                result_box["glb"] = self._hf_generate_blocking(request, dest_dir)
+            except BaseException as exc:  # noqa: BLE001 — propagate via box
+                result_box["exc"] = exc
+
+        worker = threading.Thread(
+            target=_runner,
+            daemon=True,
+            name=f"hy3d-blocking-{request.species_id[:16]}",
+        )
+        worker.start()
+        worker.join(timeout=timeout_s)
+        if worker.is_alive():
+            # Daemon thread will be torn down at interpreter exit; we cannot
+            # cancel the underlying HTTP request, but we surface a clean
+            # TimeoutError so the caller can move on or retry.
+            raise TimeoutError(
+                f"[hunyuan3d2] generate_blocking exceeded timeout_s={timeout_s}s "
+                f"for species {request.species_id} (mode={self._mode}); "
+                f"underlying gradio_client.predict() may still be running in the "
+                f"background daemon thread."
+            )
+        if result_box["exc"] is not None:
+            raise result_box["exc"]  # type: ignore[misc]
+        glb_path = result_box["glb"]
+        if glb_path is None:
+            raise RuntimeError(
+                f"[hunyuan3d2] generate_blocking finished with no glb_path for "
+                f"species {request.species_id}"
+            )
+
         result = self.validate(
             glb_path,
             species_id=request.species_id,

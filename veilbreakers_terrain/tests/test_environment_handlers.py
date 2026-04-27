@@ -949,7 +949,9 @@ class TestRoadHandlerTerrainAwareRouting:
         """LookupError/ValueError/RuntimeError should fall back + annotate result."""
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        monkeypatch.delenv("VEILBREAKERS_ROAD_STRICT", raising=False)
+        # Strict default flipped to ON in production. To test the legacy
+        # fallback path explicitly, opt out via VEILBREAKERS_ROAD_STRICT=0.
+        monkeypatch.setenv("VEILBREAKERS_ROAD_STRICT", "0")
 
         terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
 
@@ -987,7 +989,11 @@ class TestRoadHandlerTerrainAwareRouting:
         """Exceptions outside the narrow whitelist must propagate (not fall back)."""
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        monkeypatch.delenv("VEILBREAKERS_ROAD_STRICT", raising=False)
+        # Strict default flipped to ON in production. Force lenient mode so
+        # this test exercises the whitelist-narrowing logic (not the strict
+        # re-raise short-circuit) — the synthetic _UnexpectedBoom should
+        # still propagate even with strict=0.
+        monkeypatch.setenv("VEILBREAKERS_ROAD_STRICT", "0")
 
         terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
 
