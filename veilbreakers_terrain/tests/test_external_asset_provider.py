@@ -226,18 +226,16 @@ def test_hunyuan3d2_default_mode_is_hf_space(monkeypatch):
     assert p._mode == _MODE_HF_SPACE
 
 
-def test_hunyuan3d2_local_mode_via_env(monkeypatch):
-    """HUNYUAN3D2_MODE=local must select local mode."""
-    from veilbreakers_terrain.providers.hunyuan3d2_provider import (
-        Hunyuan3D2Provider,
-        _MODE_LOCAL,
-    )
+def test_hunyuan3d2_local_mode_raises(monkeypatch):
+    """HUNYUAN3D2_MODE=local must raise immediately — local requires 16-24 GB VRAM."""
+    import pytest
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
 
     monkeypatch.setenv("HUNYUAN3D2_MODE", "local")
     monkeypatch.delenv("HUNYUAN3D2_HF_ENDPOINT", raising=False)
 
-    p = Hunyuan3D2Provider()
-    assert p._mode == _MODE_LOCAL
+    with pytest.raises(RuntimeError, match="HUNYUAN3D2_MODE=local is not supported"):
+        Hunyuan3D2Provider()
 
 
 def test_hunyuan3d2_has_abc_methods():
