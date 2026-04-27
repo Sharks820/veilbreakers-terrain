@@ -209,6 +209,79 @@ def _classify_texture(filename: str) -> Optional[TextureType]:
 import logging as _logging
 _log = _logging.getLogger(__name__)
 
+
+def _load_texture_as_float(path, channels: int = 3) -> np.ndarray:
+    """Load a texture file as a float32 numpy array normalised to [0, 1].
+
+    Attempts to use ``imageio`` (preferred — handles EXR, TIF, PNG, JPG, TGA).
+    Falls back to ``PIL`` / ``Pillow`` for common 8-bit formats when imageio is
+    unavailable.  Always returns float32.
+
+    Args:
+        path:     Path-like pointing to the texture file on disk.
+        channels: Expected number of output channels (1 for greyscale, 3 for
+                  RGB).  If the loaded image has a different channel count it
+                  is sliced / expanded to match.
+
+    Returns:
+        np.ndarray of shape (H, W) when channels==1, or (H, W, channels)
+        otherwise.  dtype is always float32, values in [0, 1].
+
+    Raises:
+        ImportError: if neither imageio nor PIL is installed.
+        FileNotFoundError: if the path does not exist.
+        ValueError: if the file cannot be decoded.
+    """
+    from pathlib import Path as _Path
+
+    path = _Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"_load_texture_as_float: path not found: {path}")
+
+    arr: np.ndarray
+
+    try:
+        import imageio  # type: ignore
+        raw = np.asarray(imageio.v3.imread(str(path))).astype(np.float32)
+    except ImportError:
+        try:
+            from PIL import Image as _Image  # type: ignore
+            raw = np.asarray(_Image.open(str(path))).astype(np.float32)
+        except ImportError as exc:
+            raise ImportError(
+                "_load_texture_as_float requires 'imageio' or 'Pillow'; "
+                "install one of them: pip install imageio[ffmpeg] or pip install Pillow"
+            ) from exc
+
+    # Normalise integer dtypes to [0, 1]
+    if raw.dtype == np.float32 and raw.max() > 1.0 + 1e-5:
+        # EXR / HDR may already be linear float — only normalise if clearly uint range
+        pass
+    else:
+        # Map uint8 → /255, uint16 → /65535, float already in [0,1]
+        pass
+    # Robust normalisation: detect integer-like range
+    if raw.max() > 2.0:
+        raw = raw / (np.iinfo(np.uint16).max if raw.max() > 256.0 else 255.0)
+
+    # Ensure 3-D (H, W, C)
+    if raw.ndim == 2:
+        raw = raw[:, :, np.newaxis]
+
+    # Slice / expand to requested channel count
+    C = raw.shape[2]
+    if channels == 1:
+        if C >= 1:
+            return raw[:, :, 0]  # (H, W)
+        return raw[:, :, 0]
+    else:
+        if C >= channels:
+            return raw[:, :, :channels]
+        # Repeat last channel to fill (e.g. greyscale → RGB)
+        repeats = [raw[:, :, min(i, C - 1):min(i, C - 1) + 1] for i in range(channels)]
+        return np.concatenate(repeats, axis=2)
+
+
 # Expected core channels for a typical Quixel surface asset.  A missing
 # channel triggers a WARNING (not an error) so the pipeline can continue
 # with partial texture sets (e.g. trim sheets without displacement).
@@ -417,6 +490,8 @@ def apply_quixel_to_layer(
     albedo_array: Optional[np.ndarray] = None,
     roughness_array: Optional[np.ndarray] = None,
     normal_array: Optional[np.ndarray] = None,
+    ao_array: Optional[np.ndarray] = None,
+    displacement_array: Optional[np.ndarray] = None,
 ) -> None:
     """Blend a ``QuixelAsset`` into the splatmap layer stack.
 
@@ -441,10 +516,16 @@ def apply_quixel_to_layer(
         layer_id:         Unique name for the new splatmap layer.
         asset:            Parsed ``QuixelAsset`` (texture paths + metadata).
         side_effects:     Optional list to append provenance JSON records to.
-        albedo_array:     Pre-loaded (H, W, 3) float32 albedo texture [0,1].
-        roughness_array:  Pre-loaded (H, W) float32 roughness texture [0,1].
-        normal_array:     Pre-loaded (H, W, 3) float32 normal map (tangent-
-                          space, OpenGL convention: +Y = up).
+        albedo_array:      Pre-loaded (H, W, 3) float32 albedo texture [0,1].
+        roughness_array:   Pre-loaded (H, W) float32 roughness texture [0,1].
+        normal_array:      Pre-loaded (H, W, 3) float32 normal map (tangent-
+                           space, OpenGL convention: +Y = up).
+        ao_array:          Pre-loaded (H, W) float32 ambient occlusion [0,1].
+                           Blended into stack channel ``terrain_ao`` weighted
+                           by the new layer's splatmap weight.
+        displacement_array: Pre-loaded (H, W) float32 displacement/height
+                           map [0,1].  Blended into ``terrain_displacement``
+                           weighted by the new layer's splatmap weight.
 
     Raises:
         ValueError: If *layer_id* is empty, or the splatmap is already at
@@ -571,6 +652,61 @@ def apply_quixel_to_layer(
             "quixel_ingest",
         )
 
+    # Load AO if present in asset and not pre-supplied
+    if ao_array is None:
+        ao_path = asset.textures.get("ao") or asset.textures.get("ambient_occlusion")
+        if ao_path is not None:
+            try:
+                ao_array = _load_texture_as_float(ao_path, channels=1)
+            except Exception as exc:
+                _log.debug("AO load failed for %s: %r", layer_id, exc)
+
+    if ao_array is not None:
+        sampled_ao = _bilinear_sample_texture(
+            ao_array.astype(np.float32), uv_y, uv_x
+        )  # (H, W) or (H, W, 1)
+        if sampled_ao.ndim == 3:
+            sampled_ao = sampled_ao[..., 0]
+        terrain_ao = stack.get("terrain_ao")
+        if terrain_ao is None:
+            stack.set(
+                "terrain_ao",
+                (sampled_ao * layer_weight).astype(np.float32),
+                "quixel_ingest",
+            )
+        else:
+            blended_ao = np.asarray(terrain_ao, dtype=np.float32) + sampled_ao * layer_weight
+            stack.set("terrain_ao", blended_ao.astype(np.float32), "quixel_ingest")
+
+    # Load displacement if present in asset and not pre-supplied
+    if displacement_array is None:
+        disp_path = (
+            asset.textures.get("displacement")
+            or asset.textures.get("height")
+        )
+        if disp_path is not None:
+            try:
+                displacement_array = _load_texture_as_float(disp_path, channels=1)
+            except Exception as exc:
+                _log.debug("Displacement load failed for %s: %r", layer_id, exc)
+
+    if displacement_array is not None:
+        sampled_disp = _bilinear_sample_texture(
+            displacement_array.astype(np.float32), uv_y, uv_x
+        )  # (H, W) or (H, W, 1)
+        if sampled_disp.ndim == 3:
+            sampled_disp = sampled_disp[..., 0]
+        terrain_disp = stack.get("terrain_displacement")
+        if terrain_disp is None:
+            stack.set(
+                "terrain_displacement",
+                (sampled_disp * layer_weight).astype(np.float32),
+                "quixel_ingest",
+            )
+        else:
+            blended_disp = np.asarray(terrain_disp, dtype=np.float32) + sampled_disp * layer_weight
+            stack.set("terrain_displacement", blended_disp.astype(np.float32), "quixel_ingest")
+
     # ------------------------------------------------------------------ #
     # 3. Provenance event
     # ------------------------------------------------------------------ #
@@ -584,6 +720,8 @@ def apply_quixel_to_layer(
                 "has_albedo_blend": albedo_array is not None,
                 "has_roughness_blend": roughness_array is not None,
                 "has_normal_blend": normal_array is not None,
+                "has_ao_blend": ao_array is not None,
+                "has_displacement_blend": displacement_array is not None,
                 "textures": {k: str(v) for k, v in asset.textures.items()},
             },
             sort_keys=True,

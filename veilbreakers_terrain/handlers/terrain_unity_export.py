@@ -328,6 +328,90 @@ def _ensure_little_endian(arr: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(arr_np.astype(arr_np.dtype.newbyteorder("<"), copy=False))
 
 
+def _flip_normal_y(normal_arr: np.ndarray) -> np.ndarray:
+    """Convert OpenGL normal map (ambientCG/Poly Haven) to DirectX/HDRP convention.
+
+    OpenGL convention: +Y points toward the top of the texture (green = up).
+    DirectX / Unity HDRP convention: +Y points away from the surface in screen
+    space, which corresponds to flipping the G channel so green = down in the
+    stored texture.  This is the standard conversion required for all Quixel
+    Megascans and Poly Haven normal maps when targeting Unity HDRP or URP with
+    the HDRP Terrain Lit shader.
+
+    Args:
+        normal_arr: Float32 array of shape (H, W, C) where C >= 2.
+                    Values are expected in [0, 1] (packed normal map encoding).
+                    The array is not modified in-place; a copy is returned.
+
+    Returns:
+        A copy of *normal_arr* with the G channel (index 1) flipped:
+        ``result[..., 1] = 1.0 - normal_arr[..., 1]``.
+        Arrays with fewer than 2 channels are returned unchanged.
+    """
+    result = np.asarray(normal_arr, dtype=np.float32).copy()
+    if result.ndim == 3 and result.shape[2] >= 2:
+        result[..., 1] = 1.0 - result[..., 1]  # flip G channel
+    return result
+
+
+def _pack_hdrp_mask_map(
+    metallic: np.ndarray,
+    ao: np.ndarray,
+    detail_mask: np.ndarray,
+    smoothness: np.ndarray,
+) -> np.ndarray:
+    """Pack HDRP Terrain Lit Mask Map: R=Metallic, G=AO, B=Detail, A=Smoothness.
+
+    Unity HDRP's Terrain Lit shader expects a single "Mask Map" texture that
+    packs four material channels into RGBA following the HDRP convention:
+
+        R = Metallic     (0 = non-metallic, 1 = fully metallic)
+        G = AO           (0 = fully occluded, 1 = no occlusion)
+        B = Detail Mask  (0 = no detail layer, 1 = full detail)
+        A = Smoothness   (0 = fully rough, 1 = mirror smooth)
+
+    Note: HDRP Terrain Lit uses *smoothness* in A, not roughness.  Convert
+    roughness → smoothness as ``smoothness = 1 - roughness`` before passing.
+
+    All input arrays are broadcast-safe: scalar, (H, W), or (H, W, 1) shapes
+    are all accepted.  The output is always (H, W, 4) float32 in [0, 1].
+
+    Args:
+        metallic:    Per-texel metallic value in [0, 1].
+        ao:          Per-texel ambient occlusion in [0, 1].
+        detail_mask: Per-texel detail mask in [0, 1].
+        smoothness:  Per-texel smoothness in [0, 1]  (= 1 - roughness).
+
+    Returns:
+        np.ndarray of shape (H, W, 4), dtype float32.
+    """
+    def _squeeze(a: np.ndarray) -> np.ndarray:
+        a = np.asarray(a, dtype=np.float32)
+        if a.ndim == 3 and a.shape[2] == 1:
+            return a[..., 0]
+        return a
+
+    m = _squeeze(metallic)
+    a = _squeeze(ao)
+    d = _squeeze(detail_mask)
+    s = _squeeze(smoothness)
+
+    # Derive (H, W) shape from whichever input is 2-D
+    ref = next((x for x in (m, a, d, s) if x.ndim == 2), None)
+    if ref is None:
+        # All scalars — return a 1×1×4 array
+        h, w = 1, 1
+    else:
+        h, w = ref.shape[:2]
+
+    mask = np.zeros((h, w, 4), dtype=np.float32)
+    mask[..., 0] = np.broadcast_to(m, (h, w))
+    mask[..., 1] = np.broadcast_to(a, (h, w))
+    mask[..., 2] = np.broadcast_to(d, (h, w))
+    mask[..., 3] = np.broadcast_to(s, (h, w))
+    return mask
+
+
 def _write_raw_array(
     files: Dict[str, Dict[str, Any]],
     output_dir: Path,
@@ -1159,12 +1243,15 @@ def export_unity_manifest(
         encoding="raw_u16_le",
         flip_vertical=False,
     )
+    # Apply OpenGL→DirectX/HDRP normal map Y-flip before writing so Unity HDRP
+    # Terrain Lit reads correct normals without a per-material fixup toggle.
+    terrain_normals_hdrp = _flip_normal_y(np.asarray(stack.terrain_normals, dtype=np.float32))
     _write_raw_array(
         files,
         output_dir,
         filename="terrain_normals.bin",
         channel="terrain_normals",
-        arr=np.asarray(stack.terrain_normals, dtype=np.float32),
+        arr=terrain_normals_hdrp,
         encoding="raw_vec3_f32_le",
     )
     splatmap_files = _write_splatmap_groups(files, output_dir, stack)
@@ -1198,6 +1285,61 @@ def export_unity_manifest(
             channel=channel,
             arr=np.asarray(value),
             encoding="raw_le",
+        )
+
+    # ---------------------------------------------------------------------- #
+    # HDRP Mask Map: pack Metallic/AO/DetailMask/Smoothness into a single
+    # RGBA texture (R=Metallic, G=AO, B=Detail, A=Smoothness) for the
+    # HDRP Terrain Lit shader.  Only written when at least one source channel
+    # (terrain_ao or roughness_variation) is present on the stack.
+    # ---------------------------------------------------------------------- #
+    _terrain_ao = stack.get("terrain_ao")
+    _roughness_var = stack.get("roughness_variation")
+    if _terrain_ao is not None or _roughness_var is not None:
+        _height_shape = np.asarray(stack.height, dtype=np.float32).shape
+        _h, _w = _height_shape[:2]
+
+        # Metallic: terrain surfaces are non-metallic by default (0.0)
+        _metallic_map = np.zeros((_h, _w), dtype=np.float32)
+
+        # AO: use terrain_ao if present, else ones (no occlusion)
+        _ao_map = (
+            np.asarray(_terrain_ao, dtype=np.float32)
+            if _terrain_ao is not None
+            else np.ones((_h, _w), dtype=np.float32)
+        )
+        if _ao_map.ndim == 3:
+            _ao_map = _ao_map[..., 0]
+
+        # Detail mask: zero (no detail layer driven from pipeline data)
+        _detail_map = np.zeros((_h, _w), dtype=np.float32)
+
+        # Smoothness: derived from roughness_variation (smoothness = 1 - roughness)
+        if _roughness_var is not None:
+            _rough = np.asarray(_roughness_var, dtype=np.float32)
+            if _rough.ndim == 3:
+                _rough = _rough[..., 0]
+            _smoothness_map = np.clip(1.0 - _rough, 0.0, 1.0)
+        else:
+            _smoothness_map = np.full((_h, _w), 0.5, dtype=np.float32)
+
+        _mask_map = _pack_hdrp_mask_map(
+            _metallic_map, _ao_map, _detail_map, _smoothness_map
+        )
+        # Quantise to uint8 for compact storage (Unity imports as RGBA32)
+        _mask_map_u8 = np.rint(np.clip(_mask_map, 0.0, 1.0) * 255.0).astype(np.uint8)
+        _write_raw_array(
+            files,
+            output_dir,
+            filename="hdrp_mask_map.raw",
+            channel="hdrp_mask_map",
+            arr=_mask_map_u8,
+            encoding="raw_rgba_u8_hdrp_mask",
+            extra={
+                "channels": 4,
+                "channel_layout": "R=Metallic,G=AO,B=Detail,A=Smoothness",
+                "hdrp_mask_map": True,
+            },
         )
 
     detail_files: Dict[str, str] = {}
@@ -1800,4 +1942,6 @@ __all__ = [
     "_water_shader_manifest_json",
     "UNITY_SCALE_FACTOR",
     "_apply_unity_scale",
+    "_flip_normal_y",
+    "_pack_hdrp_mask_map",
 ]
