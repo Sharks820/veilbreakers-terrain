@@ -2702,13 +2702,19 @@ def register_bundle_c_passes() -> None:
                 "caustic_atlas_path",
                 "water_depth_atlas_path",
                 "riverbed_caustics",
+                "flow_speed",
             ),
             # OVERRIDE: Bundle F's ``caves`` pass writes a ``wet_rock`` mask for
             # dripping/seeping surfaces inside caves. Bundle C's waterfall pass
             # additionally stamps ``wet_rock`` along plunge-basin rims where
             # spray keeps rock perpetually wet. Both producers are intentional;
             # waterfall registers after caves so it takes final ownership.
-            overrides=("wet_rock",),
+            # OVERRIDE: Bundle F's ``pass_water_flow_speed`` computes the base
+            # hydraulic flow speed from slope + accumulation. Bundle C then reads
+            # that channel and applies a pool-outflow boost multiplier near
+            # plunge basins (lines ~2348-2351). The boosted field is written back
+            # under the same name so downstream passes see the final speed map.
+            overrides=("wet_rock", "flow_speed"),
             seed_namespace="waterfalls",
             requires_scene_read=True,
             may_modify_geometry=False,

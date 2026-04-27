@@ -1792,6 +1792,7 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 __all__ = [
     "pass_prepare_heightmap_raw_u16",
     "register_bundle_j_heightmap_u16_pass",
+    "register_bundle_j_terrain_normals_pass",
     "export_unity_manifest",
     "_export_heightmap",
     "_bit_depth_for_profile",
