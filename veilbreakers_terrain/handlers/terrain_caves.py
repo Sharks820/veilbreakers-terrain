@@ -3888,6 +3888,54 @@ def pass_caves(
     stack.set("cave_stalactite_length", stalactite_acc, "caves")
     stack.set("cave_stalagmite_length", stalagmite_acc, "caves")
     cave_mesh_specs = _build_cave_entry_mesh_specs(caves)
+
+    # Instantiate speleothem prop dicts from Dreybrodt-computed length arrays.
+    # _generate_speleothem_pairs was computed above but never added to cave_mesh_specs.
+    cell_size_m = float(stack.cell_size)
+    ox = float(getattr(stack, "world_origin_x", 0.0))
+    oy = float(getattr(stack, "world_origin_y", 0.0))
+    for cave_i, cave in enumerate(caves):
+        if cave.stalactite_lengths is None:
+            continue
+        stals_arr = cave.stalactite_lengths
+        rows_s, cols_s = stals_arr.shape
+        rows_h, cols_h = stack.height.shape
+        cell_rows = min(rows_s, rows_h)
+        cell_cols = min(cols_s, cols_h)
+        ys_idx, xs_idx = np.where(stals_arr[:cell_rows, :cell_cols] > 0.1)
+        if ys_idx.size == 0:
+            continue
+        # Subsample to max 60 stalactites per cave for performance.
+        if ys_idx.size > 60:
+            rng_sub = np.random.default_rng(cave_i ^ 0xDEADBEEF)
+            sel = rng_sub.choice(ys_idx.size, 60, replace=False)
+            ys_idx, xs_idx = ys_idx[sel], xs_idx[sel]
+        stala_positions: List[Tuple[float, float, float]] = [
+            (
+                ox + (int(c) + 0.5) * cell_size_m,
+                oy + (int(r) + 0.5) * cell_size_m,
+                float(stack.height[int(r), int(c)]),
+            )
+            for r, c in zip(ys_idx, xs_idx)
+        ]
+        spelo_seed = (cave_i * 2654435761 ^ 0xC0FFEE) & 0xFFFFFFFF
+        spelo_props = _generate_speleothem_pairs(
+            wall_height=float(cave.spec.entrance_height_m),
+            chamber_width=float(cave.spec.entrance_width_m),
+            chamber_depth=float(cave.spec.interior_length_m),
+            stalactite_positions=stala_positions,
+            seed=spelo_seed,
+        )
+        if spelo_props:
+            cave_mesh_specs.append({
+                "mesh_id": f"{cave.cave_id}_speleothems",
+                "mesh_type": "speleothem_props",
+                "cave_id": cave.cave_id,
+                "tier": cave.tier,
+                "material_hint": cave.material_hint or "limestone",
+                "prop_dicts": spelo_props,
+            })
+
     stack.set("cave_mesh_specs", cave_mesh_specs, "caves")
 
     hard_issues = [i for i in issues if i.is_hard()]

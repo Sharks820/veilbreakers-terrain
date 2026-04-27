@@ -260,29 +260,42 @@ def lloyd_relax_points(
     search_radius = avg_spacing * 2.5
     search_sq = search_radius * search_radius
 
+    def _build_grid(
+        pts_in: list[tuple[float, float]],
+        cell: float,
+    ) -> dict[tuple[int, int], list[int]]:
+        """Hash-grid for O(1) amortized neighborhood lookup."""
+        grid: dict[tuple[int, int], list[int]] = {}
+        for idx, (x, y) in enumerate(pts_in):
+            key = (int(x / cell), int(y / cell))
+            grid.setdefault(key, []).append(idx)
+        return grid
+
     for _iter in range(iterations):
+        grid = _build_grid(pts, search_radius)
         new_pts: list[tuple[float, float]] = []
         for i, (px, py) in enumerate(pts):
-            # Collect neighbors within search radius
             sum_x, sum_y, count = 0.0, 0.0, 0
-            for j, (qx, qy) in enumerate(pts):
-                if i == j:
-                    continue
-                dx = px - qx
-                dy = py - qy
-                if dx * dx + dy * dy <= search_sq:
-                    sum_x += qx
-                    sum_y += qy
-                    count += 1
+            gx, gy = int(px / search_radius), int(py / search_radius)
+            for dgx in (-1, 0, 1):
+                for dgy in (-1, 0, 1):
+                    for j in grid.get((gx + dgx, gy + dgy), ()):
+                        if j == i:
+                            continue
+                        qx, qy = pts[j]
+                        dx = px - qx
+                        dy = py - qy
+                        if dx * dx + dy * dy <= search_sq:
+                            sum_x += qx
+                            sum_y += qy
+                            count += 1
             if count > 0:
-                # Move toward centroid of neighbors (partial step = 0.3 for stability)
                 cx = sum_x / count
                 cy = sum_y / count
                 new_x = px + (cx - px) * 0.3
                 new_y = py + (cy - py) * 0.3
             else:
                 new_x, new_y = px, py
-            # Clamp to domain
             new_x = max(0.0, min(new_x, width))
             new_y = max(0.0, min(new_y, depth))
             new_pts.append((new_x, new_y))
@@ -291,15 +304,26 @@ def lloyd_relax_points(
     # Optional: enforce minimum separation after relaxation
     if min_distance > 0.0:
         min_sq = min_distance * min_distance
+        cell = min_distance
+        sep_grid: dict[tuple[int, int], list[int]] = {}
         kept: list[tuple[float, float]] = []
         for px, py in pts:
+            gx, gy = int(px / cell), int(py / cell)
             ok = True
-            for qx, qy in kept:
-                dx, dy = px - qx, py - qy
-                if dx * dx + dy * dy < min_sq:
-                    ok = False
+            for dgx in (-1, 0, 1):
+                if not ok:
                     break
+                for dgy in (-1, 0, 1):
+                    if not ok:
+                        break
+                    for k in sep_grid.get((gx + dgx, gy + dgy), ()):
+                        qx, qy = kept[k]
+                        dx, dy = px - qx, py - qy
+                        if dx * dx + dy * dy < min_sq:
+                            ok = False
+                            break
             if ok:
+                sep_grid.setdefault((gx, gy), []).append(len(kept))
                 kept.append((px, py))
         return kept
 

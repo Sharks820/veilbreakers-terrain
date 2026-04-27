@@ -244,6 +244,24 @@ def _build_command_handlers() -> Dict[str, Callable]:
         handlers["env_generate_swamp_terrain"] = _make_signature_handler(
             _features.generate_swamp_terrain
         )
+        handlers["env_generate_natural_arch"] = _make_signature_handler(
+            _features.generate_natural_arch
+        )
+        handlers["env_generate_geyser"] = _make_signature_handler(
+            _features.generate_geyser
+        )
+        handlers["env_generate_sinkhole"] = _make_signature_handler(
+            _features.generate_sinkhole
+        )
+        handlers["env_generate_floating_rocks"] = _make_signature_handler(
+            _features.generate_floating_rocks
+        )
+        handlers["env_generate_ice_formation"] = _make_signature_handler(
+            _features.generate_ice_formation
+        )
+        handlers["env_generate_lava_flow"] = _make_signature_handler(
+            _features.generate_lava_flow
+        )
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "COMMAND_HANDLERS: failed to register terrain_features handlers: %r",
@@ -1091,6 +1109,11 @@ def _build_command_handlers() -> Dict[str, Callable]:
         "handle_setup_terrain_biome",
     )
     _try_register(
+        "terrain_create_biome_terrain",
+        f"{_pkg}.terrain_materials",
+        "handle_create_biome_terrain",
+    )
+    _try_register(
         "terrain_sculpt",
         f"{_pkg}.terrain_sculpt",
         "handle_sculpt_terrain",
@@ -1130,153 +1153,6 @@ def _build_command_handlers() -> Dict[str, Callable]:
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "COMMAND_HANDLERS: failed to register blender_capability_bridge handlers: %r",
-            exc,
-        )
-
-    # ------------------------------------------------------------------
-    # tripo_studio_client.py — AI-powered 3D prop generation via Tripo
-    # Studio /v2/web/ API. Four handlers:
-    #   tripo_generate_asset       — text → GLB
-    #   tripo_generate_from_image  — image → GLB
-    #   tripo_balance              — studio credit balance
-    #   tripo_scatter_catalog      — read catalog.json, return valid asset paths
-    # Auth: TRIPO_SESSION_TOKEN env var (JWT from browser DevTools) or
-    #       TRIPO_SESSION_COOKIE env var (ory_kratos_session cookie).
-    # ------------------------------------------------------------------
-    try:
-        import asyncio as _asyncio
-        import os as _os
-        from pathlib import Path as _Path_tripo
-        _tc = _il.import_module(f"{_pkg}.tripo_studio_client")
-        _TripoStudioClient = _tc.TripoStudioClient
-
-        def _make_tripo_client(params: dict):
-            token = (params or {}).get("session_token", "") or _os.environ.get("TRIPO_SESSION_TOKEN", "")
-            cookie = (params or {}).get("session_cookie", "") or _os.environ.get("TRIPO_SESSION_COOKIE", "")
-            if not token and not cookie:
-                raise RuntimeError(
-                    "Tripo auth required. Set TRIPO_SESSION_TOKEN (JWT) or "
-                    "TRIPO_SESSION_COOKIE (ory_kratos_session) env var."
-                )
-            return _TripoStudioClient(session_token=token, session_cookie=cookie)
-
-        def _handle_tripo_generate_asset(params: dict) -> dict:
-            prompt = (params or {}).get("prompt", "")
-            if not prompt:
-                return {"status": "error", "error": "missing_prompt"}
-            output_dir = str((params or {}).get("output_dir", "output/tripo_generation"))
-            try:
-                client = _make_tripo_client(params)
-                return _asyncio.run(client.generate_from_text(
-                    prompt=prompt,
-                    output_dir=output_dir,
-                    texture=bool((params or {}).get("texture", True)),
-                    pbr=bool((params or {}).get("pbr", True)),
-                    model_version=str((params or {}).get("model_version", "v3.0-20250812")),
-                    timeout=float((params or {}).get("timeout", 300)),
-                    max_variants=int((params or {}).get("max_variants", 4)),
-                ))
-            except Exception as exc:
-                return {"status": "error", "error": str(exc)}
-
-        def _handle_tripo_generate_from_image(params: dict) -> dict:
-            image_path = (params or {}).get("image_path", "")
-            if not image_path:
-                return {"status": "error", "error": "missing_image_path"}
-            output_dir = str((params or {}).get("output_dir", "output/tripo_generation"))
-            try:
-                client = _make_tripo_client(params)
-                return _asyncio.run(client.generate_from_image(
-                    image_path=str(image_path),
-                    output_dir=output_dir,
-                    texture=bool((params or {}).get("texture", True)),
-                    pbr=bool((params or {}).get("pbr", True)),
-                    model_version=str((params or {}).get("model_version", "v3.0-20250812")),
-                    timeout=float((params or {}).get("timeout", 300)),
-                    max_variants=int((params or {}).get("max_variants", 2)),
-                ))
-            except Exception as exc:
-                return {"status": "error", "error": str(exc)}
-
-        def _handle_tripo_balance(params: dict) -> dict:
-            try:
-                client = _make_tripo_client(params)
-                balance = _asyncio.run(client.get_balance())
-                return {"status": "ok", "balance": balance}
-            except Exception as exc:
-                return {"status": "error", "error": str(exc)}
-
-        def _handle_tripo_scatter_catalog(params: dict) -> dict:
-            """Read catalog.json and return valid GLB asset paths for scatter.
-
-            The scene build script calls this to get a list of downloaded Tripo
-            GLBs so it can import and place them via bpy.ops.import_scene.gltf().
-            Returns gracefully when catalog is absent or all entries are missing.
-
-            catalog.json schema (written by ingest_tripo_asset.py):
-              {"version": 1, "assets": {"<asset_id>": {"lods": [{"lod": 0, "path": "...glb"}]}}}
-            """
-            import json as _json
-
-            raw_path = (params or {}).get("catalog_path", "assets/foliage/catalog.json")
-            cat_path = _Path_tripo(raw_path)
-            if not cat_path.is_absolute():
-                cat_path = _Path_tripo(__file__).resolve().parents[2] / cat_path
-
-            if not cat_path.exists():
-                return {
-                    "status": "no_catalog",
-                    "assets": [],
-                    "message": "catalog.json not found — run Tripo batch generation first",
-                }
-
-            try:
-                catalog = _json.loads(cat_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                return {"status": "error", "error": f"catalog parse error: {exc}"}
-
-            # catalog["assets"] is a dict keyed by asset_id
-            asset_map = catalog.get("assets", {})
-            if isinstance(asset_map, list):
-                # Tolerate legacy list form
-                entries = asset_map
-            else:
-                entries = list(asset_map.values())
-
-            def _lod0_path(entry: dict) -> str:
-                lods = entry.get("lods", [])
-                if lods:
-                    return str(lods[0].get("path", ""))
-                return ""
-
-            valid = [
-                {**e, "lod0_path": _lod0_path(e)}
-                for e in entries
-                if _lod0_path(e) and _Path_tripo(_lod0_path(e)).exists()
-            ]
-
-            if not valid:
-                return {
-                    "status": "empty_catalog",
-                    "assets": [],
-                    "total_catalog": len(entries),
-                    "message": "no catalog assets found on disk",
-                }
-
-            return {
-                "status": "ok",
-                "total_catalog": len(entries),
-                "valid_on_disk": len(valid),
-                "assets": valid,
-            }
-
-        handlers["tripo_generate_asset"] = _handle_tripo_generate_asset
-        handlers["tripo_generate_from_image"] = _handle_tripo_generate_from_image
-        handlers["tripo_balance"] = _handle_tripo_balance
-        handlers["tripo_scatter_catalog"] = _handle_tripo_scatter_catalog
-    except Exception as exc:  # noqa: BLE001
-        _log.warning(
-            "COMMAND_HANDLERS: failed to register tripo_studio_client handlers: %r",
             exc,
         )
 
