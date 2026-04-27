@@ -5,7 +5,7 @@ Per D-01 / D-09 (one-way dependency direction: terrain -> toolkit only).
 Plan 50-04 C-33 scope note (Rule 1 deviation):
 ``veilbreakers_mcp.primitives`` is the intended stable public surface per
 Plan 50-02, but its current implementation re-exports from
-``blender_addon.handlers.*`` which is not part of the toolkit's
+``veilbreakers_terrain.handlers.*`` which is not part of the toolkit's
 pip-installable package. A clean import from outside Blender therefore
 fails with ``ModuleNotFoundError: No module named 'blender_addon'``.
 

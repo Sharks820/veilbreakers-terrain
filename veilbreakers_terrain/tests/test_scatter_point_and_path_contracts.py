@@ -2,7 +2,7 @@ import pytest
 
 
 def test_world_creator_pointcloud_rows_convert_to_canonical_scatter_table():
-    from blender_addon.handlers.terrain_scatter_points import (
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
         load_world_creator_instance_pointcloud,
     )
 
@@ -44,7 +44,7 @@ def test_world_creator_pointcloud_rows_convert_to_canonical_scatter_table():
 
 
 def test_scatter_table_validation_blocks_missing_orientation_and_prototype():
-    from blender_addon.handlers.terrain_scatter_points import (
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
         ScatterPoint,
         ScatterPointTable,
         validate_scatter_point_table,
@@ -77,7 +77,7 @@ def test_scatter_table_validation_blocks_missing_orientation_and_prototype():
 
 
 def test_path_network_contract_requires_bridge_for_deep_water_crossing():
-    from blender_addon.handlers.terrain_path_contracts import (
+    from veilbreakers_terrain.handlers.terrain_path_contracts import (
         PathNetworkContract,
         PathSegmentContract,
         validate_path_network_contract,
@@ -106,7 +106,7 @@ def test_path_network_contract_requires_bridge_for_deep_water_crossing():
 
 
 def test_bridge_segment_contract_requires_clearance_and_material_transition():
-    from blender_addon.handlers.terrain_path_contracts import (
+    from veilbreakers_terrain.handlers.terrain_path_contracts import (
         PathNetworkContract,
         PathSegmentContract,
         validate_path_network_contract,
@@ -138,7 +138,7 @@ def test_bridge_segment_contract_requires_clearance_and_material_transition():
 
 
 def test_bridge_required_on_road_still_requires_bridge_geometry_contract():
-    from blender_addon.handlers.terrain_path_contracts import (
+    from veilbreakers_terrain.handlers.terrain_path_contracts import (
         PathNetworkContract,
         PathSegmentContract,
         validate_path_network_contract,
@@ -168,7 +168,7 @@ def test_bridge_required_on_road_still_requires_bridge_geometry_contract():
 
 
 def test_path_network_contract_rejects_segment_grade_above_budget():
-    from blender_addon.handlers.terrain_path_contracts import (
+    from veilbreakers_terrain.handlers.terrain_path_contracts import (
         PathNetworkContract,
         PathSegmentContract,
         validate_path_network_contract,
@@ -194,7 +194,7 @@ def test_path_network_contract_rejects_segment_grade_above_budget():
 
 
 def test_scatter_table_validation_requires_full_point_contract():
-    from blender_addon.handlers.terrain_scatter_points import (
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
         ScatterPoint,
         ScatterPointTable,
         validate_scatter_point_table,
@@ -233,7 +233,7 @@ def test_scatter_table_validation_requires_full_point_contract():
 
 
 def test_scatter_table_validation_rejects_non_finite_normals():
-    from blender_addon.handlers.terrain_scatter_points import (
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
         ScatterPoint,
         ScatterPointTable,
         validate_scatter_point_table,

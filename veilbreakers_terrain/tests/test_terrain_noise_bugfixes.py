@@ -19,7 +19,7 @@ class TestGravitySignBugF277:
 
     def test_downhill_particle_speeds_up(self):
         """A particle on a steep downhill slope should erode MORE than on flat terrain."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion as hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion as hydraulic_erosion
 
         # Create a tilted plane: high on left, low on right (steep gradient)
         rows, cols = 64, 64
@@ -58,7 +58,7 @@ class TestGravitySignBugF277:
         (note the MINUS, because delta_h is negative when going downhill,
         and -(-x) = +x, so speed increases)
         """
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion as hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion as hydraulic_erosion
 
         # Create a V-shaped valley — particles converge at center
         rows, cols = 64, 64
@@ -87,7 +87,7 @@ class TestOpenSimplexMismatchF805:
 
     def test_scalar_matches_array_single_element(self):
         """noise2(x, y) must equal noise2_array(np.array([x]), np.array([y]))[0]."""
-        from blender_addon.handlers._terrain_noise import _make_noise_generator
+        from veilbreakers_terrain.handlers._terrain_noise import _make_noise_generator
 
         gen = _make_noise_generator(seed=42)
 
@@ -115,7 +115,7 @@ class TestOpenSimplexMismatchF805:
 
     def test_batch_consistency(self):
         """Multiple points evaluated via noise2 loop must match noise2_array batch."""
-        from blender_addon.handlers._terrain_noise import _make_noise_generator
+        from veilbreakers_terrain.handlers._terrain_noise import _make_noise_generator
 
         gen = _make_noise_generator(seed=123)
 

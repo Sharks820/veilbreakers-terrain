@@ -32,7 +32,7 @@ class TestComputePaintWeights:
 
     def test_center_vertex_weight_is_one(self):
         """A vertex exactly at the brush center has weight 1.0."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(0.0, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 1.0, "SMOOTH")
@@ -42,7 +42,7 @@ class TestComputePaintWeights:
 
     def test_vertex_at_radius_weight_is_zero_smooth(self):
         """SMOOTH falloff: weight at exactly the radius boundary = 0.0."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(1.0, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 1.0, "SMOOTH")
@@ -52,7 +52,7 @@ class TestComputePaintWeights:
 
     def test_vertex_at_radius_weight_is_zero_linear(self):
         """LINEAR falloff: weight at radius boundary = 0.0."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(2.0, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 2.0, "LINEAR")
@@ -61,7 +61,7 @@ class TestComputePaintWeights:
 
     def test_linear_midpoint_is_half(self):
         """LINEAR falloff at half radius should give weight 0.5."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(0.5, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 1.0, "LINEAR")
@@ -70,7 +70,7 @@ class TestComputePaintWeights:
 
     def test_constant_falloff_is_one_everywhere(self):
         """CONSTANT falloff: weight = 1.0 for all vertices within radius."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0), (0.99, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 1.0, "CONSTANT")
@@ -80,7 +80,7 @@ class TestComputePaintWeights:
 
     def test_sharp_falloff_drops_faster_than_linear(self):
         """SHARP falloff at midpoint is less than LINEAR's 0.5."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(0.5, 0.0, 0.0)]
         sharp = compute_paint_weights(verts, (0.0, 0.0, 0.0), 1.0, "SHARP")
@@ -89,7 +89,7 @@ class TestComputePaintWeights:
 
     def test_vertex_outside_radius_excluded(self):
         """Vertices beyond the brush radius are not in the result."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(5.0, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 1.0, "SMOOTH")
@@ -97,7 +97,7 @@ class TestComputePaintWeights:
 
     def test_zero_radius_returns_empty(self):
         """Zero-radius brush affects no vertices."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [(0.0, 0.0, 0.0)]
         result = compute_paint_weights(verts, (0.0, 0.0, 0.0), 0.0, "SMOOTH")
@@ -105,7 +105,7 @@ class TestComputePaintWeights:
 
     def test_multiple_vertices_mixed_inclusion(self):
         """Only vertices within radius are returned."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         verts = [
             (0.0, 0.0, 0.0),   # inside
@@ -122,7 +122,7 @@ class TestComputePaintWeights:
 
     def test_3d_distance_calculation(self):
         """Brush distance is true 3D Euclidean distance."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights
 
         # Vertex at (1,1,1), distance from origin = sqrt(3) ~ 1.732
         verts = [(1.0, 1.0, 1.0)]
@@ -138,7 +138,7 @@ class TestComputePaintWeightsUV:
 
     def test_uv_center_weight_is_one(self):
         """UV vertex at brush center has weight 1.0."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights_uv
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights_uv
 
         uvs = [(0.5, 0.5)]
         result = compute_paint_weights_uv(uvs, (0.5, 0.5), 0.1, "SMOOTH")
@@ -147,7 +147,7 @@ class TestComputePaintWeightsUV:
 
     def test_uv_vertex_outside_radius(self):
         """UV vertex far from brush center is excluded."""
-        from blender_addon.handlers.vertex_paint_live import compute_paint_weights_uv
+        from veilbreakers_terrain.handlers.vertex_paint_live import compute_paint_weights_uv
 
         uvs = [(0.0, 0.0)]
         result = compute_paint_weights_uv(uvs, (1.0, 1.0), 0.1, "SMOOTH")
@@ -159,7 +159,7 @@ class TestBlendColors:
 
     def test_mix_strength_zero_returns_existing(self):
         """MIX at strength=0 returns the existing color unchanged."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.5, 0.3, 0.1, 1.0)
         new_col = (1.0, 0.0, 0.0, 1.0)
@@ -169,7 +169,7 @@ class TestBlendColors:
 
     def test_mix_strength_one_returns_new(self):
         """MIX at strength=1 returns the new color."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.5, 0.3, 0.1, 1.0)
         new_col = (1.0, 0.0, 0.0, 1.0)
@@ -179,7 +179,7 @@ class TestBlendColors:
 
     def test_mix_half_strength(self):
         """MIX at strength=0.5 gives midpoint between existing and new."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.0, 0.0, 0.0, 0.0)
         new_col = (1.0, 1.0, 1.0, 1.0)
@@ -189,7 +189,7 @@ class TestBlendColors:
 
     def test_add_blend_mode(self):
         """ADD mode adds new * strength to RGB; alpha is preserved."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.3, 0.3, 0.3, 0.3)
         new_col = (0.2, 0.2, 0.2, 0.2)
@@ -200,7 +200,7 @@ class TestBlendColors:
 
     def test_add_clamps_to_one(self):
         """ADD mode clamps RGB above 1.0; alpha is preserved."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.8, 0.8, 0.8, 0.8)
         new_col = (0.5, 0.5, 0.5, 0.5)
@@ -211,7 +211,7 @@ class TestBlendColors:
 
     def test_subtract_blend_mode(self):
         """SUBTRACT mode subtracts new * strength from RGB; alpha is preserved."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.5, 0.5, 0.5, 0.5)
         new_col = (0.2, 0.2, 0.2, 0.2)
@@ -222,7 +222,7 @@ class TestBlendColors:
 
     def test_subtract_clamps_to_zero(self):
         """SUBTRACT mode clamps RGB below 0.0; alpha is preserved."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.1, 0.1, 0.1, 0.1)
         new_col = (0.5, 0.5, 0.5, 0.5)
@@ -233,7 +233,7 @@ class TestBlendColors:
 
     def test_multiply_blend_mode(self):
         """MULTIPLY mode: existing * lerp(1.0, new, strength) for RGB; alpha is preserved."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.8, 0.8, 0.8, 0.8)
         new_col = (0.5, 0.5, 0.5, 0.5)
@@ -246,7 +246,7 @@ class TestBlendColors:
 
     def test_multiply_strength_zero_returns_existing(self):
         """MULTIPLY at strength=0: factor=1.0, so result=existing."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         existing = (0.7, 0.7, 0.7, 0.7)
         new_col = (0.1, 0.1, 0.1, 0.1)
@@ -256,14 +256,14 @@ class TestBlendColors:
 
     def test_blend_returns_four_components(self):
         """Blend always returns a 4-tuple."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         result = blend_colors((0.5, 0.5, 0.5, 0.5), (1.0, 1.0, 1.0, 1.0), 0.5, "MIX")
         assert len(result) == 4
 
     def test_all_values_clamped_0_1(self):
         """All blend results are clamped to [0, 1]."""
-        from blender_addon.handlers.vertex_paint_live import blend_colors
+        from veilbreakers_terrain.handlers.vertex_paint_live import blend_colors
 
         # ADD that would exceed 1.0
         result = blend_colors((1.0, 1.0, 1.0, 1.0), (1.0, 1.0, 1.0, 1.0), 1.0, "ADD")
@@ -315,7 +315,7 @@ class TestEvaluateMeshQuality:
 
     def test_poly_count_correct(self):
         """Evaluator reports correct poly count."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
@@ -325,7 +325,7 @@ class TestEvaluateMeshQuality:
 
     def test_quad_detected(self):
         """Single quad face is counted as quad."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
@@ -335,7 +335,7 @@ class TestEvaluateMeshQuality:
 
     def test_detects_degenerate_faces(self):
         """Evaluator detects degenerate (zero-area) faces."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_degenerate_mesh()
         q = evaluate_mesh_quality(verts, faces)
@@ -344,7 +344,7 @@ class TestEvaluateMeshQuality:
 
     def test_clean_mesh_no_degenerate(self):
         """Clean quad plane has no degenerate faces."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
@@ -352,7 +352,7 @@ class TestEvaluateMeshQuality:
 
     def test_topology_grade_is_string(self):
         """Topology grade is a single character A-F."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
@@ -367,7 +367,7 @@ class TestEvaluateMeshQuality:
         rather than D (degenerate/unrenderable).  A fully closed mesh (e.g.,
         a cube) is needed for A/B grades.
         """
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
@@ -376,7 +376,7 @@ class TestEvaluateMeshQuality:
 
     def test_closed_quad_mesh_gets_good_grade(self):
         """A closed box (all edges shared by 2 faces) gets A or B grade."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         # Unit cube: 8 vertices, 6 quad faces, all edges shared by 2 faces
         verts = [
@@ -393,7 +393,7 @@ class TestEvaluateMeshQuality:
 
     def test_normal_consistency_perfect_for_flat(self):
         """A flat plane has perfect normal consistency (1.0)."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         # Two coplanar quads sharing an edge
         verts = [
@@ -410,7 +410,7 @@ class TestEvaluateMeshQuality:
 
     def test_uv_coverage_computed_when_provided(self):
         """UV coverage is computed when UV coords are provided."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
         faces = [(0, 1, 2, 3)]
@@ -420,7 +420,7 @@ class TestEvaluateMeshQuality:
 
     def test_uv_coverage_zero_without_uvs(self):
         """UV coverage is 0.0 when no UVs provided."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         verts, faces = self._make_quad_plane()
         q = evaluate_mesh_quality(verts, faces)
@@ -428,7 +428,7 @@ class TestEvaluateMeshQuality:
 
     def test_non_manifold_detection(self):
         """Non-manifold edges (shared by 1 face only) are detected."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         # Single face = all boundary edges (each shared by 1 face = non-manifold)
         verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
@@ -439,7 +439,7 @@ class TestEvaluateMeshQuality:
 
     def test_empty_mesh(self):
         """Empty mesh returns zero counts."""
-        from blender_addon.handlers.autonomous_loop import evaluate_mesh_quality
+        from veilbreakers_terrain.handlers.autonomous_loop import evaluate_mesh_quality
 
         q = evaluate_mesh_quality([], [])
         assert q["poly_count"] == 0
@@ -452,7 +452,7 @@ class TestSelectFixAction:
 
     def test_decimate_when_over_poly_budget(self):
         """Selects 'decimate' when poly count exceeds max_poly_count."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 10000, "has_non_manifold": False,
                     "has_degenerate_faces": False, "topology_grade": "A",
@@ -463,7 +463,7 @@ class TestSelectFixAction:
 
     def test_subdivide_when_under_poly_budget(self):
         """Selects 'subdivide' when poly count is below min_poly_count."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 100, "has_non_manifold": False,
                     "has_degenerate_faces": False, "topology_grade": "A",
@@ -474,7 +474,7 @@ class TestSelectFixAction:
 
     def test_repair_when_non_manifold(self):
         """Selects 'repair_non_manifold' when non-manifold edges exist."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 1000, "has_non_manifold": True,
                     "has_degenerate_faces": False, "topology_grade": "C",
@@ -485,7 +485,7 @@ class TestSelectFixAction:
 
     def test_repair_when_degenerate_faces(self):
         """Selects 'repair_degenerate' when degenerate faces exist."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 1000, "has_non_manifold": False,
                     "has_degenerate_faces": True, "topology_grade": "D",
@@ -496,7 +496,7 @@ class TestSelectFixAction:
 
     def test_remesh_when_bad_topology(self):
         """Selects 'remesh' when topology grade is worse than target."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 1000, "has_non_manifold": False,
                     "has_degenerate_faces": False, "topology_grade": "E",
@@ -507,7 +507,7 @@ class TestSelectFixAction:
 
     def test_returns_none_when_all_targets_met(self):
         """Returns None when all targets are satisfied."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 1000, "has_non_manifold": False,
                     "has_degenerate_faces": False, "topology_grade": "A",
@@ -519,7 +519,7 @@ class TestSelectFixAction:
 
     def test_returns_none_with_empty_actions(self):
         """Returns None when no actions are available."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 99999, "has_non_manifold": True}
         targets = {"max_poly_count": 100}
@@ -527,7 +527,7 @@ class TestSelectFixAction:
 
     def test_skips_unavailable_action(self):
         """If the ideal action is not in available_actions, tries next."""
-        from blender_addon.handlers.autonomous_loop import select_fix_action
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
 
         quality = {"poly_count": 10000, "has_non_manifold": True,
                     "has_degenerate_faces": False, "topology_grade": "A",
@@ -564,7 +564,7 @@ class TestComputeTerrainChunks:
 
     def test_1024_with_chunk64_produces_256_chunks(self):
         """1024x1024 heightmap with chunk_size=64 produces 16x16=256 chunks."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(1024, 1024)
         result = compute_terrain_chunks(hmap, chunk_size=64, overlap=1, lod_levels=4)
@@ -573,7 +573,7 @@ class TestComputeTerrainChunks:
 
     def test_chunks_cover_entire_heightmap(self):
         """All grid positions from (0,0) to (max_x, max_y) are present."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(128, 128)
         result = compute_terrain_chunks(hmap, chunk_size=32, overlap=1, lod_levels=2)
@@ -588,7 +588,7 @@ class TestComputeTerrainChunks:
 
     def test_chunk_overlap_width(self):
         """Chunk sub-heightmap includes overlap border samples."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(128, 128)
         overlap = 2
@@ -613,7 +613,7 @@ class TestComputeTerrainChunks:
 
     def test_edge_chunk_overlap_clamped(self):
         """Edge chunks clamp overlap at heightmap boundaries."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(64, 64)
         result = compute_terrain_chunks(hmap, chunk_size=32, overlap=2, lod_levels=1)
@@ -627,7 +627,7 @@ class TestComputeTerrainChunks:
 
     def test_neighbor_references_interior(self):
         """Interior chunks have all 4 neighbors."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(192, 192)
         result = compute_terrain_chunks(hmap, chunk_size=64, overlap=1, lod_levels=2)
@@ -642,7 +642,7 @@ class TestComputeTerrainChunks:
 
     def test_neighbor_references_corner(self):
         """Corner chunks have None for out-of-bounds neighbors."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(128, 128)
         result = compute_terrain_chunks(hmap, chunk_size=64, overlap=1, lod_levels=2)
@@ -657,7 +657,7 @@ class TestComputeTerrainChunks:
 
     def test_lod_count_matches_requested(self):
         """Each chunk has the requested number of LOD levels."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(128, 128)
         lod_levels = 4
@@ -668,7 +668,7 @@ class TestComputeTerrainChunks:
 
     def test_lod0_more_vertices_than_lod3(self):
         """LOD0 has more vertices than LOD3 (higher detail)."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(128, 128)
         result = compute_terrain_chunks(hmap, chunk_size=64, overlap=0, lod_levels=4)
@@ -680,7 +680,7 @@ class TestComputeTerrainChunks:
 
     def test_empty_heightmap(self):
         """Empty heightmap produces no chunks."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         result = compute_terrain_chunks([], chunk_size=64)
         assert result["metadata"]["total_chunks"] == 0
@@ -688,7 +688,7 @@ class TestComputeTerrainChunks:
 
     def test_metadata_has_required_keys(self):
         """Metadata dict contains all required keys."""
-        from blender_addon.handlers.terrain_chunking import compute_terrain_chunks
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
 
         hmap = _make_heightmap(64, 64)
         result = compute_terrain_chunks(hmap, chunk_size=32)
@@ -705,7 +705,7 @@ class TestComputeChunkLod:
 
     def test_downsample_halves_resolution(self):
         """Downsampling a 64x64 chunk to 32 produces 32x32."""
-        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
+        from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(64, 64, value=0.5)
         result = _downsample_heightmap(chunk, 32)
@@ -714,7 +714,7 @@ class TestComputeChunkLod:
 
     def test_downsample_preserves_flat_value(self):
         """Flat heightmap keeps its value after downsampling."""
-        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
+        from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(64, 64, value=0.7)
         result = _downsample_heightmap(chunk, 16)
@@ -724,7 +724,7 @@ class TestComputeChunkLod:
 
     def test_downsample_corners_match(self):
         """Corner values are preserved exactly after downsampling."""
-        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
+        from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_gradient_heightmap(64, 64)
         result = _downsample_heightmap(chunk, 8)
@@ -735,7 +735,7 @@ class TestComputeChunkLod:
 
     def test_no_downsample_if_already_small(self):
         """If input is already <= target, return copy unchanged."""
-        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
+        from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(4, 4, value=0.3)
         result = _downsample_heightmap(chunk, 8)
@@ -744,14 +744,14 @@ class TestComputeChunkLod:
 
     def test_empty_chunk(self):
         """Empty chunk returns empty."""
-        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
+        from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
 
         result = _downsample_heightmap([], 8)
         assert result == []
 
     def test_target_zero_returns_empty(self):
         """Target resolution of 0 returns empty."""
-        from blender_addon.handlers.terrain_chunking import _downsample_heightmap
+        from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
 
         chunk = _make_heightmap(8, 8)
         result = _downsample_heightmap(chunk, 0)
@@ -763,7 +763,7 @@ class TestComputeStreamingDistances:
 
     def test_distances_increase_with_lod(self):
         """Each LOD level has a larger streaming distance than the previous."""
-        from blender_addon.handlers.terrain_chunking import compute_streaming_distances
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_streaming_distances
 
         distances = compute_streaming_distances(64.0, 4)
         for i in range(1, 4):
@@ -771,28 +771,28 @@ class TestComputeStreamingDistances:
 
     def test_lod0_distance_is_double_chunk_size(self):
         """LOD0 max distance = chunk_world_size * 2."""
-        from blender_addon.handlers.terrain_chunking import compute_streaming_distances
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_streaming_distances
 
         distances = compute_streaming_distances(100.0, 4)
         assert distances[0] == pytest.approx(200.0)
 
     def test_lod3_distance_is_sixteen_times_chunk_size(self):
         """LOD3 max distance = chunk_world_size * 16."""
-        from blender_addon.handlers.terrain_chunking import compute_streaming_distances
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_streaming_distances
 
         distances = compute_streaming_distances(100.0, 4)
         assert distances[3] == pytest.approx(1600.0)
 
     def test_correct_count(self):
         """Number of distance entries matches lod_levels."""
-        from blender_addon.handlers.terrain_chunking import compute_streaming_distances
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_streaming_distances
 
         distances = compute_streaming_distances(50.0, 6)
         assert len(distances) == 6
 
     def test_single_lod_level(self):
         """Single LOD level still works."""
-        from blender_addon.handlers.terrain_chunking import compute_streaming_distances
+        from veilbreakers_terrain.handlers.terrain_chunking import compute_streaming_distances
 
         distances = compute_streaming_distances(32.0, 1)
         assert len(distances) == 1
@@ -804,7 +804,7 @@ class TestExportChunksMetadata:
 
     def test_valid_json_output(self):
         """Export produces valid JSON."""
-        from blender_addon.handlers.terrain_chunking import (
+        from veilbreakers_terrain.handlers.terrain_chunking import (
             compute_terrain_chunks, export_chunks_metadata,
         )
 
@@ -817,7 +817,7 @@ class TestExportChunksMetadata:
 
     def test_no_heightmap_data_in_export(self):
         """Exported JSON does not contain raw heightmap arrays."""
-        from blender_addon.handlers.terrain_chunking import (
+        from veilbreakers_terrain.handlers.terrain_chunking import (
             compute_terrain_chunks, export_chunks_metadata,
         )
 
@@ -830,7 +830,7 @@ class TestExportChunksMetadata:
 
     def test_chunk_count_in_metadata(self):
         """Exported metadata reports correct total_chunks."""
-        from blender_addon.handlers.terrain_chunking import (
+        from veilbreakers_terrain.handlers.terrain_chunking import (
             compute_terrain_chunks, export_chunks_metadata,
         )
 

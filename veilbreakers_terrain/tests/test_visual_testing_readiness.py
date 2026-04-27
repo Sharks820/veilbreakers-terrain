@@ -101,7 +101,7 @@ def _build_fake_bpy(render_calls, opengl_calls):
 
 
 def test_visual_qa_math_contracts_are_deterministic():
-    from blender_addon.handlers.terrain_visual_qa import (
+    from veilbreakers_terrain.handlers.terrain_visual_qa import (
         auto_frame_terrain,
         compute_rotation_to_look_at,
         fov_to_focal_length,
@@ -322,7 +322,7 @@ def test_camera_clip_end_accommodates_km_terrain(monkeypatch):
 
 
 def test_visual_qa_module_import_is_stable_without_reloading_bpy():
-    module = importlib.import_module("blender_addon.handlers.terrain_visual_qa")
+    module = importlib.import_module("veilbreakers_terrain.handlers.terrain_visual_qa")
     assert hasattr(module, "handle_visual_qa_setup_camera")
     assert hasattr(module, "handle_visual_qa_set_shading")
     assert hasattr(module, "handle_visual_qa_capture_screenshot")

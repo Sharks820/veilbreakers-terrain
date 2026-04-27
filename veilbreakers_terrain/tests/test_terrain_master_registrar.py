@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 
 def test_master_registrar_loads_all_bundles():
-    from blender_addon.handlers.terrain_master_registrar import (
+    from veilbreakers_terrain.handlers.terrain_master_registrar import (
         register_all_terrain_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -27,20 +27,20 @@ def test_master_registrar_loads_all_bundles():
 
 def test_master_registrar_strict_mode_raises_on_missing():
     """Strict mode surfaces the first missing registrar."""
-    from blender_addon.handlers.terrain_master_registrar import (
+    from veilbreakers_terrain.handlers.terrain_master_registrar import (
         _safe_import_registrar,
     )
 
     # Sanity: _safe_import_registrar returns None for a bogus module
-    assert _safe_import_registrar("blender_addon.handlers.definitely_not_a_module", "fn") is None
+    assert _safe_import_registrar("veilbreakers_terrain.handlers.definitely_not_a_module", "fn") is None
 
 
 def test_master_registrar_produces_unified_pass_graph():
     """After loading, the PASS_REGISTRY should hold enough passes for a DAG."""
-    from blender_addon.handlers.terrain_master_registrar import (
+    from veilbreakers_terrain.handlers.terrain_master_registrar import (
         register_all_terrain_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -55,8 +55,8 @@ def test_master_registrar_produces_unified_pass_graph():
 
 
 def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers():
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -93,9 +93,9 @@ def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers
 
 
 def test_handle_run_terrain_pass_still_surfaces_truly_unknown_passes():
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import UnknownPassError
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import UnknownPassError
 
     TerrainPassController.clear_registry()
     try:
@@ -113,8 +113,8 @@ def test_handle_run_terrain_pass_still_surfaces_truly_unknown_passes():
 
 
 def test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read():
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -142,8 +142,8 @@ def test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read():
 
 
 def test_execute_terrain_pipeline_threads_quality_profile_hints_and_viewport():
-    from blender_addon.handlers.environment import _execute_terrain_pipeline
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import _execute_terrain_pipeline
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -179,8 +179,8 @@ def test_execute_terrain_pipeline_threads_quality_profile_hints_and_viewport():
 
 
 def test_handle_run_terrain_pass_injects_overhang_emit_phase_for_cliff_pipeline():
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     captured = {}
 
@@ -220,8 +220,8 @@ def test_handle_run_terrain_pass_injects_overhang_emit_phase_for_cliff_pipeline(
 
 
 def test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_full():
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -270,8 +270,8 @@ def test_dag_blocks_unannotated_duplicate_producer():
     cloud_shadow dual-producer rename. Silencing that hazard via ad-hoc
     registration order is no longer permitted.
     """
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         ChannelOwnershipError,
         PassDefinition,
     )
@@ -327,9 +327,9 @@ def test_optional_channels_run_before_consumer_when_available():
     scheduler runs it before the consumer; when it is absent the consumer
     is still schedulable. scatter_intelligent is the canonical caller.
     """
-    from blender_addon.handlers.terrain_pass_dag import PassDAG
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import PassDefinition
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
     def _noop(state, region):  # pragma: no cover — ordering-only
         raise RuntimeError("not expected to run")
@@ -374,11 +374,11 @@ def test_cloud_shadow_renamed_channels_are_independent():
     channels must be independent DAG-wise so neither pass overwrites the
     other's output.
     """
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_cloud_shadow import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import (
         register_bundle_j_cloud_shadow_pass,
     )
-    from blender_addon.handlers.terrain_shadow_clipmap_bake import (
+    from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import (
         register_bundle_k_shadow_clipmap_pass,
     )
 
@@ -416,8 +416,8 @@ def test_cloud_shadow_renamed_channels_are_independent():
 
 
 def test_handle_run_terrain_pass_skips_heightmap_injection_when_unity_export_opted_out():
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:

@@ -28,7 +28,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _register_passes():
     """Ensure the default Bundle A passes are registered before each test."""
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
@@ -46,8 +46,8 @@ def _build_state(
     include_scene_read: bool = True,
     protected_zones=(),
 ):
-    from blender_addon.handlers._terrain_noise import generate_heightmap
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -114,7 +114,7 @@ def _build_state(
 
 
 def test_pipeline_end_to_end_runs_all_four_passes():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=24)
@@ -132,7 +132,7 @@ def test_pipeline_end_to_end_runs_all_four_passes():
 
 
 def test_mask_stack_channels_populated_after_each_pass():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=24)
@@ -161,7 +161,7 @@ def test_mask_stack_channels_populated_after_each_pass():
 
 
 def test_pipeline_determinism_bit_identical_reruns():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state_a = _build_state(tile_size=24, seed=9001)
@@ -187,8 +187,8 @@ def test_pipeline_determinism_bit_identical_reruns():
 
 
 def test_region_scoping_leaves_outside_cells_unchanged():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=32)
@@ -215,8 +215,8 @@ def test_region_scoping_leaves_outside_cells_unchanged():
 
 
 def test_protected_zone_cells_are_not_mutated_by_erosion():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
 
     zone = ProtectedZoneSpec(
         zone_id="hero_cliff",
@@ -246,8 +246,8 @@ def test_protected_zone_cells_are_not_mutated_by_erosion():
 
 
 def test_erosion_pass_requires_scene_read():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import SceneReadRequired
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import SceneReadRequired
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=24, include_scene_read=False)
@@ -266,7 +266,7 @@ def test_erosion_pass_requires_scene_read():
 
 
 def test_checkpoint_rollback_restores_prior_state():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=24)
@@ -299,7 +299,7 @@ def test_checkpoint_rollback_restores_prior_state():
 
 
 def test_derive_pass_seed_is_deterministic_and_varies_by_inputs():
-    from blender_addon.handlers.terrain_pipeline import derive_pass_seed
+    from veilbreakers_terrain.handlers.terrain_pipeline import derive_pass_seed
 
     a = derive_pass_seed(42, "erosion", 0, 0, None)
     b = derive_pass_seed(42, "erosion", 0, 0, None)

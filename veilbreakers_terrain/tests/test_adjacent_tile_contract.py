@@ -14,18 +14,18 @@ import math
 import numpy as np
 import pytest
 
-from blender_addon.handlers._terrain_world import (
+from veilbreakers_terrain.handlers._terrain_world import (
     extract_tile,
     generate_world_heightmap,
     sample_world_height,
 )
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     TerrainIntentState,
     TerrainMaskStack,
 )
-from blender_addon.handlers.terrain_twelve_step import run_twelve_step_world_terrain
-from blender_addon.handlers.terrain_world_math import theoretical_max_amplitude
+from veilbreakers_terrain.handlers.terrain_twelve_step import run_twelve_step_world_terrain
+from veilbreakers_terrain.handlers.terrain_world_math import theoretical_max_amplitude
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ class TestTerrainNoiseEdgeCases:
         `rows >= 3 and cols >= 3` -- but normalization could still
         divide by zero if hmax == hmin on a single pixel.
         """
-        from blender_addon.handlers._terrain_noise import generate_heightmap, TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap, TERRAIN_PRESETS
 
         for terrain_type in TERRAIN_PRESETS:
             hmap = generate_heightmap(1, 1, seed=42, terrain_type=terrain_type)
@@ -42,7 +42,7 @@ class TestTerrainNoiseEdgeCases:
         The smooth path has `if rows >= 3 and cols >= 3` guard.
         A 2x2 map should skip the blur and still normalize correctly.
         """
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(2, 2, seed=0, terrain_type="plains")
         assert hmap.shape == (2, 2)
@@ -51,7 +51,7 @@ class TestTerrainNoiseEdgeCases:
 
     def test_slope_map_1x1(self):
         """Slope map on a 1x1 heightmap should return a valid 1x1 array."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         hmap = np.array([[0.5]])
         slope = compute_slope_map(hmap)
@@ -61,7 +61,7 @@ class TestTerrainNoiseEdgeCases:
 
     def test_biome_assignment_1x1(self):
         """Biome assignment on 1x1 arrays should not crash."""
-        from blender_addon.handlers._terrain_noise import compute_biome_assignments
+        from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
 
         hmap = np.array([[0.5]])
         slope = np.array([[10.0]])
@@ -70,7 +70,7 @@ class TestTerrainNoiseEdgeCases:
 
     def test_river_on_tiny_map(self):
         """River carving on a 3x3 map should not crash."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.full((3, 3), 0.5)
         path, result = carve_river_path(hmap, source=(0, 1), dest=(2, 1))
@@ -91,7 +91,7 @@ class TestTerrainErosionEdgeCases:
         out-of-bounds check (ix < 1 or ix >= cols-2) triggers. Should
         not crash, just return unchanged.
         """
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.array([[0.3, 0.7], [0.5, 0.9]])
         result = apply_hydraulic_erosion(hmap, iterations=10, seed=42)
@@ -104,7 +104,7 @@ class TestTerrainErosionEdgeCases:
         Result should have same shape with values in [0, 1] and reduced contrast
         (slopes are smoothed towards the talus threshold).
         """
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.array([[0.0, 1.0], [1.0, 0.0]])
         result = apply_thermal_erosion(hmap, iterations=5, talus_angle=30.0)
@@ -118,7 +118,7 @@ class TestTerrainErosionEdgeCases:
 
     def test_thermal_erosion_zero_iterations(self):
         """Zero iterations should return input unchanged."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.random.RandomState(42).rand(16, 16)
         result = apply_thermal_erosion(hmap, iterations=0, talus_angle=30.0)
@@ -153,7 +153,7 @@ class TestScatterEngineEdgeCases:
         """min_distance > area diagonal: should return exactly 1 point
         (the initial seed point).
         """
-        from blender_addon.handlers._scatter_engine import poisson_disk_sample
+        from veilbreakers_terrain.handlers._scatter_engine import poisson_disk_sample
 
         points = poisson_disk_sample(5.0, 5.0, min_distance=100.0, seed=42)
         assert len(points) == 1
@@ -164,7 +164,7 @@ class TestScatterEngineEdgeCases:
         """Context scatter with empty building list should use all
         generic props (no crash from nearest-building search).
         """
-        from blender_addon.handlers._scatter_engine import context_scatter
+        from veilbreakers_terrain.handlers._scatter_engine import context_scatter
 
         result = context_scatter(buildings=[], area_size=50.0, seed=42)
         assert isinstance(result, list)
@@ -173,7 +173,7 @@ class TestScatterEngineEdgeCases:
 
     def test_breakable_variants_deterministic_fragments(self):
         """Fragment counts should be within the configured range."""
-        from blender_addon.handlers._scatter_engine import (
+        from veilbreakers_terrain.handlers._scatter_engine import (
             generate_breakable_variants,
             BREAKABLE_PROPS,
         )

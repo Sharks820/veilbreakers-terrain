@@ -8,17 +8,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_pipeline import (
+from veilbreakers_terrain.handlers.terrain_pipeline import (
     TerrainPassController,
 )
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     TerrainIntentState,
     TerrainMaskStack,
     TerrainPipelineState,
     TerrainSceneRead,
 )
-from blender_addon.handlers.terrain_water_variants import (
+from veilbreakers_terrain.handlers.terrain_water_variants import (
     BraidedChannels,
     Estuary,
     HotSpring,
@@ -34,7 +34,7 @@ from blender_addon.handlers.terrain_water_variants import (
     generate_braided_channels,
     pass_water_variants,
 )
-from blender_addon.handlers.terrain_vegetation_depth import (
+from veilbreakers_terrain.handlers.terrain_vegetation_depth import (
     DisturbancePatch,
     VegetationLayer,
     VegetationLayers,
@@ -47,7 +47,7 @@ from blender_addon.handlers.terrain_vegetation_depth import (
     place_clearings,
     place_fallen_logs,
 )
-from blender_addon.handlers.terrain_bundle_o import register_bundle_o_passes
+from veilbreakers_terrain.handlers.terrain_bundle_o import register_bundle_o_passes
 
 
 # ---------------------------------------------------------------------------

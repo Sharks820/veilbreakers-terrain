@@ -29,13 +29,13 @@ def slope_heightmap():
 
 @pytest.fixture
 def mountain_heightmap():
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     return generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
 
 
 @pytest.fixture
 def flow_result(mountain_heightmap):
-    from blender_addon.handlers.terrain_advanced import compute_flow_map
+    from veilbreakers_terrain.handlers.terrain_advanced import compute_flow_map
     raw = compute_flow_map(mountain_heightmap)
     # compute_flow_map returns Python lists; convert to numpy for testing
     return {
@@ -50,7 +50,7 @@ def flow_result(mountain_heightmap):
 
 @pytest.fixture
 def eroded_masks(mountain_heightmap):
-    from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion_masks
+    from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
     return apply_hydraulic_erosion_masks(
         mountain_heightmap, iterations=500, seed=42
     )
@@ -66,7 +66,7 @@ class TestRiverFlowsDownhill:
 
     def test_flow_direction_points_downhill(self, mountain_heightmap, flow_result):
         """Every cell with a valid flow direction must point to a lower neighbor."""
-        from blender_addon.handlers.terrain_advanced import _D8_OFFSETS
+        from veilbreakers_terrain.handlers.terrain_advanced import _D8_OFFSETS
         hmap = np.asarray(mountain_heightmap, dtype=np.float64)
         flow_dir = flow_result["flow_direction"]
         rows, cols = hmap.shape
@@ -92,7 +92,7 @@ class TestRiverFlowsDownhill:
 
     def test_flow_on_gradient_follows_slope(self, slope_heightmap):
         """On a simple gradient, flow should follow the downhill direction."""
-        from blender_addon.handlers.terrain_advanced import compute_flow_map
+        from veilbreakers_terrain.handlers.terrain_advanced import compute_flow_map
         raw = compute_flow_map(slope_heightmap)
         flow_dir = np.asarray(raw["flow_direction"], dtype=np.int32)
         rows, cols = flow_dir.shape
@@ -115,7 +115,7 @@ class TestRiverFlowsDownhill:
 
     def test_traced_river_monotonically_descends(self, mountain_heightmap, flow_result):
         """A traced river path should have monotonically non-increasing elevation."""
-        from blender_addon.handlers._water_network import trace_river_from_flow
+        from veilbreakers_terrain.handlers._water_network import trace_river_from_flow
         flow_dir = flow_result["flow_direction"]  # already numpy from fixture
         flow_acc = flow_result["flow_accumulation"]
         hmap = np.asarray(mountain_heightmap, dtype=np.float64)
@@ -137,7 +137,7 @@ class TestRiverFlowsDownhill:
 
     def test_river_width_increases_downstream(self):
         """River width should increase with flow accumulation."""
-        from blender_addon.handlers._water_network import compute_river_width
+        from veilbreakers_terrain.handlers._water_network import compute_river_width
         widths = [compute_river_width(acc) for acc in [10, 100, 1000, 10000]]
         for i in range(1, len(widths)):
             assert widths[i] >= widths[i - 1], (
@@ -155,7 +155,7 @@ class TestDrainageAcyclic:
 
     def test_flow_graph_has_no_cycles(self, mountain_heightmap, flow_result):
         """Following flow directions from any cell must terminate (no loops)."""
-        from blender_addon.handlers.terrain_advanced import _D8_OFFSETS
+        from veilbreakers_terrain.handlers.terrain_advanced import _D8_OFFSETS
         flow_dir = flow_result["flow_direction"]
         rows, cols = flow_dir.shape
         max_steps = rows * cols  # upper bound on path length
@@ -184,7 +184,7 @@ class TestDrainageAcyclic:
 
     def test_every_cell_reaches_pit_or_edge(self, mountain_heightmap, flow_result):
         """Every cell must drain to a pit (flat) or the map boundary."""
-        from blender_addon.handlers.terrain_advanced import _D8_OFFSETS
+        from veilbreakers_terrain.handlers.terrain_advanced import _D8_OFFSETS
         flow_dir = flow_result["flow_direction"]
         rows, cols = flow_dir.shape
 
@@ -325,8 +325,8 @@ class TestErosionVShapedValleys:
 
     def test_thermal_erosion_smooths_steep(self):
         """Thermal erosion should reduce maximum slope (talus redistribution)."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
-        from blender_addon.handlers._terrain_noise import generate_heightmap, compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap, compute_slope_map
 
         hmap = generate_heightmap(64, 64, scale=30.0, seed=42, terrain_type="cliffs")
         slope_before = compute_slope_map(hmap)
@@ -349,7 +349,7 @@ class TestLakePhysics:
 
     def test_lakes_at_local_minima(self, mountain_heightmap, flow_result):
         """Detected lakes should be at local minima of the heightmap."""
-        from blender_addon.handlers._water_network import detect_lakes
+        from veilbreakers_terrain.handlers._water_network import detect_lakes
         hmap = np.asarray(mountain_heightmap, dtype=np.float64)
         lakes = detect_lakes(hmap, flow_result["flow_accumulation"], min_area=5)
 
@@ -375,7 +375,7 @@ class TestLakePhysics:
 
     def test_lake_surface_z_above_bottom(self, mountain_heightmap, flow_result):
         """Lake surface elevation must be >= the pit bottom."""
-        from blender_addon.handlers._water_network import detect_lakes
+        from veilbreakers_terrain.handlers._water_network import detect_lakes
         hmap = np.asarray(mountain_heightmap, dtype=np.float64)
         lakes = detect_lakes(hmap, flow_result["flow_accumulation"], min_area=5)
 
@@ -386,7 +386,7 @@ class TestLakePhysics:
 
     def test_lake_cells_below_surface(self, mountain_heightmap, flow_result):
         """All cells in a lake should have elevation <= surface_z."""
-        from blender_addon.handlers._water_network import detect_lakes
+        from veilbreakers_terrain.handlers._water_network import detect_lakes
         hmap = np.asarray(mountain_heightmap, dtype=np.float64)
         lakes = detect_lakes(hmap, flow_result["flow_accumulation"], min_area=5)
 
@@ -407,14 +407,14 @@ class TestWaterNetworkPhysics:
 
     def test_river_width_positive(self):
         """River width must always be positive."""
-        from blender_addon.handlers._water_network import compute_river_width
+        from veilbreakers_terrain.handlers._water_network import compute_river_width
         for acc in [0, 1, 10, 100, 1000, 100000]:
             w = compute_river_width(acc)
             assert w > 0, f"Zero/negative width for accumulation={acc}"
 
     def test_river_width_bounded(self):
         """River width must respect min/max bounds."""
-        from blender_addon.handlers._water_network import compute_river_width
+        from veilbreakers_terrain.handlers._water_network import compute_river_width
         w_tiny = compute_river_width(0, min_width=2.0, max_width=50.0)
         w_huge = compute_river_width(1e9, min_width=2.0, max_width=50.0)
         assert w_tiny >= 2.0

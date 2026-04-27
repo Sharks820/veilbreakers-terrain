@@ -58,7 +58,7 @@ def _stacked_cliff_heightmap(size: int = 60) -> np.ndarray:
 
 
 def _build_stack(height: np.ndarray, tile_size: int | None = None):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     ts = tile_size if tile_size is not None else height.shape[0] - 1
     drainage = np.full_like(height, 2000.0, dtype=np.float64)  # high drainage everywhere
@@ -77,7 +77,7 @@ def _build_stack(height: np.ndarray, tile_size: int | None = None):
 
 
 def _build_state(height: np.ndarray, *, include_scene_read: bool = True, seed: int = 101):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainPipelineState,
@@ -112,7 +112,7 @@ def _build_state(height: np.ndarray, *, include_scene_read: bool = True, seed: i
 
 
 def _build_manual_chain():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         ImpactPool,
         LipCandidate,
         WaterfallChain,
@@ -156,7 +156,7 @@ def _build_manual_chain():
 
 
 def test_detect_lip_candidates_finds_cliff_edge():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
     )
 
@@ -171,7 +171,7 @@ def test_detect_lip_candidates_finds_cliff_edge():
 
 
 def test_manning_velocity_is_monotonic_and_clamped():
-    from blender_addon.handlers.terrain_waterfalls import _manning_velocity
+    from veilbreakers_terrain.handlers.terrain_waterfalls import _manning_velocity
 
     assert _manning_velocity(0.0, 1.0) == pytest.approx(0.1)
     assert _manning_velocity(0.05, 0.5) > _manning_velocity(0.01, 0.5)
@@ -179,7 +179,7 @@ def test_manning_velocity_is_monotonic_and_clamped():
 
 
 def test_freefall_impact_matches_closed_form_drop():
-    from blender_addon.handlers.terrain_waterfalls import _G, _freefall_impact
+    from veilbreakers_terrain.handlers.terrain_waterfalls import _G, _freefall_impact
 
     h_drop = 20.0
     t_impact, v_total = _freefall_impact(h_drop, v_h=0.0)
@@ -188,7 +188,7 @@ def test_freefall_impact_matches_closed_form_drop():
 
 
 def test_mason_1985_pool_grows_with_drop_and_discharge():
-    from blender_addon.handlers.terrain_waterfalls import _mason_1985_pool
+    from veilbreakers_terrain.handlers.terrain_waterfalls import _mason_1985_pool
 
     small_r, small_d = _mason_1985_pool(5.0, 0.2)
     large_r, large_d = _mason_1985_pool(20.0, 5.0)
@@ -199,7 +199,7 @@ def test_mason_1985_pool_grows_with_drop_and_discharge():
 
 
 def test_estimate_discharge_increases_with_drainage_area():
-    from blender_addon.handlers.terrain_waterfalls import _estimate_discharge
+    from veilbreakers_terrain.handlers.terrain_waterfalls import _estimate_discharge
 
     small_q = _estimate_discharge(10.0, 1.0)
     big_q = _estimate_discharge(5_000_000.0, 5.0)
@@ -208,7 +208,7 @@ def test_estimate_discharge_increases_with_drainage_area():
 
 
 def test_detect_lip_respects_min_drop():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
     )
 
@@ -219,7 +219,7 @@ def test_detect_lip_respects_min_drop():
 
 
 def test_solve_waterfall_produces_full_chain():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
         solve_waterfall_from_river,
     )
@@ -238,7 +238,7 @@ def test_solve_waterfall_produces_full_chain():
 
 
 def test_carve_impact_pool_returns_delta_not_in_place():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         carve_impact_pool,
         detect_waterfall_lip_candidates,
         solve_waterfall_from_river,
@@ -258,7 +258,7 @@ def test_carve_impact_pool_returns_delta_not_in_place():
 
 
 def test_generate_mist_zone_falls_off_radially():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
         generate_mist_zone,
         solve_waterfall_from_river,
@@ -272,7 +272,7 @@ def test_generate_mist_zone_falls_off_radially():
     peak = mist.max()
     assert peak > 0.0
     # Grab pool cell — must equal peak (or close)
-    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
     pr, pc = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
     assert mist[pr, pc] == pytest.approx(peak, rel=1e-5)
     # Far cells should be zero
@@ -280,7 +280,7 @@ def test_generate_mist_zone_falls_off_radially():
 
 
 def test_validate_waterfall_system_rejects_incomplete():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         ImpactPool,
         LipCandidate,
         WaterfallChain,
@@ -316,8 +316,8 @@ def test_validate_waterfall_system_rejects_incomplete():
 
 
 def test_pass_waterfalls_populates_channels():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_waterfalls import register_bundle_c_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_waterfalls import register_bundle_c_passes
 
     TerrainPassController.clear_registry()
     register_bundle_c_passes()
@@ -339,8 +339,8 @@ def test_pass_waterfalls_populates_channels():
 
 
 def test_waterfall_registration_declares_delta_output():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_waterfalls import register_bundle_c_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_waterfalls import register_bundle_c_passes
 
     TerrainPassController.clear_registry()
     register_bundle_c_passes()
@@ -352,7 +352,7 @@ def test_waterfall_registration_declares_delta_output():
 
 
 def test_multi_tier_waterfall_produces_multiple_drop_segments():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
         solve_waterfall_from_river,
     )
@@ -369,7 +369,7 @@ def test_multi_tier_waterfall_produces_multiple_drop_segments():
 
 
 def test_determinism_same_seed_same_chain_count():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
         solve_waterfall_from_river,
     )
@@ -388,9 +388,9 @@ def test_determinism_same_seed_same_chain_count():
 
 
 def test_region_scoped_pass_leaves_outside_cells_zero():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox
-    from blender_addon.handlers.terrain_waterfalls import register_bundle_c_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_waterfalls import register_bundle_c_passes
 
     TerrainPassController.clear_registry()
     register_bundle_c_passes()
@@ -410,7 +410,7 @@ def test_region_scoped_pass_leaves_outside_cells_zero():
 
 
 def test_build_outflow_channel_returns_delta():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         build_outflow_channel,
         detect_waterfall_lip_candidates,
         solve_waterfall_from_river,
@@ -428,9 +428,9 @@ def test_build_outflow_channel_returns_delta():
 
 
 def test_pass_waterfalls_requires_scene_read():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import SceneReadRequired
-    from blender_addon.handlers.terrain_waterfalls import register_bundle_c_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import SceneReadRequired
+    from veilbreakers_terrain.handlers.terrain_waterfalls import register_bundle_c_passes
 
     TerrainPassController.clear_registry()
     register_bundle_c_passes()
@@ -445,7 +445,7 @@ def test_pass_waterfalls_requires_scene_read():
 
 
 def test_generate_foam_mask_peaks_at_pool():
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         detect_waterfall_lip_candidates,
         generate_foam_mask,
         solve_waterfall_from_river,
@@ -456,14 +456,14 @@ def test_generate_foam_mask_peaks_at_pool():
     chain = solve_waterfall_from_river(stack, lips[0])
     foam = generate_foam_mask(chain, stack)
     assert foam.max() > 0.0
-    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
     pr, pc = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
     assert foam[pr, pc] == pytest.approx(foam.max(), rel=1e-5)
 
 
 def test_generate_foam_mask_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch):
-    import blender_addon.handlers._water_network_ext as water_ext
-    from blender_addon.handlers.terrain_waterfalls import generate_foam_mask
+    import veilbreakers_terrain.handlers._water_network_ext as water_ext
+    from veilbreakers_terrain.handlers.terrain_waterfalls import generate_foam_mask
 
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
@@ -483,9 +483,9 @@ def test_generate_foam_mask_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch
 def test_generate_foam_mask_preserves_plunge_path_turbulence_when_ext_quiet(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    import blender_addon.handlers._water_network_ext as water_ext
-    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
-    from blender_addon.handlers.terrain_waterfalls import generate_foam_mask
+    import veilbreakers_terrain.handlers._water_network_ext as water_ext
+    from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from veilbreakers_terrain.handlers.terrain_waterfalls import generate_foam_mask
 
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
@@ -505,8 +505,8 @@ def test_generate_foam_mask_preserves_plunge_path_turbulence_when_ext_quiet(
 
 
 def test_generate_mist_zone_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch):
-    import blender_addon.handlers._water_network_ext as water_ext
-    from blender_addon.handlers.terrain_waterfalls import generate_mist_zone
+    import veilbreakers_terrain.handlers._water_network_ext as water_ext
+    from veilbreakers_terrain.handlers.terrain_waterfalls import generate_mist_zone
 
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
@@ -536,9 +536,9 @@ def test_generate_mist_zone_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch
 def test_generate_mist_zone_preserves_downstream_bias_when_ext_quiet(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    import blender_addon.handlers._water_network_ext as water_ext
-    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
-    from blender_addon.handlers.terrain_waterfalls import generate_mist_zone
+    import veilbreakers_terrain.handlers._water_network_ext as water_ext
+    from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from veilbreakers_terrain.handlers.terrain_waterfalls import generate_mist_zone
 
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
@@ -562,8 +562,8 @@ def test_generate_mist_zone_preserves_downstream_bias_when_ext_quiet(
 
 
 def test_generate_velocity_field_spreads_beyond_exact_path_cells():
-    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
-    from blender_addon.handlers.terrain_waterfalls import generate_velocity_field
+    from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from veilbreakers_terrain.handlers.terrain_waterfalls import generate_velocity_field
 
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
@@ -575,8 +575,8 @@ def test_generate_velocity_field_spreads_beyond_exact_path_cells():
 
 
 def test_blend_velocity_to_water_body_damps_masked_pool_and_leaves_dry_cells_alone():
-    from blender_addon.handlers._water_network_ext import _world_to_grid  # type: ignore
-    from blender_addon.handlers.terrain_waterfalls import blend_velocity_to_water_body
+    from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
+    from veilbreakers_terrain.handlers.terrain_waterfalls import blend_velocity_to_water_body
 
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
@@ -600,7 +600,7 @@ def test_blend_velocity_to_water_body_damps_masked_pool_and_leaves_dry_cells_alo
 def test_pass_waterfalls_publishes_particle_emitter_specs():
     """Running pass_waterfalls on a cliff heightmap must produce the
     three expected particle zones per detected waterfall chain."""
-    from blender_addon.handlers.terrain_waterfalls import pass_waterfalls
+    from veilbreakers_terrain.handlers.terrain_waterfalls import pass_waterfalls
 
     state = _build_state(_cliff_heightmap(size=40, drop=25.0))
     result = pass_waterfalls(state, region=None)
@@ -634,7 +634,7 @@ def test_pass_waterfalls_publishes_particle_emitter_specs():
 def test_pass_emit_particle_systems_forwards_to_state_layer():
     """pass_emit_particle_systems publishes to state.particle_layer_specs
     with engine-specific hints attached."""
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         pass_emit_particle_systems,
         pass_waterfalls,
     )
@@ -662,7 +662,7 @@ def test_pass_emit_particle_systems_forwards_to_state_layer():
 
 def test_pass_waterfalls_without_chains_does_not_publish_empty_emitters():
     """Flat terrain → zero chains → emitter channel stays unset (not empty)."""
-    from blender_addon.handlers.terrain_waterfalls import pass_waterfalls
+    from veilbreakers_terrain.handlers.terrain_waterfalls import pass_waterfalls
 
     state = _build_state(np.zeros((20, 20), dtype=np.float64))
     pass_waterfalls(state, region=None)
@@ -673,10 +673,10 @@ def test_pass_waterfalls_without_chains_does_not_publish_empty_emitters():
 
 def test_particle_emitter_specs_exported_to_unity_json(tmp_path):
     """Full pipeline: waterfall emits specs → Unity exporter writes JSON."""
-    from blender_addon.handlers.terrain_unity_export import (
+    from veilbreakers_terrain.handlers.terrain_unity_export import (
         _particle_emitter_specs_json,
     )
-    from blender_addon.handlers.terrain_waterfalls import pass_waterfalls
+    from veilbreakers_terrain.handlers.terrain_waterfalls import pass_waterfalls
 
     state = _build_state(_cliff_heightmap(size=40, drop=25.0))
     pass_waterfalls(state, region=None)

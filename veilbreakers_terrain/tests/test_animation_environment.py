@@ -1,6 +1,6 @@
 """Tests for environmental/world animation generators. Pure-logic -- no Blender."""
 import pytest
-from blender_addon.handlers.animation_environment import (
+from veilbreakers_terrain.handlers.animation_environment import (
     VALID_ENV_TYPES, validate_env_params, generate_env_keyframes,
     generate_door_open_keyframes, generate_door_slam_keyframes,
     generate_gate_raise_keyframes, generate_gate_lower_keyframes,
@@ -8,7 +8,7 @@ from blender_addon.handlers.animation_environment import (
     generate_flag_wind_keyframes, generate_chest_open_keyframes,
     generate_trap_trigger_keyframes, generate_windmill_rotate_keyframes,
 )
-from blender_addon.handlers.animation_gaits import Keyframe
+from veilbreakers_terrain.handlers.animation_gaits import Keyframe
 
 
 class TestValidation:

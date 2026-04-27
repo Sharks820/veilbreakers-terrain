@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     HeroFeatureSpec,
     TerrainIntentState,
@@ -94,7 +94,7 @@ def _make_state(stack: TerrainMaskStack, intent: TerrainIntentState) -> TerrainP
 
 class TestSaliency:
     def test_compute_vantage_silhouettes_shape(self):
-        from blender_addon.handlers.terrain_saliency import compute_vantage_silhouettes
+        from veilbreakers_terrain.handlers.terrain_saliency import compute_vantage_silhouettes
 
         stack = _make_stack()
         vantages = [(0.0, 0.0, 60.0), (30.0, 30.0, 60.0)]
@@ -104,14 +104,14 @@ class TestSaliency:
         assert np.all(s >= 0.0)
 
     def test_compute_vantage_silhouettes_empty(self):
-        from blender_addon.handlers.terrain_saliency import compute_vantage_silhouettes
+        from veilbreakers_terrain.handlers.terrain_saliency import compute_vantage_silhouettes
 
         stack = _make_stack()
         s = compute_vantage_silhouettes(stack, [], ray_count=16)
         assert s.shape == (0, 16)
 
     def test_auto_sculpt_positive_kind(self):
-        from blender_addon.handlers.terrain_saliency import auto_sculpt_around_feature
+        from veilbreakers_terrain.handlers.terrain_saliency import auto_sculpt_around_feature
 
         stack = _make_stack()
         delta = auto_sculpt_around_feature(stack, (16.0, 16.0, 50.0), "pinnacle", 10.0)
@@ -120,14 +120,14 @@ class TestSaliency:
         assert float(delta.min()) >= 0.0
 
     def test_auto_sculpt_negative_kind(self):
-        from blender_addon.handlers.terrain_saliency import auto_sculpt_around_feature
+        from veilbreakers_terrain.handlers.terrain_saliency import auto_sculpt_around_feature
 
         stack = _make_stack()
         delta = auto_sculpt_around_feature(stack, (16.0, 16.0, 50.0), "canyon", 15.0)
         assert float(delta.min()) < 0.0
 
     def test_pass_saliency_refine_noop_without_vantages(self):
-        from blender_addon.handlers.terrain_saliency import pass_saliency_refine
+        from veilbreakers_terrain.handlers.terrain_saliency import pass_saliency_refine
 
         stack = _make_stack()
         intent = _make_intent(vantages=())
@@ -142,7 +142,7 @@ class TestSaliency:
         assert stack.saliency_macro.min() >= 0.0
 
     def test_pass_saliency_refine_changes_with_vantages(self):
-        from blender_addon.handlers.terrain_saliency import pass_saliency_refine
+        from veilbreakers_terrain.handlers.terrain_saliency import pass_saliency_refine
 
         stack = _make_stack()
         intent = _make_intent(vantages=[(0.0, 0.0, 70.0), (32.0, 32.0, 70.0)])
@@ -157,8 +157,8 @@ class TestSaliency:
         assert stack.saliency_macro.min() >= 0.0
 
     def test_register_saliency_pass(self):
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
-        from blender_addon.handlers.terrain_saliency import register_saliency_pass
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_saliency import register_saliency_pass
 
         TerrainPassController.clear_registry()
         register_saliency_pass()
@@ -173,7 +173,7 @@ class TestSaliency:
 
 class TestMorphology:
     def test_default_templates_count(self):
-        from blender_addon.handlers.terrain_morphology import DEFAULT_TEMPLATES
+        from veilbreakers_terrain.handlers.terrain_morphology import DEFAULT_TEMPLATES
 
         assert len(DEFAULT_TEMPLATES) >= 30
         # Ensure we have the 6 required kinds
@@ -182,13 +182,13 @@ class TestMorphology:
             assert k in kinds, f"missing kind {k}"
 
     def test_template_ids_unique(self):
-        from blender_addon.handlers.terrain_morphology import DEFAULT_TEMPLATES
+        from veilbreakers_terrain.handlers.terrain_morphology import DEFAULT_TEMPLATES
 
         ids = [t.template_id for t in DEFAULT_TEMPLATES]
         assert len(ids) == len(set(ids))
 
     def test_apply_ridge_produces_positive_delta(self):
-        from blender_addon.handlers.terrain_morphology import (
+        from veilbreakers_terrain.handlers.terrain_morphology import (
             DEFAULT_TEMPLATES,
             apply_morphology_template,
         )
@@ -200,7 +200,7 @@ class TestMorphology:
         assert float(delta.max()) > 0.0
 
     def test_apply_canyon_produces_negative_delta(self):
-        from blender_addon.handlers.terrain_morphology import (
+        from veilbreakers_terrain.handlers.terrain_morphology import (
             DEFAULT_TEMPLATES,
             apply_morphology_template,
         )
@@ -211,7 +211,7 @@ class TestMorphology:
         assert float(delta.min()) < 0.0
 
     def test_template_deterministic(self):
-        from blender_addon.handlers.terrain_morphology import (
+        from veilbreakers_terrain.handlers.terrain_morphology import (
             DEFAULT_TEMPLATES,
             apply_morphology_template,
         )
@@ -223,7 +223,7 @@ class TestMorphology:
         np.testing.assert_array_equal(d1, d2)
 
     def test_list_templates_for_biome(self):
-        from blender_addon.handlers.terrain_morphology import list_templates_for_biome
+        from veilbreakers_terrain.handlers.terrain_morphology import list_templates_for_biome
 
         alpine = list_templates_for_biome("alpine")
         desert = list_templates_for_biome("desert")
@@ -243,7 +243,7 @@ class TestMorphology:
 
 class TestFraming:
     def test_enforce_sightline_nonzero_for_obstructed(self):
-        from blender_addon.handlers.terrain_framing import enforce_sightline
+        from veilbreakers_terrain.handlers.terrain_framing import enforce_sightline
 
         stack = _make_stack(tile=48)
         # Vantage at low altitude looking at a target across the hill crest
@@ -253,14 +253,14 @@ class TestFraming:
         assert float(delta.min()) < 0.0
 
     def test_enforce_sightline_zero_for_coincident(self):
-        from blender_addon.handlers.terrain_framing import enforce_sightline
+        from veilbreakers_terrain.handlers.terrain_framing import enforce_sightline
 
         stack = _make_stack()
         delta = enforce_sightline(stack, (5.0, 5.0, 10.0), (5.0, 5.0, 10.0), clearance_m=2.0)
         assert float(np.abs(delta).max()) == 0.0
 
     def test_pass_framing_noop_when_no_features(self):
-        from blender_addon.handlers.terrain_framing import pass_framing
+        from veilbreakers_terrain.handlers.terrain_framing import pass_framing
 
         stack = _make_stack()
         intent = _make_intent(vantages=[(0.0, 0.0, 20.0)], hero_features=())
@@ -272,7 +272,7 @@ class TestFraming:
         np.testing.assert_array_equal(stack.height, before)
 
     def test_pass_framing_cuts_obstacles(self):
-        from blender_addon.handlers.terrain_framing import pass_framing
+        from veilbreakers_terrain.handlers.terrain_framing import pass_framing
 
         stack = _make_stack(tile=48)
         hero = HeroFeatureSpec(
@@ -295,8 +295,8 @@ class TestFraming:
         assert float((stack.height - before).max()) <= 1e-9
 
     def test_register_framing_pass(self):
-        from blender_addon.handlers.terrain_framing import register_framing_pass
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_framing import register_framing_pass
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
         TerrainPassController.clear_registry()
         register_framing_pass()
@@ -311,14 +311,14 @@ class TestFraming:
 
 class TestHierarchy:
     def test_feature_tier_from_str(self):
-        from blender_addon.handlers.terrain_hierarchy import FeatureTier
+        from veilbreakers_terrain.handlers.terrain_hierarchy import FeatureTier
 
         assert FeatureTier.from_str("primary") == FeatureTier.PRIMARY
         assert FeatureTier.from_str("AMBIENT") == FeatureTier.AMBIENT
         assert FeatureTier.from_str("nonsense") == FeatureTier.SECONDARY
 
     def test_classify_cinematic_kind_forced_primary(self):
-        from blender_addon.handlers.terrain_hierarchy import FeatureTier, classify_feature_tier
+        from veilbreakers_terrain.handlers.terrain_hierarchy import FeatureTier, classify_feature_tier
 
         f = HeroFeatureSpec(
             feature_id="c",
@@ -330,7 +330,7 @@ class TestHierarchy:
         assert tier == FeatureTier.PRIMARY
 
     def test_classify_saliency_promotion(self):
-        from blender_addon.handlers.terrain_hierarchy import FeatureTier, classify_feature_tier
+        from veilbreakers_terrain.handlers.terrain_hierarchy import FeatureTier, classify_feature_tier
 
         stack = _make_stack()
         # Force saliency high at a known position
@@ -346,7 +346,7 @@ class TestHierarchy:
         assert tier in (FeatureTier.SECONDARY, FeatureTier.PRIMARY)
 
     def test_enforce_feature_budget_prunes(self):
-        from blender_addon.handlers.terrain_hierarchy import (
+        from veilbreakers_terrain.handlers.terrain_hierarchy import (
             DEFAULT_BUDGETS,
             FeatureTier,
             enforce_feature_budget,
@@ -360,7 +360,7 @@ class TestHierarchy:
         assert len(pruned) <= 1
 
     def test_enforce_feature_budget_drops_oversized(self):
-        from blender_addon.handlers.terrain_hierarchy import (
+        from veilbreakers_terrain.handlers.terrain_hierarchy import (
             DEFAULT_BUDGETS,
             FeatureTier,
             enforce_feature_budget,
@@ -383,7 +383,7 @@ class TestHierarchy:
 
 class TestRhythm:
     def test_empty_rhythm(self):
-        from blender_addon.handlers.terrain_rhythm import analyze_feature_rhythm
+        from veilbreakers_terrain.handlers.terrain_rhythm import analyze_feature_rhythm
 
         bounds = BBox(0.0, 0.0, 1000.0, 1000.0)
         result = analyze_feature_rhythm([], bounds)
@@ -391,7 +391,7 @@ class TestRhythm:
         assert result["rhythm"] == 0.0
 
     def test_regular_grid_has_high_rhythm(self):
-        from blender_addon.handlers.terrain_rhythm import analyze_feature_rhythm
+        from veilbreakers_terrain.handlers.terrain_rhythm import analyze_feature_rhythm
 
         # 5x5 perfect grid
         pts = [(float(x * 100), float(y * 100)) for x in range(5) for y in range(5)]
@@ -401,7 +401,7 @@ class TestRhythm:
         assert result["rhythm"] > 0.9
 
     def test_random_has_lower_rhythm(self):
-        from blender_addon.handlers.terrain_rhythm import analyze_feature_rhythm
+        from veilbreakers_terrain.handlers.terrain_rhythm import analyze_feature_rhythm
 
         rng = np.random.default_rng(99)
         pts = [(float(x), float(y)) for x, y in rng.uniform(0, 500, size=(25, 2))]
@@ -410,7 +410,7 @@ class TestRhythm:
         assert result["rhythm"] < 0.9
 
     def test_enforce_rhythm_with_dicts(self):
-        from blender_addon.handlers.terrain_rhythm import enforce_rhythm
+        from veilbreakers_terrain.handlers.terrain_rhythm import enforce_rhythm
 
         rng = np.random.default_rng(5)
         features = [
@@ -422,7 +422,7 @@ class TestRhythm:
         assert all("world_position" in f for f in out)
 
     def test_validate_rhythm_flags_random(self):
-        from blender_addon.handlers.terrain_rhythm import validate_rhythm
+        from veilbreakers_terrain.handlers.terrain_rhythm import validate_rhythm
 
         rng = np.random.default_rng(1)
         pts = [(float(x), float(y)) for x, y in rng.uniform(0, 500, size=(30, 2))]
@@ -443,7 +443,7 @@ class TestRhythm:
 
 class TestNegativeSpace:
     def test_compute_quiet_zone_ratio_empty(self):
-        from blender_addon.handlers.terrain_negative_space import compute_quiet_zone_ratio
+        from veilbreakers_terrain.handlers.terrain_negative_space import compute_quiet_zone_ratio
 
         tile = 16
         stack = TerrainMaskStack(
@@ -459,7 +459,7 @@ class TestNegativeSpace:
         assert compute_quiet_zone_ratio(stack) == 0.0
 
     def test_quiet_zone_ratio_with_saliency(self):
-        from blender_addon.handlers.terrain_negative_space import compute_quiet_zone_ratio
+        from veilbreakers_terrain.handlers.terrain_negative_space import compute_quiet_zone_ratio
 
         stack = _make_stack()
         stack.saliency_macro = np.zeros_like(stack.saliency_macro)
@@ -470,7 +470,7 @@ class TestNegativeSpace:
         )
 
     def test_enforce_quiet_zone_meets_min_ratio(self):
-        from blender_addon.handlers.terrain_negative_space import enforce_quiet_zone
+        from veilbreakers_terrain.handlers.terrain_negative_space import enforce_quiet_zone
 
         stack = _make_stack()
         # Force everything busy
@@ -480,7 +480,7 @@ class TestNegativeSpace:
         assert mask.sum() / mask.size >= 0.5
 
     def test_validate_negative_space_passes_when_quiet(self):
-        from blender_addon.handlers.terrain_negative_space import validate_negative_space
+        from veilbreakers_terrain.handlers.terrain_negative_space import validate_negative_space
 
         stack = _make_stack()
         stack.saliency_macro = np.zeros_like(stack.saliency_macro)
@@ -491,7 +491,7 @@ class TestNegativeSpace:
         assert issues == []
 
     def test_validate_negative_space_flags_busy(self):
-        from blender_addon.handlers.terrain_negative_space import validate_negative_space
+        from veilbreakers_terrain.handlers.terrain_negative_space import validate_negative_space
 
         stack = _make_stack()
         stack.saliency_macro = np.ones_like(stack.saliency_macro) * 0.9

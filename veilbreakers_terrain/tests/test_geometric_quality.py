@@ -105,21 +105,21 @@ def _count_non_manifold_edges(edge_map: dict) -> int:
 @pytest.fixture
 def mountain_heightmap():
     """64x64 mountain terrain heightmap."""
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     return generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
 
 
 @pytest.fixture
 def plains_heightmap():
     """64x64 plains terrain heightmap."""
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     return generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="plains")
 
 
 @pytest.fixture
 def eroded_heightmap(mountain_heightmap):
     """Mountain heightmap after hydraulic erosion."""
-    from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+    from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
     return apply_hydraulic_erosion(mountain_heightmap, iterations=200, seed=42)
 
 
@@ -204,7 +204,7 @@ class TestNormalConsistency:
 
     def test_steep_terrain_normals_valid(self):
         """Even steep (cliff-type) terrain should not have flipped normals."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         hmap = generate_heightmap(64, 64, scale=30.0, seed=99, terrain_type="cliffs")
         verts, faces = _heightmap_to_mesh(hmap)
         normals = _compute_face_normals(verts, faces)

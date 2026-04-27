@@ -33,7 +33,7 @@ class TestHeightmapPerformance:
         Post-optimization (numpy meshgrid + batch noise) target is <0.1s;
         we use a generous 0.5s threshold to account for CI variance.
         """
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         start = time.perf_counter()
         hmap = generate_heightmap(256, 256, seed=42, terrain_type="mountains")
@@ -48,7 +48,7 @@ class TestHeightmapPerformance:
 
     def test_128x128_all_terrain_types(self):
         """All 6 terrain types generate valid 128x128 heightmaps quickly."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             TERRAIN_PRESETS,
             generate_heightmap,
         )
@@ -77,7 +77,7 @@ class TestPermutationTableNoise:
 
     def test_same_seed_same_output(self):
         """Same seed produces bit-identical heightmaps."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h1 = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
@@ -85,7 +85,7 @@ class TestPermutationTableNoise:
 
     def test_different_seeds_different_output(self):
         """Different seeds produce meaningfully different heightmaps."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h1 = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, seed=999, terrain_type="mountains")
@@ -94,7 +94,7 @@ class TestPermutationTableNoise:
     def test_noise_generator_scalar_matches_array(self):
         """Scalar noise2() and vectorized noise2_array() agree on the
         seeded permutation-table backend used by the fast 2-D terrain path."""
-        from blender_addon.handlers._terrain_noise import _PermTableNoise
+        from veilbreakers_terrain.handlers._terrain_noise import _PermTableNoise
 
         gen = _PermTableNoise(seed=42)
 
@@ -109,7 +109,7 @@ class TestPermutationTableNoise:
 
     def test_noise_output_range(self):
         """Noise values should be in roughly [-1, 1]."""
-        from blender_addon.handlers._terrain_noise import _make_noise_generator
+        from veilbreakers_terrain.handlers._terrain_noise import _make_noise_generator
 
         gen = _make_noise_generator(42)
         xs = np.linspace(-10, 10, 200, dtype=np.float64)
@@ -123,7 +123,7 @@ class TestPermutationTableNoise:
 
     def test_noise_not_constant(self):
         """Noise output should have significant variation (not degenerate)."""
-        from blender_addon.handlers._terrain_noise import _make_noise_generator
+        from veilbreakers_terrain.handlers._terrain_noise import _make_noise_generator
 
         gen = _make_noise_generator(42)
         xs = np.linspace(0, 5, 100, dtype=np.float64)
@@ -134,7 +134,7 @@ class TestPermutationTableNoise:
 
     def test_permutation_table_build(self):
         """_build_permutation_table returns 512-element int32 array."""
-        from blender_addon.handlers._terrain_noise import _build_permutation_table
+        from veilbreakers_terrain.handlers._terrain_noise import _build_permutation_table
 
         perm = _build_permutation_table(42)
         assert perm.shape == (512,)
@@ -189,7 +189,7 @@ class TestSmoothingDoubleBuffer:
 
     def test_vertex_count_preserved(self):
         """Numpy-smoothed output has same vertex count as input."""
-        from blender_addon.handlers.mesh_smoothing import smooth_assembled_mesh
+        from veilbreakers_terrain.handlers.mesh_smoothing import smooth_assembled_mesh
 
         verts, faces = self._make_cube()
         result = smooth_assembled_mesh(verts, faces, smooth_iterations=3)
@@ -197,7 +197,7 @@ class TestSmoothingDoubleBuffer:
 
     def test_blend_factor_zero_no_change(self):
         """blend_factor=0 leaves vertices unchanged with numpy buffers."""
-        from blender_addon.handlers.mesh_smoothing import smooth_assembled_mesh
+        from veilbreakers_terrain.handlers.mesh_smoothing import smooth_assembled_mesh
 
         verts, faces = self._make_cube()
         result = smooth_assembled_mesh(
@@ -210,7 +210,7 @@ class TestSmoothingDoubleBuffer:
 
     def test_smoothing_changes_vertices(self):
         """Smoothing with default factor changes vertex positions."""
-        from blender_addon.handlers.mesh_smoothing import smooth_assembled_mesh
+        from veilbreakers_terrain.handlers.mesh_smoothing import smooth_assembled_mesh
 
         verts, faces = self._make_two_boxes()
         result = smooth_assembled_mesh(verts, faces, smooth_iterations=3)
@@ -224,7 +224,7 @@ class TestSmoothingDoubleBuffer:
 
     def test_more_iterations_more_displacement(self):
         """More iterations produce more total displacement."""
-        from blender_addon.handlers.mesh_smoothing import smooth_assembled_mesh
+        from veilbreakers_terrain.handlers.mesh_smoothing import smooth_assembled_mesh
 
         verts, faces = self._make_two_boxes()
         s1 = smooth_assembled_mesh(verts, faces, smooth_iterations=1)
@@ -242,14 +242,14 @@ class TestSmoothingDoubleBuffer:
 
     def test_empty_mesh_returns_empty(self):
         """Empty input handled gracefully."""
-        from blender_addon.handlers.mesh_smoothing import smooth_assembled_mesh
+        from veilbreakers_terrain.handlers.mesh_smoothing import smooth_assembled_mesh
 
         result = smooth_assembled_mesh([], [])
         assert result == []
 
     def test_output_types_are_float_tuples(self):
         """Output vertices are tuples of Python floats."""
-        from blender_addon.handlers.mesh_smoothing import smooth_assembled_mesh
+        from veilbreakers_terrain.handlers.mesh_smoothing import smooth_assembled_mesh
 
         verts, faces = self._make_cube()
         result = smooth_assembled_mesh(verts, faces, smooth_iterations=2)
@@ -305,7 +305,7 @@ class TestWeatheringCaching:
 
     def test_cached_convexity_matches_uncached(self):
         """Caching edge convexity does not change weathering output."""
-        from blender_addon.handlers.weathering import (
+        from veilbreakers_terrain.handlers.weathering import (
             compute_weathered_vertex_colors,
         )
 
@@ -324,7 +324,7 @@ class TestWeatheringCaching:
 
     def test_structural_settling_with_cached_bbox(self):
         """apply_structural_settling produces identical output with cached bbox."""
-        from blender_addon.handlers.weathering import (
+        from veilbreakers_terrain.handlers.weathering import (
             apply_structural_settling,
             _compute_bounding_box,
         )
@@ -346,7 +346,7 @@ class TestWeatheringCaching:
 
     def test_all_presets_produce_valid_colors(self):
         """All weathering presets produce valid RGBA colors in [0, 1]."""
-        from blender_addon.handlers.weathering import (
+        from veilbreakers_terrain.handlers.weathering import (
             WEATHERING_PRESETS,
             compute_weathered_vertex_colors,
         )

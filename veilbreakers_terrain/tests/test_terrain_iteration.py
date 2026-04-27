@@ -29,7 +29,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _register_passes():
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
@@ -41,8 +41,8 @@ def _register_passes():
 
 
 def _build_state(tile_size: int = 32, seed: int = 1234, include_scene_read: bool = True):
-    from blender_addon.handlers._terrain_noise import generate_heightmap
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -109,8 +109,8 @@ def _tempdir():
 
 
 def test_dirty_tracker_starts_clean():
-    from blender_addon.handlers.terrain_dirty_tracking import DirtyTracker
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_dirty_tracking import DirtyTracker
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     t = DirtyTracker(world_bounds=BBox(0, 0, 100, 100))
     assert t.is_clean()
@@ -119,8 +119,8 @@ def test_dirty_tracker_starts_clean():
 
 
 def test_dirty_tracker_mark_and_regions():
-    from blender_addon.handlers.terrain_dirty_tracking import DirtyTracker
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_dirty_tracking import DirtyTracker
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     t = DirtyTracker(world_bounds=BBox(0, 0, 100, 100))
     t.mark_dirty("height", BBox(10, 10, 20, 20))
@@ -133,8 +133,8 @@ def test_dirty_tracker_mark_and_regions():
 
 
 def test_dirty_tracker_fraction():
-    from blender_addon.handlers.terrain_dirty_tracking import DirtyTracker
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_dirty_tracking import DirtyTracker
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     t = DirtyTracker(world_bounds=BBox(0, 0, 100, 100))
     t.mark_dirty("height", BBox(0, 0, 10, 10))
@@ -143,8 +143,8 @@ def test_dirty_tracker_fraction():
 
 
 def test_dirty_tracker_coalesce_merges_all():
-    from blender_addon.handlers.terrain_dirty_tracking import DirtyTracker
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_dirty_tracking import DirtyTracker
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     t = DirtyTracker(world_bounds=BBox(0, 0, 100, 100))
     t.mark_dirty("height", BBox(5, 5, 10, 10))
@@ -158,7 +158,7 @@ def test_dirty_tracker_coalesce_merges_all():
 
 
 def test_attach_dirty_tracker_is_idempotent():
-    from blender_addon.handlers.terrain_dirty_tracking import attach_dirty_tracker
+    from veilbreakers_terrain.handlers.terrain_dirty_tracking import attach_dirty_tracker
 
     state = _build_state()
     t1 = attach_dirty_tracker(state)
@@ -172,7 +172,7 @@ def test_attach_dirty_tracker_is_idempotent():
 
 
 def test_mask_cache_put_get_hit_miss():
-    from blender_addon.handlers.terrain_mask_cache import MaskCache
+    from veilbreakers_terrain.handlers.terrain_mask_cache import MaskCache
 
     c = MaskCache(max_entries=4)
     assert c.get("k") is None
@@ -183,7 +183,7 @@ def test_mask_cache_put_get_hit_miss():
 
 
 def test_mask_cache_lru_eviction():
-    from blender_addon.handlers.terrain_mask_cache import MaskCache
+    from veilbreakers_terrain.handlers.terrain_mask_cache import MaskCache
 
     c = MaskCache(max_entries=2)
     c.put("a", 1)
@@ -195,7 +195,7 @@ def test_mask_cache_lru_eviction():
 
 
 def test_mask_cache_get_or_compute_runs_fn_once():
-    from blender_addon.handlers.terrain_mask_cache import MaskCache
+    from veilbreakers_terrain.handlers.terrain_mask_cache import MaskCache
 
     c = MaskCache()
     calls = {"n": 0}
@@ -210,8 +210,8 @@ def test_mask_cache_get_or_compute_runs_fn_once():
 
 
 def test_mask_cache_key_determinism():
-    from blender_addon.handlers.terrain_mask_cache import cache_key_for_pass
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_mask_cache import cache_key_for_pass
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     state = _build_state()
     k1 = cache_key_for_pass("erosion", state.intent, BBox(0, 0, 10, 10), (0, 0))
@@ -222,7 +222,7 @@ def test_mask_cache_key_determinism():
 
 
 def test_mask_cache_invalidate_prefix():
-    from blender_addon.handlers.terrain_mask_cache import MaskCache
+    from veilbreakers_terrain.handlers.terrain_mask_cache import MaskCache
 
     c = MaskCache()
     c.put("height:1", 1)
@@ -235,8 +235,8 @@ def test_mask_cache_invalidate_prefix():
 
 
 def test_pass_with_cache_restores_produced_channels():
-    from blender_addon.handlers.terrain_mask_cache import MaskCache, pass_with_cache
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_mask_cache import MaskCache, pass_with_cache
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
@@ -260,8 +260,8 @@ def test_pass_with_cache_restores_produced_channels():
 
 
 def test_compute_minimum_padding_expands_region():
-    from blender_addon.handlers.terrain_region_exec import compute_minimum_padding
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_region_exec import compute_minimum_padding
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     region = BBox(50, 50, 60, 60)
     padded = compute_minimum_padding(region, ["erosion"], world_bounds=BBox(0, 0, 100, 100))
@@ -272,8 +272,8 @@ def test_compute_minimum_padding_expands_region():
 
 
 def test_compute_minimum_padding_clamps_to_world():
-    from blender_addon.handlers.terrain_region_exec import compute_minimum_padding
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_region_exec import compute_minimum_padding
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     region = BBox(0, 0, 10, 10)
     padded = compute_minimum_padding(region, ["erosion"], world_bounds=BBox(0, 0, 100, 100))
@@ -282,9 +282,9 @@ def test_compute_minimum_padding_clamps_to_world():
 
 
 def test_execute_region_runs_pass_sequence():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_region_exec import execute_region
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_region_exec import execute_region
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     with _tempdir() as td:
         state = _build_state(tile_size=32)
@@ -309,8 +309,8 @@ def test_execute_region_runs_pass_sequence():
 
 
 def test_visual_diff_identical_stacks_reports_no_change():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_visual_diff import compute_visual_diff
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_visual_diff import compute_visual_diff
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
@@ -323,9 +323,9 @@ def test_visual_diff_identical_stacks_reports_no_change():
 
 
 def test_visual_diff_detects_height_change():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_visual_diff import compute_visual_diff
-    from blender_addon.handlers.terrain_live_preview import _clone_stack_for_diff
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_visual_diff import compute_visual_diff
+    from veilbreakers_terrain.handlers.terrain_live_preview import _clone_stack_for_diff
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
@@ -340,9 +340,9 @@ def test_visual_diff_detects_height_change():
 
 
 def test_generate_diff_overlay_shape_and_colors():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_visual_diff import generate_diff_overlay
-    from blender_addon.handlers.terrain_live_preview import _clone_stack_for_diff
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_visual_diff import generate_diff_overlay
+    from veilbreakers_terrain.handlers.terrain_live_preview import _clone_stack_for_diff
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
@@ -364,7 +364,7 @@ def test_generate_diff_overlay_shape_and_colors():
 
 
 def test_pass_dag_topological_order_from_registry():
-    from blender_addon.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
 
     dag = PassDAG.from_registry()
     order = dag.topological_order()
@@ -374,7 +374,7 @@ def test_pass_dag_topological_order_from_registry():
 
 
 def test_pass_dag_parallel_waves():
-    from blender_addon.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
 
     dag = PassDAG.from_registry()
     waves = dag.parallel_waves()
@@ -387,8 +387,8 @@ def test_pass_dag_parallel_waves():
 
 
 def test_pass_dag_execute_parallel_runs_all():
-    from blender_addon.handlers.terrain_pass_dag import PassDAG
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
@@ -402,16 +402,16 @@ def test_pass_dag_execute_parallel_runs_all():
 
 
 def test_pass_dag_from_registry_rejects_unknown_pass_names():
-    from blender_addon.handlers.terrain_pass_dag import PassDAG, PassDAGError
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG, PassDAGError
 
     with pytest.raises(PassDAGError, match="missing_pass"):
         PassDAG.from_registry(["macro_world", "missing_pass"])
 
 
 def test_pass_dag_execute_parallel_propagates_worker_failures():
-    from blender_addon.handlers.terrain_pass_dag import PassDAG
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import PassDefinition
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
     def _explode(state, region):
         raise RuntimeError("boom")
@@ -435,9 +435,9 @@ def test_pass_dag_execute_parallel_propagates_worker_failures():
 
 
 def test_pass_dag_execute_parallel_is_actually_parallel_for_independent_passes():
-    from blender_addon.handlers.terrain_pass_dag import PassDAG
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import PassDefinition, PassResult
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
 
     def _sleepy(name: str):
         def _inner(state, region):
@@ -482,17 +482,17 @@ def test_pass_dag_execute_parallel_is_actually_parallel_for_independent_passes()
 
 
 def test_hot_reload_watcher_detects_no_change_on_first_scan():
-    from blender_addon.handlers.terrain_hot_reload import HotReloadWatcher
+    from veilbreakers_terrain.handlers.terrain_hot_reload import HotReloadWatcher
 
     w = HotReloadWatcher()
-    w.add("blender_addon.handlers.terrain_semantics")
+    w.add("veilbreakers_terrain.handlers.terrain_semantics")
     reloaded = w.check_and_reload()
     # First scan establishes baseline — no changes detected
     assert reloaded == [] or "terrain_semantics" in reloaded[0]
 
 
 def test_reload_biome_rules_runs_without_error():
-    from blender_addon.handlers.terrain_hot_reload import reload_biome_rules
+    from veilbreakers_terrain.handlers.terrain_hot_reload import reload_biome_rules
 
     ok = reload_biome_rules()
     # All or some modules reload successfully; never raise
@@ -505,12 +505,12 @@ def test_reload_biome_rules_runs_without_error():
 
 
 def test_iteration_metrics_record_and_speedup():
-    from blender_addon.handlers.terrain_iteration_metrics import (
+    from veilbreakers_terrain.handlers.terrain_iteration_metrics import (
         IterationMetrics,
         record_iteration,
         speedup_factor,
     )
-    from blender_addon.handlers.terrain_semantics import PassResult
+    from veilbreakers_terrain.handlers.terrain_semantics import PassResult
 
     baseline = IterationMetrics()
     record_iteration(baseline, PassResult(pass_name="a", status="ok", duration_seconds=1.0))
@@ -526,7 +526,7 @@ def test_iteration_metrics_record_and_speedup():
 
 
 def test_iteration_metrics_cache_hit_rate():
-    from blender_addon.handlers.terrain_iteration_metrics import (
+    from veilbreakers_terrain.handlers.terrain_iteration_metrics import (
         IterationMetrics,
         record_cache_hit,
         record_cache_miss,
@@ -545,8 +545,8 @@ def test_iteration_metrics_cache_hit_rate():
 
 
 def test_live_preview_session_apply_edit_changes_hash():
-    from blender_addon.handlers.terrain_live_preview import LivePreviewSession
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_live_preview import LivePreviewSession
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)
@@ -572,12 +572,12 @@ def test_iteration_velocity_cache_delivers_speedup():
     faster than the cold run. We assert >= 2x to avoid CI flakiness; the
     real target is 5x but single-threaded machines vary.
     """
-    from blender_addon.handlers.terrain_iteration_metrics import (
+    from veilbreakers_terrain.handlers.terrain_iteration_metrics import (
         IterationMetrics,
         speedup_factor,
     )
-    from blender_addon.handlers.terrain_mask_cache import MaskCache, pass_with_cache
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_mask_cache import MaskCache, pass_with_cache
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with _tempdir() as td:
         state = _build_state(tile_size=48)
@@ -617,9 +617,9 @@ def test_iteration_velocity_cache_delivers_speedup():
 
 
 def test_dirty_tracker_integration_with_live_preview():
-    from blender_addon.handlers.terrain_live_preview import LivePreviewSession
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_live_preview import LivePreviewSession
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     with _tempdir() as td:
         state = _build_state(tile_size=24)

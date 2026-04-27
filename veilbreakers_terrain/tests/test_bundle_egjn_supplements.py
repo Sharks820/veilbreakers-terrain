@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_asset_metadata import (
+from veilbreakers_terrain.handlers.terrain_asset_metadata import (
     AABB,
     LOCATION_TAGS,
     ROLE_TAGS,
@@ -27,31 +27,31 @@ from blender_addon.handlers.terrain_asset_metadata import (
     classify_size_from_bounds,
     validate_asset_metadata,
 )
-from blender_addon.handlers.terrain_banded_advanced import (
+from veilbreakers_terrain.handlers.terrain_banded_advanced import (
     _kuwahara_quadrant_stats,
     apply_anti_grain_smoothing,
     compute_anisotropic_breakup,
 )
-from blender_addon.handlers.terrain_readability_semantic import (
+from veilbreakers_terrain.handlers.terrain_readability_semantic import (
     check_cave_framing_presence,
     check_cliff_silhouette_readability,
     check_focal_composition,
     check_waterfall_chain_completeness,
     run_semantic_readability_audit,
 )
-from blender_addon.handlers.terrain_unity_export_contracts import (
+from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
     REQUIRED_MESH_ATTRIBUTES,
     UnityExportContract,
     validate_bit_depth_contract,
     validate_mesh_attributes_present,
     write_export_manifest,
 )
-from blender_addon.handlers.terrain_performance_report import (
+from veilbreakers_terrain.handlers.terrain_performance_report import (
     DEFAULT_BUDGETS,
     collect_performance_report,
     serialize_performance_report,
 )
-from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
 
 # ---------------------------------------------------------------------------

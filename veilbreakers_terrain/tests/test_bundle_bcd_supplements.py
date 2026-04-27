@@ -19,15 +19,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_materials_v2 import MaterialChannel
-from blender_addon.handlers.terrain_materials_ext import (
+from veilbreakers_terrain.handlers.terrain_materials_v2 import MaterialChannel
+from veilbreakers_terrain.handlers.terrain_materials_ext import (
     HERO_CLIFF_MIN_FRAC,
     MaterialChannelExt,
     compute_height_blended_weights,
     validate_cliff_silhouette_area,
     validate_texel_density_coherency,
 )
-from blender_addon.handlers.terrain_waterfalls_volumetric import (
+from veilbreakers_terrain.handlers.terrain_waterfalls_volumetric import (
     FUNCTIONAL_SUFFIXES,
     WaterfallVolumetricProfile,
     build_waterfall_functional_object_names,
@@ -35,7 +35,7 @@ from blender_addon.handlers.terrain_waterfalls_volumetric import (
     validate_waterfall_anchor_screen_space,
     validate_waterfall_volumetric,
 )
-from blender_addon.handlers.terrain_quality_profiles import (
+from veilbreakers_terrain.handlers.terrain_quality_profiles import (
     PRODUCTION_PROFILE,
     ProfileValidationError,
     TerrainQualityProfile,
@@ -47,7 +47,7 @@ from blender_addon.handlers.terrain_quality_profiles import (
     load_quality_profile,
     write_profile_jsons,
 )
-from blender_addon.handlers.terrain_checkpoints_ext import (
+from veilbreakers_terrain.handlers.terrain_checkpoints_ext import (
     PresetLocked,
     assert_preset_unlocked,
     enforce_retention_policy,
@@ -57,7 +57,7 @@ from blender_addon.handlers.terrain_checkpoints_ext import (
     save_every_n_operations,
     unlock_preset,
 )
-from blender_addon.handlers.terrain_legacy_bug_fixes import (
+from veilbreakers_terrain.handlers.terrain_legacy_bug_fixes import (
     TARGET_LINES,
     audit_np_clip_in_file,
     audit_terrain_advanced_world_units,

@@ -7,7 +7,7 @@ import numpy as np
 
 class TestTerrainWorldFoundation:
     def test_adjacent_tiles_share_edge_with_world_origin(self):
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         tile_size = 32
         cell_size = 2.0
@@ -37,7 +37,7 @@ class TestTerrainWorldFoundation:
         np.testing.assert_allclose(west[:, -1], east[:, 0], atol=1e-12)
 
     def test_world_heightmap_extract_tile_round_trip(self):
-        from blender_addon.handlers._terrain_world import (
+        from veilbreakers_terrain.handlers._terrain_world import (
             extract_tile,
             generate_world_heightmap,
         )
@@ -60,7 +60,7 @@ class TestTerrainWorldFoundation:
         )
 
     def test_erode_world_heightmap_preserves_seams(self):
-        from blender_addon.handlers._terrain_world import (
+        from veilbreakers_terrain.handlers._terrain_world import (
             erode_world_heightmap,
             extract_tile,
             generate_world_heightmap,
@@ -95,7 +95,7 @@ class TestTerrainWorldFoundation:
         assert result["max_edge_delta"] <= 1e-10
 
     def test_validate_tile_seams_reports_clean(self):
-        from blender_addon.handlers._terrain_world import (
+        from veilbreakers_terrain.handlers._terrain_world import (
             extract_tile,
             generate_world_heightmap,
             validate_tile_seams,
@@ -124,7 +124,7 @@ class TestTerrainWorldFoundation:
         assert result["max_edge_delta"] <= 1e-12
 
     def test_sample_world_height_is_deterministic(self):
-        from blender_addon.handlers._terrain_world import sample_world_height
+        from veilbreakers_terrain.handlers._terrain_world import sample_world_height
 
         h1 = sample_world_height(
             128.0,
@@ -144,7 +144,7 @@ class TestTerrainWorldFoundation:
         assert h1 == h2
 
     def test_theoretical_max_amplitude_formula(self):
-        from blender_addon.handlers._terrain_noise import _theoretical_max_amplitude
+        from veilbreakers_terrain.handlers._terrain_noise import _theoretical_max_amplitude
 
         assert _theoretical_max_amplitude(1, 0.5) == 1.0
         assert np.isclose(_theoretical_max_amplitude(4, 0.5), 1.875)

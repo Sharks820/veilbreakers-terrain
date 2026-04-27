@@ -24,7 +24,7 @@ class TestValidateTerrainParams:
 
     def test_valid_defaults(self):
         """Default parameters pass validation."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({})
         assert result["name"] == "Terrain"
@@ -34,49 +34,49 @@ class TestValidateTerrainParams:
 
     def test_raises_resolution_too_large(self):
         """Resolution > 4096 raises ValueError."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         with pytest.raises(ValueError, match="Resolution"):
             _validate_terrain_params({"resolution": 4097})
 
     def test_raises_resolution_too_small(self):
         """Resolution < 3 raises ValueError."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         with pytest.raises(ValueError, match="Resolution"):
             _validate_terrain_params({"resolution": 2})
 
     def test_raises_unknown_terrain_type(self):
         """Unknown terrain_type raises ValueError."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         with pytest.raises(ValueError, match="terrain_type"):
             _validate_terrain_params({"terrain_type": "bogus_terrain"})
 
     def test_raises_unknown_erosion_mode(self):
         """Unknown erosion mode raises ValueError."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         with pytest.raises(ValueError, match="erosion"):
             _validate_terrain_params({"erosion": "wind"})
 
     def test_max_resolution_4096_passes(self):
         """Resolution 4096 (maximum) passes validation."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({"resolution": 4096})
         assert result["resolution"] == 4096
 
     def test_default_erosion_iterations_5000(self):
         """Default erosion_iterations is 5000."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({})
         assert result["erosion_iterations"] == 5000
 
     def test_all_terrain_types_valid(self):
         """All supported terrain types pass validation."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         for ttype in [
             "mountains",
@@ -95,7 +95,7 @@ class TestValidateTerrainParams:
 
     def test_all_erosion_modes_valid(self):
         """All erosion modes pass validation."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         for mode in ["none", "hydraulic", "thermal", "both"]:
             result = _validate_terrain_params({"erosion": mode})
@@ -103,42 +103,42 @@ class TestValidateTerrainParams:
 
     def test_custom_name_preserved(self):
         """Custom name parameter is preserved."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({"name": "MyTerrain"})
         assert result["name"] == "MyTerrain"
 
     def test_custom_scale_preserved(self):
         """Custom scale parameter is preserved."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({"scale": 200.0})
         assert result["scale"] == 200.0
 
     def test_custom_noise_scale_preserved(self):
         """Custom noise_scale parameter is preserved."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({"noise_scale": 48.0})
         assert result["noise_scale"] == 48.0
 
     def test_custom_height_scale_preserved(self):
         """Custom height_scale parameter is preserved."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({"height_scale": 50.0})
         assert result["height_scale"] == 50.0
 
     def test_custom_seed_preserved(self):
         """Custom seed parameter is preserved."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({"seed": 42})
         assert result["seed"] == 42
 
     def test_returns_dict(self):
         """Validated result is a dict."""
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({})
         assert isinstance(result, dict)
@@ -153,7 +153,7 @@ class TestWorldHeightSolverAdapter:
     """World-unit path solver wrapper must preserve signed terrain ranges."""
 
     def test_round_trips_negative_elevation_heightmap(self):
-        from blender_addon.handlers.environment import _run_height_solver_in_world_space
+        from veilbreakers_terrain.handlers.environment import _run_height_solver_in_world_space
 
         hmap = np.array(
             [
@@ -177,7 +177,7 @@ class TestWorldHeightSolverAdapter:
         assert transform.world_max == 20.0
 
     def test_denormalizes_solver_output_back_to_world_units(self):
-        from blender_addon.handlers.environment import _run_height_solver_in_world_space
+        from veilbreakers_terrain.handlers.environment import _run_height_solver_in_world_space
 
         hmap = np.array(
             [
@@ -205,14 +205,14 @@ class TestAltitudeRuleNormalization:
     """Biome-rule altitude normalization must preserve negative ranges."""
 
     def test_negative_range_maps_to_unit_interval(self):
-        from blender_addon.handlers.environment import _normalize_altitude_for_rule_range
+        from veilbreakers_terrain.handlers.environment import _normalize_altitude_for_rule_range
 
         assert _normalize_altitude_for_rule_range(-40.0, range_min=-40.0, range_max=20.0) == 0.0
         assert _normalize_altitude_for_rule_range(20.0, range_min=-40.0, range_max=20.0) == 1.0
         assert _normalize_altitude_for_rule_range(-10.0, range_min=-40.0, range_max=20.0) == pytest.approx(0.5)
 
     def test_clamps_values_outside_explicit_range(self):
-        from blender_addon.handlers.environment import _normalize_altitude_for_rule_range
+        from veilbreakers_terrain.handlers.environment import _normalize_altitude_for_rule_range
 
         assert _normalize_altitude_for_rule_range(-50.0, range_min=-40.0, range_max=20.0) == 0.0
         assert _normalize_altitude_for_rule_range(30.0, range_min=-40.0, range_max=20.0) == 1.0
@@ -222,14 +222,14 @@ class TestNoiseSamplingScale:
     """Terrain footprint and noise sampling scale should be decoupled."""
 
     def test_derives_smaller_scale_from_terrain_size(self):
-        from blender_addon.handlers.environment import _resolve_noise_sampling_scale
+        from veilbreakers_terrain.handlers.environment import _resolve_noise_sampling_scale
 
         derived = _resolve_noise_sampling_scale(terrain_size=180.0, terrain_type="mountains")
         assert derived < 180.0
         assert derived >= 24.0
 
     def test_explicit_noise_scale_wins(self):
-        from blender_addon.handlers.environment import _resolve_noise_sampling_scale
+        from veilbreakers_terrain.handlers.environment import _resolve_noise_sampling_scale
 
         assert _resolve_noise_sampling_scale(
             terrain_size=180.0,
@@ -238,7 +238,7 @@ class TestNoiseSamplingScale:
         ) == pytest.approx(60.0)
 
     def test_invalid_explicit_noise_scale_raises(self):
-        from blender_addon.handlers.environment import _resolve_noise_sampling_scale
+        from veilbreakers_terrain.handlers.environment import _resolve_noise_sampling_scale
 
         with pytest.raises(ValueError, match="noise_scale"):
             _resolve_noise_sampling_scale(
@@ -252,7 +252,7 @@ class TestHeightmapReliefEnhancement:
     """Terrain relief enhancement should expand weak heightmaps without shifting sea level."""
 
     def test_mountain_relief_is_boosted_when_span_is_too_small(self):
-        from blender_addon.handlers.environment import _enhance_heightmap_relief
+        from veilbreakers_terrain.handlers.environment import _enhance_heightmap_relief
 
         hmap = np.array(
             [
@@ -271,7 +271,7 @@ class TestHeightmapReliefEnhancement:
         assert float(boosted.max()) > float(hmap.max())
 
     def test_signed_heightmap_keeps_zero_centered_for_coastal_relief(self):
-        from blender_addon.handlers.environment import _enhance_heightmap_relief
+        from veilbreakers_terrain.handlers.environment import _enhance_heightmap_relief
 
         hmap = np.array(
             [
@@ -292,7 +292,7 @@ class TestRoadTerrainProfiling:
     """Road deformation helpers should create a usable crown-and-ditch profile."""
 
     def test_apply_road_profile_raises_center_and_softens_shoulders(self):
-        from blender_addon.handlers.environment import _apply_road_profile_to_heightmap
+        from veilbreakers_terrain.handlers.environment import _apply_road_profile_to_heightmap
 
         heightmap = np.zeros((9, 9), dtype=np.float64)
         path = [(4, 1), (4, 7)]
@@ -312,7 +312,7 @@ class TestRoadTerrainProfiling:
         assert profiled[0, 0] == pytest.approx(0.0)
 
     def test_build_road_mask_and_sdf_marks_centerline(self):
-        from blender_addon.handlers.environment import _build_road_mask_and_sdf
+        from veilbreakers_terrain.handlers.environment import _build_road_mask_and_sdf
 
         road_mask, road_sdf = _build_road_mask_and_sdf(
             [(4, 1), (4, 7)],
@@ -327,7 +327,7 @@ class TestRoadTerrainProfiling:
         assert road_sdf[0, 0] > 0.0
 
     def test_extract_road_network_centerline_points_accepts_2d_routes_and_dedupes(self):
-        from blender_addon.handlers.environment import _extract_road_network_centerline_points
+        from veilbreakers_terrain.handlers.environment import _extract_road_network_centerline_points
 
         result = _extract_road_network_centerline_points(
             {
@@ -346,7 +346,7 @@ class TestRoadTerrainProfiling:
         ]
 
     def test_extract_road_network_centerline_points_skips_non_finite_points(self):
-        from blender_addon.handlers.environment import _extract_road_network_centerline_points
+        from veilbreakers_terrain.handlers.environment import _extract_road_network_centerline_points
 
         result = _extract_road_network_centerline_points(
             {
@@ -366,7 +366,7 @@ class TestRoadTerrainProfiling:
         ]
 
     def test_grid_path_from_world_centerline_fills_gaps(self):
-        from blender_addon.handlers.environment import _grid_path_from_world_centerline
+        from veilbreakers_terrain.handlers.environment import _grid_path_from_world_centerline
 
         path = _grid_path_from_world_centerline(
             [(-4.0, -4.0, 0.0), (4.0, 4.0, 0.0)],
@@ -385,7 +385,7 @@ class TestRoadTerrainProfiling:
             assert abs(c1 - c0) <= 1
 
     def test_terrain_world_xy_to_grid_rc_clamps_to_bounds(self):
-        from blender_addon.handlers.environment import _terrain_world_xy_to_grid_rc
+        from veilbreakers_terrain.handlers.environment import _terrain_world_xy_to_grid_rc
 
         rc = _terrain_world_xy_to_grid_rc(
             999.0,
@@ -401,7 +401,7 @@ class TestRoadTerrainProfiling:
         assert rc == (0, 4)
 
     def test_fill_grid_path_gaps_produces_8_connected_steps(self):
-        from blender_addon.handlers.environment import _fill_grid_path_gaps
+        from veilbreakers_terrain.handlers.environment import _fill_grid_path_gaps
 
         path = _fill_grid_path_gaps([(0, 0), (0, 3), (3, 3)])
 
@@ -443,7 +443,7 @@ class TestRoadTerrainProfiling:
         assert path[-1] == (4, 4)
 
     def test_grade_road_path_in_world_space_respects_fractional_width(self):
-        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+        from veilbreakers_terrain.handlers.environment import _grade_road_path_in_world_space
 
         heightmap = np.zeros((7, 7), dtype=np.float64)
         heightmap[3, 3] = 10.0
@@ -458,7 +458,7 @@ class TestRoadTerrainProfiling:
         assert graded[3, 1] > 0.0
 
     def test_sample_path_indices_preserves_forced_boundaries(self):
-        from blender_addon.handlers.environment import _sample_path_indices
+        from veilbreakers_terrain.handlers.environment import _sample_path_indices
 
         path = [(0, c) for c in range(12)]
         indices = _sample_path_indices(path, min_spacing_cells=3.0, forced_indices={4, 8})
@@ -468,7 +468,7 @@ class TestRoadTerrainProfiling:
         assert 8 in indices
 
     def test_collect_bridge_spans_extends_to_banks(self):
-        from blender_addon.handlers.environment import _collect_bridge_spans
+        from veilbreakers_terrain.handlers.environment import _collect_bridge_spans
 
         path = [(4, c) for c in range(8)]
         base = np.full((9, 9), 2.0, dtype=np.float64)
@@ -497,7 +497,7 @@ class TestRoadTerrainProfiling:
 class TestRoadHandlerTerrainAwareRouting:
     def test_handle_generate_road_threads_derived_cost_map_to_solver(self):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_twelve_step import _build_road_cost_map
+        from veilbreakers_terrain.handlers.terrain_twelve_step import _build_road_cost_map
 
         captured: dict[str, object] = {}
 
@@ -734,7 +734,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result["road_routing_method"] == "astar_24dir"
 
     def test_write_json_manifest_writes_utf8_and_creates_parent(self, tmp_path):
-        from blender_addon.handlers.environment import _write_json_manifest
+        from veilbreakers_terrain.handlers.environment import _write_json_manifest
 
         target = tmp_path / "nested" / "manifest.json"
         payload = {"name": "cafe", "value": 3}
@@ -745,7 +745,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert target.read_text(encoding="utf-8").endswith("\n}")
 
     def test_cleanup_written_artifacts_removes_existing_and_missing_paths(self, tmp_path):
-        from blender_addon.handlers.environment import _cleanup_written_artifacts
+        from veilbreakers_terrain.handlers.environment import _cleanup_written_artifacts
 
         first = tmp_path / "a.json"
         second = tmp_path / "b.raw"
@@ -1055,7 +1055,7 @@ class TestExportHeightmapRaw:
 
     def test_returns_bytes(self):
         """Export returns bytes object."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[0.0, 0.5], [0.5, 1.0]])
         raw = _export_heightmap_raw(hmap, flip_vertical=False)
@@ -1063,7 +1063,7 @@ class TestExportHeightmapRaw:
 
     def test_correct_byte_length(self):
         """Output length is width * height * 2 bytes (16-bit)."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[0.0, 0.5], [0.5, 1.0]])
         raw = _export_heightmap_raw(hmap, flip_vertical=False)
@@ -1071,7 +1071,7 @@ class TestExportHeightmapRaw:
 
     def test_known_2x2_values(self):
         """Known 2x2 heightmap produces correct uint16 values."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[0.0, 1.0], [0.5, 0.5]])
         raw = _export_heightmap_raw(hmap, flip_vertical=False)
@@ -1086,7 +1086,7 @@ class TestExportHeightmapRaw:
 
     def test_flip_vertical_reverses_rows(self):
         """flip_vertical=True reverses row order."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[0.0, 0.0], [1.0, 1.0]])
         raw_no_flip = _export_heightmap_raw(hmap, flip_vertical=False)
@@ -1103,7 +1103,7 @@ class TestExportHeightmapRaw:
 
     def test_flat_heightmap_all_same(self):
         """Flat heightmap (all same value) exports as all zeros."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.full((4, 4), 0.5)
         raw = _export_heightmap_raw(hmap, flip_vertical=False)
@@ -1113,7 +1113,7 @@ class TestExportHeightmapRaw:
 
     def test_values_in_uint16_range(self):
         """All exported values are in [0, 65535]."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.random.RandomState(42).rand(8, 8)
         raw = _export_heightmap_raw(hmap, flip_vertical=False)
@@ -1122,7 +1122,7 @@ class TestExportHeightmapRaw:
 
     def test_little_endian_byte_order(self):
         """Output uses little-endian byte order."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         # Create a heightmap where we know the exact uint16 value
         hmap = np.array([[0.0, 1.0]])
@@ -1134,7 +1134,7 @@ class TestExportHeightmapRaw:
 
     def test_larger_heightmap(self):
         """Correctly handles larger heightmaps."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.random.RandomState(42).rand(64, 64)
         raw = _export_heightmap_raw(hmap, flip_vertical=True)
@@ -1142,7 +1142,7 @@ class TestExportHeightmapRaw:
 
     def test_shared_value_range_preserves_world_scale(self):
         """A shared export range should avoid per-tile renormalization."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[10.0, 20.0]], dtype=np.float64)
         raw = _export_heightmap_raw(
@@ -1156,7 +1156,7 @@ class TestExportHeightmapRaw:
 
     def test_shared_value_range_clamps_outside_bounds(self):
         """Shared export range should clamp values outside the provided range."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[-5.0, 50.0]], dtype=np.float64)
         raw = _export_heightmap_raw(
@@ -1169,7 +1169,7 @@ class TestExportHeightmapRaw:
         assert values[1] == 65535
 
     def test_rejects_non_finite_height_values(self):
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.array([[0.0, np.nan]], dtype=np.float64)
         with pytest.raises(ValueError, match="non-finite"):
@@ -1180,7 +1180,7 @@ class TestExportSplatmapRaw:
     """Test RAW splatmap export (pure logic, no file I/O)."""
 
     def test_returns_bytes(self):
-        from blender_addon.handlers.environment import _export_splatmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_splatmap_raw
 
         splat = np.zeros((2, 2, 4), dtype=np.float64)
         splat[:, :, 0] = 1.0
@@ -1189,7 +1189,7 @@ class TestExportSplatmapRaw:
         assert len(raw) == 2 * 2 * 4
 
     def test_normalizes_channels(self):
-        from blender_addon.handlers.environment import _export_splatmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_splatmap_raw
 
         splat = np.array(
             [
@@ -1203,7 +1203,7 @@ class TestExportSplatmapRaw:
         assert values.max() <= 255
 
     def test_zero_weight_pixel_defaults_to_base_layer(self):
-        from blender_addon.handlers.environment import _export_splatmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_splatmap_raw
 
         splat = np.zeros((1, 1, 4), dtype=np.float64)
         raw = _export_splatmap_raw(splat, flip_vertical=False)
@@ -1211,7 +1211,7 @@ class TestExportSplatmapRaw:
         assert tuple(raw) == (255, 0, 0, 0)
 
     def test_negative_and_non_finite_weights_are_sanitized(self):
-        from blender_addon.handlers.environment import _export_splatmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_splatmap_raw
 
         splat = np.array([[[np.nan, -3.0, 2.0, np.inf]]], dtype=np.float64)
         raw = _export_splatmap_raw(splat, flip_vertical=False)
@@ -1223,7 +1223,7 @@ class TestWorldSplatmapWeights:
     """World splatmap weighting should honor a shared height range."""
 
     def test_shared_height_range_keeps_weights_stable(self):
-        from blender_addon.handlers.terrain_materials import compute_world_splatmap_weights
+        from veilbreakers_terrain.handlers.terrain_materials import compute_world_splatmap_weights
 
         tile = np.array(
             [
@@ -1246,7 +1246,7 @@ class TestWorldSplatmapWeights:
         assert not np.allclose(local_weights[0, 1], shared_weights[0, 1])
 
     def test_larger_cell_size_keeps_same_height_delta_less_cliff_like(self):
-        from blender_addon.handlers.terrain_materials import compute_world_splatmap_weights
+        from veilbreakers_terrain.handlers.terrain_materials import compute_world_splatmap_weights
 
         hmap = np.tile(np.linspace(0.0, 3.0, 5), (5, 1))
         fine = compute_world_splatmap_weights(
@@ -1276,7 +1276,7 @@ class TestHandlerReturnDictKeys:
         """handle_generate_terrain returns dict with required keys."""
         # We can't call the handler without Blender, but we can verify
         # the validation function returns the right structure
-        from blender_addon.handlers.environment import _validate_terrain_params
+        from veilbreakers_terrain.handlers.environment import _validate_terrain_params
 
         result = _validate_terrain_params({
             "name": "TestTerrain",
@@ -1294,7 +1294,7 @@ class TestHandlerReturnDictKeys:
 
     def test_export_raw_produces_correct_format(self):
         """_export_heightmap_raw produces Unity-compatible 16-bit little-endian."""
-        from blender_addon.handlers.environment import _export_heightmap_raw
+        from veilbreakers_terrain.handlers.environment import _export_heightmap_raw
 
         hmap = np.random.RandomState(42).rand(33, 33)
         raw = _export_heightmap_raw(hmap, flip_vertical=True)
@@ -1357,7 +1357,7 @@ class TestHandlerReturnDictKeys:
 class TestControllerTerrainPath:
     def test_generate_terrain_uses_controller_heightmap_as_source_of_truth(self):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.full((3, 3), 2.0, dtype=np.float64)
         stack = TerrainMaskStack(
@@ -1410,7 +1410,7 @@ class TestControllerTerrainPath:
              patch.object(env_mod, "_create_terrain_mesh_from_heightmap", side_effect=_fake_create_mesh), \
              patch.object(env_mod, "_cliff_structures_to_overlay_placements", return_value=cliff_overlays), \
              patch.object(env_mod, "generate_heightmap", side_effect=AssertionError("legacy path should not run")), \
-             patch("blender_addon.handlers.terrain_cliffs.carve_cliff_system", return_value=["hero_cliff"]):
+             patch("veilbreakers_terrain.handlers.terrain_cliffs.carve_cliff_system", return_value=["hero_cliff"]):
             result = env_mod.handle_generate_terrain(
                 {
                     "name": "ControllerTerrain",
@@ -1439,7 +1439,7 @@ class TestControllerTerrainPath:
 
     def test_controller_path_threads_cave_candidates_but_defers_cave_pipeline_by_default(self):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
         stack = TerrainMaskStack(
@@ -1509,7 +1509,7 @@ class TestControllerTerrainPath:
 
     def test_controller_path_can_opt_in_to_cave_pipeline(self):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
         stack = TerrainMaskStack(
@@ -1577,7 +1577,7 @@ class TestControllerTerrainPath:
 
     def test_controller_path_inserts_hydrology_before_erosion(self):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
         stack = TerrainMaskStack(
@@ -1642,7 +1642,7 @@ class TestControllerTerrainPath:
 
     def test_controller_path_forwards_quality_profile_hints_and_viewport_vantage(self):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
         height = np.zeros((3, 3), dtype=np.float64)
         stack = TerrainMaskStack(
@@ -1778,7 +1778,7 @@ class TestWorldTerrainGeneration:
 
     def test_world_terrain_writes_batch_manifest_and_frontier(self, tmp_path):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_chunking import build_tile_seam_contract
+        from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
         def _fake_tile(params):
             tile_x = params["tile_x"]
@@ -1883,7 +1883,7 @@ class TestWorldTerrainGeneration:
 
     def test_world_terrain_manifest_write_failure_isolated(self, tmp_path):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_chunking import build_tile_seam_contract
+        from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
         def _fake_tile(params):
             tile_x = params["tile_x"]
@@ -1937,7 +1937,7 @@ class TestWorldTerrainGeneration:
 
     def test_world_terrain_partial_failure_preserves_requested_bounds_and_frontier(self, tmp_path):
         from blender_addon.handlers import environment as env_mod
-        from blender_addon.handlers.terrain_chunking import build_tile_seam_contract
+        from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
         def _fake_tile(params):
             tile_x = params["tile_x"]
@@ -2238,10 +2238,10 @@ def test_multi_biome_world_uses_mesh_backed_scatter_helper():
     with patch.object(env_mod, "handle_generate_terrain", side_effect=_fake_generate_terrain), \
          patch.object(env_mod, "_compute_vertex_colors_for_biome_map", return_value=[(1.0, 0.0, 0.0, 1.0)] * 4), \
          patch.object(env_mod.bpy.data.objects, "get", return_value=fake_obj), \
-         patch("blender_addon.handlers._biome_grammar.generate_world_map_spec", return_value=_Spec()), \
-         patch("blender_addon.handlers.terrain_materials.handle_create_biome_terrain", return_value={"status": "ok"}), \
-         patch("blender_addon.handlers.environment_scatter.handle_scatter_vegetation", side_effect=lambda params: scatter_calls.append(params) or {"instance_count": 3}), \
-         patch("blender_addon.handlers.vegetation_system.scatter_biome_vegetation", side_effect=AssertionError("legacy scatter path should not run")):
+         patch("veilbreakers_terrain.handlers._biome_grammar.generate_world_map_spec", return_value=_Spec()), \
+         patch("veilbreakers_terrain.handlers.terrain_materials.handle_create_biome_terrain", return_value={"status": "ok"}), \
+         patch("veilbreakers_terrain.handlers.environment_scatter.handle_scatter_vegetation", side_effect=lambda params: scatter_calls.append(params) or {"instance_count": 3}), \
+         patch("veilbreakers_terrain.handlers.vegetation_system.scatter_biome_vegetation", side_effect=AssertionError("legacy scatter path should not run")):
         result = env_mod.handle_generate_multi_biome_world(
             {
                 "name": "BiomeWorld",
@@ -2261,7 +2261,7 @@ def test_multi_biome_world_uses_mesh_backed_scatter_helper():
 
 class TestExportHeightRangeResolution:
     def test_tiled_world_uses_shared_height_range(self):
-        from blender_addon.handlers.environment import _resolve_export_height_range
+        from veilbreakers_terrain.handlers.environment import _resolve_export_height_range
 
         hmap = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float64)
         result = _resolve_export_height_range(
@@ -2275,7 +2275,7 @@ class TestExportHeightRangeResolution:
         assert result == (0.0, 80.0)
 
     def test_legacy_export_defaults_to_local_range(self):
-        from blender_addon.handlers.environment import _resolve_export_height_range
+        from veilbreakers_terrain.handlers.environment import _resolve_export_height_range
 
         hmap = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float64)
         result = _resolve_export_height_range({}, hmap)
@@ -2285,7 +2285,7 @@ class TestExportHeightRangeResolution:
 
 class TestCreateCaveEntranceHandler:
     def test_rejects_invalid_style(self):
-        from blender_addon.handlers.environment import handle_create_cave_entrance
+        from veilbreakers_terrain.handlers.environment import handle_create_cave_entrance
 
         with pytest.raises(ValueError, match="style must be one of"):
             handle_create_cave_entrance({"style": "sci_fi"})
@@ -2298,7 +2298,7 @@ class TestCreateCaveEntranceHandler:
             "metadata": {"stalactite_count": 2, "overhang_m": 0.9},
         }
 
-        with patch("blender_addon.handlers._terrain_depth.generate_cave_entrance_mesh", return_value=fake_spec), \
+        with patch("veilbreakers_terrain.handlers._terrain_depth.generate_cave_entrance_mesh", return_value=fake_spec), \
              patch.object(env_mod.bpy.data.objects, "get", return_value=None), \
              patch.object(env_mod, "_create_mesh_object_from_spec", return_value={"name": "CaveEntrance"}):
             result = env_mod.handle_create_cave_entrance(
@@ -2318,7 +2318,7 @@ class TestCreateCaveEntranceHandler:
         assert result["arch_spec"]["vertex_count"] == 3
 
     def test_rejects_non_finite_location(self):
-        from blender_addon.handlers.environment import handle_create_cave_entrance
+        from veilbreakers_terrain.handlers.environment import handle_create_cave_entrance
 
         with pytest.raises(ValueError, match="non-finite"):
             handle_create_cave_entrance(
@@ -2331,7 +2331,7 @@ class TestCreateCaveEntranceHandler:
 
 class TestRoadMaskPainting:
     def test_new_splatmap_stays_zero_outside_road(self):
-        from blender_addon.handlers.environment import _paint_road_mask_on_terrain
+        from veilbreakers_terrain.handlers.environment import _paint_road_mask_on_terrain
 
         class _Vertex:
             def __init__(self, x, y, z=0.0):
@@ -2439,7 +2439,7 @@ class TestRoadMaskPainting:
 
 class TestResolveTerrainTileParams:
     def test_defaults_compute_world_origin_and_center(self):
-        from blender_addon.handlers.environment import _resolve_terrain_tile_params
+        from veilbreakers_terrain.handlers.environment import _resolve_terrain_tile_params
 
         result = _resolve_terrain_tile_params({"tile_x": 1, "tile_y": 2})
 
@@ -2451,7 +2451,7 @@ class TestResolveTerrainTileParams:
         assert result["object_location"] == (384.0, 640.0, 0.0)
 
     def test_explicit_resolution_derives_tile_size(self):
-        from blender_addon.handlers.environment import _resolve_terrain_tile_params
+        from veilbreakers_terrain.handlers.environment import _resolve_terrain_tile_params
 
         result = _resolve_terrain_tile_params({
             "tile_x": 3,
@@ -2468,7 +2468,7 @@ class TestResolveTerrainTileParams:
         assert result["object_location"] == (448.0, 576.0, 0.0)
 
     def test_resolution_tile_size_mismatch_raises(self):
-        from blender_addon.handlers.environment import _resolve_terrain_tile_params
+        from veilbreakers_terrain.handlers.environment import _resolve_terrain_tile_params
 
         with pytest.raises(ValueError, match="resolution must equal tile_size"):
             _resolve_terrain_tile_params({"tile_size": 64, "resolution": 63})
@@ -2476,7 +2476,7 @@ class TestResolveTerrainTileParams:
 
 class TestTerrainWorldCoordinateHelpers:
     def test_grid_to_world_xy_respects_center_offset(self):
-        from blender_addon.handlers.environment import _terrain_grid_to_world_xy
+        from veilbreakers_terrain.handlers.environment import _terrain_grid_to_world_xy
 
         start = _terrain_grid_to_world_xy(
             0,
@@ -2511,7 +2511,7 @@ class TestTerrainWorldCoordinateHelpers:
         assert end == (200.0, 250.0)
 
     def test_grid_to_world_xy_uses_rectangular_axes(self):
-        from blender_addon.handlers.environment import _terrain_grid_to_world_xy
+        from veilbreakers_terrain.handlers.environment import _terrain_grid_to_world_xy
 
         start = _terrain_grid_to_world_xy(
             0,
@@ -2549,7 +2549,7 @@ class TestTerrainWorldCoordinateHelpers:
         assert end == (110.0, 60.0)
 
     def test_resolve_water_path_points_defaults_to_offset_terrain_center(self):
-        from blender_addon.handlers.environment import _resolve_water_path_points
+        from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
         path = _resolve_water_path_points(
             path_points_raw=None,
@@ -2565,7 +2565,7 @@ class TestTerrainWorldCoordinateHelpers:
         ]
 
     def test_resolve_water_path_points_preserves_explicit_points(self):
-        from blender_addon.handlers.environment import _resolve_water_path_points
+        from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
         path = _resolve_water_path_points(
             path_points_raw=[[1, 2, 3], [4, 5, 6]],
@@ -2578,7 +2578,7 @@ class TestTerrainWorldCoordinateHelpers:
         assert path == [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]
 
     def test_resolve_water_path_points_accepts_numpy_arrays(self):
-        from blender_addon.handlers.environment import _resolve_water_path_points
+        from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
         path = _resolve_water_path_points(
             path_points_raw=np.asarray([[1.0, 2.0], [4.0, 5.0]], dtype=np.float64),
@@ -2591,7 +2591,7 @@ class TestTerrainWorldCoordinateHelpers:
         assert path == [(1.0, 2.0, 7.5), (4.0, 5.0, 7.5)]
 
     def test_resolve_water_path_points_rejects_single_explicit_point(self):
-        from blender_addon.handlers.environment import _resolve_water_path_points
+        from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
         with pytest.raises(ValueError, match="at least 2 points"):
             _resolve_water_path_points(
@@ -2603,7 +2603,7 @@ class TestTerrainWorldCoordinateHelpers:
             )
 
     def test_resolve_water_path_points_rejects_non_finite_coordinates(self):
-        from blender_addon.handlers.environment import _resolve_water_path_points
+        from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
         with pytest.raises(ValueError, match="non-finite"):
             _resolve_water_path_points(
@@ -2619,7 +2619,7 @@ class TestRiverPathSmoothing:
     """River path smoothing should reduce stair-stepping and stay downhill."""
 
     def test_smooth_river_path_points_resamples_and_preserves_descent(self):
-        from blender_addon.handlers.environment import _smooth_river_path_points
+        from veilbreakers_terrain.handlers.environment import _smooth_river_path_points
 
         path = [
             (0.0, 0.0, 12.0),
@@ -2645,7 +2645,7 @@ class TestRiverPathSmoothing:
         ), "Expected smoothed river control points to move off the stair-step grid"
 
     def test_smooth_river_path_points_collapses_duplicate_xy_points(self):
-        from blender_addon.handlers.environment import _smooth_river_path_points
+        from veilbreakers_terrain.handlers.environment import _smooth_river_path_points
 
         path = [
             (0.0, 0.0, 12.0),
@@ -2667,7 +2667,7 @@ class TestRiverPathSmoothing:
 
 class TestRiverTerminalWidthTaper:
     def test_terminal_width_scale_narrows_endpoints_but_not_midstream(self):
-        from blender_addon.handlers.environment import _resolve_river_terminal_width_scale
+        from veilbreakers_terrain.handlers.environment import _resolve_river_terminal_width_scale
 
         scales = [
             _resolve_river_terminal_width_scale(i, 9, taper_rings=3)
@@ -2680,7 +2680,7 @@ class TestRiverTerminalWidthTaper:
         assert scales[-1] == pytest.approx(scales[0])
 
     def test_terminal_width_scale_disables_cleanly(self):
-        from blender_addon.handlers.environment import _resolve_river_terminal_width_scale
+        from veilbreakers_terrain.handlers.environment import _resolve_river_terminal_width_scale
 
         assert _resolve_river_terminal_width_scale(0, 6, taper_rings=0) == pytest.approx(1.0)
         assert _resolve_river_terminal_width_scale(0, 2, taper_rings=3) == pytest.approx(1.0)
@@ -2688,7 +2688,7 @@ class TestRiverTerminalWidthTaper:
 
 class TestRiverBankContactSolver:
     def test_solver_can_find_close_bank_contact_inside_default_half_width(self):
-        from blender_addon.handlers.environment import _resolve_river_bank_contact
+        from veilbreakers_terrain.handlers.environment import _resolve_river_bank_contact
 
         def _sampler(x: float, y: float) -> float:
             return -1.5 if abs(x) < 0.6 else 1.25
@@ -2708,7 +2708,7 @@ class TestRiverBankContactSolver:
         assert terrain_z > 0.0
 
     def test_solver_falls_back_when_sampler_returns_non_finite(self):
-        from blender_addon.handlers.environment import _resolve_river_bank_contact
+        from veilbreakers_terrain.handlers.environment import _resolve_river_bank_contact
 
         dist, terrain_z = _resolve_river_bank_contact(
             terrain_height_sampler=lambda x, y: float("nan"),
@@ -2735,43 +2735,43 @@ class TestNearestPotPlus1:
 
     def test_129_stays_129(self):
         """129 is already a POT+1 (128+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(129) == 129
 
     def test_100_becomes_129(self):
         """100 rounds up to 129 (128+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(100) == 129
 
     def test_257_stays_257(self):
         """257 is already a POT+1 (256+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(257) == 257
 
     def test_513_stays_513(self):
         """513 is already a POT+1 (512+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(513) == 513
 
     def test_3_becomes_3(self):
         """3 is already a POT+1 (2+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(3) == 3
 
     def test_65_becomes_65(self):
         """65 is already a POT+1 (64+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(65) == 65
 
     def test_50_becomes_65(self):
         """50 rounds up to 65 (64+1)."""
-        from blender_addon.handlers.environment import _nearest_pot_plus_1
+        from veilbreakers_terrain.handlers.environment import _nearest_pot_plus_1
 
         assert _nearest_pot_plus_1(50) == 65
 
@@ -2799,20 +2799,20 @@ class TestVBBiomePresets:
 
     def test_has_ten_biome_presets(self):
         """VB_BIOME_PRESETS contains exactly 10 biomes."""
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
 
         assert len(VB_BIOME_PRESETS) == 10
 
     def test_all_biome_names_present(self):
         """All expected VeilBreakers biome names are present."""
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
 
         for name in self.VB_BIOME_NAMES:
             assert name in VB_BIOME_PRESETS, f"Missing biome: {name}"
 
     def test_all_biomes_have_required_keys(self):
         """Every biome preset has terrain_type, resolution, height_scale, erosion, scatter_rules."""
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
 
         required_keys = {"terrain_type", "resolution", "height_scale", "erosion", "scatter_rules"}
         for name, preset in VB_BIOME_PRESETS.items():
@@ -2821,8 +2821,8 @@ class TestVBBiomePresets:
 
     def test_all_biome_terrain_types_are_valid(self):
         """Every biome's terrain_type maps to a valid TERRAIN_PRESETS entry."""
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
-        from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
         for name, preset in VB_BIOME_PRESETS.items():
             assert preset["terrain_type"] in TERRAIN_PRESETS, (
@@ -2832,7 +2832,7 @@ class TestVBBiomePresets:
 
     def test_scatter_rules_have_required_keys(self):
         """Every scatter rule has asset, density, min_distance, scale_range."""
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
 
         rule_keys = {"asset", "density", "min_distance", "scale_range"}
         for name, preset in VB_BIOME_PRESETS.items():
@@ -2844,7 +2844,7 @@ class TestVBBiomePresets:
 
     def test_scatter_rules_scale_range_is_two_element_list(self):
         """scale_range is a list of exactly 2 floats [min, max]."""
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
 
         for name, preset in VB_BIOME_PRESETS.items():
             for i, rule in enumerate(preset["scatter_rules"]):
@@ -2858,7 +2858,7 @@ class TestVBBiomePresets:
 
     def test_get_vb_biome_preset_returns_copy(self):
         """get_vb_biome_preset returns an independent copy."""
-        from blender_addon.handlers.environment import get_vb_biome_preset, VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import get_vb_biome_preset, VB_BIOME_PRESETS
 
         preset = get_vb_biome_preset("thornwood_forest")
         assert preset is not None
@@ -2867,7 +2867,7 @@ class TestVBBiomePresets:
         assert VB_BIOME_PRESETS["thornwood_forest"]["resolution"] != 9999
 
     def test_build_external_model_environment_manifest_falls_back_for_unknown_assets(self):
-        from blender_addon.handlers.environment import _build_external_model_environment_manifest
+        from veilbreakers_terrain.handlers.environment import _build_external_model_environment_manifest
 
         scene_bounds = {
             "x_min": 0.0,
@@ -2906,7 +2906,7 @@ class TestVBBiomePresets:
         assert entry["scene_bounds"] is not scene_bounds
 
     def test_thornwood_forest_uses_progression_tree_assets(self):
-        from blender_addon.handlers.environment import VB_BIOME_PRESETS
+        from veilbreakers_terrain.handlers.environment import VB_BIOME_PRESETS
 
         assets = {rule["asset"] for rule in VB_BIOME_PRESETS["thornwood_forest"]["scatter_rules"]}
         assert "tree_healthy" in assets
@@ -2915,21 +2915,21 @@ class TestVBBiomePresets:
 
     def test_get_vb_biome_preset_returns_none_for_unknown(self):
         """get_vb_biome_preset returns None for unknown biome name."""
-        from blender_addon.handlers.environment import get_vb_biome_preset
+        from veilbreakers_terrain.handlers.environment import get_vb_biome_preset
 
         assert get_vb_biome_preset("nonexistent_biome") is None
         assert get_vb_biome_preset("") is None
 
     def test_get_vb_biome_preset_all_biomes(self):
         """get_vb_biome_preset returns a dict for every known biome."""
-        from blender_addon.handlers.environment import get_vb_biome_preset
+        from veilbreakers_terrain.handlers.environment import get_vb_biome_preset
 
         for name in self.VB_BIOME_NAMES:
             preset = get_vb_biome_preset(name)
             assert isinstance(preset, dict), f"get_vb_biome_preset('{name}') returned {type(preset)}"
 
     def test_get_vb_biome_preset_builds_manifest_entries_for_all_scatter_rules(self):
-        from blender_addon.handlers.environment import get_vb_biome_preset
+        from veilbreakers_terrain.handlers.environment import get_vb_biome_preset
 
         for name in self.VB_BIOME_NAMES:
             preset = get_vb_biome_preset(name)
@@ -2946,7 +2946,7 @@ class TestVBBiomePresets:
         The handler builds effective params from the preset before validation,
         so here we simulate that resolution.
         """
-        from blender_addon.handlers.environment import (
+        from veilbreakers_terrain.handlers.environment import (
             get_vb_biome_preset,
             _validate_terrain_params,
         )
@@ -2974,7 +2974,7 @@ class TestVBBiomePresets:
 
         Simulates the handler's param merge logic.
         """
-        from blender_addon.handlers.environment import (
+        from veilbreakers_terrain.handlers.environment import (
             get_vb_biome_preset,
             _validate_terrain_params,
         )

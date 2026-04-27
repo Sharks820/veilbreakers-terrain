@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     TerrainMaskStack,
     TerrainIntentState,
@@ -67,7 +67,7 @@ class TestFullTerrainPipeline:
 
     def test_register_all_terrain_passes_loads_bundle_a(self):
         """Bundle A (foundation) always loads successfully."""
-        from blender_addon.handlers.terrain_master_registrar import (
+        from veilbreakers_terrain.handlers.terrain_master_registrar import (
             register_all_terrain_passes,
         )
 
@@ -76,7 +76,7 @@ class TestFullTerrainPipeline:
 
     def test_register_all_terrain_passes_loads_multiple_bundles(self):
         """At least 5 bundles load in non-strict mode."""
-        from blender_addon.handlers.terrain_master_registrar import (
+        from veilbreakers_terrain.handlers.terrain_master_registrar import (
             register_all_terrain_passes,
         )
 
@@ -88,7 +88,7 @@ class TestFullTerrainPipeline:
 
     def test_erosion_modifies_heightmap(self):
         """apply_hydraulic_erosion must actually change height values."""
-        from blender_addon.handlers._terrain_erosion import (
+        from veilbreakers_terrain.handlers._terrain_erosion import (
             apply_hydraulic_erosion,
         )
 
@@ -105,7 +105,7 @@ class TestFullTerrainPipeline:
 
     def test_structural_masks_populated_after_pass(self):
         """After pass_structural_masks, slope/curvature channels exist."""
-        from blender_addon.handlers._terrain_world import pass_structural_masks
+        from veilbreakers_terrain.handlers._terrain_world import pass_structural_masks
 
         state = _make_pipeline_state()
         result = pass_structural_masks(state, region=None)
@@ -117,7 +117,7 @@ class TestFullTerrainPipeline:
 
     def test_erosion_produces_nonzero_change(self):
         """Erosion must produce measurable height changes."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         stack = _make_stack()
         eroded = apply_hydraulic_erosion(stack.height, iterations=1000, seed=42)
@@ -126,7 +126,7 @@ class TestFullTerrainPipeline:
 
     def test_validation_functions_run_without_crash(self):
         """Key validation functions accept a valid stack without exceptions."""
-        from blender_addon.handlers.terrain_validation import (
+        from veilbreakers_terrain.handlers.terrain_validation import (
             validate_height_finite,
             validate_height_range,
         )
@@ -184,7 +184,7 @@ class TestFullTerrainPipeline:
 
     def test_quantize_heightmap_preserves_range(self):
         """Heightmap quantization to uint16 must preserve relative ordering."""
-        from blender_addon.handlers.terrain_unity_export import _quantize_heightmap
+        from veilbreakers_terrain.handlers.terrain_unity_export import _quantize_heightmap
 
         stack = _make_stack()
         quantized = _quantize_heightmap(stack)
@@ -194,8 +194,8 @@ class TestFullTerrainPipeline:
 
     def test_pass_validation_full_runs_end_to_end(self):
         """pass_validation_full runs through all validators without crash."""
-        from blender_addon.handlers._terrain_world import pass_structural_masks
-        from blender_addon.handlers.terrain_validation import pass_validation_full
+        from veilbreakers_terrain.handlers._terrain_world import pass_structural_masks
+        from veilbreakers_terrain.handlers.terrain_validation import pass_validation_full
 
         state = _make_pipeline_state()
         # Must have structural masks for validation to work

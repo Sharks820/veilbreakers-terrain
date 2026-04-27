@@ -18,7 +18,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_pass_registry():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     yield
@@ -26,8 +26,8 @@ def _reset_pass_registry():
 
 
 def _build_state(tile_size: int = 32, seed: int = 42):
-    from blender_addon.handlers.terrain_masks import compute_base_masks
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -71,7 +71,7 @@ def _build_state(tile_size: int = 32, seed: int = 42):
 
 
 def _build_large_state(tile_size: int = 512):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -109,7 +109,7 @@ def _build_large_state(tile_size: int = 512):
 
 
 def test_default_dark_fantasy_rules_has_5_channels():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         default_dark_fantasy_rules,
     )
 
@@ -121,7 +121,7 @@ def test_default_dark_fantasy_rules_has_5_channels():
 
 
 def test_ruleset_rejects_duplicate_channel_ids():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         MaterialChannel,
         MaterialRuleSet,
     )
@@ -137,7 +137,7 @@ def test_ruleset_rejects_duplicate_channel_ids():
 
 
 def test_ruleset_rejects_missing_default_channel():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         MaterialChannel,
         MaterialRuleSet,
     )
@@ -150,7 +150,7 @@ def test_ruleset_rejects_missing_default_channel():
 
 
 def test_cliff_channel_is_triplanar():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         default_dark_fantasy_rules,
     )
 
@@ -165,7 +165,7 @@ def test_cliff_channel_is_triplanar():
 
 
 def test_weights_sum_to_one_per_cell():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
     )
 
@@ -176,7 +176,7 @@ def test_weights_sum_to_one_per_cell():
 
 
 def test_weights_shape_matches_heightmap():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
         default_dark_fantasy_rules,
     )
@@ -189,7 +189,7 @@ def test_weights_shape_matches_heightmap():
 
 
 def test_weights_vectorized_under_200ms_on_512():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
     )
 
@@ -202,7 +202,7 @@ def test_weights_vectorized_under_200ms_on_512():
 
 
 def test_cliff_channel_triggers_on_high_slope():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
         default_dark_fantasy_rules,
     )
@@ -221,7 +221,7 @@ def test_cliff_channel_triggers_on_high_slope():
 
 
 def test_ground_channel_dominates_flat_terrain():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
         default_dark_fantasy_rules,
     )
@@ -240,7 +240,7 @@ def test_ground_channel_dominates_flat_terrain():
 
 
 def test_wet_rock_channel_triggers_on_wetness():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
         default_dark_fantasy_rules,
     )
@@ -261,7 +261,7 @@ def test_wet_rock_channel_triggers_on_wetness():
 
 
 def test_snow_channel_triggers_above_altitude():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
         default_dark_fantasy_rules,
     )
@@ -282,7 +282,7 @@ def test_snow_channel_triggers_above_altitude():
 
 
 def test_snow_channel_absent_at_low_altitude():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
         default_dark_fantasy_rules,
     )
@@ -303,7 +303,7 @@ def test_snow_channel_absent_at_low_altitude():
 
 
 def test_weights_never_nan_or_inf():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
     )
 
@@ -318,10 +318,10 @@ def test_weights_never_nan_or_inf():
 
 
 def test_pass_materials_populates_splatmap_channel():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_material_passes()
     state = _build_state()
@@ -334,10 +334,10 @@ def test_pass_materials_populates_splatmap_channel():
 
 
 def test_pass_materials_metrics_report_coverage():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_material_passes()
     state = _build_state()
@@ -351,10 +351,10 @@ def test_pass_materials_metrics_report_coverage():
 
 
 def test_pass_materials_is_deterministic():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_material_passes()
     state_a = _build_state()
@@ -371,7 +371,7 @@ def test_pass_materials_is_deterministic():
 
 
 def test_pass_materials_applies_height_blend_defaults():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         MaterialChannel,
         MaterialRuleSet,
         pass_materials,
@@ -402,11 +402,11 @@ def test_pass_materials_applies_height_blend_defaults():
 
 
 def test_region_scoped_pass_leaves_outside_cells_unchanged():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
     register_bundle_b_material_passes()
     state = _build_state()
@@ -433,10 +433,10 @@ def test_region_scoped_pass_leaves_outside_cells_unchanged():
 
 
 def test_unity_export_manifest_lists_splatmap():
-    from blender_addon.handlers.terrain_materials_v2 import (
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_material_passes()
     state = _build_state()

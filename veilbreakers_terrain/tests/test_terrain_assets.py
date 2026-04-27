@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_assets import (
+from veilbreakers_terrain.handlers.terrain_assets import (
     AssetContextRule,
     AssetRole,
     build_asset_context_rules,
@@ -34,8 +34,8 @@ from blender_addon.handlers.terrain_assets import (
     scatter_debris_for_caves,
     validate_asset_density_and_overlap,
 )
-from blender_addon.handlers.terrain_pipeline import TerrainPassController
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     ProtectedZoneSpec,
     TerrainIntentState,
@@ -412,7 +412,7 @@ def test_pass_preserves_existing_detail_density(stack, intent):
 
 
 def test_scatter_registration_declares_detail_density_output():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     definition = TerrainPassController.get_pass("scatter_intelligent")
     assert "detail_density" in definition.produces_channels

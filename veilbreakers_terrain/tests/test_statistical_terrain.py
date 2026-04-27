@@ -108,31 +108,31 @@ def _radial_spectral_power(heightmap: np.ndarray) -> tuple[np.ndarray, np.ndarra
 
 @pytest.fixture
 def mountain_hmap():
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     return generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="mountains")
 
 
 @pytest.fixture
 def plains_hmap():
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     return generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="plains")
 
 
 @pytest.fixture
 def canyon_hmap():
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     return generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="canyon")
 
 
 @pytest.fixture
 def mountain_slope(mountain_hmap):
-    from blender_addon.handlers._terrain_noise import compute_slope_map
+    from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
     return compute_slope_map(mountain_hmap)
 
 
 @pytest.fixture
 def plains_slope(plains_hmap):
-    from blender_addon.handlers._terrain_noise import compute_slope_map
+    from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
     return compute_slope_map(plains_hmap)
 
 
@@ -151,7 +151,7 @@ class TestHeightDistribution:
 
     def test_plains_narrow_range(self, plains_hmap):
         """Plains should have a narrower height range than mountains (unnormalized)."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         # Use normalize=False to see the raw amplitude differences between presets
         mtn = generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="mountains", normalize=False)
         pln = generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="plains", normalize=False)
@@ -177,14 +177,14 @@ class TestHeightDistribution:
 
     def test_different_seeds_different_distribution(self):
         """Different seeds should produce different height distributions."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         h1 = generate_heightmap(64, 64, scale=50.0, seed=1, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, scale=50.0, seed=999, terrain_type="mountains")
         assert abs(h1.mean() - h2.mean()) > 1e-4 or abs(h1.std() - h2.std()) > 1e-4
 
     def test_terrain_types_differ_statistically(self):
         """Different terrain types should have distinguishable statistics (unnormalized)."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         # Use normalize=False to preserve the amplitude_scale differences
         mtn = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains", normalize=False)
         plains = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="plains", normalize=False)
@@ -237,14 +237,14 @@ class TestSlopeStatistics:
 
     def test_flat_heightmap_zero_slope(self):
         """A perfectly flat heightmap should have zero slope everywhere."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
         flat = np.full((32, 32), 0.5)
         slope = compute_slope_map(flat)
         np.testing.assert_allclose(slope, 0.0, atol=1e-10)
 
     def test_slope_mean_ordered_by_terrain_type(self):
         """Mean slope: mountains > canyon > hills > plains > flat."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap, compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap, compute_slope_map
         types_ordered = ["mountains", "canyon", "hills", "plains", "flat"]
         means = []
         for t in types_ordered:
@@ -281,7 +281,7 @@ class TestFractalDimension:
 
     def test_flat_terrain_low_fractal_dimension(self):
         """Flat terrain should have lower fractal dimension."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         flat = generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="flat")
         fd = _estimate_fractal_dimension_boxcount(flat)
         assert fd < 3.5, f"Flat terrain FD={fd:.2f} is unexpectedly high"
@@ -352,21 +352,21 @@ class TestHeightmapReproducibility:
 
     def test_same_params_same_output(self):
         """Identical parameters produce identical heightmaps."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         h1 = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
         np.testing.assert_array_equal(h1, h2)
 
     def test_different_seeds_different_output(self):
         """Different seeds produce different heightmaps."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         h1 = generate_heightmap(64, 64, scale=50.0, seed=1, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, scale=50.0, seed=2, terrain_type="mountains")
         assert not np.array_equal(h1, h2)
 
     def test_all_terrain_types_generate(self):
         """Every terrain preset should generate without error."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap, TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap, TERRAIN_PRESETS
         for ttype in TERRAIN_PRESETS:
             h = generate_heightmap(32, 32, scale=30.0, seed=42, terrain_type=ttype)
             assert h.shape == (32, 32)

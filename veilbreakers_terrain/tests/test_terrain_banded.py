@@ -28,7 +28,7 @@ import numpy as np
 
 
 def _gen(width=64, height=64, seed=1234, biome="dark_fantasy_default", **kw):
-    from blender_addon.handlers.terrain_banded import generate_banded_heightmap
+    from veilbreakers_terrain.handlers.terrain_banded import generate_banded_heightmap
 
     return generate_banded_heightmap(
         width, height,
@@ -109,7 +109,7 @@ def test_bands_have_distinct_frequency_content():
 
 
 def test_composite_equals_weighted_sum_of_bands():
-    from blender_addon.handlers.terrain_banded import (
+    from veilbreakers_terrain.handlers.terrain_banded import (
         BAND_WEIGHTS,
         compose_banded_heightmap,
     )
@@ -130,7 +130,7 @@ def test_composite_equals_weighted_sum_of_bands():
 
 
 def test_changing_micro_weight_only_perturbs_high_frequencies():
-    from blender_addon.handlers.terrain_banded import compose_banded_heightmap
+    from veilbreakers_terrain.handlers.terrain_banded import compose_banded_heightmap
 
     bands = _gen(width=128, height=128, seed=11)
     w0 = (0.55, 0.28, 0.12, 0.05)
@@ -150,7 +150,7 @@ def test_changing_micro_weight_only_perturbs_high_frequencies():
 
 
 def test_changing_macro_weight_only_perturbs_low_frequencies():
-    from blender_addon.handlers.terrain_banded import compose_banded_heightmap
+    from veilbreakers_terrain.handlers.terrain_banded import compose_banded_heightmap
 
     bands = _gen(width=128, height=128, seed=13)
     w0 = (0.55, 0.28, 0.12, 0.05)
@@ -181,7 +181,7 @@ def test_meso_band_shows_nonzero_warp_displacement():
     equal plain fBm on a regular grid. We assert the meso band is NOT
     equal to a non-warped fBm sampled on the same grid — confirming the
     warp path is exercised."""
-    from blender_addon.handlers.terrain_banded import _fbm_array, _coord_grids
+    from veilbreakers_terrain.handlers.terrain_banded import _fbm_array, _coord_grids
 
     bands = _gen(width=64, height=64, seed=21)
     xs, ys = _coord_grids(64, 64, 0.0, 0.0, 1.0, 150.0 * 1.0)
@@ -221,8 +221,8 @@ def test_strata_band_variance_dominated_by_vertical_axis():
 
 
 def test_legacy_generate_heightmap_is_reexported():
-    from blender_addon.handlers._terrain_noise import generate_heightmap as direct
-    from blender_addon.handlers.terrain_banded import generate_heightmap as reexport
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap as direct
+    from veilbreakers_terrain.handlers.terrain_banded import generate_heightmap as reexport
 
     # Verify the reexport produces identical output to the direct import
     # (identity check is fragile across import-alias boundaries)
@@ -239,7 +239,7 @@ def test_legacy_generate_heightmap_is_reexported():
 
 
 def test_banded_macro_registers_on_pass_controller():
-    from blender_addon.handlers.terrain_banded import register_bundle_g_passes
+    from veilbreakers_terrain.handlers.terrain_banded import register_bundle_g_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
@@ -258,7 +258,7 @@ def test_banded_macro_registers_on_pass_controller():
 
 
 def _build_minimal_state(tile_size=24, seed=321):
-    from blender_addon.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -309,7 +309,7 @@ def _build_minimal_state(tile_size=24, seed=321):
 
 
 def test_banded_pass_writes_composite_into_stack_height():
-    from blender_addon.handlers.terrain_banded import (
+    from veilbreakers_terrain.handlers.terrain_banded import (
         generate_banded_heightmap,
         register_bundle_g_passes,
     )

@@ -41,7 +41,7 @@ def test_mesh_smoothing_imports_when_scipy_is_unavailable(monkeypatch):
 
 
 def test_build_laplacian_computes_average_neighbor_delta():
-    from blender_addon.handlers.mesh_smoothing import _build_laplacian
+    from veilbreakers_terrain.handlers.mesh_smoothing import _build_laplacian
 
     neighbors = [{1, 2}, {0}, {0}]
     laplacian = _build_laplacian(3, neighbors)
@@ -62,7 +62,7 @@ def test_build_laplacian_computes_average_neighbor_delta():
 
 
 def test_compute_face_normal_handles_unit_and_degenerate_faces():
-    from blender_addon.handlers.mesh_smoothing import _compute_face_normal
+    from veilbreakers_terrain.handlers.mesh_smoothing import _compute_face_normal
 
     normal = _compute_face_normal(
         np.array([0.0, 0.0, 0.0]),
@@ -80,7 +80,7 @@ def test_compute_face_normal_handles_unit_and_degenerate_faces():
 
 
 def test_boundary_and_sharp_masks_preserve_open_edges_and_creases():
-    from blender_addon.handlers.mesh_smoothing import (
+    from veilbreakers_terrain.handlers.mesh_smoothing import (
         _build_boundary_vertex_mask,
         _build_sharp_vertex_mask,
     )
@@ -108,7 +108,7 @@ def test_boundary_and_sharp_masks_preserve_open_edges_and_creases():
 
 
 def test_laplacian_pass_respects_fixed_vertices():
-    from blender_addon.handlers.mesh_smoothing import _build_laplacian, _laplacian_pass
+    from veilbreakers_terrain.handlers.mesh_smoothing import _build_laplacian, _laplacian_pass
 
     neighbors = [{1}, {0, 2}, {1}]
     laplacian = _build_laplacian(3, neighbors)

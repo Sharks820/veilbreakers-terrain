@@ -21,7 +21,7 @@ import pytest
 
 
 def _make_stack(tile_size: int = 24, seed: int = 7):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
     xs = np.linspace(0.0, 1.0, tile_size + 1)
@@ -44,7 +44,7 @@ def _make_stack(tile_size: int = 24, seed: int = 7):
 
 
 def _build_state(tile_size: int = 24, seed: int = 7):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainPipelineState,
@@ -78,7 +78,7 @@ def stack(state):
 
 
 def test_stochastic_sampling_mask_shape_and_dtype(stack):
-    from blender_addon.handlers.terrain_stochastic_shader import (
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
 
@@ -90,7 +90,7 @@ def test_stochastic_sampling_mask_shape_and_dtype(stack):
 
 
 def test_stochastic_sampling_mask_is_deterministic(stack):
-    from blender_addon.handlers.terrain_stochastic_shader import (
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
 
@@ -100,7 +100,7 @@ def test_stochastic_sampling_mask_is_deterministic(stack):
 
 
 def test_stochastic_sampling_different_seeds_differ(stack):
-    from blender_addon.handlers.terrain_stochastic_shader import (
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
 
@@ -110,7 +110,7 @@ def test_stochastic_sampling_different_seeds_differ(stack):
 
 
 def test_stochastic_sampling_rejects_bad_tile_size(stack):
-    from blender_addon.handlers.terrain_stochastic_shader import (
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         build_stochastic_sampling_mask,
     )
 
@@ -119,7 +119,7 @@ def test_stochastic_sampling_rejects_bad_tile_size(stack):
 
 
 def test_export_unity_shader_template_writes_json():
-    from blender_addon.handlers.terrain_stochastic_shader import (
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import (
         StochasticShaderTemplate,
         export_unity_shader_template,
     )
@@ -144,7 +144,7 @@ def test_export_unity_shader_template_writes_json():
 def test_pass_stochastic_shader_populates_uv_mask(state):
     # Fix 7.18: stochastic_shader no longer writes roughness_variation (single-writer rule).
     # It writes stochastic_uv_mask only; roughness_variation is owned by roughness_driver.
-    from blender_addon.handlers.terrain_stochastic_shader import pass_stochastic_shader
+    from veilbreakers_terrain.handlers.terrain_stochastic_shader import pass_stochastic_shader
 
     result = pass_stochastic_shader(state, None)
     assert result.status == "ok"
@@ -161,7 +161,7 @@ def test_pass_stochastic_shader_populates_uv_mask(state):
 
 
 def test_macro_color_shape_and_dtype(stack):
-    from blender_addon.handlers.terrain_macro_color import compute_macro_color
+    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
 
     color = compute_macro_color(stack)
     rows, cols = stack.height.shape
@@ -171,7 +171,7 @@ def test_macro_color_shape_and_dtype(stack):
 
 
 def test_macro_color_respects_biome_id(stack):
-    from blender_addon.handlers.terrain_macro_color import (
+    from veilbreakers_terrain.handlers.terrain_macro_color import (
         DARK_FANTASY_PALETTE,
         compute_macro_color,
     )
@@ -187,7 +187,7 @@ def test_macro_color_respects_biome_id(stack):
 
 
 def test_macro_color_wet_darkens(stack):
-    from blender_addon.handlers.terrain_macro_color import compute_macro_color
+    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
 
     dry = compute_macro_color(stack)
     wet = np.ones_like(stack.height, dtype=np.float64) * 0.9
@@ -197,7 +197,7 @@ def test_macro_color_wet_darkens(stack):
 
 
 def test_macro_color_custom_palette(stack):
-    from blender_addon.handlers.terrain_macro_color import compute_macro_color
+    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
 
     biome = np.zeros_like(stack.height, dtype=np.int32)
     stack.set("biome_id", biome, "test")
@@ -207,7 +207,7 @@ def test_macro_color_custom_palette(stack):
 
 
 def test_pass_macro_color_populates_channel(state):
-    from blender_addon.handlers.terrain_macro_color import pass_macro_color
+    from veilbreakers_terrain.handlers.terrain_macro_color import pass_macro_color
 
     result = pass_macro_color(state, None)
     assert result.status == "ok"
@@ -221,7 +221,7 @@ def test_pass_macro_color_populates_channel(state):
 
 
 def test_multiscale_breakup_shape_and_dtype(stack):
-    from blender_addon.handlers.terrain_multiscale_breakup import (
+    from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         compute_multiscale_breakup,
     )
 
@@ -231,7 +231,7 @@ def test_multiscale_breakup_shape_and_dtype(stack):
 
 
 def test_multiscale_breakup_deterministic(stack):
-    from blender_addon.handlers.terrain_multiscale_breakup import (
+    from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         compute_multiscale_breakup,
     )
 
@@ -241,7 +241,7 @@ def test_multiscale_breakup_deterministic(stack):
 
 
 def test_multiscale_breakup_rejects_empty_scales(stack):
-    from blender_addon.handlers.terrain_multiscale_breakup import (
+    from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         compute_multiscale_breakup,
     )
 
@@ -252,7 +252,7 @@ def test_multiscale_breakup_rejects_empty_scales(stack):
 def test_pass_multiscale_breakup_does_not_write_roughness(state):
     # Fix 7.18: multiscale_breakup no longer writes roughness_variation (single-writer rule).
     # roughness_variation is owned exclusively by terrain_roughness_driver.
-    from blender_addon.handlers.terrain_multiscale_breakup import pass_multiscale_breakup
+    from veilbreakers_terrain.handlers.terrain_multiscale_breakup import pass_multiscale_breakup
 
     result = pass_multiscale_breakup(state, None)
     assert result.status == "ok"
@@ -272,7 +272,7 @@ def test_pass_multiscale_breakup_does_not_write_roughness(state):
 
 
 def test_bake_shadow_clipmap_shape_and_range(stack):
-    from blender_addon.handlers.terrain_shadow_clipmap_bake import bake_shadow_clipmap
+    from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import bake_shadow_clipmap
 
     mask = bake_shadow_clipmap(stack, sun_dir_rad=(0.5, 0.8), clipmap_res=64)
     assert mask.shape == (64, 64)
@@ -281,7 +281,7 @@ def test_bake_shadow_clipmap_shape_and_range(stack):
 
 
 def test_bake_shadow_clipmap_sun_below_horizon(stack):
-    from blender_addon.handlers.terrain_shadow_clipmap_bake import bake_shadow_clipmap
+    from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import bake_shadow_clipmap
 
     mask = bake_shadow_clipmap(stack, sun_dir_rad=(0.0, -0.1), clipmap_res=32)
     assert np.all(mask == 0.0)
@@ -294,7 +294,7 @@ def test_export_shadow_clipmap_exr_and_sidecar(stack):
     dependencies), so the output is a real .exr file.  The test accepts any
     format the writer produces (EXR, PNG, or NPY) and validates the sidecar.
     """
-    from blender_addon.handlers.terrain_shadow_clipmap_bake import (
+    from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import (
         bake_shadow_clipmap,
         export_shadow_clipmap_exr,
     )
@@ -338,7 +338,7 @@ def test_pass_shadow_clipmap_populates_cloud_shadow(state):
     channel is now owned by Bundle J's ``pass_cloud_shadow`` exclusively so the
     DAG can reason about the two producers independently.
     """
-    from blender_addon.handlers.terrain_shadow_clipmap_bake import pass_shadow_clipmap
+    from veilbreakers_terrain.handlers.terrain_shadow_clipmap_bake import pass_shadow_clipmap
 
     result = pass_shadow_clipmap(state, None)
     assert result.status == "ok"
@@ -353,7 +353,7 @@ def test_pass_shadow_clipmap_populates_cloud_shadow(state):
 
 
 def test_roughness_driver_default_baseline(stack):
-    from blender_addon.handlers.terrain_roughness_driver import (
+    from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         compute_roughness_from_wetness_wear,
     )
 
@@ -365,7 +365,7 @@ def test_roughness_driver_default_baseline(stack):
 
 
 def test_roughness_driver_wet_reduces_roughness(stack):
-    from blender_addon.handlers.terrain_roughness_driver import (
+    from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         compute_roughness_from_wetness_wear,
     )
 
@@ -377,7 +377,7 @@ def test_roughness_driver_wet_reduces_roughness(stack):
 
 
 def test_roughness_driver_erosion_increases_roughness(stack):
-    from blender_addon.handlers.terrain_roughness_driver import (
+    from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         compute_roughness_from_wetness_wear,
     )
 
@@ -389,7 +389,7 @@ def test_roughness_driver_erosion_increases_roughness(stack):
 
 
 def test_pass_roughness_driver(state):
-    from blender_addon.handlers.terrain_roughness_driver import pass_roughness_driver
+    from veilbreakers_terrain.handlers.terrain_roughness_driver import pass_roughness_driver
 
     result = pass_roughness_driver(state, None)
     assert result.status == "ok"
@@ -399,7 +399,7 @@ def test_pass_roughness_driver(state):
 
 
 def test_pass_roughness_driver_consumes_breakup_signal(state):
-    from blender_addon.handlers.terrain_roughness_driver import pass_roughness_driver
+    from veilbreakers_terrain.handlers.terrain_roughness_driver import pass_roughness_driver
 
     baseline_result = pass_roughness_driver(state, None)
     assert baseline_result.status == "ok"
@@ -437,7 +437,7 @@ def _make_fake_quixel_asset(root: Path, asset_id: str = "rock_mossy_01") -> Path
 
 
 def test_ingest_quixel_asset_parses_channels():
-    from blender_addon.handlers.terrain_quixel_ingest import ingest_quixel_asset
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import ingest_quixel_asset
 
     with tempfile.TemporaryDirectory() as td:
         asset_dir = _make_fake_quixel_asset(Path(td))
@@ -451,14 +451,14 @@ def test_ingest_quixel_asset_parses_channels():
 
 
 def test_ingest_quixel_asset_missing_folder_raises():
-    from blender_addon.handlers.terrain_quixel_ingest import ingest_quixel_asset
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import ingest_quixel_asset
 
     with pytest.raises(FileNotFoundError):
         ingest_quixel_asset(Path("/nonexistent/quixel/asset"))
 
 
 def test_apply_quixel_to_layer_creates_splatmap(stack):
-    from blender_addon.handlers.terrain_quixel_ingest import (
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         apply_quixel_to_layer,
     )
@@ -478,7 +478,7 @@ def test_apply_quixel_to_layer_creates_splatmap(stack):
 
 
 def test_pass_quixel_ingest_with_assets_param(state):
-    from blender_addon.handlers.terrain_quixel_ingest import (
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,
         pass_quixel_ingest,
     )
@@ -490,7 +490,7 @@ def test_pass_quixel_ingest_with_assets_param(state):
 
 
 def test_pass_quixel_ingest_handles_missing_paths(state):
-    from blender_addon.handlers.terrain_quixel_ingest import pass_quixel_ingest
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import pass_quixel_ingest
 
     state.intent.composition_hints["quixel_assets"] = [
         {"asset_path": "/definitely/not/here", "layer_id": "bad"}
@@ -502,7 +502,7 @@ def test_pass_quixel_ingest_handles_missing_paths(state):
 
 
 def test_pass_quixel_ingest_bundle_k_uses_composition_hints(state):
-    from blender_addon.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
 
     state.intent.composition_hints["quixel_assets"] = [
         {"asset_path": "/definitely/not/here", "layer_id": "bad"}
@@ -518,12 +518,12 @@ def test_pass_quixel_ingest_bundle_k_uses_composition_hints(state):
 
 
 def test_register_bundle_k_passes():
-    from blender_addon.handlers.terrain_bundle_k import (
+    from veilbreakers_terrain.handlers.terrain_bundle_k import (
         BUNDLE_K_PASSES,
         register_bundle_k_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import pass_quixel_ingest_bundle_k
 
     # Preserve registry
     original = dict(TerrainPassController.PASS_REGISTRY)
@@ -544,8 +544,8 @@ def test_register_bundle_k_passes():
 def test_bundle_k_passes_produce_unity_channels():
     """Ensure Bundle K passes collectively produce macro_color +
     roughness_variation + (implicit via cloud_shadow) for Unity export."""
-    from blender_addon.handlers.terrain_bundle_k import register_bundle_k_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_bundle_k import register_bundle_k_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     original = dict(TerrainPassController.PASS_REGISTRY)
     try:

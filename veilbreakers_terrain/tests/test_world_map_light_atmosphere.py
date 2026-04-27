@@ -18,7 +18,7 @@ class TestWorldMapGeneration:
     """Test world map generation with Voronoi regions and POI distribution."""
 
     def test_default_generation_returns_worldmap(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map()
         assert wm is not None
@@ -27,19 +27,19 @@ class TestWorldMapGeneration:
         assert wm.seed == 42
 
     def test_custom_region_count(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(num_regions=10, seed=99)
         assert len(wm.regions) == 10
 
     def test_minimum_two_regions(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(num_regions=1)
         assert len(wm.regions) >= 2
 
     def test_regions_have_valid_structure(self):
-        from blender_addon.handlers.world_map import generate_world_map, BIOME_TYPES
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, BIOME_TYPES
 
         wm = generate_world_map(num_regions=4, seed=7)
         for region in wm.regions:
@@ -52,7 +52,7 @@ class TestWorldMapGeneration:
             assert region.area > 0
 
     def test_regions_centers_within_map_bounds(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(map_size=1000.0, seed=55)
         for region in wm.regions:
@@ -60,7 +60,7 @@ class TestWorldMapGeneration:
             assert 0 <= region.center[1] <= 1000.0
 
     def test_connections_between_adjacent_regions(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(num_regions=6, seed=42)
         assert len(wm.connections) > 0
@@ -73,13 +73,13 @@ class TestWorldMapGeneration:
             assert conn.road_type in ("main", "path")
 
     def test_poi_minimum_count(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(min_pois=300, seed=42)
         assert len(wm.poi_positions) >= 300
 
     def test_poi_positions_within_map_bounds(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(map_size=500.0, min_pois=50, seed=11)
         for poi in wm.poi_positions:
@@ -87,7 +87,7 @@ class TestWorldMapGeneration:
             assert 0 <= poi.position[1] <= 500.0
 
     def test_poi_types_are_valid(self):
-        from blender_addon.handlers.world_map import generate_world_map, POI_TYPES
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, POI_TYPES
 
         wm = generate_world_map(min_pois=100, seed=42)
         for poi in wm.poi_positions:
@@ -96,7 +96,7 @@ class TestWorldMapGeneration:
             assert poi.region  # non-empty region name
 
     def test_deterministic_with_same_seed(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm1 = generate_world_map(seed=123)
         wm2 = generate_world_map(seed=123)
@@ -108,7 +108,7 @@ class TestWorldMapGeneration:
             assert r1.biome == r2.biome
 
     def test_different_seeds_produce_different_maps(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm1 = generate_world_map(seed=1)
         wm2 = generate_world_map(seed=2)
@@ -120,14 +120,14 @@ class TestWorldMapGeneration:
         assert biomes1 != biomes2 or centers1 != centers2
 
     def test_large_map_with_many_regions(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(num_regions=15, map_size=5000.0, min_pois=500, seed=77)
         assert len(wm.regions) == 15
         assert len(wm.poi_positions) >= 500
 
     def test_small_map(self):
-        from blender_addon.handlers.world_map import generate_world_map
+        from veilbreakers_terrain.handlers.world_map import generate_world_map
 
         wm = generate_world_map(num_regions=3, map_size=100.0, min_pois=10, seed=33)
         assert len(wm.regions) == 3
@@ -138,7 +138,7 @@ class TestWorldMapSerialization:
     """Test world map serialization to dict."""
 
     def test_to_dict_has_all_keys(self):
-        from blender_addon.handlers.world_map import generate_world_map, world_map_to_dict
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, world_map_to_dict
 
         wm = generate_world_map(num_regions=3, min_pois=10, seed=42)
         d = world_map_to_dict(wm)
@@ -154,7 +154,7 @@ class TestWorldMapSerialization:
         assert d["num_pois"] == len(d["poi_positions"])
 
     def test_region_dict_structure(self):
-        from blender_addon.handlers.world_map import generate_world_map, world_map_to_dict
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, world_map_to_dict
 
         wm = generate_world_map(num_regions=3, min_pois=10, seed=42)
         d = world_map_to_dict(wm)
@@ -170,7 +170,7 @@ class TestBiomeTypes:
     """Test biome type definitions."""
 
     def test_all_biomes_have_required_keys(self):
-        from blender_addon.handlers.world_map import BIOME_TYPES
+        from veilbreakers_terrain.handlers.world_map import BIOME_TYPES
 
         required = {"color", "vegetation_density", "danger_level", "terrain_roughness", "ambient"}
         for biome_name, biome_def in BIOME_TYPES.items():
@@ -178,18 +178,18 @@ class TestBiomeTypes:
                 assert key in biome_def, f"Biome '{biome_name}' missing '{key}'"
 
     def test_biome_count(self):
-        from blender_addon.handlers.world_map import BIOME_TYPES
+        from veilbreakers_terrain.handlers.world_map import BIOME_TYPES
 
         assert len(BIOME_TYPES) == 10
 
     def test_danger_levels_in_range(self):
-        from blender_addon.handlers.world_map import BIOME_TYPES
+        from veilbreakers_terrain.handlers.world_map import BIOME_TYPES
 
         for name, biome in BIOME_TYPES.items():
             assert 0 <= biome["danger_level"] <= 10, f"{name} danger out of range"
 
     def test_vegetation_density_in_range(self):
-        from blender_addon.handlers.world_map import BIOME_TYPES
+        from veilbreakers_terrain.handlers.world_map import BIOME_TYPES
 
         for name, biome in BIOME_TYPES.items():
             assert 0 <= biome["vegetation_density"] <= 1.0, f"{name} veg density out of range"
@@ -199,7 +199,7 @@ class TestPOITypes:
     """Test POI type definitions."""
 
     def test_all_pois_have_required_keys(self):
-        from blender_addon.handlers.world_map import POI_TYPES
+        from veilbreakers_terrain.handlers.world_map import POI_TYPES
 
         required = {"frequency", "min_spacing", "danger_bias", "props"}
         for poi_name, poi_def in POI_TYPES.items():
@@ -207,12 +207,12 @@ class TestPOITypes:
                 assert key in poi_def, f"POI '{poi_name}' missing '{key}'"
 
     def test_poi_count(self):
-        from blender_addon.handlers.world_map import POI_TYPES
+        from veilbreakers_terrain.handlers.world_map import POI_TYPES
 
         assert len(POI_TYPES) == 12
 
     def test_all_pois_have_props(self):
-        from blender_addon.handlers.world_map import POI_TYPES
+        from veilbreakers_terrain.handlers.world_map import POI_TYPES
 
         for name, poi in POI_TYPES.items():
             assert len(poi["props"]) >= 3, f"POI '{name}' has fewer than 3 props"
@@ -227,7 +227,7 @@ class TestLandmarkTypes:
     """Test landmark type definitions."""
 
     def test_all_landmarks_have_required_keys(self):
-        from blender_addon.handlers.world_map import LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import LANDMARK_TYPES
 
         required = {"min_height", "visibility_range", "props"}
         for lm_name, lm_def in LANDMARK_TYPES.items():
@@ -235,23 +235,23 @@ class TestLandmarkTypes:
                 assert key in lm_def, f"Landmark '{lm_name}' missing '{key}'"
 
     def test_landmark_count(self):
-        from blender_addon.handlers.world_map import LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import LANDMARK_TYPES
 
         assert len(LANDMARK_TYPES) == 5
 
     def test_glowing_crystal_has_emission(self):
-        from blender_addon.handlers.world_map import LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import LANDMARK_TYPES
 
         assert LANDMARK_TYPES["glowing_crystal"].get("emission") is True
 
     def test_visibility_ranges_positive(self):
-        from blender_addon.handlers.world_map import LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import LANDMARK_TYPES
 
         for name, lm in LANDMARK_TYPES.items():
             assert lm["visibility_range"] > 0, f"{name} has non-positive visibility range"
 
     def test_min_heights_positive(self):
-        from blender_addon.handlers.world_map import LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import LANDMARK_TYPES
 
         for name, lm in LANDMARK_TYPES.items():
             assert lm["min_height"] > 0, f"{name} has non-positive min_height"
@@ -261,7 +261,7 @@ class TestLandmarkPlacement:
     """Test landmark distribution across world map."""
 
     def test_place_landmarks_default(self):
-        from blender_addon.handlers.world_map import generate_world_map, place_landmarks
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, place_landmarks
 
         wm = generate_world_map(num_regions=4, seed=42)
         landmarks = place_landmarks(wm)
@@ -270,7 +270,7 @@ class TestLandmarkPlacement:
         assert len(landmarks) <= len(wm.regions)
 
     def test_place_landmarks_multiple_per_region(self):
-        from blender_addon.handlers.world_map import generate_world_map, place_landmarks
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, place_landmarks
 
         wm = generate_world_map(num_regions=4, seed=42)
         landmarks = place_landmarks(wm, landmarks_per_region=3)
@@ -278,7 +278,7 @@ class TestLandmarkPlacement:
         assert len(landmarks) > 0
 
     def test_landmark_structure(self):
-        from blender_addon.handlers.world_map import generate_world_map, place_landmarks, LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, place_landmarks, LANDMARK_TYPES
 
         wm = generate_world_map(num_regions=4, seed=42)
         landmarks = place_landmarks(wm)
@@ -291,7 +291,7 @@ class TestLandmarkPlacement:
             assert len(lm.props) > 0
 
     def test_landmark_height_above_minimum(self):
-        from blender_addon.handlers.world_map import generate_world_map, place_landmarks, LANDMARK_TYPES
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, place_landmarks, LANDMARK_TYPES
 
         wm = generate_world_map(num_regions=6, seed=42)
         landmarks = place_landmarks(wm, seed=99)
@@ -300,7 +300,7 @@ class TestLandmarkPlacement:
             assert lm.height >= min_h
 
     def test_landmark_deterministic(self):
-        from blender_addon.handlers.world_map import generate_world_map, place_landmarks
+        from veilbreakers_terrain.handlers.world_map import generate_world_map, place_landmarks
 
         wm = generate_world_map(num_regions=4, seed=42)
         lm1 = place_landmarks(wm, seed=10)
@@ -315,20 +315,20 @@ class TestStorytellingPatterns:
     """Test environmental storytelling patterns."""
 
     def test_all_patterns_exist(self):
-        from blender_addon.handlers.world_map import STORYTELLING_PATTERNS
+        from veilbreakers_terrain.handlers.world_map import STORYTELLING_PATTERNS
 
         assert len(STORYTELLING_PATTERNS) == 4
         expected = {"battlefield_aftermath", "abandoned_camp", "blood_trail", "corruption_spread"}
         assert set(STORYTELLING_PATTERNS.keys()) == expected
 
     def test_all_patterns_have_props(self):
-        from blender_addon.handlers.world_map import STORYTELLING_PATTERNS
+        from veilbreakers_terrain.handlers.world_map import STORYTELLING_PATTERNS
 
         for name, props in STORYTELLING_PATTERNS.items():
             assert len(props) == 4, f"Pattern '{name}' should have exactly 4 props"
 
     def test_generate_scene_valid_pattern(self):
-        from blender_addon.handlers.world_map import generate_storytelling_scene
+        from veilbreakers_terrain.handlers.world_map import generate_storytelling_scene
 
         scene = generate_storytelling_scene(
             "battlefield_aftermath", center=(100, 200), radius=15.0, seed=42
@@ -339,13 +339,13 @@ class TestStorytellingPatterns:
         assert len(scene.prop_placements) == 4
 
     def test_generate_scene_invalid_pattern_raises(self):
-        from blender_addon.handlers.world_map import generate_storytelling_scene
+        from veilbreakers_terrain.handlers.world_map import generate_storytelling_scene
 
         with pytest.raises(ValueError, match="Unknown storytelling pattern"):
             generate_storytelling_scene("nonexistent_pattern", center=(0, 0))
 
     def test_scene_props_have_position_and_rotation(self):
-        from blender_addon.handlers.world_map import generate_storytelling_scene
+        from veilbreakers_terrain.handlers.world_map import generate_storytelling_scene
 
         scene = generate_storytelling_scene(
             "abandoned_camp", center=(50, 50), radius=10.0, seed=7
@@ -358,7 +358,7 @@ class TestStorytellingPatterns:
             assert len(prop["position"]) == 2
 
     def test_blood_trail_linear_distribution(self):
-        from blender_addon.handlers.world_map import generate_storytelling_scene
+        from veilbreakers_terrain.handlers.world_map import generate_storytelling_scene
 
         scene = generate_storytelling_scene(
             "blood_trail", center=(0, 0), radius=20.0, seed=42
@@ -373,7 +373,7 @@ class TestStorytellingPatterns:
         assert d_first < d_last
 
     def test_scene_deterministic(self):
-        from blender_addon.handlers.world_map import generate_storytelling_scene
+        from veilbreakers_terrain.handlers.world_map import generate_storytelling_scene
 
         s1 = generate_storytelling_scene("corruption_spread", (10, 20), seed=55)
         s2 = generate_storytelling_scene("corruption_spread", (10, 20), seed=55)
@@ -392,7 +392,7 @@ class TestLightPropMap:
     """Test light prop definitions."""
 
     def test_all_light_props_have_required_keys(self):
-        from blender_addon.handlers.light_integration import LIGHT_PROP_MAP
+        from veilbreakers_terrain.handlers.light_integration import LIGHT_PROP_MAP
 
         required = {"type", "color", "energy", "radius", "flicker", "offset_z", "shadow"}
         for prop_name, prop_def in LIGHT_PROP_MAP.items():
@@ -400,19 +400,19 @@ class TestLightPropMap:
                 assert key in prop_def, f"Light prop '{prop_name}' missing '{key}'"
 
     def test_light_prop_count(self):
-        from blender_addon.handlers.light_integration import LIGHT_PROP_MAP
+        from veilbreakers_terrain.handlers.light_integration import LIGHT_PROP_MAP
 
         assert len(LIGHT_PROP_MAP) == 8
 
     def test_light_types_valid(self):
-        from blender_addon.handlers.light_integration import LIGHT_PROP_MAP
+        from veilbreakers_terrain.handlers.light_integration import LIGHT_PROP_MAP
 
         valid_types = {"point", "area", "spot"}
         for name, prop in LIGHT_PROP_MAP.items():
             assert prop["type"] in valid_types, f"{name} has invalid light type"
 
     def test_colors_are_tuples_of_three(self):
-        from blender_addon.handlers.light_integration import LIGHT_PROP_MAP
+        from veilbreakers_terrain.handlers.light_integration import LIGHT_PROP_MAP
 
         for name, prop in LIGHT_PROP_MAP.items():
             assert len(prop["color"]) == 3, f"{name} color is not RGB tuple"
@@ -420,7 +420,7 @@ class TestLightPropMap:
                 assert 0 <= c <= 1.0
 
     def test_energy_positive(self):
-        from blender_addon.handlers.light_integration import LIGHT_PROP_MAP
+        from veilbreakers_terrain.handlers.light_integration import LIGHT_PROP_MAP
 
         for name, prop in LIGHT_PROP_MAP.items():
             assert prop["energy"] > 0, f"{name} has non-positive energy"
@@ -430,7 +430,7 @@ class TestFlickerPresets:
     """Test flicker animation presets."""
 
     def test_all_presets_have_required_keys(self):
-        from blender_addon.handlers.light_integration import FLICKER_PRESETS
+        from veilbreakers_terrain.handlers.light_integration import FLICKER_PRESETS
 
         required = {"frequency", "amplitude", "pattern"}
         for name, preset in FLICKER_PRESETS.items():
@@ -438,7 +438,7 @@ class TestFlickerPresets:
                 assert key in preset, f"Flicker preset '{name}' missing '{key}'"
 
     def test_preset_count(self):
-        from blender_addon.handlers.light_integration import FLICKER_PRESETS
+        from veilbreakers_terrain.handlers.light_integration import FLICKER_PRESETS
 
         assert len(FLICKER_PRESETS) == 4
 
@@ -447,13 +447,13 @@ class TestComputeLightPlacements:
     """Test light placement computation."""
 
     def test_empty_input(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         result = compute_light_placements([])
         assert result == []
 
     def test_non_light_props_ignored(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [
             {"type": "chest", "position": (10, 20)},
@@ -463,7 +463,7 @@ class TestComputeLightPlacements:
         assert len(result) == 0
 
     def test_torch_sconce_generates_light(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "torch_sconce", "position": (5, 10)}]
         result = compute_light_placements(props)
@@ -478,7 +478,7 @@ class TestComputeLightPlacements:
         assert light["flicker"] is not None
 
     def test_campfire_generates_light(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "campfire", "position": (0, 0)}]
         result = compute_light_placements(props)
@@ -487,7 +487,7 @@ class TestComputeLightPlacements:
         assert result[0]["flicker"] is not None
 
     def test_lantern_no_flicker(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "lantern", "position": (0, 0)}]
         result = compute_light_placements(props)
@@ -495,28 +495,28 @@ class TestComputeLightPlacements:
         assert result[0]["flicker"] is None
 
     def test_3d_position_adds_offset(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "campfire", "position": (10, 20, 5)}]
         result = compute_light_placements(props)
         assert result[0]["position"][2] == 5.5  # 5 + 0.5 offset
 
     def test_scale_affects_energy(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "campfire", "position": (0, 0), "scale": 2.0}]
         result = compute_light_placements(props)
         assert result[0]["energy"] == 200  # 100 * 2.0
 
     def test_disabled_light_skipped(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "campfire", "position": (0, 0), "on": False}]
         result = compute_light_placements(props)
         assert len(result) == 0
 
     def test_multiple_props_mixed(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [
             {"type": "torch_sconce", "position": (0, 0)},
@@ -529,7 +529,7 @@ class TestComputeLightPlacements:
         assert len(result) == 3  # torch, campfire, lantern
 
     def test_window_area_light(self):
-        from blender_addon.handlers.light_integration import compute_light_placements
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements
 
         props = [{"type": "window", "position": (5, 10)}]
         result = compute_light_placements(props)
@@ -537,7 +537,7 @@ class TestComputeLightPlacements:
         assert result[0]["light_type"] == "area"
 
     def test_all_light_props_produce_lights(self):
-        from blender_addon.handlers.light_integration import compute_light_placements, LIGHT_PROP_MAP
+        from veilbreakers_terrain.handlers.light_integration import compute_light_placements, LIGHT_PROP_MAP
 
         for prop_type in LIGHT_PROP_MAP:
             props = [{"type": prop_type, "position": (0, 0)}]
@@ -549,12 +549,12 @@ class TestMergeNearbyLights:
     """Test light merging for performance."""
 
     def test_empty_input(self):
-        from blender_addon.handlers.light_integration import merge_nearby_lights
+        from veilbreakers_terrain.handlers.light_integration import merge_nearby_lights
 
         assert merge_nearby_lights([]) == []
 
     def test_single_light_no_merge(self):
-        from blender_addon.handlers.light_integration import merge_nearby_lights
+        from veilbreakers_terrain.handlers.light_integration import merge_nearby_lights
 
         lights = [{
             "light_type": "point", "position": (0, 0, 1),
@@ -565,7 +565,7 @@ class TestMergeNearbyLights:
         assert len(result) == 1
 
     def test_far_apart_lights_not_merged(self):
-        from blender_addon.handlers.light_integration import merge_nearby_lights
+        from veilbreakers_terrain.handlers.light_integration import merge_nearby_lights
 
         lights = [
             {"light_type": "point", "position": (0, 0, 1), "color": (1, 1, 1),
@@ -577,7 +577,7 @@ class TestMergeNearbyLights:
         assert len(result) == 2
 
     def test_close_lights_merged(self):
-        from blender_addon.handlers.light_integration import merge_nearby_lights
+        from veilbreakers_terrain.handlers.light_integration import merge_nearby_lights
 
         lights = [
             {"light_type": "point", "position": (0, 0, 1), "color": (1, 0, 0),
@@ -594,7 +594,7 @@ class TestMergeNearbyLights:
         assert merged["merged_count"] == 2
 
     def test_merged_position_is_energy_weighted(self):
-        from blender_addon.handlers.light_integration import merge_nearby_lights
+        from veilbreakers_terrain.handlers.light_integration import merge_nearby_lights
 
         lights = [
             {"light_type": "point", "position": (0, 0, 0), "color": (1, 1, 1),
@@ -612,14 +612,14 @@ class TestLightBudget:
     """Test performance budget estimation."""
 
     def test_empty_lights(self):
-        from blender_addon.handlers.light_integration import compute_light_budget
+        from veilbreakers_terrain.handlers.light_integration import compute_light_budget
 
         result = compute_light_budget([])
         assert result["total_lights"] == 0
         assert result["estimated_cost"] == 0
 
     def test_simple_lights(self):
-        from blender_addon.handlers.light_integration import compute_light_budget
+        from veilbreakers_terrain.handlers.light_integration import compute_light_budget
 
         lights = [
             {"shadow": False, "flicker": None},
@@ -631,7 +631,7 @@ class TestLightBudget:
         assert result["estimated_cost"] == 2.0
 
     def test_shadow_lights_cost_more(self):
-        from blender_addon.handlers.light_integration import compute_light_budget
+        from veilbreakers_terrain.handlers.light_integration import compute_light_budget
 
         lights = [
             {"shadow": True, "flicker": None},
@@ -640,7 +640,7 @@ class TestLightBudget:
         assert result["estimated_cost"] == 4.0  # 1 base + 3 shadow
 
     def test_flicker_lights_cost_more(self):
-        from blender_addon.handlers.light_integration import compute_light_budget
+        from veilbreakers_terrain.handlers.light_integration import compute_light_budget
 
         lights = [
             {"shadow": False, "flicker": {"frequency": 2}},
@@ -649,7 +649,7 @@ class TestLightBudget:
         assert result["estimated_cost"] == 1.5  # 1 base + 0.5 flicker
 
     def test_recommendation_levels(self):
-        from blender_addon.handlers.light_integration import compute_light_budget
+        from veilbreakers_terrain.handlers.light_integration import compute_light_budget
 
         # Excellent
         assert compute_light_budget(
@@ -672,7 +672,7 @@ class TestAtmosphericVolumes:
     """Test atmospheric volume definitions."""
 
     def test_all_volumes_have_required_keys(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         required = {"shape", "density", "height", "color", "opacity", "animation", "animation_speed", "particle_type"}
         for vol_name, vol_def in ATMOSPHERIC_VOLUMES.items():
@@ -680,19 +680,19 @@ class TestAtmosphericVolumes:
                 assert key in vol_def, f"Volume '{vol_name}' missing '{key}'"
 
     def test_volume_count(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         assert len(ATMOSPHERIC_VOLUMES) == 7
 
     def test_valid_shapes(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         valid_shapes = {"box", "sphere", "cone"}
         for name, vol in ATMOSPHERIC_VOLUMES.items():
             assert vol["shape"] in valid_shapes, f"{name} has invalid shape"
 
     def test_colors_are_rgb_tuples(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         for name, vol in ATMOSPHERIC_VOLUMES.items():
             assert len(vol["color"]) == 3, f"{name} color is not RGB"
@@ -700,24 +700,24 @@ class TestAtmosphericVolumes:
                 assert 0 <= c <= 1.0
 
     def test_void_shimmer_has_distortion(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         assert ATMOSPHERIC_VOLUMES["void_shimmer"].get("distortion") is True
 
     def test_fireflies_are_emissive(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         ff = ATMOSPHERIC_VOLUMES["fireflies"]
         assert ff["particle_type"] == "emissive"
         assert ff.get("emission_strength", 0) > 0
 
     def test_god_rays_direction_down(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         assert ATMOSPHERIC_VOLUMES["god_rays"]["direction"] == "down"
 
     def test_smoke_plume_direction_up(self):
-        from blender_addon.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import ATMOSPHERIC_VOLUMES
 
         assert ATMOSPHERIC_VOLUMES["smoke_plume"]["direction"] == "up"
 
@@ -726,13 +726,13 @@ class TestBiomeAtmosphereRules:
     """Test biome-to-atmosphere mapping."""
 
     def test_all_biomes_have_rules(self):
-        from blender_addon.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES
 
         # All biomes from world_map should have atmosphere rules
         assert len(BIOME_ATMOSPHERE_RULES) == 10
 
     def test_rules_reference_valid_volumes(self):
-        from blender_addon.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES, ATMOSPHERIC_VOLUMES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES, ATMOSPHERIC_VOLUMES
 
         for biome, rules in BIOME_ATMOSPHERE_RULES.items():
             for rule in rules:
@@ -740,7 +740,7 @@ class TestBiomeAtmosphereRules:
                     f"Biome '{biome}' references unknown volume '{rule['volume']}'"
 
     def test_rules_have_required_keys(self):
-        from blender_addon.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES
+        from veilbreakers_terrain.handlers.atmospheric_volumes import BIOME_ATMOSPHERE_RULES
 
         for biome, rules in BIOME_ATMOSPHERE_RULES.items():
             for rule in rules:
@@ -754,7 +754,7 @@ class TestComputeAtmosphericPlacements:
     """Test atmospheric placement computation."""
 
     def test_dark_forest_placements(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         result = compute_atmospheric_placements(
             "dark_forest", (0, 0, 100, 100), seed=42
@@ -764,7 +764,7 @@ class TestComputeAtmosphericPlacements:
         assert "ground_fog" in vol_types
 
     def test_corrupted_swamp_placements(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         result = compute_atmospheric_placements(
             "corrupted_swamp", (0, 0, 200, 200), seed=42
@@ -774,7 +774,7 @@ class TestComputeAtmosphericPlacements:
         assert "spore_cloud" in vol_types
 
     def test_unknown_biome_uses_default(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         result = compute_atmospheric_placements(
             "nonexistent_biome", (0, 0, 50, 50), seed=42
@@ -782,7 +782,7 @@ class TestComputeAtmosphericPlacements:
         assert len(result) > 0
 
     def test_placement_structure(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         result = compute_atmospheric_placements(
             "enchanted_glade", (0, 0, 80, 80), seed=42
@@ -800,7 +800,7 @@ class TestComputeAtmosphericPlacements:
             assert "animation" in p
 
     def test_positions_within_bounds(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         bounds = (10, 20, 50, 60)
         result = compute_atmospheric_placements("dark_forest", bounds, seed=42)
@@ -809,7 +809,7 @@ class TestComputeAtmosphericPlacements:
             assert bounds[1] <= p["position"][1] <= bounds[3]
 
     def test_density_scale_increases_count(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         base = compute_atmospheric_placements(
             "dark_forest", (0, 0, 100, 100), seed=42, density_scale=1.0
@@ -820,7 +820,7 @@ class TestComputeAtmosphericPlacements:
         assert len(scaled) >= len(base)
 
     def test_deterministic(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_atmospheric_placements
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         r1 = compute_atmospheric_placements("volcanic_wastes", (0, 0, 100, 100), seed=42)
         r2 = compute_atmospheric_placements("volcanic_wastes", (0, 0, 100, 100), seed=42)
@@ -830,7 +830,7 @@ class TestComputeAtmosphericPlacements:
             assert a["position"] == b["position"]
 
     def test_all_biomes_produce_volumes(self):
-        from blender_addon.handlers.atmospheric_volumes import (
+        from veilbreakers_terrain.handlers.atmospheric_volumes import (
             compute_atmospheric_placements,
             BIOME_ATMOSPHERE_RULES,
         )
@@ -844,7 +844,7 @@ class TestVolumeMeshSpec:
     """Test volume mesh specification generation."""
 
     def test_box_mesh_spec(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_volume_mesh_spec
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_volume_mesh_spec
 
         spec = compute_volume_mesh_spec("ground_fog")
         assert spec["shape"] == "box"
@@ -853,7 +853,7 @@ class TestVolumeMeshSpec:
         assert spec["volume_type"] == "ground_fog"
 
     def test_sphere_mesh_spec(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_volume_mesh_spec
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_volume_mesh_spec
 
         spec = compute_volume_mesh_spec("fireflies")
         assert spec["shape"] == "sphere"
@@ -862,7 +862,7 @@ class TestVolumeMeshSpec:
         assert len(spec["faces"]) == 80
 
     def test_cone_mesh_spec(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_volume_mesh_spec
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_volume_mesh_spec
 
         spec = compute_volume_mesh_spec("god_rays")
         assert spec["shape"] == "cone"
@@ -870,7 +870,7 @@ class TestVolumeMeshSpec:
         assert len(spec["faces"]) >= 8
 
     def test_custom_position_and_scale(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_volume_mesh_spec
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_volume_mesh_spec
 
         spec = compute_volume_mesh_spec(
             "ground_fog", position=(10, 20, 5), scale=2.0
@@ -879,13 +879,13 @@ class TestVolumeMeshSpec:
         assert spec["transform"]["scale"] == 2.0
 
     def test_unknown_volume_raises(self):
-        from blender_addon.handlers.atmospheric_volumes import compute_volume_mesh_spec
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_volume_mesh_spec
 
         with pytest.raises(ValueError, match="Unknown volume type"):
             compute_volume_mesh_spec("nonexistent_volume")
 
     def test_all_volume_types_produce_specs(self):
-        from blender_addon.handlers.atmospheric_volumes import (
+        from veilbreakers_terrain.handlers.atmospheric_volumes import (
             compute_volume_mesh_spec,
             ATMOSPHERIC_VOLUMES,
         )
@@ -900,14 +900,14 @@ class TestAtmospherePerformance:
     """Test atmosphere performance estimation."""
 
     def test_empty_placements(self):
-        from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
+        from veilbreakers_terrain.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
         result = estimate_atmosphere_performance([])
         assert result["total_volumes"] == 0
         assert result["estimated_cost"] == 0
 
     def test_basic_volumes(self):
-        from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
+        from veilbreakers_terrain.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
         placements = [
             {"volume_type": "ground_fog"},
@@ -920,7 +920,7 @@ class TestAtmospherePerformance:
         assert result["estimated_cost"] > 0
 
     def test_particle_volumes_cost_more(self):
-        from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
+        from veilbreakers_terrain.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
         # Particle volumes add particle_cost surcharge on top of fill cost.
         # Use ground_fog (no particle_type) as baseline, then add particle key explicitly.
@@ -931,7 +931,7 @@ class TestAtmospherePerformance:
         assert cost_particle > cost_base  # particle surcharge added
 
     def test_distortion_volumes_cost_more(self):
-        from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
+        from veilbreakers_terrain.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
         # Distortion volumes add distortion_cost surcharge on top of fill cost
         base = [{"volume_type": "void_shimmer"}]
@@ -941,7 +941,7 @@ class TestAtmospherePerformance:
         assert cost_distort > cost_base  # distortion surcharge added
 
     def test_volume_type_counts(self):
-        from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
+        from veilbreakers_terrain.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
         placements = [
             {"volume_type": "ground_fog"},
@@ -954,7 +954,7 @@ class TestAtmospherePerformance:
         assert counts["dust_motes"] == 1
 
     def test_recommendation_levels(self):
-        from blender_addon.handlers.atmospheric_volumes import estimate_atmosphere_performance
+        from veilbreakers_terrain.handlers.atmospheric_volumes import estimate_atmosphere_performance
 
         # Excellent
         result = estimate_atmosphere_performance(

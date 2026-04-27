@@ -8,8 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_semantics import TerrainMaskStack
-from blender_addon.handlers.terrain_wind_field import compute_wind_field
+from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+from veilbreakers_terrain.handlers.terrain_wind_field import compute_wind_field
 
 
 def _make_stack(ridge_val: float, height_val: float = 0.5) -> TerrainMaskStack:

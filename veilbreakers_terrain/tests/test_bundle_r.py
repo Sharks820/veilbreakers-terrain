@@ -25,14 +25,14 @@ import pytest
 
 
 def _make_state(*, include_scene_read=True, include_viewport=True, anchors=()):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
         TerrainPipelineState,
         TerrainSceneRead,
     )
-    from blender_addon.handlers.terrain_viewport_sync import read_user_vantage
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import read_user_vantage
 
     height = np.zeros((33, 33), dtype=np.float64)
     stack = TerrainMaskStack(
@@ -80,14 +80,14 @@ def _make_state(*, include_scene_read=True, include_viewport=True, anchors=()):
 
 
 def test_rule_1_fresh_scene_read_passes():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state()
     ProtocolGate.rule_1_observe_before_calculate(state)
 
 
 def test_rule_1_missing_scene_read_raises():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolGate,
         ProtocolViolation,
     )
@@ -98,7 +98,7 @@ def test_rule_1_missing_scene_read_raises():
 
 
 def test_rule_1_stale_scene_read_raises():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolGate,
         ProtocolViolation,
     )
@@ -113,7 +113,7 @@ def test_rule_1_stale_scene_read_raises():
 
 
 def test_rule_2_attached_viewport_passes():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state()
     ProtocolGate.rule_2_sync_to_user_viewport(state)
@@ -121,7 +121,7 @@ def test_rule_2_attached_viewport_passes():
 
 def test_rule_2_missing_viewport_logs_warning(caplog):
     import logging
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state(include_viewport=False)
     with caplog.at_level(logging.WARNING):
@@ -131,16 +131,16 @@ def test_rule_2_missing_viewport_logs_warning(caplog):
 
 
 def test_rule_2_out_of_view_ok_bypasses():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state(include_viewport=False)
     ProtocolGate.rule_2_sync_to_user_viewport(state, out_of_view_ok=True)
 
 
 def test_rule_3_unlocked_anchors_pass():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
-    from blender_addon.handlers.terrain_reference_locks import clear_all_locks
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_reference_locks import clear_all_locks
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     anchor = TerrainAnchor(name="HERO_A", world_position=(1.0, 2.0, 3.0))
@@ -149,15 +149,15 @@ def test_rule_3_unlocked_anchors_pass():
 
 
 def test_rule_3_drifted_anchor_raises():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolGate,
         ProtocolViolation,
     )
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="HERO_A", world_position=(1.0, 2.0, 3.0)))
@@ -169,7 +169,7 @@ def test_rule_3_drifted_anchor_raises():
 
 
 def test_rule_4_real_geometry_allowed():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     ProtocolGate.rule_4_real_geometry_not_vertex_tricks(
         {"feature_kind": "cliff", "vertex_color_fake": False}
@@ -177,7 +177,7 @@ def test_rule_4_real_geometry_allowed():
 
 
 def test_rule_4_vertex_fake_hero_raises():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolGate,
         ProtocolViolation,
     )
@@ -189,7 +189,7 @@ def test_rule_4_vertex_fake_hero_raises():
 
 
 def test_rule_5_small_edits_pass():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state()
     ProtocolGate.rule_5_smallest_diff_per_iteration(
@@ -198,7 +198,7 @@ def test_rule_5_small_edits_pass():
 
 
 def test_rule_5_bulk_edits_without_flag_raise():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolGate,
         ProtocolViolation,
     )
@@ -212,7 +212,7 @@ def test_rule_5_bulk_edits_without_flag_raise():
 
 
 def test_rule_5_bulk_edit_flag_allows():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     state = _make_state()
     total_cells = state.mask_stack.height.size
@@ -222,7 +222,7 @@ def test_rule_5_bulk_edit_flag_allows():
 
 
 def test_rule_6_valid_placement_class_passes():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     ProtocolGate.rule_6_surface_vs_interior_classification(
         {"placements": [{"id": "rock_1", "placement_class": "surface"}]}
@@ -230,7 +230,7 @@ def test_rule_6_valid_placement_class_passes():
 
 
 def test_rule_6_invalid_placement_class_raises():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolGate,
         ProtocolViolation,
     )
@@ -242,14 +242,14 @@ def test_rule_6_invalid_placement_class_raises():
 
 
 def test_rule_7_plugin_version_passes():
-    from blender_addon.handlers.terrain_protocol import ProtocolGate
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
     ProtocolGate.rule_7_plugin_usage({})
 
 
 def test_enforce_protocol_decorator_runs_gates():
-    from blender_addon.handlers.terrain_protocol import enforce_protocol
-    from blender_addon.handlers.terrain_reference_locks import clear_all_locks
+    from veilbreakers_terrain.handlers.terrain_protocol import enforce_protocol
+    from veilbreakers_terrain.handlers.terrain_reference_locks import clear_all_locks
 
     clear_all_locks()
 
@@ -263,7 +263,7 @@ def test_enforce_protocol_decorator_runs_gates():
 
 
 def test_enforce_protocol_decorator_blocks_on_failure():
-    from blender_addon.handlers.terrain_protocol import (
+    from veilbreakers_terrain.handlers.terrain_protocol import (
         ProtocolViolation,
         enforce_protocol,
     )
@@ -283,14 +283,14 @@ def test_enforce_protocol_decorator_blocks_on_failure():
 
 
 def test_vantage_default_is_z_up():
-    from blender_addon.handlers.terrain_viewport_sync import read_user_vantage
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import read_user_vantage
 
     v = read_user_vantage()
     assert v.camera_up == (0.0, 0.0, 1.0)
 
 
 def test_vantage_fresh_passes():
-    from blender_addon.handlers.terrain_viewport_sync import (
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import (
         assert_vantage_fresh,
         read_user_vantage,
     )
@@ -300,7 +300,7 @@ def test_vantage_fresh_passes():
 
 
 def test_vantage_stale_raises():
-    from blender_addon.handlers.terrain_viewport_sync import (
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import (
         ViewportStale,
         assert_vantage_fresh,
         read_user_vantage,
@@ -312,7 +312,7 @@ def test_vantage_stale_raises():
 
 
 def test_vantage_frustum_contains_center():
-    from blender_addon.handlers.terrain_viewport_sync import (
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import (
         is_in_frustum,
         read_user_vantage,
     )
@@ -322,7 +322,7 @@ def test_vantage_frustum_contains_center():
 
 
 def test_vantage_frustum_rejects_far():
-    from blender_addon.handlers.terrain_viewport_sync import (
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import (
         is_in_frustum,
         read_user_vantage,
     )
@@ -332,7 +332,7 @@ def test_vantage_frustum_rejects_far():
 
 
 def test_vantage_transform_returns_tuple():
-    from blender_addon.handlers.terrain_viewport_sync import (
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import (
         read_user_vantage,
         transform_world_to_vantage,
     )
@@ -344,7 +344,7 @@ def test_vantage_transform_returns_tuple():
 
 
 def test_vantage_view_matrix_hash_is_stable():
-    from blender_addon.handlers.terrain_viewport_sync import read_user_vantage
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import read_user_vantage
 
     v1 = read_user_vantage(
         camera_position=(0.0, -20.0, 12.0), focal_point=(0.0, 0.0, 0.0)
@@ -356,7 +356,7 @@ def test_vantage_view_matrix_hash_is_stable():
 
 
 def test_vantage_different_cameras_differ():
-    from blender_addon.handlers.terrain_viewport_sync import read_user_vantage
+    from veilbreakers_terrain.handlers.terrain_viewport_sync import read_user_vantage
 
     v1 = read_user_vantage(camera_position=(0.0, -20.0, 12.0))
     v2 = read_user_vantage(camera_position=(10.0, -20.0, 12.0))
@@ -369,12 +369,12 @@ def test_vantage_different_cameras_differ():
 
 
 def test_lock_and_retrieve():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         clear_all_locks,
         is_locked,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     a = TerrainAnchor(name="CLIFF_A", world_position=(1.0, 2.0, 3.0))
@@ -383,13 +383,13 @@ def test_lock_and_retrieve():
 
 
 def test_unlock_releases():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         clear_all_locks,
         is_locked,
         lock_anchor,
         unlock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="CLIFF_A", world_position=(1.0, 2.0, 3.0)))
@@ -398,12 +398,12 @@ def test_unlock_releases():
 
 
 def test_intact_anchor_passes():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         assert_anchor_integrity,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     a = TerrainAnchor(name="X", world_position=(0.0, 0.0, 0.0))
@@ -412,13 +412,13 @@ def test_intact_anchor_passes():
 
 
 def test_drifted_anchor_raises():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         AnchorDrift,
         assert_anchor_integrity,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="X", world_position=(0.0, 0.0, 0.0)))
@@ -428,12 +428,12 @@ def test_drifted_anchor_raises():
 
 
 def test_assert_all_anchors_intact_returns_reports():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         assert_all_anchors_intact,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainAnchor,
         TerrainIntentState,
@@ -457,11 +457,11 @@ def test_assert_all_anchors_intact_returns_reports():
 
 
 def test_unlocked_anchor_treated_as_intact():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         assert_anchor_integrity,
         clear_all_locks,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     a = TerrainAnchor(name="ghost", world_position=(1.0, 2.0, 3.0))
@@ -470,12 +470,12 @@ def test_unlocked_anchor_treated_as_intact():
 
 
 def test_lock_overwrites_previous():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         _LOCKED_ANCHORS,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="X", world_position=(0, 0, 0)))
@@ -484,13 +484,13 @@ def test_lock_overwrites_previous():
 
 
 def test_anchor_locks_are_isolated_per_thread():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         _LOCKED_ANCHORS,
         clear_all_locks,
         is_locked,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="X", world_position=(0.0, 0.0, 0.0)))
@@ -513,12 +513,12 @@ def test_anchor_locks_are_isolated_per_thread():
 
 
 def test_within_tolerance_passes():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         assert_anchor_integrity,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="X", world_position=(0.0, 0.0, 0.0)))
@@ -528,13 +528,13 @@ def test_within_tolerance_passes():
 
 
 def test_beyond_tolerance_raises():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         AnchorDrift,
         assert_anchor_integrity,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainAnchor
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainAnchor
 
     clear_all_locks()
     lock_anchor(TerrainAnchor(name="X", world_position=(0.0, 0.0, 0.0)))
@@ -544,12 +544,12 @@ def test_beyond_tolerance_raises():
 
 
 def test_zero_distance_intact():
-    from blender_addon.handlers.terrain_reference_locks import (
+    from veilbreakers_terrain.handlers.terrain_reference_locks import (
         assert_all_anchors_intact,
         clear_all_locks,
         lock_anchor,
     )
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainAnchor,
         TerrainIntentState,
@@ -575,13 +575,13 @@ def test_zero_distance_intact():
 
 
 def test_addon_loaded():
-    from blender_addon.handlers.terrain_addon_health import assert_addon_loaded
+    from veilbreakers_terrain.handlers.terrain_addon_health import assert_addon_loaded
 
     assert_addon_loaded()
 
 
 def test_addon_version_matches_minimum():
-    from blender_addon.handlers.terrain_addon_health import (
+    from veilbreakers_terrain.handlers.terrain_addon_health import (
         assert_addon_version_matches,
     )
 
@@ -589,7 +589,7 @@ def test_addon_version_matches_minimum():
 
 
 def test_addon_version_mismatch_raises():
-    from blender_addon.handlers.terrain_addon_health import (
+    from veilbreakers_terrain.handlers.terrain_addon_health import (
         AddonVersionMismatch,
         _read_bl_info_version,
         assert_addon_version_matches,
@@ -603,7 +603,7 @@ def test_addon_version_mismatch_raises():
 
 
 def test_handlers_registered_for_env_run_terrain_pass():
-    from blender_addon.handlers.terrain_addon_health import (
+    from veilbreakers_terrain.handlers.terrain_addon_health import (
         assert_handlers_registered,
     )
 
@@ -611,7 +611,7 @@ def test_handlers_registered_for_env_run_terrain_pass():
 
 
 def test_handlers_registered_for_env_export_unity_bundle():
-    from blender_addon.handlers.terrain_addon_health import (
+    from veilbreakers_terrain.handlers.terrain_addon_health import (
         assert_handlers_registered,
     )
 
@@ -619,7 +619,7 @@ def test_handlers_registered_for_env_export_unity_bundle():
 
 
 def test_handlers_registered_missing_raises():
-    from blender_addon.handlers.terrain_addon_health import (
+    from veilbreakers_terrain.handlers.terrain_addon_health import (
         AddonNotLoaded,
         assert_handlers_registered,
     )
@@ -629,19 +629,19 @@ def test_handlers_registered_missing_raises():
 
 
 def test_detect_stale_addon_returns_bool():
-    from blender_addon.handlers.terrain_addon_health import detect_stale_addon
+    from veilbreakers_terrain.handlers.terrain_addon_health import detect_stale_addon
 
     assert isinstance(detect_stale_addon(), bool)
 
 
 def test_force_reload_noop_headless():
-    from blender_addon.handlers.terrain_addon_health import force_addon_reload
+    from veilbreakers_terrain.handlers.terrain_addon_health import force_addon_reload
 
     force_addon_reload()  # must not raise in headless mode
 
 
 def test_read_bl_info_version_returns_tuple_or_none():
-    from blender_addon.handlers.terrain_addon_health import _read_bl_info_version
+    from veilbreakers_terrain.handlers.terrain_addon_health import _read_bl_info_version
 
     version = _read_bl_info_version()
     assert version is None or isinstance(version, tuple)
@@ -653,7 +653,7 @@ def test_read_bl_info_version_returns_tuple_or_none():
 
 
 def test_assert_z_is_up_allows_z():
-    from blender_addon.handlers.terrain_blender_safety import assert_z_is_up
+    from veilbreakers_terrain.handlers.terrain_blender_safety import assert_z_is_up
 
     assert_z_is_up("Z")
     assert_z_is_up("+Z")
@@ -662,7 +662,7 @@ def test_assert_z_is_up_allows_z():
 
 
 def test_assert_z_is_up_rejects_y():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         CoordinateSystemError,
         assert_z_is_up,
     )
@@ -672,14 +672,14 @@ def test_assert_z_is_up_rejects_y():
 
 
 def test_convert_y_up_to_z_up_maps_axes():
-    from blender_addon.handlers.terrain_blender_safety import convert_y_up_to_z_up
+    from veilbreakers_terrain.handlers.terrain_blender_safety import convert_y_up_to_z_up
 
     pos, rot = convert_y_up_to_z_up((1.0, 2.0, 3.0))
     assert pos == (1.0, -3.0, 2.0)
 
 
 def test_guard_z_up_blocks_y():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         CoordinateSystemError,
         guard_z_up,
     )
@@ -694,7 +694,7 @@ def test_guard_z_up_blocks_y():
 
 
 def test_screenshot_cap_clamps_large():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         BLENDER_SCREENSHOT_MAX_SIZE,
         clamp_screenshot_size,
     )
@@ -704,7 +704,7 @@ def test_screenshot_cap_clamps_large():
 
 
 def test_screenshot_cap_clamps_small():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         BLENDER_SCREENSHOT_MIN_SIZE,
         clamp_screenshot_size,
     )
@@ -713,20 +713,20 @@ def test_screenshot_cap_clamps_small():
 
 
 def test_screenshot_cap_preserves_valid():
-    from blender_addon.handlers.terrain_blender_safety import clamp_screenshot_size
+    from veilbreakers_terrain.handlers.terrain_blender_safety import clamp_screenshot_size
 
     assert clamp_screenshot_size(256) == 256
     assert clamp_screenshot_size(507) == 507
 
 
 def test_assert_boolean_safe_small_ok():
-    from blender_addon.handlers.terrain_blender_safety import assert_boolean_safe
+    from veilbreakers_terrain.handlers.terrain_blender_safety import assert_boolean_safe
 
     assert_boolean_safe(1000, 2000)
 
 
 def test_assert_boolean_safe_dense_raises():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         BlenderBooleanUnsafe,
         assert_boolean_safe,
     )
@@ -738,7 +738,7 @@ def test_assert_boolean_safe_dense_raises():
 
 
 def test_decimate_ratio_for_dense():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         BOOLEAN_DENSE_MESH_DECIMATE_TARGET,
         decimate_to_safe_count,
     )
@@ -748,20 +748,20 @@ def test_decimate_ratio_for_dense():
 
 
 def test_decimate_ratio_for_already_safe():
-    from blender_addon.handlers.terrain_blender_safety import decimate_to_safe_count
+    from veilbreakers_terrain.handlers.terrain_blender_safety import decimate_to_safe_count
 
     assert decimate_to_safe_count(5000, 30000) == 1.0
 
 
 def test_recommend_solver_dense_uses_fast():
-    from blender_addon.handlers.terrain_blender_safety import recommend_boolean_solver
+    from veilbreakers_terrain.handlers.terrain_blender_safety import recommend_boolean_solver
 
     assert recommend_boolean_solver(50000, 10000) == "FAST"
     assert recommend_boolean_solver(1000, 1000) == "EXACT"
 
 
 def test_gltf_serialized_preserves_order():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         clear_gltf_import_log,
         get_gltf_import_log,
         import_gltf_serialized,
@@ -778,7 +778,7 @@ def test_gltf_serialized_preserves_order():
 
 
 def test_gltf_serial_empty_list_ok():
-    from blender_addon.handlers.terrain_blender_safety import (
+    from veilbreakers_terrain.handlers.terrain_blender_safety import (
         import_gltf_serialized,
     )
 
@@ -791,7 +791,7 @@ def test_gltf_serial_empty_list_ok():
 
 
 def test_capture_scene_read_basic():
-    from blender_addon.handlers.terrain_scene_read import capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
 
     sr = capture_scene_read(reviewer="pytest")
     assert sr.reviewer == "pytest"
@@ -800,14 +800,14 @@ def test_capture_scene_read_basic():
 
 
 def test_capture_scene_read_focal_hint():
-    from blender_addon.handlers.terrain_scene_read import capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
 
     sr = capture_scene_read(reviewer="p", focal_point_hint=(10.0, 20.0, 3.0))
     assert sr.focal_point == (10.0, 20.0, 3.0)
 
 
 def test_capture_scene_read_includes_major_landforms():
-    from blender_addon.handlers.terrain_scene_read import capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
 
     sr = capture_scene_read(
         reviewer="p",
@@ -818,7 +818,7 @@ def test_capture_scene_read_includes_major_landforms():
 
 
 def test_capture_scene_read_timestamp_current():
-    from blender_addon.handlers.terrain_scene_read import capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
 
     before = time.time()
     sr = capture_scene_read(reviewer="p")
@@ -827,7 +827,7 @@ def test_capture_scene_read_timestamp_current():
 
 
 def test_handle_capture_scene_read_wrapper():
-    from blender_addon.handlers.terrain_scene_read import handle_capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_scene_read import handle_capture_scene_read
 
     result = handle_capture_scene_read(
         {
@@ -842,7 +842,7 @@ def test_handle_capture_scene_read_wrapper():
 
 
 def test_scene_read_default_scope_centered_on_focal():
-    from blender_addon.handlers.terrain_scene_read import capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
 
     sr = capture_scene_read(reviewer="p", focal_point_hint=(100.0, 100.0, 5.0))
     assert sr.edit_scope.contains_point(100.0, 100.0)

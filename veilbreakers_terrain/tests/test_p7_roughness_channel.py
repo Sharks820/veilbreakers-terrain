@@ -62,11 +62,11 @@ def test_canonical_writer_still_writes():
 def test_roughness_driver_declares_breakup_dependency():
     """pass_roughness_driver must require ``roughness_breakup`` so the DAG
     scheduler forces ``pass_multiscale_breakup`` to run first (P1-2)."""
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_multiscale_breakup import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_multiscale_breakup import (
         register_bundle_k_multiscale_breakup_pass,
     )
-    from blender_addon.handlers.terrain_roughness_driver import (
+    from veilbreakers_terrain.handlers.terrain_roughness_driver import (
         register_bundle_k_roughness_driver_pass,
     )
 

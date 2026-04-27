@@ -6,7 +6,7 @@ import pytest
 
 
 def test_compute_aabb_empty_and_nonempty_bounds():
-    from blender_addon.handlers._mesh_bridge import _compute_aabb
+    from veilbreakers_terrain.handlers._mesh_bridge import _compute_aabb
 
     assert _compute_aabb([]) == {
         "min": [0.0, 0.0, 0.0],
@@ -25,7 +25,7 @@ def test_compute_aabb_empty_and_nonempty_bounds():
 
 
 def test_cluster_vertices_merges_same_grid_cell_and_reports_error():
-    from blender_addon.handlers._mesh_bridge import _cluster_vertices
+    from veilbreakers_terrain.handlers._mesh_bridge import _cluster_vertices
 
     vertices = [
         (0.0, 0.0, 0.0),
@@ -44,7 +44,7 @@ def test_cluster_vertices_merges_same_grid_cell_and_reports_error():
 
 
 def test_make_billboard_spec_preserves_aabb_height_uvs_and_metadata():
-    from blender_addon.handlers._mesh_bridge import _make_billboard_spec
+    from veilbreakers_terrain.handlers._mesh_bridge import _make_billboard_spec
 
     src_verts = [
         (-2.0, -1.0, 0.0),

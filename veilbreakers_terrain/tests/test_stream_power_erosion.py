@@ -27,7 +27,7 @@ def _make_sloped_dem(size: int = 8) -> np.ndarray:
 
 
 def _make_intent(seed: int = 42):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         TerrainIntentState, BBox, TerrainSceneRead,
     )
     import time
@@ -55,7 +55,7 @@ def _make_intent(seed: int = 42):
 
 
 def make_state(h, rock_hardness=None, flow_accum=None):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         TerrainMaskStack, TerrainPipelineState,
     )
     tile_size = h.shape[0]
@@ -85,25 +85,25 @@ class TestComputeStreamPowerErosion:
     """Unit tests for the Cordonnier 2016 ε-topological-order SPL solver."""
 
     def test_returns_same_shape_as_input(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8)
         result = compute_stream_power_erosion(dem, K_scalar=0.001, m=0.5, n=1.0, dt=1000.0, steps=5)
         assert result.shape == dem.shape
 
     def test_returns_same_dtype_as_input_float32(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float32)
         result = compute_stream_power_erosion(dem, K_scalar=0.001, steps=5)
         assert result.dtype == np.float32
 
     def test_returns_same_dtype_as_input_float64(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         result = compute_stream_power_erosion(dem, K_scalar=0.001, steps=5)
         assert result.dtype == np.float64
 
     def test_erosion_lowers_values_with_positive_K(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         # With uplift=0, erosion should lower the terrain
         result = compute_stream_power_erosion(
@@ -113,7 +113,7 @@ class TestComputeStreamPowerErosion:
         assert result.sum() <= dem.sum()
 
     def test_zero_K_scalar_no_erosion(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         result = compute_stream_power_erosion(
             dem, K_scalar=0.0, uplift_rate=0.0, dt=1000.0, steps=10
@@ -122,7 +122,7 @@ class TestComputeStreamPowerErosion:
         np.testing.assert_allclose(result, dem, rtol=1e-9)
 
     def test_zero_erodibility_map_no_erosion(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         K_map = np.zeros_like(dem)
         result = compute_stream_power_erosion(
@@ -131,7 +131,7 @@ class TestComputeStreamPowerErosion:
         np.testing.assert_allclose(result, dem, rtol=1e-9)
 
     def test_variable_erodibility_map_produces_differentiation(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         # Half high K (soft), half low K (hard)
         K_map = np.full_like(dem, 0.0005)
@@ -148,7 +148,7 @@ class TestComputeStreamPowerErosion:
         )
 
     def test_uniform_drainage_area_ones_same_as_none(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         result_none = compute_stream_power_erosion(
             dem, K_scalar=0.001, drainage_area=None, steps=5
@@ -159,7 +159,7 @@ class TestComputeStreamPowerErosion:
         np.testing.assert_allclose(result_none, result_ones, rtol=1e-9)
 
     def test_larger_drainage_area_produces_more_incision(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         result_1x = compute_stream_power_erosion(
             dem, K_scalar=0.001, drainage_area=np.ones_like(dem), uplift_rate=0.0, steps=10
@@ -173,7 +173,7 @@ class TestComputeStreamPowerErosion:
         )
 
     def test_larger_cell_size_increases_world_space_drainage_area_effect(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
 
         dem = _make_sloped_dem(8).astype(np.float64)
         drainage = np.full_like(dem, 16.0)
@@ -202,7 +202,7 @@ class TestComputeStreamPowerErosion:
         )
 
     def test_positive_uplift_partially_counteracts_erosion(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8).astype(np.float64)
         result_no_uplift = compute_stream_power_erosion(
             dem, K_scalar=0.005, uplift_rate=0.0, dt=1000.0, steps=10
@@ -216,18 +216,18 @@ class TestComputeStreamPowerErosion:
         )
 
     def test_compute_stream_power_erosion_in_all(self):
-        import blender_addon.handlers._terrain_erosion as _mod
+        import veilbreakers_terrain.handlers._terrain_erosion as _mod
         assert "compute_stream_power_erosion" in _mod.__all__
 
     def test_erodibility_map_shape_mismatch_raises_valueerror(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8)
         bad_K = np.ones((4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="erodibility_map shape"):
             compute_stream_power_erosion(dem, erodibility_map=bad_K, steps=1)
 
     def test_drainage_area_shape_mismatch_raises_valueerror(self):
-        from blender_addon.handlers._terrain_erosion import compute_stream_power_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import compute_stream_power_erosion
         dem = _make_sloped_dem(8)
         bad_A = np.ones((4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="drainage_area shape"):
@@ -236,7 +236,7 @@ class TestComputeStreamPowerErosion:
 
 class TestHydraulicErodibility:
     def test_apply_hydraulic_erosion_masks_respects_erodibility_map(self):
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion_masks
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
 
         dem = _make_sloped_dem(16).astype(np.float64)
         low_erodibility = np.full_like(dem, 0.0002)
@@ -262,7 +262,7 @@ class TestHydraulicErodibility:
         )
 
     def test_zero_erodibility_blocks_hydraulic_erosion(self):
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion_masks
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
 
         dem = _make_sloped_dem(16).astype(np.float64)
         result = apply_hydraulic_erosion_masks(
@@ -287,7 +287,7 @@ class TestHydraulicErodibility:
         that a uniform K = 0.5e-3 map still produces meaningful erosion
         within a factor of 2 of that baseline.
         """
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion_masks
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
 
         dem = _make_sloped_dem(32).astype(np.float64)
 
@@ -346,7 +346,7 @@ class TestPassErosionIntegration:
     """Integration tests for pass_erosion with rock_hardness and flow_accumulation."""
 
     def setup_method(self):
-        from blender_addon.handlers.terrain_pipeline import (
+        from veilbreakers_terrain.handlers.terrain_pipeline import (
             TerrainPassController,
             register_default_passes,
         )
@@ -354,12 +354,12 @@ class TestPassErosionIntegration:
         register_default_passes()
 
     def teardown_method(self):
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         TerrainPassController.clear_registry()
 
     def test_pass_erosion_no_rock_hardness_no_crash(self):
         """With rock_hardness=None, pass_erosion uses uniform K_base without crashing."""
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
         h = _make_sloped_dem(16).astype(np.float32)
         state = make_state(h, rock_hardness=None, flow_accum=None)
         result = pass_erosion(state, None)
@@ -368,7 +368,7 @@ class TestPassErosionIntegration:
 
     def test_pass_erosion_with_rock_hardness_produces_different_height(self):
         """With rock_hardness populated, pass_erosion output differs from None rock_hardness."""
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
         import copy
 
         h = _make_sloped_dem(16).astype(np.float32)
@@ -390,7 +390,7 @@ class TestPassErosionIntegration:
     def test_pass_erosion_flow_accumulation_none_logs_warning(self, caplog):
         """When flow_accumulation is None, pass_erosion logs a warning."""
         import logging
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
 
         h = _make_sloped_dem(16).astype(np.float32)
         state = make_state(h, rock_hardness=None, flow_accum=None)
@@ -406,7 +406,7 @@ class TestPassErosionIntegration:
 
     def test_pass_erosion_result_differs_from_input(self):
         """Erosion pass should change the height (not be a no-op)."""
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
         h = _make_sloped_dem(16).astype(np.float32)
         state = make_state(h)
         pass_erosion(state, None)

@@ -41,7 +41,7 @@ def _build_state(
     cave_candidates=(),
     protected_zones=(),
 ):
-    from blender_addon.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -137,7 +137,7 @@ def _inject_channel(stack, channel: str, value: float) -> None:
 
 
 def test_archetype_enum_has_five_members():
-    from blender_addon.handlers.terrain_caves import CaveArchetype
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype
 
     members = set(CaveArchetype)
     assert len(members) == 5
@@ -151,7 +151,7 @@ def test_archetype_enum_has_five_members():
 
 
 def test_make_archetype_spec_defaults_per_archetype():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, make_archetype_spec
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, make_archetype_spec
 
     for archetype in CaveArchetype:
         spec = make_archetype_spec(archetype)
@@ -163,7 +163,7 @@ def test_make_archetype_spec_defaults_per_archetype():
 
 
 def test_make_archetype_spec_overrides_applied():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, make_archetype_spec
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, make_archetype_spec
 
     spec = make_archetype_spec(
         CaveArchetype.FISSURE, entrance_width_m=9.9
@@ -177,7 +177,7 @@ def test_make_archetype_spec_overrides_applied():
 
 
 def test_pick_archetype_coastal_picks_sea_grotto():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
 
     state = _build_state(mode="low_coastal")
     _inject_channel(state.mask_stack, "wetness", 0.95)
@@ -191,7 +191,7 @@ def test_pick_archetype_coastal_picks_sea_grotto():
 
 
 def test_pick_archetype_high_wet_plateau_picks_glacial_melt():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
 
     state = _build_state(mode="high_plateau")
     _inject_channel(state.mask_stack, "wetness", 0.85)
@@ -203,7 +203,7 @@ def test_pick_archetype_high_wet_plateau_picks_glacial_melt():
 
 
 def test_pick_archetype_steep_dry_picks_fissure():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
 
     state = _build_state(mode="steep")
     _inject_channel(state.mask_stack, "wetness", 0.0)
@@ -214,7 +214,7 @@ def test_pick_archetype_steep_dry_picks_fissure():
 
 
 def test_pick_archetype_basin_mid_picks_karst():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, pick_cave_archetype
 
     state = _build_state(mode="flat_mid")
     _inject_channel(state.mask_stack, "basin", 1.0)
@@ -228,7 +228,7 @@ def test_pick_archetype_basin_mid_picks_karst():
 
 
 def test_pick_archetype_deterministic():
-    from blender_addon.handlers.terrain_caves import pick_cave_archetype
+    from veilbreakers_terrain.handlers.terrain_caves import pick_cave_archetype
 
     state = _build_state(mode="mixed")
     a = pick_cave_archetype(state.mask_stack, (10.0, 10.0, 0.0), seed=99)
@@ -242,7 +242,7 @@ def test_pick_archetype_deterministic():
 
 
 def test_generate_cave_path_deterministic_same_seed():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, generate_cave_path
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, generate_cave_path
 
     state = _build_state()
     path_a = generate_cave_path(
@@ -257,7 +257,7 @@ def test_generate_cave_path_deterministic_same_seed():
 
 
 def test_generate_cave_path_differs_per_seed():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, generate_cave_path
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, generate_cave_path
 
     state = _build_state()
     path_a = generate_cave_path(
@@ -271,7 +271,7 @@ def test_generate_cave_path_differs_per_seed():
 
 
 def test_generate_cave_path_sinkhole_starts_vertical():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, generate_cave_path
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, generate_cave_path
 
     state = _build_state()
     path = generate_cave_path(
@@ -289,7 +289,7 @@ def test_generate_cave_path_sinkhole_starts_vertical():
 
 
 def test_generate_cave_path_all_archetypes_nonempty():
-    from blender_addon.handlers.terrain_caves import CaveArchetype, generate_cave_path
+    from veilbreakers_terrain.handlers.terrain_caves import CaveArchetype, generate_cave_path
 
     state = _build_state()
     for archetype in CaveArchetype:
@@ -305,7 +305,7 @@ def test_generate_cave_path_all_archetypes_nonempty():
 
 
 def test_carve_cave_volume_populates_cave_candidate():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         carve_cave_volume,
         generate_cave_path,
@@ -331,7 +331,7 @@ def test_carve_cave_volume_populates_cave_candidate():
 
 
 def test_build_entrance_frame_has_min_two_rocks():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         build_cave_entrance_frame,
         make_archetype_spec,
@@ -349,7 +349,7 @@ def test_build_entrance_frame_has_min_two_rocks():
 
 
 def test_build_entrance_frame_lintel_for_wide_archetypes():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         build_cave_entrance_frame,
         make_archetype_spec,
@@ -375,7 +375,7 @@ def test_build_entrance_frame_lintel_for_wide_archetypes():
 
 
 def test_scatter_collapse_debris_deterministic():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         generate_cave_path,
         make_archetype_spec,
@@ -394,7 +394,7 @@ def test_scatter_collapse_debris_deterministic():
 
 
 def test_scatter_collapse_debris_density_scales():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         generate_cave_path,
         make_archetype_spec,
@@ -418,7 +418,7 @@ def test_scatter_collapse_debris_density_scales():
 
 
 def test_generate_damp_mask_populates_wet_rock():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         generate_cave_path,
         generate_damp_mask,
@@ -445,7 +445,7 @@ def test_generate_damp_mask_populates_wet_rock():
 
 
 def test_validate_entrance_accepts_good_frame():
-    from blender_addon.handlers.terrain_caves import (
+    from veilbreakers_terrain.handlers.terrain_caves import (
         CaveArchetype,
         build_cave_entrance_frame,
         generate_cave_path,
@@ -469,7 +469,7 @@ def test_validate_entrance_accepts_good_frame():
 
 
 def test_validate_entrance_rejects_no_framing():
-    from blender_addon.handlers.terrain_caves import validate_cave_entrance
+    from veilbreakers_terrain.handlers.terrain_caves import validate_cave_entrance
 
     state = _build_state()
     bad_frame = {
@@ -486,7 +486,7 @@ def test_validate_entrance_rejects_no_framing():
 
 
 def test_validate_entrance_rejects_short_lip():
-    from blender_addon.handlers.terrain_caves import validate_cave_entrance
+    from veilbreakers_terrain.handlers.terrain_caves import validate_cave_entrance
 
     state = _build_state()
     bad = {
@@ -506,7 +506,7 @@ def test_validate_entrance_rejects_short_lip():
 
 
 def test_register_bundle_f_passes_adds_caves():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()
@@ -527,7 +527,7 @@ def test_register_bundle_f_passes_adds_caves():
 
 
 def test_pass_caves_requires_scene_read():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
@@ -561,7 +561,7 @@ def test_pass_caves_requires_scene_read():
 
 
 def test_pass_caves_populates_channels_and_structures():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()
@@ -584,7 +584,7 @@ def test_pass_caves_populates_channels_and_structures():
 
 
 def test_pass_caves_region_scoping_filters_entrances():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import BBox
 
@@ -602,7 +602,7 @@ def test_pass_caves_region_scoping_filters_entrances():
 
 
 def test_pass_caves_respects_protected_zones():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
 
@@ -631,7 +631,7 @@ def test_pass_caves_respects_protected_zones():
 
 
 def test_pass_caves_empty_scene_read_still_ok():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()
@@ -643,7 +643,7 @@ def test_pass_caves_empty_scene_read_still_ok():
 
 
 def test_find_entrance_candidates_can_fallback_to_terrain_signals():
-    from blender_addon.handlers.terrain_caves import _find_entrance_candidates, _world_to_cell
+    from veilbreakers_terrain.handlers.terrain_caves import _find_entrance_candidates, _world_to_cell
 
     state = _build_state(mode="steep", cave_candidates=())
     cliff = np.zeros_like(state.mask_stack.height, dtype=np.float32)
@@ -660,7 +660,7 @@ def test_find_entrance_candidates_can_fallback_to_terrain_signals():
 
 
 def test_pass_caves_can_discover_candidates_from_cliff_signals():
-    from blender_addon.handlers.terrain_caves import register_bundle_f_passes
+    from veilbreakers_terrain.handlers.terrain_caves import register_bundle_f_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_f_passes()

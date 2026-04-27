@@ -58,7 +58,7 @@ def _polyline_length(points) -> float:
 
 
 def _build_stack(size: int = 40):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     h = np.zeros((size, size), dtype=np.float64)
     return TerrainMaskStack(
@@ -78,7 +78,7 @@ def _build_stack(size: int = 40):
 
 
 def test_add_meander_increases_path_length():
-    from blender_addon.handlers._water_network_ext import add_meander
+    from veilbreakers_terrain.handlers._water_network_ext import add_meander
 
     net = _build_network_with_straight_segment(n=20)
     orig_len = _polyline_length(net.segments[0].waypoints)
@@ -88,7 +88,7 @@ def test_add_meander_increases_path_length():
 
 
 def test_add_meander_preserves_endpoints():
-    from blender_addon.handlers._water_network_ext import add_meander
+    from veilbreakers_terrain.handlers._water_network_ext import add_meander
 
     net = _build_network_with_straight_segment(n=20)
     first = net.segments[0].waypoints[0]
@@ -99,7 +99,7 @@ def test_add_meander_preserves_endpoints():
 
 
 def test_add_meander_zero_amplitude_noop():
-    from blender_addon.handlers._water_network_ext import add_meander
+    from veilbreakers_terrain.handlers._water_network_ext import add_meander
 
     net = _build_network_with_straight_segment(n=10)
     original = list(net.segments[0].waypoints)
@@ -108,7 +108,7 @@ def test_add_meander_zero_amplitude_noop():
 
 
 def test_apply_bank_asymmetry_tags_segments():
-    from blender_addon.handlers._water_network_ext import apply_bank_asymmetry
+    from veilbreakers_terrain.handlers._water_network_ext import apply_bank_asymmetry
 
     net = _build_network_with_straight_segment(n=10)
     apply_bank_asymmetry(net, bias=0.6)
@@ -119,7 +119,7 @@ def test_apply_bank_asymmetry_tags_segments():
 
 
 def test_apply_bank_asymmetry_clamps_range():
-    from blender_addon.handlers._water_network_ext import apply_bank_asymmetry
+    from veilbreakers_terrain.handlers._water_network_ext import apply_bank_asymmetry
 
     net = _build_network_with_straight_segment(n=10)
     apply_bank_asymmetry(net, bias=5.0)
@@ -129,7 +129,7 @@ def test_apply_bank_asymmetry_clamps_range():
 
 
 def test_compute_wet_rock_mask_zero_without_seeds():
-    from blender_addon.handlers._water_network_ext import compute_wet_rock_mask
+    from veilbreakers_terrain.handlers._water_network_ext import compute_wet_rock_mask
 
     stack = _build_stack(size=20)
     mask = compute_wet_rock_mask(stack, None, radius_m=3.0)
@@ -138,7 +138,7 @@ def test_compute_wet_rock_mask_zero_without_seeds():
 
 
 def test_compute_wet_rock_mask_decays_with_distance():
-    from blender_addon.handlers._water_network_ext import compute_wet_rock_mask
+    from veilbreakers_terrain.handlers._water_network_ext import compute_wet_rock_mask
 
     stack = _build_stack(size=30)
     net = _FakeNetwork()
@@ -151,7 +151,7 @@ def test_compute_wet_rock_mask_decays_with_distance():
 
 
 def test_compute_wet_rock_mask_boosts_adjacent_cells_for_high_flow_sources():
-    from blender_addon.handlers._water_network_ext import compute_wet_rock_mask
+    from veilbreakers_terrain.handlers._water_network_ext import compute_wet_rock_mask
 
     stack = _build_stack(size=30)
     stack.flow_accumulation = np.ones_like(stack.height)
@@ -169,7 +169,7 @@ def test_compute_wet_rock_mask_boosts_adjacent_cells_for_high_flow_sources():
 
 
 def test_compute_wet_rock_mask_fallback_keeps_seed_strength(monkeypatch: pytest.MonkeyPatch):
-    import blender_addon.handlers._water_network_ext as water_ext
+    import veilbreakers_terrain.handlers._water_network_ext as water_ext
 
     stack = _build_stack(size=30)
     stack.flow_accumulation = np.ones_like(stack.height)
@@ -190,8 +190,8 @@ def test_compute_wet_rock_mask_fallback_keeps_seed_strength(monkeypatch: pytest.
 
 
 def test_compute_foam_mask_peaks_at_pool():
-    from blender_addon.handlers._water_network_ext import compute_foam_mask
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers._water_network_ext import compute_foam_mask
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         ImpactPool,
         LipCandidate,
         WaterfallChain,
@@ -235,8 +235,8 @@ def test_compute_foam_mask_peaks_at_pool():
 
 
 def test_compute_mist_mask_is_radial():
-    from blender_addon.handlers._water_network_ext import compute_mist_mask
-    from blender_addon.handlers.terrain_waterfalls import (
+    from veilbreakers_terrain.handlers._water_network_ext import compute_mist_mask
+    from veilbreakers_terrain.handlers.terrain_waterfalls import (
         ImpactPool,
         LipCandidate,
         WaterfallChain,
@@ -277,8 +277,8 @@ def test_compute_mist_mask_is_radial():
 
 
 def test_solve_outflow_produces_path():
-    from blender_addon.handlers._water_network_ext import solve_outflow
-    from blender_addon.handlers.terrain_waterfalls import ImpactPool
+    from veilbreakers_terrain.handlers._water_network_ext import solve_outflow
+    from veilbreakers_terrain.handlers.terrain_waterfalls import ImpactPool
 
     pool = ImpactPool(
         world_position=(10.0, 10.0, 0.0),
@@ -336,7 +336,7 @@ class TestManningSlopeConvention:
         return _State(stack), stack
 
     def test_dimensionless_slope_passes(self):
-        from blender_addon.handlers._water_network import pass_water_flow_speed
+        from veilbreakers_terrain.handlers._water_network import pass_water_flow_speed
 
         height = np.linspace(0.0, 1.0, 64).astype(np.float64)
         height = np.tile(height, (16, 1))  # 1m total rise over 64m
@@ -350,7 +350,7 @@ class TestManningSlopeConvention:
 
     def test_radian_unit_error_raises(self):
         """Feeding a radians-as-slope channel with huge magnitudes trips the assert."""
-        from blender_addon.handlers._water_network import pass_water_flow_speed
+        from veilbreakers_terrain.handlers._water_network import pass_water_flow_speed
 
         height = np.zeros((8, 8), dtype=np.float64)
         # A "slope" array in bogus units — values of 25 indicate something
@@ -362,7 +362,7 @@ class TestManningSlopeConvention:
 
     def test_docstring_documents_unit_convention(self):
         import inspect as _inspect
-        from blender_addon.handlers._water_network import pass_water_flow_speed
+        from veilbreakers_terrain.handlers._water_network import pass_water_flow_speed
 
         doc = _inspect.getdoc(pass_water_flow_speed) or ""
         assert "dimensionless" in doc.lower(), (

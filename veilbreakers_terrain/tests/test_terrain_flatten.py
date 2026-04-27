@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from blender_addon.handlers.terrain_advanced import (
+from veilbreakers_terrain.handlers.terrain_advanced import (
     flatten_terrain_zone,
     flatten_multiple_zones,
 )

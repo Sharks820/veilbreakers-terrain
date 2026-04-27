@@ -573,7 +573,7 @@ class TestObservationAndSafetyDispatch:
         assert navmesh["error"] == "missing_params"
 
     def test_validation_bridge_uses_overall_status(self) -> None:
-        from blender_addon.handlers.terrain_semantics import BBox, TerrainIntentState, TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState, TerrainMaskStack
 
         stack = TerrainMaskStack(
             tile_size=4,

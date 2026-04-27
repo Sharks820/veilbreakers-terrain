@@ -29,7 +29,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _register_passes():
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
@@ -41,7 +41,7 @@ def _register_passes():
 
 
 def _build_stack(tile_size: int = 16, seed: int = 1234, *, extras: bool = True):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
     height = rng.standard_normal((tile_size, tile_size)).astype(np.float64) * 5.0 + 100.0
@@ -63,8 +63,8 @@ def _build_stack(tile_size: int = 16, seed: int = 1234, *, extras: bool = True):
 
 
 def _build_state(tile_size: int = 16, seed: int = 1234):
-    from blender_addon.handlers._terrain_noise import generate_heightmap
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -125,7 +125,7 @@ def _build_state(tile_size: int = 16, seed: int = 1234):
 
 
 def test_bundle_n_registrar_is_callable():
-    from blender_addon.handlers.terrain_bundle_n import (
+    from veilbreakers_terrain.handlers.terrain_bundle_n import (
         BUNDLE_N_MODULES,
         BUNDLE_N_RUNTIME_CONTRACT,
         register_bundle_n_passes,
@@ -142,9 +142,9 @@ def test_bundle_n_registrar_is_callable():
 
 
 def test_bundle_n_pipeline_hooks_attach_budget_issues_and_readability(monkeypatch):
-    import blender_addon.handlers.terrain_bundle_n as bundle_n
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import ValidationIssue
+    import veilbreakers_terrain.handlers.terrain_bundle_n as bundle_n
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import ValidationIssue
 
     def _fake_enforce_budget(stack, intent, budget):
         return [
@@ -180,7 +180,7 @@ def test_bundle_n_pipeline_hooks_attach_budget_issues_and_readability(monkeypatc
 
 
 def test_bundle_n_pipeline_hooks_attach_structured_budget_report():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     state = _build_state(tile_size=8, seed=2222)
     controller = TerrainPassController(state)
@@ -193,7 +193,7 @@ def test_bundle_n_pipeline_hooks_attach_structured_budget_report():
 
 
 def test_bundle_n_pipeline_hooks_apply_review_blockers_from_intent():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     state = _build_state(tile_size=8, seed=2323)
     state.intent.composition_hints["review_blockers"] = [
@@ -226,7 +226,7 @@ def test_bundle_n_pipeline_hooks_apply_review_blockers_from_intent():
 
 
 def test_bundle_n_pipeline_opt_in_records_telemetry_and_golden():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     state = _build_state(tile_size=8, seed=3131)
     with tempfile.TemporaryDirectory() as td:
@@ -253,8 +253,8 @@ def test_bundle_n_pipeline_opt_in_records_telemetry_and_golden():
 def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
     monkeypatch,
 ):
-    import blender_addon.handlers.terrain_bundle_n as bundle_n
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    import veilbreakers_terrain.handlers.terrain_bundle_n as bundle_n
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     captured = {}
 
@@ -301,8 +301,8 @@ def test_bundle_n_pipeline_opt_in_runs_determinism_from_pre_pipeline_state(
 
 
 def test_determinism_check_passes_on_identical_runs():
-    from blender_addon.handlers.terrain_determinism_ci import run_determinism_check
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_determinism_ci import run_determinism_check
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=12)
@@ -315,7 +315,7 @@ def test_determinism_check_passes_on_identical_runs():
 
 def test_determinism_check_detects_mutation():
     """Mutate 1 bit of the replay baseline and expect a regression."""
-    from blender_addon.handlers.terrain_determinism_ci import (
+    from veilbreakers_terrain.handlers.terrain_determinism_ci import (
         detect_determinism_regressions,
     )
 
@@ -326,7 +326,7 @@ def test_determinism_check_detects_mutation():
 
 
 def test_determinism_check_no_regression_on_equal_hashes():
-    from blender_addon.handlers.terrain_determinism_ci import (
+    from veilbreakers_terrain.handlers.terrain_determinism_ci import (
         detect_determinism_regressions,
     )
 
@@ -334,8 +334,8 @@ def test_determinism_check_no_regression_on_equal_hashes():
 
 
 def test_determinism_check_run_records_populated():
-    from blender_addon.handlers.terrain_determinism_ci import run_determinism_check
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_determinism_ci import run_determinism_check
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(tile_size=12)
@@ -349,7 +349,7 @@ def test_determinism_check_run_records_populated():
 def test_determinism_fails_on_1bit_mutation_of_mask_stack():
     """A 1-bit change in the mask stack bytes must produce a distinct hash
     and therefore a detected regression via detect_determinism_regressions."""
-    from blender_addon.handlers.terrain_determinism_ci import (
+    from veilbreakers_terrain.handlers.terrain_determinism_ci import (
         detect_determinism_regressions,
     )
 
@@ -374,7 +374,7 @@ def test_determinism_fails_on_1bit_mutation_of_mask_stack():
 
 
 def test_readability_bands_returns_five_entries():
-    from blender_addon.handlers.terrain_readability_bands import (
+    from veilbreakers_terrain.handlers.terrain_readability_bands import (
         BAND_IDS,
         compute_readability_bands,
     )
@@ -386,7 +386,7 @@ def test_readability_bands_returns_five_entries():
 
 
 def test_readability_bands_all_clamped_to_range():
-    from blender_addon.handlers.terrain_readability_bands import (
+    from veilbreakers_terrain.handlers.terrain_readability_bands import (
         compute_readability_bands,
     )
 
@@ -396,7 +396,7 @@ def test_readability_bands_all_clamped_to_range():
 
 
 def test_readability_aggregate_between_0_and_10():
-    from blender_addon.handlers.terrain_readability_bands import (
+    from veilbreakers_terrain.handlers.terrain_readability_bands import (
         aggregate_readability_score,
         compute_readability_bands,
     )
@@ -407,11 +407,11 @@ def test_readability_aggregate_between_0_and_10():
 
 
 def test_readability_flat_terrain_scores_lower_than_varied():
-    from blender_addon.handlers.terrain_readability_bands import (
+    from veilbreakers_terrain.handlers.terrain_readability_bands import (
         aggregate_readability_score,
         compute_readability_bands,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     flat = TerrainMaskStack(
         tile_size=16,
@@ -430,7 +430,7 @@ def test_readability_flat_terrain_scores_lower_than_varied():
 
 
 def test_readability_aggregate_empty_returns_zero():
-    from blender_addon.handlers.terrain_readability_bands import (
+    from veilbreakers_terrain.handlers.terrain_readability_bands import (
         aggregate_readability_score,
     )
 
@@ -443,7 +443,7 @@ def test_readability_aggregate_empty_returns_zero():
 
 
 def test_budget_default_values():
-    from blender_addon.handlers.terrain_budget_enforcer import TerrainBudget
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import TerrainBudget
 
     b = TerrainBudget()
     assert b.max_tri_count > 0
@@ -452,7 +452,7 @@ def test_budget_default_values():
 
 
 def test_budget_usage_computes_per_axis():
-    from blender_addon.handlers.terrain_budget_enforcer import (
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import (
         TerrainBudget,
         compute_tile_budget_usage,
     )
@@ -465,7 +465,7 @@ def test_budget_usage_computes_per_axis():
 
 
 def test_budget_report_as_dict_serializes_nested_budget_fields():
-    from blender_addon.handlers.terrain_budget_enforcer import BudgetReport
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import BudgetReport
 
     report = BudgetReport(
         tile_km2=0.25,
@@ -496,7 +496,7 @@ def test_budget_report_as_dict_serializes_nested_budget_fields():
 
 
 def test_budget_resolve_uses_quality_profile_defaults():
-    from blender_addon.handlers.terrain_budget_enforcer import resolve_budget
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import resolve_budget
 
     state = _build_state(tile_size=8)
     object.__setattr__(state.intent, "quality_profile", "mobile")
@@ -508,7 +508,7 @@ def test_budget_resolve_uses_quality_profile_defaults():
 
 
 def test_budget_enforce_clean_tile_no_issues():
-    from blender_addon.handlers.terrain_budget_enforcer import (
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import (
         TerrainBudget,
         enforce_budget,
     )
@@ -520,7 +520,7 @@ def test_budget_enforce_clean_tile_no_issues():
 
 
 def test_budget_enforce_triggers_hard_on_tight_budget():
-    from blender_addon.handlers.terrain_budget_enforcer import (
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import (
         TerrainBudget,
         enforce_budget,
     )
@@ -535,7 +535,7 @@ def test_budget_enforce_triggers_hard_on_tight_budget():
 
 
 def test_budget_soft_warn_at_near_threshold():
-    from blender_addon.handlers.terrain_budget_enforcer import (
+    from veilbreakers_terrain.handlers.terrain_budget_enforcer import (
         TerrainBudget,
         enforce_budget,
     )
@@ -560,7 +560,7 @@ def test_budget_soft_warn_at_near_threshold():
 
 
 def test_golden_snapshot_save_and_load_roundtrip():
-    from blender_addon.handlers.terrain_golden_snapshots import (
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
         load_golden_snapshot,
         save_golden_snapshot,
     )
@@ -576,7 +576,7 @@ def test_golden_snapshot_save_and_load_roundtrip():
 
 
 def test_golden_compare_identical_stack_no_issues():
-    from blender_addon.handlers.terrain_golden_snapshots import (
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
         compare_against_golden,
         save_golden_snapshot,
     )
@@ -589,7 +589,7 @@ def test_golden_compare_identical_stack_no_issues():
 
 
 def test_golden_compare_mutated_stack_raises_hard_issue():
-    from blender_addon.handlers.terrain_golden_snapshots import (
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
         compare_against_golden,
         save_golden_snapshot,
     )
@@ -606,7 +606,7 @@ def test_golden_compare_mutated_stack_raises_hard_issue():
 
 
 def test_golden_compare_detects_new_channel_soft():
-    from blender_addon.handlers.terrain_golden_snapshots import (
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
         compare_against_golden,
         save_golden_snapshot,
     )
@@ -623,8 +623,8 @@ def test_golden_compare_detects_new_channel_soft():
 
 
 def test_golden_library_seeds_at_least_20_snapshots():
-    from blender_addon.handlers.terrain_golden_snapshots import seed_golden_library
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import seed_golden_library
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         def build(seed: int, tile_x: int, tile_y: int):
@@ -651,21 +651,21 @@ def test_golden_library_seeds_at_least_20_snapshots():
 
 
 def test_review_finding_rejects_bad_severity():
-    from blender_addon.handlers.terrain_review_ingest import ReviewFinding
+    from veilbreakers_terrain.handlers.terrain_review_ingest import ReviewFinding
 
     with pytest.raises(ValueError):
         ReviewFinding(source="ai", severity="catastrophic", message="nope")
 
 
 def test_review_finding_rejects_bad_source():
-    from blender_addon.handlers.terrain_review_ingest import ReviewFinding
+    from veilbreakers_terrain.handlers.terrain_review_ingest import ReviewFinding
 
     with pytest.raises(ValueError):
         ReviewFinding(source="alien", severity="hard", message="nope")
 
 
 def test_ingest_review_json_parses_findings_list():
-    from blender_addon.handlers.terrain_review_ingest import ingest_review_json
+    from veilbreakers_terrain.handlers.terrain_review_ingest import ingest_review_json
 
     payload = {
         "findings": [
@@ -696,7 +696,7 @@ def test_ingest_review_json_parses_findings_list():
 
 
 def test_apply_review_findings_preserves_immutability():
-    from blender_addon.handlers.terrain_review_ingest import (
+    from veilbreakers_terrain.handlers.terrain_review_ingest import (
         ReviewFinding,
         apply_review_findings,
     )
@@ -721,7 +721,7 @@ def test_apply_review_findings_preserves_immutability():
 
 
 def test_record_telemetry_writes_and_returns_record():
-    from blender_addon.handlers.terrain_telemetry_dashboard import record_telemetry
+    from veilbreakers_terrain.handlers.terrain_telemetry_dashboard import record_telemetry
 
     state = _build_state()
     with tempfile.TemporaryDirectory() as td:
@@ -741,7 +741,7 @@ def test_record_telemetry_writes_and_returns_record():
 
 
 def test_summarize_telemetry_empty_file_returns_zero_counts():
-    from blender_addon.handlers.terrain_telemetry_dashboard import summarize_telemetry
+    from veilbreakers_terrain.handlers.terrain_telemetry_dashboard import summarize_telemetry
 
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "missing.ndjson"
@@ -751,7 +751,7 @@ def test_summarize_telemetry_empty_file_returns_zero_counts():
 
 
 def test_summarize_telemetry_aggregates_across_records():
-    from blender_addon.handlers.terrain_telemetry_dashboard import (
+    from veilbreakers_terrain.handlers.terrain_telemetry_dashboard import (
         record_telemetry,
         summarize_telemetry,
     )
@@ -772,7 +772,7 @@ def test_summarize_telemetry_aggregates_across_records():
 
 
 def test_telemetry_record_roundtrip_to_dict():
-    from blender_addon.handlers.terrain_telemetry_dashboard import TelemetryRecord
+    from veilbreakers_terrain.handlers.terrain_telemetry_dashboard import TelemetryRecord
 
     rec = TelemetryRecord(
         timestamp=123.0,

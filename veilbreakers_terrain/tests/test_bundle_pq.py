@@ -16,33 +16,33 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_dem_import import (
+from veilbreakers_terrain.handlers.terrain_dem_import import (
     DEMSource,
     import_dem_tile,
     normalize_dem_to_world_range,
     resample_dem_to_tile_grid,
 )
-from blender_addon.handlers.terrain_palette_extract import (
+from veilbreakers_terrain.handlers.terrain_palette_extract import (
     PaletteEntry,
     extract_palette_from_image,
     palette_to_biome_mapping,
 )
-from blender_addon.handlers.terrain_footprint_surface import (
+from veilbreakers_terrain.handlers.terrain_footprint_surface import (
     FootprintSurfacePoint,
     compute_footprint_surface_data,
     export_footprint_data_json,
 )
-from blender_addon.handlers.terrain_destructibility_patches import (
+from veilbreakers_terrain.handlers.terrain_destructibility_patches import (
     DestructibilityPatch,
     detect_destructibility_patches,
     export_destructibility_json,
 )
-from blender_addon.handlers.terrain_weathering_timeline import (
+from veilbreakers_terrain.handlers.terrain_weathering_timeline import (
     WeatheringEvent,
     apply_weathering_event,
     generate_weathering_timeline,
 )
-from blender_addon.handlers.terrain_semantics import BBox, TerrainMaskStack
+from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainMaskStack
 
 
 def _tiny_stack(size: int = 8) -> TerrainMaskStack:

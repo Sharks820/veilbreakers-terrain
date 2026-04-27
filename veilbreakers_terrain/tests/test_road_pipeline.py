@@ -413,7 +413,7 @@ class TestRoadPathNetworkContracts:
         assert bridge_segment["bridge_clearance_m"] >= 1.0
 
     def test_continuation_edge_uses_start_edge_when_route_ends_inside_node(self):
-        from blender_addon.handlers.terrain_path_contracts import infer_continuation_edge
+        from veilbreakers_terrain.handlers.terrain_path_contracts import infer_continuation_edge
 
         edge = infer_continuation_edge(
             [(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)],
@@ -445,7 +445,7 @@ class TestRoadMaxGradeClamp:
         return _math.degrees(_math.atan(max_tan))
 
     def test_clamp_reduces_forced_steep_section(self):
-        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+        from veilbreakers_terrain.handlers.environment import _grade_road_path_in_world_space
 
         # 1 m cell_size, 20-cell east-west straight path with a forced ~45°
         # cliff in the middle of an otherwise flat valley.
@@ -476,14 +476,14 @@ class TestRoadMaxGradeClamp:
 
     def test_default_max_grade_is_15_degrees(self):
         import inspect as _inspect
-        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+        from veilbreakers_terrain.handlers.environment import _grade_road_path_in_world_space
 
         sig = _inspect.signature(_grade_road_path_in_world_space)
         assert "max_grade_degrees" in sig.parameters
         assert sig.parameters["max_grade_degrees"].default == 15.0
 
     def test_flat_path_unchanged_within_tolerance(self):
-        from blender_addon.handlers.environment import _grade_road_path_in_world_space
+        from veilbreakers_terrain.handlers.environment import _grade_road_path_in_world_space
 
         heightmap = np.full((3, 10), 5.0, dtype=np.float64)
         path = [(1, c) for c in range(10)]

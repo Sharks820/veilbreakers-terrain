@@ -39,7 +39,7 @@ def _cube_mesh():
 
 
 def test_lod_vector_helpers_and_silhouette_contracts():
-    from blender_addon.handlers.lod_pipeline import (
+    from veilbreakers_terrain.handlers.lod_pipeline import (
         _cross,
         _dot,
         _face_normal,
@@ -63,7 +63,7 @@ def test_lod_vector_helpers_and_silhouette_contracts():
 
 
 def test_qem_and_collision_aabb_contracts_are_physical():
-    from blender_addon.handlers.lod_pipeline import (
+    from veilbreakers_terrain.handlers.lod_pipeline import (
         _compute_quadric,
         _edge_collapse_cost_qem,
         _qem_optimal_position,
@@ -92,7 +92,7 @@ def test_qem_and_collision_aabb_contracts_are_physical():
 
 
 def test_billboard_and_lod_chain_keep_camera_and_texture_metadata():
-    from blender_addon.handlers.lod_pipeline import (
+    from veilbreakers_terrain.handlers.lod_pipeline import (
         _generate_billboard_quad,
         _generate_billboard_quad_spec,
         _make_billboard_lod_spec,
@@ -130,7 +130,7 @@ def test_billboard_and_lod_chain_keep_camera_and_texture_metadata():
 
 
 def test_scene_budget_validator_flags_over_and_under_budget():
-    from blender_addon.handlers.lod_pipeline import SceneBudgetValidator
+    from veilbreakers_terrain.handlers.lod_pipeline import SceneBudgetValidator
 
     validator = SceneBudgetValidator()
     low = validator.validate([1000, 2000], scope="per_room")
@@ -252,7 +252,7 @@ def test_handle_generate_lods_accepts_billboard_spec_tuple(monkeypatch):
 
 def test_procedural_material_library_contracts_and_dispatch():
     from blender_addon.handlers import COMMAND_HANDLERS
-    from blender_addon.handlers.procedural_materials import (
+    from veilbreakers_terrain.handlers.procedural_materials import (
         GENERATORS,
         MATERIAL_LIBRARY,
         REQUIRED_MATERIAL_KEYS,

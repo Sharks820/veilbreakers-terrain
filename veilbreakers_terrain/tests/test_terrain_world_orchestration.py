@@ -13,11 +13,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_semantics import (
+from veilbreakers_terrain.handlers.terrain_semantics import (
     BBox,
     TerrainIntentState,
 )
-from blender_addon.handlers.terrain_twelve_step import (
+from veilbreakers_terrain.handlers.terrain_twelve_step import (
     run_twelve_step_world_terrain,
 )
 

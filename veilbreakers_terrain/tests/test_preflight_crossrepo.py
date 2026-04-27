@@ -6,7 +6,7 @@ sibling-disk editable install.
 
 Note (Plan 50-04 C-33 deviation, Rule 1):
 ``veilbreakers_mcp.primitives`` currently re-exports symbols from
-``blender_addon.handlers.*`` via absolute imports. ``blender_addon`` lives
+``veilbreakers_terrain.handlers.*`` via absolute imports. ``blender_addon`` lives
 outside ``src/`` and is NOT included in the hatchling editable install
 (the toolkit pyproject packages only ``src/veilbreakers_mcp``). Therefore
 importing ``veilbreakers_mcp.primitives`` raises ``ModuleNotFoundError``

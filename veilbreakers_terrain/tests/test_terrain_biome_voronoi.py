@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from blender_addon.handlers._terrain_noise import voronoi_biome_distribution
+from veilbreakers_terrain.handlers._terrain_noise import voronoi_biome_distribution
 
 
 class TestVoronoiBiomeDistribution:

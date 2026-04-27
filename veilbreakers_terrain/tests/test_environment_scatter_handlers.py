@@ -10,7 +10,7 @@ expected result dict shapes.
 import numpy as np
 import pytest
 
-from blender_addon.handlers._scatter_engine import (
+from veilbreakers_terrain.handlers._scatter_engine import (
     biome_filter_points,
     context_scatter,
     generate_breakable_variants,
@@ -23,7 +23,7 @@ class TestScatterVegetationLogic:
 
     def test_world_height_sampling_matches_centered_and_offset_tiles(self):
         """World-space height sampling should be invariant to terrain center offsets."""
-        from blender_addon.handlers.environment_scatter import _sample_heightmap_world
+        from veilbreakers_terrain.handlers.environment_scatter import _sample_heightmap_world
 
         heightmap = np.array(
             [
@@ -59,7 +59,7 @@ class TestScatterVegetationLogic:
 
     def test_world_height_sampling_respects_rectangular_terrain_extent(self):
         """World-space sampling should map X and Y against their own terrain axes."""
-        from blender_addon.handlers.environment_scatter import _sample_heightmap_world
+        from veilbreakers_terrain.handlers.environment_scatter import _sample_heightmap_world
 
         heightmap = np.array(
             [
@@ -85,7 +85,7 @@ class TestScatterVegetationLogic:
 
     def test_world_height_sampling_clamps_out_of_bounds(self):
         """World-space sampling should clamp gracefully outside the terrain footprint."""
-        from blender_addon.handlers.environment_scatter import _sample_heightmap_world
+        from veilbreakers_terrain.handlers.environment_scatter import _sample_heightmap_world
 
         heightmap = np.array(
             [
@@ -109,7 +109,7 @@ class TestScatterVegetationLogic:
         assert sampled == pytest.approx(8.0)
 
     def test_world_height_sampling_applies_height_offset(self):
-        from blender_addon.handlers.environment_scatter import _sample_heightmap_world
+        from veilbreakers_terrain.handlers.environment_scatter import _sample_heightmap_world
 
         heightmap = np.array(
             [
@@ -134,7 +134,7 @@ class TestScatterVegetationLogic:
         assert sampled == pytest.approx(5.0)
 
     def test_terrain_cell_size_from_extent_uses_world_spacing(self):
-        from blender_addon.handlers.environment_scatter import _terrain_cell_size_from_extent
+        from veilbreakers_terrain.handlers.environment_scatter import _terrain_cell_size_from_extent
 
         spacing = _terrain_cell_size_from_extent(
             terrain_width=80.0,
@@ -160,7 +160,7 @@ class TestScatterVegetationLogic:
 
         # Create synthetic heightmap and slope map
         heightmap = np.random.RandomState(seed).random((64, 64))
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
         slope_map = compute_slope_map(
             heightmap,
             cell_size=(terrain_depth / 63.0, terrain_width / 63.0),
@@ -326,7 +326,7 @@ class TestMultipassScatterIntegration:
         ]
 
     def test_scatter_pass_supports_rectangular_terrain_extents(self):
-        from blender_addon.handlers.environment_scatter import _scatter_pass
+        from veilbreakers_terrain.handlers.environment_scatter import _scatter_pass
 
         hm = np.full((40, 80), 0.35, dtype=np.float32)
         slope = np.zeros_like(hm)
@@ -347,7 +347,7 @@ class TestMultipassScatterIntegration:
             assert -30.0 <= y <= 30.0
 
     def test_generate_multipass_scatter_placements_returns_local_positions(self):
-        from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
+        from veilbreakers_terrain.handlers.environment_scatter import _generate_multipass_scatter_placements
 
         hm = np.full((48, 64), 0.32, dtype=np.float32)
         slope = np.zeros_like(hm)
@@ -371,7 +371,7 @@ class TestMultipassScatterIntegration:
             assert 0.0 <= item["rotation"] <= 360.0
 
     def test_generate_multipass_scatter_placements_respects_building_exclusion(self):
-        from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
+        from veilbreakers_terrain.handlers.environment_scatter import _generate_multipass_scatter_placements
 
         hm = np.full((64, 64), 0.3, dtype=np.float32)
         slope = np.zeros_like(hm)
@@ -444,7 +444,7 @@ class TestMultipassScatterIntegration:
         assert placements[0]["vegetation_type"] == "rock"
 
     def test_generate_multipass_scatter_placements_filters_to_requested_types(self):
-        from blender_addon.handlers.environment_scatter import _generate_multipass_scatter_placements
+        from veilbreakers_terrain.handlers.environment_scatter import _generate_multipass_scatter_placements
 
         hm = np.full((48, 48), 0.28, dtype=np.float32)
         slope = np.zeros_like(hm)
@@ -476,10 +476,10 @@ class TestMultipassScatterIntegration:
         assert {item["vegetation_type"] for item in placements} == {"tree"}
 
     def test_multipass_placements_convert_to_canonical_scatter_point_table(self):
-        from blender_addon.handlers.environment_scatter import (
+        from veilbreakers_terrain.handlers.environment_scatter import (
             _build_scatter_point_table_from_placements,
         )
-        from blender_addon.handlers.terrain_scatter_points import (
+        from veilbreakers_terrain.handlers.terrain_scatter_points import (
             validate_scatter_point_table,
         )
 
@@ -521,7 +521,7 @@ class TestMultipassScatterIntegration:
         assert point.mask_sources == ("multipass_scatter", "species:tree_oak", "biome:forest")
 
     def test_scatter_point_table_prefers_actual_instance_transform_metadata(self):
-        from blender_addon.handlers.environment_scatter import (
+        from veilbreakers_terrain.handlers.environment_scatter import (
             _build_scatter_point_table_from_placements,
         )
 
@@ -559,7 +559,7 @@ class TestMultipassScatterIntegration:
         assert point.orient == pytest.approx((0.1, 0.2, 0.3, 0.9))
 
     def test_catalog_category_placements_map_to_coarse_rules_without_dropping(self):
-        from blender_addon.handlers.environment_scatter import _filter_multipass_scatter_placements
+        from veilbreakers_terrain.handlers.environment_scatter import _filter_multipass_scatter_placements
 
         placements = [
             {
@@ -660,7 +660,7 @@ class TestCreateBreakableLogic:
 
     def test_breakable_counts_match_config(self):
         """Fragment and debris counts fall within configured ranges."""
-        from blender_addon.handlers._scatter_engine import BREAKABLE_PROPS
+        from veilbreakers_terrain.handlers._scatter_engine import BREAKABLE_PROPS
 
         for prop_type, config in BREAKABLE_PROPS.items():
             result = generate_breakable_variants(prop_type, seed=0)
@@ -685,8 +685,8 @@ class TestPropGeneratorMapCoverage:
 
     def test_prop_generator_map_covers_all_affinity_types(self):
         """Every prop type in PROP_AFFINITY has a PROP_GENERATOR_MAP entry."""
-        from blender_addon.handlers._scatter_engine import PROP_AFFINITY
-        from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._scatter_engine import PROP_AFFINITY
+        from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
         missing = []
         for building_type, prop_list in PROP_AFFINITY.items():
@@ -700,8 +700,8 @@ class TestPropGeneratorMapCoverage:
 
     def test_prop_generator_map_covers_generic_props(self):
         """Every prop type in _GENERIC_PROPS has a PROP_GENERATOR_MAP entry."""
-        from blender_addon.handlers._scatter_engine import _GENERIC_PROPS
-        from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._scatter_engine import _GENERIC_PROPS
+        from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
         missing = []
         for prop_type, _weight in _GENERIC_PROPS:
@@ -714,7 +714,7 @@ class TestPropGeneratorMapCoverage:
 
     def test_generic_props_avoid_fallen_log_default_for_settlements(self):
         """Town-adjacent generic scatter should not default to fallen logs."""
-        from blender_addon.handlers._scatter_engine import _GENERIC_PROPS
+        from veilbreakers_terrain.handlers._scatter_engine import _GENERIC_PROPS
 
         generic_types = {prop_type for prop_type, _weight in _GENERIC_PROPS}
         assert "log" not in generic_types
@@ -722,7 +722,7 @@ class TestPropGeneratorMapCoverage:
 
     def test_all_prop_generators_are_callable(self):
         """All generator functions in PROP_GENERATOR_MAP are callable."""
-        from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
         for prop_type, (gen_func, _kwargs) in PROP_GENERATOR_MAP.items():
             assert callable(gen_func), (
@@ -731,7 +731,7 @@ class TestPropGeneratorMapCoverage:
 
     def test_all_prop_generators_produce_valid_meshspec(self):
         """All generators in PROP_GENERATOR_MAP produce valid MeshSpec dicts."""
-        from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
         for prop_type, (gen_func, gen_kwargs) in PROP_GENERATOR_MAP.items():
             spec = gen_func(**gen_kwargs)
@@ -753,7 +753,7 @@ class TestPropGeneratorMapCoverage:
 
     def test_prop_generator_map_in_all_maps(self):
         """PROP_GENERATOR_MAP is registered in _ALL_MAPS for resolve_generator."""
-        from blender_addon.handlers._mesh_bridge import _ALL_MAPS, PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._mesh_bridge import _ALL_MAPS, PROP_GENERATOR_MAP
 
         assert "prop" in _ALL_MAPS, (
             "PROP_GENERATOR_MAP not registered in _ALL_MAPS"
@@ -762,7 +762,7 @@ class TestPropGeneratorMapCoverage:
 
     def test_prop_map_has_minimum_entries(self):
         """PROP_GENERATOR_MAP has at least 20 entries (all affinity + generic)."""
-        from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
         assert len(PROP_GENERATOR_MAP) >= 20, (
             f"Expected at least 20 entries, got {len(PROP_GENERATOR_MAP)}"
@@ -774,7 +774,7 @@ class TestHandlerImports:
 
     def test_scatter_engine_importable(self):
         """_scatter_engine module imports without bpy."""
-        from blender_addon.handlers._scatter_engine import (
+        from veilbreakers_terrain.handlers._scatter_engine import (
             BREAKABLE_PROPS,
             PROP_AFFINITY,
             biome_filter_points,
@@ -791,7 +791,7 @@ class TestHandlerImports:
 
     def test_prop_generator_map_importable(self):
         """PROP_GENERATOR_MAP imports without bpy."""
-        from blender_addon.handlers._mesh_bridge import PROP_GENERATOR_MAP
+        from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
         assert isinstance(PROP_GENERATOR_MAP, dict)
         assert len(PROP_GENERATOR_MAP) > 0
 
@@ -806,7 +806,7 @@ class TestScatterChannelConsumers:
     # -- detail_density (Fix 9.1) --
 
     def test_detail_density_dict_collapses_to_mean(self):
-        from blender_addon.handlers.environment_scatter import _collapse_detail_density
+        from veilbreakers_terrain.handlers.environment_scatter import _collapse_detail_density
         arr = np.full((4, 4), 0.5, dtype=np.float32)
         result = _collapse_detail_density({"canopy": arr, "ground_cover": arr})
         assert result is not None
@@ -814,16 +814,16 @@ class TestScatterChannelConsumers:
         assert float(result.mean()) == pytest.approx(0.5)
 
     def test_detail_density_none_returns_none(self):
-        from blender_addon.handlers.environment_scatter import _collapse_detail_density
+        from veilbreakers_terrain.handlers.environment_scatter import _collapse_detail_density
         assert _collapse_detail_density(None) is None
 
     def test_detail_density_empty_dict_returns_none(self):
-        from blender_addon.handlers.environment_scatter import _collapse_detail_density
+        from veilbreakers_terrain.handlers.environment_scatter import _collapse_detail_density
         assert _collapse_detail_density({}) is None
 
     def test_density_reject_at_half_density(self):
         """density=0.5 should reject ~half of candidates."""
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
         dm = np.full((4, 4), 0.5, dtype=np.float32)
         # rng_val=0.3 < 0.5 → accept (not rejected)
         assert not _density_reject(dm, 2.0, 2.0, 0.3)
@@ -831,23 +831,23 @@ class TestScatterChannelConsumers:
         assert _density_reject(dm, 2.0, 2.0, 0.8)
 
     def test_density_reject_none_map_never_rejects(self):
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
         assert not _density_reject(None, 0.0, 0.0, 0.9999)
 
     def test_density_reject_full_density_never_rejects(self):
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
         dm = np.full((4, 4), 1.0, dtype=np.float32)
         for rv in [0.0, 0.5, 0.99]:
             assert not _density_reject(dm, 1.0, 1.0, rv)
 
     def test_density_reject_zero_density_always_rejects(self):
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
         dm = np.zeros((4, 4), dtype=np.float32)
         for rv in [0.01, 0.5, 0.99]:
             assert _density_reject(dm, 1.0, 1.0, rv)
 
     def test_sample_scalar_map_uses_bilinear_sampling(self):
-        from blender_addon.handlers.environment_scatter import _sample_scalar_map
+        from veilbreakers_terrain.handlers.environment_scatter import _sample_scalar_map
 
         arr = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
         sampled = _sample_scalar_map(arr, x_local=5.0, y_local=5.0, width=10.0, height=10.0)
@@ -856,7 +856,7 @@ class TestScatterChannelConsumers:
     def test_resolve_scatter_context_maps_combines_water_sources(self):
         from types import SimpleNamespace
 
-        from blender_addon.handlers.environment_scatter import _resolve_scatter_context_maps
+        from veilbreakers_terrain.handlers.environment_scatter import _resolve_scatter_context_maps
 
         stack = SimpleNamespace(
             wetness=np.array([[0.2, 0.1], [0.0, 0.0]], dtype=np.float32),
@@ -883,7 +883,7 @@ class TestScatterChannelConsumers:
     def test_resolve_scatter_context_maps_combines_disturbance_layers(self):
         from types import SimpleNamespace
 
-        from blender_addon.handlers.environment_scatter import _resolve_scatter_context_maps
+        from veilbreakers_terrain.handlers.environment_scatter import _resolve_scatter_context_maps
 
         stack = SimpleNamespace(
             wetness=None,
@@ -910,21 +910,21 @@ class TestScatterChannelConsumers:
     # -- hero_exclusion (Fix 9.4) --
 
     def test_hero_exclusion_all_ones_excludes_all(self):
-        from blender_addon.handlers.environment_scatter import _hero_excluded
+        from veilbreakers_terrain.handlers.environment_scatter import _hero_excluded
         excl = np.ones((8, 8), dtype=np.float32)
         assert _hero_excluded(excl, 5.0, 5.0, 10.0, 10.0)
 
     def test_hero_exclusion_all_zeros_excludes_none(self):
-        from blender_addon.handlers.environment_scatter import _hero_excluded
+        from veilbreakers_terrain.handlers.environment_scatter import _hero_excluded
         excl = np.zeros((8, 8), dtype=np.float32)
         assert not _hero_excluded(excl, 5.0, 5.0, 10.0, 10.0)
 
     def test_hero_exclusion_none_returns_false(self):
-        from blender_addon.handlers.environment_scatter import _hero_excluded
+        from veilbreakers_terrain.handlers.environment_scatter import _hero_excluded
         assert not _hero_excluded(None, 5.0, 5.0, 10.0, 10.0)
 
     def test_hero_exclusion_partial_mask(self):
-        from blender_addon.handlers.environment_scatter import _hero_excluded
+        from veilbreakers_terrain.handlers.environment_scatter import _hero_excluded
         excl = np.zeros((10, 10), dtype=np.float32)
         excl[5:, 5:] = 1.0  # top-right quadrant excluded
         # Point at (7.5, 7.5) within a 10x10 terrain → falls in excluded quadrant
@@ -935,11 +935,11 @@ class TestScatterChannelConsumers:
     # -- wind_field (Fix 9.5) --
 
     def test_wind_rotation_none_returns_zero(self):
-        from blender_addon.handlers.environment_scatter import _wind_rotation_y
+        from veilbreakers_terrain.handlers.environment_scatter import _wind_rotation_y
         assert _wind_rotation_y(None, 5.0, 5.0, 10.0, 10.0) == pytest.approx(0.0)
 
     def test_wind_rotation_plus_x_direction(self):
-        from blender_addon.handlers.environment_scatter import _wind_rotation_y
+        from veilbreakers_terrain.handlers.environment_scatter import _wind_rotation_y
         import math
         wind = np.zeros((4, 4, 2), dtype=np.float32)
         wind[..., 0] = 1.0   # wind_x = 1
@@ -949,7 +949,7 @@ class TestScatterChannelConsumers:
         assert rot == pytest.approx(math.pi / 2, abs=1e-4)
 
     def test_wind_rotation_plus_y_direction(self):
-        from blender_addon.handlers.environment_scatter import _wind_rotation_y
+        from veilbreakers_terrain.handlers.environment_scatter import _wind_rotation_y
         wind = np.zeros((4, 4, 2), dtype=np.float32)
         wind[..., 0] = 0.0
         wind[..., 1] = 1.0
@@ -967,7 +967,7 @@ class TestWriteTreeInstancePoints:
 
     def test_writes_float32_n5_to_stack(self):
         from types import SimpleNamespace
-        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        from veilbreakers_terrain.handlers.environment_scatter import _write_tree_instance_points
         stack = SimpleNamespace(tree_instance_points=None)
         arr = np.array([[1.0, 2.0, 3.0, 0.5, 0.0]], dtype=np.float32)
         _write_tree_instance_points(arr, stack)
@@ -976,13 +976,13 @@ class TestWriteTreeInstancePoints:
         assert stack.tree_instance_points.shape == (1, 5)
 
     def test_none_stack_is_noop(self):
-        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        from veilbreakers_terrain.handlers.environment_scatter import _write_tree_instance_points
         # Should not raise
         _write_tree_instance_points(np.empty((0, 5), dtype=np.float32), None)
 
     def test_wrong_shape_is_noop(self):
         from types import SimpleNamespace
-        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        from veilbreakers_terrain.handlers.environment_scatter import _write_tree_instance_points
         stack = SimpleNamespace(tree_instance_points=None)
         arr = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)  # (1, 3) not (N, 5)
         _write_tree_instance_points(arr, stack)
@@ -990,7 +990,7 @@ class TestWriteTreeInstancePoints:
 
     def test_filters_non_finite_rows_and_normalizes_prototype_ids(self):
         from types import SimpleNamespace
-        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        from veilbreakers_terrain.handlers.environment_scatter import _write_tree_instance_points
 
         stack = SimpleNamespace(tree_instance_points=None)
         arr = np.array(
@@ -1017,7 +1017,7 @@ class TestLocationLayer:
 
     def test_generates_instances_on_3x3_grid(self):
         """3x3 cell grid at density=1 produces 1-9 instances (repulsion may reject some)."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=42)
         result = ll.generate(30.0, 30.0)
         assert result.shape[1] == 5
@@ -1025,7 +1025,7 @@ class TestLocationLayer:
 
     def test_instances_within_bounds(self):
         """All accepted instances are within [0, width] x [0, height]."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=7)
         result = ll.generate(30.0, 30.0)
         assert len(result) > 0
@@ -1034,7 +1034,7 @@ class TestLocationLayer:
 
     def test_repulsion_radius_enforced(self):
         """No two accepted instances are closer than repulsion_radius."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         rr = 3.0
         ll = LocationLayer(cell_size=5.0, density=0.04, repulsion_radius=rr, seed=0)
         result = ll.generate(50.0, 50.0)
@@ -1050,7 +1050,7 @@ class TestLocationLayer:
 
     def test_deterministic_same_seed(self):
         """Same seed → identical output."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=42)
         r1 = ll.generate(30.0, 30.0)
         r2 = ll.generate(30.0, 30.0)
@@ -1058,14 +1058,14 @@ class TestLocationLayer:
 
     def test_different_seeds_produce_different_output(self):
         """Different seeds → different output (collision probability negligible)."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         r1 = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=1).generate(30.0, 30.0)
         r2 = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=99).generate(30.0, 30.0)
         assert not np.array_equal(r1, r2)
 
     def test_candidate_within_cell(self):
         """candidate x = j*cs + cs*(rand+0.5) stays within [j*cs, (j+1)*cs]."""
-        from blender_addon.handlers.environment_scatter import _location_layer_rand2
+        from veilbreakers_terrain.handlers.environment_scatter import _location_layer_rand2
         cs = 10.0
         for i in range(3):
             for j in range(3):
@@ -1078,7 +1078,7 @@ class TestLocationLayer:
 
     def test_output_shape_and_dtype(self):
         """Output is float32 ndarray shape (N, 5)."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=0)
         result = ll.generate(30.0, 30.0)
         assert isinstance(result, np.ndarray)
@@ -1088,7 +1088,7 @@ class TestLocationLayer:
 
     def test_empty_terrain_returns_empty(self):
         """width=0 or height=0 returns empty (0, 5) array."""
-        from blender_addon.handlers.environment_scatter import LocationLayer
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
         ll = LocationLayer(cell_size=10.0, density=0.01, repulsion_radius=3.0, seed=0)
         result = ll.generate(0.0, 0.0)
         assert result.shape == (0, 5) or result.shape[1] == 5
@@ -1103,7 +1103,7 @@ class TestRoadMaskExclusion:
 
     def test_all_road_mask_excludes_all(self):
         """road_mask = ones → every point is excluded via the helper."""
-        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         # road_sdf_np=None path — test the road_mask logic using the stack mock
         # For road_mask we test via integration: all points at col/row = road
         import numpy as np
@@ -1119,7 +1119,7 @@ class TestRoadMaskExclusion:
 
     def test_no_road_mask_passes_all(self):
         """road_sdf_np=None → no exclusion applied."""
-        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         assert not _apply_sdf_exclusion(
             world_x=5.0, world_y=5.0, road_sdf_np=None,
             placement_radius=2.0,
@@ -1129,7 +1129,7 @@ class TestRoadMaskExclusion:
 
     def test_write_tree_instance_points_via_stack_set(self):
         """_write_tree_instance_points calls stack.set when available."""
-        from blender_addon.handlers.environment_scatter import _write_tree_instance_points
+        from veilbreakers_terrain.handlers.environment_scatter import _write_tree_instance_points
         recorded = {}
 
         class MockStack:
@@ -1144,7 +1144,7 @@ class TestRoadMaskExclusion:
 
     def test_road_mask_none_fallback_no_crash(self):
         """When road_sdf is None, _apply_sdf_exclusion returns False without error."""
-        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         result = _apply_sdf_exclusion(0.0, 0.0, None, 2.0, 0.0, 0.0, 100.0, 100.0)
         assert result is False
 
@@ -1157,7 +1157,7 @@ class TestSdfRoadExclusion:
     """Tests for SDF-based road edge exclusion via _apply_sdf_exclusion."""
 
     def _excl(self, world_x, world_y, sdf_val, placement_radius=2.0):
-        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         road_sdf = np.full((8, 8), sdf_val, dtype=np.float32)
         return _apply_sdf_exclusion(
             world_x=world_x, world_y=world_y,
@@ -1177,7 +1177,7 @@ class TestSdfRoadExclusion:
 
     def test_none_sdf_no_exclusion(self):
         """road_sdf_dist is None → no exclusion applied."""
-        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         assert not _apply_sdf_exclusion(5.0, 5.0, None, 2.0, 0.0, 0.0, 10.0, 10.0)
 
     def test_default_clearance_is_two_metres(self):
@@ -1187,7 +1187,7 @@ class TestSdfRoadExclusion:
 
     def test_sdf_and_road_mask_both_active(self):
         """A point excluded by road_mask is still excluded by SDF (not re-admitted)."""
-        from blender_addon.handlers.environment_scatter import _apply_sdf_exclusion
+        from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         # Both sdf=0.5 (excluded) and None (not excluded) — test both branches
         road_sdf_low = np.full((8, 8), 0.5, dtype=np.float32)
         road_sdf_high = np.full((8, 8), 5.0, dtype=np.float32)
@@ -1204,7 +1204,7 @@ class TestEmergentGrass:
 
     def test_full_ground_weight_gives_scale(self):
         """All ground weights = 1.0 → output = GRASS_DENSITY_SCALE (5.0)."""
-        from blender_addon.handlers.terrain_vegetation_depth import (
+        from veilbreakers_terrain.handlers.terrain_vegetation_depth import (
             GRASS_DENSITY_SCALE, compute_emergent_grass_density,
         )
         splatmap = np.zeros((4, 4, 5), dtype=np.float32)
@@ -1215,7 +1215,7 @@ class TestEmergentGrass:
 
     def test_half_ground_weight_gives_half_scale(self):
         """All ground weights = 0.5 → output = 2.5."""
-        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        from veilbreakers_terrain.handlers.terrain_vegetation_depth import compute_emergent_grass_density
         splatmap = np.zeros((4, 4, 5), dtype=np.float32)
         splatmap[..., 0] = 0.5
         result = compute_emergent_grass_density(splatmap)
@@ -1223,14 +1223,14 @@ class TestEmergentGrass:
 
     def test_zero_ground_weight_gives_zeros(self):
         """All ground weights = 0.0 → output all zeros."""
-        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        from veilbreakers_terrain.handlers.terrain_vegetation_depth import compute_emergent_grass_density
         splatmap = np.zeros((4, 4, 5), dtype=np.float32)
         result = compute_emergent_grass_density(splatmap)
         np.testing.assert_array_equal(result, 0.0)
 
     def test_invalid_splatmap_returns_zeros_no_crash(self):
         """splatmap with ndim != 3 or L <= grass_idx → returns zeros, no crash."""
-        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        from veilbreakers_terrain.handlers.terrain_vegetation_depth import compute_emergent_grass_density
         # 2D splatmap
         result_2d = compute_emergent_grass_density(np.ones((4, 4), dtype=np.float32))
         assert result_2d.ndim == 2
@@ -1241,7 +1241,7 @@ class TestEmergentGrass:
 
     def test_output_dtype_is_float32(self):
         """Output is float32."""
-        from blender_addon.handlers.terrain_vegetation_depth import compute_emergent_grass_density
+        from veilbreakers_terrain.handlers.terrain_vegetation_depth import compute_emergent_grass_density
         splatmap = np.ones((4, 4, 3), dtype=np.float64)
         result = compute_emergent_grass_density(splatmap)
         assert result.dtype == np.float32
@@ -1252,14 +1252,14 @@ class TestHaloScatter:
 
     def test_deterministic(self):
         """Same inputs → same tile_id always."""
-        from blender_addon.handlers.environment_scatter import halo_scatter_point_id
+        from veilbreakers_terrain.handlers.environment_scatter import halo_scatter_point_id
         v = halo_scatter_point_id(10.0, 20.0, seed=42, num_tiles=4)
         for _ in range(10):
             assert halo_scatter_point_id(10.0, 20.0, seed=42, num_tiles=4) == v
 
     def test_range_within_num_tiles(self):
         """100 random points → all tile_ids in [0, num_tiles)."""
-        from blender_addon.handlers.environment_scatter import halo_scatter_point_id
+        from veilbreakers_terrain.handlers.environment_scatter import halo_scatter_point_id
         rng = np.random.default_rng(0)
         xs = rng.uniform(0, 100, 100)
         ys = rng.uniform(0, 100, 100)
@@ -1269,7 +1269,7 @@ class TestHaloScatter:
 
     def test_same_point_same_tile(self):
         """Two identical points → same tile_id."""
-        from blender_addon.handlers.environment_scatter import halo_scatter_point_id
+        from veilbreakers_terrain.handlers.environment_scatter import halo_scatter_point_id
         assert (
             halo_scatter_point_id(50.0, 50.0, seed=1, num_tiles=8)
             == halo_scatter_point_id(50.0, 50.0, seed=1, num_tiles=8)
@@ -1285,7 +1285,7 @@ class TestLodScreenPercentage:
     """_lod_for_distance honours object_radius_m via LOD_PRESETS."""
 
     def test_small_bush_at_50m_is_far_lod(self):
-        from blender_addon.handlers.environment_scatter import _lod_for_distance
+        from veilbreakers_terrain.handlers.environment_scatter import _lod_for_distance
 
         # 0.5m bush at 50m → screen_pct ≈ 0.01 → well below every
         # vegetation LOD_PRESETS threshold → final LOD (3 = billboard/cull).
@@ -1293,7 +1293,7 @@ class TestLodScreenPercentage:
         assert lod >= 2, f"Small bush at 50m should be LOD2+, got {lod}"
 
     def test_large_tree_at_50m_is_lod0(self):
-        from blender_addon.handlers.environment_scatter import _lod_for_distance
+        from veilbreakers_terrain.handlers.environment_scatter import _lod_for_distance
 
         # LOD_PRESETS["vegetation"]["screen_percentages"] = [1.0, 0.3, 0.08, 0.02].
         # A radius large enough to give screen_pct >= 1.0 at 50 m is >= 50 m.
@@ -1301,7 +1301,7 @@ class TestLodScreenPercentage:
         assert lod == 0, f"Huge tree at 50m should be LOD0, got {lod}"
 
     def test_relative_sizing_bush_vs_tree_same_distance(self):
-        from blender_addon.handlers.environment_scatter import _lod_for_distance
+        from veilbreakers_terrain.handlers.environment_scatter import _lod_for_distance
 
         bush_lod = _lod_for_distance(50.0, "bush", object_radius_m=0.5)
         tree_lod = _lod_for_distance(50.0, "tree", object_radius_m=5.0)
@@ -1311,7 +1311,7 @@ class TestLodScreenPercentage:
         )
 
     def test_fallback_to_distance_table_when_radius_absent(self):
-        from blender_addon.handlers.environment_scatter import _lod_for_distance
+        from veilbreakers_terrain.handlers.environment_scatter import _lod_for_distance
 
         # No object_radius_m → legacy distance-only path.
         lod = _lod_for_distance(50.0, "tree")
@@ -1327,7 +1327,7 @@ class TestDensityBilinearSampling:
     """_density_reject samples density bilinearly."""
 
     def test_bilinear_returns_intermediate_value_at_midpoint(self):
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
 
         # 2x2 density map: bilinear at (0.5, 0.5) should be 0.5, so an
         # rng_val strictly between 0 and 1 discriminates correctly.
@@ -1337,7 +1337,7 @@ class TestDensityBilinearSampling:
         assert _density_reject(dm, 0.5, 0.5, rng_val=0.6) is True
 
     def test_linear_ramp_monotonic_no_stairstep(self):
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
 
         # Build a 1D-style ramp 0->1 in the row direction, 8 rows x 2 cols.
         dm = np.linspace(0.0, 1.0, 8, dtype=np.float32)[:, None].repeat(2, axis=1)
@@ -1366,5 +1366,5 @@ class TestDensityBilinearSampling:
         assert samples[-1] - samples[0] > 0.8
 
     def test_none_density_never_rejects(self):
-        from blender_addon.handlers.environment_scatter import _density_reject
+        from veilbreakers_terrain.handlers.environment_scatter import _density_reject
         assert _density_reject(None, 0.0, 0.0, rng_val=0.9) is False

@@ -9,7 +9,7 @@ class TestErosionConfig:
     """ErosionConfig must have all 12 fields with sensible defaults."""
 
     def test_all_twelve_fields_exist(self):
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         cfg = ErosionConfig()
         fields = [
@@ -30,7 +30,7 @@ class TestErosionConfig:
             assert hasattr(cfg, f), f"ErosionConfig missing field: {f}"
 
     def test_default_values_sensible(self):
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         cfg = ErosionConfig()
         assert 0.0 < cfg.strength <= 1.0
@@ -44,7 +44,7 @@ class TestErosionConfig:
         assert cfg.frequency > 0.0
 
     def test_custom_values(self):
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         cfg = ErosionConfig(strength=0.8, octave_count=6, frequency=2.0)
         assert cfg.strength == 0.8
@@ -56,7 +56,7 @@ class TestAnalyticalErosionResult:
     """AnalyticalErosionResult must have height_delta, ridge_map, gradient_x, gradient_z."""
 
     def test_fields_exist(self):
-        from blender_addon.handlers._terrain_erosion import AnalyticalErosionResult
+        from veilbreakers_terrain.handlers._terrain_erosion import AnalyticalErosionResult
 
         arr = np.zeros((4, 4))
         result = AnalyticalErosionResult(
@@ -73,7 +73,7 @@ class TestAnalyticalErosionResult:
         assert isinstance(result.metrics, dict)
 
     def test_arrays_are_numpy(self):
-        from blender_addon.handlers._terrain_erosion import AnalyticalErosionResult
+        from veilbreakers_terrain.handlers._terrain_erosion import AnalyticalErosionResult
 
         arr = np.ones((8, 8))
         result = AnalyticalErosionResult(
@@ -93,7 +93,7 @@ class TestErosionMasksRidgeMap:
     """ErosionMasks must have an optional ridge_map field."""
 
     def test_ridge_map_field_exists(self):
-        from blender_addon.handlers._terrain_erosion import ErosionMasks
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionMasks
 
         arr = np.zeros((4, 4))
         masks = ErosionMasks(
@@ -108,7 +108,7 @@ class TestErosionMasksRidgeMap:
         assert hasattr(masks, "ridge_map")
 
     def test_ridge_map_accepts_array(self):
-        from blender_addon.handlers._terrain_erosion import ErosionMasks
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionMasks
 
         arr = np.zeros((4, 4))
         ridge = np.random.randn(4, 4)

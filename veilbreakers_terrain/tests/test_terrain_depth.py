@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blender_addon.handlers._terrain_depth import (
+from veilbreakers_terrain.handlers._terrain_depth import (
     _fbm_noise2,
     generate_cliff_face_mesh,
     generate_cave_entrance_mesh,

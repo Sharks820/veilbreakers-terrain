@@ -2,7 +2,7 @@
 
 import pytest
 
-from blender_addon.handlers.atmospheric_volumes import (
+from veilbreakers_terrain.handlers.atmospheric_volumes import (
     ATMOSPHERIC_VOLUMES,
     BIOME_ATMOSPHERE_RULES,
     compute_atmospheric_placements,

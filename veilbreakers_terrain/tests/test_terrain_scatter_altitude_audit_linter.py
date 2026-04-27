@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from blender_addon.handlers.terrain_scatter_altitude_audit_linter import (
+from veilbreakers_terrain.handlers.terrain_scatter_altitude_audit_linter import (
     audit_scatter_altitude_conversion,
 )
 

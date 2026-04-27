@@ -22,7 +22,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _make_minimal_stack(tile_size: int = 16) -> "TerrainMaskStack":
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     h = np.random.rand(tile_size, tile_size).astype(np.float32) * 100.0 + 1.0
     return TerrainMaskStack(
@@ -37,7 +37,7 @@ def _make_minimal_stack(tile_size: int = 16) -> "TerrainMaskStack":
 
 
 def _make_intent(seed: int = 42, erosion_profile: str = "temperate"):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         TerrainIntentState,
         BBox,
         TerrainSceneRead,
@@ -68,12 +68,12 @@ def _make_intent(seed: int = 42, erosion_profile: str = "temperate"):
 
 
 def _make_state(tile_size: int = 16, with_scene_read: bool = True):
-    from blender_addon.handlers.terrain_semantics import TerrainPipelineState
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainPipelineState
 
     stack = _make_minimal_stack(tile_size)
     intent = _make_intent()
     if not with_scene_read:
-        from blender_addon.handlers.terrain_semantics import (
+        from veilbreakers_terrain.handlers.terrain_semantics import (
             TerrainIntentState, BBox,
         )
         intent = TerrainIntentState(
@@ -93,24 +93,24 @@ class TestTerrainMaskStackFreqChannels:
     """TerrainMaskStack must have hmap_low_freq and hmap_high_freq fields."""
 
     def test_hmap_low_freq_field_exists(self):
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert hasattr(stack, "hmap_low_freq")
         assert stack.hmap_low_freq is None
 
     def test_hmap_high_freq_field_exists(self):
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert hasattr(stack, "hmap_high_freq")
         assert stack.hmap_high_freq is None
 
     def test_hmap_low_freq_in_array_channels(self):
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert "hmap_low_freq" in stack._ARRAY_CHANNELS
 
     def test_hmap_high_freq_in_array_channels(self):
-        from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert "hmap_high_freq" in stack._ARRAY_CHANNELS
 
@@ -130,7 +130,7 @@ class TestTerrainMaskStackFreqChannels:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "stack.npz"
             stack.to_npz(path)
-            from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+            from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
             restored = TerrainMaskStack.from_npz(path)
 
         assert restored.hmap_low_freq is not None
@@ -144,7 +144,7 @@ class TestTerrainMaskStackFreqChannels:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "stack.npz"
             stack.to_npz(path)
-            from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+            from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
             restored = TerrainMaskStack.from_npz(path)
 
         assert restored.hmap_high_freq is not None
@@ -159,7 +159,7 @@ class TestPassDAGContracts:
     """PassDAG registrations must match the Fix 12.1 spec exactly."""
 
     def setup_method(self):
-        from blender_addon.handlers.terrain_pipeline import (
+        from veilbreakers_terrain.handlers.terrain_pipeline import (
             TerrainPassController,
             register_default_passes,
         )
@@ -168,7 +168,7 @@ class TestPassDAGContracts:
         self.reg = TerrainPassController.PASS_REGISTRY
 
     def teardown_method(self):
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         TerrainPassController.clear_registry()
 
     def test_pass_generate_low_freq_hmap_registered(self):
@@ -215,7 +215,7 @@ class TestPassFunctionBehavior:
     """Individual pass functions must behave per the Fix 12.1 spec."""
 
     def setup_method(self):
-        from blender_addon.handlers.terrain_pipeline import (
+        from veilbreakers_terrain.handlers.terrain_pipeline import (
             TerrainPassController,
             register_default_passes,
         )
@@ -223,11 +223,11 @@ class TestPassFunctionBehavior:
         register_default_passes()
 
     def teardown_method(self):
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         TerrainPassController.clear_registry()
 
     def test_pass_generate_low_freq_hmap_sets_hmap_low_freq(self):
-        from blender_addon.handlers._terrain_world import pass_generate_low_freq_hmap
+        from veilbreakers_terrain.handlers._terrain_world import pass_generate_low_freq_hmap
 
         state = _make_state()
         result = pass_generate_low_freq_hmap(state, None)
@@ -236,7 +236,7 @@ class TestPassFunctionBehavior:
         assert state.mask_stack.hmap_low_freq.ndim == 2
 
     def test_pass_generate_low_freq_hmap_also_sets_height(self):
-        from blender_addon.handlers._terrain_world import pass_generate_low_freq_hmap
+        from veilbreakers_terrain.handlers._terrain_world import pass_generate_low_freq_hmap
 
         state = _make_state()
         # Zero out the height to force regeneration
@@ -245,7 +245,7 @@ class TestPassFunctionBehavior:
         assert state.mask_stack.height is not None
 
     def test_pass_generate_low_freq_hmap_reuses_existing_low_freq_channel(self):
-        from blender_addon.handlers._terrain_world import pass_generate_low_freq_hmap
+        from veilbreakers_terrain.handlers._terrain_world import pass_generate_low_freq_hmap
 
         state = _make_state()
         existing = np.full((16, 16), 37.5, dtype=np.float32)
@@ -260,7 +260,7 @@ class TestPassFunctionBehavior:
         np.testing.assert_array_equal(state.mask_stack.height, existing)
 
     def test_pass_generate_high_freq_detail_sets_hmap_high_freq(self):
-        from blender_addon.handlers._terrain_world import pass_generate_high_freq_detail
+        from veilbreakers_terrain.handlers._terrain_world import pass_generate_high_freq_detail
 
         state = _make_state()
         result = pass_generate_high_freq_detail(state, None)
@@ -269,7 +269,7 @@ class TestPassFunctionBehavior:
         assert state.mask_stack.hmap_high_freq.ndim == 2
 
     def test_pass_generate_high_freq_detail_shape_matches_tile(self):
-        from blender_addon.handlers._terrain_world import pass_generate_high_freq_detail
+        from veilbreakers_terrain.handlers._terrain_world import pass_generate_high_freq_detail
 
         state = _make_state(tile_size=16)
         pass_generate_high_freq_detail(state, None)
@@ -277,8 +277,8 @@ class TestPassFunctionBehavior:
         assert h.shape[0] == h.shape[1]  # square tile
 
     def test_pass_composite_hmap_computes_correct_formula(self):
-        from blender_addon.handlers._terrain_world import pass_composite_hmap
-        from blender_addon.handlers._terrain_world import DETAIL_SCALE
+        from veilbreakers_terrain.handlers._terrain_world import pass_composite_hmap
+        from veilbreakers_terrain.handlers._terrain_world import DETAIL_SCALE
 
         state = _make_state()
         low = np.ones((16, 16), dtype=np.float32) * 10.0
@@ -292,11 +292,11 @@ class TestPassFunctionBehavior:
         np.testing.assert_allclose(state.mask_stack.height, expected, rtol=1e-5)
 
     def test_pass_composite_hmap_detail_scale_is_0_2(self):
-        from blender_addon.handlers._terrain_world import DETAIL_SCALE
+        from veilbreakers_terrain.handlers._terrain_world import DETAIL_SCALE
         assert abs(DETAIL_SCALE - 0.2) < 1e-9
 
     def test_pass_composite_hmap_raises_if_low_freq_missing(self):
-        from blender_addon.handlers._terrain_world import pass_composite_hmap
+        from veilbreakers_terrain.handlers._terrain_world import pass_composite_hmap
 
         state = _make_state()
         # Only high freq set
@@ -305,7 +305,7 @@ class TestPassFunctionBehavior:
             pass_composite_hmap(state, None)
 
     def test_pass_composite_hmap_raises_if_high_freq_missing(self):
-        from blender_addon.handlers._terrain_world import pass_composite_hmap
+        from veilbreakers_terrain.handlers._terrain_world import pass_composite_hmap
 
         state = _make_state()
         # Only low freq set
@@ -315,7 +315,7 @@ class TestPassFunctionBehavior:
 
     def test_pass_erosion_reads_hmap_low_freq_when_set(self):
         """When hmap_low_freq is present, erosion should operate on it (not height)."""
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
 
         state = _make_state()
         # Set hmap_low_freq to different values than height
@@ -332,7 +332,7 @@ class TestPassFunctionBehavior:
 
     def test_pass_erosion_fallback_to_height_when_hmap_low_freq_absent(self):
         """Backward compat: when hmap_low_freq is None, erosion falls back to stack.height."""
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
 
         state = _make_state()
         # Ensure hmap_low_freq is None
@@ -349,7 +349,7 @@ class TestPassFunctionBehavior:
 
     def test_pass_erosion_updates_hmap_low_freq_after_erosion(self):
         """After erosion, hmap_low_freq should be updated to the eroded result."""
-        from blender_addon.handlers._terrain_world import pass_erosion
+        from veilbreakers_terrain.handlers._terrain_world import pass_erosion
 
         state = _make_state()
         low_arr = np.random.rand(16, 16).astype(np.float32) * 50.0 + 20.0
@@ -365,7 +365,7 @@ class TestPassFunctionBehavior:
         )
 
     def test_macro_world_pipeline_reapplies_neighbor_seams_after_generation(self):
-        from blender_addon.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
         state = _make_state(with_scene_read=False)
         state.mask_stack.set("height", np.zeros((16, 16), dtype=np.float32), "test")
@@ -382,7 +382,7 @@ class TestPassFunctionBehavior:
         np.testing.assert_allclose(state.mask_stack.hmap_low_freq[0, :], 7.0)
 
     def test_constants_declared(self):
-        from blender_addon.handlers._terrain_world import (
+        from veilbreakers_terrain.handlers._terrain_world import (
             LOW_FREQ_OCTAVES,
             HIGH_FREQ_OCTAVES,
             DETAIL_SCALE,

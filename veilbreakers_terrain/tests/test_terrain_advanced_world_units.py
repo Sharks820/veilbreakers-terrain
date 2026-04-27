@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from blender_addon.handlers.terrain_advanced import (
+from veilbreakers_terrain.handlers.terrain_advanced import (
     compute_erosion_brush,
     flatten_terrain_zone,
 )

@@ -25,8 +25,8 @@ class TestApplyAnalyticalErosion:
 
     def test_produces_nonzero_height_delta(self):
         """Known gradient heightmap must produce non-zero erosion."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(64, 64)
         cfg = ErosionConfig(strength=0.5, octave_count=3)
@@ -41,8 +41,8 @@ class TestApplyAnalyticalErosion:
 
     def test_ridge_map_sign_convention(self):
         """Ridge map must have values < 0 (creases) and > 0 (ridges)."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(64, 64)
         cfg = ErosionConfig(strength=0.5, octave_count=4)
@@ -56,8 +56,8 @@ class TestApplyAnalyticalErosion:
 
     def test_determinism_same_seed(self):
         """Two calls with the same seed must produce bit-identical results."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(32, 32)
         cfg = ErosionConfig()
@@ -72,8 +72,8 @@ class TestApplyAnalyticalErosion:
 
     def test_different_seed_different_result(self):
         """Different seeds must produce different patterns."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(32, 32)
         cfg = ErosionConfig()
@@ -90,11 +90,11 @@ class TestApplyAnalyticalErosion:
         For true chunk-parallelism, the gradient and height range must come from
         the global world (not recomputed per-chunk), so we pass them explicitly.
         """
-        from blender_addon.handlers.terrain_erosion_filter import (
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import (
             apply_analytical_erosion,
             finite_difference_gradient,
         )
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         # Generate a large heightmap
         big = _make_gradient_heightmap(64, 64)
@@ -133,8 +133,8 @@ class TestApplyAnalyticalErosion:
 
     def test_per_pixel_config_override(self):
         """Per-pixel ErosionConfig override must produce different erosion in different zones."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(64, 64)
 
@@ -155,8 +155,8 @@ class TestApplyAnalyticalErosion:
 
     def test_assumed_slope_erodes_flat_terrain(self):
         """Flat terrain with assumed_slope > 0 must still produce erosion features."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         flat = _make_flat_heightmap(64, 64, value=0.5)
 
@@ -177,8 +177,8 @@ class TestApplyAnalyticalErosion:
 
     def test_exit_slope_threshold(self):
         """Very low slope areas should have reduced erosion when exit_slope_threshold is high."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(64, 64)
 
@@ -200,8 +200,8 @@ class TestApplyAnalyticalErosion:
 
     def test_returns_analytical_erosion_result(self):
         """Return type must be AnalyticalErosionResult with all fields populated."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import (
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import (
             AnalyticalErosionResult,
             ErosionConfig,
         )
@@ -219,8 +219,8 @@ class TestApplyAnalyticalErosion:
 
     def test_gradient_outputs_finite(self):
         """All gradient outputs must be finite (no NaN/inf)."""
-        from blender_addon.handlers.terrain_erosion_filter import apply_analytical_erosion
-        from blender_addon.handlers._terrain_erosion import ErosionConfig
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import apply_analytical_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import ErosionConfig
 
         hmap = _make_gradient_heightmap(32, 32)
         result = apply_analytical_erosion(hmap, ErosionConfig(), seed=42)
@@ -236,7 +236,7 @@ class TestFiniteDifferenceGradient:
 
     def test_gradient_of_linear_function(self):
         """Gradient of h = 2x + 3z should be (2, 3) everywhere (interior)."""
-        from blender_addon.handlers.terrain_erosion_filter import finite_difference_gradient
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import finite_difference_gradient
 
         rows, cols = 32, 32
         cell_size = 1.0
@@ -258,7 +258,7 @@ class TestFiniteDifferenceGradient:
 
     def test_gradient_shape_matches_input(self):
         """Output shape must match input shape."""
-        from blender_addon.handlers.terrain_erosion_filter import finite_difference_gradient
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import finite_difference_gradient
 
         hmap = np.random.randn(16, 24)
         gx, gz = finite_difference_gradient(hmap, 1.0)
@@ -267,7 +267,7 @@ class TestFiniteDifferenceGradient:
 
     def test_gradient_finite(self):
         """Gradient must be finite everywhere including edges."""
-        from blender_addon.handlers.terrain_erosion_filter import finite_difference_gradient
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import finite_difference_gradient
 
         hmap = np.random.randn(16, 16)
         gx, gz = finite_difference_gradient(hmap, 0.5)

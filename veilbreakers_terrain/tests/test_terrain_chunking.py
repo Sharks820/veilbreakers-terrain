@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from blender_addon.handlers.terrain_chunking import (
+from veilbreakers_terrain.handlers.terrain_chunking import (
     build_tile_batch_manifest,
     build_tile_seam_contract,
     compute_chunk_lod,
@@ -13,7 +13,7 @@ from blender_addon.handlers.terrain_chunking import (
     export_chunks_metadata,
     validate_tile_seams,
 )
-from blender_addon.handlers._terrain_world import validate_tile_seams as validate_world_tile_seams
+from veilbreakers_terrain.handlers._terrain_world import validate_tile_seams as validate_world_tile_seams
 
 
 # ---------------------------------------------------------------------------

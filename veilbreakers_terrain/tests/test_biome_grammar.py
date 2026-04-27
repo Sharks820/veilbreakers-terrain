@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from blender_addon.handlers._biome_grammar import (
+from veilbreakers_terrain.handlers._biome_grammar import (
     WorldMapSpec,
     generate_world_map_spec,
     resolve_biome_name,
@@ -342,7 +342,7 @@ class TestWorldMapIntegration:
 
     def test_large_biome_count_works(self):
         """All 14 available biomes can be used simultaneously."""
-        from blender_addon.handlers.terrain_materials import BIOME_PALETTES
+        from veilbreakers_terrain.handlers.terrain_materials import BIOME_PALETTES
         all_biomes = list(BIOME_PALETTES.keys())
         spec = generate_world_map_spec(
             width=32, height=32,
@@ -355,7 +355,7 @@ class TestWorldMapIntegration:
 
     def test_default_6_biomes_all_in_palettes(self):
         """Default biome list should use valid BIOME_PALETTES keys."""
-        from blender_addon.handlers.terrain_materials import BIOME_PALETTES
+        from veilbreakers_terrain.handlers.terrain_materials import BIOME_PALETTES
         spec = generate_world_map_spec(width=16, height=16, biome_count=6)
         for name in spec.biome_names:
             assert name in BIOME_PALETTES, f"'{name}' not in BIOME_PALETTES"

@@ -17,7 +17,7 @@ class TestApplyHydraulicErosion:
 
     def test_returns_same_shape(self):
         """Eroded heightmap has same shape as input."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         result = apply_hydraulic_erosion(hmap, iterations=50, seed=42)
@@ -25,7 +25,7 @@ class TestApplyHydraulicErosion:
 
     def test_values_in_0_1_range(self):
         """All eroded values stay within the input range."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         result = apply_hydraulic_erosion(hmap, iterations=50, seed=42)
@@ -34,7 +34,7 @@ class TestApplyHydraulicErosion:
 
     def test_erosion_modifies_heightmap(self):
         """Eroded heightmap differs from input (erosion did something)."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         result = apply_hydraulic_erosion(hmap, iterations=100, seed=42)
@@ -42,7 +42,7 @@ class TestApplyHydraulicErosion:
 
     def test_deterministic_with_same_seed(self):
         """Same seed produces identical erosion results."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         r1 = apply_hydraulic_erosion(hmap, iterations=50, seed=42)
@@ -51,7 +51,7 @@ class TestApplyHydraulicErosion:
 
     def test_different_seeds_differ(self):
         """Different seeds produce different erosion results."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         r1 = apply_hydraulic_erosion(hmap, iterations=50, seed=42)
@@ -60,7 +60,7 @@ class TestApplyHydraulicErosion:
 
     def test_flat_heightmap_minimal_change(self):
         """Erosion on a flat heightmap returns near-identical array."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.full((32, 32), 0.5)
         result = apply_hydraulic_erosion(hmap, iterations=50, seed=42)
@@ -69,7 +69,7 @@ class TestApplyHydraulicErosion:
 
     def test_returns_ndarray(self):
         """Return type is numpy ndarray."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         hmap = np.random.RandomState(42).rand(16, 16)
         result = apply_hydraulic_erosion(hmap, iterations=10, seed=42)
@@ -86,7 +86,7 @@ class TestApplyThermalErosion:
 
     def test_returns_same_shape(self):
         """Eroded heightmap has same shape as input."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         result = apply_thermal_erosion(hmap, iterations=10, talus_angle=45.0)
@@ -94,7 +94,7 @@ class TestApplyThermalErosion:
 
     def test_values_in_0_1_range(self):
         """All eroded values stay within the input range."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.random.RandomState(42).rand(32, 32)
         result = apply_thermal_erosion(hmap, iterations=10, talus_angle=45.0)
@@ -103,7 +103,7 @@ class TestApplyThermalErosion:
 
     def test_erosion_reduces_max_slope(self):
         """Thermal erosion reduces the maximum slope (material redistributed)."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         # Create heightmap with steep slopes
         hmap = np.zeros((16, 16))
@@ -124,7 +124,7 @@ class TestApplyThermalErosion:
 
     def test_flat_heightmap_no_change(self):
         """Erosion on a flat heightmap returns near-identical array."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.full((16, 16), 0.5)
         result = apply_thermal_erosion(hmap, iterations=10, talus_angle=45.0)
@@ -132,7 +132,7 @@ class TestApplyThermalErosion:
 
     def test_returns_ndarray(self):
         """Return type is numpy ndarray."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.random.RandomState(42).rand(16, 16)
         result = apply_thermal_erosion(hmap, iterations=5, talus_angle=45.0)
@@ -148,8 +148,8 @@ class TestErosionHighIterationAndWorldUnits:
 
     def test_erosion_50k_visible_channels(self):
         """50K droplet erosion on 64x64 heightmap carves channels > 0.05 depth."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         # Generate a mountainous heightmap with real terrain features
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
@@ -169,8 +169,8 @@ class TestErosionHighIterationAndWorldUnits:
 
     def test_erosion_50k_stays_in_bounds(self):
         """50K droplet erosion keeps values within the input range."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         eroded = apply_hydraulic_erosion(hmap, iterations=50000, seed=42)
@@ -179,7 +179,7 @@ class TestErosionHighIterationAndWorldUnits:
 
     def test_hydraulic_world_unit_height_range_is_supported(self):
         """Hydraulic erosion supports arbitrary world-unit height ranges."""
-        from blender_addon.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         base = np.linspace(10.0, 30.0, 64 * 64, dtype=np.float64).reshape(64, 64)
         hmap = base + np.random.RandomState(42).rand(64, 64) * 0.5
@@ -196,7 +196,7 @@ class TestErosionHighIterationAndWorldUnits:
 
     def test_thermal_world_unit_height_range_is_supported(self):
         """Thermal erosion supports arbitrary world-unit height ranges."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.linspace(-5.0, 17.0, 32 * 32, dtype=np.float64).reshape(32, 32)
         result = apply_thermal_erosion(hmap, iterations=12, talus_angle=35.0)
@@ -206,7 +206,7 @@ class TestErosionHighIterationAndWorldUnits:
 
     def test_thermal_cell_size_affects_world_space_threshold(self):
         """Larger sample spacing should reduce talus transfer for the same height delta."""
-        from blender_addon.handlers._terrain_erosion import apply_thermal_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_thermal_erosion
 
         hmap = np.zeros((9, 9), dtype=np.float64)
         hmap[4, 4] = 1.0

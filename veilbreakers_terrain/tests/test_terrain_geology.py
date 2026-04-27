@@ -18,7 +18,7 @@ import pytest
 
 
 def _build_stack(tile_size: int = 32, heights: str = "ramp"):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     H = W = tile_size
     if heights == "ramp":
@@ -50,7 +50,7 @@ def _build_stack(tile_size: int = 32, heights: str = "ramp"):
 
 
 def _build_state(stack, *, seed: int = 42, hints=None):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainPipelineState,
@@ -73,7 +73,7 @@ def _build_state(stack, *, seed: int = 42, hints=None):
 
 
 def test_stratigraphy_layer_validates_hardness():
-    from blender_addon.handlers.terrain_stratigraphy import StratigraphyLayer
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import StratigraphyLayer
 
     with pytest.raises(ValueError):
         StratigraphyLayer("bad", hardness=1.5, thickness_m=10.0)
@@ -82,7 +82,7 @@ def test_stratigraphy_layer_validates_hardness():
 
 
 def test_stratigraphy_stack_layer_for_elevation():
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
     )
@@ -104,7 +104,7 @@ def test_stratigraphy_stack_layer_for_elevation():
 
 
 def test_compute_rock_hardness_shape_and_range():
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
         compute_rock_hardness,
@@ -129,7 +129,7 @@ def test_compute_rock_hardness_shape_and_range():
 
 
 def test_compute_strata_orientation_unit_vectors():
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
         compute_strata_orientation,
@@ -153,7 +153,7 @@ def test_compute_strata_orientation_unit_vectors():
 
 
 def test_apply_differential_erosion_softer_erodes_more():
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
         apply_differential_erosion,
@@ -179,7 +179,7 @@ def test_apply_differential_erosion_softer_erodes_more():
 
 
 def test_pass_stratigraphy_populates_channels():
-    from blender_addon.handlers.terrain_stratigraphy import pass_stratigraphy
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import pass_stratigraphy
 
     stack = _build_stack(heights="ramp")
     state = _build_state(stack)
@@ -191,7 +191,7 @@ def test_pass_stratigraphy_populates_channels():
 
 
 def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():
-    from blender_addon.handlers.terrain_stratigraphy import pass_stratigraphy
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import pass_stratigraphy
 
     stack = _build_stack(heights="ramp")
     state = _build_state(stack, hints={"intrusions_enabled": False, "fold_enabled": False})
@@ -214,7 +214,7 @@ def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():
 
 
 def test_compute_snow_line_factor_ranges():
-    from blender_addon.handlers.terrain_glacial import compute_snow_line
+    from veilbreakers_terrain.handlers.terrain_glacial import compute_snow_line
 
     stack_low = _build_stack(heights="ramp")  # 0..100
     factor = compute_snow_line(stack_low, snow_line_altitude_m=50.0)
@@ -228,7 +228,7 @@ def test_compute_snow_line_factor_ranges():
 
 
 def test_carve_u_valley_produces_depression():
-    from blender_addon.handlers.terrain_glacial import carve_u_valley
+    from veilbreakers_terrain.handlers.terrain_glacial import carve_u_valley
 
     stack = _build_stack(tile_size=40, heights="flat")
     path = [(5.0, 20.0), (35.0, 20.0)]
@@ -242,7 +242,7 @@ def test_carve_u_valley_produces_depression():
 
 
 def test_scatter_moraines_deterministic():
-    from blender_addon.handlers.terrain_glacial import scatter_moraines
+    from veilbreakers_terrain.handlers.terrain_glacial import scatter_moraines
 
     stack = _build_stack(tile_size=40, heights="flat")
     path = [(5.0, 20.0), (35.0, 20.0)]
@@ -253,7 +253,7 @@ def test_scatter_moraines_deterministic():
 
 
 def test_pass_glacial_populates_snow_line():
-    from blender_addon.handlers.terrain_glacial import pass_glacial
+    from veilbreakers_terrain.handlers.terrain_glacial import pass_glacial
 
     stack = _build_stack(heights="ramp")
     state = _build_state(stack, hints={"snow_line_altitude_m": 50.0})
@@ -269,7 +269,7 @@ def test_pass_glacial_populates_snow_line():
 
 
 def test_apply_wind_erosion_changes_height():
-    from blender_addon.handlers.terrain_wind_erosion import apply_wind_erosion
+    from veilbreakers_terrain.handlers.terrain_wind_erosion import apply_wind_erosion
 
     stack = _build_stack(heights="bowl")
     delta = apply_wind_erosion(stack, prevailing_dir_rad=0.0, intensity=0.5)
@@ -278,7 +278,7 @@ def test_apply_wind_erosion_changes_height():
 
 
 def test_apply_wind_erosion_intensity_zero_noop():
-    from blender_addon.handlers.terrain_wind_erosion import apply_wind_erosion
+    from veilbreakers_terrain.handlers.terrain_wind_erosion import apply_wind_erosion
 
     stack = _build_stack(heights="bowl")
     delta = apply_wind_erosion(stack, prevailing_dir_rad=0.0, intensity=0.0)
@@ -286,7 +286,7 @@ def test_apply_wind_erosion_intensity_zero_noop():
 
 
 def test_apply_wind_erosion_does_not_wrap_opposite_edges():
-    from blender_addon.handlers.terrain_wind_erosion import apply_wind_erosion
+    from veilbreakers_terrain.handlers.terrain_wind_erosion import apply_wind_erosion
 
     stack = _build_stack(heights="flat")
     stack.height[:, 0] = 0.0
@@ -296,7 +296,7 @@ def test_apply_wind_erosion_does_not_wrap_opposite_edges():
 
 
 def test_generate_dunes_nonzero_and_deterministic():
-    from blender_addon.handlers.terrain_wind_erosion import generate_dunes
+    from veilbreakers_terrain.handlers.terrain_wind_erosion import generate_dunes
 
     stack = _build_stack(heights="flat")
     d1 = generate_dunes(stack, wind_dir=0.0, seed=7)
@@ -306,7 +306,7 @@ def test_generate_dunes_nonzero_and_deterministic():
 
 
 def test_pass_wind_erosion_runs():
-    from blender_addon.handlers.terrain_wind_erosion import pass_wind_erosion
+    from veilbreakers_terrain.handlers.terrain_wind_erosion import pass_wind_erosion
 
     stack = _build_stack(heights="bowl")
     state = _build_state(stack, hints={"wind_erosion_intensity": 0.2})
@@ -327,7 +327,7 @@ def test_pass_wind_erosion_runs():
 
 
 def test_compute_wave_energy_shape_and_localization():
-    from blender_addon.handlers.coastline import compute_wave_energy
+    from veilbreakers_terrain.handlers.coastline import compute_wave_energy
 
     stack = _build_stack(heights="ramp")  # 0..100
     energy = compute_wave_energy(
@@ -340,7 +340,7 @@ def test_compute_wave_energy_shape_and_localization():
 
 
 def test_detect_tidal_zones_populates_tidal():
-    from blender_addon.handlers.coastline import detect_tidal_zones
+    from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
 
     stack = _build_stack(heights="ramp")
     tidal = detect_tidal_zones(stack, sea_level_m=10.0, tidal_range_m=4.0)
@@ -351,7 +351,7 @@ def test_detect_tidal_zones_populates_tidal():
 
 
 def test_apply_coastal_erosion_returns_delta():
-    from blender_addon.handlers.coastline import apply_coastal_erosion
+    from veilbreakers_terrain.handlers.coastline import apply_coastal_erosion
 
     stack = _build_stack(heights="ramp")
     delta = apply_coastal_erosion(stack, sea_level_m=10.0)
@@ -361,7 +361,7 @@ def test_apply_coastal_erosion_returns_delta():
 
 
 def test_pass_coastline_populates_tidal():
-    from blender_addon.handlers.coastline import pass_coastline
+    from veilbreakers_terrain.handlers.coastline import pass_coastline
 
     stack = _build_stack(heights="ramp")
     state = _build_state(
@@ -380,7 +380,7 @@ def test_pass_coastline_populates_tidal():
 
 
 def test_karst_feature_validates_kind():
-    from blender_addon.handlers.terrain_karst import KarstFeature
+    from veilbreakers_terrain.handlers.terrain_karst import KarstFeature
 
     with pytest.raises(ValueError):
         KarstFeature("k1", "not_a_kind", (0, 0, 0), 1.0)
@@ -389,7 +389,7 @@ def test_karst_feature_validates_kind():
 
 
 def test_detect_karst_candidates_requires_hardness():
-    from blender_addon.handlers.terrain_karst import detect_karst_candidates
+    from veilbreakers_terrain.handlers.terrain_karst import detect_karst_candidates
 
     stack = _build_stack(heights="bowl")
     # No hardness populated → no features
@@ -397,11 +397,11 @@ def test_detect_karst_candidates_requires_hardness():
 
 
 def test_detect_and_carve_karst():
-    from blender_addon.handlers.terrain_karst import (
+    from veilbreakers_terrain.handlers.terrain_karst import (
         carve_karst_features,
         detect_karst_candidates,
     )
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
         compute_rock_hardness,
@@ -449,7 +449,7 @@ def test_detect_and_carve_karst():
 
 
 def test_pass_karst_runs_without_hardness():
-    from blender_addon.handlers.terrain_karst import pass_karst
+    from veilbreakers_terrain.handlers.terrain_karst import pass_karst
 
     stack = _build_stack(heights="bowl")
     state = _build_state(stack)
@@ -464,10 +464,10 @@ def test_pass_karst_runs_without_hardness():
 
 
 def test_validate_strata_consistency_smooth_passes():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_strata_consistency,
     )
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
         compute_strata_orientation,
@@ -486,7 +486,7 @@ def test_validate_strata_consistency_smooth_passes():
 
 
 def test_validate_strata_consistency_missing_channel():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_strata_consistency,
     )
 
@@ -496,7 +496,7 @@ def test_validate_strata_consistency_missing_channel():
 
 
 def test_validate_strahler_ordering_detects_jump():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_strahler_ordering,
     )
 
@@ -512,7 +512,7 @@ def test_validate_strahler_ordering_detects_jump():
 
 
 def test_validate_strahler_ordering_detects_uphill_order():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_strahler_ordering,
     )
 
@@ -526,7 +526,7 @@ def test_validate_strahler_ordering_detects_uphill_order():
 
 
 def test_validate_strahler_ordering_none_safe():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_strahler_ordering,
     )
 
@@ -534,7 +534,7 @@ def test_validate_strahler_ordering_none_safe():
 
 
 def test_validate_glacial_plausibility_below_treeline_fails():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_glacial_plausibility,
     )
 
@@ -547,7 +547,7 @@ def test_validate_glacial_plausibility_below_treeline_fails():
 
 
 def test_validate_glacial_plausibility_above_treeline_passes():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_glacial_plausibility,
     )
 
@@ -560,11 +560,11 @@ def test_validate_glacial_plausibility_above_treeline_passes():
 
 
 def test_validate_karst_plausibility_flags_hard_rock():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_karst_plausibility,
     )
-    from blender_addon.handlers.terrain_karst import KarstFeature
-    from blender_addon.handlers.terrain_stratigraphy import (
+    from veilbreakers_terrain.handlers.terrain_karst import KarstFeature
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
         StratigraphyStack,
         compute_rock_hardness,
@@ -588,7 +588,7 @@ def test_validate_karst_plausibility_flags_hard_rock():
 
 
 def test_register_bundle_i_passes_registers_all_five():
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         BUNDLE_I_PASSES,
         register_bundle_i_passes,
     )
@@ -609,7 +609,7 @@ def test_register_bundle_i_passes_registers_all_five():
 
 def test_bundle_i_does_not_modify_default_passes():
     """Ensure register_bundle_i_passes is independent of register_default_passes."""
-    from blender_addon.handlers.terrain_geology_validator import (
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
         register_bundle_i_passes,
     )
     from veilbreakers_terrain.handlers.terrain_pipeline import (
@@ -638,7 +638,7 @@ def test_bundle_i_does_not_modify_default_passes():
 
 
 def test_bundle_i_declares_full_stratigraphy_channel_contract():
-    from blender_addon.handlers.terrain_geology_validator import register_bundle_i_passes
+    from veilbreakers_terrain.handlers.terrain_geology_validator import register_bundle_i_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     prior = dict(TerrainPassController.PASS_REGISTRY)

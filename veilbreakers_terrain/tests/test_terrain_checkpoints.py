@@ -16,8 +16,8 @@ import pytest
 
 
 def _make_controller(tile_size=16, checkpoint_dir=None):
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         HeroFeatureSpec,
         ProtectedZoneSpec,
@@ -80,7 +80,7 @@ def _make_controller(tile_size=16, checkpoint_dir=None):
 
 
 def test_save_checkpoint_writes_file():
-    from blender_addon.handlers.terrain_checkpoints import save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -91,7 +91,7 @@ def test_save_checkpoint_writes_file():
 
 
 def test_save_checkpoint_with_label():
-    from blender_addon.handlers.terrain_checkpoints import save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -100,7 +100,7 @@ def test_save_checkpoint_with_label():
 
 
 def test_save_checkpoint_populates_unity_metadata():
-    from blender_addon.handlers.terrain_checkpoints import save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -117,7 +117,7 @@ def test_save_checkpoint_populates_unity_metadata():
 
 
 def test_rollback_last_checkpoint_restores_state():
-    from blender_addon.handlers.terrain_checkpoints import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import (
         rollback_last_checkpoint,
         save_checkpoint,
     )
@@ -134,7 +134,7 @@ def test_rollback_last_checkpoint_restores_state():
 
 
 def test_rollback_last_checkpoint_raises_on_empty():
-    from blender_addon.handlers.terrain_checkpoints import rollback_last_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import rollback_last_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -148,7 +148,7 @@ def test_rollback_last_checkpoint_raises_on_empty():
 
 
 def test_rollback_to_by_id():
-    from blender_addon.handlers.terrain_checkpoints import rollback_to, save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import rollback_to, save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -161,7 +161,7 @@ def test_rollback_to_by_id():
 
 
 def test_rollback_to_by_label():
-    from blender_addon.handlers.terrain_checkpoints import rollback_to, save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import rollback_to, save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -174,7 +174,7 @@ def test_rollback_to_by_label():
 
 
 def test_rollback_to_restores_viewport_vantage_snapshot():
-    from blender_addon.handlers.terrain_checkpoints import rollback_to, save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import rollback_to, save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -186,7 +186,7 @@ def test_rollback_to_restores_viewport_vantage_snapshot():
 
 
 def test_rollback_to_unknown_raises():
-    from blender_addon.handlers.terrain_checkpoints import rollback_to, save_checkpoint
+    from veilbreakers_terrain.handlers.terrain_checkpoints import rollback_to, save_checkpoint
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -201,7 +201,7 @@ def test_rollback_to_unknown_raises():
 
 
 def test_list_checkpoints_serialized_summary():
-    from blender_addon.handlers.terrain_checkpoints import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import (
         list_checkpoints,
         save_checkpoint,
     )
@@ -220,7 +220,7 @@ def test_list_checkpoints_serialized_summary():
 
 
 def test_list_checkpoints_empty():
-    from blender_addon.handlers.terrain_checkpoints import list_checkpoints
+    from veilbreakers_terrain.handlers.terrain_checkpoints import list_checkpoints
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)
@@ -233,7 +233,7 @@ def test_list_checkpoints_empty():
 
 
 def test_preset_save_and_restore_roundtrip():
-    from blender_addon.handlers.terrain_checkpoints import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import (
         restore_preset,
         save_preset,
     )
@@ -254,7 +254,7 @@ def test_preset_save_and_restore_roundtrip():
 
 
 def test_preset_preserves_protected_zones_and_hero_specs():
-    from blender_addon.handlers.terrain_checkpoints import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import (
         restore_preset,
         save_preset,
     )
@@ -277,7 +277,7 @@ def test_preset_preserves_protected_zones_and_hero_specs():
 
 
 def test_preset_json_is_valid():
-    from blender_addon.handlers.terrain_checkpoints import save_preset
+    from veilbreakers_terrain.handlers.terrain_checkpoints import save_preset
 
     with tempfile.TemporaryDirectory() as td:
         preset_dir = Path(td) / "presets"
@@ -296,8 +296,8 @@ def test_preset_json_is_valid():
 
 
 def test_autosave_adds_checkpoint_after_successful_pass():
-    from blender_addon.handlers.terrain_checkpoints import autosave_after_pass
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import autosave_after_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
@@ -325,8 +325,8 @@ def test_autosave_adds_checkpoint_after_successful_pass():
 
 
 def test_autosave_disable_restores_original_run_pass():
-    from blender_addon.handlers.terrain_checkpoints import autosave_after_pass
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_checkpoints import autosave_after_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
@@ -347,7 +347,7 @@ def test_autosave_disable_restores_original_run_pass():
 
 
 def test_autosave_idempotent_enable():
-    from blender_addon.handlers.terrain_checkpoints import autosave_after_pass
+    from veilbreakers_terrain.handlers.terrain_checkpoints import autosave_after_pass
 
     with tempfile.TemporaryDirectory() as td:
         controller, _ = _make_controller(checkpoint_dir=td)

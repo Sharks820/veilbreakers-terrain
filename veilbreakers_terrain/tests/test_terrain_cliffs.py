@@ -22,7 +22,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_pass_registry():
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     yield
@@ -39,8 +39,8 @@ def _build_cliff_state(tile_size: int = 48):
     This gives a single connected cliff region with high slope and
     clear lip geometry.
     """
-    from blender_addon.handlers.terrain_masks import compute_base_masks
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -86,8 +86,8 @@ def _build_cliff_state(tile_size: int = 48):
 
 def _build_two_cliff_state(tile_size: int = 48):
     """Two isolated high plateaus separated by low ground — two cliffs."""
-    from blender_addon.handlers.terrain_masks import compute_base_masks
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -135,7 +135,7 @@ def _build_two_cliff_state(tile_size: int = 48):
 
 
 def test_candidate_mask_respects_slope_threshold():
-    from blender_addon.handlers.terrain_cliffs import build_cliff_candidate_mask
+    from veilbreakers_terrain.handlers.terrain_cliffs import build_cliff_candidate_mask
 
     state = _build_cliff_state()
     low = build_cliff_candidate_mask(state.mask_stack, slope_threshold_deg=20.0)
@@ -146,7 +146,7 @@ def test_candidate_mask_respects_slope_threshold():
 
 
 def test_candidate_mask_excludes_hero_exclusion():
-    from blender_addon.handlers.terrain_cliffs import build_cliff_candidate_mask
+    from veilbreakers_terrain.handlers.terrain_cliffs import build_cliff_candidate_mask
 
     state = _build_cliff_state()
     # Exclude the upper half of the grid — should eliminate the cliff
@@ -158,7 +158,7 @@ def test_candidate_mask_excludes_hero_exclusion():
 
 
 def test_candidate_mask_drops_small_clusters():
-    from blender_addon.handlers.terrain_cliffs import build_cliff_candidate_mask
+    from veilbreakers_terrain.handlers.terrain_cliffs import build_cliff_candidate_mask
 
     state = _build_cliff_state()
     mask = build_cliff_candidate_mask(
@@ -175,7 +175,7 @@ def test_candidate_mask_drops_small_clusters():
 
 
 def test_carve_cliff_system_finds_single_cliff():
-    from blender_addon.handlers.terrain_cliffs import carve_cliff_system
+    from veilbreakers_terrain.handlers.terrain_cliffs import carve_cliff_system
 
     state = _build_cliff_state()
     cliffs = carve_cliff_system(state, region=None)
@@ -187,7 +187,7 @@ def test_carve_cliff_system_finds_single_cliff():
 
 
 def test_carve_cliff_system_separates_two_components():
-    from blender_addon.handlers.terrain_cliffs import carve_cliff_system
+    from veilbreakers_terrain.handlers.terrain_cliffs import carve_cliff_system
 
     state = _build_two_cliff_state()
     cliffs = carve_cliff_system(state, region=None, min_component_size=5)
@@ -200,7 +200,7 @@ def test_carve_cliff_system_separates_two_components():
 
 
 def test_carve_cliff_system_respects_max_cliff_count():
-    from blender_addon.handlers.terrain_cliffs import carve_cliff_system
+    from veilbreakers_terrain.handlers.terrain_cliffs import carve_cliff_system
 
     state = _build_two_cliff_state()
     cliffs = carve_cliff_system(
@@ -215,7 +215,7 @@ def test_carve_cliff_system_respects_max_cliff_count():
 
 
 def test_add_cliff_ledges_scales_with_span():
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         add_cliff_ledges,
         carve_cliff_system,
     )
@@ -230,7 +230,7 @@ def test_add_cliff_ledges_scales_with_span():
 
 
 def test_add_cliff_ledges_honors_explicit_count():
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         add_cliff_ledges,
         carve_cliff_system,
     )
@@ -248,7 +248,7 @@ def test_add_cliff_ledges_honors_explicit_count():
 
 
 def test_talus_field_disjoint_from_face_mask():
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         build_talus_field,
         carve_cliff_system,
     )
@@ -271,8 +271,8 @@ def test_talus_field_disjoint_from_face_mask():
 
 
 def test_pass_cliffs_populates_cliff_candidate_channel():
-    from blender_addon.handlers.terrain_cliffs import register_bundle_b_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_cliffs import register_bundle_b_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_passes()
     state = _build_cliff_state()
@@ -287,8 +287,8 @@ def test_pass_cliffs_populates_cliff_candidate_channel():
 
 
 def test_pass_cliffs_records_structure_side_effects():
-    from blender_addon.handlers.terrain_cliffs import register_bundle_b_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_cliffs import register_bundle_b_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_passes()
     state = _build_cliff_state()
@@ -300,8 +300,8 @@ def test_pass_cliffs_records_structure_side_effects():
 
 
 def test_pass_cliffs_is_deterministic():
-    from blender_addon.handlers.terrain_cliffs import register_bundle_b_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_cliffs import register_bundle_b_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_passes()
     state_a = _build_cliff_state()
@@ -323,7 +323,7 @@ def test_pass_cliffs_is_deterministic():
 
 
 def test_validate_cliff_readability_flags_small_face():
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         CliffStructure,
         validate_cliff_readability,
     )
@@ -343,7 +343,7 @@ def test_validate_cliff_readability_flags_small_face():
 
 
 def test_validate_cliff_readability_passes_for_real_cliff():
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         add_cliff_ledges,
         build_talus_field,
         carve_cliff_system,
@@ -361,7 +361,7 @@ def test_validate_cliff_readability_passes_for_real_cliff():
 
 
 def test_hero_mesh_insertion_records_intent():
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         carve_cliff_system,
         insert_hero_cliff_meshes,
     )
@@ -375,8 +375,8 @@ def test_hero_mesh_insertion_records_intent():
 
 
 def test_emit_overhang_meshes_publishes_mesh_layer_cache():
-    from blender_addon.handlers.terrain_cliffs import register_bundle_b_passes
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_cliffs import register_bundle_b_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     register_bundle_b_passes()
     state = _build_cliff_state()
@@ -388,7 +388,7 @@ def test_emit_overhang_meshes_publishes_mesh_layer_cache():
 
 
 def test_build_cliff_overhang_mesh_specs_uses_local_lip_heights():
-    from blender_addon.handlers.terrain_cliffs import _build_cliff_overhang_mesh_specs
+    from veilbreakers_terrain.handlers.terrain_cliffs import _build_cliff_overhang_mesh_specs
 
     state = _build_cliff_state()
     state.mask_stack.height[10, 12] = 14.0
@@ -430,8 +430,8 @@ def test_build_cliff_overhang_mesh_specs_uses_local_lip_heights():
 def test_strata_color_bands_visible_in_macro_color():
     """Per-cell strata palette is blended into macro_color when a
     stratigraphy cross-section is published on the stack."""
-    from blender_addon.handlers.terrain_macro_color import compute_macro_color
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_macro_color import compute_macro_color
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     # Build a simple height grid with two bands
     N = 32
@@ -477,7 +477,7 @@ def test_strata_color_bands_visible_in_macro_color():
 def test_cliff_silhouette_rejects_blobby():
     """A filled circular disc (maximally blobby) is rejected by
     validate_cliff_silhouette_shape."""
-    from blender_addon.handlers.terrain_materials_ext import (
+    from veilbreakers_terrain.handlers.terrain_materials_ext import (
         validate_cliff_silhouette_shape,
     )
 
@@ -513,7 +513,7 @@ def test_cliff_silhouette_rejects_blobby():
 def test_cliff_silhouette_rejects_uniform_face():
     """A cliff whose face cells all sit at nearly the same height fails
     the uniformity gate."""
-    from blender_addon.handlers.terrain_materials_ext import (
+    from veilbreakers_terrain.handlers.terrain_materials_ext import (
         validate_cliff_silhouette_shape,
     )
 
@@ -533,7 +533,7 @@ def test_talus_boulder_power_law_distribution():
     """Boulder radii produced by place_talus_boulders_power_law follow a
     Korcak power law: N(>r) ∝ r^-D with D≈2.3, so small boulders
     dominate the count."""
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         CliffStructure,
         _sample_korcak_radii,
     )
@@ -562,11 +562,11 @@ def test_talus_boulder_power_law_distribution():
 def test_talus_boulder_placement_gated_by_slope_trigger():
     """place_talus_boulders_power_law produces no boulders when the slope
     trigger (steep >60° within 10 cells of gentle <15°) is absent."""
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         CliffStructure,
         place_talus_boulders_power_law,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     N = 32
     heights = np.zeros((N, N), dtype=np.float64)
@@ -599,11 +599,11 @@ def test_talus_boulder_placement_gated_by_slope_trigger():
 
 def test_talus_boulder_placement_emits_species_tag():
     """When slope trigger is satisfied, placements carry species='talus_boulder'."""
-    from blender_addon.handlers.terrain_cliffs import (
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
         CliffStructure,
         place_talus_boulders_power_law,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     N = 48
     heights = np.zeros((N, N), dtype=np.float64)
@@ -656,8 +656,8 @@ def test_height_blend_weights_active_in_materials():
 def test_cave_opening_crosses_strata_flag():
     """validate_cave_opening_integration flags cave openings whose 2-cell
     ring touches > 2 distinct surface strata IDs."""
-    from blender_addon.handlers.terrain_caves import validate_cave_opening_integration
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_caves import validate_cave_opening_integration
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     N = 32
     heights = np.zeros((N, N), dtype=np.float64)

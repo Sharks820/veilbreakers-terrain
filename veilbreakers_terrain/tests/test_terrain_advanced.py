@@ -9,7 +9,7 @@ All pure-logic -- no Blender dependency.
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_advanced import (
+from veilbreakers_terrain.handlers.terrain_advanced import (
     apply_layer_operation,
     apply_stamp_to_heightmap,
     apply_thermal_erosion,

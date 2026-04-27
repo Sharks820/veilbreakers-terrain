@@ -18,7 +18,7 @@ import math
 import numpy as np
 import pytest
 
-from blender_addon.handlers.terrain_foliage_catalog import (
+from veilbreakers_terrain.handlers.terrain_foliage_catalog import (
     AssetManifest,
     EXPECTED_CATEGORIES,
     FOLIAGE_SPECIES_CATALOG,
@@ -31,7 +31,7 @@ from blender_addon.handlers.terrain_foliage_catalog import (
     species_for_biome,
     species_ids_by_category,
 )
-from blender_addon.handlers.environment_scatter import (
+from veilbreakers_terrain.handlers.environment_scatter import (
     _SPECIES_CONSTRAINTS,
     _scatter_pass,
 )
@@ -256,7 +256,7 @@ class TestWaterFoliageGating:
 
 class TestFoliageManifestIntegration:
     def test_unity_manifest_helper_emits_catalog(self):
-        from blender_addon.handlers.terrain_unity_export import (
+        from veilbreakers_terrain.handlers.terrain_unity_export import (
             _build_foliage_scatter_manifest,
         )
         out = _build_foliage_scatter_manifest()

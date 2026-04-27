@@ -390,7 +390,7 @@ def test_cave_opening_material_seam_integration() -> None:
     import numpy as np
 
     # Build a synthetic mask stack with a single cave opening at (10,10).
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rows, cols = 24, 24
     stack = TerrainMaskStack(
@@ -451,8 +451,8 @@ def test_cave_canyon_dual_exit_regression() -> None:
     # --- Direct regression of the helper -----------------------------------
     # Build a synthetic stack with cliffs on east + west of the cave midpoint
     # (canyon topology) and a long enough path to trip the depth heuristic.
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
-    from blender_addon.handlers.terrain_caves import CaveStructure, CaveArchetype, make_archetype_spec
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_caves import CaveStructure, CaveArchetype, make_archetype_spec
 
     rows, cols = 80, 80
     stack = TerrainMaskStack(

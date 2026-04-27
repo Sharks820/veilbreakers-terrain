@@ -20,7 +20,7 @@ import pytest
 
 
 def _make_stack(tile_size: int = 24, seed: int = 7):
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
     xs = np.linspace(0.0, 1.0, tile_size + 1)
@@ -58,7 +58,7 @@ def _attach_structural_masks(stack) -> None:
 
 
 def _build_state(tile_size: int = 24, seed: int = 7, structural: bool = True):
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainPipelineState,
@@ -93,7 +93,7 @@ def stack(state):
 
 
 def test_audio_zones_produces_int8_array(stack):
-    from blender_addon.handlers.terrain_audio_zones import compute_audio_reverb_zones
+    from veilbreakers_terrain.handlers.terrain_audio_zones import compute_audio_reverb_zones
 
     arr = compute_audio_reverb_zones(stack)
     assert arr.dtype == np.int8
@@ -101,7 +101,7 @@ def test_audio_zones_produces_int8_array(stack):
 
 
 def test_audio_zones_cave_overrides_open(stack):
-    from blender_addon.handlers.terrain_audio_zones import (
+    from veilbreakers_terrain.handlers.terrain_audio_zones import (
         AudioReverbClass,
         compute_audio_reverb_zones,
     )
@@ -114,7 +114,7 @@ def test_audio_zones_cave_overrides_open(stack):
 
 
 def test_audio_zones_water_sets_water_near(stack):
-    from blender_addon.handlers.terrain_audio_zones import (
+    from veilbreakers_terrain.handlers.terrain_audio_zones import (
         AudioReverbClass,
         compute_audio_reverb_zones,
     )
@@ -127,7 +127,7 @@ def test_audio_zones_water_sets_water_near(stack):
 
 
 def test_pass_audio_zones_populates_channel(state):
-    from blender_addon.handlers.terrain_audio_zones import pass_audio_zones
+    from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
 
     result = pass_audio_zones(state, None)
     assert result.status == "ok"
@@ -141,7 +141,7 @@ def test_pass_audio_zones_populates_channel(state):
 
 
 def test_wildlife_affinity_default_rules(stack):
-    from blender_addon.handlers.terrain_wildlife_zones import (
+    from veilbreakers_terrain.handlers.terrain_wildlife_zones import (
         DEFAULT_WILDLIFE_RULES,
         compute_wildlife_affinity,
     )
@@ -157,7 +157,7 @@ def test_wildlife_affinity_default_rules(stack):
 
 
 def test_wildlife_zones_writes_dict_channel(state):
-    from blender_addon.handlers.terrain_wildlife_zones import pass_wildlife_zones
+    from veilbreakers_terrain.handlers.terrain_wildlife_zones import pass_wildlife_zones
 
     result = pass_wildlife_zones(state, None)
     assert result.status == "ok"
@@ -166,7 +166,7 @@ def test_wildlife_zones_writes_dict_channel(state):
 
 
 def test_wildlife_exclusion_respects_hero_exclusion(stack):
-    from blender_addon.handlers.terrain_wildlife_zones import (
+    from veilbreakers_terrain.handlers.terrain_wildlife_zones import (
         SpeciesAffinityRule,
         compute_wildlife_affinity,
     )
@@ -190,7 +190,7 @@ def test_wildlife_exclusion_respects_hero_exclusion(stack):
 
 
 def test_gameplay_zones_returns_int32(stack):
-    from blender_addon.handlers.terrain_gameplay_zones import compute_gameplay_zones
+    from veilbreakers_terrain.handlers.terrain_gameplay_zones import compute_gameplay_zones
 
     zones = compute_gameplay_zones(stack)
     assert zones.dtype == np.int32
@@ -198,7 +198,7 @@ def test_gameplay_zones_returns_int32(stack):
 
 
 def test_gameplay_zones_puzzle_from_caves(stack):
-    from blender_addon.handlers.terrain_gameplay_zones import (
+    from veilbreakers_terrain.handlers.terrain_gameplay_zones import (
         GameplayZoneType,
         compute_gameplay_zones,
     )
@@ -211,7 +211,7 @@ def test_gameplay_zones_puzzle_from_caves(stack):
 
 
 def test_pass_gameplay_zones_populates(state):
-    from blender_addon.handlers.terrain_gameplay_zones import pass_gameplay_zones
+    from veilbreakers_terrain.handlers.terrain_gameplay_zones import pass_gameplay_zones
 
     result = pass_gameplay_zones(state, None)
     assert result.status == "ok"
@@ -225,7 +225,7 @@ def test_pass_gameplay_zones_populates(state):
 
 
 def test_wind_field_shape_and_dtype(stack):
-    from blender_addon.handlers.terrain_wind_field import compute_wind_field
+    from veilbreakers_terrain.handlers.terrain_wind_field import compute_wind_field
 
     field = compute_wind_field(stack, 0.5, 6.0)
     assert field.dtype == np.float32
@@ -233,7 +233,7 @@ def test_wind_field_shape_and_dtype(stack):
 
 
 def test_wind_field_faster_at_altitude(stack):
-    from blender_addon.handlers.terrain_wind_field import compute_wind_field
+    from veilbreakers_terrain.handlers.terrain_wind_field import compute_wind_field
 
     field = compute_wind_field(stack, 0.0, 5.0)
     speed = np.sqrt(field[..., 0] ** 2 + field[..., 1] ** 2)
@@ -247,7 +247,7 @@ def test_wind_field_faster_at_altitude(stack):
 
 
 def test_pass_wind_field_populates(state):
-    from blender_addon.handlers.terrain_wind_field import pass_wind_field
+    from veilbreakers_terrain.handlers.terrain_wind_field import pass_wind_field
 
     result = pass_wind_field(state, None)
     assert result.status == "ok"
@@ -261,7 +261,7 @@ def test_pass_wind_field_populates(state):
 
 
 def test_cloud_shadow_range(stack):
-    from blender_addon.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
 
     mask = compute_cloud_shadow_mask(stack, seed=42, cloud_density=0.5, cloud_scale_m=60.0)
     assert mask.dtype == np.float32
@@ -270,7 +270,7 @@ def test_cloud_shadow_range(stack):
 
 
 def test_cloud_shadow_determinism(stack):
-    from blender_addon.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
 
     a = compute_cloud_shadow_mask(stack, seed=123)
     b = compute_cloud_shadow_mask(stack, seed=123)
@@ -278,7 +278,7 @@ def test_cloud_shadow_determinism(stack):
 
 
 def test_pass_cloud_shadow_populates(state):
-    from blender_addon.handlers.terrain_cloud_shadow import pass_cloud_shadow
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import pass_cloud_shadow
 
     result = pass_cloud_shadow(state, None)
     assert result.status == "ok"
@@ -291,7 +291,7 @@ def test_pass_cloud_shadow_populates(state):
 
 
 def test_decal_kinds_produce_float32_in_unit_range(stack):
-    from blender_addon.handlers.terrain_decal_placement import (
+    from veilbreakers_terrain.handlers.terrain_decal_placement import (
         DecalKind,
         compute_decal_density,
     )
@@ -304,7 +304,7 @@ def test_decal_kinds_produce_float32_in_unit_range(stack):
 
 
 def test_pass_decals_fills_dict_channel(state):
-    from blender_addon.handlers.terrain_decal_placement import DecalKind, pass_decals
+    from veilbreakers_terrain.handlers.terrain_decal_placement import DecalKind, pass_decals
 
     result = pass_decals(state, None)
     assert result.status == "ok"
@@ -319,7 +319,7 @@ def test_pass_decals_fills_dict_channel(state):
 
 
 def test_navmesh_area_id_classification(stack):
-    from blender_addon.handlers.terrain_navmesh_export import (
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import (
         NAVMESH_SWIM,
         NAVMESH_WALKABLE,
         compute_navmesh_area_id,
@@ -335,7 +335,7 @@ def test_navmesh_area_id_classification(stack):
 
 
 def test_traversability_is_unit_range_float32(stack):
-    from blender_addon.handlers.terrain_navmesh_export import compute_traversability
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import compute_traversability
 
     trav = compute_traversability(stack)
     assert trav.dtype == np.float32
@@ -343,7 +343,7 @@ def test_traversability_is_unit_range_float32(stack):
 
 
 def test_pass_navmesh_produces_two_channels(state):
-    from blender_addon.handlers.terrain_navmesh_export import pass_navmesh
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import pass_navmesh
 
     result = pass_navmesh(state, None)
     assert result.status == "ok"
@@ -353,7 +353,7 @@ def test_pass_navmesh_produces_two_channels(state):
 
 
 def test_export_navmesh_json_writes_file(state):
-    from blender_addon.handlers.terrain_navmesh_export import export_navmesh_json
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import export_navmesh_json
 
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "navmesh.json"
@@ -372,7 +372,7 @@ def test_export_navmesh_json_writes_file(state):
 
 
 def test_ecotone_graph_empty_without_biome(stack):
-    from blender_addon.handlers.terrain_ecotone_graph import build_ecotone_graph
+    from veilbreakers_terrain.handlers.terrain_ecotone_graph import build_ecotone_graph
 
     graph = build_ecotone_graph(stack)
     assert graph["nodes"] == []
@@ -380,7 +380,7 @@ def test_ecotone_graph_empty_without_biome(stack):
 
 
 def test_ecotone_graph_with_biomes(stack):
-    from blender_addon.handlers.terrain_ecotone_graph import build_ecotone_graph
+    from veilbreakers_terrain.handlers.terrain_ecotone_graph import build_ecotone_graph
 
     biome = np.zeros(stack.height.shape, dtype=np.int32)
     biome[:, : stack.height.shape[1] // 2] = 1
@@ -395,7 +395,7 @@ def test_ecotone_graph_with_biomes(stack):
 
 
 def test_validate_ecotone_smoothness_flags_narrow(stack):
-    from blender_addon.handlers.terrain_ecotone_graph import validate_ecotone_smoothness
+    from veilbreakers_terrain.handlers.terrain_ecotone_graph import validate_ecotone_smoothness
 
     graph = {
         "cell_size_m": 2.0,
@@ -414,7 +414,7 @@ def test_validate_ecotone_smoothness_flags_narrow(stack):
 
 
 def test_pass_ecotones_runs_clean(state):
-    from blender_addon.handlers.terrain_ecotone_graph import pass_ecotones
+    from veilbreakers_terrain.handlers.terrain_ecotone_graph import pass_ecotones
 
     result = pass_ecotones(state, None)
     assert result.status == "ok"
@@ -429,14 +429,14 @@ def test_pass_ecotones_runs_clean(state):
 
 
 def test_unity_export_manifest_writes_files(state):
-    from blender_addon.handlers.terrain_audio_zones import pass_audio_zones
-    from blender_addon.handlers.terrain_cloud_shadow import pass_cloud_shadow
-    from blender_addon.handlers.terrain_decal_placement import pass_decals
-    from blender_addon.handlers.terrain_gameplay_zones import pass_gameplay_zones
-    from blender_addon.handlers.terrain_navmesh_export import pass_navmesh
-    from blender_addon.handlers.terrain_unity_export import export_unity_manifest
-    from blender_addon.handlers.terrain_wildlife_zones import pass_wildlife_zones
-    from blender_addon.handlers.terrain_wind_field import pass_wind_field
+    from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import pass_cloud_shadow
+    from veilbreakers_terrain.handlers.terrain_decal_placement import pass_decals
+    from veilbreakers_terrain.handlers.terrain_gameplay_zones import pass_gameplay_zones
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import pass_navmesh
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+    from veilbreakers_terrain.handlers.terrain_wildlife_zones import pass_wildlife_zones
+    from veilbreakers_terrain.handlers.terrain_wind_field import pass_wind_field
 
     for p in (
         pass_audio_zones,
@@ -471,9 +471,9 @@ def test_unity_export_manifest_writes_files(state):
 
 
 def test_unity_export_json_schemas(state):
-    from blender_addon.handlers.terrain_audio_zones import pass_audio_zones
-    from blender_addon.handlers.terrain_gameplay_zones import pass_gameplay_zones
-    from blender_addon.handlers.terrain_unity_export import export_unity_manifest
+    from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
+    from veilbreakers_terrain.handlers.terrain_gameplay_zones import pass_gameplay_zones
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     pass_audio_zones(state, None)
     pass_gameplay_zones(state, None)
@@ -495,7 +495,7 @@ def test_unity_export_json_schemas(state):
 
 
 def test_unity_export_decals_convert_to_y_up(state):
-    from blender_addon.handlers.terrain_unity_export import export_unity_manifest
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     decal = np.zeros_like(state.mask_stack.height, dtype=np.float32)
     decal[2, 3] = 1.0
@@ -514,7 +514,7 @@ def test_unity_export_decals_convert_to_y_up(state):
 
 
 def test_unity_export_heightmap_u16_quantized(state):
-    from blender_addon.handlers.terrain_unity_export import export_unity_manifest
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     with tempfile.TemporaryDirectory() as td:
         export_unity_manifest(state.mask_stack, Path(td))
@@ -526,7 +526,7 @@ def test_unity_export_heightmap_u16_quantized(state):
 
 
 def test_unity_export_writes_terrain_normals(state):
-    from blender_addon.handlers.terrain_unity_export import export_unity_manifest
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     with tempfile.TemporaryDirectory() as td:
         export_unity_manifest(state.mask_stack, Path(td))
@@ -541,7 +541,7 @@ def test_unity_export_writes_terrain_normals(state):
 
 
 def test_prepare_terrain_normals_pass_populates_channel(state):
-    from blender_addon.handlers.terrain_unity_export import pass_prepare_terrain_normals
+    from veilbreakers_terrain.handlers.terrain_unity_export import pass_prepare_terrain_normals
 
     result = pass_prepare_terrain_normals(state, None)
 
@@ -553,7 +553,7 @@ def test_prepare_terrain_normals_pass_populates_channel(state):
 
 
 def test_prepare_heightmap_raw_u16_pass_populates_channel(state):
-    from blender_addon.handlers.terrain_unity_export import pass_prepare_heightmap_raw_u16
+    from veilbreakers_terrain.handlers.terrain_unity_export import pass_prepare_heightmap_raw_u16
 
     result = pass_prepare_heightmap_raw_u16(state, None)
 
@@ -569,11 +569,11 @@ def test_prepare_heightmap_raw_u16_pass_populates_channel(state):
 
 
 def test_register_bundle_j_passes_lands_all_eight():
-    from blender_addon.handlers.terrain_bundle_j import (
+    from veilbreakers_terrain.handlers.terrain_bundle_j import (
         BUNDLE_J_PASSES,
         register_bundle_j_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -586,11 +586,11 @@ def test_register_bundle_j_passes_lands_all_eight():
 
 
 def test_bundle_j_passes_run_through_controller():
-    from blender_addon.handlers.terrain_bundle_j import (
+    from veilbreakers_terrain.handlers.terrain_bundle_j import (
         BUNDLE_J_PASSES,
         register_bundle_j_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -607,11 +607,11 @@ def test_bundle_j_passes_run_through_controller():
 
 def test_bundle_j_passes_do_not_require_scene_read():
     """Bundle J passes are read-only classification — no scene read needed."""
-    from blender_addon.handlers.terrain_bundle_j import (
+    from veilbreakers_terrain.handlers.terrain_bundle_j import (
         BUNDLE_J_PASSES,
         register_bundle_j_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     try:
@@ -628,8 +628,8 @@ def test_bundle_j_passes_do_not_require_scene_read():
 def test_bundle_j_does_not_touch_default_passes():
     """Ensure Bundle J registration does not clobber Bundle A passes when
     both are registered in sequence."""
-    from blender_addon.handlers.terrain_bundle_j import register_bundle_j_passes
-    from blender_addon.handlers.terrain_pipeline import (
+    from veilbreakers_terrain.handlers.terrain_bundle_j import register_bundle_j_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
     )
@@ -663,13 +663,13 @@ def test_bundle_j_does_not_touch_default_passes():
 
 def test_bundle_j_populates_unity_ready_channels(state):
     """Every Bundle J pass must populate at least one Unity-ready channel."""
-    from blender_addon.handlers.terrain_audio_zones import pass_audio_zones
-    from blender_addon.handlers.terrain_cloud_shadow import pass_cloud_shadow
-    from blender_addon.handlers.terrain_gameplay_zones import pass_gameplay_zones
-    from blender_addon.handlers.terrain_navmesh_export import pass_navmesh
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
-    from blender_addon.handlers.terrain_unity_export import pass_prepare_terrain_normals
-    from blender_addon.handlers.terrain_wind_field import pass_wind_field
+    from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import pass_cloud_shadow
+    from veilbreakers_terrain.handlers.terrain_gameplay_zones import pass_gameplay_zones
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import pass_navmesh
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_unity_export import pass_prepare_terrain_normals
+    from veilbreakers_terrain.handlers.terrain_wind_field import pass_wind_field
 
     unity_channels = set(TerrainMaskStack.UNITY_EXPORT_CHANNELS)
     checks = [
@@ -687,21 +687,21 @@ def test_bundle_j_populates_unity_ready_channels(state):
 
 
 def test_wildlife_affinity_populates_dict_channel_provenance(state):
-    from blender_addon.handlers.terrain_wildlife_zones import pass_wildlife_zones
+    from veilbreakers_terrain.handlers.terrain_wildlife_zones import pass_wildlife_zones
 
     pass_wildlife_zones(state, None)
     assert "wildlife_affinity" in state.mask_stack.populated_by_pass
 
 
 def test_decal_density_populates_dict_channel_provenance(state):
-    from blender_addon.handlers.terrain_decal_placement import pass_decals
+    from veilbreakers_terrain.handlers.terrain_decal_placement import pass_decals
 
     pass_decals(state, None)
     assert "decal_density" in state.mask_stack.populated_by_pass
 
 
 def test_audio_zones_metrics_contain_distribution(state):
-    from blender_addon.handlers.terrain_audio_zones import pass_audio_zones
+    from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
 
     result = pass_audio_zones(state, None)
     assert "class_distribution" in result.metrics
@@ -709,7 +709,7 @@ def test_audio_zones_metrics_contain_distribution(state):
 
 def test_unity_export_manifest_minimal_without_optional_channels():
     """Manifest export works even if only height is populated."""
-    from blender_addon.handlers.terrain_unity_export import export_unity_manifest
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     state = _build_state(structural=False)
     with tempfile.TemporaryDirectory() as td:

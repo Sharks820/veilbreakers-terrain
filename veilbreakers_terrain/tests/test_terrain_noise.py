@@ -19,7 +19,7 @@ class TestGenerateHeightmap:
 
     def test_returns_ndarray_correct_shape(self):
         """generate_heightmap returns ndarray of shape (height, width)."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 32, seed=42, terrain_type="mountains")
         assert isinstance(hmap, np.ndarray)
@@ -27,7 +27,7 @@ class TestGenerateHeightmap:
 
     def test_values_in_0_1_range(self):
         """All heightmap values are in [0, 1]."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         assert hmap.min() >= 0.0
@@ -35,7 +35,7 @@ class TestGenerateHeightmap:
 
     def test_deterministic_same_seed(self):
         """Same seed produces identical output."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h1 = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
@@ -43,7 +43,7 @@ class TestGenerateHeightmap:
 
     def test_different_seeds_differ(self):
         """Different seeds produce different output."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h1 = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, seed=99, terrain_type="mountains")
@@ -51,7 +51,7 @@ class TestGenerateHeightmap:
 
     def test_mountains_terrain_type(self):
         """Mountains terrain type produces valid heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         assert hmap.shape == (64, 64)
@@ -60,7 +60,7 @@ class TestGenerateHeightmap:
 
     def test_hills_terrain_type(self):
         """Hills terrain type produces valid heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="hills")
         assert hmap.shape == (64, 64)
@@ -69,7 +69,7 @@ class TestGenerateHeightmap:
 
     def test_plains_terrain_type(self):
         """Plains terrain type produces valid heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="plains")
         assert hmap.shape == (64, 64)
@@ -78,7 +78,7 @@ class TestGenerateHeightmap:
 
     def test_volcanic_terrain_type(self):
         """Volcanic terrain type produces valid heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="volcanic")
         assert hmap.shape == (64, 64)
@@ -87,7 +87,7 @@ class TestGenerateHeightmap:
 
     def test_canyon_terrain_type(self):
         """Canyon terrain type produces valid heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="canyon")
         assert hmap.shape == (64, 64)
@@ -96,7 +96,7 @@ class TestGenerateHeightmap:
 
     def test_cliffs_terrain_type(self):
         """Cliffs terrain type produces valid heightmap."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="cliffs")
         assert hmap.shape == (64, 64)
@@ -110,7 +110,7 @@ class TestGenerateHeightmap:
         stability.  IQR is more robust than std when a power curve
         (mountains) compresses the distribution tails.
         """
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         mountains = generate_heightmap(128, 128, seed=42, terrain_type="mountains")
         plains = generate_heightmap(128, 128, seed=42, terrain_type="plains")
@@ -132,7 +132,7 @@ class TestGenerateHeightmap:
         Canyon uses ridge subtraction to create valley-like patterns, which
         should produce a distinct height distribution.
         """
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         canyon = generate_heightmap(64, 64, seed=42, terrain_type="canyon")
         mountains = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
@@ -141,14 +141,14 @@ class TestGenerateHeightmap:
 
     def test_unknown_terrain_type_raises(self):
         """Unknown terrain_type raises ValueError."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         with pytest.raises(ValueError, match="terrain_type"):
             generate_heightmap(64, 64, seed=42, terrain_type="unknown_biome")
 
     def test_custom_octaves_override(self):
         """Custom octaves parameter overrides the preset above the AAA floor."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h_default = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         h_custom = generate_heightmap(
@@ -159,7 +159,7 @@ class TestGenerateHeightmap:
 
     def test_explicit_low_octaves_are_honored(self):
         """Explicit low octave overrides must not be silently clamped to the default stack."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h_oct3 = generate_heightmap(64, 64, seed=42, terrain_type="mountains", octaves=3)
         h_oct8 = generate_heightmap(64, 64, seed=42, terrain_type="mountains", octaves=8)
@@ -168,7 +168,7 @@ class TestGenerateHeightmap:
 
     def test_large_resolution_256(self):
         """256x256 heightmap generates correctly with vectorized path."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(256, 256, seed=42, terrain_type="mountains")
         assert hmap.shape == (256, 256)
@@ -177,7 +177,7 @@ class TestGenerateHeightmap:
 
     def test_non_square_heightmap(self):
         """Non-square heightmaps generate correctly."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(128, 64, seed=42, terrain_type="hills")
         assert hmap.shape == (64, 128)
@@ -186,7 +186,7 @@ class TestGenerateHeightmap:
 
     def test_mountains_normalize_false_preserves_signed_relief(self):
         """normalize=False should preserve negative mountain relief."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(
             64, 64, seed=42, terrain_type="mountains", normalize=False
@@ -196,7 +196,7 @@ class TestGenerateHeightmap:
 
     def test_cliffs_normalize_false_preserves_signed_relief(self):
         """normalize=False should preserve negative cliff relief."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(
             64, 64, seed=42, terrain_type="cliffs", normalize=False
@@ -215,13 +215,13 @@ class TestTerrainPresets:
 
     def test_has_eleven_terrain_types(self):
         """TERRAIN_PRESETS has the current 11 terrain types."""
-        from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
         assert len(TERRAIN_PRESETS) == 11
 
     def test_required_terrain_types_present(self):
         """All required terrain types are present."""
-        from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
         required = {
             "mountains",
@@ -240,21 +240,21 @@ class TestTerrainPresets:
 
     def test_each_preset_has_octaves(self):
         """Each preset has an 'octaves' key."""
-        from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
         for name, preset in TERRAIN_PRESETS.items():
             assert "octaves" in preset, f"{name} missing 'octaves'"
 
     def test_each_preset_has_persistence(self):
         """Each preset has a 'persistence' key."""
-        from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
         for name, preset in TERRAIN_PRESETS.items():
             assert "persistence" in preset, f"{name} missing 'persistence'"
 
     def test_each_preset_has_lacunarity(self):
         """Each preset has a 'lacunarity' key."""
-        from blender_addon.handlers._terrain_noise import TERRAIN_PRESETS
+        from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
         for name, preset in TERRAIN_PRESETS.items():
             assert "lacunarity" in preset, f"{name} missing 'lacunarity'"
@@ -270,7 +270,7 @@ class TestDomainWarpIntegration:
 
     def test_warp_produces_different_output(self):
         """generate_heightmap with warp_strength=0.5 differs from warp_strength=0.0."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h_no_warp = generate_heightmap(
             128, 128, seed=42, terrain_type="mountains", warp_strength=0.0
@@ -284,7 +284,7 @@ class TestDomainWarpIntegration:
 
     def test_warp_backward_compat(self):
         """warp_strength=0.0 produces identical output to no warp param (backward compat)."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h_default = generate_heightmap(128, 128, seed=42, terrain_type="mountains")
         h_explicit_zero = generate_heightmap(
@@ -297,7 +297,7 @@ class TestDomainWarpIntegration:
 
     def test_warp_produces_valid_terrain(self):
         """Warped heightmap has values in [0,1] with meaningful variation (std > 0.05)."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         hmap = generate_heightmap(
             128, 128, seed=42, terrain_type="mountains", warp_strength=0.5
@@ -310,7 +310,7 @@ class TestDomainWarpIntegration:
 
     def test_warp_scale_affects_output(self):
         """Different warp_scale values produce different results."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h1 = generate_heightmap(
             64, 64, seed=42, terrain_type="mountains",
@@ -326,7 +326,7 @@ class TestDomainWarpIntegration:
 
     def test_warp_deterministic(self):
         """Same seed + warp params produce identical output."""
-        from blender_addon.handlers._terrain_noise import generate_heightmap
+        from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         h1 = generate_heightmap(
             64, 64, seed=42, terrain_type="mountains",
@@ -349,7 +349,7 @@ class TestComputeSlopeMap:
 
     def test_returns_same_shape(self):
         """Slope map has same shape as input heightmap."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         hmap = np.random.RandomState(42).rand(32, 32)
         slope = compute_slope_map(hmap)
@@ -357,7 +357,7 @@ class TestComputeSlopeMap:
 
     def test_flat_terrain_low_slope(self):
         """A flat heightmap produces near-zero slopes."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         hmap = np.ones((32, 32)) * 0.5
         slope = compute_slope_map(hmap)
@@ -365,7 +365,7 @@ class TestComputeSlopeMap:
 
     def test_slope_values_in_valid_range(self):
         """All slope values are in [0, 90] degrees."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         hmap = np.random.RandomState(42).rand(32, 32)
         slope = compute_slope_map(hmap)
@@ -374,7 +374,7 @@ class TestComputeSlopeMap:
 
     def test_steep_terrain_has_high_slope(self):
         """Terrain with large height differences has high slope values."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         # Create a ramp: left side = 0, right side = 1
         hmap = np.tile(np.linspace(0, 1, 32), (32, 1))
@@ -384,7 +384,7 @@ class TestComputeSlopeMap:
 
     def test_larger_cell_size_reduces_world_space_slope(self):
         """The same height delta over larger cells should read as a gentler slope."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         hmap = np.tile(np.linspace(0, 1, 9), (9, 1))
         fine = compute_slope_map(hmap, cell_size=1.0)
@@ -393,7 +393,7 @@ class TestComputeSlopeMap:
 
     def test_axis_specific_cell_spacing_reduces_slope_on_that_axis(self):
         """Tuple spacing should let rectangular terrain use different row/col spacing."""
-        from blender_addon.handlers._terrain_noise import compute_slope_map
+        from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
 
         hmap = np.tile(np.linspace(0, 1, 9)[:, None], (1, 9))
         fine = compute_slope_map(hmap, cell_size=(1.0, 1.0))
@@ -411,7 +411,7 @@ class TestComputeBiomeAssignments:
 
     def test_returns_int_array_same_shape(self):
         """Biome assignments return integer array matching heightmap shape."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             compute_biome_assignments,
             compute_slope_map,
         )
@@ -424,7 +424,7 @@ class TestComputeBiomeAssignments:
 
     def test_all_values_are_valid_rule_indices(self):
         """All biome values are valid rule indices (0 to len(rules)-1)."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             BIOME_RULES,
             compute_biome_assignments,
             compute_slope_map,
@@ -438,7 +438,7 @@ class TestComputeBiomeAssignments:
 
     def test_snow_at_high_altitude(self):
         """High altitude, low slope cells should be assigned 'highland_scrub' (rule 2)."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             compute_biome_assignments,
         )
 
@@ -451,7 +451,7 @@ class TestComputeBiomeAssignments:
 
     def test_rock_at_steep_slope(self):
         """Steep slope cells should be assigned 'rock' (rule 1)."""
-        from blender_addon.handlers._terrain_noise import compute_biome_assignments
+        from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
 
         hmap = np.full((8, 8), 0.5)  # Mid altitude
         slope = np.full((8, 8), 50.0)  # Steep slope
@@ -461,7 +461,7 @@ class TestComputeBiomeAssignments:
 
     def test_dead_grass_at_mid_altitude(self):
         """Mid altitude, low slope -> dead_grass (rule 4)."""
-        from blender_addon.handlers._terrain_noise import compute_biome_assignments
+        from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
 
         hmap = np.full((8, 8), 0.5)  # Mid altitude
         slope = np.full((8, 8), 10.0)  # Low slope
@@ -471,7 +471,7 @@ class TestComputeBiomeAssignments:
 
     def test_mud_at_low_altitude(self):
         """Low altitude, low slope -> mud (rule 6)."""
-        from blender_addon.handlers._terrain_noise import compute_biome_assignments
+        from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
 
         hmap = np.full((8, 8), 0.1)  # Low altitude
         slope = np.full((8, 8), 5.0)  # Low slope
@@ -481,7 +481,7 @@ class TestComputeBiomeAssignments:
 
     def test_custom_biome_rules(self):
         """Custom biome rules override defaults."""
-        from blender_addon.handlers._terrain_noise import compute_biome_assignments
+        from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
 
         rules = [
             {"name": "water", "min_alt": 0.0, "max_alt": 0.3},
@@ -506,7 +506,7 @@ class TestCarveRiverPath:
 
     def test_returns_path_and_heightmap(self):
         """Returns a tuple of (path, modified_heightmap)."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, result = carve_river_path(hmap, source=(0, 16), dest=(31, 16))
@@ -516,7 +516,7 @@ class TestCarveRiverPath:
 
     def test_path_is_connected(self):
         """Path forms a connected sequence of adjacent cells."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, _ = carve_river_path(hmap, source=(0, 16), dest=(31, 16))
@@ -530,7 +530,7 @@ class TestCarveRiverPath:
 
     def test_path_starts_at_source(self):
         """Path starts at the source coordinate."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, _ = carve_river_path(hmap, source=(0, 16), dest=(31, 16))
@@ -538,7 +538,7 @@ class TestCarveRiverPath:
 
     def test_path_ends_at_dest(self):
         """Path ends at the destination coordinate."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.random.RandomState(42).rand(32, 32)
         path, _ = carve_river_path(hmap, source=(0, 16), dest=(31, 16))
@@ -546,7 +546,7 @@ class TestCarveRiverPath:
 
     def test_carving_lowers_heightmap(self):
         """River carving reduces heightmap values along the path."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.full((32, 32), 0.5)
         path, result = carve_river_path(
@@ -562,7 +562,7 @@ class TestCarveRiverPath:
 
     def test_result_values_in_bounds(self):
         """Carved heightmap values stay in [0, 1]."""
-        from blender_addon.handlers._terrain_noise import carve_river_path
+        from veilbreakers_terrain.handlers._terrain_noise import carve_river_path
 
         hmap = np.random.RandomState(42).rand(32, 32)
         _, result = carve_river_path(hmap, source=(0, 16), dest=(31, 16))
@@ -581,7 +581,7 @@ class TestGenerateRoadPathGrid:
 
     def test_returns_path_and_heightmap(self):
         """Returns a tuple of (path, modified_heightmap)."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             generate_road_path_grid_legacy as generate_road_path_grid,
         )
 
@@ -594,7 +594,7 @@ class TestGenerateRoadPathGrid:
 
     def test_path_is_connected(self):
         """Road path forms a connected sequence of adjacent cells."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             generate_road_path_grid_legacy as generate_road_path_grid,
         )
 
@@ -610,7 +610,7 @@ class TestGenerateRoadPathGrid:
 
     def test_road_flattens_terrain(self):
         """Road grading reduces height variation along the path."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             generate_road_path_grid_legacy as generate_road_path_grid,
         )
 
@@ -629,7 +629,7 @@ class TestGenerateRoadPathGrid:
 
     def test_result_values_in_bounds(self):
         """Road-graded heightmap values stay in [0, 1]."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             generate_road_path_grid_legacy as generate_road_path_grid,
         )
 
@@ -642,7 +642,7 @@ class TestGenerateRoadPathGrid:
 
     def test_multi_waypoint_road(self):
         """Road with multiple waypoints connects all segments."""
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             generate_road_path_grid_legacy as generate_road_path_grid,
         )
 
@@ -665,7 +665,7 @@ class TestGenerateRoadPathGrid:
         one segment or two — a drifting implementation would show higher error
         on the multi-segment road.
         """
-        from blender_addon.handlers._terrain_noise import (
+        from veilbreakers_terrain.handlers._terrain_noise import (
             generate_road_path_grid_legacy as generate_road_path_grid,
         )
 
