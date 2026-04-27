@@ -5,7 +5,7 @@ memory files into enforceable callable guards:
   - Z-up enforcement (feedback_blender_z_up.md)
   - Screenshot size cap (feedback_screenshot_max_size.md): HARD CAP 507
   - Boolean op dense mesh guard (feedback_blender_crash_avoidance.md): 60k vert
-  - Tripo GLB batch serialization (feedback_tripo_import_one_at_a_time.md)
+  - GLB/GLTF batch import serialization
 
 See Addendum 1.A.6 for the authoritative spec.
 """
@@ -329,14 +329,14 @@ def recommend_boolean_solver(
 
 
 # ---------------------------------------------------------------------------
-# Tripo GLB import serialization
+# GLB/GLTF import serialization
 # ---------------------------------------------------------------------------
 
-_TRIPO_IMPORT_LOCK = threading.Lock()
-_TRIPO_IMPORT_LOG: List[Path] = []
+_GLTF_IMPORT_LOCK = threading.Lock()
+_GLTF_IMPORT_LOG: List[Path] = []
 
 
-def import_tripo_glb_serialized(
+def import_gltf_serialized(
     glb_paths: Sequence[Path],
     *,
     require_exists: bool = True,
@@ -347,7 +347,7 @@ def import_tripo_glb_serialized(
       1. Path must exist on disk when ``require_exists=True`` (default).
       2. Path must end in ``.glb`` or ``.gltf`` — anything else is rejected.
       3. Exactly one import is in flight at any time, via a process-wide
-         lock (``_TRIPO_IMPORT_LOCK``).
+         lock (``_GLTF_IMPORT_LOCK``).
 
     Real Blender would call ``bpy.ops.import_scene.gltf(filepath=...)``
     inside the with-block. Headless mode records the serialization order
@@ -359,26 +359,26 @@ def import_tripo_glb_serialized(
         suffix = path.suffix.lower()
         if suffix not in (".glb", ".gltf"):
             raise ValueError(
-                f"import_tripo_glb_serialized: unsupported suffix {suffix!r} "
+                f"import_gltf_serialized: unsupported suffix {suffix!r} "
                 f"for {path!r}; expected .glb or .gltf"
             )
         if require_exists and not path.exists():
             raise FileNotFoundError(
-                f"import_tripo_glb_serialized: missing file {path!r}"
+                f"import_gltf_serialized: missing file {path!r}"
             )
-        with _TRIPO_IMPORT_LOCK:
+        with _GLTF_IMPORT_LOCK:
             out.append(path)
-            _TRIPO_IMPORT_LOG.append(path)
+            _GLTF_IMPORT_LOG.append(path)
     return out
 
 
-def get_tripo_import_log() -> List[Path]:
+def get_gltf_import_log() -> List[Path]:
     """Test helper — returns a copy of the serialization log."""
-    return list(_TRIPO_IMPORT_LOG)
+    return list(_GLTF_IMPORT_LOG)
 
 
-def clear_tripo_import_log() -> None:
-    _TRIPO_IMPORT_LOG.clear()
+def clear_gltf_import_log() -> None:
+    _GLTF_IMPORT_LOG.clear()
 
 
 __all__ = [
@@ -395,7 +395,7 @@ __all__ = [
     "assert_boolean_safe",
     "decimate_to_safe_count",
     "recommend_boolean_solver",
-    "import_tripo_glb_serialized",
-    "get_tripo_import_log",
-    "clear_tripo_import_log",
+    "import_gltf_serialized",
+    "get_gltf_import_log",
+    "clear_gltf_import_log",
 ]

@@ -53,22 +53,22 @@ def _build_foliage_scatter_manifest() -> Dict[str, Any]:
         a Terrain Detail slot or Foliage Mode prototype for each entry.
       - ``categories_covered``: flat list, used by CI to guarantee we
         never regress the 14-category AAA coverage bar.
-      - ``tripo_assets_required``: species_ids flagged for Phase-I Tripo
-        generation — the Unity project can fall back to a placeholder
-        prefab until the authored asset lands.
+      - ``external_model_assets_required``: species_ids flagged for external
+        model generation or art-authoring — the Unity project can fall back
+        to a placeholder prefab until the authored asset lands.
     """
     try:
         from .terrain_foliage_catalog import (
             manifest_entries,
             categories_covered,
-            tripo_assets_required,
+            external_model_assets_required,
         )
     except Exception:  # pragma: no cover - catalog should always import
-        return {"species": {}, "categories_covered": [], "tripo_assets_required": []}
+        return {"species": {}, "categories_covered": [], "external_model_assets_required": []}
     return {
         "species": manifest_entries(),
         "categories_covered": sorted(categories_covered()),
-        "tripo_assets_required": list(tripo_assets_required()),
+        "external_model_assets_required": list(external_model_assets_required()),
     }
 
 

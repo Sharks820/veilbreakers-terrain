@@ -22,7 +22,11 @@ import math
 from typing import List, Set, Tuple
 
 import numpy as np
-from scipy.sparse import csr_matrix
+
+try:  # Blender add-on registration must survive environments without SciPy.
+    from scipy.sparse import csr_matrix as _csr_matrix
+except ModuleNotFoundError:  # pragma: no cover - exercised via import-hook test
+    _csr_matrix = None  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -45,12 +49,22 @@ def _build_adjacency(
     return neighbors
 
 
-def _build_laplacian(n: int, neighbors: List[Set[int]]) -> csr_matrix:
+def _build_laplacian(n: int, neighbors: List[Set[int]]):
     """Build normalised graph Laplacian L = D^{-1} A - I as a sparse matrix.
 
     Multiplying verts by L gives (avg_neighbor - vert) per row, so the
     Laplacian step becomes: new_verts = verts + factor * (L @ verts).
     """
+    if _csr_matrix is None:
+        L = np.zeros((n, n), dtype=np.float64)
+        for i, nb in enumerate(neighbors):
+            if nb:
+                w = 1.0 / len(nb)
+                for j in nb:
+                    L[i, j] = w
+            L[i, i] -= 1.0
+        return L
+
     rows, cols, data = [], [], []
     for i, nb in enumerate(neighbors):
         if not nb:
@@ -60,8 +74,8 @@ def _build_laplacian(n: int, neighbors: List[Set[int]]) -> csr_matrix:
             rows.append(i)
             cols.append(j)
             data.append(w)
-    A = csr_matrix((data, (rows, cols)), shape=(n, n), dtype=np.float64)
-    identity = csr_matrix(np.eye(n, dtype=np.float64))
+    A = _csr_matrix((data, (rows, cols)), shape=(n, n), dtype=np.float64)
+    identity = _csr_matrix(np.eye(n, dtype=np.float64))
     return A - identity
 
 
@@ -181,7 +195,7 @@ def _build_boundary_vertex_mask(
 
 def _laplacian_pass(
     current: np.ndarray,
-    L: csr_matrix,
+    L,
     factor: float,
     fixed_mask: np.ndarray,
 ) -> np.ndarray:

@@ -37,6 +37,19 @@ _LOC_HANDLERS: Dict[str, str] = {
     "cliff_face": "env_generate_cliff_face",
     "swamp": "env_generate_swamp_terrain",
     "world_map": "world_generate_world_map",
+    "terrain": "env_generate_terrain",
+    "terrain_tile": "env_generate_terrain_tile",
+    "world_terrain": "env_generate_world_terrain",
+    "multi_biome_world": "env_generate_multi_biome_world",
+    "terrain_stitch_edges": "env_stitch_terrain_edges",
+    "terrain_paint": "env_paint_terrain",
+    "river_carve": "env_carve_river",
+    "water_basin_carve": "env_carve_water_basin",
+    "water_create": "env_create_water",
+    "heightmap_export": "env_export_heightmap",
+    "road_generate": "env_generate_road",
+    "cave_entrance": "env_create_cave_entrance",
+    "probe_placements": "env_compute_probe_placements",
     # ------------------------------------------------------------------
     # Terrain advanced edit ops
     # ------------------------------------------------------------------
@@ -58,6 +71,13 @@ _LOC_HANDLERS: Dict[str, str] = {
     "terrain_lods": "terrain_generate_lods",
     "terrain_biome_setup": "terrain_setup_biome",
     "material_procedural": "material_create_procedural",
+    "quality_profile_load": "terrain_load_quality_profile",
+    "quality_profile_list": "terrain_list_quality_profiles",
+    "quality_profile_apply": "terrain_apply_quality_profile",
+    "scatter_vegetation": "scatter_vegetation",
+    "scatter_biome_vegetation": "scatter_biome_vegetation",
+    "scatter_props": "scatter_props",
+    "scatter_breakable": "scatter_create_breakable",
     # ------------------------------------------------------------------
     # Mesh operations
     # ------------------------------------------------------------------
@@ -163,13 +183,6 @@ _LOC_HANDLERS: Dict[str, str] = {
     "gn_dump": "blender_geometry_nodes_dump",
     "addon_enable": "blender_addon_enable",
     "addon_disable": "blender_addon_disable",
-    # ------------------------------------------------------------------
-    # Tripo Studio — AI-powered 3D asset generation
-    # ------------------------------------------------------------------
-    "tripo_generate": "tripo_generate_asset",
-    "tripo_generate_image": "tripo_generate_from_image",
-    "tripo_balance": "tripo_balance",
-    "tripo_scatter": "tripo_scatter_catalog",
 }
 
 

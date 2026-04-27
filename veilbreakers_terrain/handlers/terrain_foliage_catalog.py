@@ -58,8 +58,10 @@ this dict by ``species_id``.  Fields:
     biome_mask              set of biome keys that accept this species;
                              empty set means "all biomes".
     unity_asset_path        manifest path emitted to Unity importer.
-    requires_tripo_asset    True when no authored/procedural mesh exists
-                             yet — Phase I agent must generate a Tripo prop.
+    requires_external_model_asset
+                             True when no authored/procedural mesh exists
+                             yet, so a future external model provider must
+                             supply the asset.
 
 Keep this file dependency-free (stdlib only).  The scatter module and the
 unity export module both import ``FOLIAGE_SPECIES_CATALOG`` — cyclic
@@ -73,6 +75,7 @@ import logging
 import math
 import random
 import threading
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
@@ -129,7 +132,7 @@ class SpeciesSpec:
     lod_viewer_distance_m: float
     biome_mask: FrozenSet[str]
     unity_asset_path: str
-    requires_tripo_asset: bool = False
+    requires_external_model_asset: bool = False
     notes: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -149,7 +152,7 @@ class SpeciesSpec:
             "lod_viewer_distance_m": float(self.lod_viewer_distance_m),
             "biome_mask": sorted(self.biome_mask),
             "unity_asset_path": self.unity_asset_path,
-            "requires_tripo_asset": bool(self.requires_tripo_asset),
+            "requires_external_model_asset": bool(self.requires_external_model_asset),
             "notes": self.notes,
         }
 
@@ -302,8 +305,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=500.0,
         biome_mask=_ALL_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Rocks/HeroBoulder.prefab",
-        requires_tripo_asset=True,
-        notes="Hand-placed-feel landmark boulder; Phase I Tripo prop.",
+        requires_external_model_asset=True,
+        notes="Hand-placed-feel landmark boulder; external hero prop required.",
     ),
 
     # ---- 4. Moss ---------------------------------------------------------
@@ -360,8 +363,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=60.0,
         biome_mask=_WET_BIOMES | {"dark_forest"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Vines/VineHanging.prefab",
-        requires_tripo_asset=True,
-        notes="Cliff-hanging vine cluster; needs Tripo alpha-card prop.",
+        requires_external_model_asset=True,
+        notes="Cliff-hanging vine cluster; external alpha-card prop required.",
     ),
     "vine_climbing": SpeciesSpec(
         species_id="vine_climbing",
@@ -596,8 +599,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=90.0,
         biome_mask=frozenset({"grassy_plains", "prairie", "forest"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Fences/FenceWood.prefab",
-        requires_tripo_asset=True,
-        notes="Wooden fence segment; Phase I Tripo prop (2m modular).",
+        requires_external_model_asset=True,
+        notes="Wooden fence segment; external 2 m modular prop required.",
     ),
     "fence_stone": SpeciesSpec(
         species_id="fence_stone",
@@ -611,8 +614,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=120.0,
         biome_mask=frozenset({"mountain", "grassy_plains", "prairie", "dead"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Fences/FenceStone.prefab",
-        requires_tripo_asset=True,
-        notes="Stone wall segment; Phase I Tripo prop (2m modular).",
+        requires_external_model_asset=True,
+        notes="Stone wall segment; external 2 m modular prop required.",
     ),
 
     # ---- 12. Signs (waypoint readability) --------------------------------
@@ -628,8 +631,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=100.0,
         biome_mask=_ALL_BIOMES - {"corrupted_wasteland"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Signs/SignWooden.prefab",
-        requires_tripo_asset=True,
-        notes="Crossroads wooden sign; Phase I Tripo prop.",
+        requires_external_model_asset=True,
+        notes="Crossroads wooden sign; external prop required.",
     ),
     "sign_stone_waypoint": SpeciesSpec(
         species_id="sign_stone_waypoint",
@@ -643,8 +646,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=140.0,
         biome_mask=_ALL_BIOMES - {"corrupted_wasteland"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Signs/SignStoneWaypoint.prefab",
-        requires_tripo_asset=True,
-        notes="Stone waypoint marker; Phase I Tripo prop.",
+        requires_external_model_asset=True,
+        notes="Stone waypoint marker; external prop required.",
     ),
 
     # ---- 13. Textured walkways -------------------------------------------
@@ -687,8 +690,8 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         lod_viewer_distance_m=70.0,
         biome_mask=frozenset({"swamp", "forest", "dark_forest"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Walkways/PlankWalkway.prefab",
-        requires_tripo_asset=True,
-        notes="Plank boardwalk over swamp water; Phase I Tripo prop.",
+        requires_external_model_asset=True,
+        notes="Plank boardwalk over swamp water; external prop required.",
     ),
 
     # ---- 14. Accent foliage ---------------------------------------------
@@ -773,15 +776,16 @@ def species_for_biome(biome: str) -> Tuple[SpeciesSpec, ...]:
     )
 
 
-def tripo_assets_required() -> Tuple[str, ...]:
-    """Species IDs flagged as needing a Tripo-generated asset (Phase I).
+def external_model_assets_required() -> Tuple[str, ...]:
+    """Species IDs flagged as needing an externally authored model asset.
 
-    This is the handoff list for the Phase I Tripo-asset agent.
+    This is the provider-neutral handoff list for the model-generation or
+    asset-authoring pipeline selected later.
     """
     return tuple(
         spec.species_id
         for spec in FOLIAGE_SPECIES_CATALOG.values()
-        if spec.requires_tripo_asset
+        if spec.requires_external_model_asset
     )
 
 
@@ -837,18 +841,18 @@ SPECIES_CONSTRAINTS_FROM_CATALOG: Dict[str, Dict[str, float]] = _derive_species_
 
 
 # ---------------------------------------------------------------------------
-# Tripo asset manifest binding (Phase I).
+# External model asset manifest binding.
 # ---------------------------------------------------------------------------
 #
-# The Phase I Tripo ingest pipeline writes ``assets/foliage/catalog.json``.
+# The selected model-asset pipeline writes ``assets/foliage/catalog.json``.
 # Each entry carries {asset_id, category, display_category, scatter_hint,
 # lods:[{path, level, tri_count, vert_count, is_billboard}], bbox, pivot}.
 # This section binds those ingested assets to the scatter species table
 # above so the scatter pipeline can resolve a species to a concrete mesh.
 
-# Species -> Tripo-ingest category priority list.  First category with any
+# Species -> asset category priority list.  First category with any
 # ingested asset wins; category-to-fallback rules live below.
-SPECIES_TRIPO_CATEGORIES: Dict[str, Tuple[str, ...]] = {
+SPECIES_ASSET_CATEGORIES: Dict[str, Tuple[str, ...]] = {
     "grass_tall":            ("grass",),
     "grass_short":           ("grass",),
     "grass_dry":             ("grass",),
@@ -892,9 +896,9 @@ SPECIES_TRIPO_CATEGORIES: Dict[str, Tuple[str, ...]] = {
 
 
 # Minimal built-in stub so callers can still resolve a species before any
-# Tripo asset has been ingested.  The scatter engine treats ``fallback: True``
+# external asset has been ingested.  The scatter engine treats ``fallback: True``
 # as "use the legacy procedural mesh".
-_TRIPO_FALLBACK_ENTRIES: Dict[str, Dict[str, Any]] = {
+_ASSET_FALLBACK_ENTRIES: Dict[str, Dict[str, Any]] = {
     "_fallback_grass": {
         "asset_id": "_fallback_grass",
         "category": "grass",
@@ -960,11 +964,11 @@ def default_asset_catalog_path() -> Path:
     return Path(__file__).resolve().parents[2] / "assets" / "foliage" / "catalog.json"
 
 
-class TripoAssetManifest:
+class AssetManifest:
     """Thread-safe loader for ``assets/foliage/catalog.json``.
 
     Reloads lazily whenever the file mtime changes so long-running Blender
-    sessions pick up new Tripo ingests without restart.
+    sessions pick up newly ingested model assets without restart.
 
     The manifest is intentionally separate from ``FOLIAGE_SPECIES_CATALOG``
     so tests can substitute an in-memory stub while leaving the species
@@ -978,7 +982,7 @@ class TripoAssetManifest:
         overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         self._path = path if path is not None else default_asset_catalog_path()
-        self._overrides = dict(overrides) if overrides else {}
+        self._overrides = deepcopy(overrides) if overrides else {}
         self._lock = threading.RLock()
         self._mtime = 0.0
         self._loaded = False
@@ -1007,7 +1011,7 @@ class TripoAssetManifest:
                         if isinstance(entry, dict):
                             assets[str(aid)] = entry
             except (OSError, json.JSONDecodeError) as exc:
-                _LOG.warning("Tripo manifest load failed (%s): %s", self._path, exc)
+                _LOG.warning("Asset manifest load failed (%s): %s", self._path, exc)
         assets.update(self._overrides)
 
         by_cat: Dict[str, List[str]] = {}
@@ -1036,18 +1040,19 @@ class TripoAssetManifest:
     def get_asset(self, asset_id: str) -> Optional[Dict[str, Any]]:
         self._maybe_reload()
         with self._lock:
-            return self._assets.get(asset_id) or _TRIPO_FALLBACK_ENTRIES.get(asset_id)
+            entry = self._assets.get(asset_id) or _ASSET_FALLBACK_ENTRIES.get(asset_id)
+            return deepcopy(entry) if entry is not None else None
 
     def assets_for_category(self, category: str) -> List[Dict[str, Any]]:
         self._maybe_reload()
         with self._lock:
             ids = list(self._by_category.get(category, ()))
-            return [self._assets[i] for i in ids if i in self._assets]
+            return [deepcopy(self._assets[i]) for i in ids if i in self._assets]
 
     def assets_for_species(self, species_id: str) -> List[Dict[str, Any]]:
-        """Every ingested asset bound to *species_id* via SPECIES_TRIPO_CATEGORIES."""
+        """Every ingested asset bound to *species_id* via SPECIES_ASSET_CATEGORIES."""
         out: List[Dict[str, Any]] = []
-        for cat in SPECIES_TRIPO_CATEGORIES.get(species_id, ()):
+        for cat in SPECIES_ASSET_CATEGORIES.get(species_id, ()):
             out.extend(self.assets_for_category(cat))
         return out
 
@@ -1061,12 +1066,12 @@ class TripoAssetManifest:
         rng = rng or random
         entries = self.assets_for_species(species_id)
         if entries:
-            return rng.choice(entries)
-        for cat in SPECIES_TRIPO_CATEGORIES.get(species_id, ()):
+            return deepcopy(rng.choice(entries))
+        for cat in SPECIES_ASSET_CATEGORIES.get(species_id, ()):
             fb_id = _CATEGORY_FALLBACK.get(cat)
-            if fb_id and fb_id in _TRIPO_FALLBACK_ENTRIES:
-                return dict(_TRIPO_FALLBACK_ENTRIES[fb_id])
-        return dict(_TRIPO_FALLBACK_ENTRIES["_fallback_prop"])
+            if fb_id and fb_id in _ASSET_FALLBACK_ENTRIES:
+                return deepcopy(_ASSET_FALLBACK_ENTRIES[fb_id])
+        return deepcopy(_ASSET_FALLBACK_ENTRIES["_fallback_prop"])
 
     def lod_paths(self, asset_id: str) -> List[str]:
         entry = self.get_asset(asset_id)
@@ -1082,8 +1087,8 @@ class TripoAssetManifest:
         self._maybe_reload()
         with self._lock:
             bound_species = sum(
-                1 for s in SPECIES_TRIPO_CATEGORIES
-                if any(self._by_category.get(c) for c in SPECIES_TRIPO_CATEGORIES[s])
+                1 for s in SPECIES_ASSET_CATEGORIES
+                if any(self._by_category.get(c) for c in SPECIES_ASSET_CATEGORIES[s])
             )
             return {
                 "path": str(self._path),
@@ -1091,37 +1096,37 @@ class TripoAssetManifest:
                 "category_count": len(self._by_category),
                 "categories": {k: len(v) for k, v in sorted(self._by_category.items())},
                 "species_bound": bound_species,
-                "species_total": len(SPECIES_TRIPO_CATEGORIES),
+                "species_total": len(SPECIES_ASSET_CATEGORIES),
             }
 
 
-_DEFAULT_MANIFEST: Optional[TripoAssetManifest] = None
+_DEFAULT_MANIFEST: Optional[AssetManifest] = None
 _DEFAULT_MANIFEST_LOCK = threading.Lock()
 
 
-def get_default_asset_manifest() -> TripoAssetManifest:
-    """Return the module-level Tripo asset manifest, constructing it on demand."""
+def get_default_asset_manifest() -> AssetManifest:
+    """Return the module-level asset manifest, constructing it on demand."""
     global _DEFAULT_MANIFEST
     with _DEFAULT_MANIFEST_LOCK:
         if _DEFAULT_MANIFEST is None:
-            _DEFAULT_MANIFEST = TripoAssetManifest()
+            _DEFAULT_MANIFEST = AssetManifest()
         return _DEFAULT_MANIFEST
 
 
-def set_default_asset_manifest(manifest: Optional[TripoAssetManifest]) -> None:
+def set_default_asset_manifest(manifest: Optional[AssetManifest]) -> None:
     """Install *manifest* as the module-level default.  ``None`` resets."""
     global _DEFAULT_MANIFEST
     with _DEFAULT_MANIFEST_LOCK:
         _DEFAULT_MANIFEST = manifest
 
 
-def resolve_tripo_asset(
+def resolve_model_asset(
     species_id: str,
     *,
     rng: Optional[random.Random] = None,
-    manifest: Optional[TripoAssetManifest] = None,
+    manifest: Optional[AssetManifest] = None,
 ) -> Dict[str, Any]:
-    """Look up a Tripo-ingested asset entry for *species_id*.
+    """Look up an ingested model asset entry for *species_id*.
 
     Uses the default module-level manifest unless one is explicitly passed.
     Always returns a dict (possibly a fallback entry with ``fallback: True``).
@@ -1135,15 +1140,15 @@ __all__ = [
     "FOLIAGE_SPECIES_CATALOG",
     "EXPECTED_CATEGORIES",
     "SPECIES_CONSTRAINTS_FROM_CATALOG",
-    "SPECIES_TRIPO_CATEGORIES",
+    "SPECIES_ASSET_CATEGORIES",
     "species_ids_by_category",
     "species_for_biome",
-    "tripo_assets_required",
+    "external_model_assets_required",
     "manifest_entries",
     "categories_covered",
-    "TripoAssetManifest",
+    "AssetManifest",
     "default_asset_catalog_path",
     "get_default_asset_manifest",
     "set_default_asset_manifest",
-    "resolve_tripo_asset",
+    "resolve_model_asset",
 ]
