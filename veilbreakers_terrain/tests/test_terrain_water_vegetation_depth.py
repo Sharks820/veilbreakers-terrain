@@ -575,6 +575,67 @@ def test_pass_water_variants_populates_wetness_and_surface():
 
 
 # ---------------------------------------------------------------------------
+# W-1 dual-semantics regression — water_surface_mask vs water_surface_elevation_m
+# ---------------------------------------------------------------------------
+
+
+def test_w1_water_surface_mask_is_binary():
+    """water_surface_mask must be a binary float32 mask with values in {0, 1}."""
+    state = _make_state()
+    pass_water_variants(state, region=None)
+    mask = state.mask_stack.water_surface_mask
+    assert mask is not None, "water_surface_mask not written by pass_water_variants"
+    assert mask.dtype == np.float32, f"expected float32, got {mask.dtype}"
+    unique_vals = set(np.unique(mask))
+    assert unique_vals <= {0.0, 1.0}, (
+        f"water_surface_mask must be binary (0 or 1), got values: {unique_vals}"
+    )
+
+
+def test_w1_water_surface_elevation_m_is_world_space():
+    """water_surface_elevation_m must hold world-space metres (not clamped to [0,1]).
+
+    The bathymetry pass writes water_surface_elevation_m; set height to a
+    large value so the world-space elevation exceeds 1.0 and confirms the
+    channel is *not* a binary mask.
+    """
+    from veilbreakers_terrain.handlers.terrain_water_variants import pass_bathymetry
+
+    state = _make_state()
+    # Force water presence so bathymetry has wet cells to write.
+    state.mask_stack.height[:] = 500.0
+    state.mask_stack.set("water_surface", np.ones(state.mask_stack.height.shape, dtype=np.float32), "test")
+    pass_bathymetry(state, region=None)
+    elev = state.mask_stack.water_surface_elevation_m
+    assert elev is not None, "water_surface_elevation_m not written by pass_bathymetry"
+    assert elev.dtype == np.float32, f"expected float32, got {elev.dtype}"
+    # World-space: at least some values should be > 1.0 when terrain is at 500m.
+    assert float(elev.max()) > 1.0, (
+        f"water_surface_elevation_m max={elev.max():.2f} looks like a binary mask, not world-space metres"
+    )
+
+
+def test_w1_mask_and_elevation_are_distinct_channels():
+    """water_surface_mask and water_surface_elevation_m must be independent arrays."""
+    from veilbreakers_terrain.handlers.terrain_water_variants import pass_bathymetry
+
+    state = _make_state()
+    pass_water_variants(state, region=None)
+    state.mask_stack.height[:] = 200.0
+    state.mask_stack.set("water_surface", np.ones(state.mask_stack.height.shape, dtype=np.float32), "test")
+    pass_bathymetry(state, region=None)
+
+    mask = state.mask_stack.water_surface_mask
+    elev = state.mask_stack.water_surface_elevation_m
+    assert mask is not None and elev is not None
+    # They must not be the same array.
+    assert mask is not elev, "water_surface_mask and water_surface_elevation_m must be distinct arrays"
+    # Mask is in [0, 1]; elevation at 200m height should be >> 1.
+    assert float(mask.max()) <= 1.0
+    assert float(elev.max()) > 1.0
+
+
+# ---------------------------------------------------------------------------
 # Registrar
 # ---------------------------------------------------------------------------
 

@@ -192,3 +192,65 @@ def test_catalog_appends_multiple(tmp_path: Path):
     data = json.loads(catalog_path.read_text())
     assert len(data) == 3
     assert [d["species_id"] for d in data] == ["spec_0", "spec_1", "spec_2"]
+
+
+# ---------------------------------------------------------------------------
+# Hunyuan3D2Provider — ABC conformance + mode detection (no network required)
+# ---------------------------------------------------------------------------
+
+def test_hunyuan3d2_provider_is_subclass():
+    """Hunyuan3D2Provider must be a concrete subclass of ExternalAssetProvider."""
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    assert issubclass(Hunyuan3D2Provider, ExternalAssetProvider)
+
+
+def test_hunyuan3d2_provider_id():
+    """Provider ID must be 'hunyuan3d2' for catalog + dispatch keying."""
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    assert Hunyuan3D2Provider.provider_id == "hunyuan3d2"
+
+
+def test_hunyuan3d2_default_mode_is_hf_space(monkeypatch):
+    """Without env vars, mode must default to HuggingFace Space."""
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import (
+        Hunyuan3D2Provider,
+        _MODE_HF_SPACE,
+    )
+
+    monkeypatch.delenv("HUNYUAN3D2_MODE", raising=False)
+    monkeypatch.delenv("HUNYUAN3D2_HF_ENDPOINT", raising=False)
+
+    p = Hunyuan3D2Provider()
+    assert p._mode == _MODE_HF_SPACE
+
+
+def test_hunyuan3d2_local_mode_via_env(monkeypatch):
+    """HUNYUAN3D2_MODE=local must select local mode."""
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import (
+        Hunyuan3D2Provider,
+        _MODE_LOCAL,
+    )
+
+    monkeypatch.setenv("HUNYUAN3D2_MODE", "local")
+    monkeypatch.delenv("HUNYUAN3D2_HF_ENDPOINT", raising=False)
+
+    p = Hunyuan3D2Provider()
+    assert p._mode == _MODE_LOCAL
+
+
+def test_hunyuan3d2_has_abc_methods():
+    """Hunyuan3D2Provider must implement all three ABC abstract methods."""
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    assert callable(getattr(Hunyuan3D2Provider, "submit", None))
+    assert callable(getattr(Hunyuan3D2Provider, "poll", None))
+    assert callable(getattr(Hunyuan3D2Provider, "download", None))
+
+
+def test_hunyuan3d2_exported_from_providers_package():
+    """Hunyuan3D2Provider must be importable from the providers package __init__."""
+    from veilbreakers_terrain.providers import Hunyuan3D2Provider
+
+    assert Hunyuan3D2Provider.provider_id == "hunyuan3d2"
