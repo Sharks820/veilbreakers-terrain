@@ -1847,7 +1847,7 @@ class WaterNetwork:
                 terminal_pr, terminal_pc = path[idx_b]
                 enters_lake = (terminal_pr, terminal_pc) in lake_cell_set
                 if enters_lake:
-                    segment_waypoints = _apply_delta_fan(
+                    segment_waypoints, _delta_meta = _apply_delta_fan(
                         segment_waypoints, flow_acc[terminal_pr, terminal_pc],
                         cell_size,
                     )
@@ -3011,7 +3011,7 @@ def _apply_delta_fan(
     waypoints: list[tuple[float, float, float]],
     terminal_flow_accumulation: float,
     cell_size: float,
-) -> list[tuple[float, float, float]]:
+) -> tuple[list[tuple[float, float, float]], dict]:
     """Blend the terminal segment's velocity to zero over a delta fan radius.
 
     When a river reaches a lake or ocean, Galloway (1975) describes two
@@ -3022,17 +3022,9 @@ def _apply_delta_fan(
           ≈ 80°.
 
     This function does not alter the waypoint positions (the D8 path
-    already routes into the lake basin).  Instead it appends a metadata
-    tag ``_delta_fan_radius_m`` on the first waypoint by converting it to
-    a dict — but since waypoints are plain tuples, we instead return the
-    waypoints unchanged and record fan metadata via the segment attribute
-    ``_delta_fan``.  The actual velocity blending is performed by
-    ``compute_velocity_field`` using the fan radius stored on the segment.
-
-    For waypoint geometry purposes: we do NOT alter positions, we merely
-    signal the delta condition to downstream consumers through the
-    unchanged waypoint list.  The caller (from_heightmap) tags the segment
-    with ``_delta_fan`` after calling this function.
+    already routes into the lake basin).  Fan metadata is returned as the
+    second element of the return tuple so the caller can tag the segment
+    directly — no module-level side-channel dict needed.
 
     Args:
         waypoints: Existing list of (x, y, z) waypoints for the segment.
@@ -3040,8 +3032,9 @@ def _apply_delta_fan(
         cell_size: World metres per grid cell.
 
     Returns:
-        The original waypoints list, unchanged (fan geometry is encoded
-        via segment metadata, not waypoint displacement).
+        (waypoints, metadata) where metadata has keys fan_radius_m,
+        delta_type, spread_angle_deg.  waypoints is the original list,
+        unchanged.
     """
     # Compute fan radius: Leopold & Wolman discharge proxy
     q_proxy = math.sqrt(max(terminal_flow_accumulation, 1.0)) * cell_size
@@ -3051,8 +3044,6 @@ def _apply_delta_fan(
     fan_radius_m = max(fan_radius_m, cell_size * 2.0)
 
     # Wave-dominated vs river-dominated Galloway (1975) classification
-    # Proxy: high flow accumulation → river-dominated (narrow fan)
-    #        low flow accumulation  → wave-dominated  (wide fan)
     acc_threshold = 5000.0
     if terminal_flow_accumulation >= acc_threshold:
         delta_type = "river_dominated"
@@ -3061,24 +3052,12 @@ def _apply_delta_fan(
         delta_type = "wave_dominated"
         spread_angle_deg = 80.0
 
-    # Tag the metadata onto the last waypoint as a 4-tuple extension.
-    # Since waypoints are (x, y, z) tuples we cannot mutate them; metadata
-    # is returned to the caller via a side channel.  This function's primary
-    # purpose is to be a clean boundary — the caller reads the return value
-    # to know the waypoints are unchanged and should tag the segment itself.
-    # We store fan metadata in the module-level _DELTA_FAN_METADATA dict
-    # keyed by the id of the terminal waypoint tuple, available for testing.
-    _DELTA_FAN_METADATA[id(waypoints)] = {
+    metadata = {
         "fan_radius_m": round(fan_radius_m, 2),
         "delta_type": delta_type,
         "spread_angle_deg": spread_angle_deg,
     }
-
-    return waypoints
-
-
-# Module-level registry for delta fan metadata (keyed by waypoint list id)
-_DELTA_FAN_METADATA: dict[int, dict] = {}
+    return waypoints, metadata
 
 # ===================================================================
 # River-to-lake convergence detection and velocity transition
@@ -3363,7 +3342,7 @@ def pass_river_convergence(
         status="ok",
         duration_seconds=dt,
         produced_channels=("river_mouth_mask", "confluence_foam", "delta_fan_direction"),
-        consumed_channels=("flow_accumulation", "flow_direction", "water_surface"),
+        consumed_channels=("flow_accumulation", "flow_direction", "water_surface_mask"),
         metrics={
             "mouth_cells": mouth_count,
             "foam_coverage_pct": round(float((foam > 0.01).sum()) / max(H * W, 1) * 100.0, 2),

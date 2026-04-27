@@ -158,6 +158,27 @@ class SpeciesSpec:
     altitude_max_m: float = 5000.0          # mirror of max_altitude_m (loose default)
     wetness_tolerance: float = 0.5          # 0=dry only, 1=wet ok
 
+    def __post_init__(self) -> None:
+        import math as _math
+        # Validate deprecated mirror fields only when explicitly set (non-default).
+        if self.slope_max_deg != 45.0:
+            rad_from_deg = _math.radians(self.slope_max_deg)
+            if abs(rad_from_deg - self.max_slope_rad) > 0.1:
+                raise ValueError(
+                    f"SpeciesSpec({self.species_id}): slope_max_deg={self.slope_max_deg}° "
+                    f"({rad_from_deg:.4f} rad) conflicts with max_slope_rad={self.max_slope_rad:.4f} rad"
+                )
+        if self.altitude_min_m != -100.0 and abs(self.altitude_min_m - self.min_altitude_m) > 1.0:
+            raise ValueError(
+                f"SpeciesSpec({self.species_id}): altitude_min_m={self.altitude_min_m} "
+                f"conflicts with min_altitude_m={self.min_altitude_m}"
+            )
+        if self.altitude_max_m != 5000.0 and abs(self.altitude_max_m - self.max_altitude_m) > 1.0:
+            raise ValueError(
+                f"SpeciesSpec({self.species_id}): altitude_max_m={self.altitude_max_m} "
+                f"conflicts with max_altitude_m={self.max_altitude_m}"
+            )
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to JSON-friendly dict for the Unity manifest."""
         return {

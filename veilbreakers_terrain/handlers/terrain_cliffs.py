@@ -2773,7 +2773,7 @@ def register_bundle_b_passes() -> None:
             name="cliffs",
             func=pass_cliffs,
             requires_channels=("slope", "height"),
-            produces_channels=("cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs", "talus_boulder_placements"),
+            produces_channels=("cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs", "talus_boulder_placements", "cliff_mask", "talus_mask", "strata_mask"),
             seed_namespace="cliffs",
             requires_scene_read=False,
             may_modify_geometry=False,

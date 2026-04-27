@@ -45,9 +45,16 @@ class TerrainTextureLayerStack:
     def add_layer(self, layer: TextureLayer) -> None:
         self.layers.append(layer)
 
-    def validate(self) -> list[str]:
+    def validate(self, terrain_stack=None) -> list[str]:
         issues = []
         for layer in self.layers:
+            if not layer.terrain_mask_source:
+                issues.append(f"{layer.layer_id}: terrain_mask_source is empty")
+            elif terrain_stack is not None and not hasattr(terrain_stack, layer.terrain_mask_source):
+                issues.append(
+                    f"{layer.layer_id}: terrain_mask_source '{layer.terrain_mask_source}' "
+                    f"not found on stack"
+                )
             if layer.weight_map is None:
                 issues.append(f"{layer.layer_id}: missing weight_map")
             if layer.normal is None:

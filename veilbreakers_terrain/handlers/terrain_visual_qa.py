@@ -459,7 +459,7 @@ def handle_visual_qa_validate_channels(
         issues: List[str] = (
             [f"missing:{c}" for c in result["missing"]]
             + [f"dtype_mismatch:{c}" for c in result["dtype_mismatch"]]
-            + [f"range_violation:{c}" for c in result["range_violations"]]
+            + [f"out_of_range:{c}" for c in result["range_violations"]]
         )
         return {
             "status": "ok",
@@ -593,7 +593,7 @@ def compare_render_to_golden(
 
     except ImportError:
         result["reason"] = "pillow_unavailable"
-        result["ok"] = True  # Don't block CI when deps unavailable
+        result["ok"] = False
     except Exception as exc:
         result["reason"] = f"error:{exc}"
 
