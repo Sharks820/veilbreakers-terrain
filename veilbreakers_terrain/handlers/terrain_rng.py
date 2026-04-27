@@ -15,6 +15,10 @@ import numpy as np
 from typing import Union
 
 def make_rng(*keys: Union[int, str, float]) -> np.random.Generator:
+    # FUTURE USE: intended as the canonical deterministic RNG factory for all
+    # scatter, erosion, and noise passes — replaces ad-hoc np.random.RandomState
+    # calls across the codebase (tracked under BUG-48/49/81/91/92/96).
+    # Currently called from tests only; production passes should migrate to this.
     """Create a deterministic Generator seeded from an ordered sequence of keys.
 
     Usage:
@@ -33,5 +37,7 @@ def make_rng(*keys: Union[int, str, float]) -> np.random.Generator:
 
 def tile_rng(world_origin_x: float, world_origin_y: float,
              root_seed: int = 42) -> np.random.Generator:
+    # FUTURE USE: per-tile RNG convenience wrapper for terrain chunking and
+    # parallel tile generation — no production callers yet; referenced by tests only.
     """Convenience: make a per-tile RNG from world origin + root seed."""
     return make_rng(int(world_origin_x * 1000), int(world_origin_y * 1000), root_seed)

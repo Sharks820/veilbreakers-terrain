@@ -40,6 +40,9 @@ def _world_to_cell(
 
 
 def compute_footprint_surface_data(
+    # FUTURE USE: Bundle Q footprint VFX/audio surface sampler — no production
+    # caller yet; intended to feed the Unity gameplay footprint and audio systems
+    # once the Bundle Q MCP command handler is wired in COMMAND_HANDLERS.
     stack: TerrainMaskStack,
     world_positions: np.ndarray,
 ) -> List[FootprintSurfacePoint]:

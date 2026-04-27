@@ -29,6 +29,9 @@ class WeatheringEvent:
 
 
 def generate_weathering_timeline(
+    # FUTURE USE: Bundle Q pass — drives time-lapse weathering sequences for
+    # environmental storytelling and material aging. No production caller yet;
+    # will be wired into the post-pipeline hooks in a future Bundle Q pass registration.
     duration_hours: float,
     seed: int,
 ) -> List[WeatheringEvent]:

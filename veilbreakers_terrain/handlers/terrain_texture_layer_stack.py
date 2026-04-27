@@ -36,6 +36,10 @@ class TextureLayer:
 
 @dataclass
 class TerrainTextureLayerStack:
+    # FUTURE USE: PBR layer stack consumed by terrain_quixel_ingest,
+    # terrain_materials_v2, and terrain_unity_export — no direct production
+    # callers outside those modules yet; wiring is in progress as part of the
+    # MicroSplat texturing upgrade (see docs/AAA_MASTER_IMPLEMENTATION_GUIDE_2026_04_27.md).
     layers: list[TextureLayer] = field(default_factory=list)
 
     def add_layer(self, layer: TextureLayer) -> None:
