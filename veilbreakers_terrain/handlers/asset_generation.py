@@ -469,15 +469,20 @@ class RunPodBackend(_BackendBase):
 
 
 class RodinBackend(_BackendBase):
-    """Hyperhuman / Deemos Rodin REST client.
+    """Hyper3D Rodin REST client (secondary provider — requires Business plan ~$96/mo).
 
-    Endpoint reference: ``https://hyperhuman.deemos.com/api/v2/rodin``.
-    Image-to-3D is the primary mode (Rodin's text-to-3D quality lags its
-    image-to-3D), so :class:`AssetRequest.reference_image_path` is
-    effectively required when this backend is selected.
+    Primary provider for VeilBreakers is Hunyuan3D-2 (local, free).
+    Use Rodin only when GPU is unavailable locally.
+
+    API reference: https://api.hyper3d.com/api/v2
+    Submit: POST /rodin (multipart/form-data) → {"subscription_key": "..."}
+    Poll:   POST /status  (JSON body {"subscription_key": key}) → {"status": "Done"|"Failed"|...}
+    Download: POST /download (JSON {"subscription_key": key}) → [{"url": "..."}]
+              then GET the pre-signed S3 URL *without* auth header.
     """
 
-    BASE_URL = "https://hyperhuman.deemos.com/api/v2/rodin"
+    # Corrected from "https://hyperhuman.deemos.com/api/v2/rodin"
+    BASE_URL = "https://api.hyper3d.com/api/v2"
 
     def __init__(
         self,
@@ -486,7 +491,7 @@ class RodinBackend(_BackendBase):
         base_url: Optional[str] = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("RODIN_API_KEY")
-        self.base_url = base_url or self.BASE_URL
+        self.base_url = (base_url or self.BASE_URL).rstrip("/")
         if not self.api_key:
             logger.warning("RodinBackend created without api_key; set RODIN_API_KEY")
 
@@ -511,15 +516,24 @@ class RodinBackend(_BackendBase):
             )
 
         def _submit() -> str:
+            # POST /rodin with multipart/form-data — returns subscription_key (not job_id)
             files = {}
-            data = {"prompt": request.prompt, "target_poly_count": str(request.target_poly_count)}
+            data: dict = {
+                "prompt": request.prompt,
+                "geometry_file_format": "glb",
+                "material": "PBR",
+                "quality": "high",
+                "use_hyper": "false",
+            }
             if request.seed is not None:
                 data["seed"] = str(request.seed)
+            if request.target_poly_count:
+                data["poly_count"] = str(request.target_poly_count)
             if request.reference_image_path is not None:
                 files["images"] = open(request.reference_image_path, "rb")
             try:
                 resp = requests.post(
-                    f"{self.base_url}/jobs",
+                    f"{self.base_url}/rodin",
                     headers=self._headers(),
                     data=data,
                     files=files or None,
@@ -530,37 +544,58 @@ class RodinBackend(_BackendBase):
                     fh.close()
             resp.raise_for_status()
             body = resp.json()
-            job_id = body.get("uuid") or body.get("job_id") or body.get("id")
-            if not job_id:
-                raise RuntimeError(f"Rodin submit returned no job id: {body}")
-            return str(job_id)
+            # API returns subscription_key, not a job UUID
+            key = body.get("subscription_key") or body.get("uuid") or body.get("job_id")
+            if not key:
+                raise RuntimeError(f"Rodin submit returned no subscription_key: {body}")
+            return str(key)
 
-        def _poll(job_id: str) -> str:
+        def _poll(subscription_key: str) -> None:
+            # POST /status with JSON body — status field is capitalized ("Done", "Failed")
             deadline = time.monotonic() + timeout_s
             while True:
-                resp = requests.get(
-                    f"{self.base_url}/jobs/{job_id}",
+                resp = requests.post(
+                    f"{self.base_url}/status",
                     headers=self._headers(),
+                    json={"subscription_key": subscription_key},
                     timeout=30,
                 )
                 resp.raise_for_status()
                 body = resp.json()
                 status = (body.get("status") or "").lower()
-                if status in {"done", "completed", "success"}:
-                    url = body.get("download_url") or body.get("glb_url")
-                    if not url:
-                        raise RuntimeError(f"Rodin done but no download url: {body}")
-                    return str(url)
+                if status in {"done", "completed", "success", "finished"}:
+                    return
                 if status in {"failed", "error", "cancelled"}:
                     raise RuntimeError(f"Rodin job {status}: {body}")
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"Rodin job {job_id} timed out after {timeout_s}s")
+                    raise TimeoutError(f"Rodin job {subscription_key} timed out after {timeout_s}s")
                 time.sleep(5.0)
 
+        def _download(subscription_key: str) -> str:
+            # POST /download → list of pre-signed S3 URLs; must NOT send auth header to S3
+            resp = requests.post(
+                f"{self.base_url}/download",
+                headers=self._headers(),
+                json={"subscription_key": subscription_key},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            items = resp.json()
+            if not items:
+                raise RuntimeError(f"Rodin /download returned empty list for {subscription_key}")
+            # Find GLB entry; fall back to first item
+            glb_url = next(
+                (item["url"] for item in items if str(item.get("name", "")).lower().endswith(".glb")),
+                items[0]["url"],
+            )
+            return str(glb_url)
+
         def _call() -> Path:
-            job_id = _submit()
-            url = _poll(job_id)
-            with requests.get(url, headers=self._headers(), stream=True, timeout=120) as resp:
+            subscription_key = _submit()
+            _poll(subscription_key)
+            glb_url = _download(subscription_key)
+            # S3 pre-signed URLs must NOT include the auth header
+            with requests.get(glb_url, stream=True, timeout=120) as resp:
                 resp.raise_for_status()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".glb") as fh:
                     for chunk in resp.iter_content(chunk_size=1 << 16):

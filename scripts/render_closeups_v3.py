@@ -1,8 +1,12 @@
 """render_closeups_v3.py — Task-point close-up renders + overhead ortho for VeilBreakers Scene v3.
 
-Opens the existing .blend and renders 8 targeted cameras covering every gameplay-critical
+Opens the existing .blend and renders targeted cameras covering every gameplay-critical
 feature point: cave portal, waterfall, river bank entry/exit, lake shore, cliff face,
-mountain overhead, full tile overview.
+mountain overhead, full tile overview, and 4 cardinal overview shots.
+
+Camera positions are loaded from output/scene_v3/generation_manifest.json when present,
+falling back to hardcoded defaults. This prevents mislabeled renders when terrain seed
+or layout changes. The manifest is written by the terrain generation pipeline.
 
 Run:
     "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe" \
@@ -12,11 +16,13 @@ Run:
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
 import traceback
 from pathlib import Path
+from typing import Optional
 
 import bpy
 from mathutils import Vector, Euler
@@ -24,15 +30,62 @@ from mathutils import Vector, Euler
 OUT_DIR = Path(__file__).resolve().parents[1] / "output" / "scene_v3" / "closeups"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-LAKE_XY = (120.0, -315.0)
-LAKE_RADIUS = 210.0
-LAKE_WATER_LEVEL = 8.0
-CAVE_ENTRY = (282.0, 80.0, 78.0)
-CAVE_EXIT = (432.0, 132.0, 110.0)
-WATERFALL_XY = (-238.0, 174.0)
-WATERFALL_TOP_Z = 32.0
-BRIDGE_A = (-104.0, -24.0)
-BRIDGE_B = (-52.0, -80.0)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_MANIFEST_PATH = _REPO_ROOT / "output" / "scene_v3" / "generation_manifest.json"
+
+# --- Defaults (used when generation_manifest.json is absent or a key is missing) ---
+_DEFAULTS = {
+    "lake_center": {"x": 120.0, "y": -315.0},
+    "lake_radius": 210.0,
+    "water_level": 8.0,
+    "cave_entry": {"x": 282.0, "y": 80.0, "z": 78.0},
+    "cave_exit": {"x": 432.0, "y": 132.0, "z": 110.0},
+    "waterfall": {"x": -238.0, "y": 174.0, "z": 32.0},
+    "bridge_a": {"x": -104.0, "y": -24.0},
+    "bridge_b": {"x": -52.0, "y": -80.0},
+}
+
+
+def _load_poi() -> dict:
+    """Read POI positions from generation_manifest.json; fall back to defaults."""
+    if not _MANIFEST_PATH.exists():
+        print(
+            f"[closeup] WARNING: no manifest at {_MANIFEST_PATH} — "
+            "using hardcoded defaults. Camera labels may not match actual features.",
+            flush=True,
+        )
+        return _DEFAULTS.copy()
+    try:
+        raw = json.loads(_MANIFEST_PATH.read_text())
+        poi = raw.get("poi", {})
+        merged = _DEFAULTS.copy()
+        merged.update(poi)
+        print(f"[closeup] loaded POI positions from {_MANIFEST_PATH.name}", flush=True)
+        return merged
+    except Exception as exc:
+        print(f"[closeup] WARNING: failed to parse manifest ({exc!r}) — using defaults", flush=True)
+        return _DEFAULTS.copy()
+
+
+_POI = _load_poi()
+
+LAKE_XY = (_POI["lake_center"]["x"], _POI["lake_center"]["y"])
+LAKE_RADIUS = float(_POI["lake_radius"])
+LAKE_WATER_LEVEL = float(_POI["water_level"])
+
+_cave = _POI["cave_entry"]
+CAVE_ENTRY = (_cave["x"], _cave["y"], _cave["z"])
+_cave_exit = _POI["cave_exit"]
+CAVE_EXIT = (_cave_exit["x"], _cave_exit["y"], _cave_exit["z"])
+
+_wf = _POI["waterfall"]
+WATERFALL_XY = (_wf["x"], _wf["y"])
+WATERFALL_TOP_Z = _wf.get("z", 32.0)
+
+_ba = _POI.get("bridge_a") or {"x": -104.0, "y": -24.0}
+_bb = _POI.get("bridge_b") or {"x": -52.0, "y": -80.0}
+BRIDGE_A = (_ba["x"], _ba["y"])
+BRIDGE_B = (_bb["x"], _bb["y"])
 
 
 def _look_at(cam: bpy.types.Object, target: tuple) -> None:
@@ -125,14 +178,53 @@ def main() -> int:
 
     shots: list[tuple[str, bpy.types.Object]] = []
 
-    # 1. Full tile overview — wide orthographic-feel high shot
+    # ── Overview block: 5 broad context shots come FIRST so any viewer
+    #    has full-map context before seeing close-ups. ──────────────────
+
+    # 1. Full tile overhead — centered, very high
     cam = _make_cam(
         "CAM_TileOverview",
         location=(0.0, -80.0, 1100.0),
         target=(0.0, 0.0, 0.0),
         lens=28.0, clip_end=5000.0,
     )
-    shots.append(("01_tile_overview", cam))
+    shots.append(("01_overview_full_tile", cam))
+
+    # 1b. North approach — looking south across the whole tile
+    cam = _make_cam(
+        "CAM_OverviewNorth",
+        location=(0.0, 680.0, 420.0),
+        target=(0.0, 0.0, 60.0),
+        lens=24.0, clip_end=4000.0,
+    )
+    shots.append(("01b_overview_north", cam))
+
+    # 1c. South approach — looking north (shows lake, river, mountains)
+    cam = _make_cam(
+        "CAM_OverviewSouth",
+        location=(0.0, -680.0, 420.0),
+        target=(0.0, 0.0, 60.0),
+        lens=24.0, clip_end=4000.0,
+    )
+    shots.append(("01c_overview_south", cam))
+
+    # 1d. East approach — looking west
+    cam = _make_cam(
+        "CAM_OverviewEast",
+        location=(680.0, 0.0, 380.0),
+        target=(0.0, 0.0, 60.0),
+        lens=24.0, clip_end=4000.0,
+    )
+    shots.append(("01d_overview_east", cam))
+
+    # 1e. West approach — looking east
+    cam = _make_cam(
+        "CAM_OverviewWest",
+        location=(-680.0, 0.0, 380.0),
+        target=(0.0, 0.0, 60.0),
+        lens=24.0, clip_end=4000.0,
+    )
+    shots.append(("01e_overview_west", cam))
 
     # 2. Hero establishing shot (south, show lake + river + mountains)
     cam = _make_cam(
