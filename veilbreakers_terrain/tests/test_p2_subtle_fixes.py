@@ -38,8 +38,7 @@ def test_hydraulic_droplet_deposits_at_final_position():
     import ast
     import inspect
 
-    from blender_addon.handlers import _terrain_erosion
-    from blender_addon.handlers._terrain_erosion import (
+    from veilbreakers_terrain.handlers._terrain_erosion import (
         apply_hydraulic_erosion_masks,
     )
 
@@ -104,7 +103,7 @@ def test_priority_flood_breaks_flat_ties_without_stripes():
     interiors so no two adjacent cells end up at identical filled
     elevation.  Regression for P2-6 stripe artifacts.
     """
-    from blender_addon.handlers._water_network import priority_flood_d8
+    from veilbreakers_terrain.handlers._water_network import priority_flood_d8
 
     size = 10
     dem = np.ones((size, size), dtype=np.float64) * 2.0
@@ -134,7 +133,7 @@ def test_priority_flood_breaks_flat_ties_without_stripes():
 
 def test_priority_flood_d8_default_return_shape_unchanged():
     """Backward compat: priority_flood_d8(dem) still returns 2-tuple."""
-    from blender_addon.handlers._water_network import priority_flood_d8
+    from veilbreakers_terrain.handlers._water_network import priority_flood_d8
 
     dem = np.array([[3.0, 2.0, 1.0], [3.0, 2.0, 1.0], [3.0, 2.0, 1.0]])
     out = priority_flood_d8(dem)
@@ -154,7 +153,7 @@ def test_astar_cell_size_affects_slope_penalty():
     non-trivially.
     """
     import warnings as _warn
-    from blender_addon.handlers._terrain_noise import _legacy_astar
+    from veilbreakers_terrain.handlers._terrain_noise import _legacy_astar
 
     rows, cols = 4, 20
     hmap = np.zeros((rows, cols), dtype=np.float64)
@@ -193,7 +192,7 @@ def test_generate_road_path_grid_threads_cell_size():
     changes the cost landscape enough to alter route choice on terrain
     with clear valley/ridge contrast.
     """
-    from blender_addon.handlers._terrain_noise import generate_road_path_grid_legacy as generate_road_path_grid
+    from veilbreakers_terrain.handlers._terrain_noise import generate_road_path_grid_legacy as generate_road_path_grid
 
     size = 24
     yy, xx = np.meshgrid(np.arange(size), np.arange(size), indexing="ij")
@@ -220,7 +219,7 @@ def test_generate_road_path_grid_strict_cell_size_rejects_none():
     """Opt-in strict mode rejects missing cell_size rather than silently
     using the 1.0 default (fail-fast for production callers).
     """
-    from blender_addon.handlers._terrain_noise import generate_road_path_grid_legacy as generate_road_path_grid
+    from veilbreakers_terrain.handlers._terrain_noise import generate_road_path_grid_legacy as generate_road_path_grid
 
     hmap = np.zeros((8, 8), dtype=np.float64)
     import warnings as _warn

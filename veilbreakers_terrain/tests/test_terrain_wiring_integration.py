@@ -34,11 +34,11 @@ def _fresh_controller():
     passes (erosion, etc.) that declare ``requires_scene_read=True`` do
     not trip the orchestrator's protocol gate.
     """
-    from blender_addon.handlers.terrain_master_registrar import (
+    from veilbreakers_terrain.handlers.terrain_master_registrar import (
         register_all_terrain_passes,
     )
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
-    from blender_addon.handlers.terrain_semantics import (
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
         TerrainMaskStack,
@@ -140,12 +140,12 @@ def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
         checkpoint=False,
     )
     # Cleanup the global registry for other tests
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     TerrainPassController.clear_registry()
 
     assert len(results) == 4
     for r in results:
-        assert r.status in ("ok", "warnings"), f"{r.pass_name}: {r.status} {r.issues}"
+        assert r.status in ("ok", "warning"), f"{r.pass_name}: {r.status} {r.issues}"
 
     stack = controller.state.mask_stack
     # structural_masks populates these
@@ -158,8 +158,8 @@ def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
 
 def test_wiring_handle_run_terrain_pass_matches_direct_controller():
     """The MCP-facing handler should return the same shape as direct controller calls."""
-    from blender_addon.handlers.environment import handle_run_terrain_pass
-    from blender_addon.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     TerrainPassController.clear_registry()
     result = handle_run_terrain_pass(
@@ -186,7 +186,7 @@ def test_wiring_handle_run_terrain_pass_matches_direct_controller():
 
 
 def test_compute_erosion_brush_preserves_world_unit_range():
-    from blender_addon.handlers.terrain_advanced import compute_erosion_brush
+    from veilbreakers_terrain.handlers.terrain_advanced import compute_erosion_brush
 
     # World-unit heightmap with values well above 1.0 (metres)
     hm = np.full((32, 32), 50.0, dtype=np.float64)
@@ -212,7 +212,7 @@ def test_compute_erosion_brush_preserves_world_unit_range():
 
 
 def test_flatten_terrain_zone_preserves_world_unit_range():
-    from blender_addon.handlers.terrain_advanced import flatten_terrain_zone
+    from veilbreakers_terrain.handlers.terrain_advanced import flatten_terrain_zone
 
     hm = np.linspace(40.0, 120.0, 32 * 32).reshape(32, 32)
     flat = flatten_terrain_zone(
@@ -235,7 +235,7 @@ def test_flatten_terrain_zone_preserves_world_unit_range():
 def test_compute_world_splatmap_weights_is_vectorized_and_normalized():
     import time
 
-    from blender_addon.handlers.terrain_materials import compute_world_splatmap_weights
+    from veilbreakers_terrain.handlers.terrain_materials import compute_world_splatmap_weights
 
     rng = np.random.default_rng(0)
     hm = rng.random((128, 128)).astype(np.float64) * 30.0
@@ -259,7 +259,7 @@ def test_compute_world_splatmap_weights_is_vectorized_and_normalized():
 
 
 def test_generate_waterfall_direction_aware_rotation():
-    from blender_addon.handlers.terrain_features import generate_waterfall
+    from veilbreakers_terrain.handlers.terrain_features import generate_waterfall
 
     base = generate_waterfall(height=8.0, width=3.0, num_steps=2, seed=1)
     rotated = generate_waterfall(
@@ -284,7 +284,7 @@ def test_generate_waterfall_direction_aware_rotation():
 
 def test_generate_waterfall_default_matches_legacy_frame():
     """Default facing_direction=(0,-1) must be a pure identity."""
-    from blender_addon.handlers.terrain_features import generate_waterfall
+    from veilbreakers_terrain.handlers.terrain_features import generate_waterfall
 
     result = generate_waterfall(height=5.0, num_steps=1, seed=7)
     assert result["facing_direction"] == (0.0, -1.0)
@@ -299,7 +299,7 @@ def test_generate_waterfall_default_matches_legacy_frame():
 
 def test_strahler_ordering_basic_y_shape():
     """Two order-1 tributaries merging should produce an order-2 trunk."""
-    from blender_addon.handlers._water_network import (
+    from veilbreakers_terrain.handlers._water_network import (
         WaterNetwork,
         WaterNode,
         WaterSegment,
@@ -339,7 +339,7 @@ def test_strahler_ordering_basic_y_shape():
 
 
 def test_resolve_water_path_points_pads_2d_to_3d():
-    from blender_addon.handlers.environment import _resolve_water_path_points
+    from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
     pts = _resolve_water_path_points(
         path_points_raw=[(0.0, 0.0), (10.0, 5.0)],
@@ -355,7 +355,7 @@ def test_resolve_water_path_points_pads_2d_to_3d():
 
 
 def test_resolve_water_path_points_rejects_1d():
-    from blender_addon.handlers.environment import _resolve_water_path_points
+    from veilbreakers_terrain.handlers.environment import _resolve_water_path_points
 
     with pytest.raises(ValueError, match="2 .* or 3"):
         _resolve_water_path_points(
@@ -373,7 +373,7 @@ def test_resolve_water_path_points_rejects_1d():
 
 
 def test_resolve_export_height_range_rejects_tiled_without_explicit_range():
-    from blender_addon.handlers.environment import _resolve_export_height_range
+    from veilbreakers_terrain.handlers.environment import _resolve_export_height_range
 
     hm = np.zeros((8, 8), dtype=np.float64)
     with pytest.raises(ValueError, match="tiled_world"):
@@ -381,7 +381,7 @@ def test_resolve_export_height_range_rejects_tiled_without_explicit_range():
 
 
 def test_resolve_export_height_range_accepts_explicit_range():
-    from blender_addon.handlers.environment import _resolve_export_height_range
+    from veilbreakers_terrain.handlers.environment import _resolve_export_height_range
 
     hm = np.zeros((8, 8), dtype=np.float64)
     result = _resolve_export_height_range(
@@ -391,7 +391,7 @@ def test_resolve_export_height_range_accepts_explicit_range():
 
 
 def test_resolve_height_range_returns_none_when_no_explicit_keys():
-    from blender_addon.handlers.environment import _resolve_height_range
+    from veilbreakers_terrain.handlers.environment import _resolve_height_range
 
     hm = np.zeros((8, 8), dtype=np.float64)
     assert (
@@ -405,11 +405,11 @@ def test_resolve_height_range_returns_none_when_no_explicit_keys():
 
 
 def test_negative_space_feature_density_validator_trips():
-    from blender_addon.handlers.terrain_negative_space import (
+    from veilbreakers_terrain.handlers.terrain_negative_space import (
         compute_feature_density,
         validate_negative_space,
     )
-    from blender_addon.handlers.terrain_semantics import TerrainMaskStack
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     # Half the tile above busy threshold → density absolutely blows the cap
     sal = np.zeros((64, 64), dtype=np.float64)
@@ -441,7 +441,7 @@ def test_negative_space_feature_density_validator_trips():
 
 
 def test_region_exec_speedup_estimate():
-    from blender_addon.handlers.terrain_region_exec import estimate_speedup
+    from veilbreakers_terrain.handlers.terrain_region_exec import estimate_speedup
 
     assert estimate_speedup(10.0, 2.0) == pytest.approx(5.0)
     assert estimate_speedup(0.0, 1.0) == 0.0
@@ -449,12 +449,12 @@ def test_region_exec_speedup_estimate():
 
 
 def test_iteration_metrics_percentiles_and_summary():
-    from blender_addon.handlers.terrain_iteration_metrics import (
+    from veilbreakers_terrain.handlers.terrain_iteration_metrics import (
         IterationMetrics,
         meets_speedup_target,
         record_iteration,
     )
-    from blender_addon.handlers.terrain_semantics import PassResult
+    from veilbreakers_terrain.handlers.terrain_semantics import PassResult
 
     metrics = IterationMetrics()
     for i, dur in enumerate([0.1, 0.2, 0.3, 0.4, 0.5]):
@@ -500,7 +500,7 @@ def test_detect_cliff_edges_height_scale_applies_to_z_and_height():
     ``height_scale=1.0`` baseline and the scaled variant clear the
     2 m minimum floor — otherwise the floor hides the scaling ratio.
     """
-    from blender_addon.handlers._terrain_depth import detect_cliff_edges
+    from veilbreakers_terrain.handlers._terrain_depth import detect_cliff_edges
 
     # Synthetic cliff with a 3.0-unit drop so the 2 m floor is never
     # the dominant factor at either scale under test.
@@ -547,7 +547,7 @@ def test_detect_cliff_edges_height_independent_of_terrain_footprint():
     the cliff threshold under the new spacing. We use a drop that is
     large enough to keep both calls tripping the threshold.
     """
-    from blender_addon.handlers._terrain_depth import detect_cliff_edges
+    from veilbreakers_terrain.handlers._terrain_depth import detect_cliff_edges
 
     # Drop of 30 units over the cliff column — enough to produce a
     # steep slope at both 100 m and 800 m terrain footprints.
@@ -578,7 +578,7 @@ def test_detect_cliff_edges_height_independent_of_terrain_footprint():
 
 def test_detect_cliff_edges_height_has_2m_floor():
     """Very shallow clusters still get a sensible minimum height."""
-    from blender_addon.handlers._terrain_depth import detect_cliff_edges
+    from veilbreakers_terrain.handlers._terrain_depth import detect_cliff_edges
 
     hm = np.full((32, 32), 0.5, dtype=np.float64)
     # Tiny 0.02 drop across a 3-cell column — realistic for erosion noise
