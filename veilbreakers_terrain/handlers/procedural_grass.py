@@ -421,6 +421,10 @@ class ProceduralGrassSystem:
             return np.zeros((0, 2), dtype=np.int64)
 
         flat = weight.ravel().astype(np.float64)
+        nonzero = int((flat > 0).sum())
+        if nonzero == 0:
+            return np.zeros((0, 2), dtype=np.int64)
+        target_count = min(target_count, nonzero)
         flat /= flat.sum()
         idx = self.rng.choice(flat.size, size=target_count, replace=False, p=flat)
         rows = idx // weight.shape[1]
@@ -479,7 +483,9 @@ class ProceduralGrassSystem:
         terrain_extent_y = h * cell_size
 
         biome_id_arr = _stack_attr(stack, "biome_id")
-        drainage_arr = _stack_attr(stack, "drainage") or _stack_attr(stack, "wetness")
+        drainage_arr = _stack_attr(stack, "drainage")
+        if drainage_arr is None:
+            drainage_arr = _stack_attr(stack, "wetness")
         drainage_norm = _normalise_array(drainage_arr)
 
         records: list[GrassPlacementRecord] = []
