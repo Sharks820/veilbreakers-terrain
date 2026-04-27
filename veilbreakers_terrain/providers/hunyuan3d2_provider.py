@@ -1,15 +1,14 @@
-"""Hunyuan3D-2 provider — supports HuggingFace Space (cloud), HF Inference Endpoint, or local server.
+"""Hunyuan3D-2 provider — HuggingFace Space (default) or HF Inference Endpoint.
 
-Default mode: HuggingFace Space (cloud, free, queued).
+Default mode: HuggingFace Space tencent/Hunyuan3D-2 via gradio_client (free, queued, ~90s).
   pip install gradio-client
 
-Production mode: Set HUNYUAN3D2_HF_ENDPOINT to your HF Inference Endpoint URL.
-Local mode: Set HUNYUAN3D2_MODE=local and HUNYUAN3D2_BASE_URL to your local server.
+Faster mode: Set HUNYUAN3D2_HF_ENDPOINT to a private HF Inference Endpoint URL (paid).
 
 Mode selection (checked in order):
-  1. HUNYUAN3D2_MODE=local   → local API server (requires 16-24 GB VRAM)
-  2. HUNYUAN3D2_HF_ENDPOINT  → HF Inference Endpoint URL (paid, fast, any VRAM)
-  3. (default)               → HuggingFace Space via gradio_client (free, queued, ~90s)
+  1. (default)               → HuggingFace Space via gradio_client (free, queued, ~90s)
+  2. HUNYUAN3D2_HF_ENDPOINT  → HF Inference Endpoint URL (paid, fast)
+  3. HUNYUAN3D2_MODE=local   → local api_server.py (requires 16-24 GB VRAM — NOT for 8 GB cards)
 
 HF Space endpoints (tencent/Hunyuan3D-2):
   generation_all    — shape + texture in one call (~90s); outputs white_mesh, textured_mesh, ...
@@ -79,19 +78,18 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
 
     huggingface (default)
         Uses the public tencent/Hunyuan3D-2 HuggingFace Space via gradio_client.
-        Free, queued, ~90 seconds per asset.
+        Free, queued, ~90 seconds per asset.  Works on any machine — no GPU required.
         Requires: pip install gradio-client
 
     hf_endpoint
         Uses a private HF Inference Endpoint you deploy yourself.
         Set HUNYUAN3D2_HF_ENDPOINT=https://your-endpoint.huggingface.cloud
-        Paid, fast, supports any VRAM configuration.
-        Requires: pip install gradio-client
+        Paid, fast.  Requires: pip install gradio-client
 
-    local
+    local  [NOT RECOMMENDED — requires 16-24 GB VRAM]
         Uses a local api_server.py from the Hunyuan3D-2 repo.
         Set HUNYUAN3D2_MODE=local (and optionally HUNYUAN3D2_BASE_URL).
-        Requires 16-24 GB VRAM and pip install requests.
+        Only viable on high-end workstation GPUs; will OOM on 8 GB cards.
 
     ABC contract (submit / poll / download):
         In huggingface and hf_endpoint modes the generation is a single blocking
