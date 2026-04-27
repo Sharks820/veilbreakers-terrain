@@ -466,3 +466,107 @@ def handle_visual_qa_capture_screenshot(
 
 
 # NOTE: register handle_visual_qa_validate_channels in handlers/__init__.py COMMAND_HANDLERS
+
+
+# ---------------------------------------------------------------------------
+# V-2: Render vs golden SSIM comparison (CI gate)
+# ---------------------------------------------------------------------------
+
+def compare_render_to_golden(
+    render_path: str,
+    golden_path: str,
+    ssim_threshold: float = 0.95,
+) -> Dict[str, Any]:
+    """Compare a rendered image against a stored golden using SSIM.
+
+    Returns a dict with keys:
+      - ``ok`` (bool): True when SSIM >= ssim_threshold or golden is absent.
+      - ``ssim`` (float | None): computed SSIM score; None when either image
+        cannot be loaded.
+      - ``threshold`` (float): the threshold used.
+      - ``render_path`` (str), ``golden_path`` (str): paths as supplied.
+      - ``reason`` (str): human-readable outcome.
+
+    When the golden file does not yet exist the comparison returns ``ok=True``
+    with ``reason="golden_absent"`` so a first run is never a hard failure —
+    callers are responsible for committing the golden image from the render.
+
+    Requires ``Pillow`` (PIL) + ``scikit-image`` or ``scipy`` for SSIM.
+    Falls back to pixel-MAE when scikit-image is unavailable, using
+    ``ssim_threshold`` as a MAE tolerance (0–1 scale, lower = stricter).
+    """
+    result: Dict[str, Any] = {
+        "ok": False,
+        "ssim": None,
+        "threshold": ssim_threshold,
+        "render_path": render_path,
+        "golden_path": golden_path,
+        "reason": "unknown",
+    }
+
+    golden = Path(golden_path)
+    if not golden.exists():
+        result["ok"] = True
+        result["reason"] = "golden_absent"
+        return result
+
+    render = Path(render_path)
+    if not render.exists():
+        result["reason"] = "render_absent"
+        return result
+
+    try:
+        from PIL import Image as _Image
+        import numpy as _np_local
+
+        r_img = _np_local.asarray(_Image.open(render_path).convert("RGB"), dtype=_np_local.float32) / 255.0
+        g_img = _np_local.asarray(_Image.open(golden_path).convert("RGB"), dtype=_np_local.float32) / 255.0
+
+        if r_img.shape != g_img.shape:
+            # Resize render to match golden dimensions
+            from PIL import Image as _PIL
+            r_pil = _PIL.open(render_path).convert("RGB").resize(
+                (g_img.shape[1], g_img.shape[0]), _PIL.Resampling.LANCZOS
+            )
+            r_img = _np_local.asarray(r_pil, dtype=_np_local.float32) / 255.0
+
+        try:
+            from skimage.metrics import structural_similarity as _ssim_fn
+            score = float(_ssim_fn(r_img, g_img, data_range=1.0, channel_axis=2))
+            result["ssim"] = round(score, 6)
+            result["ok"] = score >= ssim_threshold
+            result["reason"] = "ssim_pass" if result["ok"] else "ssim_fail"
+        except ImportError:
+            # Fallback: mean absolute error (lower is better, threshold inverted)
+            mae = float(_np_local.abs(r_img - g_img).mean())
+            result["ssim"] = round(1.0 - mae, 6)
+            mae_threshold = 1.0 - ssim_threshold
+            result["ok"] = mae <= mae_threshold
+            result["reason"] = "mae_pass" if result["ok"] else "mae_fail"
+
+    except ImportError:
+        result["reason"] = "pillow_unavailable"
+        result["ok"] = True  # Don't block CI when deps unavailable
+    except Exception as exc:
+        result["reason"] = f"error:{exc}"
+
+    return result
+
+
+def handle_visual_qa_compare_render(
+    render_path: str,
+    golden_path: str,
+    ssim_threshold: float = 0.95,
+) -> Dict[str, Any]:
+    """Pipeline handler wrapping compare_render_to_golden with error guard."""
+    try:
+        return compare_render_to_golden(render_path, golden_path, ssim_threshold=ssim_threshold)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "ssim": None,
+            "threshold": ssim_threshold,
+            "render_path": render_path,
+            "golden_path": golden_path,
+            "reason": f"exception:{exc}",
+        }

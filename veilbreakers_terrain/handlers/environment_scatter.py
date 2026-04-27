@@ -58,7 +58,26 @@ from ._scatter_engine import (
 )
 from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
-from .vegetation_lsystem import generate_billboard_impostor
+# L-3: generate_billboard_impostor is from the deprecated D-grade L-system pipeline.
+# Import lazily so failures are non-fatal; call sites should migrate to a proper
+# N-view Blender bake via Phase 9C of the 12-phase plan.
+try:
+    import warnings as _warnings
+    from .vegetation_lsystem import generate_billboard_impostor as _generate_billboard_impostor_raw
+    def generate_billboard_impostor(*args, **kwargs):
+        _warnings.warn(
+            "generate_billboard_impostor is deprecated (L-3/C-4); "
+            "implement N-view Blender atlas bake in Phase 9C.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _generate_billboard_impostor_raw(*args, **kwargs)
+except ImportError:
+    def generate_billboard_impostor(*args, **kwargs):  # type: ignore[misc]
+        raise NotImplementedError(
+            "vegetation_lsystem.generate_billboard_impostor unavailable (L-3); "
+            "implement N-view Blender atlas bake in Phase 9C of the 12-phase plan."
+        )
 from .lod_pipeline import generate_lod_chain
 from .terrain_semantics import WorldHeightTransform
 from .terrain_scatter_points import ScatterPoint, ScatterPointTable, validate_scatter_point_table

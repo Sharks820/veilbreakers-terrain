@@ -1,0 +1,33 @@
+{
+  "_scenario": "cliff_talus_apron",
+  "_description": "Steep cliff face with a talus scree apron at its base. Key features: cliff_mask, talus_mask, strata_mask all emitted; strata banding visible; scree density gradient from face to apron edge.",
+  "_version": 1,
+  "intent": {
+    "seed": 137,
+    "region_bounds": [-256, -256, 256, 256],
+    "tile_size": 512,
+    "cell_size": 1.0,
+    "quality_profile": "production",
+    "noise_profile": "dark_fantasy_default",
+    "erosion_profile": "arid",
+    "composition_hints": {
+      "scenario": "cliff_talus_apron",
+      "cliff_height_min_m": 30.0,
+      "talus_angle_deg": 35.0,
+      "strata_layers": 4
+    }
+  },
+  "required_channels": [
+    "heightmap",
+    "cliff_mask",
+    "talus_mask",
+    "strata_mask",
+    "slope"
+  ],
+  "channel_assertions": {
+    "cliff_mask": {"min_nonzero_cells": 80, "range": [0.0, 1.0]},
+    "talus_mask": {"min_nonzero_cells": 50, "range": [0.0, 1.0]},
+    "strata_mask": {"min_nonzero_cells": 20, "range": [0.0, 1.0]}
+  },
+  "render_goldens": {}
+}

@@ -1,0 +1,36 @@
+{
+  "_scenario": "waterfall_plunge_pool",
+  "_description": "Vertical cliff face with a river terminating in a plunge pool at its base. Key features: cliff drop > 20m, pool radius > 15m, foam band at cliff base, shoreline_blend ring around pool.",
+  "_version": 1,
+  "intent": {
+    "seed": 42,
+    "region_bounds": [-512, -512, 512, 512],
+    "tile_size": 1024,
+    "cell_size": 1.0,
+    "quality_profile": "production",
+    "noise_profile": "dark_fantasy_default",
+    "erosion_profile": "temperate",
+    "composition_hints": {
+      "scenario": "waterfall_plunge_pool",
+      "cliff_height_min_m": 20.0,
+      "plunge_pool_radius_min_m": 15.0,
+      "river_width_m": 8.0
+    }
+  },
+  "required_channels": [
+    "heightmap",
+    "cliff_mask",
+    "water_surface_mask",
+    "water_surface_elevation_m",
+    "water_depth_m",
+    "shoreline_blend",
+    "flow_accumulation",
+    "flow_direction"
+  ],
+  "channel_assertions": {
+    "water_depth_m": {"min_nonzero_cells": 100, "max_value_m": 200.0},
+    "cliff_mask": {"min_nonzero_cells": 50},
+    "shoreline_blend": {"range": [0.0, 1.0]}
+  },
+  "render_goldens": {}
+}

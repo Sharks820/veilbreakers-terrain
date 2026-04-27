@@ -1,0 +1,36 @@
+{
+  "_scenario": "deep_lake_basin",
+  "_description": "Enclosed basin containing a deep freshwater lake. Key features: water_depth_m > 40m at center, bathymetry channel present, shoreline_blend ring, wetness gradient from shoreline inward.",
+  "_version": 1,
+  "intent": {
+    "seed": 7,
+    "region_bounds": [-512, -512, 512, 512],
+    "tile_size": 1024,
+    "cell_size": 1.0,
+    "quality_profile": "production",
+    "noise_profile": "dark_fantasy_default",
+    "erosion_profile": "temperate",
+    "composition_hints": {
+      "scenario": "deep_lake_basin",
+      "lake_radius_min_m": 80.0,
+      "max_depth_m": 50.0,
+      "enclosed_basin": true
+    }
+  },
+  "required_channels": [
+    "heightmap",
+    "water_surface_mask",
+    "water_surface_elevation_m",
+    "water_depth_m",
+    "shoreline_blend",
+    "bathymetry",
+    "wetness"
+  ],
+  "channel_assertions": {
+    "water_depth_m": {"min_nonzero_cells": 500, "max_value_m": 200.0},
+    "bathymetry": {"range": [0.0, 1.0]},
+    "shoreline_blend": {"range": [0.0, 1.0]},
+    "water_surface_mask": {"range": [0.0, 1.0]}
+  },
+  "render_goldens": {}
+}

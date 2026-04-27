@@ -1,0 +1,32 @@
+{
+  "_scenario": "cave_entrance",
+  "_description": "Cave mouth opening into a cliff face with a surrounding occlusion shadow. Key features: cave_candidate channel non-empty, cliff_mask overlapping cave region, entrance framed by strata banding.",
+  "_version": 1,
+  "intent": {
+    "seed": 2048,
+    "region_bounds": [-128, -128, 128, 128],
+    "tile_size": 256,
+    "cell_size": 0.5,
+    "quality_profile": "production",
+    "noise_profile": "dark_fantasy_default",
+    "erosion_profile": "temperate",
+    "composition_hints": {
+      "scenario": "cave_entrance",
+      "cave_radius_min_m": 5.0,
+      "cliff_height_min_m": 15.0,
+      "strata_layers": 3
+    }
+  },
+  "required_channels": [
+    "heightmap",
+    "cliff_mask",
+    "cave_candidate",
+    "strata_mask"
+  ],
+  "channel_assertions": {
+    "cliff_mask": {"min_nonzero_cells": 30, "range": [0.0, 1.0]},
+    "cave_candidate": {"min_nonzero_cells": 5, "range": [0.0, 1.0]},
+    "strata_mask": {"range": [0.0, 1.0]}
+  },
+  "render_goldens": {}
+}
