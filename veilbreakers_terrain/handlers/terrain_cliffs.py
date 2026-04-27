@@ -108,6 +108,9 @@ class StrataLayer:
     hardness: float = 0.5
     x_shift_m: float = 0.0
     is_overhang: bool = False
+    # Linear-RGB color derived from hardness: soft=shale beige, hard=basalt grey.
+    # Populated by _build_strata_layers; consumed by material and export passes.
+    rgb_color: Tuple[float, float, float] = field(default_factory=lambda: (0.55, 0.50, 0.42))
 
 
 # ---------------------------------------------------------------------------
@@ -632,12 +635,35 @@ def _build_strata_layers(
         if layers and hardness > 0.70 and layers[-1].hardness < hardness - 0.15:
             is_overhang = True
 
+        # Geological colour: interpolate across 5 hardness stops.
+        # soft shale (0.0) → limestone (0.3) → sandstone (0.6) → granite (0.8) → basalt (1.0)
+        _stops = [
+            (0.00, (0.58, 0.52, 0.44)),  # shale / mudstone — warm grey-brown
+            (0.30, (0.76, 0.68, 0.54)),  # limestone — beige
+            (0.60, (0.60, 0.46, 0.36)),  # sandstone — rusty-tan
+            (0.80, (0.36, 0.33, 0.31)),  # granite — dark grey
+            (1.00, (0.22, 0.20, 0.19)),  # basalt — near-black
+        ]
+        rgb_color: Tuple[float, float, float] = _stops[0][1]
+        for k in range(len(_stops) - 1):
+            h0, c0 = _stops[k]
+            h1, c1 = _stops[k + 1]
+            if h0 <= hardness <= h1:
+                t = (hardness - h0) / max(h1 - h0, 1e-6)
+                rgb_color = (
+                    c0[0] + t * (c1[0] - c0[0]),
+                    c0[1] + t * (c1[1] - c0[1]),
+                    c0[2] + t * (c1[2] - c0[2]),
+                )
+                break
+
         layers.append(StrataLayer(
             dip_angle_rad=dip,
             thickness_m=max(0.3, thickness),
             hardness=hardness,
             x_shift_m=x_shift,
             is_overhang=is_overhang,
+            rgb_color=rgb_color,
         ))
 
     return layers
@@ -1665,6 +1691,31 @@ def _build_cliff_overhang_mesh_specs(
         else None
     )
     for cliff in cliffs:
+        # Serialize per-stratum color bands so the material pass can apply
+        # geological colour without re-computing hardness from scratch.
+        if cliff.strata_layers:
+            cumulative_z = float(cliff.min_height_m)
+            strata_bands = []
+            for sl in cliff.strata_layers:
+                strata_bands.append({
+                    "z_base_m": cumulative_z,
+                    "z_top_m": cumulative_z + sl.thickness_m,
+                    "hardness": sl.hardness,
+                    "rgb_color": list(sl.rgb_color),
+                    "is_overhang": sl.is_overhang,
+                    "dip_angle_rad": sl.dip_angle_rad,
+                })
+                cumulative_z += sl.thickness_m
+            mesh_specs.append({
+                "mesh_id": f"{cliff.cliff_id}_strata_material",
+                "mesh_type": "cliff_strata_material",
+                "cliff_id": cliff.cliff_id,
+                "tier": cliff.tier,
+                "strata_bands": strata_bands,
+                "cliff_z_min": float(cliff.min_height_m),
+                "cliff_z_max": float(cliff.max_height_m),
+            })
+
         overhang_spec = cliff.overhang_spec or {}
         out_nx, out_ny = overhang_spec.get("outward_normal_xy", (0.0, 1.0))
         for segment in overhang_spec.get("segments", ()):

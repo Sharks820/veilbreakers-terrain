@@ -877,6 +877,28 @@ def _euler_xyz_to_quat(rx: float, ry: float, rz: float) -> tuple[float, float, f
     )
 
 
+def _resolve_prototype_id(
+    placement: dict[str, Any],
+    species_id: str,
+    resolve_fn: Any,
+) -> str:
+    """Return the best available prototype_id for a scatter placement.
+
+    Priority: explicit prototype_id in placement → catalog unity_asset_path
+    (non-fallback) → species_id string (engine-side procedural fallback).
+    """
+    if placement.get("prototype_id"):
+        return str(placement["prototype_id"])
+    if resolve_fn is not None:
+        try:
+            entry = resolve_fn(species_id)
+            if not entry.get("fallback") and entry.get("unity_asset_path"):
+                return str(entry["unity_asset_path"])
+        except Exception:
+            pass
+    return species_id
+
+
 def _build_scatter_point_table_from_placements(
     placements: list[dict[str, Any]],
     *,
@@ -892,6 +914,13 @@ def _build_scatter_point_table_from_placements(
     """Convert handler placements into the canonical scatter point table."""
     terrain_half_x = terrain_width * 0.5
     terrain_half_y = terrain_height * 0.5
+
+    # Resolve catalog assets once per call to avoid repeated module import overhead.
+    try:
+        from .terrain_foliage_catalog import resolve_model_asset as _resolve_asset
+    except Exception:
+        _resolve_asset = None  # type: ignore[assignment]
+
     points: list[ScatterPoint] = []
     for index, placement in enumerate(placements):
         local_x, local_y = placement["position"]
@@ -930,7 +959,9 @@ def _build_scatter_point_table_from_placements(
                 normal=(float(normal[0]), float(normal[1]), float(normal[2])),
                 orient=(float(orient[0]), float(orient[1]), float(orient[2]), float(orient[3])),
                 scale=(scale, scale, scale),
-                prototype_id=str(placement.get("prototype_id", species_id)),
+                prototype_id=_resolve_prototype_id(
+                    placement, species_id, _resolve_asset
+                ),
                 species_id=species_id,
                 biome_id=str(biome_id),
                 density=float(placement.get("density", 1.0)),
