@@ -34,6 +34,13 @@ from veilbreakers_terrain.src.veilbreakers_mcp.blender_server import (
 # 1. Audit coverage test
 # ---------------------------------------------------------------------------
 PHASE_J_LOCATION_KEYS = [
+    "blender_scene_info", "blender_object_info",
+    "object_create", "object_delete", "object_transform",
+    "material_basic", "light_setup", "camera_setup",
+    "camera_orbit_plan", "camera_apply_shot",
+    "render_output_check", "material_inspect", "terrain_editability_report",
+    "terrain_bridge_health", "terrain_heightfield_mesh",
+    "terrain_write_attribute", "terrain_scene_validate",
     "bmesh_op",
     "modifier_add", "modifier_apply", "modifier_remove", "modifier_list",
     "uv_project",
@@ -46,6 +53,23 @@ PHASE_J_LOCATION_KEYS = [
 ]
 
 PHASE_J_COMMANDS = [
+    "blender_scene_info",
+    "blender_object_info",
+    "blender_object_create_primitive",
+    "blender_object_delete",
+    "blender_object_transform",
+    "blender_material_assign_basic",
+    "blender_light_create_or_update",
+    "blender_camera_create_or_update",
+    "blender_camera_orbit_plan",
+    "blender_camera_apply_shot",
+    "blender_render_output_check",
+    "blender_material_inspect",
+    "blender_terrain_editability_report",
+    "blender_terrain_bridge_health",
+    "blender_terrain_heightfield_mesh_from_channels",
+    "blender_terrain_write_named_attribute",
+    "blender_terrain_scene_validate",
     "blender_bmesh_op",
     "blender_modifier_add", "blender_modifier_apply",
     "blender_modifier_remove", "blender_modifier_list",
@@ -238,6 +262,72 @@ class _FakeMesh:
     def __init__(self) -> None:
         self.vertices: List[Any] = []
         self.polygons: List[Any] = []
+        self.materials: List[Any] = []
+        self.attributes = _FakeAttributeCollection()
+
+    def from_pydata(self, verts, edges, faces) -> None:
+        self.vertices = [SimpleNamespace(co=v) for v in verts]
+        self.polygons = [
+            SimpleNamespace(vertices=tuple(face), use_smooth=False)
+            for face in faces
+        ]
+        self.attributes._vertex_count = len(self.vertices)
+
+    def update(self) -> None:
+        return None
+
+
+class _FakeMeshCollection(dict):
+    def new(self, name: str) -> _FakeMesh:
+        mesh = _FakeMesh()
+        mesh.name = name
+        self[name] = mesh
+        return mesh
+
+
+class _FakeAttributeDatum:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+
+class _FakeAttributeData(list):
+    def foreach_set(self, attr: str, values: Any) -> None:
+        if attr != "value":
+            raise AttributeError(attr)
+        for datum, value in zip(self, values):
+            datum.value = float(value)
+
+
+class _FakeAttribute:
+    def __init__(self, name: str, count: int) -> None:
+        self.name = name
+        self.data = _FakeAttributeData(_FakeAttributeDatum() for _ in range(count))
+
+
+class _FakeAttributeCollection(dict):
+    def new(self, name: str, type: str, domain: str) -> _FakeAttribute:  # noqa: A002
+        attr = _FakeAttribute(name, getattr(self, "_vertex_count", 0))
+        attr.type = type
+        attr.domain = domain
+        self[name] = attr
+        return attr
+
+    def remove(self, attr: _FakeAttribute) -> None:
+        self.pop(attr.name, None)
+
+
+class _FakeCollection:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.objects = SimpleNamespace(link=lambda obj: None)
+        self.children = SimpleNamespace(link=lambda coll: None)
+
+
+class _FakeCollectionCollection(dict):
+    def new(self, name: str) -> _FakeCollection:
+        coll = _FakeCollection(name)
+        self[name] = coll
+        return coll
 
 
 class _FakeModifier:
@@ -265,6 +355,47 @@ class _FakeModifierCollection:
     def __contains__(self, name: str) -> bool:
         return self.get(name) is not None
 
+    def __iter__(self):
+        return iter(self._items)
+
+
+class _FakeMaterial:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.diffuse_color = (1.0, 1.0, 1.0, 1.0)
+        self.use_nodes = False
+        self.node_tree = SimpleNamespace(nodes={})
+
+
+class _FakeMaterialCollection(dict):
+    def new(self, name: str) -> _FakeMaterial:
+        mat = _FakeMaterial(name)
+        self[name] = mat
+        return mat
+
+    def get(self, name: str, default=None) -> Any:  # type: ignore[override]
+        return super().get(name, default)
+
+
+class _FakeDataBlock:
+    def __init__(self, name: str, type_: str) -> None:
+        self.name = name
+        self.type = type_
+        self.energy = 0.0
+        self.size = 1.0
+        self.lens = 35.0
+
+
+class _FakeDataBlockCollection(dict):
+    def __init__(self, type_: str) -> None:
+        super().__init__()
+        self._type = type_
+
+    def new(self, name: str, type: str | None = None) -> _FakeDataBlock:  # noqa: A002
+        block = _FakeDataBlock(name, type or self._type)
+        self[name] = block
+        return block
+
 
 class _FakeObject:
     def __init__(self, name: str, type_: str = "MESH") -> None:
@@ -272,11 +403,65 @@ class _FakeObject:
         self.type = type_
         self.data = _FakeMesh()
         self.modifiers = _FakeModifierCollection()
+        self.location = (0.0, 0.0, 0.0)
+        self.rotation_euler = (0.0, 0.0, 0.0)
+        self.scale = (1.0, 1.0, 1.0)
+        self.dimensions = (1.0, 1.0, 1.0)
+        self.bound_box = []
+        self.parent = None
 
 
 class _FakeObjectCollection(dict):
     def get(self, name: str, default=None) -> Any:  # type: ignore[override]
         return super().get(name, default)
+
+    def new(self, name: str, data: Any) -> _FakeObject:
+        type_ = "EMPTY" if data is None else getattr(data, "type", "MESH")
+        if type_ in {"AREA", "POINT", "SPOT", "SUN"}:
+            type_ = "LIGHT"
+        elif type_ == "CAMERA":
+            type_ = "CAMERA"
+        obj = _FakeObject(name, type_)
+        obj.data = data if data is not None else _FakeMesh()
+        self[name] = obj
+        return obj
+
+    def remove(self, obj: _FakeObject, do_unlink: bool = True) -> None:
+        self.pop(obj.name, None)
+
+
+class _FakeMeshOps:
+    def __init__(self, fake_bpy: ModuleType) -> None:
+        self._bpy = fake_bpy
+
+    def _add(self, name: str, location: Any, rotation: Any) -> _FakeObject:
+        obj = _FakeObject(name)
+        obj.location = tuple(location)
+        obj.rotation_euler = tuple(rotation)
+        self._bpy.data.objects[name] = obj
+        self._bpy.context.view_layer.objects.active = obj
+        return obj
+
+    def primitive_cube_add(self, *, size: float, location: Any, rotation: Any) -> None:
+        self._add("Cube", location, rotation)
+
+    def primitive_plane_add(self, *, size: float, location: Any, rotation: Any) -> None:
+        self._add("Plane", location, rotation)
+
+    def primitive_uv_sphere_add(self, **kwargs: Any) -> None:
+        self._add("Sphere", kwargs["location"], kwargs["rotation"])
+
+    def primitive_ico_sphere_add(self, **kwargs: Any) -> None:
+        self._add("IcoSphere", kwargs["location"], kwargs["rotation"])
+
+    def primitive_cylinder_add(self, **kwargs: Any) -> None:
+        self._add("Cylinder", kwargs["location"], kwargs["rotation"])
+
+    def primitive_cone_add(self, **kwargs: Any) -> None:
+        self._add("Cone", kwargs["location"], kwargs["rotation"])
+
+    def primitive_torus_add(self, **kwargs: Any) -> None:
+        self._add("Torus", kwargs["location"], kwargs["rotation"])
 
 
 def _install_fake_bpy(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
@@ -285,7 +470,11 @@ def _install_fake_bpy(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     fake_bpy.data = SimpleNamespace(  # type: ignore[attr-defined]
         node_groups=_FakeNodeGroupCollection(),
         objects=_FakeObjectCollection(),
-        collections={},
+        collections=_FakeCollectionCollection(),
+        meshes=_FakeMeshCollection(),
+        materials=_FakeMaterialCollection(),
+        lights=_FakeDataBlockCollection("AREA"),
+        cameras=_FakeDataBlockCollection("CAMERA"),
     )
     fake_bpy.context = SimpleNamespace(  # type: ignore[attr-defined]
         scene=SimpleNamespace(
@@ -297,6 +486,7 @@ def _install_fake_bpy(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         ),
         view_layer=SimpleNamespace(objects=SimpleNamespace(active=None)),
     )
+    fake_bpy.ops = SimpleNamespace(mesh=_FakeMeshOps(fake_bpy))  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     return fake_bpy
 
@@ -369,3 +559,192 @@ def test_gn_dispatch_error_on_missing_group(monkeypatch: pytest.MonkeyPatch) -> 
     r = dispatch("gn_dump", {"group_name": "does_not_exist"})
     assert r["status"] == "error"
     assert r["error"] == "node_group_not_found"
+
+
+def test_safe_object_material_camera_light_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Generic Blender MCP's useful object workflow, but through safe wrappers."""
+    fake_bpy = _install_fake_bpy(monkeypatch)
+
+    r = dispatch("object_create", {
+        "name": "VB_probe_cube",
+        "primitive_type": "cube",
+        "location": [1.0, 2.0, 3.0],
+        "scale": [2.0, 2.0, 1.0],
+    })
+    assert r["status"] == "ok", r
+    assert r["result"]["object"]["name"] == "VB_probe_cube"
+    assert fake_bpy.data.objects.get("VB_probe_cube") is not None
+
+    r = dispatch("object_transform", {
+        "object_name": "VB_probe_cube",
+        "location": [2.0, 3.0, 4.0],
+        "rotation_euler": [0.0, 0.0, 1.0],
+    })
+    assert r["status"] == "ok", r
+    assert r["result"]["object"]["location"] == [2.0, 3.0, 4.0]
+
+    r = dispatch("material_basic", {
+        "object_name": "VB_probe_cube",
+        "material_name": "VB_probe_moss",
+        "base_color": [0.2, 0.4, 0.1, 1.0],
+        "roughness": 0.8,
+    })
+    assert r["status"] == "ok", r
+    assert fake_bpy.data.objects["VB_probe_cube"].data.materials[0].name == "VB_probe_moss"
+
+    r = dispatch("light_setup", {
+        "name": "VB_key_light",
+        "light_type": "AREA",
+        "location": [0.0, -4.0, 5.0],
+        "energy": 700.0,
+    })
+    assert r["status"] == "ok", r
+    assert fake_bpy.data.objects["VB_key_light"].type == "LIGHT"
+
+    r = dispatch("camera_setup", {
+        "name": "VB_camera",
+        "location": [0.0, -8.0, 4.0],
+        "rotation_euler": [1.1, 0.0, 0.0],
+        "lens": 40.0,
+    })
+    assert r["status"] == "ok", r
+    assert fake_bpy.context.scene.camera.name == "VB_camera"
+
+    r = dispatch("blender_scene_info", {"include_objects": True})
+    assert r["status"] == "ok", r
+    assert r["result"]["counts_by_type"]["MESH"] == 1
+    assert r["result"]["counts_by_type"]["LIGHT"] == 1
+    assert r["result"]["counts_by_type"]["CAMERA"] == 1
+
+    r = dispatch("blender_object_info", {"object_name": "VB_probe_cube"})
+    assert r["status"] == "ok", r
+    assert r["result"]["object"]["materials"] == ["VB_probe_moss"]
+
+    r = dispatch("object_delete", {"object_name": "VB_probe_cube"})
+    assert r["status"] == "ok", r
+    assert fake_bpy.data.objects.get("VB_probe_cube") is None
+
+
+def test_terrain_recipe_heightfield_attribute_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recipe-level terrain path: build mesh -> write channel -> validate scene."""
+    fake_bpy = _install_fake_bpy(monkeypatch)
+
+    r = dispatch("terrain_bridge_health", {})
+    assert r["status"] == "ok", r
+    assert r["result"]["bpy_available"] is True
+
+    heights = [
+        [0.0, 1.0, 0.0],
+        [0.5, 1.5, 0.5],
+        [0.0, 0.75, 0.0],
+    ]
+    wetness = [
+        [0.0, 0.2, 0.0],
+        [0.5, 1.0, 0.5],
+        [0.0, 0.3, 0.0],
+    ]
+    r = dispatch("terrain_heightfield_mesh", {
+        "name": "VB_Terrain_Main",
+        "height": heights,
+        "cell_size": 2.0,
+        "attributes": {"wetness": wetness},
+        "material_name": "VB_Terrain_Debug",
+        "shade_smooth": True,
+    })
+    assert r["status"] == "ok", r
+    assert r["result"]["vertex_count"] == 9
+    assert r["result"]["face_count"] == 4
+    assert r["result"]["attributes_written"] == ["height", "wetness"]
+    assert fake_bpy.data.objects["VB_Terrain_Main"].data.materials[0].name == "VB_Terrain_Debug"
+
+    r = dispatch("terrain_write_attribute", {
+        "object_name": "VB_Terrain_Main",
+        "attribute_name": "flow_accumulation",
+        "values": [0.0] * 9,
+    })
+    assert r["status"] == "ok", r
+    assert r["result"]["value_count"] == 9
+
+    r = dispatch("terrain_scene_validate", {
+        "required_objects": ["VB_Terrain_Main"],
+        "required_attributes": {
+            "VB_Terrain_Main": ["height", "wetness", "flow_accumulation"],
+        },
+    })
+    assert r["status"] == "ok", r
+    assert r["result"]["ready"] is True
+
+    r = dispatch("terrain_scene_validate", {
+        "required_objects": ["VB_Terrain_Main"],
+        "required_attributes": {"VB_Terrain_Main": ["missing_channel"]},
+    })
+    assert r["status"] == "error"
+    assert r["error"] == "scene_validation_failed"
+
+
+def test_camera_quality_texture_and_editability_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Camera angles, render checks, texture inspection, and editability are MCP-reachable."""
+    fake_bpy = _install_fake_bpy(monkeypatch)
+
+    r = dispatch("camera_orbit_plan", {
+        "target": [0.0, 0.0, 0.0],
+        "radius": 12.0,
+        "include_top": True,
+        "include_closeups": True,
+    })
+    assert r["status"] == "ok", r
+    shots = r["result"]["shots"]
+    names = {shot["name"] for shot in shots}
+    assert {"hero", "north", "east", "south", "west", "top", "closeup_north"} <= names
+
+    hero = next(shot for shot in shots if shot["name"] == "hero")
+    r = dispatch("camera_apply_shot", {
+        "camera_name": "VB_hero_camera",
+        "shot": hero,
+        "use_look_at": False,
+    })
+    assert r["status"] == "ok", r
+    assert fake_bpy.context.scene.camera.name == "VB_hero_camera"
+
+    render_path = tmp_path / "hero.png"
+    render_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 700)
+    r = dispatch("render_output_check", {
+        "path": str(render_path),
+        "min_bytes": 512,
+        "require_png": True,
+    })
+    assert r["status"] == "ok", r
+    assert r["result"]["ready"] is True
+    assert r["result"]["is_png"] is True
+
+    heights = [
+        [0.0, 1.0, 0.0],
+        [0.5, 1.5, 0.5],
+        [0.0, 0.75, 0.0],
+    ]
+    r = dispatch("terrain_heightfield_mesh", {
+        "name": "VB_Terrain_Main",
+        "height": heights,
+        "material_name": "VB_Terrain_Debug",
+    })
+    assert r["status"] == "ok", r
+
+    r = dispatch("material_inspect", {"object_name": "VB_Terrain_Main"})
+    assert r["status"] == "ok", r
+    assert r["result"]["ready_for_texturing"] is True
+    assert r["result"]["material_count"] == 1
+    assert "height" in r["result"]["attributes"]
+
+    r = dispatch("terrain_editability_report", {"object_name": "VB_Terrain_Main"})
+    assert r["status"] == "ok", r
+    assert r["result"]["editable"] is True
+    assert r["result"]["vertex_count"] == 9
+    assert r["result"]["face_count"] == 4
+
+
+def test_visual_compare_render_is_mcp_reachable() -> None:
+    assert resolve_command("visual_compare_render") == "visual_qa_compare_render"
+    assert "visual_qa_compare_render" in COMMAND_HANDLERS

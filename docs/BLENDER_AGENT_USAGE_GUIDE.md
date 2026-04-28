@@ -17,7 +17,101 @@ All responses are dicts with `status: "ok"` on success or
 
 ---
 
-## 1. bmesh operations — `bmesh_op`
+## 1. Scene/object orientation and bounded edits
+
+Use these as the safe VeilBreakers equivalent of generic Blender MCP scene
+inspection and basic object authoring. Prefer them over arbitrary Python code.
+
+| Location key | Purpose |
+|---|---|
+| `blender_scene_info` | compact object counts, active camera, optional object summaries |
+| `blender_object_info` | detailed summary for one object |
+| `object_create` | create bounded mesh primitive (`cube`, `plane`, `uv_sphere`, `ico_sphere`, `cylinder`, `cone`, `torus`) |
+| `object_transform` | set location, rotation, and/or scale |
+| `object_delete` | delete one named object |
+| `material_basic` | create/update a simple Principled material and assign it |
+| `material_inspect` | inspect assigned materials, shader nodes, UV layers, and terrain attributes |
+| `light_setup` | create/update `AREA`, `POINT`, `SPOT`, or `SUN` light |
+| `camera_setup` | create/update camera, optionally look at a target and set active |
+| `camera_orbit_plan` | generate reusable hero/cardinal/top/closeup terrain camera shots |
+| `camera_apply_shot` | create/update a Blender camera from one shot-list entry |
+| `render_output_check` | verify a render file exists, is non-trivial, and optionally is PNG |
+| `terrain_bridge_health` | check live Blender/bmesh availability and compact scene status |
+| `terrain_heightfield_mesh` | build a terrain grid mesh from a height channel and named point attributes |
+| `terrain_write_attribute` | write a scalar point attribute to an existing terrain mesh |
+| `terrain_scene_validate` | verify required terrain objects/channels/camera before an agent mutates or exports |
+| `terrain_editability_report` | confirm a terrain object is mesh-backed, unlocked, attributed, textured, and editable |
+
+**Primitive payload**
+
+```json
+{
+  "name": "VB_probe_cube",
+  "primitive_type": "cube",
+  "location": [0, 0, 1],
+  "rotation_euler": [0, 0, 0],
+  "scale": [1, 1, 1],
+  "size": 1.0
+}
+```
+
+**Material payload**
+
+```json
+{
+  "object_name": "VB_probe_cube",
+  "material_name": "VB_probe_moss",
+  "base_color": [0.22, 0.38, 0.18, 1.0],
+  "roughness": 0.8,
+  "metallic": 0.0
+}
+```
+
+**Terrain heightfield payload**
+
+```json
+{
+  "name": "VB_Terrain_Main",
+  "height": [[0.0, 0.4, 0.0], [0.2, 1.0, 0.2], [0.0, 0.3, 0.0]],
+  "cell_size": 2.0,
+  "attributes": {
+    "wetness": [[0.0, 0.2, 0.0], [0.4, 1.0, 0.4], [0.0, 0.2, 0.0]],
+    "flow_accumulation": [[0.0, 0.1, 0.0], [0.2, 0.8, 0.2], [0.0, 0.1, 0.0]]
+  },
+  "material_name": "VB_Terrain_Debug",
+  "replace": true
+}
+```
+
+Use `terrain_scene_validate` before follow-up operations:
+
+```json
+{
+  "required_objects": ["VB_Terrain_Main"],
+  "required_attributes": {
+    "VB_Terrain_Main": ["height", "wetness", "flow_accumulation"]
+  },
+  "require_active_camera": false
+}
+```
+
+Use the camera and render quality loop before visual claims:
+
+```json
+{
+  "target": [0, 0, 0],
+  "radius": 40,
+  "include_top": true,
+  "include_closeups": true
+}
+```
+
+Pass one returned `shots[]` item into `camera_apply_shot`, render or capture,
+then run `render_output_check` and `visual_compare_render` when a golden exists.
+
+---
+
+## 2. bmesh operations — `bmesh_op`
 
 Low-level bmesh edit ops applied in place to a mesh object.
 
@@ -45,7 +139,7 @@ is unavailable. Always guard dense meshes with `safety_boolean` first.
 
 ---
 
-## 2. Modifier stack — `modifier_add` / `modifier_apply` / `modifier_remove` / `modifier_list`
+## 3. Modifier stack — `modifier_add` / `modifier_apply` / `modifier_remove` / `modifier_list`
 
 Supported types: `SUBSURF`, `DECIMATE`, `ARRAY`, `MIRROR`, `SOLIDIFY`,
 `DISPLACE`, `REMESH`, `CURVE`, `BOOLEAN`, `NODES`.
@@ -70,7 +164,7 @@ Unknown settings are reported in `unknown_settings`; known ones in
 
 ---
 
-## 3. UV projection — `uv_project`
+## 4. UV projection — `uv_project`
 
 **Payload**
 
@@ -92,7 +186,7 @@ mode is restored even on failure.
 
 ---
 
-## 4. Render engine — `render_engine`
+## 5. Render engine — `render_engine`
 
 ```json
 {"engine": "BLENDER_EEVEE_NEXT | BLENDER_EEVEE | CYCLES | BLENDER_WORKBENCH"}
@@ -102,7 +196,7 @@ Blender 4.5's default engine identifier is `BLENDER_EEVEE_NEXT`.
 
 ---
 
-## 5. Render still — `render_still`
+## 6. Render still — `render_still`
 
 ```json
 {
@@ -121,7 +215,7 @@ shading). `mode=render` uses the active engine.
 
 ---
 
-## 6. Collections — `collection_create` / `collection_link`
+## 7. Collections — `collection_create` / `collection_link`
 
 **Create**
 
@@ -139,7 +233,7 @@ If `parent` is omitted, links to the scene's root collection.
 
 ---
 
-## 7. Parenting — `parent_set`
+## 8. Parenting — `parent_set`
 
 ```json
 {
@@ -154,7 +248,7 @@ If `parent` is omitted, links to the scene's root collection.
 
 ---
 
-## 8. Empty controllers — `empty_create`
+## 9. Empty controllers — `empty_create`
 
 ```json
 {
@@ -169,12 +263,12 @@ Fails with `name_taken` if an object of that name already exists.
 
 ---
 
-## 9. Geometry Nodes — round-trip surface
+## 10. Geometry Nodes — round-trip surface
 
 Five commands, together sufficient to build, assign, and inspect a Geometry
 Nodes tree without leaving the MCP layer.
 
-### 9.1 `gn_create_group`
+### 10.1 `gn_create_group`
 
 ```json
 {"name": "gn_terrain_subdiv"}
@@ -183,7 +277,7 @@ Nodes tree without leaving the MCP layer.
 Creates a `GeometryNodeTree` with default `Geometry` input/output sockets
 and a straight-through link between the group's input and output nodes.
 
-### 9.2 `gn_add_node`
+### 10.2 `gn_add_node`
 
 ```json
 {
@@ -194,7 +288,7 @@ and a straight-through link between the group's input and output nodes.
 }
 ```
 
-### 9.3 `gn_link_sockets`
+### 10.3 `gn_link_sockets`
 
 ```json
 {
@@ -208,7 +302,7 @@ and a straight-through link between the group's input and output nodes.
 
 Socket identifiers accept socket names or positional indexes.
 
-### 9.4 `gn_assign_object`
+### 10.4 `gn_assign_object`
 
 ```json
 {
@@ -220,7 +314,7 @@ Socket identifiers accept socket names or positional indexes.
 
 Creates a `NODES` modifier if absent and assigns the node group.
 
-### 9.5 `gn_dump`
+### 10.5 `gn_dump`
 
 ```json
 {"group_name": "gn_terrain_subdiv"}
@@ -243,7 +337,7 @@ This round-trips: `create → add → link → assign → dump` is the full buil
 
 ---
 
-## 10. Add-ons — `addon_enable` / `addon_disable`
+## 11. Add-ons — `addon_enable` / `addon_disable`
 
 Short-name keys: `ant_landscape`, `sapling`, `node_wrangler`. Any other
 string is passed through as the raw Blender add-on module name.
@@ -254,13 +348,14 @@ string is passed through as the raw Blender add-on module name.
 
 ---
 
-## 11. Existing high-level handlers (recap)
+## 12. Existing high-level handlers (recap)
 
 These predate Phase J and remain the right tools for their domain.
 
 | Location key | Command |
 |---|---|
 | `terrain_sculpt` | raise/lower/smooth/flatten/stamp brush (handlers/terrain_sculpt.py) |
+| `blender_scene_info`, `blender_object_info`, `object_create`, `object_transform`, `object_delete`, `material_basic`, `light_setup`, `camera_setup` | safe scene/object/modeling wrappers inspired by generic Blender MCP |
 | `paint_weights`, `paint_weights_uv`, `paint_blend` | vertex-paint offline math |
 | `material_procedural` | procedural material creation |
 | `terrain_biome_setup` | full biome material setup |

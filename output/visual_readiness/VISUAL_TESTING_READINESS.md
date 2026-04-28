@@ -5,9 +5,9 @@
 - Blender runtime detected: False
 - Screenshot contract ok: True
 - Material library contract ok: True
-- Captured thumbnail bytes: 0
+- Captured thumbnail bytes: 8
 - Placeholder PNG detected: True
-- Perceptual hash: raw:missing
+- Perceptual hash: raw:70e4956d0d38456e
 - Reference present: False
 - Pixel diff exceeded: False
 

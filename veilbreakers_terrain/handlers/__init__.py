@@ -739,10 +739,19 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 required_channels=required_channels,
             )
 
+        def _handle_visual_qa_compare_render(params: dict) -> dict:
+            payload = params or {}
+            return _vqa.handle_visual_qa_compare_render(
+                render_path=str(payload.get("render_path", "")),
+                golden_path=str(payload.get("golden_path", "")),
+                ssim_threshold=float(payload.get("ssim_threshold", 0.95)),
+            )
+
         handlers["visual_qa_setup_camera"] = _handle_visual_qa_setup_camera
         handlers["visual_qa_set_shading"] = _handle_visual_qa_set_shading
         handlers["visual_qa_capture_screenshot"] = _handle_visual_qa_capture_screenshot
         handlers["visual_qa_validate_channels"] = _handle_visual_qa_validate_channels
+        handlers["visual_qa_compare_render"] = _handle_visual_qa_compare_render
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "COMMAND_HANDLERS: failed to register terrain_visual_qa handlers: %r",
@@ -1137,6 +1146,23 @@ def _build_command_handlers() -> Dict[str, Callable]:
             fn = getattr(_bcb, fn_name)
             return _make_signature_handler(fn)
 
+        handlers["blender_scene_info"] = _wrap("scene_info")
+        handlers["blender_object_info"] = _wrap("object_info")
+        handlers["blender_object_create_primitive"] = _wrap("object_create_primitive")
+        handlers["blender_object_delete"] = _wrap("object_delete")
+        handlers["blender_object_transform"] = _wrap("object_transform")
+        handlers["blender_material_assign_basic"] = _wrap("material_assign_basic")
+        handlers["blender_light_create_or_update"] = _wrap("light_create_or_update")
+        handlers["blender_camera_create_or_update"] = _wrap("camera_create_or_update")
+        handlers["blender_camera_orbit_plan"] = _wrap("camera_orbit_plan")
+        handlers["blender_camera_apply_shot"] = _wrap("camera_apply_shot")
+        handlers["blender_render_output_check"] = _wrap("render_output_check")
+        handlers["blender_material_inspect"] = _wrap("material_inspect")
+        handlers["blender_terrain_editability_report"] = _wrap("terrain_editability_report")
+        handlers["blender_terrain_bridge_health"] = _wrap("terrain_bridge_health")
+        handlers["blender_terrain_heightfield_mesh_from_channels"] = _wrap("terrain_heightfield_mesh_from_channels")
+        handlers["blender_terrain_write_named_attribute"] = _wrap("terrain_write_named_attribute")
+        handlers["blender_terrain_scene_validate"] = _wrap("terrain_scene_validate")
         handlers["blender_bmesh_op"] = _wrap("bmesh_op")
         handlers["blender_modifier_add"] = _wrap("modifier_add")
         handlers["blender_modifier_apply"] = _wrap("modifier_apply")
