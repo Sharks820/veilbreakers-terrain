@@ -25,6 +25,14 @@ class PassDAGError(RuntimeError):
     """Raised when the dependency graph is cyclic or unresolvable."""
 
 
+class PassNotRegisteredError(KeyError):
+    """Raised by PassDAG.resolve_pass when the requested pass is not in the DAG."""
+
+
+class WaveExecutionError(RuntimeError):
+    """Raised when one or more passes in a parallel wave fail."""
+
+
 def _merge_pass_outputs(
     target_controller: TerrainPassController,
     source_result: PassResult,
@@ -265,6 +273,20 @@ class PassDAG:
 
         return order
 
+    def resolve_pass(self, pass_name: str) -> "PassDefinition":
+        """Return the PassDefinition for *pass_name*, or raise PassNotRegisteredError.
+
+        Replaces the former silent-None behaviour (S22-P0-32).  Every caller
+        that previously checked ``if result is None`` must now use try/except
+        PassNotRegisteredError instead.
+        """
+        if pass_name not in self._passes:
+            raise PassNotRegisteredError(
+                f"Pass {pass_name!r} is not registered in the DAG. "
+                f"Registered passes: {list(self._passes)}"
+            )
+        return self._passes[pass_name]
+
     def parallel_waves(self) -> List[List[str]]:
         """Group passes into waves where each wave can run in parallel.
 
@@ -357,19 +379,35 @@ class PassDAG:
                     future_to_name[fut] = pname
                     submit_times[pname] = t_sub
 
+                # I5-P0-5: collect ALL futures before deciding to fail so that
+                # surviving passes still get their outputs merged into the
+                # shared controller state.  A bare future.result() call used
+                # to propagate the first exception immediately, aborting the
+                # loop and leaving completed-but-unmerged results discarded.
+                wave_failures: List[tuple] = []
                 for future in as_completed(future_to_name):
                     t_done = _time.perf_counter()
                     pname = future_to_name[future]
-                    res = future.result()
-                    res.metrics["wave_index"] = wave_idx
-                    res.metrics["wave_size"] = wave_size
-                    res.metrics["wave_submit_time_s"] = submit_times[pname]
-                    res.metrics["wave_wall_time_s"] = round(
-                        t_done - submit_times[pname], 6
-                    )
-                    wave_results[pname] = res
+                    try:
+                        res = future.result()
+                        res.metrics["wave_index"] = wave_idx
+                        res.metrics["wave_size"] = wave_size
+                        res.metrics["wave_submit_time_s"] = submit_times[pname]
+                        res.metrics["wave_wall_time_s"] = round(
+                            t_done - submit_times[pname], 6
+                        )
+                        wave_results[pname] = res
+                    except Exception as exc:  # noqa: BLE001
+                        wave_failures.append((pname, exc))
+                        logger.error(
+                            "Pass %r failed in parallel wave %d: %s",
+                            pname, wave_idx, exc, exc_info=exc,
+                        )
 
+            # Merge surviving results in deterministic order
             for pname in sorted(wave):
+                if pname not in wave_results:
+                    continue  # this pass failed; skip merge
                 merged = _merge_pass_outputs(controller, wave_results[pname])
                 if checkpoint and merged.status == "ok":
                     ckpt = controller._save_checkpoint(pname, merged)
@@ -377,10 +415,20 @@ class PassDAG:
                     controller.state.checkpoints.append(ckpt)
                 results.append(merged)
 
+            if wave_failures:
+                failed_names = [name for name, _ in wave_failures]
+                succeeded_count = len(wave_results)
+                raise WaveExecutionError(
+                    f"Wave {wave_idx} execution failed for passes: {failed_names}. "
+                    f"{succeeded_count} pass(es) succeeded and were merged."
+                )
+
         return results
 
 
 __all__ = [
     "PassDAG",
     "PassDAGError",
+    "PassNotRegisteredError",
+    "WaveExecutionError",
 ]

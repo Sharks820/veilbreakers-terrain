@@ -48,6 +48,10 @@ from .terrain_semantics import (
 )
 
 
+class PipelineSubsystemError(RuntimeError):
+    """Raised when a non-recoverable pipeline subsystem call fails (FIX-1.2)."""
+
+
 def _make_gate_issue(code: str, severity: str, message: str) -> ValidationIssue:
     return ValidationIssue(code=code, severity=severity, message=message)
 
@@ -413,11 +417,21 @@ class TerrainPassController:
             region,
         )
 
+        # K5-P0-1: snapshot mask_stack before execution so a failing pass can
+        # be rolled back to a clean state.  Phase 7 will replace this deepcopy
+        # with a copy-on-write scheme; for now correctness beats performance.
+        stack_snapshot = copy.deepcopy(self.state.mask_stack)
+
         _provenance_before = dict(self.state.mask_stack.populated_by_pass)
         t0 = time.perf_counter()
         try:
             result = definition.func(self.state, region)
         except Exception as exc:  # pragma: no cover — surface all errors
+            _log.error(
+                "Pass %r raised exception — rolling back mask_stack: %s",
+                pass_name, exc, exc_info=exc,
+            )
+            self.state.mask_stack = stack_snapshot
             result = PassResult(
                 pass_name=pass_name,
                 status="failed",
@@ -427,7 +441,7 @@ class TerrainPassController:
                 content_hash_before=content_hash_before,
             )
             self.state.record_pass(result)
-            raise
+            return result
 
         if not isinstance(result, PassResult):
             raise PassContractError(
@@ -689,10 +703,14 @@ class TerrainPassController:
                     results,
                     pre_pipeline_state=bundle_n_pre_pipeline_state,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 # Bundle N post-pipeline QA is a safety net: never let it break
-                # the main pipeline. Optional hook errors remain best-effort.
-                pass
+                # the main pipeline. Log at ERROR so the failure is visible, but
+                # remain best-effort (S22-P0-38 / FIX-1.2).
+                _log.error(
+                    "Subsystem bundle_n_post_pipeline_hooks failed: %s",
+                    exc, exc_info=exc,
+                )
 
         return results
 
@@ -1327,6 +1345,7 @@ def register_default_passes(*, strict: bool = False) -> None:
 
 __all__ = [
     "TerrainPassController",
+    "PipelineSubsystemError",
     "derive_pass_seed",
     "register_default_passes",
     "pass_compute_terrain_labels",
