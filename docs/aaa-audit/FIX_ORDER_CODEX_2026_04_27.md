@@ -2231,6 +2231,13 @@ These test assertions currently encode buggy behaviour as correct. They will fai
 | FIX-7-18 (shadow cost model) | `light_integration.py` | Point light shadow cost = +18.0 (6 faces × 3.0); spot light shadow cost = +3.0 (1 face) |
 | FIX-7-19 (AAA_NORMAL_CONSISTENCY_MIN unused) | `autonomous_loop.py:select_fix_action()` | Add branch: `if metrics.normal_consistency < AAA_NORMAL_CONSISTENCY_MIN: return "rebake_normals"` |
 
+### Priority 7E — Opus verification additions (S20-VERIFY)
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-7-20 (reverb table mismatch) | `terrain_unity_export.py:1640–1649` | Replace hardcoded `class_params` dict with a read from `REVERB_PRESETS` imported from `terrain_audio_zones`; delete duplicate table |
+| FIX-7-21 (tree HDRP shader) | `VbTerrainImporter.cs:GetOrCreateTreePrefab()` | Add `"HDRP/TerrainLit"` as first candidate in tree material shader lookup, same fix as FIX-7-4 |
+
 ### Batch 7 summary
 
 | Batch 7 sub-group | Count | Notes |
@@ -2239,9 +2246,10 @@ These test assertions currently encode buggy behaviour as correct. They will fai
 | 7B wiring fixes | 5 | Each requires test coverage added in same commit |
 | 7C Unity importer | 2 | Coordinate with Unity scene owners before merging |
 | 7D math correctness | 6 | FIX-7-17 (Sabine) may be scoped as P1 if audio RT60 remains disconnected |
-| **Total new** | **19** | |
+| 7E verification additions | 2 | FIX-7-20 is a 1-line import swap; FIX-7-21 is identical to FIX-7-4 |
+| **Total new** | **21** | |
 
 ---
 
 *End of FIX_ORDER_CODEX_2026_04_27.md*  
-*Total active P0s covered: 221 (202 original + 19 from Section 20 Batch 7). Execute batches in order 0→1→2→3→4→5→6→7.*
+*Total active P0s covered: 223 (202 original + 21 from Section 20 Batch 7). Execute batches in order 0→1→2→3→4→5→6→7.*

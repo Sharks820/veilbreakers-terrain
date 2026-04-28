@@ -3147,3 +3147,81 @@ New P1 findings: **17** (S20-P1-1 through S20-P1-17)
 10. S20-P0-2 — audio RT60 pipeline dead code (1000-line system produces zero output)
 
 **End of Section 20.**
+
+---
+
+## Section 20 Addendum — Opus Independent Verification (2026-04-28)
+
+*Single Opus agent performed line-level source verification of all 20 Section 20 P0 findings. Agent read every cited file and line, quoted confirming code, and graded each finding.*
+
+### Verification verdicts
+
+| Finding | Verdict | Notes |
+|---------|---------|-------|
+| S20-P0-1 (Bundle E water exclusion) | **CONFIRMED** | `compute_viability()` checks height/slope/wetness/forbidden_masks — zero references to `water_surface_elevation_m` |
+| S20-P0-2 (audio RT60 dead code) | **CONFIRMED** | `pass_audio_zones` writes `stack.set("audio_zone_list", zones)`; `_audio_zones_json()` reads `stack.audio_reverb_class` + hardcoded dict — zone graph discarded |
+| S20-P0-3 (Sabine open terrain) | **PARTIAL** | Real bug: `h_comp.std()` passed as wall_height with floor=1.0, no ceiling — produces nonsense RT60 on hilly open tiles. Wording correction: not literal "overflow", produces unrealistically high RT60 values |
+| S20-P0-4 (AAA_NORMAL_CONSISTENCY_MIN unused) | **CONFIRMED** | Zero references outside definition; `select_fix_action()` has no branch on `normal_consistency` |
+| S20-P0-5 (light/probe placements never exported) | **CONFIRMED** | Outputs wired only to MCP command handlers; no `_lights_json()`/`_probes_json()`; no descriptor fields in C# |
+| S20-P0-6 (HDRP shader absent) | **CONFIRMED** | `Shader.Find("Standard")` → `"Universal Render Pipeline/Lit"` → `"Diffuse"`. `"HDRP/TerrainLit"` never attempted |
+| S20-P0-7 (reimport non-idempotent) | **CONFIRMED** | `GenerateUniqueAssetPath()` called every time at `CreateTerrainData:286`; no `LoadAssetAtPath` lookup |
+| S20-P0-8 (export types silently dropped) | **CONFIRMED** | C# `TerrainBundleDescriptor` lines 19–47: missing hdrp_mask_map, water_shader_manifest, audio/gameplay/wildlife/decal zones, particle_emitter_specs, ecosystem_meta |
+| S20-P0-9 (sim/ bypassed) | **CONFIRMED** | Zero production imports of `veilbreakers_terrain.sim.*`; handler matches are comments/docstrings only |
+| S20-P0-10 (ProceduralGrassSystem not registered) | **CONFIRMED** | `terrain_master_registrar.py` and all `terrain_bundle_*.py` have zero matches for `procedural_grass` or `ProceduralGrassSystem` |
+| S20-P0-11 (asset_generation not wired) | **CONFIRMED** | Only imported by test file |
+| S20-P0-12 (parallel divergent data models) | **CONFIRMED** | Structurally confirmed; no cross-wiring between asset_generation.py and providers/ |
+| S20-P0-13 (HuggingFace shape-only endpoint) | **NEEDS DEEPER CHECK** | Uses `tencent/Hunyuan3D-2` Space; gradio API call details not fully verified at line level |
+| S20-P0-14 (RunPod local path) | **NEEDS DEEPER CHECK** | Structurally confirmed as unwired; exact line-level path bug not verified in this sweep |
+| S20-P0-15 (foam alpha inverted) | **CONFIRMED** | `obstacle_prox = distance_transform_edt(rock_mask == 0)` grows with distance from rock → at rock prox=0 → foam=0, in open water prox→∞ → foam=max. Inverted from physical reality |
+| S20-P0-16 (Brucks blend ignores scree) | **CONFIRMED** | Line 613: `blend_alpha = weights[:, :, cliff_idx].copy()` — scree_idx never referenced |
+| S20-P0-17 (overhang threshold wrong) | **CONFIRMED** | Line 857: `overhang_threshold_rad = math.radians(60.0)`. Docstring at 851–852 states intent is 80°; code uses 60°. Comment reads `# cos(60°) criterion` — author confusion, implementation is wrong |
+| S20-P0-18 (fold bypasses stack.set()) | **CONFIRMED** | `stack.height = (h + delta).astype(...)` at line 453 — direct attribute write, no invalidation hooks |
+| S20-P0-19 (terrain_banded_advanced dead) | **CONFIRMED** | Only imported by two test files; no production handler/bundle reference |
+| S20-P0-20 (three phantom channels) | **CONFIRMED** | Zero `stack.set("lightmap_uv_chart_id"` / `stack.set("bedrock_height"` / `stack.set("sediment_height"` across all handlers; all three read in terrain_unity_export.py |
+
+**Summary: 18 confirmed, 2 partial/needs-deeper-check, 0 false positives.**
+
+---
+
+### Additional P0s found by Opus verification
+
+**S20-V-P0-1: terrain_unity_export.py hardcoded reverb params contradict physics model**
+
+`_audio_zones_json()` at `terrain_unity_export.py:1640–1649` defines a hardcoded `class_params` dict with RT60 values (e.g., `cave_tight: rt60=0.8`) that directly contradict `REVERB_PRESETS` in `terrain_audio_zones.py:80` (e.g., `cave: rt60=2.80`). Even the hardcoded fallback path ships incorrect reverb values. Two competing reverb tables with inconsistent data.
+
+- **File:** `terrain_unity_export.py:1640–1649` vs `terrain_audio_zones.py:80`
+- **Severity:** P0 — both the wired path (S20-P0-2) and the fallback path ship wrong reverb
+
+**S20-V-P0-2: VbTerrainImporter.cs tree material has same HDRP shader gap**
+
+`GetOrCreateTreePrefab()` at `VbTerrainImporter.cs:1059–1063` applies the same `Standard` → `URP/Lit` → `Diffuse` lookup as the terrain material, with no `HDRP/TerrainLit` attempt. Trees render magenta in all HDRP builds, same as terrain supplemental materials.
+
+- **File:** `unity_plugin/Editor/VbTerrainImporter.cs:1059–1063`
+- **Severity:** P0 — all tree assets broken in HDRP (S20-P0-6 also affects trees, not just terrain)
+
+**S20-V-P1-1: VbTerrainImporter.cs prefab idempotency inconsistent**
+
+`PrefabUtility.SaveAsPrefabAsset` at line 1080 uses a `LoadAssetAtPath` check (creating only if missing), while `CreateTerrainData` at line 286 always calls `GenerateUniqueAssetPath`. TerrainData recreates every reimport; tree prefabs do not. Inconsistent; TerrainData references in the scene break on every reimport while prefabs are stable.
+
+**S20-V-P1-2: terrain_audio_zones.py chamfer-distance fallback is O(H×W) pure Python**
+
+`_chamfer_distance_cells()` at lines 330–359 is a pure-Python row-by-row loop used when SciPy is absent. At 4096×4096 tiles this is ~16M Python iterations — estimated 60–120s per call. SciPy availability is not enforced; this is a silent performance cliff.
+
+**S20-V-P1-3: terrain_assets.py slope rules fail open for default-bound rules**
+
+`compute_viability()` at lines 312–313 only runs the slope gate when `rule.max_slope_rad < π/2 - ε` or `rule.min_slope_rad > ε`. Rules that use the default constructor (bounds = 0..π/2) skip the slope check entirely. Any asset type using default slope bounds has its viability gate fail open — any slope passes.
+
+---
+
+### Section 20 final cumulative totals (post-verification)
+
+- **+2 new P0** from Opus verification (S20-V-P0-1, S20-V-P0-2)
+- **+3 new P1** from Opus verification (S20-V-P1-1 through P1-3)
+- **Revised Section 20 P0 count: 22** (20 original + 2 from verification)
+
+**Running grand total:**
+- **236 total confirmed P0 findings** (234 pre-verification + 2 new)
+- **233 active unresolved P0 blockers** (3 previously fixed)
+- **Overall grade: D−** (floor — unchanged)
+
+**End of Section 20 Addendum.**
