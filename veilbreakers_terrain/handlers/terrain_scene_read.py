@@ -77,7 +77,7 @@ def _walk_scene() -> dict:
         result["timestamp"] = bpy.data.scenes[0].name  # use scene name as identifier
     except ChannelNotWrittenError:
         raise  # Rule-1: phantom channel reads must propagate
-    except Exception:
+    except (ImportError, AttributeError):
         pass  # bpy unavailable outside Blender — non-fatal for headless mode
     return result
 

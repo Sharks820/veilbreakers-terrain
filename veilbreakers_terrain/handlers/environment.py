@@ -2776,13 +2776,15 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         if pass_name:
             requested_passes = [str(pass_name)]
         else:
+            _qp_name = str(params.get("quality_profile", "production"))
+            _is_preview_qp = _qp_name in ("preview", "mobile", "low")
             requested_passes = [
                 "pass_generate_low_freq_hmap",
                 "terrain_labels",
                 "structural_masks",
                 "pass_generate_high_freq_detail",
                 "pass_composite_hmap",
-                "validation_minimal",
+                "validation_minimal" if _is_preview_qp else "validation_full",
             ]
             if params.get("scene_read") is not None:
                 requested_passes[3:3] = ["pass_hydrology", "erosion"]
@@ -3050,13 +3052,15 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
 
     if pipeline is None and pass_name is None:
+        _qp_name2 = str(params.get("quality_profile", "production"))
+        _is_preview_qp2 = _qp_name2 in ("preview", "mobile", "low")
         pipeline = [
             "pass_generate_low_freq_hmap",
             "terrain_labels",
             "structural_masks",
             "pass_generate_high_freq_detail",
             "pass_composite_hmap",
-            "validation_minimal",
+            "validation_minimal" if _is_preview_qp2 else "validation_full",
         ]
         if scene_read is not None:
             pipeline[3:3] = ["pass_hydrology", "erosion"]

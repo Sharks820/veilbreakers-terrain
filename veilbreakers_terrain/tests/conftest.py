@@ -126,12 +126,12 @@ def _reset_pass_registry():
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         original = dict(TerrainPassController.PASS_REGISTRY)
         TerrainPassController.clear_registry()
-    except Exception:
+    except (ImportError, AttributeError):
         pass
     yield
     try:
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
         TerrainPassController.clear_registry()
         TerrainPassController.PASS_REGISTRY.update(original)
-    except Exception:
+    except (ImportError, AttributeError):
         pass
