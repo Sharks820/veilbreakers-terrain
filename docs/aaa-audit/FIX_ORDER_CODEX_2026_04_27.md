@@ -2319,5 +2319,131 @@ These test assertions currently encode buggy behaviour as correct. They will fai
 
 ---
 
-*End of FIX_ORDER_CODEX_2026_04_27.md*  
-*Total active P0s covered: 253 (202 original + 21 Batch 7 + 30 Batch 8). Execute batches in order 0→1→2→3→4→5→6→7→8.*
+*End of FIX_ORDER_CODEX_2026_04_27.md*
+
+
+---
+
+## Batch 9 — Section 22 P0 Fixes (67 new P0s, 2026-04-28 final sweep)
+
+**Execute after Batch 8. Organised by dependency tier: single-line correctness first, then stack-bypass conversions, then dead-code repair, then Unity export, then performance, then math/physics, then architecture. Commit atomically one fix per commit.**
+
+### Priority 9A — Single-line / channel-name / constant fixes
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-1 (S22-P0-66 — wrong channel name) | `terrain_caves.py` | Replace `stack.get("biome")` with `stack.get("biome_id")` in `_select_cave_style()` |
+| FIX-9-2 (S22-P0-57 — AO channel misspelling) | `terrain_roughness_driver.py` | Replace `stack.get("ambient_occlusion")` with `stack.get("ambient_occlusion_bake")` in `_compute_ao_term()` |
+| FIX-9-3 (S22-P0-58 — saliency water attrs) | `terrain_saliency.py` | Replace `getattr(stack, "water", None)` and `getattr(stack, "river", None)` with `stack.get("water_surface_mask")` in `_compute_water_saliency()` |
+| FIX-9-4 (S22-P0-20 — snow line default) | `terrain_glacial.py` | Change `SNOW_LINE_DEFAULT_M = 2000.0` to `SNOW_LINE_DEFAULT_M = 160.0` (80% of 200m max_elev); add `climate_zone = stack.get("climate_zone"); if climate_zone is not None: effective_snow_line = climate_zone.snow_line_m` |
+| FIX-9-5 (S22-P0-22 — dune slope gate) | `terrain_wind_field.py` | In `_deposit_dune_sand()`: add `slope = stack.get("slope"); if slope is not None: dune_deposition = np.where(slope > 0.26, 0.0, dune_deposition)` before applying to height |
+| FIX-9-6 (S22-P0-36 — triangle count) | `terrain_budget_enforcer.py` | Replace `len(mesh.polygons) * 3` with `sum(max(0, len(p.vertices) - 2) for p in mesh.polygons)` (fan triangulation — correct for both tris and quads) |
+| FIX-9-7 (S22-P0-39 — silent profile fallback) | `terrain_quality_profiles.py` | In `QualityProfile.load(name)`: add `if name not in KNOWN_PROFILES: raise ValueError(f"Unknown quality profile: {name!r}. Valid profiles: {list(KNOWN_PROFILES)}")` |
+| FIX-9-8 (S22-P0-40 — dev mode bypass) | `terrain_reference_locks.py` | Remove early-return when `TERRAIN_DEV_MODE == "1"`; replace with `logger.warning("DEV_MODE: reference lock check still runs")` |
+| FIX-9-9 (S22-P0-52 — contract version pinned) | `terrain_unity_export_contracts.py` | Replace `CONTRACT_VERSION = "1.0"` with dynamic version from package metadata: `import importlib.metadata; CONTRACT_VERSION = importlib.metadata.version("veilbreakers-terrain")` |
+| FIX-9-10 (S22-P0-60 — gait static strings) | `animation_gaits.py` | Refactor `GaitSelector.select_gait()` to accept `stack: TerrainMaskStack` and read `biome_id = stack.get("biome_id")` and material weights; map numeric biome_id to gait via `BIOME_GAIT_MAP` dict |
+
+### Priority 9B — Stack bypass conversions
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-11 (S22-P0-13 — coastline height bypass) | `coastline.py` | In `_apply_coastal_erosion()`: replace `self.stack.height[mask] -= erosion_delta` with `h = self.stack.get("height").copy(); h[mask] -= erosion_delta; self.stack.set("height", h, "coastline._apply_coastal_erosion")` |
+| FIX-9-12 (S22-P0-63 — weathering wetness bypass) | `terrain_weathering_timeline.py` | In `_apply_wet_season()`: replace `self.stack.wetness = new_wetness_map` with `self.stack.set("wetness", new_wetness_map, "terrain_weathering_timeline._apply_wet_season")` |
+| FIX-9-13 (S22-P0-33 — parallel merge setattr) | `terrain_pipeline.py` | In `_merge_parallel_results()`: replace `setattr(merged_stack, key, val)` loop with `merged_stack.set(key, val, "terrain_pipeline._merge_parallel_results")` for each channel key |
+| FIX-9-14 (S22-P0-37 — content_hash clobbered) | `terrain_pass_dag.py` | In `_resolve_graph()`: save `prev_hash = node.content_hash` before execution; only set `node.content_hash = None` if execution succeeds; on exception: restore `node.content_hash = prev_hash` |
+
+### Priority 9C — Dead code repair / Blender 4.5 compatibility
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-15 (S22-P0-65 — use_auto_smooth dead) | `_mesh_bridge.py` | In `apply_smoothing()`: replace `mesh.use_auto_smooth = True; mesh.auto_smooth_angle = angle` with: `mesh.normals_split_custom_set_from_vertices([v.normal for v in mesh.vertices])` (Blender 4.5 custom-normals path); remove bare `except AttributeError: pass` |
+| FIX-9-16 (S22-P0-18 — morphology dead) | `terrain_pipeline.py` | Add `"pass_morphology"` to `pass_sequence` immediately after the erosion group; confirm `terrain_bundle_n.py` registration maps to the correct function |
+| FIX-9-17 (S22-P0-27/28 — LOD/navmesh not in sequence) | `terrain_pipeline.py` | Add `"pass_horizon_lod"` to `pass_sequence` in the LOD group; add `"pass_navmesh_export"` at pipeline end (after all geometry passes, before Unity export) |
+| FIX-9-18 (S22-P0-29 — deprecated billboard call) | `lod_pipeline.py` | Remove call to `environment_scatter.generate_billboard_impostor`; import and call the current `BillboardImpostorGenerator(mesh, config).generate()` from the live impostor module; remove bare `except Exception: pass` at call site |
+
+### Priority 9D — Unity export critical path
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-19 (S22-P0-42 — VbTerrainTileMetadata stub) | `unity_plugin/VbTerrainTileMetadata.cs` | Expand C# struct to include all exported fields: `biomeId`, `climateZone`, `waterPresent`, `waterSurfaceElevationM`, `scatterCount`, `lod0DistanceM`, `lod1DistanceM`, `channelBounds` (Dictionary), `snowLineFactor`, and all other fields the Python exporter serialises |
+| FIX-9-20 (S22-P0-44 — gameplay zones path mismatch) | `terrain_gameplay_zones.py` | Change output path from `output/gameplay_zones.json` to `output/terrain_data/gameplay_zones.json`; create `output/terrain_data/` directory if absent |
+| FIX-9-21 (S22-P0-45 — wildlife zones path + missing importer) | `terrain_wildlife_zones.py` + `unity_plugin/VbTerrainImporter.cs` | Fix output path to `output/terrain_data/wildlife_zones.json`; add importer code in `VbTerrainImporter.cs` to read wildlife zones JSON and register spawn regions |
+| FIX-9-22 (S22-P0-46 — navmesh OBJ format) | `terrain_navmesh_export.py` | Replace OBJ output with Unity NavMesh link approach: export walkable area meshes as `.asset` files via `UnityEditor.AI.NavMeshBuilder` script call, OR export NMX binary using the navmesh serialisation spec; co-ordinate with Unity-side importer |
+| FIX-9-23 (S22-P0-47 — decal_density dict crash) | `terrain_decal_placement.py` | Replace `stack.decal_density = {}` with `decal_density_arr = np.zeros((H, W), dtype=np.float32)` populated from the decal placement loop; call `stack.set("decal_density", decal_density_arr, "terrain_decal_placement")` |
+| FIX-9-24 (S22-P0-50 — zone missing z-bounds) | `terrain_gameplay_zones.py` | Add `z_min` and `z_max` to `_serialize_zone(zone)` output dict; compute from zone geometry (min/max terrain height within zone polygon); update Unity `VbZoneData` struct accordingly |
+| FIX-9-25 (S22-P0-48 — zone priority last-wins) | `terrain_gameplay_zones.py` | In `_resolve_zone_overlap(zones, point)`: sort `zones` by `zone.priority` descending before returning `zones[0]` |
+| FIX-9-26 (S22-P0-51 — decal rotation zero) | `terrain_decal_placement.py` | In `_place_decal(cell_x, cell_y)`: compute surface normal from `stack.get("height")` gradient at the cell; derive rotation quaternion from normal vector; set `rotation = normal_to_quaternion(surface_normal)` |
+| FIX-9-27 (S22-P0-55 — spawn density resolution-dep) | `terrain_wildlife_zones.py` | In `_compute_spawn_density(zone)`: replace `/ zone.cell_count` with `/ zone.area_m2`; compute `zone.area_m2 = zone.cell_count * (cell_size_m ** 2)` from pipeline state |
+| FIX-9-28 (S22-P0-54 — trigger radius in cells) | `terrain_gameplay_zones.py` | In `_compute_trigger_radius(zone)`: return `zone.radius_m` (world metres); if only `radius_cells` is stored, convert: `radius_m = zone.radius_cells * state.cell_size_m` |
+| FIX-9-29 (S22-P0-53 — navmesh no cost areas) | `terrain_navmesh_export.py` | Accept `gameplay_zones` as parameter; for each zone with non-walkable type (water, mud, cliff), mark corresponding navmesh cells with appropriate `AreaMask` before export |
+| FIX-9-30 (S22-P0-49 — REQUIRED_CHANNELS incomplete) | `terrain_unity_export_contracts.py` | Expand `REQUIRED_CHANNELS` to match `_ARRAY_CHANNELS` exactly — add all 14 missing channels; add test asserting `set(REQUIRED_CHANNELS) == set(_ARRAY_CHANNELS)` |
+| FIX-9-31 (S22-P0-43 — @enforce_protocol unused) | `terrain_unity_export_contracts.py` + export files | Apply `@enforce_protocol` decorator to every public export function in `terrain_unity_export.py`, `terrain_navmesh_export.py`, `terrain_gameplay_zones.py`, `terrain_wildlife_zones.py` |
+
+### Priority 9E — Performance
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-32 (S22-P0-34 — deepcopy OOM) | `terrain_pipeline.py` | In `_checkpoint_pass_state()`: replace `copy.deepcopy(stack)` with a lightweight snapshot: `snapshot = {ch: arr for ch, arr in stack._dirty_channels.items()}` — copy only channels dirtied since the last checkpoint; restore by calling `stack.set(ch, arr, "checkpoint_restore")` on rollback |
+| FIX-9-33 (S22-P0-9 — O(N^2) flood fill) | `_water_network_ext.py` | Replace `_flood_fill_basins()` Python dict union-find loop with `scipy.ndimage.label(depression_mask)` for basin segmentation; use `scipy.ndimage.find_objects()` for basin bounding boxes; replace path-compression union-find merge with `np.unique` on labelled arrays |
+
+### Priority 9F — Correctness / math / physics
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-34 (S22-P0-21 — uvala compositing) | `terrain_karst.py` | In `_compose_uvala()`: replace `np.minimum(base_heightmap, uvala_depressions)` with `base_heightmap + np.minimum(0.0, uvala_depressions)` |
+| FIX-9-35 (S22-P0-23 — multiscale tile seams) | `terrain_multiscale_breakup.py` | Seed all noise coordinates from world-space: `noise_x = world_origin[0] + cell_x * cell_size_m; noise_z = world_origin[1] + cell_y * cell_size_m`; pass `(noise_x, noise_z)` to the domain-warp noise function |
+| FIX-9-36 (S22-P0-2 — triplanar indices-as-meters) | `terrain_materials_v2.py` | In `_triplanar_uv(cell_x, cell_y)`: replace raw indices with world-space coords: `world_x = cell_x * state.cell_size_m + world_origin[0]; world_z = cell_y * state.cell_size_m + world_origin[1]`; pass `(world_x, world_z)` to UV formula |
+| FIX-9-37 (S22-P0-3 — region mask multiply) | `terrain_materials_v2.py` | In `_apply_region_mask(weight_map, region_mask)`: replace `weight_map *= region_mask` with `weight_map = (1.0 - region_mask) * base_weight_map + region_mask * weight_map` (lerp from base to region-specific) |
+| FIX-9-38 (S22-P0-4 — strata clip sign) | `terrain_stratigraphy.py` | In `_clip_above_water(strata_mask, water_elev)`: change `strata_mask[height > water_elev] = 0.0` to `strata_mask[height < water_elev] = 0.0` (suppress strata below water, expose above) |
+| FIX-9-39 (S22-P0-5 — MaterialRuleSet last-wins) | `terrain_materials_v2.py` | In `apply_rules()`: before iterating rules, sort candidates by `rule.priority` descending; `break` after first matching rule with any priority > 0; for equal-priority conflicts, log a warning |
+| FIX-9-40 (S22-P0-1 — cliff lip whole perimeter) | `terrain_cliffs.py` | In `generate_cliff_lip()`: filter perimeter vertices to only those with `vertex.z > (cliff_bbox.z_min + 0.8 * cliff_height)` — top 20% of cliff height constitutes the lip edge |
+| FIX-9-41 (S22-P0-7 — undercut Z-offset too small) | `terrain_cliffs.py` | In `generate_cliff_undercut()`: compute `min_offset = 0.5 * texel_size_m`; change `offset = 0.01` to `offset = max(0.125, min_offset)` |
+| FIX-9-42 (S22-P0-25 — hero features in water) | `terrain_framing.py` | In `_place_hero_features()`: retrieve `water_mask = stack.get("water_surface_mask")`; if not None, multiply placement density field by `(1.0 - water_mask)` before candidate generation |
+| FIX-9-43 (S22-P0-24 — banded kernel fixed) | `terrain_banded.py` | In `_apply_band_erosion()`: replace `kernel_size = 3` with `kernel_size = max(3, int(resolution / 256 * 3)) | 1` (force odd number for symmetric kernel) |
+| FIX-9-44 (S22-P0-12 — wind field 64x64) | `terrain_wind_field.py` | In `WindFieldGenerator.generate()`: replace `np.zeros((64, 64))` with `np.zeros((state.resolution, state.resolution))` where `state.resolution` is the tile resolution |
+| FIX-9-45 (S22-P0-14 — meander cutoff dangling) | `_water_network_ext.py` | In `_cut_meander_loop()`: after removing neck vertices, add an edge connecting `upstream_end_vertex` to `bypass_channel_start_vertex` in the channel graph |
+| FIX-9-46 (S22-P0-8 — water_surface_elevation_m absent from pass_water_variants) | `terrain_water_variants.py` | At end of `pass_water_variants()`: compute `water_surface_elev = np.where(water_surface_mask > 0, water_body_elevation, 0.0)` and call `stack.set("water_surface_elevation_m", water_surface_elev, "pass_water_variants")` |
+| FIX-9-47 (S22-P0-10 — wave field stale) | `coastline.py` | In `CoastlineProcessor`: refactor to call `self.compute_wave_field()` at end of each erosion pass, or call it lazily via property; at minimum call after the final erosion pass completes |
+| FIX-9-48 (S22-P0-11 — mist global-max normalization) | `terrain_waterfalls_volumetric.py` | In `_compute_mist_envelope()`: remove global-max normalization; compute per-source contribution as `source.intensity * distance_attenuation(cell, source.position)` and accumulate additively; clamp result to [0, 1] |
+| FIX-9-49 (S22-P0-17 — foam depth screen-UV) | `terrain_waterfalls_volumetric.py` | In `_sample_depth_for_foam()`: replace screen-UV depth sample with world-space depth: `depth = stack.get("height")[cell_y, cell_x] - particle.world_z` where particle.world_z is the particle's world-space Z; use this signed depth for attenuation |
+| FIX-9-50 (S22-P0-31 — ecotone width pixels) | `terrain_ecotone_graph.py` | In `_compute_transition_width()`: return `zone.transition_width_m / state.cell_size_m` (convert metres to cells); if `transition_width_m` not present, use ecological default of 80m |
+| FIX-9-51 (S22-P0-30 — billboard_spec not in chain) | `terrain_scatter_points.py` | In `_build_scatter_chain()`: append `billboard_spec` to chain list after `lod_spec`: `chain = [geometry_spec, placement_spec, lod_spec, billboard_spec]` |
+| FIX-9-52 (S22-P0-59 — atmosphere Y/Z axis swap) | `atmospheric_volumes.py` | In `_build_bounds()`: replace `z_min = volume.y_min; z_max = volume.y_max` with `z_min = volume.z_min; z_max = volume.z_max`; confirm export schema uses Unity Z (up) convention |
+| FIX-9-53 (S22-P0-26 — cave entrance flat surface) | `terrain_karst.py` | In `_place_cave_entrances()`: replace `doline_rim_elevation` targeting with slope-filtered cells: `steep_cells = np.where(slope > 0.61)` (35 degrees); intersect with doline adjacency mask; sample entrance positions from `steep_cells` |
+| FIX-9-54 (S22-P0-41 — chunk overlap in pixels) | `terrain_chunking.py` | In `_compute_overlap()`: replace pixel count with `overlap_m = 5.0` (world-space metres); return `int(overlap_m / state.cell_size_m)` |
+| FIX-9-55 (S22-P0-15 — reservoir pre-dam heightmap) | `terrain_water_variants.py` + `terrain_pipeline.py` | Move `pass_water_variants` after `pass_dam_geometry` in `pass_sequence`; OR add a second water-variant pass `pass_water_variants_post_dam` that runs after dam geometry |
+| FIX-9-56 (S22-P0-16 — tidal flat hardcoded MSL) | `coastline.py` | In `_build_tidal_flat()`: replace `0.0 +` with `msl = stack.get("water_surface_elevation_m") or 0.0; height = msl + tidal_range * tidal_phase` |
+
+### Priority 9G — Architecture / determinism / protocol enforcement
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-9-57 (S22-P0-32 — PassDAG silent None) | `terrain_pass_dag.py` | In `resolve_pass(pass_name)`: replace `return None` with `raise PassNotRegisteredError(f"Pass {pass_name!r} is not registered in the DAG. Registered passes: {list(self._nodes)}")` |
+| FIX-9-58 (S22-P0-35 — Bundle N dead conditions) | `terrain_bundle_n.py` | Replace the `water_depth_m < 0.01 and slope < 0.05` condition with a multi-check battery that tests for each known P0 family: `_check_stochastic_seams()`, `_check_phantom_channel_reads()`, `_check_tree_z_export()`, `_check_foam_alpha()` — at minimum wire to the top-10 P0 families from S1-S22 |
+| FIX-9-59 (S22-P0-61 — determinism CI same process) | `terrain_determinism_ci.py` | Refactor `DeterminismCITest.run()`: for hash-based non-determinism test, spawn two subprocess invocations via `subprocess.run([sys.executable, "-m", "veilbreakers_terrain.cli", "generate_tile", "--seed", seed], ...)` and diff their outputs |
+| FIX-9-60 (S22-P0-62 / S22-P0-67 — RandomState + bare np.random) | `_biome_grammar.py` (all 8+ sites) | Replace every `np.random.RandomState()` and bare `np.random.random()` / `np.random.uniform()` / `np.random.choice()` with calls to `tile_rng(tile_id).random()` / `tile_rng(tile_id).uniform()` / `tile_rng(tile_id).choice()`; import `tile_rng` from `terrain_determinism_ci`; propagate `tile_id` parameter through all grammar rule functions |
+| FIX-9-61 (S22-P0-64 — scene read bare except) | `terrain_scene_read.py` | In `_read_channel(name)`: replace `except Exception: pass` with `except ChannelNotWrittenError: raise` (re-raise Rule-1 errors) and `except Exception as exc: logger.error("Unexpected error reading channel %s: %s", name, exc); raise` |
+| FIX-9-62 (S22-P0-38 — 17+ bare excepts in environment.py) | `environment.py` | Audit all 17+ bare `except Exception: pass` clauses; replace with: (a) `except SpecificError as exc: logger.warning(...)` where the error is expected and recoverable, or (b) `except Exception as exc: logger.error(...); raise` where the error is unexpected; eliminate silent swallowing at all call sites |
+| FIX-9-63 (S22-P0-19 — snow_line_factor phantom) | `terrain_glacial.py` | Add `snow_line_factor` writer: compute from `climate_zone.altitude_m / max_terrain_elev_m`; call `stack.set("snow_line_factor", snow_line_factor_arr, "terrain_glacial.compute_snow_line")` before the glacial extent computation reads it |
+| FIX-9-64 (S22-P0-6 — stratigraphy displacement discarded) | `terrain_stratigraphy.py` | In `apply_stratigraphy_displacement()`: after computing `delta_height`, apply it: `current_height = stack.get("height"); stack.set("height", current_height + self.displacement_buffer, "terrain_stratigraphy.apply_stratigraphy_displacement")`; clear `self.displacement_buffer` |
+| FIX-9-65 (S22-P0-38 cont. / pipeline bare excepts) | `terrain_pipeline.py` subsystem call sites | For each subsystem call wrapped in bare `except Exception: pass` (biome, ecotone, foliage catalog): replace with `except Exception as exc: logger.error("Subsystem %s failed: %s", subsystem_name, exc); state.mark_subsystem_failed(subsystem_name); raise PipelineSubsystemError(subsystem_name) from exc` |
+| FIX-9-66 (S22-P0-62 — non-determinism in all production files) | All production handler files | Global audit: grep for `np.random.random(`, `random.random(`, `np.random.uniform(`, `np.random.choice(`, `np.random.randint(` outside test files; replace each with the equivalent `tile_rng(tile_id).<method>()` call; ensure `tile_id` flows through the pipeline state |
+| FIX-9-67 (S22-P0-56 — Visual QA zero coverage) | `terrain_visual_qa.py` | Replace the existing 12 vacuous checks with checks derived from the P0 audit: (a) stochastic shader seam test (sample diagonal pixels in triplanar output, flag if variance > threshold), (b) foam alpha test (check foam channel is in [0,1] not inverted), (c) water elevation test (flag if all water_surface_elevation_m == 0 on non-ocean tile), (d) tree export Z test (flag if any exported tree Z == 0 on non-flat tile), (e) phantom channel check (for each channel in REQUIRED_CHANNELS: flag if writer count == 0) |
+
+### Batch 9 summary
+
+| Batch 9 sub-group | Count | Notes |
+|-------------------|-------|-------|
+| 9A single-line / constant fixes | 10 | Safest; commit atomically; each is a 1–3 line change |
+| 9B stack bypass conversions | 4 | Follow FIX-7-A/8-A pattern; add provenance string |
+| 9C dead code / Blender 4.5 | 4 | FIX-9-15 requires Blender 4.5 API verification; FIX-9-16/17 require pass_sequence edit |
+| 9D Unity export critical | 13 | FIX-9-19 requires C# struct expansion + Unity test; FIX-9-22 requires navmesh format research |
+| 9E performance | 2 | FIX-9-32 deepcopy replacement is highest-risk; test at 1024² before committing |
+| 9F correctness / math | 23 | Commit each independently; each has a clear expected output change |
+| 9G architecture | 11 | FIX-9-57 (PassDAG raise) will surface latent failures — run full suite before merging |
+| **Total new** | **67** | FIX-9-1 through FIX-9-67 |
+
+---
+
+*Total active P0s covered: 320 (253 original Batches 0–8 + 67 Batch 9). Execute batches in order 0→1→2→3→4→5→6→7→8→9.*
+

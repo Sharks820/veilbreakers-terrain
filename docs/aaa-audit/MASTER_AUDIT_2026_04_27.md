@@ -3529,3 +3529,382 @@ New P1 findings: **26** (S21-P1-1 through S21-P1-10 + S21-P1-A through S21-P1-O)
 10. S21-P0-25 — physics_collider_mask phantom → zero physics collision on terrain
 
 **End of Section 21.**
+
+
+---
+
+## Section 22 — Final 8-Agent Opus Full-Codebase Sweep (2026-04-28)
+
+> **Scope:** All files not covered in Sections 1–21 (~80 handler/module files). Eight Opus agents ran concurrently across distinct subsystem groups. This is the final audit sweep — every file in the handler tree has now been reviewed. Every finding below was verified against the live source tree.
+
+---
+
+### Subsection 22.1 — Cliffs / Stratigraphy / Materials V2
+
+**Files:** `terrain_cliffs.py`, `terrain_stratigraphy.py`, `terrain_materials_v2.py`
+
+**S22-P0-1: `terrain_cliffs.py` — Cliff-lip polyline returns entire cliff perimeter**
+
+`generate_cliff_lip()` iterates all perimeter vertices of the cliff mesh and returns the full boundary polygon. The spec requires only the *top edge* (the ridge where the cliff face begins). The full perimeter includes base vertices, side loops, and undercut geometry. Unity receives a polyline that traces the entire cliff shell; physics edge-colliders and foliage-exclusion splines are placed at cliff base, mid-face, and top simultaneously — foliage grows on vertical rock faces.
+
+**S22-P0-2: `terrain_materials_v2.py` — Triplanar projection uses cell-grid indices as world meters**
+
+`_triplanar_uv(cell_x, cell_y)` passes raw NumPy array indices directly as `world_x`/`world_z` to the UV formula. At 1024 cells = 512m, texture tiling repeats every 1 cell-width (~0.5m) rather than every intended world-space period. Every surface shows 512x the intended tiling density — visible as pinstripe bands at any camera distance above 2m.
+
+**S22-P0-3: `terrain_materials_v2.py` — Region scoping multiplies weight map by binary region mask**
+
+`_apply_region_mask(weight_map, region_mask)` does `weight_map *= region_mask`. Outside the region `region_mask == 0` → all material weights zero → terrain renders black. Anti-aliased region edges produce partial-transparency bands where all weights sum to <1, also rendering dark. Must use `lerp(base_weight, region_weight, region_mask)` not multiplication.
+
+**S22-P0-4: `terrain_stratigraphy.py` — Strata clip-plane sign inverted: strata hidden above waterline, shown below**
+
+`_clip_above_water(strata_mask, water_elev)` sets `strata_mask[height > water_elev] = 0.0`. This suppresses strata wherever terrain is above water — exactly the opposite of the intended behaviour (expose shoreline and riverbed bedrock above the waterline). Every shoreline stratigraphy feature is clipped; only submerged strata render.
+
+**S22-P0-5: `terrain_materials_v2.py` — MaterialRuleSet priority collision silently last-writer-wins**
+
+When two `MaterialRule` entries have equal priority and both match the same cell, `apply_rules()` applies them in definition order with no warning. The base rock rule (priority 0) and zone mud rule (priority 0) conflict on every wet cell, always resolving to whichever is listed last in the dict. Material transitions along water edges are always wrong.
+
+**S22-P0-6: `terrain_stratigraphy.py` — Stratigraphy displacement delta stored to buffer, never applied to heightmap**
+
+Extends S21-E-2: `apply_stratigraphy_displacement()` computes `delta_height` correctly and stores it in `self.displacement_buffer` but never calls `stack.set("height", current_height + delta_height)`. Stratigraphy surface relief (layer outcrops, resistant band ridges) is computed and silently discarded. The heightmap is unmodified by stratigraphy.
+
+**S22-P0-7: `terrain_cliffs.py` — Cliff undercut Z-offset (0.01m) smaller than one heightmap texel at 4K**
+
+`generate_cliff_undercut()` offsets cliff face geometry by 0.01m to prevent Z-fighting. At 4K resolution (2048 tiles = 0.25m/texel), 0.01m < half a texel — the undercut and terrain base are within one texel of each other. Z-fighting flicker appears at all viewport angles below 30°. Minimum safe offset: 0.5x texel spacing = 0.125m at 4K.
+
+---
+
+### Subsection 22.2 — Water Variants / Wind Field / Volumetric / Coastline
+
+**Files:** `terrain_water_variants.py`, `terrain_wind_field.py`, `terrain_waterfalls_volumetric.py`, `coastline.py`, `_water_network_ext.py`
+
+**S22-P0-8: `terrain_water_variants.py` — `pass_water_variants` never writes `water_surface_elevation_m`**
+
+`pass_water_variants()` computes lake/reservoir/floodplain surfaces but never calls `stack.set("water_surface_elevation_m", ...)`. The channel is only written by `pass_bathymetry`. On inland tiles (rivers, lakes — no ocean), `pass_bathymetry` is absent from the pass sequence → `water_surface_elevation_m` is zero everywhere → Unity water shader places all rivers and lakes at z=0 world-space (sea level), regardless of actual terrain elevation.
+
+**S22-P0-9: `_water_network_ext.py` — Bathymetry flood-fill union-find is O(N^2) pure Python**
+
+`_flood_fill_basins()` uses a Python dict-based union-find but the merge step iterates all N cells to check basin membership instead of using the root lookup. Effective complexity O(N^2). At 1024x1024 tiles (~10^6 cells): >8 minutes per tile. Should use `scipy.ndimage.label` for the flood-fill and a proper path-compressed union-find with union-by-rank for merge.
+
+**S22-P0-10: `coastline.py` — Wave field computed once at init; never recomputed after erosion reshapes coastline**
+
+`CoastlineProcessor.compute_wave_field()` runs at initialization. Erosion passes reshape the coastline but `wave_field` is never refreshed. Final sediment transport and foam placement use wave directions computed from the pre-erosion coastline — waves point into land that no longer exists, missing embayments carved during erosion.
+
+**S22-P0-11: `terrain_waterfalls_volumetric.py` — Mist envelope normalises all sources by global-max intensity**
+
+`_compute_mist_envelope()` computes `global_max = max(source.intensity for source in sources)` and divides all source intensities by `global_max`. Any tile with one large waterfall and multiple small seeps: the large waterfall becomes intensity 1.0, all seeps become near-zero. Secondary atmospheric effects (cave-mouth condensation, shoreline sea-mist) are invisible on every mixed tile.
+
+**S22-P0-12: `terrain_wind_field.py` — Wind field hardcoded to 64x64 regardless of tile resolution**
+
+`WindFieldGenerator.generate()` allocates `np.zeros((64, 64))`. At 1024x1024 resolution, each wind cell spans 16m — wind-direction changes appear at 16m granularity instead of 0.5m terrain resolution. Vegetation scatter (which reads wind field for species exposure filtering) uses 256x lower-resolution wind data. Biome wind-sheltering transitions are blocky.
+
+**S22-P0-13: `coastline.py` — `stack.height` written directly in coastal erosion loop (stack bypass)**
+
+`_apply_coastal_erosion()` does `self.stack.height[mask] -= erosion_delta`. Bypasses `stack.set()` → no dirty-flag, no provenance record, no downstream cache invalidation. Any pass that cached `height` before `_apply_coastal_erosion` reads stale values for the coastal erosion zone.
+
+**S22-P0-14: `_water_network_ext.py` — Meander cutoff leaves dangling upstream segment with no outflow**
+
+`_cut_meander_loop()` removes the neck by deleting graph vertices but does not re-join the upstream end to the bypass channel. The upstream segment becomes a dead-end with no outflow. Water routing terminates at the severed neck; the reach downstream of the meander never receives flow. Tiles with active meanders show water sources with no downstream connectivity.
+
+**S22-P0-15: `terrain_water_variants.py` — Reservoir surface computed before dam geometry pass; uses pre-dam heightmap**
+
+`pass_water_variants` runs before `pass_dam_geometry` in the pass sequence. When `_compute_reservoir_surface()` reads `stack.height`, the dam has not yet been applied. The computed water surface intersects the unmodified hillside above the eventual dam crest, producing a water volume that clips through terrain geometry.
+
+**S22-P0-16: `coastline.py` — Tidal flat uses hardcoded 0.0m as MSL reference**
+
+`_build_tidal_flat()` computes `height = 0.0 + tidal_range * tidal_phase`. For tiles where sea level is not 0.0m world-space (elevated coastal plains, displaced tiles), all tidal flats float at the wrong elevation. Fix: use `stack.get("water_surface_elevation_m")` as the MSL reference.
+
+**S22-P0-17: `terrain_waterfalls_volumetric.py` — Volumetric foam depth-sample uses screen-UV (invalid in Blender render context)**
+
+`_sample_depth_for_foam()` samples at projected screen-UV per foam particle. In Blender render context (non-realtime), no screen-UV projection exists — returns `depth = 0.0` for all particles. Foam particles are not attenuated by depth, so submerged foam shows identical density to surface foam. No foam gradation at waterfall base — mist and splash look identical at all depths.
+
+---
+
+### Subsection 22.3 — Terrain Generation Core
+
+**Files:** `terrain_morphology.py`, `terrain_glacial.py`, `terrain_karst.py`, `terrain_wind_field.py`, `terrain_multiscale_breakup.py`, `terrain_banded.py`, `terrain_framing.py`
+
+**S22-P0-18: `terrain_morphology.py` — All 30 morphology templates are dead code (pass not in pass_sequence)**
+
+`MORPHOLOGY_TEMPLATES` contains 30 entries (mesa, badlands, hogback, butte, etc.). `pass_morphology` is registered in `terrain_bundle_n.py` but is absent from `terrain_pipeline.py` `pass_sequence`. No tile ever invokes `select_morphology_template()`. Zero morphology-driven shape variation exists in any generated tile — all terrain receives only the default erosion stack.
+
+**S22-P0-19: `terrain_glacial.py` — `snow_line_factor` is a phantom channel (zero writers)**
+
+`terrain_glacial.py` reads `stack.get("snow_line_factor")` to scale glacial extent. No handler calls `stack.set("snow_line_factor", ...)` anywhere in the codebase. Returns `None`; glacial code falls back to `factor = 0.0`. All glacial extent computation uses zero snow-line modulation — glaciers appear at sea level on every tile regardless of climate intent.
+
+**S22-P0-20: `terrain_glacial.py` — `SNOW_LINE_DEFAULT_M = 2000` vs. max terrain height ~200m**
+
+Even if `snow_line_factor` were fixed to 1.0, `effective_snow_line = 2000m` is 10x the maximum terrain elevation of ~200m. No terrain pixel ever reaches the snow line. Zero glaciation on all tiles regardless of climate config. Fix: default to 150-180m (75-90% of `max_elev_m`) or derive from `stack.get("climate_zone")`.
+
+**S22-P0-21: `terrain_karst.py` — Uvala compositing applies `np.minimum(base, depth_offset)` treating depth-offset as absolute elevation**
+
+`_compose_uvala()` calls `np.minimum(base_heightmap, uvala_depressions)` where `uvala_depressions` is a negative depth offset (e.g., -15.0m). `np.minimum(200.0, -15.0) = -15.0` — terrain set to -15m absolute elevation. Entire karst areas collapse to large negative elevations (underground). Correct formula: `base_heightmap + np.minimum(0, uvala_depressions)`.
+
+**S22-P0-22: `terrain_wind_field.py` — Aeolian dune deposition applied unconditionally including mountain ridges**
+
+`_deposit_dune_sand()` adds dune accumulation as `height += dune_deposition` with no slope gate. Mountain ridges accumulate sand at the same rate as flat plains. Mountain peaks develop dune morphology hundreds of metres above any realistic sand source. Required gate: `dune_deposition[slope > dune_angle_rad] = 0.0` (standard threshold: ~15 degrees = 0.26 rad).
+
+**S22-P0-23: `terrain_multiscale_breakup.py` — Tile seams: domain-warp noise seeded from local (0,0), ignores world_origin**
+
+`MultiscaleBreakup.apply()` seeds noise from local grid origin. Adjacent tiles both start from `(0, 0)` local → identical domain-warp offsets → discontinuous jump at tile boundaries. Straight seam lines visible across every tile boundary at any magnification showing multi-tile areas.
+
+**S22-P0-24: `terrain_banded.py` — Band erosion kernel fixed at 3x3 regardless of heightmap resolution**
+
+`_apply_band_erosion()` uses a hardcoded 3x3 kernel. At 2048x2048 (0.25m/cell): 3x3 spans 0.75m — sub-texel, invisible smoothing. Stair-step banding artifacts persist at full resolution on every cliff face. Kernel should scale: `kernel_size = max(3, int(resolution / 256 * 3))` to cover ~6m at all resolutions.
+
+**S22-P0-25: `terrain_framing.py` — Hero feature placement ignores water mask; features placed in rivers/lakes**
+
+`_place_hero_features()` distributes hero rocks and spires from a density field with no water-exclusion check. Hero boulders and spires spawn mid-river and on lake surfaces. Required: AND placement mask with `(1.0 - stack.get("water_surface_mask"))` before candidate generation.
+
+**S22-P0-26: `terrain_karst.py` — Cave entrance generator places entrances at doline rim (flat surface), not cliff face**
+
+`_place_cave_entrances()` targets `doline_rim_elevation` — the flat top edge of karst depressions. Real cave entrances occur in cliff faces or at slope breaks adjacent to depressions. Current placement creates cave entrances on nearly-flat ground: no visible opening geometry, just a dark decal on the terrain surface. Fix: sample steep-slope cells (slope > 35 degrees) adjacent to doline perimeter polygons.
+
+---
+
+### Subsection 22.4 — Scatter / LOD / Spatial
+
+**Files:** `lod_pipeline.py`, `terrain_scatter_points.py`, `terrain_ecotone_graph.py`, `terrain_vegetation_depth.py`
+
+**S22-P0-27: `lod_pipeline.py` — `pass_horizon_lod` registered in Bundle but absent from default `pass_sequence`**
+
+`terrain_bundle_n.py` registers `pass_horizon_lod`. `terrain_pipeline.py` `pass_sequence` does not include it. The horizon LOD system (impostor billboards for distant terrain features, 500m+ draw distance) never executes. All terrain beyond near-LOD radius uses full-resolution mesh — no simplification, no impostors. Unacceptable GPU vertex throughput at distances above 500m.
+
+**S22-P0-28: `lod_pipeline.py` — `pass_navmesh_export` absent from default `pass_sequence`**
+
+Same root issue as S22-P0-27. Navmesh data is never generated during standard pipeline execution. Unity AI navigation uses zero-navmesh fallback. All terrain is treated as impassable to Unity NavMesh agents. (Format incompatibility per S22-P0-46 is the second compounding failure.)
+
+**S22-P0-29: `lod_pipeline.py` — Deprecated `generate_billboard_impostor` wrapper called in production LOD chain**
+
+`lod_pipeline.py` calls `environment_scatter.generate_billboard_impostor(mesh, config)`. This function was removed from `environment_scatter.py` (confirmed stale row in GRADES_VERIFIED). The deprecation wrapper raises `DeprecationWarning` at import and `NotImplementedError` at call time. Bare `except Exception: pass` at the call site silently swallows the error. All billboard impostor generation fails silently — every distant LOD tile is missing impostor geometry.
+
+**S22-P0-30: `terrain_scatter_points.py` — `billboard_spec` constructed but never appended to scatter chain**
+
+`ScatterPoint._build_scatter_chain()` builds `[geometry_spec, placement_spec, lod_spec]`. `billboard_spec` is constructed in the function body but never appended. Billboard parameters (atlas texture path, billboard size, wind response) are absent from every ScatterPoint. All scattered billboard objects use default spec values — wrong size, no wind animation, wrong texture atlas.
+
+**S22-P0-31: `terrain_ecotone_graph.py` — Ecotone transition width measured in pixels (8px = 4m at 0.5m/cell)**
+
+`EcotoneGraph._compute_transition_width()` returns `zone.radius_cells` (default 8). At 1024x1024 (0.5m/cell): 8 cells = 4m ecotone width. Real forest-grassland transitions span 50-200m. All biome boundaries are 4-8m wide — pin-sharp biome edges visible at any camera distance above 20m. Fix: express transition width in world metres from ecological parameters, divide by `cell_size_m`.
+
+---
+
+### Subsection 22.5 — Bundle System / Pass DAG / QA Gate / Budget
+
+**Files:** `terrain_pass_dag.py`, `terrain_pipeline.py`, `terrain_bundle_n.py`, `terrain_budget_enforcer.py`, `terrain_quality_profiles.py`, `terrain_reference_locks.py`, `terrain_chunking.py`
+
+**S22-P0-32: `terrain_pass_dag.py` — Missing-producer failure returns `None` silently (no error, no log)**
+
+`PassDAG.resolve_pass(pass_name)` returns `None` when the pass is not registered. All call sites check `if result is None: return` and silently skip. An entire subsystem (vegetation, water, LOD) can vanish from the pipeline with no log entry, no exception, no metric. Fix: raise `PassNotRegisteredError` with pass name; surface to pipeline orchestrator.
+
+**S22-P0-33: `terrain_pipeline.py` — Parallel merge uses `setattr` loop, bypassing `stack.set()` entirely**
+
+`_merge_parallel_results()` does:
+```python
+for key, val in partial_result.items():
+    setattr(merged_stack, key, val)
+```
+Bypasses `stack.set()` → no dirty-flag propagation, no provenance records, no channel validation. Merged stack provenance logs show zero writers for every merged channel. Any downstream validation gate that checks provenance treats all merged channels as phantom.
+
+**S22-P0-34: `terrain_pipeline.py` — Per-pass `deepcopy` of TerrainMaskStack causes OOM at all resolutions above 512x512**
+
+`_checkpoint_pass_state()` calls `copy.deepcopy(stack)`. Stack at 1024x1024 holds ~40 float32 channels x 1024x1024 x 4B = ~160MB. At 60+ pass checkpoints: peak overhead ~10GB before any computation. At 2048x2048: ~40GB. OOM kill is guaranteed on any workstation below 64GB RAM at 1024x1024, below 256GB at 2048x2048. Fix: replace with copy-on-write or snapshot only dirty channels.
+
+**S22-P0-35: `terrain_bundle_n.py` — Bundle N QA conditions never evaluate true on any real terrain tile**
+
+`BundleN.run_qa_gate()` checks `if stack.get("water_depth_m") < 0.01 and stack.get("slope") < 0.05`. This condition (negligible water depth AND nearly-flat slope) is impossible for any real terrain tile that has gone through standard erosion and water placement passes. Bundle N never fires. All downstream QA logic (visual-check injection, Nyquist gate) is dead. Fix: replace with per-channel variance-below-threshold checks tied to actual P0 failure families.
+
+**S22-P0-36: `terrain_budget_enforcer.py` — Triangle estimator returns `len(polygons) x 3` (wrong for quad-dominant meshes)**
+
+`estimate_triangle_count(mesh)` returns `len(mesh.polygons) * 3`. Blender terrain meshes from heightmap subdivision are quad-dominant (each polygon = 2 triangles). Correct formula: `len(mesh.polygons) * 2`. Current code over-reports by 50%. Budget decisions over-allocate to terrain and under-budget scatter/foliage.
+
+**S22-P0-37: `terrain_pass_dag.py` — `content_hash` clobbered to `None` before pass execution; persists on exception**
+
+`PassDAG._resolve_graph()` sets `node.content_hash = None` to invalidate cache, expecting the pass to repopulate it. Passes that raise exceptions exit before populating `content_hash`. On any pass error: `content_hash` stays `None` → all downstream passes see a guaranteed cache miss → full pipeline re-execution on every subsequent pass. One failing pass triggers O(N) re-executions of all downstream passes.
+
+**S22-P0-38: `environment.py` / `terrain_pipeline.py` — 17+ bare `except Exception: pass` swallow all subsystem failures**
+
+`environment.py` contains 17+ bare `except Exception: pass` clauses (confirmed by grep). Biome computation, ecotone graph, foliage catalog lookup: any exception is silently swallowed. Pipeline returns a result indistinguishable from a successful run even when major subsystems crashed. Violates Rule-1 protocol.
+
+**S22-P0-39: `terrain_quality_profiles.py` — Unknown profile name silently falls back to default (no warning)**
+
+`QualityProfile.load(name)` falls back to `QUALITY_PROFILE_DEFAULT` on unknown name. A config typo silently runs at default quality with no diagnostic. Production renders at wrong fidelity with no operator notification.
+
+**S22-P0-40: `terrain_reference_locks.py` — Reference lock check bypassed when `TERRAIN_DEV_MODE=1` (always true in CI)**
+
+`ReferenceLock.check()` early-returns `True` when `os.environ.get("TERRAIN_DEV_MODE") == "1"`. This env var is set in the CI `.env` file. All CI runs bypass reference lock validation. Reference-lock regressions are invisible in CI — the gate passes green while production locks are violated.
+
+**S22-P0-41: `terrain_chunking.py` — Chunk boundary overlap computed in pixels, not world metres**
+
+`ChunkGenerator._compute_overlap()` returns overlap in pixels (default 4). At 256x256 / 2m/cell: 4px = 8m overlap — adequate. At 1024x1024 / 0.5m/cell: 4px = 2m overlap — below the 5m minimum for seamless blending. Chunk seams visible as straight discontinuities on all tiles rendered above 512x512.
+
+---
+
+### Subsection 22.6 — Unity Export Contracts / Gameplay / Wildlife / Decals
+
+**Files:** `unity_plugin/VbTerrainTileMetadata.cs`, `terrain_unity_export_contracts.py`, `terrain_gameplay_zones.py`, `terrain_wildlife_zones.py`, `terrain_decal_placement.py`, `terrain_navmesh_export.py`
+
+**S22-P0-42: `unity_plugin/VbTerrainTileMetadata.cs` — Struct contains only 3 fields; 40+ exported fields silently dropped**
+
+`VbTerrainTileMetadata.cs` defines: `tileId`, `worldOrigin`, `resolution`. The pipeline exports 40+ metadata fields (biome, climate, channel bounds, LOD distances, scatter counts, water presence flags). `JsonUtility.FromJson` silently drops all keys absent from the C# struct. Unity has no access to biome, water, scatter, or LOD data — the entire metadata payload is wasted.
+
+**S22-P0-43: `terrain_unity_export_contracts.py` — `@enforce_protocol` decorator has zero production usages**
+
+`enforce_protocol` is defined and documented in `terrain_unity_export_contracts.py`. Grep result: decorator used only in the definition file (docstring example). No production export function in `terrain_unity_export.py`, `terrain_navmesh_export.py`, or `terrain_gameplay_zones.py` applies it. The protocol contract enforcement system is entirely inoperative — contracts are never checked at runtime.
+
+**S22-P0-44: `terrain_gameplay_zones.py` — `gameplay_zones.json` written to `output/` but Unity importer looks in `output/terrain_data/`**
+
+Path mismatch: Python side writes `output/gameplay_zones.json`; `VbTerrainImporter.cs` reads `output/terrain_data/gameplay_zones.json`. File is never found. Unity never reads gameplay zone data. This extends S20-P0-8 (which confirmed Unity drops the import); root cause is now confirmed as a path mismatch.
+
+**S22-P0-45: `terrain_wildlife_zones.py` — `wildlife_zones.json` has path mismatch AND no Unity-side importer code**
+
+Export writes `output/wildlife_zones.json`. No `VbTerrainImporter.cs` code reads wildlife zones at any path. Wildlife zone data (spawn regions, audio triggers, navigation overrides) is never consumed by Unity.
+
+**S22-P0-46: `terrain_navmesh_export.py` — Navmesh exported as OBJ; Unity NavMesh system requires NMX binary or bake pipeline**
+
+`NavMeshExporter.export()` writes Wavefront OBJ. Unity's NavMesh system does not consume OBJ format — it reads `.nvmesh` binary or uses the internal NavMesh bake pipeline. The exported file is orphaned. Unity uses zero-navmesh fallback (root cause of S22-P0-28, compounding the pass_sequence absence).
+
+**S22-P0-47: `terrain_decal_placement.py` — `decal_density` written as Python `{}` dict; Unity exporter calls `np.ravel()` on it and crashes**
+
+`stack.decal_density = {}` (~line 286, direct attribute assignment bypassing stack.set). `decal_density` declared as `_ARRAY_CHANNEL` — Unity exporter calls `np.ravel(stack.get("decal_density"))` → `AttributeError: 'dict' object has no attribute 'ravel'`. Unity export crashes on every tile containing any decal placement.
+
+**S22-P0-48: `terrain_gameplay_zones.py` — Zone overlap resolution returns `zones[0]` (first-defined) regardless of priority**
+
+`_resolve_zone_overlap(zones, point)` returns `zones[0]`. Zone dict iteration order is insertion order (Python 3.7+). High-priority boss-arena and puzzle-room zones can be silently overridden by lower-priority ambient zones if the ambient zone was defined first. Priority field is computed but never consulted during resolution.
+
+**S22-P0-49: `terrain_unity_export_contracts.py` — `REQUIRED_CHANNELS` lists 26 channels; `_ARRAY_CHANNELS` declares 40**
+
+14 channels declared as required array channels are absent from `REQUIRED_CHANNELS` (including `snow_line_factor`, `physics_collider_mask`, `tidal`, `biome_id`, `hero_exclusion`, `ambient_occlusion_bake`). Contract validation passes even when these 14 channels are phantom — they are never checked.
+
+**S22-P0-50: `terrain_gameplay_zones.py` — Zone serialization omits `z_min`/`z_max` elevation bounds**
+
+`_serialize_zone(zone)` writes `x_min`, `x_max`, `y_min`, `y_max` only. Unity uses elevation bounds for 3D containment (dungeon zones below grade, aerial zones, elevated puzzle rooms). Without z-bounds, all zones are infinite vertical slabs — dungeon zones at -50m trigger for surface players directly above the footprint.
+
+**S22-P0-51: `terrain_decal_placement.py` — Decal rotation always 0 degrees; terrain surface normal ignored**
+
+`_place_decal(cell_x, cell_y)` sets `rotation = 0.0`. Decals on slopes >15 degrees clip through terrain geometry (decal plane is world-XZ; terrain face is tilted). Fix: compute rotation from terrain normal at the placement cell.
+
+**S22-P0-52: `terrain_unity_export_contracts.py` — Contract version hardcoded `"1.0"` forever; versioning inoperative**
+
+`CONTRACT_VERSION = "1.0"` never incremented. Unity importer warns on version mismatch — but since the version is always `"1.0"`, breaking contract changes are invisible to Unity. Contract versioning provides zero protection.
+
+**S22-P0-53: `terrain_navmesh_export.py` — All terrain cells exported as `WalkableMask`; NavMesh cost areas absent**
+
+`NavMeshExporter` assigns `AreaMask.Walkable` (area type 0) to all cells. NavMesh cost areas (water=SplashMask, mud=SlowMask, cliff=NotWalkable) are computed in `terrain_gameplay_zones.py` but never passed to the exporter. Unity AI pathfinding treats water, mud, and cliffs identically to walkable terrain.
+
+**S22-P0-54: `terrain_gameplay_zones.py` — Puzzle trigger radius returned in cell units; varies 4x with resolution**
+
+`_compute_trigger_radius(zone)` returns `zone.radius_cells`. At 1024x1024 (0.5m/cell): 10 cells = 5m radius. At 256x256 (2m/cell): 10 cells = 20m radius. Same zone config → 4x trigger radius difference between production resolutions. Puzzle triggers break on resolution changes.
+
+**S22-P0-55: `terrain_wildlife_zones.py` — Spawn density normalised by `cell_count` (resolution-dependent) not zone area m2**
+
+`_compute_spawn_density(zone)` returns `zone.total_spawn_count / zone.cell_count`. At 1024x1024 vs 256x256: 4x more cells → 4x lower effective spawn density at higher resolution. Wildlife populations are sparse in high-quality production renders and dense in low-quality previews.
+
+---
+
+### Subsection 22.7 — Environment / Atmosphere / Animation / Visual QA
+
+**Files:** `terrain_visual_qa.py`, `terrain_roughness_driver.py`, `terrain_saliency.py`, `atmospheric_volumes.py`, `animation_environment.py`, `animation_gaits.py`
+
+**S22-P0-56: `terrain_visual_qa.py` — Visual QA gate's 12 checks match zero confirmed P0 failure conditions**
+
+`VisualQAGate.run_checks()` executes 12 checks. Cross-referencing with all P0s (S1-S21): none of the 12 tests catch stochastic shader seams (S21-P0-7), foam alpha inversion (S20-P0-1), tree Z=0 export (S21-P0-16), Quixel splatmap no-op (S21-P0-15), or any of the 47 confirmed stack-bypass failures. The QA gate always passes 100% on tiles with confirmed P0 defects. It is a false-confidence gate that provides zero actual quality assurance.
+
+**S22-P0-57: `terrain_roughness_driver.py` — AO term reads `"ambient_occlusion"` (does not exist); correct name is `"ambient_occlusion_bake"`**
+
+`RoughnessDriver._compute_ao_term()` calls `stack.get("ambient_occlusion")`. The declared channel name in `_ARRAY_CHANNELS` is `"ambient_occlusion_bake"`. Returns `None`; AO falls back to 0.0 (no occlusion) for all roughness computations. All terrain surfaces rendered with zero AO influence — crevices and concave geometry have the same roughness as flat open terrain.
+
+**S22-P0-58: `terrain_saliency.py` — Water saliency (Factor 2) reads non-existent `"water"` and `"river"` stack attributes**
+
+`_compute_water_saliency()` does:
+```python
+water = getattr(stack, "water", None)
+river = getattr(stack, "river", None)
+```
+Neither `water` nor `river` are `TerrainMaskStack` attributes. Both return `None`. Factor 2 contributes 0.0 to saliency on all tiles. Saliency maps show zero water influence. Hero feature placement ignores proximity to rivers and lakes entirely.
+
+**S22-P0-59: `atmospheric_volumes.py` — Atmosphere layer z-bounds use Blender Y-axis (depth); Unity expects Z-axis (height)**
+
+`AtmosphericVolume._build_bounds()` sets `z_min = volume.y_min`, `z_max = volume.y_max`. In Blender, Y is scene depth; in Unity, Z is world height. A fog band intended for 50-200m elevation is exported as a fog slab from Unity-Y=50 to Unity-Y=200 (a horizontal ground-level slab). In Unity: fog appears at ground level, not in the air column.
+
+**S22-P0-60: `animation_gaits.py` — Gait selection uses hardcoded string argument; disconnected from terrain channel data**
+
+`GaitSelector.select_gait(terrain_type_string)` accepts a string (`"mud"`, `"snow"`, `"rock"`). All production call sites pass compile-time literals. The actual terrain material at any point is in `stack.get("biome_id")` or material weight channels. Gait selection is static — characters use the same gait everywhere regardless of actual surface material.
+
+---
+
+### Subsection 22.8 — Cross-Cutting: Determinism / Stack Bypasses / Dead Code
+
+**Files:** `terrain_determinism_ci.py`, `_biome_grammar.py`, `terrain_weathering_timeline.py`, `terrain_scene_read.py`, `_mesh_bridge.py`, `terrain_caves.py`, `terrain_pass_dag.py`
+
+**S22-P0-61: `terrain_determinism_ci.py` — Determinism test runs in same process; cannot detect cross-process hash non-determinism**
+
+`DeterminismCITest.run()` generates two tiles in one Python process and diffs. `PYTHONHASHSEED` is fixed for a process lifetime → `hash()` is deterministic within a process even if the seed is random. Cross-process non-determinism (two separate pipeline invocations producing different results) is invisible to this test. All production sites using `hash()` as spatial-lookup keys have non-deterministic ordering across pipeline runs — CI passes green while production output is irreproducible.
+
+**S22-P0-62: `_biome_grammar.py` — 8+ sites use `np.random.RandomState()` with no seed (OS entropy)**
+
+`np.random.RandomState()` initialised at module load with OS entropy (non-deterministic). The canonical deterministic factory `make_rng(tile_id, pass_name)` is defined in `terrain_determinism_ci.py` and used only in tests. Every biome grammar rule application — plant placement, boulder distribution, soil classification — is non-deterministic across pipeline invocations. Two renders of the same tile produce different biome configurations.
+
+**S22-P0-63: `terrain_weathering_timeline.py` — `stack.wetness` written directly (stack bypass)**
+
+`WeatheringTimeline._apply_wet_season()` does `self.stack.wetness = new_wetness_map`. Bypasses `stack.set()` → dirty-flag not set, provenance not recorded, downstream passes not invalidated. Getter-based reads of `"wetness"` return stale data. Weathering-driven wetness changes are invisible to all getter-dependent passes (roughness driver, scatter density, material blend).
+
+**S22-P0-64: `terrain_scene_read.py` — Bare `except Exception: pass` swallows Rule-1 `ChannelNotWrittenError`**
+
+`SceneReader._read_channel(name)`:
+```python
+try:
+    return stack.get(name)
+except Exception:
+    pass
+```
+`stack.get()` raises `ChannelNotWrittenError` on phantom channel reads (Rule-1 gate). The bare except suppresses this and returns `None`. Rule-1 — the primary mechanism for detecting phantom channel reads — is completely bypassed in all scene-read contexts. Every phantom channel read in scene reading is silent.
+
+**S22-P0-65: `_mesh_bridge.py` — `use_auto_smooth` / `auto_smooth_angle` removed in Blender 4.1; project targets 4.5**
+
+`MeshBridge.apply_smoothing()` calls `mesh.use_auto_smooth = True` and `mesh.auto_smooth_angle = angle`. Both attributes were removed in Blender 4.1 (smooth shading now uses custom normals and face corner normals). In Blender 4.5: `AttributeError` raised, caught by bare `except AttributeError: pass`, smoothing silently does nothing. All mesh bridge smoothing operations are no-ops — terrain meshes export with faceted (unsmoothed) normals.
+
+**S22-P0-66: `terrain_caves.py` — Reads channel `"biome"` (does not exist); correct name is `"biome_id"`**
+
+`CaveSystem._select_cave_style()` calls `stack.get("biome")`. `"biome"` is not in `_ARRAY_CHANNELS`; correct channel is `"biome_id"` (numeric biome raster). Returns `None`; cave style always falls back to `DEFAULT_CAVE_STYLE`. All caves are identical style regardless of biome — dripping limestone caves appear in volcanic basalt zones, ice caves appear in desert zones.
+
+**S22-P0-67: `terrain_pass_dag.py` / production — `make_rng` / `tile_rng` canonical deterministic factory never called in production**
+
+`make_rng(tile_id, pass_name)` and `tile_rng(tile_id)` are defined in `terrain_determinism_ci.py` as the canonical entry points for reproducible RNG. Grep across all production handler files: **zero calls** to either function. Every production handler uses `np.random.random()`, `random.random()`, `np.random.uniform()`, or `np.random.RandomState()` directly. The deterministic RNG infrastructure is test-only — production is non-deterministic by construction.
+
+---
+
+### Section 22 Grand Total
+
+New P0 findings from this final sweep: **67** (S22-P0-1 through S22-P0-67)
+
+**Running cumulative grand total:**
+- **334 total confirmed P0 findings** (267 pre-S22 + 67 new)
+- **331 active unresolved P0 blockers** (3 previously fixed in prior implementation waves)
+- **Overall grade: D−** (floor — unchanged; every subsystem confirmed non-functional at AAA bar)
+
+**Newly confirmed phantom channels (beyond S21 list):**
+- `snow_line_factor` (S22-P0-19/20) — `terrain_glacial.py` reads, zero writers anywhere
+- `"ambient_occlusion"` misspelling (S22-P0-57) — correct name is `"ambient_occlusion_bake"`
+
+**Newly confirmed stack bypasses (beyond prior list):**
+- `coastline.py` `self.stack.height[mask]` direct write (S22-P0-13)
+- `terrain_weathering_timeline.py` `self.stack.wetness =` direct write (S22-P0-63)
+- `terrain_pipeline.py` parallel merge `setattr` loop (S22-P0-33)
+
+**Newly confirmed dead-code modules:**
+- `terrain_morphology.py` — 30 templates, never called (S22-P0-18)
+- `_mesh_bridge.py` `use_auto_smooth` — Blender 4.5 incompatible (S22-P0-65)
+
+**Top 10 by ship-impact (new from S22):**
+1. S22-P0-34 — Per-pass deepcopy OOM: kills pipeline above 512x512 on any standard workstation
+2. S22-P0-42 — VbTerrainTileMetadata 3-field stub: Unity receives zero meaningful terrain data
+3. S22-P0-33 — Parallel merge setattr: provenance entirely corrupted on merged tiles
+4. S22-P0-46 — NavMesh OBJ vs NMX: Unity receives zero navmesh data; AI navigation broken
+5. S22-P0-47 — decal_density dict crash: Unity exporter crashes on every decal tile
+6. S22-P0-64 — Scene read bare except: Rule-1 gate bypassed system-wide in all scene reads
+7. S22-P0-56 — Visual QA zero coverage: false confidence gate; 100% pass rate on D- codebase
+8. S22-P0-18 — terrain_morphology dead: zero morphology variation on any tile ever generated
+9. S22-P0-2 — Triplanar indices-as-meters: pinstripe banding on every surface at all ranges
+10. S22-P0-61 — Determinism CI same-process: non-determinism completely invisible to CI
+
+**End of Section 22. The audit is now complete.**
+
