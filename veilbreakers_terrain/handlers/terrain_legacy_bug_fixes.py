@@ -1,3 +1,4 @@
+# AUDITOR_MODULE — documentation/verification deliverable only; not called at runtime
 """Bundle B legacy bug audit — static inspection of terrain_advanced.py.
 
 Addendum 2.B.1 flagged 4 suspect ``np.clip(...)`` sites in

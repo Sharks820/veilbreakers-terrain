@@ -1,0 +1,1538 @@
+[
+  {
+    "file": "terrain_master_registrar.py",
+    "callable": "_safe_import_registrar",
+    "grade": "B+",
+    "rationale": "Graceful ImportError capture with detailed error logging. Returns bool success flag. Catches all exceptions to prevent bundle failures from halting registration. Missing: no retry logic or version mismatch detection."
+  },
+  {
+    "file": "terrain_master_registrar.py",
+    "callable": "register_all_terrain_passes",
+    "grade": "A-",
+    "rationale": "Clean public facade that delegates to _impl. Prevents double-registration via _REGISTERED guard. Missing: no return type indicating which bundles succeeded."
+  },
+  {
+    "file": "terrain_master_registrar.py",
+    "callable": "register_all_terrain_passes_detailed",
+    "grade": "A-",
+    "rationale": "Returns per-bundle success dict enabling callers to audit what registered. Ordered import sequence (A→G→H→F→I→C→B→E→D→H-saliency→J→K→L→N→O) is physically correct. Duplicate detection in place."
+  },
+  {
+    "file": "terrain_master_registrar.py",
+    "callable": "_register_all_terrain_passes_impl",
+    "grade": "A-",
+    "rationale": "Core implementation. Registration order enforces height-mutators before materials/scatter/validation. Duplicate pass name detection with warnings. Missing: no cross-bundle channel ownership audit at registration time."
+  },
+  {
+    "file": "terrain_materials_ext.py",
+    "callable": "MaterialChannelExt",
+    "grade": "B+",
+    "rationale": "Extends MaterialChannel with AAA ceiling fields (texel_density_px_m, micro_normal_slot, height_blend_gamma, triplanar_projection, emissive_intensity). channel_id property is clean. As a frozen dataclass it is thread-safe."
+  },
+  {
+    "file": "terrain_materials_ext.py",
+    "callable": "MaterialChannelExt.channel_id",
+    "grade": "A-",
+    "rationale": "Simple property returning name. Clean, no issues."
+  },
+  {
+    "file": "terrain_materials_ext.py",
+    "callable": "validate_texel_density_coherency",
+    "grade": "C+",
+    "rationale": "Critical flaw: triplanar channels (which project onto steep/hero geometry) are validated at terrain tier (512 px/m) instead of hero tier (1024 px/m). Docstring claims hero requires 1024 but code only enforces 512 for triplanar. Will silently under-deliver texel density on hero cliff surfaces. AAA would fail this in shader review."
+  },
+  {
+    "file": "terrain_materials_ext.py",
+    "callable": "compute_height_blended_weights",
+    "grade": "B",
+    "rationale": "Valley-biased gamma uses (1-h01)^(1/g) — mathematically unusual height inversion; correct for Brucks-style valley-bias but undocumented. Python loop over L channels acceptable (L typically 5). Missing: no vectorized numpy path for larger channel counts."
+  },
+  {
+    "file": "terrain_materials_ext.py",
+    "callable": "validate_cliff_silhouette_area",
+    "grade": "B+",
+    "rationale": "Checks cliff_mask coverage vs total area with configurable threshold. Returns ValidationIssue list. Clean contract."
+  },
+  {
+    "file": "terrain_materials_ext.py",
+    "callable": "validate_cliff_silhouette_shape",
+    "grade": "B",
+    "rationale": "Uses aspect ratio of cliff bounding box as proxy for silhouette elongation. Bounding-box aspect ratio is a weak proxy — L-shaped cliffs and branching cliffs would both fail or pass incorrectly. A connected-component-per-cluster elongation check would be more accurate."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "MaterialChannel",
+    "grade": "B+",
+    "rationale": "Clean frozen dataclass. All required fields present. Missing: no declared PBR color space (sRGB vs linear) on base_color, which creates ambiguity downstream for compositors."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "MaterialRuleSet",
+    "grade": "B+",
+    "rationale": "Frozen dataclass with __post_init__ integrity checks. Detects duplicate channel names. Has index_of helper."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "MaterialRuleSet.__post_init__",
+    "grade": "B+",
+    "rationale": "Validates channel name uniqueness, produces meaningful error. No channel count limit enforcement (could silently exceed splatmap 4-channel budget)."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "MaterialRuleSet.index_of",
+    "grade": "A-",
+    "rationale": "Linear scan, O(L), L typically small. Raises ValueError on unknown channel. Clean."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "default_dark_fantasy_rules",
+    "grade": "B+",
+    "rationale": "Five-channel ruleset: bedrock/grass/dirt/sand/snow. Height, slope, curvature, wetness bands all configured. Channel count (5) does exceed standard 4-channel splatmap — requires extended splatmap or MRT in-engine."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "triplanar_blend",
+    "grade": "C+",
+    "rationale": "Core triplanar projection function. The _default_noise sin placeholder in the triplanar path is an explicit stub acknowledged in comments but still shipping. Any axis-blending work using this path will produce sin-wave artifacts instead of real texture noise. This is a known gap that needs replacement before AAA use."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "compute_normal_z",
+    "grade": "A-",
+    "rationale": "Reconstructs normal Z from XY via sqrt(1 - x^2 - y^2). Clamps to [0, 1] for safety. Correct and vectorized."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "apply_brucks_blend",
+    "grade": "B+",
+    "rationale": "Implements Brucks-style height-based weight blending with contrast parameter. Softmax normalization after height-blend is correct. Well-commented. Missing: no test for degenerate case where all weights are zero after blending."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "compute_snow_line_factor",
+    "grade": "B+",
+    "rationale": "Sigmoid altitude curve modulated by slope exposure. Configurable via climate_params dict. Temperature lapse rate not modeled (would need elevation_m, not normalized height). Functional for game purposes."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "sample_macro_color",
+    "grade": "B",
+    "rationale": "Bilinear sampling of a macro color array at fractional coordinates. Manual bilinear interpolation is correct but duplicates the pattern in terrain_math and terrain_saliency. Should call a shared utility."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "apply_sdf_road_blend",
+    "grade": "B+",
+    "rationale": "Reads road_sdf channel and applies smoothstep blend toward road material. Gracefully skips when channel absent. Clean."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "_smoothstep_band",
+    "grade": "A-",
+    "rationale": "Clean smoothstep utility for band transitions. Vectorized numpy. Edge cases (lo==hi) handled."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "compute_slope_material_weights",
+    "grade": "C+",
+    "rationale": "Critical: curvature and wetness bands use hard step functions (np.where) rather than smoothstep. Produces visible discontinuities at band boundaries — exactly the material stripe artifacts AAA pipelines ban. Slope band does use smoothstep (_smoothstep_band call) but curvature/wetness do not. Inconsistent quality within the same function."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "_resolve_height_blend_gammas",
+    "grade": "B+",
+    "rationale": "Extracts gamma values from MaterialChannelExt objects or falls back to defaults. Short, correct, no issues."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "_build_material_channel_exts",
+    "grade": "B+",
+    "rationale": "Wraps each MaterialChannel in a MaterialChannelExt for AAA ceiling fields. Clean factory pattern."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "pass_materials",
+    "grade": "B",
+    "rationale": "Orchestrates the full materials pass. Calls compute_slope_material_weights, apply_brucks_blend, apply_sdf_road_blend. Inherits the curvature/wetness hard-step issue from compute_slope_material_weights. Additionally, the splatmap result is not gamma-corrected before writing — caller must know whether weights are in linear or display space. DAG declaration (requires/produces) is complete."
+  },
+  {
+    "file": "terrain_materials_v2.py",
+    "callable": "register_bundle_b_material_passes",
+    "grade": "A-",
+    "rationale": "Registers pass with correct requires/produces channels. Marks overrides. Clean."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "slope_radians",
+    "grade": "A-",
+    "rationale": "Correct arctan2 of gradient magnitude. Vectorized numpy. Edge-safe (no division by zero risk)."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "slope_degrees",
+    "grade": "A-",
+    "rationale": "Calls slope_radians, converts to degrees. Clean wrapper."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "slope_gradient_magnitude",
+    "grade": "A-",
+    "rationale": "Uses np.gradient for central differences, correct for general arrays. Vectorized."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "talus_height_units",
+    "grade": "A-",
+    "rationale": "Converts talus angle to max height difference per cell for erosion passes. Formula is correct: tan(angle) * cell_size."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "world_to_cell",
+    "grade": "A-",
+    "rationale": "Correct rounding, clamped to grid bounds. Clean."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "cell_to_world",
+    "grade": "A-",
+    "rationale": "Inverse of world_to_cell. Correct."
+  },
+  {
+    "file": "terrain_math.py",
+    "callable": "distance_field_edt",
+    "grade": "C",
+    "rationale": "Critical performance flaw: the scipy fast path (EDT) is correct O(N), but the Python chamfer fallback has TWO nested O(H*W) loops per direction pass. For 2049x2049 tiles this is 16.8M iterations per forward/backward pass in pure Python — will take minutes and block the pipeline. The two-pass Borgefors 3-4-5 algorithm is correct but must be in numpy/C, not Python loops. AAA pipelines would never ship a fallback this slow."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "MorphologyTemplate",
+    "grade": "A-",
+    "rationale": "Frozen dataclass with geological metadata fields (rock_hardness, drainage_pattern, geological_era, erosion_class). Well-designed contract. 30+ templates covering major landforms."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_ridge_params",
+    "grade": "B+",
+    "rationale": "Returns correct ridge MorphologyTemplate with appropriate geological metadata."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_canyon_params",
+    "grade": "B+",
+    "rationale": "Canyon template with narrow width, steep flanks, deep incision. Geologically consistent."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_mesa_params",
+    "grade": "B+",
+    "rationale": "Mesa template with flat top, hard rock. Matches sedimentary formation conventions."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_pinnacle_params",
+    "grade": "B+",
+    "rationale": "Pinnacle/spire template. High aspect ratio, volcanic hardness. Correct."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_spur_params",
+    "grade": "B+",
+    "rationale": "Lateral spur template extending from main ridge. Correct directional parameters."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_valley_params",
+    "grade": "B+",
+    "rationale": "Valley template with negative relief, soft sediment. Drainage pattern correctly set to dendritic."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "DEFAULT_TEMPLATES",
+    "grade": "B+",
+    "rationale": "30+ templates covering ridges, canyons, mesas, pinnacles, spurs, valleys, arches, plateaus. Geological diversity is good for dark fantasy. Not callable but evaluated as exported constant."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "_rng_from_seed",
+    "grade": "B+",
+    "rationale": "Creates deterministic np.random.Generator from seed. Uses default_rng (PCG64). Clean."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "apply_morphology_template",
+    "grade": "B+",
+    "rationale": "Applies Gaussian envelope morphology with random rotation from RNG. Correct coordinate transformation. Smooth blend via Gaussian is appropriate. Missing: no persistence/lacunarity parameters for multi-octave morphology stacking."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "list_templates_for_biome",
+    "grade": "B+",
+    "rationale": "Filters template list by biome compatibility. Clean lookup."
+  },
+  {
+    "file": "terrain_morphology.py",
+    "callable": "get_natural_arch_specs",
+    "grade": "B",
+    "rationale": "Returns arch specifications dict. Reasonable parameters but arch geometry is described via metadata, not actual arch cross-section curve — downstream pass would need to interpret these specs to actually generate arch geometry. One layer of indirection away from being useful."
+  },
+  {
+    "file": "terrain_multiscale_breakup.py",
+    "callable": "_rng_grid_bilinear",
+    "grade": "B+",
+    "rationale": "Generates a bilinearly-upsampled noise grid from random values at a coarser resolution. Correct bilinear interpolation. Used for efficient coarse-scale noise."
+  },
+  {
+    "file": "terrain_multiscale_breakup.py",
+    "callable": "compute_multiscale_breakup",
+    "grade": "B",
+    "rationale": "Three-octave noise breakup (5m/20m/100m). Amplitude weights are 1/(i+1) = [1.0, 0.5, 0.333] — simplified fixed ratio. No configurable persistence/lacunarity. Horizon Zero Dawn and Ghost of Tsushima use per-octave artist-tunable weights. Functional but less flexible than production tools."
+  },
+  {
+    "file": "terrain_multiscale_breakup.py",
+    "callable": "pass_multiscale_breakup",
+    "grade": "B+",
+    "rationale": "Clean pass function. Calls compute_multiscale_breakup and writes to stack. Proper status/metrics reporting."
+  },
+  {
+    "file": "terrain_multiscale_breakup.py",
+    "callable": "register_bundle_k_multiscale_breakup_pass",
+    "grade": "A-",
+    "rationale": "Registers with correct channel declarations. Clean."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "compute_navmesh_area_id",
+    "grade": "B+",
+    "rationale": "Correct Recast-style area ID assignment from slope, water, cliff masks. Traversability logic is AAA-standard (WALKABLE/WATER/NOT_WALKABLE mapping). Vectorized numpy."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "_edt_cells",
+    "grade": "B",
+    "rationale": "EDT wrapper using scipy when available, chamfer fallback. Same O(H*W) Python chamfer issue as terrain_math.distance_field_edt. However navmesh tiles are typically smaller than full terrain tiles so the impact is less severe here."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "compute_traversability",
+    "grade": "B+",
+    "rationale": "Combines slope gradient, EDT from water, area IDs into traversability gradient. Numpy vectorized. Clean formula."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "_build_navmesh_geometry",
+    "grade": "D",
+    "rationale": "Critical performance failure: three nested Python loops O(H*W) for vertices, triangles, and off-mesh connection detection. For a 2049x2049 tile this is 16.8M Python iterations for vertices alone, plus ~33M for triangles. This will take minutes in production. NavMesh geometry must be built with numpy vectorized operations or C extension. CDPR/Guerrilla would fail this in code review."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "export_navmesh_json",
+    "grade": "B",
+    "rationale": "Orchestrates navmesh export. Correctly calls compute_navmesh_area_id, compute_traversability, _build_navmesh_geometry. Quality is limited by _build_navmesh_geometry performance. JSON output schema is well-structured."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "pass_navmesh",
+    "grade": "B",
+    "rationale": "Pass function with proper status/metrics. Inherits _build_navmesh_geometry performance issue."
+  },
+  {
+    "file": "terrain_navmesh_export.py",
+    "callable": "register_bundle_j_navmesh_pass",
+    "grade": "A-",
+    "rationale": "Clean registration with correct channel declarations."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "compute_quiet_zone_ratio",
+    "grade": "A-",
+    "rationale": "Measures fraction of cells below saliency threshold. Vectorized numpy. 40% quiet zone target is design-grounded."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "compute_busy_ratio",
+    "grade": "A-",
+    "rationale": "Inverse of quiet zone ratio. Clean."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "find_saliency_peaks",
+    "grade": "B+",
+    "rationale": "NMS-based peak detection in saliency map. Uses minimum spacing constraint. Returns peak positions sorted by salience score. Well-grounded."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "compute_min_peak_spacing",
+    "grade": "A-",
+    "rationale": "12m minimum spacing default is design-justified. Returns scalar metric."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "compute_feature_density",
+    "grade": "B+",
+    "rationale": "Uses scipy gaussian_kde for density estimation — correct statistical approach. Falls back to histogram if scipy unavailable."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "enforce_quiet_zone",
+    "grade": "B+",
+    "rationale": "Suppresses saliency in over-busy regions via Gaussian decay. Preserves existing peaks. Design-correct approach."
+  },
+  {
+    "file": "terrain_negative_space.py",
+    "callable": "validate_negative_space",
+    "grade": "B+",
+    "rationale": "Returns ValidationIssue list for quiet zone ratio, peak spacing, density clustering. All checks are design-grounded. Good AAA composition validation."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "PaletteEntry",
+    "grade": "B+",
+    "rationale": "Frozen dataclass for palette entries with lab_color tuple. Clean."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "BiomeMappingResult",
+    "grade": "B+",
+    "rationale": "Has __getitem__ for dict-style access. Clean result container."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "BiomeMappingResult.__getitem__",
+    "grade": "B+",
+    "rationale": "Enables dict-style access by key. Clean wrapper."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "_labels_for",
+    "grade": "B+",
+    "rationale": "Maps biome name strings to semantic lab color clusters. Clean lookup."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "extract_palette_from_image",
+    "grade": "C+",
+    "rationale": "Two issues: (1) RNG seed hardcoded to 0 — palette extraction is non-reproducible across different calls that don't pass a seed explicitly. (2) k-means uses random initialization (not k-means++) — can converge to suboptimal centroids for dark fantasy palettes with tight color clusters. k-means++ is standard in production palette extraction (Photoshop, Substance)."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "_lin",
+    "grade": "A-",
+    "rationale": "Inner sRGB linearization helper. Correct IEC 61966-2-1 formula. Vectorized."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "_f",
+    "grade": "A-",
+    "rationale": "CIE Lab f() nonlinearity function. Correct cube root / linear fallback. Vectorized."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "_rgb_to_lab",
+    "grade": "A-",
+    "rationale": "Correct sRGB→XYZ→Lab conversion. D65 white point. Well-implemented."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "_label_for_rgb",
+    "grade": "B+",
+    "rationale": "Nearest-Lab-centroid label assignment. Vectorized distance computation. Clean."
+  },
+  {
+    "file": "terrain_palette_extract.py",
+    "callable": "palette_to_biome_mapping",
+    "grade": "B+",
+    "rationale": "Maps extracted palette entries to biome category labels via Lab distance. Returns BiomeMappingResult. Design-correct use of perceptually uniform color space."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAGError",
+    "grade": "A",
+    "rationale": "Clean exception type for DAG errors. RuntimeError subclass is appropriate."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "_merge_pass_outputs",
+    "grade": "A-",
+    "rationale": "Correct channel conflict resolution. Warns on undeclared channels. Skips merge for 'skipped' status. Uses numpy .copy() over deepcopy for array channels (10-100x faster). Channel ownership tracking via populated_by_pass is correct. Writes content_hash_after."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG",
+    "grade": "A-",
+    "rationale": "Class encapsulating the dependency graph. Constructor detects duplicates, warns on contested channels."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.__init__",
+    "grade": "A-",
+    "rationale": "Duplicate pass name detection. Contested channel warnings. Producer map correctly built. Clean."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.from_registry",
+    "grade": "A-",
+    "rationale": "Factory from global registry. Missing name validation raises PassDAGError with clear message. Clean."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.names",
+    "grade": "A",
+    "rationale": "Simple property returning pass names list. Clean."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.dependencies",
+    "grade": "A-",
+    "rationale": "Returns hard + optional dependency set. Optional edges only added when producer exists — correct behavior for optional channels. Self-dependency excluded."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.topological_order",
+    "grade": "A",
+    "rationale": "Kahn's BFS algorithm correctly implemented. Sorted queue for determinism. Cycle detection via residual in-degree check. Names every cycle member in error. Correct — would pass AAA algorithm review."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.parallel_waves",
+    "grade": "A-",
+    "rationale": "Groups passes into waves where all dependencies are in prior waves. Uses topological_order for correct base. Returns sorted lists for determinism. Clean."
+  },
+  {
+    "file": "terrain_pass_dag.py",
+    "callable": "PassDAG.execute_parallel",
+    "grade": "A-",
+    "rationale": "Deep-copy state per worker prevents channel races. Deterministic merge via sorted pass name. Per-future timing metrics (wave_submit_time_s, wave_wall_time_s) are production-quality. Single-pass waves skip ThreadPoolExecutor overhead. Checkpoint integration correct. Thread-safety design is solid."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "infer_continuation_edge",
+    "grade": "A-",
+    "rationale": "Correctly infers which tile edge a path exits through. Checks both endpoints. Tolerance parameter. Clean."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "material_stack_for_path",
+    "grade": "B+",
+    "rationale": "Returns required material layer tuple for path type. Bridge and non-bridge variants. Covers dirt/gravel/paved/trail. Reasonable defaults."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "PathSegmentContract",
+    "grade": "A-",
+    "rationale": "Frozen dataclass with all required fields. length_m and max_observed_grade compute correctly. to_dict includes observed_max_grade and length_m. Well-designed contract."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "PathSegmentContract.length_m",
+    "grade": "A-",
+    "rationale": "Sums Euclidean distances along polyline. Correct 3D distance via math.dist."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "PathSegmentContract.max_observed_grade",
+    "grade": "A-",
+    "rationale": "Returns max(abs(rise/run)) over all segments. Correctly handles zero-horizontal-distance case via math.inf. Clean."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "PathSegmentContract.to_dict",
+    "grade": "A-",
+    "rationale": "Complete serialization including computed fields. Clean."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "PathNetworkContract",
+    "grade": "A-",
+    "rationale": "Frozen dataclass grouping segments. to_dict serializes correctly."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "PathNetworkContract.to_dict",
+    "grade": "A-",
+    "rationale": "Serializes all segments. Clean."
+  },
+  {
+    "file": "terrain_path_contracts.py",
+    "callable": "validate_path_network_contract",
+    "grade": "A-",
+    "rationale": "Comprehensive validation: duplicate IDs, short segments, invalid width, missing material stack, deep water without bridge, grade budget violation, bridge geometry requirements, continuation edge validity. All checks are design-grounded. Returns issue list, not exceptions — correct validation pattern."
+  },
+  {
+    "file": "terrain_performance_report.py",
+    "callable": "TerrainPerformanceReport",
+    "grade": "B+",
+    "rationale": "Dataclass collecting pass timing, channel memory, triangle estimates. Useful diagnostic output."
+  },
+  {
+    "file": "terrain_performance_report.py",
+    "callable": "_channel_bytes",
+    "grade": "B+",
+    "rationale": "Returns raw byte count for numpy arrays. Clean helper."
+  },
+  {
+    "file": "terrain_performance_report.py",
+    "callable": "collect_performance_report",
+    "grade": "B",
+    "rationale": "Collects metrics from mask stack. Triangle estimate is 2*H*W (no LOD) — will over-report runtime triangle budget. Texture memory is raw bytes not GPU-compressed (BC7 would be ~6x smaller). These two inaccuracies make the performance report misleading for GPU budget decisions."
+  },
+  {
+    "file": "terrain_performance_report.py",
+    "callable": "serialize_performance_report",
+    "grade": "B+",
+    "rationale": "JSON serialization of performance report. Clean."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolViolation",
+    "grade": "A-",
+    "rationale": "Clean exception type for protocol violations."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate",
+    "grade": "B+",
+    "rationale": "7-rule protocol gate class. Static methods for each rule. Covers scene read, anchor drift, vantage, brush size, history, hard gates."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_1",
+    "grade": "A-",
+    "rationale": "Enforces scene_read required before mutation. Clean."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_2",
+    "grade": "B+",
+    "rationale": "Soft warning when vantage is None — intentional for headless mode. Correct design choice for CI/headless testing."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_3",
+    "grade": "A-",
+    "rationale": "Calls assert_all_anchors_intact. Raises on drift. Correct."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_4",
+    "grade": "A-",
+    "rationale": "Brush size limit enforcement. Clean."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_5",
+    "grade": "A-",
+    "rationale": "History depth limit. Clean."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_6",
+    "grade": "A-",
+    "rationale": "Hard gate for irreversible operations. Clean."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "ProtocolGate.rule_7",
+    "grade": "A-",
+    "rationale": "Protected zone check. Clean."
+  },
+  {
+    "file": "terrain_protocol.py",
+    "callable": "enforce_protocol",
+    "grade": "B+",
+    "rationale": "Decorator applying all 7 gates. Clean wrapping pattern."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "PresetLocked",
+    "grade": "A-",
+    "rationale": "Exception for locked preset mutation attempts. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "ProfileValidationError",
+    "grade": "A-",
+    "rationale": "Exception for invalid profile schemas. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "_validate_profile_schema",
+    "grade": "A-",
+    "rationale": "Validates all required schema keys present. Raises ProfileValidationError with clear message. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "_is_power_of_two",
+    "grade": "A",
+    "rationale": "Correct bitmask check for power-of-two. Clean one-liner."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "_is_heightmap_resolution",
+    "grade": "A-",
+    "rationale": "Validates 2^n+1 heightmap sizes. Correct check for Recast-compatible resolutions."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "TerrainQualityProfile",
+    "grade": "A-",
+    "rationale": "Dataclass with __post_init__ validation. Lock/unlock mechanism for preset protection. Resolution validation. Complete quality tier definitions (mobile/standard/high_fidelity/aaa_open_world)."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "TerrainQualityProfile.__post_init__",
+    "grade": "A-",
+    "rationale": "Validates resolution, texture budget, shadow distance. Raises ProfileValidationError on out-of-range values. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "_merge_with_parent",
+    "grade": "A-",
+    "rationale": "Direction-aware merge (max/min depending on which direction is 'better quality'). Handles texture budgets as max-wins, shadow_distance as max-wins, etc. More sophisticated than naive dict.update(). Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "load_quality_profile",
+    "grade": "A-",
+    "rationale": "Loads from JSON with parent resolution chain. Clean factory."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "list_quality_profiles",
+    "grade": "A-",
+    "rationale": "Returns canonical profile names. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "list_quality_profiles_canonical",
+    "grade": "A-",
+    "rationale": "Returns canonical dict of profiles. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "write_profile_jsons",
+    "grade": "A-",
+    "rationale": "Serializes all profiles to JSON files. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "lock_preset",
+    "grade": "A-",
+    "rationale": "Locks preset against mutation. Raises PresetLocked on subsequent writes. Clean."
+  },
+  {
+    "file": "terrain_quality_profiles.py",
+    "callable": "unlock_preset",
+    "grade": "A-",
+    "rationale": "Unlocks preset for modification. Clean."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "TextureType",
+    "grade": "A-",
+    "rationale": "Enum covering all Megascans channel types (albedo, roughness, normal, ao, displacement, metallic, emissive, cavity, translucency, fuzz). Complete."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "_classify_texture",
+    "grade": "A-",
+    "rationale": "Infers TextureType from filename suffix patterns. Handles all standard Megascans naming conventions. Clean."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "_load_texture_as_float",
+    "grade": "C+",
+    "rationale": "Critical PBR flaw: normalizes integer textures by dtype.max but does NOT apply sRGB gamma linearization. Albedo textures are stored in sRGB (gamma ~2.2) and must be linearized before PBR mixing. Without linearization, albedo blending happens in perceptually-encoded space, producing darker-than-correct results at blend midpoints. This is the #1 PBR pipeline mistake. Normal, roughness, AO, displacement channels do NOT need linearization (they are stored in linear space already) — but albedo does. Needs TextureType-aware gamma decode."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "_asset_matches_biome",
+    "grade": "B+",
+    "rationale": "Tag-based biome matching with fallback to True when no tags present. Permissive but functional."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "ingest_quixel_asset",
+    "grade": "B",
+    "rationale": "Orchestrates asset ingestion. Reads all texture types, writes to appropriate stack channels. terrain_ao and terrain_displacement ARE written correctly. AO: correctly treated as linear (no gamma needed). Displacement: correctly linear. Inherits sRGB issue from _load_texture_as_float for albedo."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "_bilinear_sample_texture",
+    "grade": "B+",
+    "rationale": "Bilinear sampling with edge-safe clamping. Python channel loop for 3D tensors (C <= 3, acceptable for asset ingest, not tight inner loop)."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "apply_quixel_to_layer",
+    "grade": "B",
+    "rationale": "Applies Quixel textures to splatmap layer via weight mask. Inherits sRGB issue. Missing: no mip-level selection — large tile sizes will sample the same full-res texture regardless of display distance."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "pass_quixel_ingest",
+    "grade": "B",
+    "rationale": "Main Quixel ingest pass. Finds asset directories, calls ingest_quixel_asset. Inherits all above issues. DAG declarations correct."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "pass_quixel_ingest_bundle_k",
+    "grade": "B",
+    "rationale": "Bundle K variant. Same functional quality as pass_quixel_ingest."
+  },
+  {
+    "file": "terrain_quixel_ingest.py",
+    "callable": "register_bundle_k_quixel_ingest_pass",
+    "grade": "A-",
+    "rationale": "Registers with correct channel declarations. Clean."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "BandScore",
+    "grade": "A-",
+    "rationale": "Dataclass with clamp method. Clean band score container."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "BandScore.clamp",
+    "grade": "A-",
+    "rationale": "Clamps score to [0, 1]. Clean."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_safe_std",
+    "grade": "A-",
+    "rationale": "Returns 0.0 for empty/None arrays instead of raising. Clean guard."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_normalize_to_score",
+    "grade": "B+",
+    "rationale": "Normalizes a value to [0, 1] given expected range. Missing: no handling for inverted scales (where lower is better)."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_band_silhouette",
+    "grade": "B+",
+    "rationale": "Sky exposure proxy — measures fraction of cells with high sky exposure. Design-grounded: silhouette readability directly tied to sky contrast. Vectorized."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_band_volume",
+    "grade": "B+",
+    "rationale": "Volume fill score via height variance relative to tile extent. Measures vertical diversity. Reasonable proxy."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_band_value",
+    "grade": "B+",
+    "rationale": "Slope contrast as proxy for surface variety. Measures gradient variance. Reasonable AAA readability metric."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_band_texture",
+    "grade": "B+",
+    "rationale": "Gradient variance as proxy for surface texture richness. Vectorized."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "_band_color",
+    "grade": "B+",
+    "rationale": "Color spread score via RGB channel variance. Measures palette diversity. Simple but grounded."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "compute_readability_bands",
+    "grade": "B+",
+    "rationale": "Computes all 5 bands. Returns BandScore dict. Well-structured. All bands have real visual quality grounding."
+  },
+  {
+    "file": "terrain_readability_bands.py",
+    "callable": "aggregate_readability_score",
+    "grade": "B+",
+    "rationale": "Weighted average of 5 band scores. Default equal weights. Configurable. Clean."
+  },
+  {
+    "file": "terrain_readability_semantic.py",
+    "callable": "check_cliff_silhouette_readability",
+    "grade": "B",
+    "rationale": "Flood-fill on cliff mask using list.pop() which is LIFO (DFS not BFS). The function comment says BFS but it's DFS. Correctness for flood-fill is unaffected (DFS finds same components), but comment is misleading and the wrong algorithm for breadth-first nearest-neighbor analysis."
+  },
+  {
+    "file": "terrain_readability_semantic.py",
+    "callable": "check_waterfall_chain_completeness",
+    "grade": "B+",
+    "rationale": "Checks that waterfall chain has lip, pool, and drop height. Returns ValidationIssue list. Clean semantic check."
+  },
+  {
+    "file": "terrain_readability_semantic.py",
+    "callable": "check_cave_framing_presence",
+    "grade": "B+",
+    "rationale": "Checks cave candidates have appropriate framing geometry in scene read. Clean check."
+  },
+  {
+    "file": "terrain_readability_semantic.py",
+    "callable": "check_focal_composition",
+    "grade": "B+",
+    "rationale": "Verifies focal point has at least one hero feature within reasonable distance. Grounded in composition principles."
+  },
+  {
+    "file": "terrain_readability_semantic.py",
+    "callable": "_safe_asarray",
+    "grade": "A-",
+    "rationale": "Returns None for None input, asarray otherwise. Clean guard."
+  },
+  {
+    "file": "terrain_readability_semantic.py",
+    "callable": "run_semantic_readability_audit",
+    "grade": "B+",
+    "rationale": "Runs all semantic checks and aggregates ValidationIssues. Clean orchestration."
+  },
+  {
+    "file": "terrain_rng.py",
+    "callable": "make_rng",
+    "grade": "B",
+    "rationale": "SHA-256-based deterministic RNG factory using list-form default_rng (correct for parallel seeding per NumPy docs). The hashing scheme produces uint32 seeds from str(key) — correct but truncates to 4 bytes out of 32 (loses entropy). Critical gap: FUTURE USE comment reveals this is only called from tests, not from production passes. Ad-hoc np.random.RandomState calls elsewhere in the codebase are not yet migrated (BUG-48/49/81/91/92/96 open). The tool exists but isn't enforced — so the seeding scheme is half-implemented."
+  },
+  {
+    "file": "terrain_rng.py",
+    "callable": "tile_rng",
+    "grade": "B",
+    "rationale": "Convenience wrapper using world_origin * 1000 for integer conversion. Also FUTURE USE only. Same migration gap as make_rng."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "_world_to_cell",
+    "grade": "A-",
+    "rationale": "World-to-grid conversion with rounding and clamping. Correct. Duplicates the function in terrain_math but harmless duplication within the file's pure-numpy scope."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "_sample_height_bilinear",
+    "grade": "A-",
+    "rationale": "Edge-safe bilinear height sampling. Correctly clamps r0/c0 to [0, rows-2] before r0+1 access. Well-handled degenerate 1-row/col case."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "compute_vantage_silhouettes",
+    "grade": "A-",
+    "rationale": "Casts azimuthal rays from each vantage, detects sky-terrain horizon transitions. Vectorized ray sampling (ray_count x n_samples at once). scipy map_coordinates for sub-pixel sampling when available, manual bilinear fallback. Silhouette scoring via arctan2 + transition bonus is design-correct. This matches the documented Witcher 3 / Horizon ZD composition approach."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "auto_sculpt_around_feature",
+    "grade": "B+",
+    "rationale": "Desire-line gradient-following height delta. Positive features get gradient-aligned ridge emphasis; negative features get erosion channel via flow proxy. Gaussian envelope blending. More sophisticated than radial Gaussian. Not a full hydrological simulation but appropriate for game authoring. Vectorized numpy throughout."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "_rasterize_vantage_silhouettes_onto_grid",
+    "grade": "B+",
+    "rationale": "Projects silhouette scores onto grid via arctan2 ray binning. Inverse-square falloff. FOV forward-weighting. No per-cell Python loop (vectorized via arctan2 grid computation). Not true DDA (the function name claims DDA but uses angle binning) — naming is misleading but result is functionally correct for accumulation purposes."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "_compute_8factor_saliency",
+    "grade": "A-",
+    "rationale": "8-factor UE5-style saliency scoring: height visibility, water proximity (EDT), slope shelter (Laplacian), ridge prominence (TPI), convexity (prominence), sky exposure, vegetation-break potential, tactical sight-line. All factors normalized [0,1] and blended 1/8 each. Factors have real AAA composition grounding. scipy paths for all computationally intensive operations. Falls back to numpy approximations without scipy. High-quality implementation."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "pass_saliency_refine",
+    "grade": "A-",
+    "rationale": "Reads vantages from intent, computes silhouettes, applies 8-factor scoring. Blends 50/50 with existing saliency_macro (tactical_influence up to 0.5, scales with vantage count). Returns rich metrics. Well-designed pass contract. Correctly marks idempotent=False (result depends on vantage state)."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "_saliency_quality_gate",
+    "grade": "A-",
+    "rationale": "Validates saliency_macro has meaningful variance after refinement. Checks std >= 0.02 and mean in [0.05, 0.95]. Returns soft ValidationIssues. Non-blocking gate appropriate for a diagnostic check."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "_SALIENCY_GATE",
+    "grade": "A-",
+    "rationale": "QualityGate instance wrapping _saliency_quality_gate. blocking=False (soft). Clean."
+  },
+  {
+    "file": "terrain_saliency.py",
+    "callable": "register_saliency_pass",
+    "grade": "A-",
+    "rationale": "Registers saliency_refine pass with correct channel declarations. overrides=(saliency_macro) explicitly declared. Deterministic, not idempotent. Clean registration."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "_positions_xy",
+    "grade": "B+",
+    "rationale": "Extracts 2D positions from HeroFeatureSpec, dict, or tuple inputs. Polymorphic input handling is correct. Clean."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "_feature_type",
+    "grade": "B+",
+    "rationale": "Returns type tag for grouping. Handles HeroFeatureSpec, dict, generic. Clean."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "_feature_salience",
+    "grade": "B+",
+    "rationale": "Returns 0-1 salience proxy from tier or weight field. tier_map (primary=1.0, secondary=0.6, tertiary=0.3, ambient=0.1) is design-grounded."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "_nn_distances",
+    "grade": "B+",
+    "rationale": "Returns nearest-neighbour distances via cKDTree (fast) or N² fallback. Correct."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "_ripley_k_proxy",
+    "grade": "B+",
+    "rationale": "Simplified Ripley K(r) without edge correction. Returns L(r) = sqrt(K/pi) - r. Correctly mirrors spatial statistics approach for density validation. Edge correction omission is appropriate for terrain-scale analysis (boundary effects are << tile size)."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "_monotonic_gradient",
+    "grade": "B",
+    "rationale": "Spearman rank correlation via 8-bin histogram. The argsort(argsort()) double-ranking is correct but could be simplified with scipy.stats.spearmanr. Results with only 8 bins can be granular. Functional but imprecise for sparse point sets."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "analyze_feature_rhythm",
+    "grade": "A-",
+    "rationale": "Comprehensive rhythm analysis: NN statistics, Ripley K proxy, density gradients. 50k point cap for performance. Returns well-documented metrics dict. AAA target of ~0.6 rhythm (CV ~0.4) is design-grounded (matches Guerrilla/Naughty Dog QA thresholds cited in code)."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "enforce_rhythm",
+    "grade": "B+",
+    "rationale": "Two-path strategy: clustered → prune lowest-salience duplicates; overdispersed/in-range → Lloyd relaxation. Respects HeroFeatureSpec frozen status (never moves or removes anchored features). Convergence check prevents infinite loops. Rebuilds output types correctly. Well-designed."
+  },
+  {
+    "file": "terrain_rhythm.py",
+    "callable": "validate_rhythm",
+    "grade": "A-",
+    "rationale": "Groups by feature type, runs analyze_feature_rhythm per type, emits typed ValidationIssues. Six distinct checks (too_random, too_regular, clustered, overdispersed, density_gradient, min_spacing_violated). Hard min_spacing violations correctly categorized as hard severity. High-quality validation."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "ScatterPoint",
+    "grade": "A-",
+    "rationale": "Frozen dataclass with full scatter point contract: position, normal, orient, scale, prototype_id, species_id, biome_id, density, seed, slope, height_m, mask_sources, lod_bucket, wind_profile. All AAA scatter fields present. to_dict complete."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "ScatterPoint.to_dict",
+    "grade": "A-",
+    "rationale": "Complete serialization. All field types handled correctly."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "ScatterPointTable",
+    "grade": "A-",
+    "rationale": "Container for scatter points with format/coordinate_space/source metadata. to_dict includes point_count. Clean."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "ScatterPointTable.to_dict",
+    "grade": "A-",
+    "rationale": "Serializes all points and table metadata. Clean."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "_float",
+    "grade": "A-",
+    "rationale": "Safe float extraction from dict with default. Handles TypeError/ValueError. Clean."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "_int",
+    "grade": "A-",
+    "rationale": "Safe int extraction. Clean."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "_quat_len",
+    "grade": "A-",
+    "rationale": "Quaternion magnitude. Clean."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "_normalise_quat",
+    "grade": "A-",
+    "rationale": "Normalizes quaternion, guards zero-length case. Clean."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "load_world_creator_instance_pointcloud",
+    "grade": "B+",
+    "rationale": "Converts World Creator CSV rows to ScatterPointTable. Normalizes coordinates by coordinate_scale_m. Applies model_scale. Sets slope=0.0 (not computed from terrain, which is a gap — slope should come from heightmap query). wind_profile passed through."
+  },
+  {
+    "file": "terrain_scatter_points.py",
+    "callable": "validate_scatter_point_table",
+    "grade": "A-",
+    "rationale": "Comprehensive per-point validation: finite position/normal/orient, non-empty IDs, positive scale, density in [0,1], unit quaternion, slope in [0,90], height_m == position.z (within 1cm), implausible height (> ±10km). Whole-table: duplicate position detection (mm precision), single-species heuristic. High-quality contract validation."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "AnchorDrift",
+    "grade": "A-",
+    "rationale": "RuntimeError subclass for anchor drift. Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "AnchorDriftReport",
+    "grade": "A-",
+    "rationale": "Dataclass with drifted bool, distance, tolerance, message. Clean result container."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "_lock_registry",
+    "grade": "B+",
+    "rationale": "Thread-local registry for worker threads, module-level for main thread. Preserves backward compatibility while being parallel-safe. RLock used correctly."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "lock_anchor",
+    "grade": "A-",
+    "rationale": "Thread-safe anchor locking via RLock. Overwrites prior lock (documented). Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "unlock_anchor",
+    "grade": "A-",
+    "rationale": "Thread-safe pop from registry. Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "clear_all_locks",
+    "grade": "A-",
+    "rationale": "Test helper to clear all locks. Thread-safe. Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "is_locked",
+    "grade": "A-",
+    "rationale": "Thread-safe locked check. Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "_distance",
+    "grade": "A-",
+    "rationale": "3D Euclidean distance. Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "assert_anchor_integrity",
+    "grade": "A-",
+    "rationale": "Raises AnchorDrift if anchor position drifted beyond tolerance. Unlocked anchors always pass. Thread-safe. Clean."
+  },
+  {
+    "file": "terrain_reference_locks.py",
+    "callable": "assert_all_anchors_intact",
+    "grade": "A-",
+    "rationale": "Returns list of AnchorDriftReport for all intent anchors. Does not raise — callers decide severity. Thread-safe. Clean."
+  },
+  {
+    "file": "terrain_region_exec.py",
+    "callable": "RegionExecutionReport",
+    "grade": "A-",
+    "rationale": "Dataclass with results, padded_region, wall_clock_seconds, rolled_back, rollback_checkpoint_id. Complete result container."
+  },
+  {
+    "file": "terrain_region_exec.py",
+    "callable": "_pass_pad_radius",
+    "grade": "B+",
+    "rationale": "Returns padding radius per pass from override map or default. Clean."
+  },
+  {
+    "file": "terrain_region_exec.py",
+    "callable": "compute_minimum_padding",
+    "grade": "A-",
+    "rationale": "Expands region by maximum padding any pass in the sequence needs. Clamps to world_bounds. Falls back to default on registry miss. Clean."
+  },
+  {
+    "file": "terrain_region_exec.py",
+    "callable": "execute_region",
+    "grade": "A-",
+    "rationale": "Runs pass sequence scoped to padded region. Stops on first failure. Correct primitive."
+  },
+  {
+    "file": "terrain_region_exec.py",
+    "callable": "execute_region_with_rollback",
+    "grade": "A-",
+    "rationale": "Two-layer rollback: primary deep-copy (guaranteed), secondary checkpoint (best-effort). Matches Horizon/Decima iterative sculpt semantics. Never corrupts global state on failure. Rollback only applied on actual failure. Well-designed."
+  },
+  {
+    "file": "terrain_region_exec.py",
+    "callable": "estimate_speedup",
+    "grade": "A-",
+    "rationale": "Returns full_tile / region ratio. Handles zero-time edge cases. Clean."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "ReviewFinding",
+    "grade": "A-",
+    "rationale": "Dataclass with source/severity/location/message/suggested_fix/tags/affected_feature. __post_init__ validates source and severity against allowed sets. Clean contract."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "ReviewFinding.__post_init__",
+    "grade": "A-",
+    "rationale": "Validates source and severity. Raises ValueError with clear message on invalid values. Clean."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "ReviewFinding.to_dict",
+    "grade": "A-",
+    "rationale": "Serializes finding to dict. Uses dataclasses.asdict. Clean."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "_coerce_location",
+    "grade": "A-",
+    "rationale": "Safely coerces raw location to 3-tuple or None. Clean."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "ingest_review_json",
+    "grade": "A-",
+    "rationale": "Parses review JSON (list or findings-keyed dict). Collects skip reasons instead of silently continuing (BUG-R8-A9-029 fix). Logs all skipped entries as WARNING. Handles both AI and human review formats. Clean."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "apply_review_findings",
+    "grade": "A-",
+    "rationale": "Folds findings into intent composition_hints. Immutable — returns new frozen dataclass via dataclasses.replace. Separate lists for blockers/suggestions/info. Tracks review_total_ingested. Clean."
+  },
+  {
+    "file": "terrain_review_ingest.py",
+    "callable": "pass_apply_review_blockers",
+    "grade": "B+",
+    "rationale": "Translates findings to ValidationIssues and suggested passes. Action verb mapping to pass names is a useful routing heuristic. Structured side_effect strings for downstream parsing. Missing: no deduplication of suggested_passes from the same verb appearing in multiple findings (only deduped per finding via seen_passes set, but the set resets per finding in original)."
+  },
+  {
+    "file": "terrain_roughness_driver.py",
+    "callable": "compute_roughness_from_wetness_wear",
+    "grade": "B+",
+    "rationale": "Base roughness from wetness/erosion/deposition/AO. Model is physically plausible: wet=low roughness, eroded=high roughness, deposition=moderate, AO-concavity adds dust. All channel lookups gracefully handle None. Vectorized numpy."
+  },
+  {
+    "file": "terrain_roughness_driver.py",
+    "callable": "pass_roughness_driver",
+    "grade": "B+",
+    "rationale": "5-stage roughness computation: base, slope, curvature, material zone override, breakup modulation. All stages optional and gracefully skipped when channels absent. Curvature contribution correctly adds for convex, subtracts for concave. Material zone override (MicroSplat workflow) is well-integrated. Breakup modulation is ±18% — appropriate range."
+  },
+  {
+    "file": "terrain_roughness_driver.py",
+    "callable": "register_bundle_k_roughness_driver_pass",
+    "grade": "A-",
+    "rationale": "Requires roughness_breakup to enforce DAG ordering. Clean registration."
+  },
+  {
+    "file": "terrain_scatter_altitude_audit_linter.py",
+    "callable": "WORLD_HEIGHT_TRANSFORM_WARNING",
+    "grade": "A-",
+    "rationale": "Clear warning string documenting the forbidden pattern and correct alternative. Not callable but graded as exported constant."
+  },
+  {
+    "file": "terrain_scatter_altitude_audit_linter.py",
+    "callable": "audit_scatter_altitude_conversion",
+    "grade": "A-",
+    "rationale": "Scans source for 7 forbidden altitude normalization patterns. Returns location-tagged offense strings. Skips comments. Clean source linter."
+  },
+  {
+    "file": "terrain_scatter_altitude_audit_linter.py",
+    "callable": "_cli_main",
+    "grade": "A-",
+    "rationale": "CLI entry point for CI runs. Returns non-zero on any violation. Handles missing/unreadable files gracefully. Lists canonical scatter handlers as defaults. Clean CI integration."
+  },
+  {
+    "file": "terrain_scatter_altitude_safety.py",
+    "callable": "audit_scatter_altitude_conversion",
+    "grade": "B",
+    "rationale": "Deprecated compatibility alias. Forwards to terrain_scatter_altitude_audit_linter. Correctly labeled as dead code / candidate for removal. The shim itself is fine; the concern is that it exists at all — callers should have been migrated to the canonical module."
+  },
+  {
+    "file": "terrain_scene_read.py",
+    "callable": "_walk_scene",
+    "grade": "B+",
+    "rationale": "Walks bpy.data to extract hero features, camera focal point, waterfall chains, cave candidates. Correct bpy API usage (matrix_world.col[2] for camera direction). Falls back cleanly without bpy. Missing: no error logging when bpy operations fail — silent except pass loses diagnostic info."
+  },
+  {
+    "file": "terrain_scene_read.py",
+    "callable": "capture_scene_read",
+    "grade": "A-",
+    "rationale": "Builds TerrainSceneRead from kwargs or live bpy data. Addendum 1.A.7 fields (viewport_vantage stored in WeakKeyDictionary sidecar to avoid dataclass mutation). Handles partial live data gracefully (merges live over supplied kwargs). BUG-R8-A9-020 fix (id()-keyed dict replaced with WeakKeyDictionary). Clean."
+  },
+  {
+    "file": "terrain_scene_read.py",
+    "callable": "get_extended_metadata",
+    "grade": "A-",
+    "rationale": "Returns Addendum 1.A.7 extended metadata dict including viewport_vantage from WeakKeyDictionary. Clean."
+  },
+  {
+    "file": "terrain_scene_read.py",
+    "callable": "_coerce_bbox",
+    "grade": "A-",
+    "rationale": "Coerces BBox from BBox, dict, or 4-tuple. Handles None. Clean."
+  },
+  {
+    "file": "terrain_scene_read.py",
+    "callable": "handle_capture_scene_read",
+    "grade": "A-",
+    "rationale": "MCP-style handler wrapping capture_scene_read. Full parameter passthrough. Returns standardized response dict with counts, hashes, and lists. Clean bridge integration."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "get_falloff_value",
+    "grade": "A-",
+    "rationale": "7-curve falloff library (smooth, linear, sphere, root, sharp, gaussian, constant). All curves match DCC tool presets. Clamps input and output. Raises ValueError on unknown falloff. Clean."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "_build_falloff_lut",
+    "grade": "A-",
+    "rationale": "Pre-samples falloff curve to 1024-bin LUT. Vectorized construction for all named curves. Sentinel at index lut_size+1. Avoids per-vertex function calls. Clean performance optimization."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "_sample_falloff_lut",
+    "grade": "A-",
+    "rationale": "Bilinear sub-bin interpolation into LUT. Correct floor/hi bracketing. Eliminates quantization banding. Vectorized. Matches GPU bilinear texture filtering semantics."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "compute_brush_weights",
+    "grade": "A-",
+    "rationale": "Vectorized XY distance computation. LUT + bilinear sub-cell sampling. Optional normalize and pressure scaling. Handles 2D and 3D vertex input. Returns only affected vertices. Clean."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "compute_raise_displacements",
+    "grade": "A-",
+    "rationale": "Vectorized numpy. SDF mode with Hermite damping. Normal projection for use_normal. Slope/curvature masking. Protected zone clipping. All hot paths vectorized. High-quality implementation."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "compute_lower_displacements",
+    "grade": "A-",
+    "rationale": "Mirrors raise with dual floor parameters (min_height + floor_clamp, strictest wins). SDF mode. All masking paths vectorized. Clean."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "compute_smooth_displacements",
+    "grade": "B+",
+    "rationale": "Gaussian-weighted Laplacian smooth with adjacency rebuild from faces when provided. scipy fast path uses gaussian_filter. Adjacency fallback uses Python loop over affected vertices (not full O(V) loop — only affected set). Multiple iterations. sigma estimate from mean edge length is correct. Missing: the grid index arithmetic (row=idx//cols) assumes regular grid topology which breaks for irregular meshes."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "compute_flatten_displacements",
+    "grade": "A-",
+    "rationale": "Weighted SVD plane fit (best-fit plane, not weighted mean). Prevents waviness on sloped terrain. Fallback to weighted mean when positions not provided. Protected zone and slope masking vectorized. High-quality — this is the correct way to implement flatten, not a simple average."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "compute_stamp_displacements",
+    "grade": "A-",
+    "rationale": "Fully vectorized bilinear heightmap sampling. Feathering via smoothstep. Four blend modes (add/replace/max/min) all vectorized. Correct UV coordinate mapping. No Python loops over vertices. High-quality."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "_build_adjacency",
+    "grade": "A-",
+    "rationale": "8-connected (Moore neighbourhood) adjacency from bmesh. Includes edge-sharing + face-diagonal neighbours. Sorted for determinism. Matches ZBrush/Houdini topology-smooth kernel definition."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "handle_sculpt_terrain",
+    "grade": "A-",
+    "rationale": "World→local transform for brush center via matrix_world.inverted(). XY-averaged scale for radius conversion. Dispatches to all 5 sculpt modes. Atomic displacement application with bounds clamping. Rebuilds normals, pushes to mesh datablock, tags dirty bounding box. bmesh.free() in finally block. Comprehensive and correct."
+  },
+  {
+    "file": "terrain_sculpt.py",
+    "callable": "_require_bpy",
+    "grade": "A-",
+    "rationale": "Clear error for use outside Blender. Clean guard."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "_get_material_def",
+    "grade": "A-",
+    "rationale": "Looks up material from TERRAIN_MATERIALS first, then MATERIAL_LIBRARY. Clean cascading lookup."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "get_all_terrain_material_keys",
+    "grade": "A-",
+    "rationale": "Returns all material keys referenced by any biome palette. Useful for orphan detection."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "get_biome_palette",
+    "grade": "A-",
+    "rationale": "Returns palette dict for named biome. Raises ValueError on unknown biome with available list. Clean."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "_face_slope_angle",
+    "grade": "A-",
+    "rationale": "Computes slope angle in degrees from face normal. Correct arccos of nz component. Handles zero-length normal."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "_classify_face",
+    "grade": "B+",
+    "rationale": "5-factor face classification: slope, water level, curvature modulation (±4 degrees). Water edge takes priority. Curvature shift is well-motivated (concave faces accumulate soil, convex faces express bare rock). Missing: no hysteresis — faces near boundaries can flip classification on tiny changes."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "assign_terrain_materials_by_slope",
+    "grade": "B+",
+    "rationale": "5-factor pure-logic classification: slope, altitude band (5 tiers: water/treeline/snowline/standard/cliff), rock hardness (shifts thresholds ±10-15°), wetness (aspect-corrected), aspect (north/south solar exposure ±0.15 moisture bias). Boundary dithering via face index parity. Python loop over faces — not ideal for large mesh counts but pure-logic function not on hot path. Well-grounded in World Creator 2 / GeoGlyph conventions."
+  },
+  {
+    "file": "terrain_materials.py",
+    "callable": "blend_terrain_vertex_colors",
+    "grade": "B+",
+    "rationale": "4-channel splatmap blending (RGBA = grass/rock/dirt/special). Three axes: slope drives rock/grass, altitude drives special (snow/water), wetness drives dirt/grass. Correct sRGB linearization for blending with re-encoding at output. Python loop over vertices — would be slow on AAA meshes (500k+ vertices). Should be vectorized with numpy or moved to a pass function. Logic quality is good."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "_make_gate_issue",
+    "grade": "A-",
+    "rationale": "Creates ValidationIssue from gate check result. Clean factory helper."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "derive_pass_seed",
+    "grade": "A-",
+    "rationale": "SHA-256-based deterministic per-pass seed from pass name + intent hash + root seed. Correct use of hashlib for reproducible seeding. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "_normalize_delta_integration_sequence",
+    "grade": "B+",
+    "rationale": "Normalizes delta integration sequence to canonical list form. Handles string/list/tuple inputs. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController",
+    "grade": "A-",
+    "rationale": "Central pipeline controller class. Class-level PASS_REGISTRY (shared across instances, intentional for bundle registration pattern). Instance-level state + checkpoint_dir. Clean design."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.register_pass",
+    "grade": "A-",
+    "rationale": "Classmethod registering PassDefinition by name. Duplicate detection with WARNING. Validates produces_channels overlap with overrides field. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.get_pass",
+    "grade": "A-",
+    "rationale": "Retrieves PassDefinition by name. Raises KeyError with message listing valid names. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.clear_registry",
+    "grade": "A-",
+    "rationale": "Test helper to clear the class-level registry. Correctly operates on the class dict. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.validate_registry_graph",
+    "grade": "A-",
+    "rationale": "Validates the registry's channel dependency graph for unresolved requires_channels. Warns on unresolved but does not raise (graceful degradation). Lists unresolved channels per pass. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.require_scene_read",
+    "grade": "A-",
+    "rationale": "Enforces scene_read presence when pass definition requires it. Raises ProtocolViolation with clear message. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.enforce_protected_zones",
+    "grade": "A-",
+    "rationale": "Checks pass region does not overlap protected zones. Raises ProtocolViolation on overlap. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.run_pass",
+    "grade": "A-",
+    "rationale": "Runs a single pass with full lifecycle: gate checks, seed derivation, pass function call, quality gate evaluation, timing, checkpoint (optional). Handles skipped and failed status correctly. Metrics and timing populated. Clean execution flow."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.run_pipeline",
+    "grade": "A-",
+    "rationale": "Runs pass sequence with from_pass partial re-run, dry_run validation mode, Bundle N post-pipeline hooks. Stops on first failure. Correct pipeline execution semantics."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController._save_checkpoint",
+    "grade": "A-",
+    "rationale": "Persists mask stack to .npz. Populates world_bounds, height range, cell_size, coordinate system metadata for Unity round-trip. Creates parent chain via parent_checkpoint_id. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.rollback_to",
+    "grade": "A-",
+    "rationale": "Rewinds to named checkpoint. Shape validation before restore prevents grid-size mismatches. Restores water_network, side_effects, pass_history. Truncates checkpoint list. Logs rewound pass count. Correct Houdini PDG rollback semantics."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "TerrainPassController.rollback_last_checkpoint",
+    "grade": "A-",
+    "rationale": "Convenience wrapper for rollback_to with last checkpoint. Raises if no checkpoints. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "pass_compute_terrain_labels",
+    "grade": "A-",
+    "rationale": "Initializes rock_label/gravel_label/water_label/cliff_label channels. Preserves generator-stamped values with [0,1] clamp. Zeroes unset channels. Clean initialization pattern."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "register_terrain_label_passes",
+    "grade": "A-",
+    "rationale": "Registers terrain_labels pass with all 4 label channels declared as produces_channels. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "pass_compute_snow_line",
+    "grade": "B+",
+    "rationale": "Normalizes height to [0,1] using stack height_min_m/height_max_m, calls compute_snow_line_factor. Passes climate_params from intent. Sets snow_line_factor channel. Clean pass wrapper."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "register_snow_line_pass",
+    "grade": "A-",
+    "rationale": "Registers snow_line pass. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "pass_water_depth",
+    "grade": "A-",
+    "rationale": "Computes water_depth_m = max(ws_elev - height, 0). Cubic smoothstep shoreline_blend over 0.5m zone. Correctly skips when water_surface_elevation_m absent. Handles height_m vs height channel ambiguity. Uses explicit None check (not 'or') to avoid numpy array truthiness ValueError. Clean W-2 fix."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "register_pass_water_depth",
+    "grade": "A-",
+    "rationale": "Registers with optional_channels=(water_surface_elevation_m) so it gracefully skips when water data absent. Clean."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "_toposort_passes",
+    "grade": "B+",
+    "rationale": "Kahn's algorithm for topological ordering within register_default_passes. Uses queue.pop(0) (O(N) list) instead of deque (O(1)). For small pass lists this is fine, but a deque would be more correct. Cycle detection raises ValueError with cycle member names. Preserves original registration order within the same dependency level."
+  },
+  {
+    "file": "terrain_pipeline.py",
+    "callable": "register_default_passes",
+    "grade": "A-",
+    "rationale": "Bundle A default pass registration with full DAG validation, cycle detection, topological sort, and INFO logging of registration order. Auditable by design. Channel prerequisite check warns on unresolvable externally-supplied channels. Clean."
+  }
+]

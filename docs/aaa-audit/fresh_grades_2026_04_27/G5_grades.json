@@ -1,0 +1,728 @@
+[
+  {
+    "file": "terrain_fog_masks.py",
+    "callable": "compute_fog_pool_mask",
+    "grade": "A-",
+    "rationale": "Four-weight blend (altitude gamma, Gaussian-Laplacian concavity, log-normalised flow accumulation, temperature inversion proxy) is physically grounded and matches UE5 volumetric fog layering. Reflect-padding prevents toroidal seam artefacts and scipy fallback is clean. Minor gap: the 0.40/0.30/0.20/0.10 blend weights are hardcoded constants with no per-biome or intent override, limiting art-directed control vs Horizon ZD's fully tunable layering."
+  },
+  {
+    "file": "terrain_fog_masks.py",
+    "callable": "compute_mist_envelope",
+    "grade": "A-",
+    "rationale": "Beer-Lambert exponential absorption with correct per-distance and per-height attenuation is the right physical model; scipy EDT fast path is O(H*W), and the manual dilation fallback is ring-based (not pixel-loop over the raster). The fallback loop over falloff_steps is O(steps * H*W) numpy ops, not per-cell Python — acceptable. Minor: source_intensity takes the global max of wetness rather than sampling the actual source cell, which can over-brighten mist from dilute wetness fields."
+  },
+  {
+    "file": "terrain_fog_masks.py",
+    "callable": "pass_fog_masks",
+    "grade": "A-",
+    "rationale": "Pipeline contract is correct: consumes height/flow_accumulation/wetness, produces mist, records meaningful metrics. The np.maximum combine of mist and 0.75*fog_pool is physically sensible. No issues with protected zone handling (read-only on inputs). Slight concern: the overrides declaration for mist is documented but not enforced inside the function itself — relies on PassDefinition contract."
+  },
+  {
+    "file": "terrain_fog_masks.py",
+    "callable": "register_bundle_l_fog_masks_pass",
+    "grade": "A",
+    "rationale": "Minimal, correct registrar. Properly declares overrides=(\"mist\",) with a clear explanatory comment, matching the pipeline contract pattern used throughout other bundles."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "SpeciesSpec",
+    "grade": "A",
+    "rationale": "Immutable frozen dataclass with full AAA scatter contract: altitude/slope/moisture bands, exclusion/affinity kinds, Poisson radius, LOD distances, impostor atlas, collision proxy, wind profile, and a __post_init__ that cross-validates deprecated mirror fields. The level of metadata coverage matches Ghost of Tsushima and RDR2 scatter configs. Only mild gap: lod_distances_m defaults are tuples, not validated to be ascending."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "_slope",
+    "grade": "A",
+    "rationale": "Tiny pure helper — correctly converts degree bounds to radian tuple. No issues."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "species_ids_by_category",
+    "grade": "A",
+    "rationale": "Clean single-pass generator-to-tuple with no side effects. Correct and complete."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "species_for_biome",
+    "grade": "A",
+    "rationale": "Correct biome membership query; the docstring correctly notes the empty-set edge case. No issues."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "external_model_assets_required",
+    "grade": "A",
+    "rationale": "Simple, correct filter. Provider-neutral handoff list is the right pattern."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "manifest_entries",
+    "grade": "A",
+    "rationale": "Correct serialization to JSON-friendly dict via to_dict(). No issues."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "categories_covered",
+    "grade": "A",
+    "rationale": "Correct frozenset comprehension. No issues."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "_derive_species_constraints",
+    "grade": "A-",
+    "rationale": "Correctly normalizes altitude against a nominal 3000m world band and maps all catalog fields to the scatter engine's expected format. The 3000m norm is a hardcoded constant that should ideally come from intent/world config, but it is consistent with the existing scatter engine contract."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "default_asset_catalog_path",
+    "grade": "A",
+    "rationale": "Uses __file__.resolve().parents[2] for repo-relative path resolution — correct and portable."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "AssetManifest",
+    "grade": "A-",
+    "rationale": "Thread-safe RLock with mtime-based hot-reload is well-engineered. _maybe_reload, _load_locked, get_asset, assets_for_category, choose_for_species, lod_paths, stats all correctly implement the contract with deepcopy isolation. Minor gap: category de-duplication between category and display_category appends the same asset_id twice to the index, which can cause double-returns from assets_for_species."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "get_default_asset_manifest",
+    "grade": "A",
+    "rationale": "Correct double-check pattern under a module-level Lock. No issues."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "set_default_asset_manifest",
+    "grade": "A",
+    "rationale": "Simple setter with lock. None resets correctly. No issues."
+  },
+  {
+    "file": "terrain_foliage_catalog.py",
+    "callable": "resolve_model_asset",
+    "grade": "A",
+    "rationale": "Correct pass-through to manifest.choose_for_species with fallback guarantee. No issues."
+  },
+  {
+    "file": "terrain_footprint_surface.py",
+    "callable": "FootprintSurfacePoint",
+    "grade": "A",
+    "rationale": "Clean dataclass covering all required surface fields for gameplay VFX/audio. No issues."
+  },
+  {
+    "file": "terrain_footprint_surface.py",
+    "callable": "_world_to_cell",
+    "grade": "B+",
+    "rationale": "Correct rounding and clamp to grid bounds. Uses np.clip for range enforcement. Minor: round() on the raw world-to-cell division may drift for large coordinates where float precision matters; an explicit int truncation with bias would be safer at high world offsets."
+  },
+  {
+    "file": "terrain_footprint_surface.py",
+    "callable": "compute_footprint_surface_data",
+    "grade": "C+",
+    "rationale": "The function loops over each position in a Python for-loop (O(N) per-point Python iterations), computing finite-difference normals and array lookups inside the loop. For N footprints this is fine since N is small in practice, but the comment 'FUTURE USE: no production caller yet' indicates this is not exercised. The normal computation does not account for non-unit cell_size axis-aligned bias at boundaries (both rm and rp can equal r on a 1-cell tile). No vectorised batch path exists."
+  },
+  {
+    "file": "terrain_footprint_surface.py",
+    "callable": "export_footprint_data_json",
+    "grade": "A-",
+    "rationale": "Clean JSON serialization via asdict. Creates parent directories. No issues beyond the output having no versioning schema field."
+  },
+  {
+    "file": "terrain_framing.py",
+    "callable": "_bresenham_cells",
+    "grade": "A",
+    "rationale": "Correct classic Bresenham integer line rasterisation; no off-by-one at endpoints. Clean and efficient."
+  },
+  {
+    "file": "terrain_framing.py",
+    "callable": "enforce_sightline",
+    "grade": "B+",
+    "rationale": "Three-pass algorithm (Bresenham strict cut + Gaussian feather + silhouette preservation) is well-aligned with Guerrilla/UE5 sightline carving. The Gaussian feather Pass 2 iterates over every ray cell and builds a full-tile distance grid per cell — O(N_ray * H * W) numpy ops, which is expensive for long rays. AAA implementations precompute the full ray SDF in one EDT pass. Correctness is sound; the silhouette protection at the 80th percentile is a reasonable default."
+  },
+  {
+    "file": "terrain_framing.py",
+    "callable": "pass_framing",
+    "grade": "A-",
+    "rationale": "Correct pipeline contract; accumulates deltas via element-wise minimum, logs per-pair metrics at DEBUG level for auditability. Clean no-op path. Minor: re-runs enforce_sightline for each vantage×feature pair independently rather than batching, which means Gaussian feather grids are recomputed per pair."
+  },
+  {
+    "file": "terrain_framing.py",
+    "callable": "_framing_quality_gate",
+    "grade": "B+",
+    "rationale": "Correctly checks that every registered vantage→feature pair recorded a cut metric. However it cannot actually verify the sightline is clear post-carving (would require re-sampling the modified height), so it only detects skipped pairs, not incorrect carves. For a QualityGate it is honest about this limitation in the code comments."
+  },
+  {
+    "file": "terrain_framing.py",
+    "callable": "register_framing_pass",
+    "grade": "A",
+    "rationale": "Correct registrar with comprehensive PassDefinition fields including may_modify_geometry, respects_protected_zones, quality_gate, and a clear description matching the three-pass algorithm."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "GameplayZoneType",
+    "grade": "A",
+    "rationale": "Clean IntEnum with 7 gameplay-meaningful zone types. No issues."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "_label_zones",
+    "grade": "B",
+    "rationale": "scipy path is correct. The BFS fallback has an O(H*W) Python loop for the outer scan and an inner BFS — for a 1024x1024 tile this is millions of Python iterations. It is only a fallback path, but no warning is logged when scipy is unavailable and the slow path activates."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "_compute_cover_score",
+    "grade": "A-",
+    "rationale": "Vectorised two-ring (r=1 and r=2) cover scoring using edge-padded shifted arrays — no per-cell Python loops. The eight-direction shift-and-compare is the correct pattern and edge-pad prevents toroidal seam artefacts. Averaging r=1 and r=2 provides a more stable estimate than single-ring. Minor: agent_height is hardcoded at 1.0m rather than drawn from intent."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "_compute_sky_exposure",
+    "grade": "B+",
+    "rationale": "Exposure as 1-cover with Gaussian smoothing is a reasonable proxy but calls _compute_cover_score again rather than accepting an already-computed cover array, doubling the work when called from compute_gameplay_zones which also calls _compute_cover_score directly."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "_compute_choke_score",
+    "grade": "B",
+    "rationale": "EDT-based choke detection is the correct approach (mirrors Recast NavMesh corridor erosion). The Chamfer fallback contains O(H*W) Python loops for two passes — slow for large tiles. The > 35 degree obstacle threshold is hardcoded. Main path with scipy is correct and vectorised."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "_compute_vantage_score",
+    "grade": "B+",
+    "rationale": "Elevation normalisation + local slope-std combination is sensible. Uses scipy generic_filter(np.std, size=5) which is correct but calls a Python function per window — slow without scipy; the stride_tricks fallback is vectorised. The 0.6/0.4 blend weights are hardcoded."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "compute_gameplay_zones",
+    "grade": "B+",
+    "rationale": "Zone classification pipeline with physically motivated signals (cover, exposure, choke, vantage) is solid. The connected-component filtering with min_component_cells removes noise correctly. SAFE zone does not check for NARRATIVE/BOSS override at the same cell, so priority ordering (lower-priority zones applied first) can be overwritten by higher-priority ones correctly. Minor: slope/curvature recomputed if not on stack, which is correct but could be expensive."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "_compute_gameplay_score_metrics",
+    "grade": "B+",
+    "rationale": "Re-computes all four signals independently from h and slope_deg, meaning cover/exposure/choke/vantage are computed a second time when called from pass_gameplay_zones (which already calls compute_gameplay_zones that computed them). Redundant computation, but outputs are correct stats."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "pass_gameplay_zones",
+    "grade": "B+",
+    "rationale": "Correct pipeline contract; stores zones on stack, emits per-zone score metrics. The double computation issue (_compute_gameplay_score_metrics after compute_gameplay_zones already did the work) is a mild efficiency penalty but does not affect correctness."
+  },
+  {
+    "file": "terrain_gameplay_zones.py",
+    "callable": "register_bundle_j_gameplay_zones_pass",
+    "grade": "A",
+    "rationale": "Correct minimal registrar. No issues."
+  },
+  {
+    "file": "terrain_geology_validator.py",
+    "callable": "validate_strata_consistency",
+    "grade": "A-",
+    "rationale": "Vectorised 4-neighbour average orientation with edge-reflect padding, arccos dot-product angle comparison, and percentile-based violation fraction reporting is correct and efficient. Correctly strips inner cells (avoids border contamination). Minor: violates a 5% threshold with a soft issue only — no graduated severity for very high violation fractions."
+  },
+  {
+    "file": "terrain_geology_validator.py",
+    "callable": "validate_strahler_ordering",
+    "grade": "A",
+    "rationale": "Three-path implementation (dict edges BFS, networkx DiGraph, flat list) with iterative post-order DFS (correct Strahler rules, no Python recursion limit risk) is robust and well-structured. Handles all documented input formats, emits STRAHLER_JUMP vs STRAHLER_UPHILL_ORDER correctly. This is AAA-grade validation infrastructure."
+  },
+  {
+    "file": "terrain_geology_validator.py",
+    "callable": "validate_glacial_plausibility",
+    "grade": "A-",
+    "rationale": "Point-by-point tree-line altitude check over glacier paths is correct. O(N_path_points) Python loop, but N is small (path point count). Minor: does not count the total fraction of points below tree line per path, only that any are below — a single outlier triggers the same hard issue as an entirely below-treeline path."
+  },
+  {
+    "file": "terrain_geology_validator.py",
+    "callable": "validate_karst_plausibility",
+    "grade": "A-",
+    "rationale": "Correctly samples rock_hardness at feature world positions and validates against [min_hardness, max_hardness]. Clean and complete. Minor: per-feature O(1) Python loop is fine given small feature count."
+  },
+  {
+    "file": "terrain_geology_validator.py",
+    "callable": "register_bundle_i_passes",
+    "grade": "A",
+    "rationale": "Comprehensive registrar for all five Bundle I passes with correct overrides annotation (glacial overrides snow_line_factor). PassDefinition fields are complete and descriptions match implementations."
+  },
+  {
+    "file": "terrain_glacial.py",
+    "callable": "_path_to_cells",
+    "grade": "A",
+    "rationale": "Correct world-to-grid conversion with bounds check. Clean and simple."
+  },
+  {
+    "file": "terrain_glacial.py",
+    "callable": "carve_u_valley",
+    "grade": "A-",
+    "rationale": "Uses the geomorphologically correct parabolic (elliptical) U-valley cross-section profile (Svensson 1959; Harbor 1992) with scipy EDT fast path. Hack's law depth scaling from flow_accumulation is physically grounded (exponent 0.4, clamped to [0.5, 2.0]). Gaussian smoothing removes EDT quantisation. Fallback Python loop is O(bounding_box) not O(H*W) — acceptable. Minor: the dense path rasterisation builds a Python list before scipy, but this is only O(path_length) not O(raster_size)."
+  },
+  {
+    "file": "terrain_glacial.py",
+    "callable": "scatter_moraines",
+    "grade": "A-",
+    "rationale": "Geologically correct moraine classification: terminal (arcuate with flanks), recessional (stillstand intervals), and lateral (paired valley walls) with appropriate size scaling. Uses arc-length parametric interpolation (_interp) rather than index interpolation. Deterministic given seed. Minor: lateral moraine count is capped at 10 with random t_lat positions — a real glacier has continuous lateral moraines, not discrete placements."
+  },
+  {
+    "file": "terrain_glacial.py",
+    "callable": "compute_snow_line",
+    "grade": "B+",
+    "rationale": "Simple sigmoid (linear ramp over 50m band) with slope penalty is correct and fast. The 50m transition band and 0.5 max slope penalty are hardcoded constants. Missing: aspect correction (north-facing slopes hold snow lower) is important for AAA quality but absent."
+  },
+  {
+    "file": "terrain_glacial.py",
+    "callable": "pass_glacial",
+    "grade": "A-",
+    "rationale": "Correct pipeline contract; conditionally computes U-valley carving when glacier_paths present; correctly reports flow_accumulation in consumed_channels when used. Metrics are informative. Minor: glacial_delta is always written (even as zeros) but produced_channels = (\"snow_line_factor\", \"glacial_delta\") regardless — consistent with actual stack.set calls."
+  },
+  {
+    "file": "terrain_glacial.py",
+    "callable": "get_ice_formation_specs",
+    "grade": "B+",
+    "rationale": "Correctly scans snow_line_factor for high-coverage cells and delegates to generate_ice_formation for geometry. Subsampling with rng.choice avoids excessive geometry. Minor: the random subsample of candidates ignores spatial distribution (could place all ice formations in a cluster); a Poisson-disk sample would be more physically correct."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "GodRayHint",
+    "grade": "A",
+    "rationale": "Clean frozen dataclass with to_dict() for JSON export. No issues."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "_normalize_sun_dir",
+    "grade": "A",
+    "rationale": "Minimal altitude clamp to prevent tan(0) divide. Correct."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "_build_terrain_silhouette_shadow",
+    "grade": "B+",
+    "rationale": "Vectorised ray-march with fixed step size and numpy broadcasting over all cells simultaneously is correct and O(n_steps * H * W) numpy ops — no per-cell Python loop. The step size of 2 cells can miss single-pixel obstacles between steps; a step of 1 cell would be more accurate. The direction sign (FROM cell TOWARD sun) is correct. boundary conditions (clamp to grid) are correct."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "compute_god_ray_hints",
+    "grade": "A-",
+    "rationale": "Five-step pipeline (shadow mask, foliage density, shadow boundary gradient, feature bonuses, composite + NMS) is physically motivated and well-structured. The scipy NMS fallback uses vectorised separable max-filter rather than per-pixel Python loops. Edge-padding prevents tile seam artefacts in gradient computation. Minor: the intensity composite has weights > 1 in total (0.40+0.20+0.20+0.60+0.50) which can produce values > 1 before final NMS — no normalisation step."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "export_god_ray_hints_json",
+    "grade": "A",
+    "rationale": "Deterministic JSON output with sort_keys=True. Creates parent directories. schema_version included. No issues."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "pass_god_ray_hints",
+    "grade": "A-",
+    "rationale": "Correct pass contract; handles both flat and nested sun_dir hint formats; returns useful metrics. Produces no mask channel (side-effect only), which is correctly declared with produces_channels=(). Minor: cloud_shadow defaults to zeros if absent, which may be over-optimistic for a dark-fantasy tile."
+  },
+  {
+    "file": "terrain_god_ray_hints.py",
+    "callable": "register_bundle_l_god_ray_hints_pass",
+    "grade": "A",
+    "rationale": "Correct minimal registrar. No issues."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "GoldenSnapshot",
+    "grade": "A",
+    "rationale": "Well-structured dataclass with full round-trip serialization via to_dict/from_dict. Covers pipeline_version, channel_hashes, tile_coords, and populated_by_pass metadata. No issues."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "_channel_hashes",
+    "grade": "A",
+    "rationale": "Correctly includes dtype and shape in the hash to distinguish same-content arrays of different types/shapes. Uses contiguous copy for reliable tobytes(). No issues."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "save_golden_snapshot",
+    "grade": "A",
+    "rationale": "Writes both JSON record and companion .npz for tolerance-based comparison. Correct and complete implementation of the BUG-R8-A9-026 fix."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "load_golden_snapshot",
+    "grade": "A",
+    "rationale": "Simple, correct JSON load via from_dict. No issues."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "compare_against_golden",
+    "grade": "A-",
+    "rationale": "Correctly implements tolerance path (BUG-R8-A9-025) and new-channel soft issue (BUG-R8-A9-024). The tolerance check loads and compares per-channel with np.allclose(atol=tolerance). Minor gap: GOLDEN_CHANNEL_DIVERGENCE is always emitted for diverging channels even when the hash mismatch passed the tolerance check — could produce redundant hard issues for channels that are within tolerance."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "_seed_one",
+    "grade": "B+",
+    "rationale": "Correct worker function for parallel golden generation; uses deepcopy to avoid shared state; calls run_pipeline and save_golden_snapshot correctly. Returns (snap, None) or (None, failure_tuple). Minor: print() for progress rather than logging is non-standard for a library."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "seed_golden_library",
+    "grade": "B+",
+    "rationale": "ProcessPoolExecutor for count > 4 with sequential fallback on pickling errors is a pragmatic AAA CI pattern. BUG-R8-A9-028 failure rate check is correct. Minor: parallel path may fail silently if the controller/state is not picklable (the except catches all exceptions and falls back, which can hide real issues)."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "_run_scenario",
+    "grade": "B+",
+    "rationale": "Four scenario checks (water_present, cliff_present, heightmap_range, no_water_seam) are all implemented correctly with clear pass/fail reasons. The no_water_seam threshold of 0.5 is fairly loose. Minor: new scenarios added to SCENARIO_GOLDENS fall through to the 'unknown scenario' error — no extensible dispatch mechanism."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "run_scenario_goldens",
+    "grade": "A-",
+    "rationale": "Correct iteration over scenarios with pass/fail counting. Returns machine-parseable summary dict. No issues."
+  },
+  {
+    "file": "terrain_golden_snapshots.py",
+    "callable": "handle_run_scenario_goldens",
+    "grade": "A-",
+    "rationale": "Correct error-handling wrapper. No issues."
+  },
+  {
+    "file": "terrain_hierarchy.py",
+    "callable": "FeatureTier",
+    "grade": "A",
+    "rationale": "Clean Enum with from_str factory that defaults to SECONDARY for unknown values. No issues."
+  },
+  {
+    "file": "terrain_hierarchy.py",
+    "callable": "FeatureBudget",
+    "grade": "A",
+    "rationale": "Frozen dataclass with sensible AAA defaults (PRIMARY: 0.5/km2, 2M tris, 500m footprint). No issues."
+  },
+  {
+    "file": "terrain_hierarchy.py",
+    "callable": "classify_feature_tier",
+    "grade": "A-",
+    "rationale": "Cinematic kind promotion + saliency-based dynamic tier promotion is well-designed. Saliency sampling uses proper world-to-grid coordinate conversion. Minor: the promoted_idx linear search over _TIER_PRIORITY is O(N_tiers) but N is 4 so negligible."
+  },
+  {
+    "file": "terrain_hierarchy.py",
+    "callable": "enforce_feature_budget",
+    "grade": "A",
+    "rationale": "Priority-aware pruning with footprint gate, tier+saliency+feature_id sort key, density cap scaled to tile area, and triangle budget accumulation is correct and complete. The tri_estimate fallback of 10,000 is documented. Deterministic via feature_id in sort key."
+  },
+  {
+    "file": "terrain_horizon_lod.py",
+    "callable": "compute_horizon_lod",
+    "grade": "A",
+    "rationale": "Vectorised max-pool via reshape+max with edge padding is correct and O(H*W) numpy with no Python loops. Hard cap at 1/64 of source resolution enforces the silhouette-preserving requirement. Edge padding (not zero) for the reshape avoids introducing spurious low-elevation padding that would suppress max-pool values. AAA-quality implementation."
+  },
+  {
+    "file": "terrain_horizon_lod.py",
+    "callable": "_sample_height_bilinear",
+    "grade": "A",
+    "rationale": "Correct bilinear interpolation on fractional grid coordinates with boundary clamping. Fully vectorised over arbitrary array of coordinates. No issues."
+  },
+  {
+    "file": "terrain_horizon_lod.py",
+    "callable": "build_horizon_skybox_mask",
+    "grade": "B+",
+    "rationale": "Per-azimuth ray-march with bilinear height sampling is correct. The outer loop over ray_count (default 360) is a Python for-loop, but the inner distance array operations are fully vectorised numpy — so it is O(ray_count) Python iterations each doing O(max_distance/step) numpy work, which is acceptable. Minor: step = cell*0.5 can produce very long inner arrays for large tiles; no adaptive step size."
+  },
+  {
+    "file": "terrain_horizon_lod.py",
+    "callable": "pass_horizon_lod",
+    "grade": "A-",
+    "rationale": "Correct pipeline: computes LOD map, upsamples via nearest-neighbour index arithmetic (not interpolation — appropriate for LOD bias), computes horizon angles and stores them. Multiple vantage support with list processing is clean. Determinism guard on ratio is good. Minor: upsampling via np.ix_ is correct but does not use bilinear interpolation, which is intentional for LOD (max-pool already captured silhouettes)."
+  },
+  {
+    "file": "terrain_horizon_lod.py",
+    "callable": "register_bundle_l_horizon_lod_pass",
+    "grade": "A",
+    "rationale": "Correct registrar producing both lod_bias and horizon_elevation_angles. No issues."
+  },
+  {
+    "file": "terrain_hot_reload.py",
+    "callable": "_module_path",
+    "grade": "A",
+    "rationale": "Minimal, correct __file__ extraction from a module. No issues."
+  },
+  {
+    "file": "terrain_hot_reload.py",
+    "callable": "_safe_reload",
+    "grade": "A",
+    "rationale": "Correct import-or-reload pattern with WARNING-level logging on failures and explicit (success, exc) return so callers can surface errors. Failures are never silently swallowed. No issues."
+  },
+  {
+    "file": "terrain_hot_reload.py",
+    "callable": "reload_biome_rules",
+    "grade": "A",
+    "rationale": "Simple loop over module list with _safe_reload. Returns successfully reloaded names. No issues."
+  },
+  {
+    "file": "terrain_hot_reload.py",
+    "callable": "reload_material_rules",
+    "grade": "A",
+    "rationale": "Same pattern as reload_biome_rules. No issues."
+  },
+  {
+    "file": "terrain_hot_reload.py",
+    "callable": "HotReloadWatcher",
+    "grade": "A-",
+    "rationale": "Mtime-based file watching with idempotent add(), check_and_reload(), force_reload_all(), and clear_errors() is well-structured for Blender long-session use. Last-seen mtime is updated on successful reload. Minor: the initial mtime snapshot in add() only captures the mtime if the module is already in sys.modules — if hot_reload is set up before first import, the baseline is missed and the first file change may be skipped."
+  },
+  {
+    "file": "terrain_hot_reload.py",
+    "callable": "force_reload_all",
+    "grade": "A",
+    "rationale": "Module-level convenience function using dict.fromkeys for deduplication. Correct and clean."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "_get_peak_memory_mb",
+    "grade": "A",
+    "rationale": "Correctly handles Linux/macOS ru_maxrss unit difference and psutil fallback. Returns 0.0 gracefully on failure. No issues."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "IterationMetrics",
+    "grade": "A",
+    "rationale": "Comprehensive metrics dataclass with O(1) incremental record(), context manager for wall-clock timing, correct merge() for parallel waves, p50/p95/p99 percentile properties, hotspots(), and stable summary_report() with schema_version. Matches UE5 profiler and Gaea pipeline telemetry requirements. No issues."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "_percentile",
+    "grade": "A",
+    "rationale": "Handles numpy >= 1.22 method= kwarg, numpy < 1.22 interpolation= kwarg, and pure-Python linear interpolation fallback. Correct linear interpolation formula. No issues."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "record_iteration",
+    "grade": "A",
+    "rationale": "Thin delegation to IterationMetrics.record. Note: does not forward cached= or channels_written= from PassResult, so cache hit/miss and channel write counts are not populated via this convenience function — callers that need those must call record() directly."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "record_cache_hit",
+    "grade": "A",
+    "rationale": "Simple counter increment. Correct."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "record_cache_miss",
+    "grade": "A",
+    "rationale": "Simple counter increment. Correct."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "record_wave",
+    "grade": "B+",
+    "rationale": "Increments parallel_waves_run but ignores wave_size parameter — the wave size is accepted but not stored or used anywhere. The parameter is documented but effectively dead."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "speedup_factor",
+    "grade": "A",
+    "rationale": "Correctly handles zero baseline and zero current special cases. Returns inf for perfect cache and 0.0 for zero baseline. No issues."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "meets_speedup_target",
+    "grade": "A",
+    "rationale": "Clean, correct gate function with documented 5x default from the ultra plan."
+  },
+  {
+    "file": "terrain_iteration_metrics.py",
+    "callable": "stdev_duration_s",
+    "grade": "A",
+    "rationale": "Correct population stdev using statistics.pstdev with graceful fallback. No issues."
+  },
+  {
+    "file": "terrain_karst.py",
+    "callable": "SinkholeSpec",
+    "grade": "A",
+    "rationale": "Full AAA mesh spec with wall_angle, floor_depth, collapse_stage, rubble_density, and __post_init__ validation of collapse_stage and floor_depth auto-compute. No issues."
+  },
+  {
+    "file": "terrain_karst.py",
+    "callable": "KarstFeature",
+    "grade": "A",
+    "rationale": "Clean dataclass with __post_init__ validation of kind and radius_m. No issues."
+  },
+  {
+    "file": "terrain_karst.py",
+    "callable": "detect_karst_candidates",
+    "grade": "A-",
+    "rationale": "Six-step pipeline with correct Gaussian curvature (proper two-call np.gradient fix documented as bug-fix 2), mean curvature for polje detection, flow-sink proxy, Poisson-disk sampling (using existing _scatter_engine), and Williams 1983 radius morphometry (r = 2.5 * depth^0.6). Bug-fixes 1-6 are all documented and correctly implemented. Minor: the flow_accum_proxy is an inversion of gradient magnitude, not a true upslope area D8 accumulation — adequate approximation but not the real algorithm."
+  },
+  {
+    "file": "terrain_karst.py",
+    "callable": "carve_karst_features",
+    "grade": "A",
+    "rationale": "Fully vectorised via mgrid coordinate arrays and np.minimum accumulation — no Python loops over raster cells. Correct parabolic cosine wall profile for sinkholes/cenotes with orientation determinism via world-position hash. Superellipse (n=4) polje profile with 2.5:1 aspect ratio matches real karstic polje geometry. Uvala coalescence is implicit via np.minimum. AAA quality."
+  },
+  {
+    "file": "terrain_karst.py",
+    "callable": "pass_karst",
+    "grade": "A-",
+    "rationale": "Correct pipeline contract; produced_channels is () when no features detected and (\"karst_delta\",) when carved — matching actual stack.set calls. Metrics are informative. Minor: the derive_pass_seed call result is discarded (assigned to _) — seed is computed but not used to control detection randomness (Poisson-disk seeding uses its own formula from tile coords)."
+  },
+  {
+    "file": "terrain_karst.py",
+    "callable": "get_sinkhole_specs",
+    "grade": "A-",
+    "rationale": "Correct SinkholeSpec population with geologically appropriate collapse_stage logic (cenotes always flooded, large sinkholes weathered, small ones probabilistic). Attempts terrain_features.generate_sinkhole and gracefully silences ImportError. Minor: calls detect_karst_candidates without a hardness_threshold argument, using the default 0.5 which may not match the pass's configured threshold."
+  },
+  {
+    "file": "terrain_legacy_bug_fixes.py",
+    "callable": "audit_np_clip_in_file",
+    "grade": "A-",
+    "rationale": "Correct regex-based static analysis detecting is_unit_range and missing_out= patterns. Non-fatal on missing file. Heuristic for missing_out on single-line calls is acknowledged as such. Clean and useful CI tool."
+  },
+  {
+    "file": "terrain_legacy_bug_fixes.py",
+    "callable": "_audit_pixel_units_in_file",
+    "grade": "B+",
+    "rationale": "Heuristic regex for integer literals in height/resolution scaling ops is useful but prone to false positives on comment lines and string literals. Skips lines starting with '#' but not inline comments. The _PIXEL_UNIT_RE pattern has significant risk of matching unrelated arithmetic."
+  },
+  {
+    "file": "terrain_legacy_bug_fixes.py",
+    "callable": "audit_terrain_advanced_world_units",
+    "grade": "A-",
+    "rationale": "Comprehensive report dict with clip count, unit_clip_count, missing_out_count, target line status (present/moved/fixed), and pixel_unit_findings. The nearby_lines search within ±3 lines to detect moved clips is a practical AAA CI pattern. Returned dict is well-structured for machine consumption."
+  },
+  {
+    "file": "terrain_live_preview.py",
+    "callable": "_clone_stack_for_diff",
+    "grade": "A-",
+    "rationale": "Shallow copy with deep-copy of ndarrays via val.copy() is correct for diffing. Also copies populated_by_pass and dirty_channels. Minor: does not copy dict-valued channels (detail_density) — those are shared references."
+  },
+  {
+    "file": "terrain_live_preview.py",
+    "callable": "LivePreviewSession",
+    "grade": "B+",
+    "rationale": "Well-structured session class with cache, dirty tracker, and history. BUG-R8-A9-008 baseline hash seeding is correct. apply_edit, diff_preview, diff_stacks, snapshot_stack are all sensible. render_thumbnail_png uses matplotlib Agg backend correctly. Minor gap: apply_edit's cache path calls TerrainPassController.get_pass which may not exist as a classmethod in all controller implementations — depends on caller contract."
+  },
+  {
+    "file": "terrain_live_preview.py",
+    "callable": "edit_hero_feature",
+    "grade": "B+",
+    "rationale": "Supports translate/scale/rotate/material mutations via dataclasses.replace correctly. Updates both hero_feature_specs tuple and composition_hints['hero_features'] list for consistency. The cosine radial weight overlay with max-blend accumulation for hero_feature_preview is physically sensible. Minor: orientation mutations accumulate (ori[axis_idx] += angle_deg) on the mutable list copy, which is correct; rotation representation is Euler angles with no wrapping."
+  },
+  {
+    "file": "terrain_macro_color.py",
+    "callable": "DARK_FANTASY_PALETTE",
+    "grade": "A",
+    "rationale": "Well-curated 8-biome dark-fantasy palette with desaturated earth tones matching the VeilBreakers art brief. No issues."
+  },
+  {
+    "file": "terrain_macro_color.py",
+    "callable": "_resolve_palette",
+    "grade": "A",
+    "rationale": "Correctly validates palette input, converts keys/values, and falls back to default. No issues."
+  },
+  {
+    "file": "terrain_macro_color.py",
+    "callable": "_resolve_strata_color_map",
+    "grade": "B+",
+    "rationale": "Handles the strata_cross_section object-array wrapper pattern correctly. The numpy object array unpacking logic works but is fragile to future format changes. Returns None gracefully on all error paths. Minor: does not log a warning on malformed input, making silent degradation possible."
+  },
+  {
+    "file": "terrain_macro_color.py",
+    "callable": "compute_macro_color",
+    "grade": "A-",
+    "rationale": "Multi-layer blend (biome palette, wetness darkening, erosion bleaching, deposition staining, strata palette, altitude cool shift, snow line overlay) is physically motivated and vectorised throughout. The biome_arr iteration over pal items is O(N_biomes) * O(H*W) numpy ops, which is fine for 8 biomes. Minor: the altitude cool shift uses a 0.6-0.4 ramp range which may produce flat results on low-relief tiles."
+  },
+  {
+    "file": "terrain_macro_color.py",
+    "callable": "pass_macro_color",
+    "grade": "A-",
+    "rationale": "Correct pipeline contract. Metrics include per-channel RGB stats and strata_palette_applied flag. Minor: consumed_channels declares only (\"height\",) but the pass also reads wetness, biome_id, snow_line_factor, erosion_amount, deposition_amount, strata_cross_section, and albedo_shift_rgb — under-declared consumed channels can cause cache misses to not invalidate properly."
+  },
+  {
+    "file": "terrain_macro_color.py",
+    "callable": "register_bundle_k_macro_color_pass",
+    "grade": "A",
+    "rationale": "Correct minimal registrar. No issues."
+  },
+  {
+    "file": "terrain_mask_cache.py",
+    "callable": "_hash_channel",
+    "grade": "A",
+    "rationale": "Includes dtype, shape, and raw bytes in SHA-256 digest. Uses None sentinel string for missing channels to distinguish from zero arrays. Correct."
+  },
+  {
+    "file": "terrain_mask_cache.py",
+    "callable": "cache_key_for_pass",
+    "grade": "A",
+    "rationale": "Stable cache key including pass name, intent hash (or JSON serialization), region tuple, tile coords, and sorted input channel hashes. Sort ensures dict key order does not affect the digest. AAA-quality cache key construction."
+  },
+  {
+    "file": "terrain_mask_cache.py",
+    "callable": "MaskCache",
+    "grade": "A",
+    "rationale": "Thread-safe LRU with OrderedDict, hit/miss counters, tag-index for logical namespace invalidation, and double-checked locking in get_or_compute to avoid holding the lock during slow computation. invalidate_prefix correctly uses the tag index rather than string-prefix scanning opaque SHA-256 keys. The docstring explains all edge cases clearly. AAA-quality infrastructure."
+  },
+  {
+    "file": "terrain_mask_cache.py",
+    "callable": "_snapshot_produced_channels",
+    "grade": "A",
+    "rationale": "Correct deep-copy snapshot of produced channels for cache storage. No issues."
+  },
+  {
+    "file": "terrain_mask_cache.py",
+    "callable": "_restore_produced_channels",
+    "grade": "A",
+    "rationale": "Correct restore via stack.set with deep copy to avoid sharing the cached array. No issues."
+  },
+  {
+    "file": "terrain_mask_cache.py",
+    "callable": "pass_with_cache",
+    "grade": "A-",
+    "rationale": "Correct cache-backed pass execution with channel-hash-keyed invalidation, tag registration (pass name + consumed channels), and cache hit restoration. Minor: on cache miss, pass_def.func is called and then all produced channels are snapshotted — if a pass produces channels that are not listed in produces_channels, they will not be cached/restored correctly."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "compute_slope",
+    "grade": "A",
+    "rationale": "Correct np.gradient-based central difference with cell_size spacing. Input validation for 2D shape and positive cell_size. arctan of magnitude gives angle in radians. No issues."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "compute_curvature",
+    "grade": "A",
+    "rationale": "Correct discrete Laplacian using edge-padded second differences in world units. No issues."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "compute_concavity",
+    "grade": "A",
+    "rationale": "Correct negative-lobe extraction with 99th-percentile robust normalisation to avoid outlier dominance. Handles all-zero input gracefully. No issues."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "compute_convexity",
+    "grade": "A",
+    "rationale": "Symmetric counterpart to compute_concavity. Correct. No issues."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "extract_ridge_mask",
+    "grade": "A-",
+    "rationale": "5th-percentile threshold on negative second-derivative values for ridge detection is a sensible adaptive approach. Ridge is defined as locally strong concave second derivative along at least one axis — correct geomorphological definition. Minor: the 5th percentile of negative values adapts to tile relief, which means very flat tiles may produce no ridges even if there are valid edges."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "detect_basins",
+    "grade": "B",
+    "rationale": "scipy watershed_ift fast path is correct and efficient. The pure-numpy fallback contains an O(H*W) Python loop inside a two-pass Chamfer-style iteration — on a 1024x1024 tile with 2 passes this is ~2M Python loop iterations, which will be very slow. The fallback should have been the vectorised height-sorted batch propagation described in the docstring but the actual implementation has the Python loop. This is a significant performance gap for the scipy-absent path."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "compute_macro_saliency",
+    "grade": "A",
+    "rationale": "Simple three-channel blend (height prominence 50%, curvature magnitude 30%, ridge 20%) with 99th-percentile normalization for curvature. Correct and fast. Weights match the Bundle H composition contract."
+  },
+  {
+    "file": "terrain_masks.py",
+    "callable": "compute_base_masks",
+    "grade": "A-",
+    "rationale": "Compound mask population calling all seven structural mask functions in correct dependency order. Supports both fresh stack creation and in-place update. Minor: the tile_size = max(h.shape) - 1 is a VTP convention that assumes square tiles; non-square heightmaps will compute tile_size incorrectly."
+  }
+]

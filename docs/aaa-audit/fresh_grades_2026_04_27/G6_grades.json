@@ -1,0 +1,68 @@
+[
+  {
+    "file": "terrain_telemetry_dashboard.py",
+    "callable": "TelemetryRecord.to_dict",
+    "grade": "B+",
+    "rationale": "Delegates to dataclasses.asdict then patches tile_coords from tuple to list for JSON round-trip — correct and minimal. No hidden complexity, but the manual list coercion is a minor code smell that asdict's dict_factory could handle more elegantly. No production performance concern."
+  },
+  {
+    "file": "terrain_telemetry_dashboard.py",
+    "callable": "TelemetryRecord.from_dict",
+    "grade": "B",
+    "rationale": "Reconstructs a TelemetryRecord from a raw dict with safe .get() fallbacks on every field — solid defensive deserialization. However it does a shallow dict() copy on nested dicts (pass_durations, budget_usage, extra) which silently drops nested structure if values are non-dict; not a real bug for current schema but fragile. No AAA-critical flaw."
+  },
+  {
+    "file": "terrain_telemetry_dashboard.py",
+    "callable": "_count_populated_channels",
+    "grade": "B-",
+    "rationale": "Iterates over _ARRAY_CHANNELS (a fixed-length class-level tuple on MaskStack) with getattr — O(C) where C is the number of channels, which is constant and fast. Relies on private _ARRAY_CHANNELS attribute via convention rather than a proper public API, creating a fragile coupling to MaskStack internals. No production callers visible outside the module."
+  },
+  {
+    "file": "terrain_telemetry_dashboard.py",
+    "callable": "record_telemetry",
+    "grade": "B+",
+    "rationale": "Correctly derives pass_durations from state.pass_history in a single dict comprehension, calls compute_hash(), appends newline-delimited JSON atomically with append-mode open — all sound choices. Minor: no file locking so concurrent multi-process writes could corrupt the NDJSON log, but single-process Blender usage makes this acceptable. No O(H*W) loops."
+  },
+  {
+    "file": "terrain_telemetry_dashboard.py",
+    "callable": "_load_records",
+    "grade": "B",
+    "rationale": "Reads the entire NDJSON log into memory via read_text().splitlines() — fine for logs of typical length but would OOM on a very long-running pipeline with millions of tiles. Per-line JSON decode with try/except for resilience is good practice. Silently skips corrupt lines rather than reporting them, which could mask data loss."
+  },
+  {
+    "file": "terrain_telemetry_dashboard.py",
+    "callable": "summarize_telemetry",
+    "grade": "B",
+    "rationale": "Aggregates record_count, tile_count, per-pass avg/total durations, readability stats, and channel avg in a single O(N) pass over records — correct and efficient. Averages are computed with sum()/len() rather than statistics.mean(), avoiding an import but also silently returning 0.0 for empty lists in the no-records branch without standard deviation or P95 latency data that a real production telemetry dashboard would expose. Functional but shallow for AAA monitoring needs."
+  },
+  {
+    "file": "terrain_unity_export_contracts.py",
+    "callable": "UnityExportContract.minimum_for",
+    "grade": "C+",
+    "rationale": "A manual if/elif chain that maps four string literals to integer bit-depth fields — this is just a dict lookup written as a chain of conditionals with no extensibility mechanism. Returns 0 for unknown file_kind instead of raising, so callers silently pass an unrecognized kind with no error. Adequate for a small fixed set but fragile if the contract grows."
+  },
+  {
+    "file": "terrain_unity_export_contracts.py",
+    "callable": "validate_mesh_attributes_present",
+    "grade": "B",
+    "rationale": "Converts attr_names to a set then iterates REQUIRED_MESH_ATTRIBUTES (6 elements) for O(6) membership tests — correct and fast. Emits well-structured ValidationIssues with code, severity, affected_feature, message, and remediation. The 6-element constant is verified at module load time. No callers visible in this codebase beyond tests, which is a note rather than a deduction."
+  },
+  {
+    "file": "terrain_unity_export_contracts.py",
+    "callable": "validate_vertex_attributes_present",
+    "grade": "B",
+    "rationale": "Structurally identical to validate_mesh_attributes_present — same set-based membership test, same ValidationIssue construction, same remediation quality. Duplication between the two validators is a minor code smell (they could share a helper), but neither is wrong. No production callers visible in this module."
+  },
+  {
+    "file": "terrain_unity_export_contracts.py",
+    "callable": "write_export_manifest",
+    "grade": "B-",
+    "rationale": "Validates required keys per file entry, creates the output dir, and writes pretty-printed JSON — all correct. However, it raises ValueError mid-loop after potentially creating the output dir, leaving a partially-created directory behind with no manifest; a pre-validation pass before touching the filesystem would be cleaner. No atomic write (no temp-file + rename), so a crash mid-write corrupts the manifest silently."
+  },
+  {
+    "file": "terrain_unity_export_contracts.py",
+    "callable": "validate_bit_depth_contract",
+    "grade": "B-",
+    "rationale": "The kind_map resolution path is convoluted: three nested fallback levels (exact key, prefix pattern, base-name strip, mask_stack special case) with a detail_density__ branch that sets mapping=None redundantly and then falls through to the base-strip lookup anyway — this logic has a latent bug where detail_density__ files could accidentally match a base-stripped kind_map entry. The actual bit-depth and encoding checks are correct and thorough once a mapping is found, but the dispatch logic needs a rewrite. Encoding checks for splatmap and terrain_normals are guarded by `if enc and enc != ...` meaning a blank encoding silently passes, which could hide misconfigured exports."
+  }
+]

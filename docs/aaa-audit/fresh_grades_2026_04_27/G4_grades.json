@@ -1,0 +1,3441 @@
+[
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainMaskStack",
+    "line": 1,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Central data container for the entire pipeline. Typed Optional[np.ndarray] fields, .set()/.get() access with provenance tracking, SHA-256 content hash, .to_npz()/.from_npz() serialization via _ARRAY_CHANNELS registry. Architecture is sound. Critical flaw: terrain_ao and terrain_displacement are declared as Optional[np.ndarray] but NOT in _ARRAY_CHANNELS, so they silently drop on serialization round-trips — production data loss bug.",
+    "aaa_equivalent": "Guerrilla Games' terrain layer stack in Decima (channels registered per-feature with full serialization contracts)",
+    "critical_flaws": [
+      "terrain_ao and terrain_displacement fields NOT in _ARRAY_CHANNELS — silently dropped on to_npz/from_npz",
+      "simulate_fold_deformation() in terrain_stratigraphy bypasses .set() provenance via direct stack.height = ..."
+    ],
+    "strengths": [
+      "Typed dataclass with Optional[np.ndarray] for every channel",
+      "SHA-256 content hash for cache invalidation",
+      "populated_by_pass provenance tracking",
+      "water_surface_mask and water_surface_elevation_m both declared AND in _ARRAY_CHANNELS (W-1 fix confirmed)"
+    ],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Add terrain_ao and terrain_displacement to _ARRAY_CHANNELS tuple immediately — silent data loss in production. Also audit every other Optional[np.ndarray] field for _ARRAY_CHANNELS registration completeness."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainMaskStack.set",
+    "line": 120,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Proper provenance tracking — records pass name, timestamp, and channel name on every write. Guards against unknown channel names. Clean interface.",
+    "aaa_equivalent": "Naughty Dog's terrain layer write interface with audit trail",
+    "critical_flaws": [],
+    "strengths": [
+      "Records populated_by_pass on every write",
+      "Validates channel name exists before writing",
+      "Single point of truth for all channel writes"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding dtype validation — reject float64 arrays to enforce float32 consistency."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainMaskStack.get",
+    "line": 135,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Clean channel read with KeyError on unknown channels. Consistent counterpart to .set().",
+    "aaa_equivalent": "Standard typed channel accessor",
+    "critical_flaws": [],
+    "strengths": ["Raises KeyError for unknown channels", "Consistent with .set() interface"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Minor: consider returning a read-only view to prevent accidental in-place mutation of stack arrays."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainMaskStack.to_npz",
+    "line": 200,
+    "type": "method",
+    "grade": "C+",
+    "rationale": "Serializes all _ARRAY_CHANNELS to .npz with SHA-256 manifest. Correct for registered channels. Critical gap: terrain_ao and terrain_displacement not in _ARRAY_CHANNELS so they silently vanish. No version header for forward compatibility.",
+    "aaa_equivalent": "Guerrilla terrain tile serializer — but missing channel registration completeness",
+    "critical_flaws": [
+      "terrain_ao and terrain_displacement silently excluded from serialization",
+      "No schema version header — no forward/backward compatibility path"
+    ],
+    "strengths": [
+      "SHA-256 per-channel content hash in manifest",
+      "Compresses with np.savez_compressed"
+    ],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Register terrain_ao and terrain_displacement in _ARRAY_CHANNELS. Add schema_version field to manifest JSON."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainMaskStack.from_npz",
+    "line": 240,
+    "type": "method",
+    "grade": "C+",
+    "rationale": "Inverse of to_npz. Same registration gap: terrain_ao/displacement silently absent after round-trip. No version check means future format changes will silently produce wrong data.",
+    "aaa_equivalent": "Deserializer matching the incomplete serializer above",
+    "critical_flaws": [
+      "terrain_ao and terrain_displacement not restored — silent data loss",
+      "No schema version validation"
+    ],
+    "strengths": [
+      "SHA-256 verification on load",
+      "Graceful handling of missing optional channels"
+    ],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Fix _ARRAY_CHANNELS registration first. Add version guard with migration path."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainMaskStack.content_hash",
+    "line": 280,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "SHA-256 hash over all populated channels for cache invalidation. Deterministic ordering via sorted channel names. Used for tile caching throughout the pipeline.",
+    "aaa_equivalent": "Standard content-addressable cache key",
+    "critical_flaws": [],
+    "strengths": [
+      "Deterministic: sorts channel names before hashing",
+      "Covers all populated channels"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Hash also excludes terrain_ao/displacement due to _ARRAY_CHANNELS gap — cascading issue from the registration bug."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "PassDefinition",
+    "line": 350,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "Dataclass expressing DAG contract: produces_channels, requires_channels, overrides, optional_channels. Clean design that enables the pipeline orchestrator to auto-order passes without manual dependency specification.",
+    "aaa_equivalent": "Frostbite/Decima render graph node descriptor",
+    "critical_flaws": [],
+    "strengths": [
+      "Explicit produces/requires contract enables DAG auto-ordering",
+      "optional_channels for soft dependencies",
+      "overrides for explicit channel replacement semantics"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add runtime validation that produces_channels are actually registered in _ARRAY_CHANNELS."
+  },
+  {
+    "file": "handlers/terrain_semantics.py",
+    "callable": "TerrainPassController",
+    "line": 400,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "DAG-based pipeline orchestrator. Topological sort of passes, dependency validation, execution with timing. Solid architecture for managing 12+ interdependent terrain passes.",
+    "aaa_equivalent": "Avalanche Studios' modular terrain pipeline orchestrator",
+    "critical_flaws": [
+      "No cycle detection reported with clear error messaging",
+      "Pass failure handling unclear — does one failed pass abort the run or skip?"
+    ],
+    "strengths": [
+      "Topological sort for correct execution order",
+      "Timing instrumentation per pass",
+      "Dependency validation before execution"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Add explicit cycle detection with named cycle reporting. Define fail-fast vs. skip-failed-pass behavior."
+  },
+  {
+    "file": "handlers/terrain_shadow_clipmap_bake.py",
+    "callable": "TerrainShadowClipmapBake",
+    "line": 1,
+    "type": "class",
+    "grade": "B",
+    "rationale": "4-cascade shadow clipmap with LOD0-LOD3. Vectorized horizon-scan, min() composite across cascades, struct-packed mini-EXR writer. Architecturally sound. Degraded by nearest-neighbor sampling in _bake_single_cascade (no bilinear) and the DAG contract writes baked_cloud_shadow but not cloud_shadow — an intentional rename but causes confusion with dependent passes.",
+    "aaa_equivalent": "Naughty Dog TLOU2 terrain shadow bake — but with bilinear sampling",
+    "critical_flaws": [
+      "_bake_single_cascade uses nearest-neighbor sample, not bilinear — produces staircase artifacts on LOD seams"
+    ],
+    "strengths": [
+      "4-cascade LOD clipmap architecture correct",
+      "Vectorized horizon-scan",
+      "min() composite for multi-cascade shadow"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Replace nearest-neighbor with bilinear interpolation in _bake_single_cascade. Document the baked_cloud_shadow channel name explicitly."
+  },
+  {
+    "file": "handlers/terrain_shadow_clipmap_bake.py",
+    "callable": "TerrainShadowClipmapBake._bake_single_cascade",
+    "line": 80,
+    "type": "method",
+    "grade": "C+",
+    "rationale": "Bakes one LOD cascade of terrain shadow. Core horizon-scan logic is vectorized and correct. Nearest-neighbor sampling produces visible staircase artifacts at cascade borders under oblique sun angles.",
+    "aaa_equivalent": "CDProjekt terrain cascade baker — but missing bilinear",
+    "critical_flaws": [
+      "Nearest-neighbor sample — no bilinear interpolation at cascade boundaries"
+    ],
+    "strengths": [
+      "Vectorized horizon-scan loop",
+      "Correct min() compositing logic"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Use scipy.ndimage.map_coordinates with order=1 (bilinear) for sub-texel lookups."
+  },
+  {
+    "file": "handlers/terrain_shadow_clipmap_bake.py",
+    "callable": "TerrainShadowClipmapBake.bake_all_cascades",
+    "line": 150,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Orchestrates 4-cascade bake and writes baked_cloud_shadow channel. Correct cascade ordering. DAG channel naming follows W-1 pattern (produces baked_cloud_shadow, not cloud_shadow).",
+    "aaa_equivalent": "Standard clipmap cascade orchestrator",
+    "critical_flaws": [],
+    "strengths": [
+      "Correctly ordered LOD0→LOD3",
+      "Final composite via np.minimum across cascades"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Minor: log cascade timings to help diagnose performance regressions."
+  },
+  {
+    "file": "handlers/terrain_shadow_clipmap_bake.py",
+    "callable": "TerrainShadowClipmapBake._write_mini_exr",
+    "line": 220,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Struct-packed binary EXR writer. Correct 16-bit half-float encoding. Minimal header for shadow clipmap distribution. Avoids openexr dependency by writing raw binary.",
+    "aaa_equivalent": "Minimal EXR shadow tile writer",
+    "critical_flaws": [],
+    "strengths": [
+      "No openexr runtime dependency",
+      "Correct IEEE 754 half-float packing",
+      "Includes minimal EXR header for compatibility"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding multi-channel support for future normal-map shadow integration."
+  },
+  {
+    "file": "handlers/terrain_stochastic_shader.py",
+    "callable": "TerrainStochasticShader",
+    "line": 1,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Implements Heitz & Neyret 2019 histogram-preserving blending + Mikkelsen 2022 hex-tiling. Python bake pipeline is correctly rank-based (argsort+linspace). Manifest name mismatch resolved. Major issue: HLSL HistogramPreservingBlend is contrast-correction approximation only, not true CDF transform from Heitz Eq. 10. This means shader-side blending diverges from the baked LUT.",
+    "aaa_equivalent": "Respawn Entertainment terrain texture variation system (with full histogram preservation in shader)",
+    "critical_flaws": [
+      "HLSL HistogramPreservingBlend uses contrast-correction approximation, not Heitz Eq. 10 true CDF inversion — Python bake and HLSL shader are mathematically inconsistent"
+    ],
+    "strengths": [
+      "Python histogram bake correct: rank-based equalization via argsort + linspace",
+      "Hex-tiling UV offsets: Mikkelsen 2022 RectToHex/HexToRect transforms",
+      "Power-4 smooth blend weights for hex cells",
+      "Manifest name mismatch resolved"
+    ],
+    "upgrade_priority": "high",
+    "upgrade_note": "Implement true Heitz Eq. 10 in HLSL: invert the CDF via Gaussian approximation or precomputed 1D LUT texture."
+  },
+  {
+    "file": "handlers/terrain_stochastic_shader.py",
+    "callable": "TerrainStochasticShader.bake_histogram_lut",
+    "line": 120,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Correct rank-based histogram equalization via argsort + linspace. Matches Heitz 2019 offline bake specification. Produces the T(x) and T^-1(x) LUT arrays used at runtime.",
+    "aaa_equivalent": "Correct offline bake per Heitz & Neyret 2019 EGSR paper",
+    "critical_flaws": [],
+    "strengths": [
+      "argsort-based rank normalization is the correct approach",
+      "Produces both forward and inverse LUT",
+      "Parameterized LUT resolution"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider 16-bit LUT texture output to reduce quantization error in the shader inversion step."
+  },
+  {
+    "file": "handlers/terrain_stochastic_shader.py",
+    "callable": "TerrainStochasticShader.generate_hlsl",
+    "line": 300,
+    "type": "method",
+    "grade": "C+",
+    "rationale": "Generates HLSL shader source with hex-tiling and histogram-preserving blending. Hex-tiling math is correct (Mikkelsen 2022). HistogramPreservingBlend function uses contrast-correction approximation only — diverges from the correct Python bake. Result: in-game texture variation will not match the baked appearance.",
+    "aaa_equivalent": "Incorrect approximation vs. Respawn/Guerrilla full CDF inversion",
+    "critical_flaws": [
+      "HistogramPreservingBlend is contrast-correction only, not Heitz Eq. 10 — produces tonal drift vs. baked reference"
+    ],
+    "strengths": [
+      "Hex-tiling UV math correct per Mikkelsen 2022",
+      "Power-4 smooth weights for hex cell blending",
+      "Self-contained HLSL output"
+    ],
+    "upgrade_priority": "high",
+    "upgrade_note": "Replace contrast-correction with Gaussian CDF approximation or LUT texture sample in HLSL. See Heitz 2019 supplemental code."
+  },
+  {
+    "file": "handlers/terrain_stochastic_shader.py",
+    "callable": "TerrainStochasticShader._rect_to_hex",
+    "line": 380,
+    "type": "method",
+    "grade": "A",
+    "rationale": "Correct implementation of Mikkelsen 2022 RectToHex coordinate transform. Used for hex-tiling UV generation. Exact match to paper.",
+    "aaa_equivalent": "Direct implementation of Mikkelsen 2022 JCGT hex-tiling",
+    "critical_flaws": [],
+    "strengths": [
+      "Exact match to Mikkelsen 2022 equation",
+      "Vectorized numpy implementation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_stochastic_shader.py",
+    "callable": "TerrainStochasticShader._hex_to_rect",
+    "line": 400,
+    "type": "method",
+    "grade": "A",
+    "rationale": "Correct inverse of _rect_to_hex. Used for converting hex vertex offsets back to texture UV space.",
+    "aaa_equivalent": "Mikkelsen 2022 HexToRect exact implementation",
+    "critical_flaws": [],
+    "strengths": ["Exact inverse matching RectToHex"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_stochastic_shader.py",
+    "callable": "TerrainStochasticShader.write_shader_manifest",
+    "line": 450,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Writes JSON manifest with shader name, LUT paths, and blend parameters. Name mismatch previously resolved. Clean serialization.",
+    "aaa_equivalent": "Standard shader manifest writer",
+    "critical_flaws": [],
+    "strengths": [
+      "Name mismatch resolved",
+      "Includes LUT file paths for runtime binding",
+      "JSON schema validated before write"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Minor: include a schema_version field for forward compatibility."
+  },
+  {
+    "file": "handlers/terrain_stratigraphy.py",
+    "callable": "simulate_fold_deformation",
+    "line": 453,
+    "type": "function",
+    "grade": "C",
+    "rationale": "Fourier-domain fold deformation with hardness-coupled erosion. The geological approach is sound. Fatal provenance flaw: writes via direct stack.height = ... bypassing .set() tracking — the pipeline cannot know this pass modified height, breaking DAG dependency analysis and cache invalidation.",
+    "aaa_equivalent": "Terrain folding in RDR2's procedural geology — but with proper channel tracking",
+    "critical_flaws": [
+      "Direct stack.height = assignment bypasses .set() provenance tracking",
+      "DAG cannot detect height modification — pass ordering and cache invalidation broken for downstream passes"
+    ],
+    "strengths": [
+      "Fourier fold deformation physically motivated",
+      "Hardness-coupled erosion response"
+    ],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Replace stack.height = ... with stack.set('height', ..., pass_name='terrain_stratigraphy') immediately."
+  },
+  {
+    "file": "handlers/terrain_stratigraphy.py",
+    "callable": "StratigraphicLayer",
+    "line": 50,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Dataclass for a single geological layer. Well-named fields: base_height, thickness, hardness, color_tint. Used as input to the stratigraphic simulation.",
+    "aaa_equivalent": "Geology layer descriptor in terrain procedural systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Clean typed dataclass",
+      "Hardness field enables erosion coupling",
+      "Color tint for material variation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add porosity/permeability fields for future water table simulation."
+  },
+  {
+    "file": "handlers/terrain_stratigraphy.py",
+    "callable": "build_stratigraphic_stack",
+    "line": 100,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Builds N=5-9 layer stack with randomized thickness and hardness. Seeded RNG for reproducibility. Reasonable defaults for dark fantasy geological variety.",
+    "aaa_equivalent": "Procedural geology layer generator",
+    "critical_flaws": [],
+    "strengths": [
+      "Seeded for reproducible results",
+      "Parameterized layer count and thickness range"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding a 'formation_type' parameter (marine/volcanic/metamorphic) to bias layer properties."
+  },
+  {
+    "file": "handlers/terrain_stratigraphy.py",
+    "callable": "apply_stratigraphic_erosion",
+    "line": 200,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Applies differential erosion based on layer hardness. Softer layers erode faster, creating natural banding and overhangs. Uses stack height to determine which layer each cell is in.",
+    "aaa_equivalent": "Differential erosion per Geoscientific Model Development papers",
+    "critical_flaws": [],
+    "strengths": [
+      "Hardness-coupled erosion rate is physically motivated",
+      "Banding effect produces natural rock strata appearance"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Consider adding lateral undercutting for overhangs (harder layer above softer)."
+  },
+  {
+    "file": "handlers/terrain_texture_layer_stack.py",
+    "callable": "TextureLayer",
+    "line": 21,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Typed dataclass for a single PBR texture layer. All standard channels present: albedo, normal, roughness, height_displacement, AO, metallic, tiling_scale, texel_density, color_space. no_displacement_reason field is an elegant way to suppress false-positive validation warnings.",
+    "aaa_equivalent": "Standard PBR layer descriptor (UE5 terrain layer)",
+    "critical_flaws": [
+      "No runtime dtype enforcement — np.ndarray fields can be any dtype/shape without warning"
+    ],
+    "strengths": [
+      "All standard PBR channels present",
+      "no_displacement_reason for intentional displacement omission",
+      "texel_density_m field enables consistent resolution contracts"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add __post_init__ dtype/shape validation for numpy arrays."
+  },
+  {
+    "file": "handlers/terrain_texture_layer_stack.py",
+    "callable": "TerrainTextureLayerStack",
+    "line": 38,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Container for multiple TextureLayers with add_layer, validate, and normalized_weights methods. normalize_weights handles zero-sum gracefully. validate returns list[str] instead of list[ValidationIssue] — inconsistent with rest of pipeline validation system.",
+    "aaa_equivalent": "Splatmap layer stack management in game engines",
+    "critical_flaws": [
+      "validate() returns list[str] not list[ValidationIssue] — inconsistent type contract with terrain_validation.py"
+    ],
+    "strengths": [
+      "normalized_weights handles zero-sum denominator (maps to uniform)",
+      "validate checks all required PBR channels"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Return list[ValidationIssue] from validate() to match pipeline convention."
+  },
+  {
+    "file": "handlers/terrain_texture_layer_stack.py",
+    "callable": "TerrainTextureLayerStack.add_layer",
+    "line": 45,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Simple append to layers list. No duplicate layer_id check.",
+    "aaa_equivalent": "Basic list append",
+    "critical_flaws": ["No duplicate layer_id detection — silently creates duplicate layers"],
+    "strengths": ["Simple, does what it says"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add duplicate layer_id guard with ValueError."
+  },
+  {
+    "file": "handlers/terrain_texture_layer_stack.py",
+    "callable": "TerrainTextureLayerStack.validate",
+    "line": 48,
+    "type": "method",
+    "grade": "B-",
+    "rationale": "Checks all required PBR channels per layer, weight_map bounds, terrain_mask_source. Returns list[str] instead of ValidationIssue objects. AO warning (not error) is appropriate. The weight_map bounds check correctly uses 1e-5 tolerance.",
+    "aaa_equivalent": "Asset validation in Quixel Bridge integration",
+    "critical_flaws": [
+      "Returns list[str] not list[ValidationIssue] — caller cannot distinguish error severity",
+      "No check for matching spatial resolution between layers"
+    ],
+    "strengths": [
+      "Checks all 5 required PBR channels",
+      "Tolerant weight_map bounds check (1e-5 epsilon)",
+      "no_displacement_reason suppresses false positives correctly"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Return structured ValidationIssue objects. Add cross-layer resolution consistency check."
+  },
+  {
+    "file": "handlers/terrain_texture_layer_stack.py",
+    "callable": "TerrainTextureLayerStack.normalized_weights",
+    "line": 74,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Stacks per-layer weight maps and normalizes so they sum to 1.0 per-pixel. np.where(total < 1e-8, 1.0, total) correctly handles zero-sum pixels by distributing uniform weight. Returns float32 (H, W, N_layers) array.",
+    "aaa_equivalent": "Splatmap normalization in Unity TerrainData",
+    "critical_flaws": [],
+    "strengths": [
+      "Zero-sum guard prevents divide-by-zero",
+      "float32 output for GPU-ready upload",
+      "Correct (H, W, N) axis layout"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider a check that all weight_maps have matching (H, W) — currently will raise cryptic np.stack error on shape mismatch."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep",
+    "line": 1,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Orchestrates the 12-step AAA terrain generation pipeline in correct order: geology→erosion→water→vegetation→roads→props→lighting→export. All steps present in correct sequence. Step 11 _generate_water_body_specs is trivially simple (70th-percentile threshold only, no Strahler ordering, no multi-basin analysis).",
+    "aaa_equivalent": "Guerrilla Games / Horizon terrain pipeline orchestrator",
+    "critical_flaws": [
+      "Step 11 _generate_water_body_specs is a single-threshold heuristic — no hydrological network analysis"
+    ],
+    "strengths": [
+      "All 12 steps present in correct order",
+      "Each step is a clearly named private method",
+      "Timing instrumentation per step"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Step 11 needs Strahler stream ordering and multi-basin lake detection to produce AAA-quality water body specs."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep.run",
+    "line": 80,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Executes all 12 steps with per-step timing and error handling. Correctly returns TerrainMaskStack after all steps. Checkpointing support for long runs.",
+    "aaa_equivalent": "Standard pipeline execution with progress reporting",
+    "critical_flaws": [],
+    "strengths": [
+      "Per-step timing",
+      "Checkpointing support",
+      "Error propagation with step context"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding per-step memory usage tracking to identify leaks in long generation runs."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step1_geology",
+    "line": 150,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Invokes stratigraphic simulation, fold deformation, base heightmap generation. Correctly handles seeding for reproducibility.",
+    "aaa_equivalent": "Geology pass in AAA terrain pipeline",
+    "critical_flaws": [],
+    "strengths": ["Seeded for reproducibility", "Delegates to domain-specific modules"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed beyond fixing simulate_fold_deformation provenance bypass in the called module."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step2_base_erosion",
+    "line": 190,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Applies hydraulic and thermal erosion to the base heightmap. Standard approach.",
+    "aaa_equivalent": "Hydraulic erosion pass (ErosionBrush in World Creator)",
+    "critical_flaws": [],
+    "strengths": ["Delegates to dedicated erosion module", "Configurable iteration count"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding wind erosion in this step rather than as a separate pass for coherent geology."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step3_water_network",
+    "line": 230,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Computes D8 flow accumulation, river routing, lake detection. Foundation for waterfall placement in step 5.",
+    "aaa_equivalent": "Hydrological network extraction pass",
+    "critical_flaws": [],
+    "strengths": ["D8 flow accumulation is physically correct", "Lake detection via basin filling"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step4_material_distribution",
+    "line": 280,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Assigns material/biome zones based on height, slope, moisture, and aspect. Stochastic noise for natural boundaries.",
+    "aaa_equivalent": "Biome distribution in RDR2 terrain",
+    "critical_flaws": [],
+    "strengths": ["Multi-factor weighting", "Stochastic boundary noise"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider altitude-temperature coupling for more physically accurate biome transitions."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step5_waterfalls",
+    "line": 320,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Delegates to terrain_waterfalls.pass_waterfalls. Correctly passes water network outputs as inputs.",
+    "aaa_equivalent": "Waterfall placement pass",
+    "critical_flaws": [],
+    "strengths": ["Correct dependency ordering after step 3", "Delegates to dedicated physics module"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step6_roads",
+    "line": 360,
+    "type": "method",
+    "grade": "B",
+    "rationale": "A* road routing with terrain cost function. 3-zone carving (road/shoulder/blend). Rune-style approach.",
+    "aaa_equivalent": "Procedural road carving in KCD2/RDR2",
+    "critical_flaws": [],
+    "strengths": ["A* routing with terrain cost", "3-zone carving for natural road integration"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step7_vegetation",
+    "line": 400,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Vegetation placement with ecotone blending, competition, and Poisson-disk spacing. Delegates to terrain_vegetation_depth.",
+    "aaa_equivalent": "Vegetation scatter pass in Horizon/TLOU2",
+    "critical_flaws": [],
+    "strengths": ["Ecotone blending", "Competition filtering", "Poisson-disk for natural distribution"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step8_props",
+    "line": 440,
+    "type": "method",
+    "grade": "B-",
+    "rationale": "Places terrain props (rocks, debris, clutter). Less sophisticated than vegetation — basic slope/height filtering without competition or ecotone logic.",
+    "aaa_equivalent": "Prop scatter pass — simpler than vegetation",
+    "critical_flaws": ["No competition filtering between prop types", "No ecotone blending"],
+    "strengths": ["Slope and height filtering"],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Add prop-type competition masks similar to vegetation step."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step9_shadow_bake",
+    "line": 480,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Invokes 4-cascade shadow clipmap bake. Correctly passes heightmap and sun direction.",
+    "aaa_equivalent": "Shadow bake pass",
+    "critical_flaws": [],
+    "strengths": ["Delegates to dedicated shadow module", "4-cascade architecture"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step10_weathering",
+    "line": 510,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Applies 5-stage weathering model to vegetation and props. Correctly delegates to weathering.py.",
+    "aaa_equivalent": "Weathering pass in KCD2",
+    "critical_flaws": [],
+    "strengths": ["5-stage model with smooth transitions", "Per-material weathering"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step11_water_body_specs",
+    "line": 550,
+    "type": "method",
+    "grade": "D+",
+    "rationale": "Generates water body specs using a single 70th-percentile threshold on flow accumulation. No Strahler stream ordering, no basin analysis, no lake type classification, no flow rate estimation. This is a placeholder that would never survive AAA review for a water-heavy dark fantasy world.",
+    "aaa_equivalent": "No AAA equivalent uses a single percentile threshold for water body classification",
+    "critical_flaws": [
+      "Single percentile threshold — cannot distinguish lakes from rivers from ponds",
+      "No Strahler stream ordering",
+      "No flow rate estimation (needed for waterfall physics in step 5)",
+      "No multi-basin watershed analysis"
+    ],
+    "strengths": ["At least produces some water body output rather than None"],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Implement Strahler ordering, basin detection (priority flood), and Manning-based flow rate. This feeds waterfall physics so getting it wrong cascades errors."
+  },
+  {
+    "file": "handlers/terrain_twelve_step.py",
+    "callable": "TerrainTwelveStep._step12_export",
+    "line": 600,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Delegates to terrain_unity_export.export_unity_manifest. Correctly passes all required stack channels. Validates bit-depth contract before export.",
+    "aaa_equivalent": "Export pass matching Unity HDRP terrain importer spec",
+    "critical_flaws": [],
+    "strengths": [
+      "Validates before export",
+      "Delegates to comprehensive export module",
+      "Bit-depth contract validation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_is_unity_heightmap_resolution",
+    "line": 30,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Checks (n-1) & (n-2) == 0 for Unity heightmap resolution validation. This tests that n-1 is a power of 2 (Unity requires 2^k+1 resolutions). The bitwise check is correct for n > 1 but will return true for n=1 and n=2 due to how the AND works. Edge cases are unlikely in practice.",
+    "aaa_equivalent": "Unity resolution validator",
+    "critical_flaws": ["n=1 and n=2 pass the check incorrectly (edge cases)"],
+    "strengths": ["Correct bitwise check for power-of-2+1 resolutions", "Fast O(1) check"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add n > 2 guard: return n > 2 and (n-1) & (n-2) == 0."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_zup_to_unity_vectors",
+    "line": 50,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Swaps (x, z, y) for Z-up Blender to Y-up Unity conversion. Correct axis mapping matching Unity's left-handed Y-up coordinate system.",
+    "aaa_equivalent": "Standard Blender→Unity coordinate conversion",
+    "critical_flaws": [],
+    "strengths": ["Correct Z-up to Y-up axis swap", "Handles both position and direction vectors"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Document handedness change (right-handed → left-handed) in comments."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_flip_normal_y",
+    "line": 70,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Flips G-channel of normal map for OpenGL→DirectX convention. Correct for Unity HDRP which uses DirectX normal conventions.",
+    "aaa_equivalent": "Standard OpenGL→DirectX normal map flip",
+    "critical_flaws": [],
+    "strengths": ["Correct channel selection", "Documented convention change"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_pack_hdrp_mask_map",
+    "line": 90,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Packs HDRP Mask Map as RGBA float32: R=Metallic, G=AO, B=Detail, A=Smoothness. Broadcast-safe for scalar or array inputs. Matches Unity HDRP MaskMap specification exactly.",
+    "aaa_equivalent": "Unity HDRP Mask Map packing per Graphics Compositor spec",
+    "critical_flaws": [],
+    "strengths": [
+      "Exact HDRP channel ordering",
+      "Broadcast-safe: accepts scalars or 2D arrays",
+      "float32 output for precision"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_write_raw_array",
+    "line": 130,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Writes numpy array to disk with SHA-256, dtype, and shape metadata. _flip_for_unity (Y-axis inversion) and _ensure_little_endian are both applied. Metadata tracking enables integrity verification on the Unity import side.",
+    "aaa_equivalent": "Terrain tile writer with integrity metadata",
+    "critical_flaws": [],
+    "strengths": [
+      "SHA-256 integrity hash",
+      "Dtype and shape metadata",
+      "Y-axis flip for Unity heightmap convention",
+      "Little-endian enforcement"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding a format version field to the metadata for future format migrations."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_write_json",
+    "line": 180,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "JSON file writer with SHA-256. Simple but reliable. Includes indent=2 for human readability.",
+    "aaa_equivalent": "Standard JSON manifest writer",
+    "critical_flaws": [],
+    "strengths": ["SHA-256 integrity hash", "Human-readable indented output"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_supplemental_mesh_specs_json",
+    "line": 210,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Serializes cliff/cave mesh specs including vertex positions, face indices, UV coords, and drip_edge_indices. Correct Unity coordinate conversion (Z-up→Y-up). Drip edges for waterfall VFX anchor points is a nice AAA-grade detail.",
+    "aaa_equivalent": "Mesh spec serialization in RDR2 cliff placement",
+    "critical_flaws": [],
+    "strengths": [
+      "Full vertex/face/UV serialization",
+      "drip_edge_indices for waterfall VFX",
+      "Correct Unity coordinate conversion"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding LOD mesh specs per cliff asset."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_water_shader_manifest_json",
+    "line": 280,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Full HDRP Water Surface + Unreal MF_WaterSurface parameters. Lake/river/waterfall material variants with appropriate Gerstner wave counts (3 vs 6 for hero). Beer-Lambert k=0.35, Schlick f0=0.02/power=5.0. These are research-grade PBR water parameters matching Hable/Lagarde.",
+    "aaa_equivalent": "Guerrilla Horizon water shader parameter pack",
+    "critical_flaws": [],
+    "strengths": [
+      "Hero surface uses 6 Gerstner waves vs 3 for LOD",
+      "Beer-Lambert extinction coefficient physically calibrated",
+      "Schlick fresnel parameters match standard water (f0=0.02)",
+      "Separate lake/river/waterfall variants"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding wind direction coupling to Gerstner wave parameters."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_particle_emitter_specs_json",
+    "line": 360,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Serializes VFX particle emitter specs with Z-up→Y-up coordinate conversion. Correctly skips normal scaling (direction vectors are not scaled by world_scale). Position conversion is correct.",
+    "aaa_equivalent": "VFX anchor export for Niagara/VFX Graph integration",
+    "critical_flaws": [],
+    "strengths": [
+      "Correct coordinate conversion for positions",
+      "Correctly does NOT scale normals/directions",
+      "Lip/impact/mist zone separation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_hex_to_rgb01",
+    "line": 420,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Hex string to [0,1] float RGB. Error fallback returns [0,0,0] with warning. Simple utility with defensive handling.",
+    "aaa_equivalent": "Color utility",
+    "critical_flaws": [],
+    "strengths": ["Error fallback prevents crash on malformed input", "Returns normalized float"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Support both #RRGGBB and RRGGBB without hash prefix."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_default_splatmap_layer_meta",
+    "line": 440,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Reads default layer metadata from terrain_materials_v2.default_dark_fantasy_rules(). Correct delegation pattern. Vulnerable to import-time side effects from the materials module.",
+    "aaa_equivalent": "Default material layer metadata provider",
+    "critical_flaws": [],
+    "strengths": ["Delegates to domain-specific module", "Provides sensible defaults"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Cache the result to avoid repeated imports in tight loops."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_iter_connected_components",
+    "line": 470,
+    "type": "function",
+    "grade": "C+",
+    "rationale": "BFS 8-connected component labeling in pure Python. Functionally correct but O(N) BFS in Python for a potentially multi-megapixel binary mask is slow. scipy.ndimage.label would be 10-100x faster.",
+    "aaa_equivalent": "scipy.ndimage.label equivalent (but 100x slower)",
+    "critical_flaws": [
+      "Pure Python BFS — 10-100x slower than scipy.ndimage.label for large terrain masks",
+      "Memory inefficient: builds full pixel list per component"
+    ],
+    "strengths": ["Functionally correct 8-connected BFS"],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Replace with scipy.ndimage.label for 10-100x speedup."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_component_bounds",
+    "line": 530,
+    "type": "function",
+    "grade": "B",
+    "rationale": "World-space AABB from component pixel set. Correct Unity coordinate conversion. Simple and correct.",
+    "aaa_equivalent": "Component AABB calculator",
+    "critical_flaws": [],
+    "strengths": ["Correct world-space conversion", "Unity coordinate system applied"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_component_vertical_extent",
+    "line": 560,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Samples terrain height over component pixels to get vertical Z extent for gameplay zone bounds. Correct sampling approach.",
+    "aaa_equivalent": "Height-aware zone bounds for audio/gameplay",
+    "critical_flaws": [],
+    "strengths": ["Height-aware — not just 2D footprint", "Used for audio zone Z bounds"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider using the 5th/95th percentile rather than min/max to avoid outlier spikes."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_build_unity_import_descriptor",
+    "line": 600,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Builds the unity_import_descriptor.json with schema_version=1.0, all terrain asset paths, and coordinate metadata. Clean output format for Unity importer scripts.",
+    "aaa_equivalent": "Asset import descriptor in AAA pipeline integration",
+    "critical_flaws": [],
+    "strengths": [
+      "schema_version for forward compatibility",
+      "Full path listing for all asset types",
+      "Coordinate metadata included"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_zup_to_unity_vector",
+    "line": 650,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Single vector Z-up to Y-up conversion [x, z, y]. Correct axis swap.",
+    "aaa_equivalent": "Standard axis conversion utility",
+    "critical_flaws": [],
+    "strengths": ["Correct", "Simple"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_bounds_to_unity",
+    "line": 660,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Applies _zup_to_unity_vector to both min and max of a bounding box. Correct.",
+    "aaa_equivalent": "AABB coordinate conversion",
+    "critical_flaws": [],
+    "strengths": ["Correct conversion for both min and max"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_terrain_normal_at",
+    "line": 680,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Central-difference normal computation from heightmap. Correct 8-neighbor central difference scheme with boundary clamping.",
+    "aaa_equivalent": "Standard terrain normal computation",
+    "critical_flaws": [],
+    "strengths": ["Central-difference is correct", "Boundary clamping avoids edge artifacts"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_quantize_detail_density",
+    "line": 710,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Quantizes float [0,1] density to uint16 * max_density. Correct scaling. No dithering for high-frequency density variation.",
+    "aaa_equivalent": "Detail mesh density quantizer",
+    "critical_flaws": [],
+    "strengths": ["Correct scaling", "uint16 output matches Unity detail density format"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add ordered dithering to reduce quantization banding on smooth density gradients."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_write_splatmap_groups",
+    "line": 740,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Writes Unity alphamap format: global normalize across all layers, RGBA uint8, round-half-up quantization, TerrainLayer asset path hints. Correctly handles >4 layers by splitting into multiple splatmap groups. This is a non-trivial Unity format requirement that most implementations get wrong.",
+    "aaa_equivalent": "Unity TerrainData.alphamapTextures writer",
+    "critical_flaws": [],
+    "strengths": [
+      "Correct global normalization across all layers",
+      "Handles >4 layers via multiple RGBA splatmaps",
+      "Round-half-up quantization to reduce systematic bias",
+      "TerrainLayer path hints for Unity importer"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed — this is correct Unity splatmap format."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "export_unity_manifest",
+    "line": 800,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Master export orchestrator writing all terrain assets: heightmap, normals, splatmaps, HDRP mask map, detail layers, wildlife zones, gameplay zones, audio zones, tree positions, decals, mesh specs, particle emitters, water shader manifest, seam contract. Validates required fields and bit-depth contract before writing. Returns dual manifest.json + unity_import_descriptor.json.",
+    "aaa_equivalent": "Guerrilla/Naughty Dog terrain asset export pipeline",
+    "critical_flaws": [
+      "_iter_connected_components called on large masks — potential performance bottleneck"
+    ],
+    "strengths": [
+      "Comprehensive: all terrain asset types covered",
+      "Pre-export validation",
+      "Dual manifest output (engine + importer)",
+      "Correct Unity format for all asset types"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Replace _iter_connected_components with scipy.ndimage.label. Consider chunked writing for tiles > 4k resolution."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_audio_zones_json",
+    "line": 1100,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Generates audio zone JSON with per-class ambient sound parameters. class_params LUT (0-7) covers silence through water/wind/combat/forest. Connected components with terrain height bounds for 3D audio. Well-designed for runtime audio zone triggering.",
+    "aaa_equivalent": "Horizon Zero Dawn audio zone placement",
+    "critical_flaws": [],
+    "strengths": [
+      "8-class audio zone taxonomy",
+      "3D height bounds for immersive audio",
+      "Connected component separation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding reverb parameters per class for cave/forest differentiation."
+  },
+  {
+    "file": "handlers/terrain_unity_export.py",
+    "callable": "_gameplay_zones_json",
+    "line": 1200,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "7-class gameplay zone taxonomy (safe/combat/stealth/exploration/boss_arena/narrative/puzzle). Connected components per class with 2D footprint. Correct for gameplay systems integration.",
+    "aaa_equivalent": "CDPR gameplay zone export in Witcher/Cyberpunk",
+    "critical_flaws": [],
+    "strengths": [
+      "7 meaningful zone types covering full dark fantasy gameplay loop",
+      "Connected component spatial decomposition"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add danger_rating field per zone to drive enemy density systems."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "TerrainValidationError",
+    "line": 30,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Custom exception class for terrain validation failures. Carries ValidationIssue list for structured error reporting.",
+    "aaa_equivalent": "Typed validation exception",
+    "critical_flaws": [],
+    "strengths": ["Carries structured issue list", "Typed exception for catch-specific handling"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "ValidationIssue",
+    "line": 50,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Structured validation issue with channel, severity, message, and optional fix suggestion. Used throughout the validation pipeline for structured error reporting.",
+    "aaa_equivalent": "Lint/validation issue struct in AAA asset pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "Severity levels for issue triage",
+      "Optional fix suggestion for actionable output"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add a 'pass_name' field to track which pass produced the issue."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "validate_channel_ranges",
+    "line": 100,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Validates that all channels are in expected [0,1] or [0,N] ranges based on channel type. Catches out-of-range values that indicate upstream computation errors.",
+    "aaa_equivalent": "Channel range validation in terrain QA pipeline",
+    "critical_flaws": [],
+    "strengths": ["Per-channel range specification", "Detailed issue messages with actual range"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add NaN/Inf detection as a separate check."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "validate_protected_zones_untouched",
+    "line": 200,
+    "type": "function",
+    "grade": "D",
+    "rationale": "Intended to check that protected zones (spawn areas, landmarks) were not modified by terrain passes. Critical flaw: in DEFAULT_VALIDATORS this function is always called with baseline_stack=None, meaning it never computes a diff and always passes. The validator is a dead no-op in production.",
+    "aaa_equivalent": "No equivalent — broken validator has no AAA counterpart",
+    "critical_flaws": [
+      "DEFAULT_VALIDATORS always passes baseline_stack=None",
+      "Function receives None baseline and returns immediately with no issues — never diffs anything",
+      "Entire protected zone validation is silently disabled in production"
+    ],
+    "strengths": ["The function signature and logic are correct — only the call site is broken"],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Fix DEFAULT_VALIDATORS to pass the actual pre-pass baseline stack. The validator itself is correct when called properly."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "validate_water_network_consistency",
+    "line": 280,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Validates D8 flow accumulation consistency, ensures water channels are connected, checks minimum flow accumulation thresholds. Sound validation logic.",
+    "aaa_equivalent": "Hydrological network consistency check",
+    "critical_flaws": [],
+    "strengths": [
+      "D8 consistency check",
+      "Connectivity validation",
+      "Threshold-based minimum flow check"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add check that waterfall lip cells have non-zero flow accumulation."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "validate_vegetation_density_bounds",
+    "line": 360,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Checks vegetation density channels are within per-biome expected ranges. Catches over/under-seeding issues from the vegetation pass.",
+    "aaa_equivalent": "Vegetation QA check",
+    "critical_flaws": [],
+    "strengths": ["Per-biome density bounds", "Issues include which biome exceeded bounds"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "validate_bit_depth_contract",
+    "line": 450,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Validates that all channels intended for uint16 export are within [0, 65535] and that float channels are float32 (not float64). Critical export-quality gate. Called by export_unity_manifest before writing.",
+    "aaa_equivalent": "Export bit-depth contract validation in Decima/Guerrilla",
+    "critical_flaws": [],
+    "strengths": [
+      "Validates uint16 range before export",
+      "Catches float64 channels that would cause silent precision issues",
+      "Used as a pre-export gate"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add uint8 range check for RGBA splatmaps."
+  },
+  {
+    "file": "handlers/terrain_validation.py",
+    "callable": "DEFAULT_VALIDATORS",
+    "line": 600,
+    "type": "function",
+    "grade": "C-",
+    "rationale": "Returns the default list of validators run by the pipeline. Critical issue: always passes baseline_stack=None to validate_protected_zones_untouched, permanently disabling that validator. The list is otherwise comprehensive.",
+    "aaa_equivalent": "Validator registry — but with a broken entry",
+    "critical_flaws": [
+      "validate_protected_zones_untouched always called with None baseline — silent no-op",
+      "Production terrain pipelines running with this have no protected zone validation"
+    ],
+    "strengths": ["Comprehensive validator list otherwise", "Easy to extend with new validators"],
+    "upgrade_priority": "critical",
+    "upgrade_note": "Pass actual baseline_stack to validate_protected_zones_untouched."
+  },
+  {
+    "file": "handlers/terrain_vegetation_depth.py",
+    "callable": "compute_canopy_light_transmission",
+    "line": 100,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Beer-Lambert light transmission through stacked vegetation layers. I = I0 * exp(-k * LAI) where k is species-specific extinction coefficient. Physically correct for forest light modeling. LAI (Leaf Area Index) per layer enables per-species attenuation rates.",
+    "aaa_equivalent": "Forest light model in TLOU2/Horizon vegetation systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Beer-Lambert is the correct physical model",
+      "Per-species extinction coefficient",
+      "LAI-weighted attenuation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding diffuse upwelling (reflected light from understory) for more accurate forest floor lighting."
+  },
+  {
+    "file": "handlers/terrain_vegetation_depth.py",
+    "callable": "compute_vegetation_placement",
+    "line": 200,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "3-tier LOD vegetation placement: near (0.6×density), mid (1.0×), far (1.8×). Poisson disk from scatter engine, ecotone blending between biomes, 9-step filter pipeline (moisture/altitude/slope/competition/etc). Comprehensive placement logic that matches AAA vegetation scatter pipelines.",
+    "aaa_equivalent": "Horizon Zero Dawn vegetation scatter pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "3-tier LOD density scaling",
+      "Ecotone blending for natural biome transitions",
+      "9-step filter pipeline covers all ecological constraints",
+      "Poisson disk for natural spacing"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add wind corridor cutouts (high-wind areas suppress tall vegetation)."
+  },
+  {
+    "file": "handlers/terrain_vegetation_depth.py",
+    "callable": "apply_allelopathic_exclusion",
+    "line": 380,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Models allelopathic plant competition — some species suppress others within radius. Correct use of distance transforms for efficient radius computation. Black walnut-style exclusion zones for dark fantasy realism.",
+    "aaa_equivalent": "Plant competition modeling — rare in games, present in Horizon",
+    "critical_flaws": [],
+    "strengths": [
+      "EDT-based radius computation is efficient",
+      "Species-specific exclusion rules",
+      "Biologically motivated"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_vegetation_depth.py",
+    "callable": "place_clearings",
+    "line": 450,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Bridson Poisson-disk sampling for clearing placement with per-clearing radius and smoothstep edge blending. Clearings are a classic gameplay necessity in forest terrain. Correct use of rejection sampling.",
+    "aaa_equivalent": "Clearing placement in RDR2/Witcher forest terrain",
+    "critical_flaws": [],
+    "strengths": [
+      "Bridson Poisson-disk for natural spacing",
+      "Smoothstep edge blending for soft clearing boundaries",
+      "Parameterized radius and density"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider weighting clearing placement toward flat areas for campsite/encounter usability."
+  },
+  {
+    "file": "handlers/terrain_vegetation_depth.py",
+    "callable": "compute_wind_vertex_colors",
+    "line": 550,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Computes per-vertex wind sway parameters as vertex colors: R=sway_strength, G=sway_frequency, B=phase_offset, A=trunk_sway. Height-weighted sway, perlin-phase variation, and trunk anchor clamping. Standard approach for AAA wind vertex color foliage shaders.",
+    "aaa_equivalent": "Unreal Engine 5 Wind WPO vertex color scheme",
+    "critical_flaws": [],
+    "strengths": [
+      "4-channel encoding covers all standard wind parameters",
+      "Height-weighted sway (tall = more sway)",
+      "Phase offset prevents synchronized swaying",
+      "Trunk anchor (A near 0) keeps base stable"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add wind direction bias to break rotational symmetry of sway."
+  },
+  {
+    "file": "handlers/terrain_visual_qa.py",
+    "callable": "TerrainVisualQA",
+    "line": 1,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Visual QA system for terrain generation. Checks channel presence, value ranges, spatial statistics. REQUIRED_STACK_CHANNELS uses 'height' (confirmed correct). Implements both automated checks and visual diff comparison.",
+    "aaa_equivalent": "Automated terrain QA in Guerrilla/Avalanche pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "REQUIRED_STACK_CHANNELS uses 'height' not 'heightmap' (confirmed correct)",
+      "Automated check pipeline",
+      "Visual diff comparison support"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_visual_qa.py",
+    "callable": "TerrainVisualQA.REQUIRED_STACK_CHANNELS",
+    "line": 40,
+    "type": "method",
+    "grade": "A",
+    "rationale": "Defines the required channel list for QA validation. Uses 'height' (confirmed correct after prior bug fix, not 'heightmap').",
+    "aaa_equivalent": "Pipeline channel contract definition",
+    "critical_flaws": [],
+    "strengths": ["Uses correct 'height' channel name", "Comprehensive required channel list"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_visual_qa.py",
+    "callable": "TerrainVisualQA.run_checks",
+    "line": 80,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Runs all QA checks and returns structured results. Includes channel presence, range, and statistical checks.",
+    "aaa_equivalent": "QA gate runner in AAA terrain pipeline",
+    "critical_flaws": [],
+    "strengths": ["Structured result output", "Runs all check categories"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add GPU texture upload simulation to catch dtype/format issues before Unity import."
+  },
+  {
+    "file": "handlers/terrain_visual_qa.py",
+    "callable": "TerrainVisualQA.check_channel_presence",
+    "line": 130,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Checks all REQUIRED_STACK_CHANNELS are populated. Returns per-channel presence status.",
+    "aaa_equivalent": "Channel presence gate",
+    "critical_flaws": [],
+    "strengths": ["Clear pass/fail per channel", "Uses correct channel names"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_visual_qa.py",
+    "callable": "TerrainVisualQA.check_channel_ranges",
+    "line": 170,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Checks each channel's min/max against expected ranges. Catches processing errors that push values out of range.",
+    "aaa_equivalent": "Channel range QA gate",
+    "critical_flaws": [],
+    "strengths": ["Per-channel expected range validation", "Reports actual min/max in issues"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add NaN/Inf check per channel."
+  },
+  {
+    "file": "handlers/terrain_visual_qa.py",
+    "callable": "TerrainVisualQA.check_spatial_statistics",
+    "line": 220,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Checks that key channels have reasonable spatial statistics (mean, std, histogram entropy). Detects degenerate cases like all-zero or all-one channels.",
+    "aaa_equivalent": "Statistical QA for degenerate output detection",
+    "critical_flaws": [],
+    "strengths": ["Entropy check catches flat/degenerate channels", "Mean and std validation"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add autocorrelation check to detect high-frequency noise artifacts."
+  },
+  {
+    "file": "handlers/terrain_water_variants.py",
+    "callable": "TerrainWaterVariants",
+    "line": 1,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Water variant system producing water_surface, wetness, and water_surface_mask channels. produces_channels confirmed to include water_surface_mask (W-1 fix confirmed). Handles lake/river/stream/ocean variants with different physical models.",
+    "aaa_equivalent": "Horizon water body system with lake/river differentiation",
+    "critical_flaws": [],
+    "strengths": [
+      "produces_channels includes water_surface_mask (W-1 fix confirmed)",
+      "Lake/river/stream/ocean physical model differentiation",
+      "water_surface_elevation_m for physical simulation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_water_variants.py",
+    "callable": "TerrainWaterVariants.produces_channels",
+    "line": 40,
+    "type": "method",
+    "grade": "A",
+    "rationale": "Returns ('water_surface', 'wetness', 'water_surface_mask'). Confirmed correct after W-1 fix. All three channels properly declared.",
+    "aaa_equivalent": "Correct DAG channel declaration",
+    "critical_flaws": [],
+    "strengths": ["water_surface_mask included (W-1 fix)", "All three co-produced channels declared"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_water_variants.py",
+    "callable": "TerrainWaterVariants.generate_lake_surface",
+    "line": 100,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Generates lake surface at constant elevation using basin filling. Correct for enclosed basin lakes.",
+    "aaa_equivalent": "Lake surface generation in terrain pipeline",
+    "critical_flaws": [],
+    "strengths": ["Basin filling for correct enclosed lake boundaries", "Constant elevation per basin"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider multi-level lake systems (stepped cascades)."
+  },
+  {
+    "file": "handlers/terrain_water_variants.py",
+    "callable": "TerrainWaterVariants.generate_river_surface",
+    "line": 170,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Generates river surface along D8 flow paths. Linearly interpolated elevation drop along channel. Width scales with Leopold & Maddock W = 1.5*sqrt(Q).",
+    "aaa_equivalent": "River surface generation with hydraulic geometry",
+    "critical_flaws": [],
+    "strengths": [
+      "Leopold & Maddock hydraulic geometry for width",
+      "Linear elevation interpolation along channel"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Add meander curvature — straight rivers look artificial in dark fantasy settings."
+  },
+  {
+    "file": "handlers/terrain_water_variants.py",
+    "callable": "TerrainWaterVariants.generate_wetness",
+    "line": 250,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Generates wetness channel from flow accumulation + proximity to water bodies + soil moisture. Multi-factor wetness model is correct for ecological simulation.",
+    "aaa_equivalent": "Wetness map generation in terrain tooling",
+    "critical_flaws": [],
+    "strengths": [
+      "Multi-factor: flow accumulation + water proximity + soil moisture",
+      "Gaussian blur for smooth wetness falloff"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "pass_waterfalls",
+    "line": 2225,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Full waterfall pipeline orchestration: lip detection via D8 knickpoints, chain solving (cap 16), foam/mist/velocity/wet_rock/caustics channel generation, particle emitter VFX specs. Physics-based: Manning's equation, Mason 1985 plunge pools, Van Rijn scour, freefall trajectory. Chain cap at 16 is sensible for performance.",
+    "aaa_equivalent": "Horizon Forbidden West / RDR2 waterfall placement pipeline",
+    "critical_flaws": [
+      "Python loop in compute_physical_foam_composite for D8 downstream walk (5 iterations) — not vectorized"
+    ],
+    "strengths": [
+      "Manning's equation for flow velocity",
+      "Mason 1985 plunge pool sizing",
+      "Van Rijn 1993 scour formula",
+      "Freefall trajectory for impact point",
+      "VFX particle emitter spec generation",
+      "Velocity-driven foam (not pure noise)"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Vectorize the D8 downstream walk in compute_physical_foam_composite. Consider increasing chain cap to 32 for large tile sizes."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "_generate_directional_mist_zone",
+    "line": 1410,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Vectorized elliptic mist zone with vertical attenuation. Correct ellipse math: Mahalanobis-style scaled distance. Vertical attenuation exp(-|dz|/mist_height_decay) is physically motivated.",
+    "aaa_equivalent": "Waterfall mist zone in AAA terrain (BOTW-style mist)",
+    "critical_flaws": [],
+    "strengths": [
+      "Vectorized ellipse computation",
+      "Vertical attenuation for height-limited mist",
+      "Directional orientation along waterfall flow"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "_north_cw_to_east_ccw_angle",
+    "line": 1450,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Converts cartographic bearing (North=0, clockwise) to math angle (East=0, counter-clockwise). Correct conversion: math_angle = pi/2 - bearing_radians.",
+    "aaa_equivalent": "Standard cartographic to math angle conversion",
+    "critical_flaws": [],
+    "strengths": ["Correct formula", "Clear intent — prevents bearing/angle confusion"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "generate_mist_zone",
+    "line": 1470,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Composites local ellipse mist with water_network_ext.compute_mist_mask via np.maximum. Correctly uses the maximum composite so both sources contribute at full intensity in their respective regions.",
+    "aaa_equivalent": "Mist zone compositing in waterfall system",
+    "critical_flaws": [],
+    "strengths": [
+      "np.maximum composite is correct (max not add — avoids clipping)",
+      "Combines local and extended mist sources"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "_generate_local_waterfall_foam_mask",
+    "line": 1510,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Velocity-gated foam explosion at impact zone (pool impact) + EDT-based plunge-path turbulence. foam = exp(-r²/r_pool²) at impact zone is a correct Gaussian distribution. EDT for plunge path ensures foam follows topographic channel shape.",
+    "aaa_equivalent": "Physically placed foam in BOTW/Horizon waterfall systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Gaussian foam distribution at impact zone",
+      "EDT-based plunge path foam",
+      "Velocity-gated: no foam on dry terrain"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "generate_foam_mask",
+    "line": 1560,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Combines local waterfall foam with richer ext foam via np.maximum. Same correct compositing as mist zone.",
+    "aaa_equivalent": "Foam mask compositing",
+    "critical_flaws": [],
+    "strengths": ["np.maximum composite correct", "Two foam sources combined cleanly"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "compute_physical_foam_composite",
+    "line": 1600,
+    "type": "function",
+    "grade": "B-",
+    "rationale": "5-source foam composite: rapids, bend, waterfall-base dilation, shoreline, waterfall-chain. Physics-motivated sources. Source 3 (waterfall-chain downstream dilation) uses a Python for-loop for 5-iteration D8 downstream walk — this is not vectorized and will be slow on large tiles.",
+    "aaa_equivalent": "Multi-source foam compositing (Horizon water foam)",
+    "critical_flaws": [
+      "Python loop for D8 downstream walk (source 3) — O(N*5) unvectorized — slow on large tiles"
+    ],
+    "strengths": [
+      "5 physically motivated foam sources",
+      "rapids + bend + waterfall + shoreline + chain coverage"
+    ],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Vectorize D8 downstream walk using np.roll offsets and masking rather than Python loop."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "generate_velocity_field",
+    "line": 1700,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Gaussian-weighted velocity stamping: exp(-r²/r²) with highest-speed-wins compositing. Each waterfall stamps its velocity vector into a 2D field. Correct physics: velocity magnitude from Manning's equation.",
+    "aaa_equivalent": "Velocity field generation for water surface shader",
+    "critical_flaws": [],
+    "strengths": [
+      "Gaussian attenuation from waterfall center",
+      "Highest-speed-wins compositing preserves dominant flow",
+      "Manning velocity magnitude"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider smooth alpha blending instead of winner-takes-all for overlapping waterfalls."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "blend_velocity_to_water_body",
+    "line": 1780,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Cubic fade (3t²-2t³) + sin/cos Perlin-like turbulence zone at water body boundary. Smoothstep blend is correct. Turbulence zone prevents hard velocity discontinuity at waterfall→lake transition.",
+    "aaa_equivalent": "Velocity blend at waterfall entry zone",
+    "critical_flaws": [],
+    "strengths": [
+      "Cubic fade is C1-continuous (smoothstep correct)",
+      "Turbulence zone for natural velocity dissipation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "True Perlin noise would give better turbulence quality than sin/cos pattern."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "validate_waterfall_system",
+    "line": 1840,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Checks lip/plunge/pool/outflow presence + inverted gradient check + Mason 1985 pool size validation. Comprehensive waterfall sanity check.",
+    "aaa_equivalent": "Waterfall asset QA validation",
+    "critical_flaws": [],
+    "strengths": [
+      "Mason 1985 pool size validation",
+      "All 4 physical waterfall components checked",
+      "Inverted gradient check catches generation errors"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "validate_waterfall_volumetric",
+    "line": 1880,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Checks volumetric waterfall parameters: vertex density, non-zero thickness, front_curvature_segments >= 3.",
+    "aaa_equivalent": "Volumetric waterfall QA check",
+    "critical_flaws": [],
+    "strengths": ["front_curvature_segments >= 3 ensures smooth curve", "Non-zero thickness check"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "rasterize_channel_to_atlas",
+    "line": 1920,
+    "type": "function",
+    "grade": "B-",
+    "rationale": "Writes channel data to atlas PNG with PIL→imageio→.npy fallback chain. Fragile three-library fallback. The fallback to raw .npy is a different file format than the PNG target, meaning the atlas format is inconsistent depending on available libraries.",
+    "aaa_equivalent": "Texture atlas rasterizer",
+    "critical_flaws": [
+      "PIL→imageio→.npy fallback produces different file formats — inconsistent output format based on environment"
+    ],
+    "strengths": ["Fallback prevents crash in headless environments", "Correct atlas coordinate math"],
+    "upgrade_priority": "medium",
+    "upgrade_note": "Make PIL/imageio a hard dependency for the atlas path. .npy fallback produces incompatible output."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "_region_slice",
+    "line": 1960,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Converts BBox to numpy slice using region.to_cell_slice(). Simple delegation.",
+    "aaa_equivalent": "Slice conversion utility",
+    "critical_flaws": [],
+    "strengths": ["Clean delegation to BBox method"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls.py",
+    "callable": "_build_particle_emitter_specs",
+    "line": 1990,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Serializes lip/impact/mist zones per waterfall chain to VFX Graph/Niagara format. Per-chain emitter separation enables per-waterfall particle control. Correct coordinate conversion.",
+    "aaa_equivalent": "VFX emitter spec generation in CDPR/Guerrilla waterfall systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Per-chain emitter separation",
+      "Lip/impact/mist zone distinction for emitter types",
+      "VFX Graph and Niagara format compatibility"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls_volumetric.py",
+    "callable": "WaterfallVolumetricSpec",
+    "line": 1,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Dataclass for a single volumetric waterfall instance. OBB (oriented bounding box) for diagonal cascades, 3 particle seed zones (lip/sheet/plunge), 7 naming suffixes. Well-structured for engine VFX integration.",
+    "aaa_equivalent": "Waterfall VFX spec in BOTW-style water systems",
+    "critical_flaws": [],
+    "strengths": [
+      "OBB for diagonal cascade volumes",
+      "3 particle seed zones covering full waterfall lifecycle",
+      "7 naming suffixes for multi-cascade chains"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls_volumetric.py",
+    "callable": "generate_volumetric_waterfall_specs",
+    "line": 100,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Generates WaterfallVolumetricSpec instances for each detected waterfall chain. OBB orientation from flow direction, seed zone placement from lip/plunge/pool positions. Physically correct placement.",
+    "aaa_equivalent": "Volumetric waterfall generation in RDR2 water systems",
+    "critical_flaws": [],
+    "strengths": [
+      "OBB from flow direction — handles diagonal cascades correctly",
+      "3 seed zones physically placed"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_waterfalls_volumetric.py",
+    "callable": "WaterfallVolumetricSpec.to_dict",
+    "line": 80,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Serializes spec to dict for JSON export. Includes all OBB, seed zone, and VFX parameters.",
+    "aaa_equivalent": "Spec serializer for engine pipeline",
+    "critical_flaws": [],
+    "strengths": ["Complete serialization of all fields", "JSON-compatible types"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_viewport_sync.py",
+    "callable": "TerrainViewportSync",
+    "line": 1,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Synchronizes terrain state to Blender viewport via bpy. Handles heightmap displacement, material assignment, and overlay toggling. Correctly targets Blender 4.5 APIs.",
+    "aaa_equivalent": "Blender terrain viewport integration",
+    "critical_flaws": ["bpy import guard needed for headless pipeline runs"],
+    "strengths": [
+      "Blender 4.5 compatible APIs",
+      "Handles heightmap displacement modifier sync",
+      "Material and overlay control"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Ensure all bpy usage is guarded for headless runs."
+  },
+  {
+    "file": "handlers/terrain_viewport_sync.py",
+    "callable": "TerrainViewportSync.sync_heightmap",
+    "line": 50,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Syncs heightmap array to Blender displacement modifier. Correct np→bpy image data transfer.",
+    "aaa_equivalent": "Blender heightmap sync",
+    "critical_flaws": [],
+    "strengths": ["Correct np→bpy image data transfer", "Updates modifier rather than replacing"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_viewport_sync.py",
+    "callable": "TerrainViewportSync.sync_materials",
+    "line": 100,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Assigns terrain materials to mesh based on current stack state. Material slot assignment correct.",
+    "aaa_equivalent": "Blender material assignment",
+    "critical_flaws": [],
+    "strengths": ["Slot-based material assignment", "Handles material creation if not present"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_viewport_sync.py",
+    "callable": "TerrainViewportSync.toggle_overlay",
+    "line": 150,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Toggles Blender overlay visibility for terrain channels. Useful for debug visualization.",
+    "aaa_equivalent": "Debug overlay toggle",
+    "critical_flaws": [],
+    "strengths": ["Per-channel toggle control", "Blender overlay API correct"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_visual_diff.py",
+    "callable": "compute_visual_diff",
+    "line": 1,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Computes per-pixel diff between two terrain stacks. Handles channel-by-channel comparison with abs difference and RMS metrics.",
+    "aaa_equivalent": "Terrain tile diff tool in pipeline QA",
+    "critical_flaws": [],
+    "strengths": ["Per-channel RMS metric", "Absolute difference map generation"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_visual_diff.py",
+    "callable": "_bbox_of_mask",
+    "line": 60,
+    "type": "function",
+    "grade": "B-",
+    "rationale": "Computes bounding box of nonzero region in a binary mask. Uses np.argmax(rows[::-1]) for the lower bound. Potential off-by-one: r1 = nrows - np.argmax(rows[::-1]) should be r1 = nrows - np.argmax(rows[::-1]) - 1 when the argmax finds the first True in the reversed array. In practice, this may expand the bbox by one row, producing a slightly oversized but not wrong result.",
+    "aaa_equivalent": "Mask bounding box utility",
+    "critical_flaws": ["Potential off-by-one in r1 lower bound calculation"],
+    "strengths": ["Otherwise correct approach", "Handles empty mask case"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Verify r1 calculation: np.argmax(rows[::-1]) returns index in reversed array, so correct formula is r1 = nrows - 1 - np.argmax(rows[::-1])."
+  },
+  {
+    "file": "handlers/terrain_visual_diff.py",
+    "callable": "highlight_changed_regions",
+    "line": 100,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Generates a visual highlight image of changed terrain regions. Useful for pipeline debugging and QA reports.",
+    "aaa_equivalent": "Visual diff highlight in game asset pipeline",
+    "critical_flaws": [],
+    "strengths": ["Colored region highlighting", "Threshold-based change detection"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_weathering_timeline.py",
+    "callable": "WeatheringTimeline",
+    "line": 1,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Timeline-based weathering progression with keyframed states. Enables cinematic weathering transitions or season simulation. Correct interpolation between keyframes.",
+    "aaa_equivalent": "Cinematic weathering timeline in CDPR cutscene tools",
+    "critical_flaws": [],
+    "strengths": [
+      "Keyframed progression",
+      "Interpolation between weathering states"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_weathering_timeline.py",
+    "callable": "WeatheringTimeline.evaluate",
+    "line": 50,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Evaluates weathering state at a given time t by interpolating between adjacent keyframes. Correct linear/cubic interpolation.",
+    "aaa_equivalent": "Keyframe evaluation in animation system",
+    "critical_flaws": [],
+    "strengths": ["Correct keyframe interpolation", "Handles before-first and after-last keyframe cases"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wildlife_zones.py",
+    "callable": "generate_wildlife_zones",
+    "line": 1,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Generates wildlife habitat zones from biome, slope, wetness, and vegetation density inputs. Multi-factor weighted affinity scoring using weighted geometric mean in log space. Species-specific habitat requirements.",
+    "aaa_equivalent": "Wildlife zone generation in RDR2 ecosystem simulation",
+    "critical_flaws": [],
+    "strengths": [
+      "Weighted geometric mean in log space is the correct multi-factor combination",
+      "Species-specific habitat weights"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wildlife_zones.py",
+    "callable": "_compute_species_affinity",
+    "line": 60,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Per-species affinity computation using weighted geometric mean. Handles zero-affinity factors correctly (any zero disqualifies the cell — biologically correct for hard habitat requirements).",
+    "aaa_equivalent": "Species habitat suitability model",
+    "critical_flaws": [],
+    "strengths": [
+      "Geometric mean correctly models AND-logic for habitat requirements",
+      "Zero affinity hard exclusion"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wind_erosion.py",
+    "callable": "simulate_wind_erosion",
+    "line": 1,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Bagnold 1941 aeolian saltation transport rate: q ∝ slope_wind^3. McKee 1979 dune type classification by wind variability. Physically motivated wind erosion with dune formation. Directional erosion from wind field.",
+    "aaa_equivalent": "Wind erosion in Desert/Plains terrain biomes",
+    "critical_flaws": [],
+    "strengths": [
+      "Bagnold 1941 saltation transport rate",
+      "McKee 1979 dune classification",
+      "Directional erosion from wind field"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wind_erosion.py",
+    "callable": "_classify_dune_type",
+    "line": 70,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "McKee 1979 dune type classification based on wind variability index. Correct taxonomy: barchan (unidirectional), transverse (moderate), star (high variability).",
+    "aaa_equivalent": "Dune type classifier in desert terrain system",
+    "critical_flaws": [],
+    "strengths": ["McKee 1979 scientifically correct classification", "3-class taxonomy appropriate for games"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wind_erosion.py",
+    "callable": "_compute_saltation_transport",
+    "line": 110,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Bagnold 1941 q = C * sqrt(d/D) * (rho_air/g) * V^3 saltation transport. Correctly implements the cubic wind velocity term.",
+    "aaa_equivalent": "Physically-based aeolian transport",
+    "critical_flaws": [],
+    "strengths": ["Correct Bagnold equation", "Particle density parameter for different sands"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wind_field.py",
+    "callable": "compute_wind_field",
+    "line": 1,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Generates 2D wind velocity field using Kaimal & Finnigan 1994 1/f power spectrum atmospheric turbulence via 4-octave fBm. Terrain-modified via flow-around-obstacles model. Correct atmospheric boundary layer physics.",
+    "aaa_equivalent": "Wind field simulation in open-world terrain",
+    "critical_flaws": [],
+    "strengths": [
+      "Kaimal & Finnigan 1/f spectrum for atmospheric turbulence",
+      "Terrain deflection modeling",
+      "4-octave fBm for multi-scale turbulence"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_wind_field.py",
+    "callable": "_apply_terrain_deflection",
+    "line": 80,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Deflects wind around terrain obstacles using simplified flow model. Not full Navier-Stokes but a reasonable game-quality approximation.",
+    "aaa_equivalent": "Simplified terrain wind deflection",
+    "critical_flaws": [],
+    "strengths": ["Slope-based deflection is reasonable approximation", "Efficient numpy implementation"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Full Navier-Stokes would be more accurate but computationally prohibitive at terrain scale."
+  },
+  {
+    "file": "handlers/terrain_wind_field.py",
+    "callable": "_fbm_wind_noise",
+    "line": 130,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "4-octave fBm with 1/f power spectrum weighting. Correct Lacunarity=2.0, Gain=0.5. Used for atmospheric turbulence in wind field.",
+    "aaa_equivalent": "fBm noise for wind turbulence",
+    "critical_flaws": [],
+    "strengths": ["Correct 1/f spectrum weighting", "Parameterized octaves/lacunarity/gain"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_world_math.py",
+    "callable": "world_to_tile_coords",
+    "line": 1,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Converts world-space meters to tile cell coordinates. Correct division by cell_size_m with floor for integer cell index.",
+    "aaa_equivalent": "World→tile coordinate conversion utility",
+    "critical_flaws": [],
+    "strengths": ["Correct floor division for cell index", "Handles negative coordinates correctly"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_world_math.py",
+    "callable": "tile_to_world_coords",
+    "line": 30,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Inverse of world_to_tile_coords. Returns world-space center of tile cell.",
+    "aaa_equivalent": "Tile→world coordinate conversion",
+    "critical_flaws": [],
+    "strengths": ["Returns cell center (+ 0.5 * cell_size_m)", "Correct inverse"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_world_math.py",
+    "callable": "compute_terrain_normals",
+    "line": 60,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Central-difference terrain normal computation. Correct 8-neighbor kernel. float32 output. Used by multiple downstream systems for slope/aspect computation.",
+    "aaa_equivalent": "Standard terrain normal computation (same as in UE5 terrain)",
+    "critical_flaws": [],
+    "strengths": [
+      "8-neighbor central difference",
+      "Normalized output",
+      "float32 precision"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_world_math.py",
+    "callable": "compute_slope_angle",
+    "line": 100,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Slope angle in degrees from gradient magnitude. Correct: angle = arctan(grad_magnitude / cell_size_m).",
+    "aaa_equivalent": "Slope map computation",
+    "critical_flaws": [],
+    "strengths": ["Correct arctan formula", "Returns degrees (game-friendly)"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/terrain_world_math.py",
+    "callable": "compute_curvature",
+    "line": 130,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Second-derivative curvature from heightmap. Laplacian-based curvature for profile and plan curvature computation. Used for erosion weighting.",
+    "aaa_equivalent": "Terrain curvature map for erosion coupling",
+    "critical_flaws": [],
+    "strengths": ["Second-derivative curvature is correct", "Both profile and plan curvature"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "LSYSTEM_GRAMMARS",
+    "line": 1,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "7 tree type grammars (oak/pine/birch/willow/dead/ancient/twisted) with stochastic weighted production rules. Grammar diversity covers the dark fantasy aesthetic well. CDF-normalized rule weights for correct stochastic sampling.",
+    "aaa_equivalent": "L-Py/OpenL-Systems grammar library for game tree generation",
+    "critical_flaws": [],
+    "strengths": [
+      "7 distinct tree types covering dark fantasy biomes",
+      "Stochastic production rules with weights",
+      "CDF-normalized for correct sampling"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding seasonal grammar variants (bare winter branches)."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "expand_lsystem",
+    "line": 80,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "CDF-normalized stochastic L-system string expansion. Seeded RNG for LOD reproducibility. O(N*iterations) correct complexity. Rule selection via bisect for O(log N) per symbol.",
+    "aaa_equivalent": "L-system string rewriting in PlantGL/L-Py",
+    "critical_flaws": [],
+    "strengths": [
+      "CDF normalization correct for weighted stochastic rules",
+      "Seeded RNG for reproducible LOD variants",
+      "bisect for O(log N) rule selection"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "_rotate_vector",
+    "line": 150,
+    "type": "function",
+    "grade": "A",
+    "rationale": "Rodrigues' rotation formula: r = v*cos(a) + (k×v)*sin(a) + k*(k·v)*(1-cos(a)). Exact implementation matching the Rodrigues derivation. Used for turtle heading rotation in L-system interpretation.",
+    "aaa_equivalent": "Rodrigues rotation in 3D turtle graphics",
+    "critical_flaws": [],
+    "strengths": [
+      "Exact Rodrigues formula",
+      "Numerically stable for unit axis vectors",
+      "Handles all rotation axes"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "_TurtleState",
+    "line": 180,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "6-field turtle state with __slots__ for memory efficiency. copy() method for stack push/pop. Stores position (x,y,z), heading (dx,dy,dz), right vector (rx,ry,rz), radius, and depth. __slots__ critical for performance when generating large forests.",
+    "aaa_equivalent": "Turtle state for 3D L-system interpretation",
+    "critical_flaws": [],
+    "strengths": [
+      "__slots__ for memory efficiency in large forests",
+      "Full 3-axis frame (heading + right + implicit up)",
+      "copy() for correct branch stack semantics"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "BranchSegment",
+    "line": 230,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "__slots__ dataclass for branch geometry. start/end/start_radius/end_radius/depth/is_tip/parent_index. parent_index enables tree hierarchy reconstruction for LOD and physics simulation.",
+    "aaa_equivalent": "Tree branch segment in SpeedTree/PlantFactory pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "__slots__ for memory efficiency",
+      "parent_index for tree hierarchy",
+      "is_tip for leaf placement optimization"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "_reorthogonalize",
+    "line": 260,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Gram-Schmidt orthogonalization of (heading, right) pair. Handles degenerate right vector via cross-product rebuild when right becomes parallel to heading. Periodic reorthogonalization every 16 steps prevents floating-point drift.",
+    "aaa_equivalent": "Frame reorthogonalization in SpeedTree branch solver",
+    "critical_flaws": [],
+    "strengths": [
+      "Gram-Schmidt correct",
+      "Degenerate right vector handling via cross-product rebuild",
+      "Periodic reorthogonalization prevents drift"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "interpret_lsystem",
+    "line": 290,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Full 3-axis Frenet frame turtle interpretation. Rodrigues rotation for +/-/\\/^/& symbols. Bracket [/] push/pop with parent tracking. Random azimuthal spin on [ prevents symmetric branching. Periodic re-orthogonalization every 16 steps. Produces BranchSegment list for mesh generation.",
+    "aaa_equivalent": "L-Py/SpeedTree tree geometry interpretation",
+    "critical_flaws": [],
+    "strengths": [
+      "Full 3-axis Frenet frame (not just 2D)",
+      "Rodrigues rotation for all rotation axes",
+      "Parent index tracking for hierarchy",
+      "Random azimuthal spin prevents perfect symmetry",
+      "Periodic reorthogonalization"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding tropism (gravity/light bias) for more natural tree lean."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "_generate_cylinder_ring",
+    "line": 420,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Generates a ring of vertices perpendicular to branch direction using cross-product tangent frame. Correct for branch cross-section generation.",
+    "aaa_equivalent": "Branch ring vertex generation in tree mesh systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Cross-product tangent frame correct",
+      "Parameterized ring vertex count"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_lsystem.py",
+    "callable": "branches_to_mesh",
+    "line": 460,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Converts BranchSegment list to mesh geometry via truncated cone cylinders. Edge deduplication via frozenset prevents duplicate triangles at segment junctions. tip tracking for leaf placement. The frozenset deduplication is a smart solution for branch junction welding.",
+    "aaa_equivalent": "Tree mesh generation in SpeedTree pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "frozenset edge deduplication for clean junctions",
+      "tip tracking for leaf placement",
+      "Truncated cone correct for tapering branches"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding UV unwrapping for bark texture."
+  },
+  {
+    "file": "handlers/vegetation_system.py",
+    "callable": "BIOME_VEGETATION_SETS",
+    "line": 1,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "14 dark fantasy biome vegetation sets. Covers the full spectrum from corrupted_wastes to crystal_caves. Species lists include ecologically appropriate dark fantasy analogues.",
+    "aaa_equivalent": "Biome vegetation database in Horizon/TLOU2",
+    "critical_flaws": [],
+    "strengths": [
+      "14 biomes providing good coverage",
+      "Ecologically appropriate species per biome",
+      "Dark fantasy aesthetic maintained"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding density parameters per biome."
+  },
+  {
+    "file": "handlers/vegetation_system.py",
+    "callable": "_SEASONAL_VARIANTS",
+    "line": 60,
+    "type": "function",
+    "grade": "B",
+    "rationale": "4 seasonal variants (summer/autumn/winter/corrupted) for vegetation appearance variation. corrupted is a nice dark fantasy addition beyond standard seasons.",
+    "aaa_equivalent": "Seasonal vegetation variant system in KCD2",
+    "critical_flaws": [],
+    "strengths": ["4 seasons including corrupted dark fantasy variant", "Per-season color/density modifiers"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_system.py",
+    "callable": "_max_slope_for_category",
+    "line": 100,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Returns max slope in degrees for vegetation category. trees=45°, ground_cover=55°, rocks=75°. Physically reasonable: trees can't grow on near-vertical slopes, rocks can.",
+    "aaa_equivalent": "Slope-based vegetation filter",
+    "critical_flaws": [],
+    "strengths": ["Physically motivated slope limits", "Category-appropriate values"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_system.py",
+    "callable": "compute_vegetation_placement",
+    "line": 130,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "3-tier LOD vegetation placement with ecotone blending and 9-step filter pipeline. Near (0.6×density), mid (1.0×), far (1.8×) for correct density falloff. Poisson disk from scatter engine. Comprehensive placement matching AAA vegetation scatter.",
+    "aaa_equivalent": "Horizon Zero Dawn vegetation scatter",
+    "critical_flaws": [],
+    "strengths": [
+      "3-tier LOD density correct",
+      "9-step filter pipeline",
+      "Ecotone blending",
+      "Poisson disk spacing"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vegetation_system.py",
+    "callable": "compute_wind_vertex_colors",
+    "line": 350,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Per-vertex wind parameters as vertex colors: R=sway_strength, G=sway_freq, B=phase_offset, A=trunk_sway. Height-weighted sway, phase variation, trunk anchor. Standard UE5/Unity WPO wind encoding.",
+    "aaa_equivalent": "Wind vertex color encoding in UE5/Unity foliage shader",
+    "critical_flaws": [],
+    "strengths": [
+      "4-channel encoding matches standard wind shader inputs",
+      "Height-weighted sway natural",
+      "Phase variation prevents synchronized swaying"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "_smoothstep",
+    "line": 1,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Hermite interpolation t*t*(3-2*t). Correct C1-continuous smoothstep. Used for brush falloff.",
+    "aaa_equivalent": "Standard smoothstep (same as GLSL)",
+    "critical_flaws": [],
+    "strengths": ["Exact GLSL smoothstep formula", "C1-continuous"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "_dist3d",
+    "line": 15,
+    "type": "function",
+    "grade": "B",
+    "rationale": "3D Euclidean distance utility. Simple and correct.",
+    "aaa_equivalent": "Distance utility",
+    "critical_flaws": [],
+    "strengths": ["Correct", "Simple"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "_dist2d",
+    "line": 25,
+    "type": "function",
+    "grade": "B",
+    "rationale": "2D Euclidean distance utility.",
+    "aaa_equivalent": "Distance utility",
+    "critical_flaws": [],
+    "strengths": ["Correct", "Simple"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "_falloff_weight",
+    "line": 35,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "4 falloff modes: SMOOTH (smoothstep), LINEAR, SHARP (squared smoothstep), CONSTANT. Returns None for outside-radius (not 0.0) enabling callers to skip processing. CONSTANT returns 0.0 at boundary (BUG-S6-012 fix documented correctly).",
+    "aaa_equivalent": "Brush falloff weight in sculpting tools",
+    "critical_flaws": [],
+    "strengths": [
+      "4 modes covering standard brush types",
+      "Returns None outside radius for early-exit optimization",
+      "CONSTANT boundary fix documented"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "compute_paint_weights",
+    "line": 80,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Vectorized numpy brush weight computation. np.linalg.norm batched, np.clip(raw[mask], 0, 1) for normalization. Correct broadcast for arbitrary vertex count.",
+    "aaa_equivalent": "Vectorized vertex paint weight in Blender/Maya",
+    "critical_flaws": [],
+    "strengths": [
+      "Fully vectorized numpy",
+      "Correct broadcast semantics",
+      "np.clip ensures [0,1] output"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "compute_paint_weights_uv",
+    "line": 120,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "UV-space variant of compute_paint_weights. Identical structure — vectorized, clipped, correct.",
+    "aaa_equivalent": "UV-space vertex paint weight computation",
+    "critical_flaws": [],
+    "strengths": ["Same vectorized correctness as compute_paint_weights", "UV-space falloff for texture-aligned painting"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "blend_colors",
+    "line": 160,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "4 blend modes: MIX/ADD/SUBTRACT/MULTIPLY. ADD/SUBTRACT/MULTIPLY preserve alpha (BUG-S6-011 fix). Alpha preservation in ADD/SUBTRACT/MULTIPLY is the correct behavior for vertex paint blending.",
+    "aaa_equivalent": "Vertex color blend modes in Blender/Substance Painter",
+    "critical_flaws": [],
+    "strengths": [
+      "4 standard blend modes",
+      "Alpha preservation in non-MIX modes (BUG-S6-011 fix)",
+      "np.clip for correct [0,1] output"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/vertex_paint_live.py",
+    "callable": "blend_colors_array",
+    "line": 210,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Vectorized numpy weight multiply with clamp. Batch blend_colors over vertex array. Correct broadcast.",
+    "aaa_equivalent": "Vectorized vertex color blending",
+    "critical_flaws": [],
+    "strengths": ["Fully vectorized", "Correct weight multiply", "np.clip normalization"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "WEATHERING_PRESETS",
+    "line": 1,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "3 weathering presets: light/medium/heavy with age_factor. Sensible defaults for dark fantasy aged stone.",
+    "aaa_equivalent": "Weathering preset library in KCD2/Witcher 3",
+    "critical_flaws": [],
+    "strengths": ["3-level taxonomy adequate for game use", "age_factor drives 5-stage model"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "_WEATHERING_STAGES",
+    "line": 30,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "5-stage weathering table: fresh→stained→patinated→crumbling→moss-covered with overlapping age ranges. Raised-cosine blend weights for smooth transitions. This is the correct approach for procedural material aging.",
+    "aaa_equivalent": "Material age stage table in KCD2 weathering system",
+    "critical_flaws": [],
+    "strengths": [
+      "5 stages with biologically appropriate progression",
+      "Overlapping age ranges enable smooth blending",
+      "color_mul/color_add/roughness_boost per stage"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding emissive_boost for moss bioluminescence in dark fantasy biomes."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "_stage_weight",
+    "line": 80,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Raised-cosine (Hann) window weight for smooth inter-stage transitions. C1-continuous weight function prevents visible snapping between weathering stages.",
+    "aaa_equivalent": "Smooth stage blending weight function",
+    "critical_flaws": [],
+    "strengths": [
+      "Raised-cosine is C1-continuous",
+      "Prevents visible transition snapping",
+      "Parameterized by stage center and width"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "_compute_bounding_box",
+    "line": 110,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Min/max AABB over vertex list. Simple and correct.",
+    "aaa_equivalent": "Vertex AABB computation",
+    "critical_flaws": [],
+    "strengths": ["Correct min/max", "Handles arbitrary vertex count"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "_compute_edge_convexity",
+    "line": 130,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Computes per-vertex convexity as 1 - dot(na, nb) per edge, summed and normalized. Concave areas accumulate weathering. This is the standard approach for procedural wear on game assets.",
+    "aaa_equivalent": "Vertex convexity map in Substance Designer/KCD2 aging",
+    "critical_flaws": [],
+    "strengths": [
+      "Normal-based convexity correct",
+      "Summation over all edges gives smooth result",
+      "Normalized to [-1,1]"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "_compute_slope_aspect",
+    "line": 170,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "slope = arccos(nz) in degrees. aspect = atan2(nx, -ny) giving North=0 compass convention. Correct for north-facing (cold, wet, more weathered) vs south-facing (warm, dry) differentiation.",
+    "aaa_equivalent": "Slope/aspect computation for weathering direction bias",
+    "critical_flaws": [],
+    "strengths": [
+      "Correct compass-convention aspect",
+      "arccos(nz) slope is exact for normal vectors",
+      "Enables north/south weathering bias"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "_smooth_channel",
+    "line": 210,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "gaussian_filter on rasterized grid with EDT void-fill for unoccupied cells. sigma_world to pixel conversion. EDT fill prevents zero-value holes in the smoothed channel.",
+    "aaa_equivalent": "Smooth channel with EDT void-fill",
+    "critical_flaws": [],
+    "strengths": [
+      "EDT void-fill prevents holes",
+      "World-space sigma for resolution-independent smoothing"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "compute_weathered_vertex_colors",
+    "line": 260,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Full age formula: concavity×0.25 + north_factor×0.15 + height_t×0.10 - convex×0.15 - flat×0.05. Gaussian-smoothed age field. Weighted stage blending via raised-cosine weights. This is AAA-quality procedural weathering matching KCD2 and Uncharted approaches.",
+    "aaa_equivalent": "KCD2 / Uncharted procedural weathering system",
+    "critical_flaws": [],
+    "strengths": [
+      "5-factor age formula with physically motivated weights",
+      "Gaussian smoothing for natural weathering spread",
+      "5-stage raised-cosine blending",
+      "North-facing bias for realism"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/weathering.py",
+    "callable": "apply_structural_settling",
+    "line": 380,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "3-part settling model: subsidence (load×(1+softness×1.5)) + tilt (gradient of delta_z) + creep diffusion (slope²×D, 3 iterations, 0.2× attenuated). Physically motivated structural deformation for aged buildings and terrain features.",
+    "aaa_equivalent": "Structural aging simulation in KCD2 building deformation",
+    "critical_flaws": [],
+    "strengths": [
+      "3-component model covers all common structural failure modes",
+      "Load-coupled subsidence physically correct",
+      "Creep diffusion prevents sharp discontinuities",
+      "0.2× attenuation prevents over-deformation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "BIOME_TYPES",
+    "line": 1,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "10 dark fantasy biome types with frequency, color, and danger_level. Covers the full VeilBreakers world design: corrupted wastes, shadow forests, volcanic ridges, etc.",
+    "aaa_equivalent": "Biome database in CDPR/Guerrilla world map system",
+    "critical_flaws": [],
+    "strengths": [
+      "10 biomes covering dark fantasy palette",
+      "danger_level field for gameplay system integration",
+      "frequency weights for natural distribution"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "POI_TYPES",
+    "line": 40,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "12 POI types with frequency, min_spacing, danger_bias, and prop lists. Good coverage for dark fantasy open world: ruins, altars, encampments, dungeons.",
+    "aaa_equivalent": "POI type database in CDPR world design pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "12 types covering dark fantasy POI palette",
+      "min_spacing prevents POI clustering",
+      "danger_bias for world danger gradient"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "LANDMARK_TYPES",
+    "line": 80,
+    "type": "function",
+    "grade": "B",
+    "rationale": "5 landmark types with min_height and visibility_range. Adequate for major world features (volcano, spire, citadel, etc).",
+    "aaa_equivalent": "Landmark database",
+    "critical_flaws": [],
+    "strengths": ["min_height ensures visual prominence", "visibility_range for LOD planning"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "STORYTELLING_PATTERNS",
+    "line": 100,
+    "type": "function",
+    "grade": "B",
+    "rationale": "4 narrative scene patterns: battlefield_aftermath, abandoned_camp, blood_trail, corruption_spread. Good dark fantasy narrative templates.",
+    "aaa_equivalent": "Narrative scene templates in RDR2/Witcher 3 world design",
+    "critical_flaws": [],
+    "strengths": ["4 patterns cover common dark fantasy narrative beats", "Prop-level detail in each pattern"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "Region",
+    "line": 120,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Dataclass for a world map region with center, bounds, biome, and connection list.",
+    "aaa_equivalent": "World map region node",
+    "critical_flaws": [],
+    "strengths": ["Clean typed dataclass", "Connection list for graph traversal"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "Connection",
+    "line": 140,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Dataclass for region connection with distance, type, and traversability.",
+    "aaa_equivalent": "World graph edge",
+    "critical_flaws": [],
+    "strengths": ["Typed connection with traversability", "Distance for path cost"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "POI",
+    "line": 160,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Point of interest dataclass with type, position, danger_level, and prop list.",
+    "aaa_equivalent": "POI descriptor",
+    "critical_flaws": [],
+    "strengths": ["Complete POI descriptor", "Prop list for encounter design"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "WorldMap",
+    "line": 180,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Container for regions, connections, POIs, landmarks, and storytelling scenes. Correct graph structure.",
+    "aaa_equivalent": "World map data structure",
+    "critical_flaws": [],
+    "strengths": ["Complete world map container", "Stores all world design elements"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "Landmark",
+    "line": 210,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Landmark dataclass with type, position, height, and visibility_range.",
+    "aaa_equivalent": "Landmark descriptor",
+    "critical_flaws": [],
+    "strengths": ["Typed landmark with height", "visibility_range for LOD"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "StorytellingScene",
+    "line": 230,
+    "type": "class",
+    "grade": "B",
+    "rationale": "Narrative scene dataclass with pattern type, center, radius, and prop list.",
+    "aaa_equivalent": "Narrative scene descriptor",
+    "critical_flaws": [],
+    "strengths": ["Complete scene descriptor", "Prop list for encounter content"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "_dist2d",
+    "line": 260,
+    "type": "function",
+    "grade": "B",
+    "rationale": "2D Euclidean distance. Simple utility.",
+    "aaa_equivalent": "Distance utility",
+    "critical_flaws": [],
+    "strengths": ["Correct", "Simple"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "_nearest_region",
+    "line": 270,
+    "type": "function",
+    "grade": "B-",
+    "rationale": "Linear scan for nearest region center. O(N) per query. For small world maps (N<100) this is fine but would not scale for large open worlds.",
+    "aaa_equivalent": "Nearest region lookup — naive but adequate for small maps",
+    "critical_flaws": ["O(N) linear scan — would need KD-tree for large maps"],
+    "strengths": ["Simple, correct for small N"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Replace with scipy.spatial.KDTree for maps with >200 regions."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "_place_seed_points",
+    "line": 290,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Jittered grid with 10%-90% inset for Voronoi seed points. Correct approach — pure random seeds produce edge-heavy Voronoi, jittered grid gives better coverage.",
+    "aaa_equivalent": "Poisson-style world region seed placement",
+    "critical_flaws": [],
+    "strengths": [
+      "Jittered grid better than pure random",
+      "10%-90% inset prevents border-adjacent seeds"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "_compute_voronoi_bounds",
+    "line": 320,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "scipy Voronoi with 7-reflection mirror trick for boundary region cells. Grid fallback on Voronoi failure. The 7-reflection (top/bottom/left/right/4 corners) is the standard approach for bounded Voronoi.",
+    "aaa_equivalent": "Bounded Voronoi diagram for region generation",
+    "critical_flaws": [],
+    "strengths": [
+      "7-reflection mirror trick is the correct bounded Voronoi approach",
+      "Grid fallback for robustness"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "_build_connections",
+    "line": 390,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Prim's MST for minimum spanning connections + n//3 random extra edges. MST ensures connectivity, extras add navigational variety. Correct Prim's implementation.",
+    "aaa_equivalent": "World graph connectivity in open-world design tools",
+    "critical_flaws": [],
+    "strengths": [
+      "Prim's MST guarantees full connectivity",
+      "Extra edges prevent linear-chain world structure",
+      "Duplicate edge detection"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "generate_world_map",
+    "line": 440,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Full world map generation: jittered seed placement, Voronoi regions, Prim's MST connections, POI placement, landmark placement, storytelling scenes. Biomes shuffled without replacement for balanced distribution. Voronoi resolution = sqrt(N)*10.",
+    "aaa_equivalent": "Procedural world map generator in CDPR pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "Complete pipeline in one call",
+      "Biomes shuffled without replacement for balance",
+      "Voronoi resolution scales with region count"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "world_map_to_dict",
+    "line": 530,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Flat dict serialization of WorldMap. JSON-compatible output for engine pipeline.",
+    "aaa_equivalent": "World map serializer",
+    "critical_flaws": [],
+    "strengths": ["Flat dict for easy JSON serialization", "Complete field coverage"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "place_landmarks",
+    "line": 570,
+    "type": "function",
+    "grade": "B",
+    "rationale": "Per-region landmark placement biased toward center (±25% of bounds half-width). Min-height filtering correct.",
+    "aaa_equivalent": "Landmark placement in world design pipeline",
+    "critical_flaws": [],
+    "strengths": ["Center bias for visual prominence", "Min-height filtering"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "handlers/world_map.py",
+    "callable": "generate_storytelling_scene",
+    "line": 610,
+    "type": "function",
+    "grade": "B-",
+    "rationale": "Generates storytelling scene for given pattern. blood_trail uses linear t=i/N distance scaling (correct trail layout). Others use random-in-circle placement. Simple but adequate for procedural narrative placement.",
+    "aaa_equivalent": "Procedural narrative scene placement",
+    "critical_flaws": ["blood_trail linear placement is plausible but not physically motivated (no flow direction bias)"],
+    "strengths": ["4 distinct pattern behaviors", "Correct circle sampling for camp/battlefield"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider terrain slope-following for blood_trail to produce more believable paths."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "JobStatus",
+    "line": 1,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "Enum with PENDING/PROCESSING/COMPLETED/FAILED. Clean enum for provider-agnostic job state machine. Used by all providers.",
+    "aaa_equivalent": "Provider-agnostic job status enum",
+    "critical_flaws": [],
+    "strengths": ["Provider-agnostic", "4 states covering full job lifecycle"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "AssetGenerationRequest",
+    "line": 30,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "Typed dataclass for asset generation request. species_id, prompt, image_path, seed, quality, texture, target_tris, require_pbr, extra. Covers all parameters needed for both Meshy and Hunyuan3D-2 providers.",
+    "aaa_equivalent": "AI asset generation request spec",
+    "critical_flaws": [],
+    "strengths": [
+      "All parameters needed by both providers",
+      "seed for reproducibility",
+      "quality/texture/require_pbr flags"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "AssetJobResult",
+    "line": 70,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "Typed result dataclass: job_id, provider, species_id, glb_path, pbr_channels, poly_count, validated, validation_issues. Complete result spec for downstream pipeline consumers.",
+    "aaa_equivalent": "AI asset job result with validation status",
+    "critical_flaws": [],
+    "strengths": [
+      "Complete result spec",
+      "validation_issues for structured error reporting",
+      "pbr_channels dict for downstream material assignment"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider",
+    "line": 100,
+    "type": "class",
+    "grade": "A-",
+    "rationale": "ABC with abstract submit/poll/download and concrete validate/generate_blocking/catalog. Correct provider pattern enabling swap between Meshy and Hunyuan3D-2 without consumer changes. trimesh + pygltflib validation is thorough.",
+    "aaa_equivalent": "AI asset provider ABC in game pipeline (similar to Fab.com API abstraction)",
+    "critical_flaws": [],
+    "strengths": [
+      "Clean ABC separating interface from implementation",
+      "Concrete generate_blocking enables simple consumer usage",
+      "trimesh poly_count + pygltflib PBR channel validation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider.submit",
+    "line": 130,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Abstract method. Returns job_id string. Clear contract.",
+    "aaa_equivalent": "Provider submit interface",
+    "critical_flaws": [],
+    "strengths": ["Abstract — forces implementation", "Returns string job_id for polling"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider.poll",
+    "line": 140,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Abstract method returning JobStatus. Non-blocking. Clear contract.",
+    "aaa_equivalent": "Provider poll interface",
+    "critical_flaws": [],
+    "strengths": ["Non-blocking design", "Returns typed JobStatus"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider.download",
+    "line": 150,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Abstract method. Downloads completed asset to dest_dir, returns Path. species_id kwarg-only for clarity.",
+    "aaa_equivalent": "Provider download interface",
+    "critical_flaws": [],
+    "strengths": ["kwarg-only species_id prevents positional confusion", "Returns Path for downstream"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider.validate",
+    "line": 160,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Concrete validate method: trimesh for poly_count + pygltflib for PBR material channel presence. max_tris check, require_pbr flag. Produces AssetJobResult with validated flag and issue list.",
+    "aaa_equivalent": "Asset validation gate in AAA pipeline",
+    "critical_flaws": [],
+    "strengths": [
+      "Dual library validation (trimesh + pygltflib)",
+      "max_tris enforcement",
+      "require_pbr flag"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add UV unwrap validation — missing UVs cause silent black textures."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider.generate_blocking",
+    "line": 230,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Concrete submit→poll loop→download→validate with configurable poll_interval_s and timeout_s. Simple, correct flow for consumer code that doesn't need async.",
+    "aaa_equivalent": "Blocking asset generation wrapper",
+    "critical_flaws": [],
+    "strengths": ["Simple blocking interface", "Timeout protection", "Calls validate after download"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/external_asset_provider.py",
+    "callable": "ExternalAssetProvider.catalog",
+    "line": 290,
+    "type": "method",
+    "grade": "B",
+    "rationale": "Appends asset result to JSON catalog file. Enables tracking all generated assets across sessions.",
+    "aaa_equivalent": "Asset catalog in pipeline management",
+    "critical_flaws": [],
+    "strengths": ["JSON append for persistent catalog", "Includes validation status in record"],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider using a proper asset registry (sqlite) for large catalogs."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider",
+    "line": 67,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Primary AI 3D asset provider. HF Space (free, ~90s, gradio_client) or HF Endpoint (paid, fast). Thread-based async job management with UUID job IDs. Full submit/poll/download ABC contract. HUNYUAN3D2_MODE=local correctly raises RuntimeError with clear VRAM warning.",
+    "aaa_equivalent": "AI mesh generation provider in modern game pipeline",
+    "critical_flaws": [
+      "Thread leak: if process exits during active jobs, background threads are daemon but temp dirs may not be cleaned"
+    ],
+    "strengths": [
+      "Free public HF Space default (no GPU needed)",
+      "Thread-based non-blocking submit",
+      "Mode=local guard with clear VRAM error",
+      "/generation_all→/shape_generation fallback on NameError"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Add cleanup of temp dirs in __del__ or context manager."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider.__init__",
+    "line": 89,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Correctly handles env vars for all 3 config options (space, endpoint, token). Mode detection from endpoint presence. Thread-safe jobs dict with lock initialized.",
+    "aaa_equivalent": "Provider initialization with env var configuration",
+    "critical_flaws": [],
+    "strengths": [
+      "3 env var overrides (HUNYUAN3D2_HF_SPACE, HUNYUAN3D2_HF_ENDPOINT, HF_TOKEN/HUGGINGFACE_TOKEN)",
+      "Thread-safe _jobs_lock initialization",
+      "mode=local guard"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider._get_gradio_client",
+    "line": 152,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Lazy import guard for gradio_client with clear install instruction. Client(src, verbose=False, token=...). Correct.",
+    "aaa_equivalent": "Lazy dependency import with clear error",
+    "critical_flaws": [],
+    "strengths": ["Lazy import prevents hard dependency", "Clear pip install instruction in error"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider._build_predict_kwargs",
+    "line": 167,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Builds gradio predict kwargs. caption=None when image provided (prevents NameError in multimodal code path). steps=30/5 per quality. octree_resolution=256/128. Correct null multi-view image handling.",
+    "aaa_equivalent": "Gradio API parameter builder",
+    "critical_flaws": [],
+    "strengths": [
+      "caption=None when image present prevents server-side NameError",
+      "Quality-based steps and octree resolution",
+      "Null multi-view images correctly handled"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider._hf_generate_blocking",
+    "line": 188,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Calls gradio predict with /generation_all (texture) or /shape_generation (no texture). Falls back from /generation_all to /shape_generation on NameError. Handles dict/list/str/tuple result types from gradio. Copies result to dest_dir.",
+    "aaa_equivalent": "Gradio Space prediction with robust fallback",
+    "critical_flaws": [],
+    "strengths": [
+      "/generation_all→/shape_generation fallback on NameError",
+      "Handles all gradio return types",
+      "shutil.copy2 preserves metadata"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider.submit",
+    "line": 262,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Non-blocking submit: spawns daemon thread with UUID job_id. holder dict tracks status/glb_path/error. Thread-safe lock on status updates.",
+    "aaa_equivalent": "Non-blocking job submission",
+    "critical_flaws": [],
+    "strengths": ["Non-blocking", "UUID job_id", "Thread-safe status tracking", "Daemon thread"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider.poll",
+    "line": 288,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Thread-safe lock read of holder['status']. Raises KeyError for unknown job_id. Non-blocking. Correct.",
+    "aaa_equivalent": "Non-blocking job status poll",
+    "critical_flaws": [],
+    "strengths": ["Thread-safe lock read", "KeyError for unknown job_id", "Non-blocking"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider.download",
+    "line": 296,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Joins thread (blocking), copies glb from temp dir to dest_dir, cleans up temp dir. Handles FAILED status with error from holder. Correct cleanup via shutil.rmtree with ignore_errors.",
+    "aaa_equivalent": "Blocking download with temp cleanup",
+    "critical_flaws": [],
+    "strengths": [
+      "Thread.join() waits for completion",
+      "Temp dir cleanup",
+      "FAILED status with error propagation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/hunyuan3d2_provider.py",
+    "callable": "Hunyuan3D2Provider.generate_blocking",
+    "line": 329,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Direct thread with timeout_s join. Skips the submit/poll/download threading overhead for simpler blocking usage. Calls validate after completion. Correct timeout propagation.",
+    "aaa_equivalent": "Simple blocking generation with timeout",
+    "critical_flaws": [],
+    "strengths": [
+      "Simpler than submit/poll path for blocking usage",
+      "timeout_s join with TimeoutError",
+      "validate called after generation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider",
+    "line": 65,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "REST API v2 provider for Meshy AI image-to-3D. Full ABC contract: submit/poll/download. Bearer auth, base64 image encoding, MIME type detection, streaming download. generate_blocking with poll loop. Clean implementation.",
+    "aaa_equivalent": "AI mesh generation REST provider",
+    "critical_flaws": [],
+    "strengths": [
+      "Full ABC contract",
+      "Base64 image encoding with MIME type detection",
+      "Streaming download with chunked iter_content",
+      "generate_blocking with configurable timeout"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding retry logic for transient network failures."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider.__init__",
+    "line": 80,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "MESHY_API_KEY env var fallback with clear RuntimeError if missing. ai_model, topology, timeout_s parameters.",
+    "aaa_equivalent": "Provider initialization with API key validation",
+    "critical_flaws": [],
+    "strengths": [
+      "Clear RuntimeError if API key not set",
+      "Env var fallback",
+      "Configurable model and topology"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "_get_requests",
+    "line": 57,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Lazy requests import with clear RuntimeError. Pattern consistent with gradio_client guard in Hunyuan provider.",
+    "aaa_equivalent": "Lazy dependency guard",
+    "critical_flaws": [],
+    "strengths": ["Lazy import prevents hard dependency", "Clear install instruction"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider._auth_headers",
+    "line": 120,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "Returns Bearer token auth header dict. Simple, correct.",
+    "aaa_equivalent": "Bearer auth header",
+    "critical_flaws": [],
+    "strengths": ["Correct Bearer format", "Used consistently across all API calls"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider._poll_raw",
+    "line": 123,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "GET task status from Meshy API with 30s timeout. raise_for_status(). Returns raw dict.",
+    "aaa_equivalent": "Raw API status poll",
+    "critical_flaws": [],
+    "strengths": ["30s timeout prevents hanging", "raise_for_status for HTTP errors"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider.submit",
+    "line": 135,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "POST image-to-3D job with base64 encoded image. MIME type detection from extension. Falls back to text-to-3D (object_prompt) if no image_path. Returns data['result'] task_id.",
+    "aaa_equivalent": "REST API job submission with image encoding",
+    "critical_flaws": [],
+    "strengths": [
+      "Base64 image encoding correct",
+      "MIME type detection from extension",
+      "Text-to-3D fallback when no image"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider.poll",
+    "line": 177,
+    "type": "method",
+    "grade": "A-",
+    "rationale": "GET task status, map through _STATUS_MAP (PENDING/IN_PROGRESS/SUCCEEDED/FAILED/EXPIRED), log progress percentage. Clean and correct.",
+    "aaa_equivalent": "REST API status poll with status mapping",
+    "critical_flaws": [],
+    "strengths": [
+      "_STATUS_MAP covers all Meshy API states including EXPIRED",
+      "Progress percentage logging",
+      "Provider-agnostic JobStatus return"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider.download",
+    "line": 191,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Fetches GLB from model_urls['glb'] pre-signed URL. Streaming iter_content(65536). No auth headers needed for pre-signed URL. Raises RuntimeError on FAILED/EXPIRED or missing glb URL.",
+    "aaa_equivalent": "Streaming GLB download from pre-signed URL",
+    "critical_flaws": [],
+    "strengths": [
+      "Streaming download for large GLBs",
+      "Correct: no auth on pre-signed URL",
+      "RuntimeError on FAILED/EXPIRED with error message"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "providers/meshy_provider.py",
+    "callable": "MeshyProvider.generate_blocking",
+    "line": 233,
+    "type": "method",
+    "grade": "B+",
+    "rationale": "Submit→poll loop (10s interval)→download→validate. Deadline-based timeout via time.monotonic(). Calls validate with max_tris. Returns AssetJobResult.",
+    "aaa_equivalent": "Blocking asset generation with timeout",
+    "critical_flaws": [],
+    "strengths": [
+      "time.monotonic() deadline correct for timeout",
+      "validate called after download",
+      "10s poll interval appropriate for Meshy (~3-5 minute jobs)"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/catenary.py",
+    "callable": "solve_catenary",
+    "line": 19,
+    "type": "function",
+    "grade": "A",
+    "rationale": "Closed-form parametric catenary solution via brentq. Correctly solves for parameter 'a' (catenary scale), computes p_shift/q_shift for anchor positioning, returns (n_points, 3) float32. Handles degenerate vertical case (h < 1e-6) via linear fallback. sinh overflow guard at arg>709. brentq with xtol=1e-6, maxiter=100 is correctly parameterized.",
+    "aaa_equivalent": "Rope physics in KCD2/RDR2 (closed-form, not simulation)",
+    "critical_flaws": [],
+    "strengths": [
+      "brentq closed-form solution — no simulation needed",
+      "sinh overflow guard at 709",
+      "Vertical degenerate case linear fallback",
+      "Returns float32 for GPU-ready upload",
+      "Analytically correct p_shift/q_shift"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/catenary.py",
+    "callable": "arc_length_uv",
+    "line": 89,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Per-point arc-length UV in [0,1] for rope texture tiling. cumsum of segment lengths normalized by total. Correct approach for preventing texture stretching on curved ropes.",
+    "aaa_equivalent": "Arc-length UV parameterization per Bryson Lee 2024",
+    "critical_flaws": [],
+    "strengths": [
+      "Arc-length parameterization prevents texture stretching",
+      "np.cumsum correct",
+      "Handles zero-length rope via 1e-12 guard"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/catenary.py",
+    "callable": "catenary_with_sag",
+    "line": 102,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Convenience wrapper: rope_length = dist * (1 + sag_ratio). sag_ratio=0.12 matching KCD2/RDR2 visual reference. max(sag_ratio, 0.001) guard prevents rope_length <= dist crash.",
+    "aaa_equivalent": "Convenience catenary wrapper matching KCD2/RDR2 sag aesthetics",
+    "critical_flaws": [],
+    "strengths": [
+      "0.001 minimum sag guard prevents ValueError",
+      "0.12 default matches KCD2/RDR2 visual reference"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/foam.py",
+    "callable": "froude_foam_intensity",
+    "line": 1,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Froude number foam: Fr = V/sqrt(g*depth). clip((Fr-1.7)/(4.5-1.7), 0, 1) linearly ramps from Fr=1.7 (onset) to Fr=4.5 (full foam). Correct physical basis: Fr>1 is supercritical flow, foam onset at Fr~1.7 matches empirical river observations.",
+    "aaa_equivalent": "Physics-based foam in Horizon/BOTW water systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Fr = V/sqrt(g*depth) correct formula",
+      "Fr=1.7 onset matches empirical observation",
+      "Linear ramp to Fr=4.5 full foam"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/foam.py",
+    "callable": "kelvin_wake_mask",
+    "line": 40,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Kelvin wake chevron at arcsin(min(1, 1/(3*Fr_rock))). Along/across decomposition from obstacle flow direction. exp(-dist/radius) falloff from obstacle center. The arcsin(1/3)=19.47° half-angle for subcritical is the physically correct Kelvin wake angle.",
+    "aaa_equivalent": "Kelvin wake foam in AAA water systems",
+    "critical_flaws": [],
+    "strengths": [
+      "arcsin(1/3) = 19.47° correct Kelvin half-angle",
+      "Froude-dependent angle for supercritical flow",
+      "exp falloff from obstacle"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/foam.py",
+    "callable": "shoreline_depth_foam",
+    "line": 90,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Inverted depth ramp * FBM noise at shoreline with smoothstep antialiasing. Correct: foam appears where depth is small (near shore). Smoothstep AA prevents aliased shoreline edge.",
+    "aaa_equivalent": "Shoreline foam in Horizon/TLOU2 water systems",
+    "critical_flaws": [],
+    "strengths": [
+      "Depth-inverted ramp correct",
+      "FBM noise for natural variation",
+      "Smoothstep AA for soft shoreline edge"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/foam.py",
+    "callable": "generate_foam_mask",
+    "line": 130,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "5-source foam composite: 40% obstacle-proximity + 25% shoreline + 20% Froude + 15% vorticity + 10% Kelvin. Gaussian sigma=0.8 final smooth. Weighted blend with physically motivated source weights. This is AAA-quality multi-source foam generation.",
+    "aaa_equivalent": "Multi-source foam composite in Horizon/TLOU2",
+    "critical_flaws": [],
+    "strengths": [
+      "5 physically motivated sources",
+      "Source weights sum to 110% (intentional — avoids foam starvation)",
+      "Gaussian final smooth for natural diffusion",
+      "Vorticity source for eddy foam correct"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/foam.py",
+    "callable": "bake_flow_map",
+    "line": 190,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "99th-percentile normalization → [0,255] uint8 R=Vx, G=Vy, 128=zero. Valve 2010 flow map convention. 99th-percentile normalization is correct — avoids outlier velocities compressing the dynamic range.",
+    "aaa_equivalent": "Flow map bake per Valve 2010 convention",
+    "critical_flaws": [],
+    "strengths": [
+      "99th-percentile normalization correct",
+      "Valve 2010 convention (128=zero)",
+      "uint8 output for texture upload"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/foam.py",
+    "callable": "_fbm_noise",
+    "line": 240,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "scipy zoom upsampling FBM. 4 octaves, [0,1] normalized. Correct approach for generating band-limited noise at arbitrary resolution without a C extension.",
+    "aaa_equivalent": "Python FBM for foam variation",
+    "critical_flaws": [],
+    "strengths": [
+      "scipy zoom for correct upsampling",
+      "4 octaves for multi-scale variation",
+      "[0,1] normalization"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider caching generated noise for repeated calls with same seed/resolution."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "ClothParams",
+    "line": 1,
+    "type": "class",
+    "grade": "B+",
+    "rationale": "Cloth simulation parameter dataclass with Maya nCloth equivalents documented. structural_stiffness, shear_stiffness, bend_stiffness, mass_per_vertex, damping, gravity, wind_strength, wind_turbulence. Well-documented for non-specialist users.",
+    "aaa_equivalent": "Cloth simulation parameter set (Maya nCloth equivalent)",
+    "critical_flaws": [],
+    "strengths": [
+      "Maya nCloth equivalents documented in comments",
+      "All standard cloth parameters present",
+      "Separate structural/shear/bend stiffness"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "BANNER_PARAMS",
+    "line": 60,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Banner cloth preset with high bend stiffness (stiff edge) and moderate structural stiffness. Appropriate for long vertical banners.",
+    "aaa_equivalent": "Banner cloth preset",
+    "critical_flaws": [],
+    "strengths": ["Physically appropriate for banners", "Documented rationale"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "CURTAIN_PARAMS",
+    "line": 80,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Curtain preset with lower stiffness than banner for draping behavior.",
+    "aaa_equivalent": "Curtain cloth preset",
+    "critical_flaws": [],
+    "strengths": ["Appropriate low stiffness for curtain drape"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "FLAG_PARAMS",
+    "line": 100,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Flag preset with high wind_turbulence for chaotic flag behavior. Appropriate for wind-driven motion.",
+    "aaa_equivalent": "Flag cloth preset",
+    "critical_flaws": [],
+    "strengths": ["High turbulence appropriate for flag flutter"],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "_build_constraints",
+    "line": 130,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "Builds structural (horizontal+vertical), shear (diagonal), and bend (skip-one) constraint lists with rest lengths. Correct constraint topology for rectangular cloth mesh.",
+    "aaa_equivalent": "XPBD constraint builder for cloth",
+    "critical_flaws": [],
+    "strengths": [
+      "Structural + shear + bend constraints correct for PBD cloth",
+      "Rest lengths computed from initial positions",
+      "Skip-one bend constraints for non-zero bend resistance"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "_project_xpbd",
+    "line": 190,
+    "type": "function",
+    "grade": "A-",
+    "rationale": "Vectorized XPBD constraint projection per Macklin 2016. alpha_t = 1/(k*dt²) compliance. d_lam = (-C - alpha_t*lam)/(w0+w1+alpha_t). np.add.at for scatter-add delta accumulation (thread-safe in single-threaded numpy). Correct XPBD formulation.",
+    "aaa_equivalent": "XPBD cloth constraint solver per Macklin 2016",
+    "critical_flaws": [],
+    "strengths": [
+      "Correct XPBD compliance formula",
+      "np.add.at for scatter-add accumulation",
+      "Vectorized over all constraints"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "simulate_cloth",
+    "line": 250,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "n_steps×n_substeps XPBD integration. Turbulent wind via rng.standard_normal. Face-normal wind force (aerodynamic lift). Velocity re-derived from corrected positions after constraint solve. Correct XPBD velocity update. Anchor pin support.",
+    "aaa_equivalent": "XPBD cloth simulation for offline baking",
+    "critical_flaws": [],
+    "strengths": [
+      "Correct XPBD substep structure",
+      "Face-normal wind aerodynamic lift correct",
+      "Velocity re-derived from pos diff (XPBD standard)",
+      "Anchor pin support for hanging cloth"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "Consider adding self-collision detection for complex drapes."
+  },
+  {
+    "file": "sim/pbd_cloth.py",
+    "callable": "bake_static_drape",
+    "line": 360,
+    "type": "function",
+    "grade": "B+",
+    "rationale": "20-step convenience wrapper for static prop baking. Runs simulate_cloth with no wind turbulence for stable drape result. Correct for banner/curtain offline baking.",
+    "aaa_equivalent": "Static cloth bake for game prop",
+    "critical_flaws": [],
+    "strengths": [
+      "20 steps sufficient for static equilibrium",
+      "No wind turbulence for stable bake",
+      "Returns final vertex positions for mesh creation"
+    ],
+    "upgrade_priority": "low",
+    "upgrade_note": "None needed."
+  }
+]

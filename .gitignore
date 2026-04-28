@@ -31,5 +31,16 @@ Thumbs.db
 .codex_tmp_head_audit_*/
 tmp_review/
 
+# Local temp/worktree artifacts that can contain denied pytest temp dirs
+.tmp/
+.pr5-worktree/
+tmp*/
+pytest-of-*/
+pytest-cache-files-*/
+
+# Generated repo-analysis outputs
+graphify-out/
+repomix-output.*
+
 # Claude Code local state
 .claude/

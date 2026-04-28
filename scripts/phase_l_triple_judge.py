@@ -476,9 +476,9 @@ def agreement(verdicts: list[Verdict], allow_gemini_fallback: bool) -> tuple[boo
 def build_fix_prompt(node_dir: Path, issues: dict[str, list[str]], round_num: int) -> str:
     node_name = node_dir.name
     if node_name in ("aaa_node_v1", "aaa_node_v2"):
-        # build_aaa_node_v1.py and v2.py are deleted; v4 is the current script.
-        script = "scripts/build_terrain_aaa_node_v4.py"
-        short = "Node v4"
+        # build_aaa_node_v1.py through v5.py are deprecated; v6 is the current script.
+        script = "scripts/build_terrain_aaa_node_v6.py"
+        short = "Node v6"
     else:
         script = "scripts/build_aaa_node_showcase.py"
         short = "Showcase"

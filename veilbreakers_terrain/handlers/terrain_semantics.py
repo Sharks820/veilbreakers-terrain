@@ -665,6 +665,10 @@ class TerrainMaskStack:
             "wave_amplitude_per_vertex",
             # Water shader channels (riverbed caustics)
             "riverbed_caustics",
+            # D7-fix: these were silently dropped on checkpoint save (not in tuple)
+            "terrain_ao",
+            "terrain_displacement",
+            "ridge_eroded",
         ),
     )
 

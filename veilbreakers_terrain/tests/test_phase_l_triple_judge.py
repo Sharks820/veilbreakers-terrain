@@ -214,8 +214,8 @@ def test_run_node_dispatches_fix_and_fails_after_max(node_dir):
     queue = json.loads((node_dir / "TRIPLE_FIX_QUEUE.json").read_text())
     assert len(queue["dispatches"]) == 3
     # Prompt should mention the build script and issue list.
-    # build_aaa_node_v1/v2 are deleted; v1/v2 node dirs now map to v4 script.
-    assert "build_terrain_aaa_node_v4.py" in queue["dispatches"][0]["prompt"]
+    # build_aaa_node_v1/v2 are deleted; v1/v2 node dirs now map to v6 script.
+    assert "build_terrain_aaa_node_v6.py" in queue["dispatches"][0]["prompt"]
     assert "tiling" in queue["dispatches"][0]["prompt"].lower()
 
 
@@ -257,11 +257,11 @@ def test_build_fix_prompt_node_v1(tmp_path):
         {"critical": ["tiling"], "minor": ["foam"]},
         round_num=2,
     )
-    # build_aaa_node_v1.py is deleted; v1 node dir now maps to v4 script.
-    assert "build_terrain_aaa_node_v4.py" in prompt
+    # build_aaa_node_v1.py through v5.py are deprecated; v1 node dir now maps to v6 script.
+    assert "build_terrain_aaa_node_v6.py" in prompt
     assert "tiling" in prompt
     assert "round 2" in prompt
-    assert "Node v4" in prompt
+    assert "Node v6" in prompt
 
 
 def test_build_fix_prompt_showcase(tmp_path):

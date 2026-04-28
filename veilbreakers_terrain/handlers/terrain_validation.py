@@ -926,7 +926,7 @@ def validate_unity_export_ready(
     — a truthy value means we skip the hard check.
     """
     issues: List[ValidationIssue] = []
-    opt_out = bool(intent.composition_hints.get("unity_export_opt_out", False))
+    opt_out = bool((intent.composition_hints or {}).get("unity_export_opt_out", False))
     required = ("heightmap_raw_u16", "splatmap_weights_layer", "navmesh_area_id")
     missing = [c for c in required if _safe_asarray(stack.get(c)) is None]
     if missing and not opt_out:

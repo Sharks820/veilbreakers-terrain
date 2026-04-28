@@ -41,7 +41,7 @@ def _valid_stack() -> types.SimpleNamespace:
     """Return a stack that passes all REQUIRED_STACK_CHANNELS checks."""
     size = (8, 8)
     return _make_stack(
-        heightmap=np.full(size, 500.0, dtype=np.float32),
+        height=np.full(size, 500.0, dtype=np.float32),
         water_surface_mask=np.full(size, 0.5, dtype=np.float32),
         water_depth_m=np.full(size, 10.0, dtype=np.float32),
         cliff_mask=np.full(size, 0.3, dtype=np.float32),
@@ -59,7 +59,7 @@ def test_missing_channel_reported():
     """A stack lacking a required channel is flagged in 'missing'."""
     # Omit cliff_mask entirely
     stack = _make_stack(
-        heightmap=np.zeros((4, 4), dtype=np.float32),
+        height=np.zeros((4, 4), dtype=np.float32),
         water_surface_mask=np.zeros((4, 4), dtype=np.float32),
         water_depth_m=np.zeros((4, 4), dtype=np.float32),
         talus_mask=np.zeros((4, 4), dtype=np.float32),
@@ -88,10 +88,10 @@ def test_none_channel_counts_as_missing():
 def test_dtype_mismatch_integer_for_float_channel():
     """An integer array for a float channel is reported in dtype_mismatch."""
     stack = _valid_stack()
-    stack.heightmap = np.array([[100, 200], [300, 400]], dtype=np.int32)
+    stack.height = np.array([[100, 200], [300, 400]], dtype=np.int32)
     result = validate_stack_channels(stack)
     assert result["ok"] is False
-    assert "heightmap" in result["dtype_mismatch"]
+    assert "height" in result["dtype_mismatch"]
 
 
 def test_dtype_mismatch_does_not_block_other_channels():
@@ -122,11 +122,11 @@ def test_range_violation_above_max():
 def test_range_violation_below_min():
     """Values below the channel min are reported in range_violations."""
     stack = _valid_stack()
-    # heightmap min is 0.0 — set negative elevation
-    stack.heightmap = np.full((4, 4), -10.0, dtype=np.float32)
+    # height min is 0.0 — set negative elevation
+    stack.height = np.full((4, 4), -10.0, dtype=np.float32)
     result = validate_stack_channels(stack)
     assert result["ok"] is False
-    assert "heightmap" in result["range_violations"]
+    assert "height" in result["range_violations"]
 
 
 def test_range_at_boundary_passes():
@@ -217,7 +217,7 @@ def _scenario_stack() -> types.SimpleNamespace:
     w = np.full((8, 8), 0.05, dtype=np.float32)
     wd = np.full((8, 8), 5.0, dtype=np.float32)
     c = np.full((8, 8), 0.8, dtype=np.float32)
-    return _make_stack(heightmap=h, water_surface_mask=w, water_depth_m=wd, cliff_mask=c)
+    return _make_stack(height=h, water_surface_mask=w, water_depth_m=wd, cliff_mask=c)
 
 
 def test_scenario_water_present_passes():
@@ -263,7 +263,7 @@ def test_scenario_heightmap_range_passes():
 def test_scenario_heightmap_range_fails_flat_terrain():
     """heightmap_range scenario fails when terrain is perfectly flat."""
     stack = _scenario_stack()
-    stack.heightmap = np.full((8, 8), 100.0, dtype=np.float32)
+    stack.height = np.full((8, 8), 100.0, dtype=np.float32)
     result = run_scenario_goldens(stack, scenarios={"heightmap_range": SCENARIO_GOLDENS["heightmap_range"]})
     assert result["results"]["heightmap_range"]["ok"] is False
 

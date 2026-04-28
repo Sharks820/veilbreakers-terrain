@@ -373,7 +373,7 @@ SCENARIO_GOLDENS: Dict[str, Dict[str, Any]] = {
         "description": "At least one cliff pixel exists (max > 0.5)",
     },
     "heightmap_range": {
-        "channel": "heightmap",
+        "channel": "height",
         "description": "Terrain has relief (max - min > 50.0)",
     },
     "no_water_seam": {

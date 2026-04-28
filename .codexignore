@@ -10,6 +10,17 @@ dist/
 build/
 .eggs/
 
+# Local temp/worktree artifacts
+.tmp/
+.pr5-worktree/
+tmp*/
+pytest-of-*/
+pytest-cache-files-*/
+
+# Generated repo-analysis outputs
+graphify-out/
+repomix-output.*
+
 # Git internals
 .git/
 

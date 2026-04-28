@@ -21,6 +21,7 @@
 | Foliage assets | **D** | Python L-system cannot reach AAA; vegetation_lsystem.py is still wired and active |
 | Legacy build scripts | **D** | 4 scripts bypass `TerrainPassController.run_pipeline` entirely |
 | AI asset pipeline | **D** | `RodinBackend` has wrong base URL, wrong endpoints, wrong status casing — non-functional |
+| Terrain shape & erosion | **C+** | Erodibility 1000x amplification bug (`_terrain_erosion.py:308`); stratigraphy differential erosion computed but never applied to height; hydraulic erosion is pure Python scalar loop — unusable at AAA tile sizes |
 
 ---
 
@@ -156,6 +157,41 @@ stack.set("strata_mask", strata_arr, provenance="cliff_pass")
 - `cave_entrance.json`
 
 Commit hashed expected channel outputs. Gate CI on SSIM delta < 5%.
+
+---
+
+### E-1 (CRITICAL): Erodibility map arithmetic is 1000x wrong — `_terrain_erosion.py:308`
+**File:** `_terrain_erosion.py:308`
+
+`_erod_scale = np.clip(erod_arr, 0.0, None) / 1e-3` divides by 0.001, amplifying every erodibility value by 1000x. A cell with erodibility=1.0 (soft rock) produces `_erod_scale=1000`, multiplying `erode_amount` by 1000 at the brush application step. Any caller passing an `erodibility_map` gets terrain carved 1000x deeper than intended, producing a flat plane.
+
+**Fix:**
+```python
+_erod_scale = np.clip(erod_arr, 0.0, 1.0)
+```
+
+---
+
+### E-2 (CRITICAL): Stratigraphy differential erosion is a silent no-op — `terrain_stratigraphy.py:991`
+**File:** `terrain_stratigraphy.py:991`
+
+`apply_differential_erosion` returns a negative height delta. `pass_stratigraphy` stores it as a channel but never adds it to `stack.height`. Every mesa profile, overhanging ledge, and hardness-driven cliff form is computed then silently discarded. The stratigraphy system has zero geometric effect on terrain shape.
+
+**Fix:**
+```python
+h_current = np.asarray(stack.height, dtype=np.float64)
+stack.set("height", (h_current + erosion_delta).astype(stack.height.dtype), "stratigraphy")
+```
+
+---
+
+### E-3 (CRITICAL): Hydraulic erosion inner loop is pure Python scalar — non-functional at AAA tile sizes — `_terrain_erosion.py:331-477`
+**File:** `_terrain_erosion.py:331-477`
+
+The entire droplet simulation iterates particle steps in a Python for loop. At 1024x1024, 8000 particles, 30 steps this is 5-20 minutes of CPU time — incompatible with on-demand terrain generation. The `_NUMBA_AVAILABLE` flag exists in `_terrain_noise.py` but is never applied in `_terrain_erosion.py`. The `_erode_brush` inner loop (lines 648-664) adds another O(radius squared) Python loop called per step.
+
+**Fix priority:** Vectorise the particle batch (all N particles at step t in parallel via NumPy), or add `@numba.njit` path gated on `_NUMBA_AVAILABLE`. Full findings: `docs/aaa-audit/deep_dive_2026_04_27/A3_terrain_shape_erosion.md`.
+
 
 ---
 
@@ -379,3 +415,5 @@ The pipeline architecture is sound. The AAA gap is not a research problem:
 5. **Build script isolation** — 4 scripts bypass the entire pipeline, making the canonical path untestable
 
 Fix those five categories and the terrain hits B+ across all domains. The foliage and AI asset integration are D-tier because they depend on external tools (L-Py, Hunyuan3D-2 local GPU server) more than on pipeline correctness.
+
+**A3 addendum (2026-04-27 deep-dive):** Terrain shape & erosion audit found 3 P0 + 7 P1 gaps. The hydraulic erosion erodibility arithmetic bug (E-1) and stratigraphy no-op (E-2) mean the two most visually impactful erosion subsystems produce silently wrong output on every run. Fix E-1, E-2, E-3 first — they block the entire erosion/stratigraphy/strata-form pipeline. After those, address P1-1 (no 3-pass erosion structure), P1-5 (saltation blend vs. physical transport), and P1-7 (white-noise vs. coherent ridge jaggedness). Full findings: `docs/aaa-audit/deep_dive_2026_04_27/A3_terrain_shape_erosion.md`.

@@ -1,3 +1,4 @@
+# OBSERVABILITY_ONLY — telemetry module; not wired to COMMAND_HANDLERS
 """Iteration-velocity metrics (Bundle M).
 
 Records how many passes ran, how long they took, how many hit the
