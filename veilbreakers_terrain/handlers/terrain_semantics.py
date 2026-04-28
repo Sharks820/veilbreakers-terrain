@@ -238,6 +238,11 @@ class TerrainMaskStack:
     and downstream pass contracts can type-check against them.
     """
 
+    # Set True in tests to turn direct channel assignment into a hard error.
+    # Production code leaves this False so the existing warning-only path is
+    # preserved and no runtime behavior changes outside of test runs.
+    _STRICT_PROVENANCE: ClassVar[bool] = False
+
     # Shape and coordinate contract
     tile_size: int
     cell_size: float
@@ -723,6 +728,16 @@ class TerrainMaskStack:
         object.__setattr__(self, "_guard_active", True)
 
     def __setattr__(self, name: str, value: object) -> None:
+        if (
+            self.__class__._STRICT_PROVENANCE
+            and not name.startswith("_")
+            and self.__dict__.get("_guard_active")
+            and (name in self._ARRAY_CHANNELS or name in self._OPAQUE_CHANNELS)
+        ):
+            raise AttributeError(
+                f"Direct assignment to channel {name!r} bypasses the stack protocol. "
+                f"Use mask_stack.set({name!r}, array, producer_name) instead."
+            )
         if self.__dict__.get("_guard_active") and (
             name in self._ARRAY_CHANNELS or name in self._OPAQUE_CHANNELS
         ):

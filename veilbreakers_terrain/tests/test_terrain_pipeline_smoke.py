@@ -140,6 +140,9 @@ def test_mask_stack_channels_populated_after_each_pass():
 
         controller.run_pass("macro_world", checkpoint=False)
         assert state.mask_stack.height is not None
+        # Provenance: height must have been written by a named producer, not bypassed
+        assert state.mask_stack.populated_by_pass.get("height") is not None, \
+            "height channel has no recorded producer (stack bypass detected)"
 
         controller.run_pass("structural_masks", checkpoint=False)
         stack = state.mask_stack
@@ -147,12 +150,18 @@ def test_mask_stack_channels_populated_after_each_pass():
             val = stack.get(ch)
             assert val is not None, f"channel {ch} missing"
             assert val.shape == stack.height.shape, f"{ch} shape mismatch"
+            # Provenance: every structural channel must have a recorded producer
+            assert stack.populated_by_pass.get(ch) is not None, \
+                f"channel {ch!r} has no recorded producer (stack bypass detected)"
 
         controller.run_pass("erosion", checkpoint=False)
         for ch in ("erosion_amount", "deposition_amount", "wetness", "drainage", "bank_instability", "talus"):
             val = stack.get(ch)
             assert val is not None, f"erosion channel {ch} missing"
             assert val.shape == stack.height.shape
+            # Provenance: every erosion channel must have a recorded producer
+            assert stack.populated_by_pass.get(ch) is not None, \
+                f"erosion channel {ch!r} has no recorded producer (stack bypass detected)"
 
 
 # ---------------------------------------------------------------------------

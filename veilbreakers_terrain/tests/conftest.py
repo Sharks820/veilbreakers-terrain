@@ -98,6 +98,21 @@ for _mod_name in _BLENDER_MODS:
 
 
 @pytest.fixture(autouse=True)
+def strict_provenance():
+    """Enable stack-bypass detection for all tests.
+
+    Sets TerrainMaskStack._STRICT_PROVENANCE=True so that any direct channel
+    assignment (stack.slope = arr) raises AttributeError instead of the
+    production warning.  This surfaces the 179 SimpleNamespace-mock bypass
+    patterns that previously hid stack-bypass bugs from the test suite.
+    """
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+    TerrainMaskStack._STRICT_PROVENANCE = True
+    yield
+    TerrainMaskStack._STRICT_PROVENANCE = False
+
+
+@pytest.fixture(autouse=True)
 def _reset_pass_registry():
     """Save, clear, and restore TerrainPassController registry around every test.
 
