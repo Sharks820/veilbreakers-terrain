@@ -15,6 +15,7 @@ from typing import Optional, Sequence, Tuple
 
 from .terrain_semantics import (
     BBox,
+    ChannelNotWrittenError,
     HeroFeatureRef,
     TerrainSceneRead,
     WaterfallChainRef,
@@ -74,8 +75,10 @@ def _walk_scene() -> dict:
         result["cave_candidates"] = cave_candidates
 
         result["timestamp"] = bpy.data.scenes[0].name  # use scene name as identifier
+    except ChannelNotWrittenError:
+        raise  # Rule-1: phantom channel reads must propagate
     except Exception:
-        pass
+        pass  # bpy unavailable outside Blender — non-fatal for headless mode
     return result
 
 

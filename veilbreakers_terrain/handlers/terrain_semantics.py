@@ -1650,6 +1650,18 @@ class ChannelOwnershipError(RuntimeError):
     """
 
 
+class ChannelNotWrittenError(KeyError):
+    """Raised when a caller reads a TerrainMaskStack channel that has never
+    been written by any registered pass (phantom channel read).
+
+    Rule-1 enforcement: phantom channel reads must propagate as hard errors so
+    that the pipeline never silently returns stale or zero-initialised data for
+    a channel that no pass has produced in the current run.  Any ``except``
+    block that catches this error MUST re-raise it — swallowing it causes the
+    Rule-1 gate to be bypassed.
+    """
+
+
 __all__ = [
     "BBox",
     "ErosionStrategy",
@@ -1675,4 +1687,5 @@ __all__ = [
     "PassContractError",
     "UnknownPassError",
     "ChannelOwnershipError",
+    "ChannelNotWrittenError",
 ]

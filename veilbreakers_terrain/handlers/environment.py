@@ -229,8 +229,8 @@ def _object_world_xyz(obj: Any, local_co: Any) -> tuple[float, float, float]:
         try:
             world_co = matrix_world @ local_co
             return _vector_xyz(world_co)
-        except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+        except Exception as exc:
+            logger.warning("Optional subsystem matrix_world_transform failed (non-fatal): %s", exc)
 
     x, y, z = _vector_xyz(local_co)
     location = getattr(obj, "location", None)
@@ -2031,7 +2031,9 @@ def handle_generate_terrain(params: dict) -> dict:
             pipeline.append("emit_overhang_meshes")
         if "waterfalls" in pipeline and "emit_particle_systems" not in pipeline:
             pipeline.append("emit_particle_systems")
-        pipeline.append("validation_minimal")
+        quality_profile_name = str(params.get("quality_profile", "production"))
+        is_preview = quality_profile_name in ("preview", "mobile", "low")
+        pipeline.append("validation_minimal" if is_preview else "validation_full")
         controller_params["pipeline"] = pipeline
 
         controller_pipeline = list(pipeline)
@@ -3849,8 +3851,8 @@ def handle_paint_terrain(params: dict) -> dict:
     if undo_push:
         try:
             bpy.ops.ed.undo_push(message=f"Paint Terrain: {name}")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Optional subsystem undo_push failed (non-fatal): %s", exc)
 
     _duration = time.perf_counter() - _t0
     return {
@@ -3919,8 +3921,8 @@ def handle_carve_river(params: dict) -> dict:
             cell_size_m = float(params.get("cell_size_m", 1.0))
             width_m = compute_river_width(float(flow_acc))
             width = max(1, int(round(width_m / cell_size_m)))
-        except Exception:
-            pass  # fall back to static width
+        except Exception as exc:
+            logger.warning("Optional subsystem compute_river_width failed (non-fatal): %s", exc)
 
     obj = bpy.data.objects.get(terrain_name)
     if obj is None:
@@ -5367,8 +5369,8 @@ def _create_bridge_object_from_spec(
         mat = create_procedural_material(object_name, material_key)
         if mat is not None:
             mesh_data.materials.append(mat)
-    except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+    except Exception as exc:
+        logger.warning("Optional subsystem create_procedural_material failed (non-fatal): %s", exc)
     return obj
 
 
@@ -5401,8 +5403,8 @@ def _create_mesh_object_from_spec(
             if mat is not None and hasattr(obj.data, "materials"):
                 obj.data.materials.clear()
                 obj.data.materials.append(mat)
-        except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+        except Exception as exc:
+            logger.warning("Optional subsystem create_procedural_material failed (non-fatal): %s", exc)
     return obj
 
 
@@ -5636,8 +5638,8 @@ def _materialise_mist_volume(
             if mat_inv is not None and hasattr(parent, "matrix_world"):
                 try:
                     mist_obj.matrix_parent_inverse = parent.matrix_world.inverted()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Optional subsystem mist_volume_matrix_parent_inverse failed (non-fatal): %s", exc)
 
         # Volume scatter material for waterfall mist
         mat = bpy.data.materials.new("MistVolume_mat")
@@ -6418,8 +6420,8 @@ def _ensure_water_material(
     if hasattr(mat, "surface_render_method") and surface_only:
         try:
             mat.surface_render_method = "DITHERED"
-        except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+        except Exception as exc:
+            logger.warning("Optional subsystem surface_render_method failed (non-fatal): %s", exc)
     if hasattr(mat, "use_screen_refraction"):
         mat.use_screen_refraction = not surface_only
     if hasattr(mat, "refraction_depth"):
@@ -6517,10 +6519,10 @@ def _ensure_water_material(
 
             if base_color and foam_mix.outputs.get("Result") is not None:
                 links.new(foam_mix.outputs["Result"], base_color)
-        except Exception:
+        except Exception as exc:
             # Test stubs expose a smaller node API surface; keep the readable
             # fallback tint instead of failing material creation outright.
-            pass
+            logger.warning("Optional subsystem water_foam_node_wiring failed (non-fatal): %s", exc)
         rough = bsdf.inputs.get("Roughness")
         if rough:
             if surface_only:
@@ -6554,8 +6556,8 @@ def _ensure_water_material(
                 absorption.inputs["Density"].default_value = 0.08 if preview_fast else 0.12
                 if output.inputs.get("Volume") is not None:
                     links.new(absorption.outputs["Volume"], output.inputs["Volume"])
-            except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+            except Exception as exc:
+                logger.warning("Optional subsystem water_volume_absorption_node failed (non-fatal): %s", exc)
 
         if surface_only:
             try:
@@ -6568,8 +6570,8 @@ def _ensure_water_material(
                 links.new(bsdf.outputs["BSDF"], add_shader.inputs[0])
                 links.new(emission.outputs["Emission"], add_shader.inputs[1])
                 links.new(add_shader.outputs["Shader"], output.inputs["Surface"])
-            except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+            except Exception as exc:
+                logger.warning("Optional subsystem water_emission_node failed (non-fatal): %s", exc)
 
         noise_tex = nodes.new("ShaderNodeTexNoise")
         noise_tex.location = (-220, -220)
@@ -6626,8 +6628,8 @@ def _ensure_water_material(
                 links.new(bsdf.outputs["BSDF"], caus_add.inputs[0])
                 links.new(caus_emit.outputs["Emission"], caus_add.inputs[1])
                 links.new(caus_add.outputs["Shader"], output.inputs["Surface"])
-            except Exception:
-                pass  # noqa: L2-04 best-effort caustic wiring
+            except Exception as exc:
+                logger.warning("Optional subsystem water_caustic_node_wiring failed (non-fatal): %s", exc)
 
     return mat
 
@@ -6638,8 +6640,8 @@ def _apply_water_object_settings(obj: Any, *, surface_only: bool) -> None:
         return
     try:
         obj.display_type = "TEXTURED"
-    except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+    except Exception as exc:
+        logger.warning("Optional subsystem water_display_type failed (non-fatal): %s", exc)
     for attr, value in (
         ("visible_shadow", False),
         ("is_shadow_catcher", False),
@@ -6647,19 +6649,19 @@ def _apply_water_object_settings(obj: Any, *, surface_only: bool) -> None:
         if hasattr(obj, attr):
             try:
                 setattr(obj, attr, value)
-            except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+            except Exception as exc:
+                logger.warning("Optional subsystem water_obj_attr_%s failed (non-fatal): %s", attr, exc)
     cycles_visibility = getattr(obj, "cycles_visibility", None)
     if cycles_visibility is not None and hasattr(cycles_visibility, "shadow"):
         try:
             cycles_visibility.shadow = False
-        except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+        except Exception as exc:
+            logger.warning("Optional subsystem cycles_visibility_shadow failed (non-fatal): %s", exc)
     if surface_only:
         try:
             obj.color = (1.0, 1.0, 1.0, 1.0)
-        except Exception:
-            pass  # noqa: L2-04 best-effort non-critical attr write
+        except Exception as exc:
+            logger.warning("Optional subsystem water_obj_color failed (non-fatal): %s", exc)
 
 
 def _build_terrain_world_height_sampler(terrain_obj: Any) -> Callable[[float, float], float] | None:
@@ -7187,8 +7189,8 @@ def _build_level_water_surface_from_terrain(
     try:
         obj["vb_water_depth"] = float(water_depth)
         obj["vb_water_surface_only"] = bool(surface_only)
-    except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+    except Exception as exc:
+        logger.warning("Optional subsystem water_custom_properties failed (non-fatal): %s", exc)
     bpy.context.collection.objects.link(obj)
     _apply_water_object_settings(obj, surface_only=surface_only)
     mesh.materials.append(
@@ -7673,8 +7675,8 @@ def handle_create_water(params: dict) -> dict:
     try:
         obj["vb_water_depth"] = float(channel_depth)
         obj["vb_water_surface_only"] = bool(surface_only)
-    except Exception:
-        pass  # noqa: L2-04 best-effort non-critical attr write
+    except Exception as exc:
+        logger.warning("Optional subsystem channel_custom_properties failed (non-fatal): %s", exc)
     bpy.context.collection.objects.link(obj)
     _apply_water_object_settings(obj, surface_only=surface_only)
 
@@ -8389,8 +8391,8 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
                 "biome_name": primary_biome,
                 "season": params.get("season"),
             })
-        except Exception:
-            pass  # Non-fatal: material assignment is best-effort
+        except Exception as exc:
+            logger.warning("Optional subsystem handle_create_biome_terrain failed (non-fatal): %s", exc)
 
     # --- 5. Scatter vegetation per biome (if enabled) ---
     vegetation_total = 0
@@ -8409,8 +8411,8 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
                     "water_level": 0.05,
                 })
                 vegetation_total += veg_result.get("instance_count", 0)
-            except Exception:
-                pass  # Biome may not have vegetation set -- skip silently
+            except Exception as exc:
+                logger.warning("Optional subsystem handle_scatter_vegetation failed (non-fatal): %s", exc)
 
     # --- 6. Count corruption zones ---
     corruption_zones = int((spec.corruption_map > 0.3).sum())
@@ -8470,8 +8472,8 @@ def _compute_vertex_colors_for_biome_map(
                 if mat_def and "base_color" in mat_def:
                     bc = tuple(mat_def["base_color"])
                     base_color = bc if len(bc) == 4 else bc + (1.0,)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Optional subsystem biome_base_color_lookup failed (non-fatal): %s", exc)
         biome_base_colors[int(bidx)] = base_color
 
     # ------------------------------------------------------------------
