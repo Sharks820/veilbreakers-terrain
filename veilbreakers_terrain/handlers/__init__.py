@@ -12,7 +12,11 @@ to be reachable at runtime must have an entry here.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable, Dict
+
+_LP_LOCK = threading.RLock()
+_HR_LOCK = threading.RLock()
 
 
 def register_all(strict: bool = False) -> Any:
@@ -567,17 +571,18 @@ def _build_command_handlers() -> Dict[str, Callable]:
 
         def _get_or_build_session(params: dict):
             """Return the live-preview session, building it lazily."""
-            sess = _LP_STATE.get("session")
-            if sess is None:
-                # Caller must pass a ``controller`` object in params; this
-                # handler is a no-op for environments lacking an active
-                # controller (Blender-side wires one in).
-                controller = (params or {}).get("controller")
-                if controller is None:
-                    return None
-                sess = _lp.LivePreviewSession(controller=controller)
-                _LP_STATE["session"] = sess
-            return sess
+            with _LP_LOCK:
+                sess = _LP_STATE.get("session")
+                if sess is None:
+                    # Caller must pass a ``controller`` object in params; this
+                    # handler is a no-op for environments lacking an active
+                    # controller (Blender-side wires one in).
+                    controller = (params or {}).get("controller")
+                    if controller is None:
+                        return None
+                    sess = _lp.LivePreviewSession(controller=controller)
+                    _LP_STATE["session"] = sess
+                return sess
 
         def _handle_terrain_preview_apply(params: dict) -> dict:
             sess = _get_or_build_session(params)
@@ -599,7 +604,8 @@ def _build_command_handlers() -> Dict[str, Callable]:
             }
 
         def _handle_terrain_preview_reset(params: dict) -> dict:
-            _LP_STATE["session"] = None
+            with _LP_LOCK:
+                _LP_STATE["session"] = None
             return {"status": "ok", "reset": True}
 
         def _handle_terrain_preview_diff(params: dict) -> dict:
@@ -649,20 +655,22 @@ def _build_command_handlers() -> Dict[str, Callable]:
         _HR_STATE: Dict[str, Any] = {"watcher": None}
 
         def _get_watcher():
-            w = _HR_STATE.get("watcher")
-            if w is None:
-                w = _hr.HotReloadWatcher()
-                w.watch_biome_rules()
-                w.watch_material_rules()
-                _HR_STATE["watcher"] = w
-            return w
+            with _HR_LOCK:
+                w = _HR_STATE.get("watcher")
+                if w is None:
+                    w = _hr.HotReloadWatcher()
+                    w.watch_biome_rules()
+                    w.watch_material_rules()
+                    _HR_STATE["watcher"] = w
+                return w
 
         def _handle_hot_reload_start(params: dict) -> dict:
             w = _get_watcher()
             return {"status": "ok", "watched": list(w.watched_modules)}
 
         def _handle_hot_reload_stop(params: dict) -> dict:
-            _HR_STATE["watcher"] = None
+            with _HR_LOCK:
+                _HR_STATE["watcher"] = None
             return {"status": "ok", "stopped": True}
 
         def _handle_hot_reload_check(params: dict) -> dict:

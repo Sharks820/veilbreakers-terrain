@@ -1973,17 +1973,14 @@ def run_validation_suite(
 # running the pass through TerrainPassController.run_pass). We keep it as
 # a weak contract: if not set, pass_validation_full simply returns a
 # PassResult and does not attempt rollback.
-_ACTIVE_CONTROLLER: Optional[TerrainPassController] = None
+# Single ContextVar — no plain global to avoid concurrent-request race conditions.
 _ACTIVE_CONTROLLER_CTX: contextvars.ContextVar[Optional[TerrainPassController]] = (
     contextvars.ContextVar("terrain_validation_active_controller", default=None)
 )
 
 
 def _get_active_controller() -> Optional[TerrainPassController]:
-    controller = _ACTIVE_CONTROLLER_CTX.get()
-    if controller is not None:
-        return controller
-    return _ACTIVE_CONTROLLER
+    return _ACTIVE_CONTROLLER_CTX.get(None)
 
 
 def bind_active_controller(
@@ -2000,10 +1997,8 @@ def bind_active_controller(
       - ``already_bound``: True if the same instance was already registered.
       - ``controller_id``: id() of the newly bound controller, or None.
     """
-    global _ACTIVE_CONTROLLER
     if controller is None:
         _ACTIVE_CONTROLLER_CTX.set(None)
-        _ACTIVE_CONTROLLER = None
         return {"bound": True, "already_bound": False, "controller_id": None}
 
     active_controller = _get_active_controller()
@@ -2011,7 +2006,6 @@ def bind_active_controller(
         return {"bound": False, "already_bound": True, "controller_id": id(controller)}
 
     _ACTIVE_CONTROLLER_CTX.set(controller)
-    _ACTIVE_CONTROLLER = controller
     return {"bound": True, "already_bound": False, "controller_id": id(controller)}
 
 

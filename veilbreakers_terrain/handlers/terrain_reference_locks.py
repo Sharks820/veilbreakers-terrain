@@ -9,12 +9,16 @@ See Addendum 1.A.4.
 
 from __future__ import annotations
 
+import logging
 import math
+import os
 import threading
 from dataclasses import dataclass
 from typing import Dict, List
 
 from .terrain_semantics import TerrainAnchor, TerrainIntentState
+
+logger = logging.getLogger(__name__)
 
 
 class AnchorDrift(RuntimeError):
@@ -89,6 +93,9 @@ def assert_anchor_integrity(
     tolerance: float = 0.01,
 ) -> None:
     """Raise ``AnchorDrift`` if a named anchor no longer matches its lock."""
+    if os.environ.get("TERRAIN_DEV_MODE") == "1":
+        logger.warning("DEV_MODE: reference lock check still runs (env-var bypass removed)")
+    # ... full check executes regardless of TERRAIN_DEV_MODE ...
     with _LOCKED_ANCHORS_GUARD:
         locked = _lock_registry().get(anchor.name)
     if locked is None:

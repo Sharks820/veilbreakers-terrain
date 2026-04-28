@@ -133,10 +133,17 @@ class ProtocolGate:
             return
         vantage = state.viewport_vantage  # declared field — no getattr fallback needed
         if vantage is None:
+            if not out_of_view_ok:
+                raise ProtocolViolation(
+                    "Protocol Rule 2: viewport_vantage is None but out_of_view_ok=False. "
+                    "Cannot verify out-of-view readability. "
+                    "Call terrain_viewport_sync.read_user_vantage() and assign the result "
+                    "to state.viewport_vantage, or pass out_of_view_ok=True for headless runs.",
+                    rule_number=2,
+                    severity="hard",
+                )
             _rule2_log.warning(
-                "rule_2/soft: state.viewport_vantage is None — Rule 2 check skipped. "
-                "Call terrain_viewport_sync.read_user_vantage() and assign the result "
-                "to state.viewport_vantage, or pass out_of_view_ok=True for headless runs."
+                "Protocol Rule 2: no viewport_vantage, skipping readability check (out_of_view_ok=True)"
             )
             return
 

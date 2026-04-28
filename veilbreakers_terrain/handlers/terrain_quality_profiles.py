@@ -797,7 +797,9 @@ def load_quality_profile(
         _chain = []
 
     if name not in _BUILTIN_PROFILES:
-        raise KeyError(f"Unknown quality profile: {name!r}")
+        raise ValueError(
+            f"Unknown quality profile: {name!r}. Valid profiles: {list(_BUILTIN_PROFILES)}"
+        )
 
     if name in _chain:
         raise ProfileValidationError(
