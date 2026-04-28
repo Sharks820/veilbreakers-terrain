@@ -2251,5 +2251,73 @@ These test assertions currently encode buggy behaviour as correct. They will fai
 
 ---
 
+---
+
+## BATCH 8 — Section 21 Full-Codebase Scrub P0s (2026-04-28 4-agent Opus sweep)
+
+*Execute after Batches 0–7. 31 new P0s confirmed across core pipeline, scatter, water, roads, Unity export, and providers.*
+
+### Priority 8A — Single-line / low-risk fixes
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-8-1 (splatmap append zeros) | `terrain_quixel_ingest.py:577–587` | After concatenation, set `expanded[:, :, -1] = initial_weight` (derive from Quixel layer coverage mask) before normalizing; do NOT divide by sum of all-zeros new layer |
+| FIX-8-2 (tree Z=0) | `environment_scatter.py:3409` + `terrain_unity_export.py:1916` | Compute `instance.location.z` at scatter time from `stack.height` sample at placement XY; write to placement dict before export |
+| FIX-8-3 (tree wind default) | `terrain_unity_export.py:1900–1911` | Replace `_WIND_DIR_DEFAULT` with per-placement wind read from `stack.wind_field` at instance XY; fall back to `(1,0)` only when wind_field is None |
+| FIX-8-4 (tree scale=1.0) | `terrain_unity_export.py:1921–1922` | Read per-instance `scale_x`/`scale_z` from placement dict; output to TreeInstance `widthScale`/`heightScale` |
+| FIX-8-5 (foam direction inverted — waterfall) | `terrain_waterfalls.py:2586` | Change `(flow_nx*0.9, flow_ny*0.9, -0.436)` to `(flow_nx*0.9, flow_ny*0.9, 0.1)` — emit near-horizontal with slight upward bias, let gravity handle arc |
+| FIX-8-6 (Hunyuan3D2 download timeout) | `hunyuan3d2_provider.py:302` | `thread.join(timeout=self.timeout_s)` ; if thread is still alive after timeout raise `TimeoutError` |
+| FIX-8-7 (Meshy init raises) | `meshy_provider.py:103–104` | Move `MESHY_API_KEY` check from `__init__` to `submit()` |
+| FIX-8-8 (height_min_m stale) | `terrain_semantics.py:set()` | In `set()` method, when channel name is `"height"`, update `self.height_min_m = float(val.min())` and `self.height_max_m = float(val.max())` |
+| FIX-8-9 (seam threshold) | `terrain_golden_snapshots.py:430` | Change `edge_std < 0.5` to `edge_std < 0.2`; update reason string to `"need < 0.2"` |
+| FIX-8-10 (tolerance bypassed) | `terrain_golden_snapshots.py:153` | Change `if tolerance > 0.0 and golden_dir is not None` to `if tolerance > 0.0` — tolerance should apply regardless of golden_dir; document None golden_dir means no-comparison, not hard-fail |
+| FIX-8-11 (tolerance ignored in channel loop) | `terrain_golden_snapshots.py:189–205` | Apply `np.allclose(hash_a, hash_b, atol=tolerance)` in the per-channel divergence loop instead of byte equality |
+| FIX-8-12 (strata sign convention) | `terrain_validation.py:1387` | Add docstring: declare sign convention (positive-down depth vs positive-up elevation); add assertion `assert strata_depths.min() >= 0` with message explaining convention |
+
+### Priority 8B — Algorithmic / vectorisation fixes
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-8-13 (flow accumulation O(N) Python) | `terrain_advanced.py:1948–1951` | Replace with NumPy indexed-add using precomputed receiver indices: `np.add.at(flow_acc.flat, recv_flat, flow_acc.flat[src_flat])` in topographic order via argsort |
+| FIX-8-14 (drainage-basin union-find O(N²)) | `terrain_advanced.py:1952–1998` | Replace double for-loop with scipy.ndimage.label or a vectorised union-find using flat-index rank/parent arrays |
+| FIX-8-15 (Manning velocity O(H*W) Python) | `_water_network.py:1551–1574` | Vectorise: `n_arr = np.where(fa>=river_threshold, n_river, n_stream); V = (1.0/n_arr) * R_arr**(2/3) * np.sqrt(S_arr); vx = V * lut_dx[fd]; vy = V * lut_dy[fd]` |
+| FIX-8-16 (LocationLayer triple-loop) | `environment_scatter.py:1371–1401` | Replace repulsion loop with `scipy.spatial.cKDTree(accepted_xy).query_ball_point(candidate_xy, min_dist)` → reject any candidate with non-empty result |
+| FIX-8-17 (90 Poisson-disk calls) | `environment_scatter.py:1040–1093` | Generate one stratified candidate pool per pass; all species filter from the shared pool via per-species density mask |
+| FIX-8-18 (vertex_grid O(N) per candidate) | `vegetation_system.py:411–421` | Replace vertex_grid dict with a rasterised terrain-sample: pre-index `stack.height` / `stack.slope` / `stack.wetness` and sample by world-to-cell projection |
+
+### Priority 8C — Correctness fixes
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-8-19 (stochastic shader diagonal seams) | `terrain_stochastic_shader.py:163–166` (HLSL) | Implement Heitz 2019 case-split: when `fracUV.x + fracUV.y > 1`, use `w = float3(1-fracUV.x, 1-fracUV.y, fracUV.x+fracUV.y-1)` as the upper-right triangle basis |
+| FIX-8-20 (stochastic shader contrast) | `terrain_stochastic_shader.py:135` (HLSL) | Replace scalar `contrast` with `contrast = 1.0 / sqrt(dot(w, w))` per Heitz 2019 §3.3; remove user-tunable contrast parameter |
+| FIX-8-21 (gradient axis swap) | `terrain_advanced.py:1545–1546` | Swap `gx`/`gy` computation to match `_terrain_erosion` convention: `gx = (h10 - h00)*(1-fr) + (h11 - h01)*fr`, `gy = (h01 - h00)*(1-fc) + (h11 - h01)*fc` |
+| FIX-8-22 (A* inadmissible heuristic) | `road_network.py:213–222` | Remove slope-penalty from heuristic function; cost function already penalises slope — heuristic must be admissible (Euclidean only) |
+| FIX-8-23 (boolean fallback corrupt geometry) | `blender_capability_bridge.py:1062–1093` | Remove the pre-merge step before the boolean call; only merge when `intersect_boolean` is genuinely missing (add correct version guard) |
+| FIX-8-24 (species_id stripped) | `environment_scatter.py:861` | Do NOT overwrite `placement_local["vegetation_type"]`; preserve full `species_id` from catalog; let `_build_scatter_point_table` map species_id → prototype_id |
+| FIX-8-25 (BIOME_ID_MAP always {}) | `vegetation_system.py:1040–1043` | Replace `getattr(stack, "BIOME_ID_MAP", None)` with `stack.get("biome_id")` numeric raster lookup; derive `biome_mask = (biome_arr == numeric_id)` from the actual channel (once biome_id is written — coordinate with FIX for biome_id writer) |
+| FIX-8-26 (texture layer validator) | `terrain_texture_layer_stack.py:53` | Replace `hasattr(terrain_stack, layer.terrain_mask_source)` with `terrain_stack.get(layer.terrain_mask_source) is not None` |
+| FIX-8-27 (Hunyuan3D2 generate_blocking ABC bypass) | `hunyuan3d2_provider.py:331–366` | Refactor `generate_blocking` to call `submit()` → `poll()` loop → `download()` per ABC contract; remove thread-based override; ensure `_jobs` dict is populated |
+
+### Priority 8D — New phantom channel writers
+
+| Fix ID | Channel | Required action |
+|--------|---------|----------------|
+| FIX-8-28 (physics_collider_mask) | `physics_collider_mask` | Add writer in Bundle physics pass or terrain_assets.py: classify cells by slope/terrain-type into passable/impassable mask; `stack.set("physics_collider_mask", mask)` |
+| FIX-8-29 (tidal) | `tidal` | Add writer in a tidal-zone pass (near-coast low-frequency oscillation mask); if tidal gameplay is not in scope, remove from `_ARRAY_CHANNELS` and `UNITY_EXPORT_CHANNELS` |
+| FIX-8-30 (decal_density) | `decal_density` | Convert `stack.decal_density = {}` at `terrain_decal_placement.py:286` to `stack.set("decal_density", {}, "terrain_decal_placement")` |
+
+### Batch 8 summary
+
+| Batch 8 sub-group | Count | Notes |
+|-------------------|-------|-------|
+| 8A single-line fixes | 12 | Commit atomically, one fix per commit; 8-9/10/11 are the S19 regressions now elevated to P0 |
+| 8B vectorisation fixes | 6 | Each needs a performance test asserting sub-5s for 1024² tile |
+| 8C correctness | 9 | FIX-8-19/20 require HLSL edit to embedded shader string |
+| 8D phantom writers | 3 | FIX-8-29 may resolve to deletion if tidal is out of scope |
+| **Total new** | **30** | FIX-8-1 through FIX-8-30 |
+
+---
+
 *End of FIX_ORDER_CODEX_2026_04_27.md*  
-*Total active P0s covered: 223 (202 original + 21 from Section 20 Batch 7). Execute batches in order 0→1→2→3→4→5→6→7.*
+*Total active P0s covered: 253 (202 original + 21 Batch 7 + 30 Batch 8). Execute batches in order 0→1→2→3→4→5→6→7→8.*

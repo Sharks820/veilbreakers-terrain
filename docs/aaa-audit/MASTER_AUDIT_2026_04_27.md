@@ -3225,3 +3225,307 @@ New P1 findings: **17** (S20-P1-1 through S20-P1-17)
 - **Overall grade: D−** (floor — unchanged)
 
 **End of Section 20 Addendum.**
+
+---
+
+## Section 21 — Full-Codebase Scrub: 4-Agent Opus Sweep (2026-04-28)
+
+*Four parallel Opus agents each reading distinct quadrants of the codebase end-to-end. Each agent verified every cited line. Combined coverage: ~22,000 lines across 30+ files not previously audited at behavior level.*
+
+---
+
+### S21-HANDLERS — Unaudited Handlers & Bundle Orchestrators
+
+**S21-P1-1: terrain_god_ray_hints.py shadow-boundary gradient is north/west-only biased**
+
+Lines 238–249 compute shadow-edge gradient against only the north and west neighbours:
+```python
+shad_grad_r = np.abs(shadow_f - _sf_pad[:-2, 1:-1])   # north only
+shad_grad_c = np.abs(shadow_f - _sf_pad[1:-1, :-2])   # west only
+```
+South and east edges are silently missed. God-ray shaft hints are systematically biased toward the NW side of every silhouette. Identical bias on `cs_edge` (cloud shadow, lines 248–249). Fix: full 4-neighbour symmetric gradient. Visible artifact on every tile.
+
+**S21-P1-2: terrain_god_ray_hints.py reads non-existent `forest_mask` channel**
+
+`stack.get("forest_mask")` at line 205. `forest_mask` is not declared in `_ARRAY_CHANNELS` or `_OPAQUE_CHANNELS`. Always returns `None`. Foliage shafts always fall through to the slope-fallback heuristic; forest shaft detection never triggers from the dedicated path.
+
+**S21-P1-3: terrain_god_ray_hints.py `requires_channels` contract lie**
+
+Pass registration declares `requires_channels=("height",)` but the pass body also reads `cloud_shadow`, `cave_candidate`, and `waterfall_lip_candidate`. PassDAG cannot order this pass after those producers — race condition on first-tile generation.
+
+**S21-P1-4: vertex_paint_live.py O(N) brute-force distance computation per brush stroke**
+
+Lines 88–94 compute `np.linalg.norm` against all 16M+ vertices of a 4096² mesh for every brush stroke. No AABB prefilter or BVH. At AAA tile sizes, each brush click takes >1 second. CDPR/RDR2 vertex-paint operators use BVH-accelerated neighbour queries.
+
+**S21-P1-5: terrain_master_registrar.py overwritten-pass detection uses Python object identity**
+
+Line 274–278 compares with `is not`. Since `PassDefinition` is a frozen dataclass, re-registration with identical fields still triggers a false-positive "duplicate" warning. Should compare by name+func.
+
+**S21-P1-6: terrain_master_registrar.py Bundle A not safe-wrapped**
+
+`register_default_passes(strict=strict)` at line 200–202 is not wrapped in try/except even when `strict=False`. If Bundle A fails, the entire `register_all_terrain_passes` raises — contradicting the "graceful degradation" promise of `_safe_import_registrar`.
+
+**S21-P1-7: terrain_telemetry_dashboard.py dict channels undercounted in channel metrics**
+
+Line 56–62: `for name in stack._ARRAY_CHANNELS:` — iterates only scalar channels. `detail_density`, `wildlife_affinity`, `decal_density` are dict channels in `_DICT_CHANNELS`. Dashboard reports a "channel count regression" whenever scatter work shifts to dict channels; metric is unreliable.
+
+**S21-P1-8: terrain_visual_diff.py height delta normalised by per-frame max**
+
+Lines 138–144 normalise the diff overlay by `np.abs(dh).max()`. A 1cm bump and a 100m reset produce visually identical diff tiles. Should use a stable world-height range from `state.intent` — otherwise the regression viewer cannot distinguish magnitude.
+
+**S21-P1-9: terrain_asset_metadata.py LOD screen-height monotonicity unchecked**
+
+`validate_asset_metadata()` (lines 174–301) checks `lod_index` ordering but not that `screen_height_px` is monotonically decreasing across LOD levels. An asset with `LOD0=10px, LOD1=200px` validates and ships with inverted LOD transitions — LOD1 (lowest quality) renders closer to camera than LOD0.
+
+**S21-P1-10: terrain_scatter_altitude_audit_linter.py asymmetric variable-name patterns**
+
+Lines 30–38: division patterns only match the literal variable names `heights` and `heightmap`. Renaming to `h`, `elev`, or `altitude` bypasses the linter silently. The `array_minus_array_min` pattern (line 37) also produces high false-positives on non-altitude min-zeroing (e.g. `times - times.min()`).
+
+---
+
+### S21-PIPELINE — Core Data Pipeline, Erosion, Materials, Vegetation
+
+**S21-P0-1: terrain_advanced.py flow accumulation is O(N) Python loop at AAA tile sizes**
+
+`compute_flow_accumulation()` lines 1948–1951:
+```python
+for k in range(valid_mask.sum()):
+    flow_acc[recv_r[k], recv_c[k]] += flow_acc[valid_r[k], valid_c[k]]
+```
+At 4096² = 16.7M iterations in pure Python. CDPR/Guerrilla flow accumulation is GPU or NumPy pointer-doubling. This function is on the critical path for river/waterfall generation.
+
+**S21-P0-2: terrain_advanced.py drainage-basin union-find is double O(N) Python loop**
+
+Lines 1952–1998: two nested Python for-loops (`for fi in range(rows*cols):` after `for i in range(flat_indices.size):`). Same scaling failure as flow accumulation. Both must be vectorised before AAA tile builds are viable.
+
+**S21-P0-3: terrain_advanced.py bilinear gradient axis swap in `compute_erosion_brush`**
+
+Lines 1545–1546: `gy` is computed against `fc` (column fraction) and `gx` against `fr` (row fraction) — conventions opposite to `_terrain_erosion.apply_hydraulic_erosion_masks` (which uses the standard formulation where `h10 = result[ir+1, ic]` is the row-direction neighbour). One system has gx and gy swapped. Erosion paths in `terrain_advanced` are rotated 90° relative to `_terrain_erosion` output.
+
+**S21-P0-4: terrain_texture_layer_stack.py validator uses `hasattr` on stack channels — false positive on every layer**
+
+Line 53: `not hasattr(terrain_stack, layer.terrain_mask_source)`. `TerrainMaskStack` channels are accessed via `stack.get(name)`, not as attributes. Every `validate_layer()` call against a production stack fires false-positive "not found" errors for every valid layer. The entire layer-stack validator is broken.
+
+**S21-P0-5: vegetation_system.py BIOME_ID_MAP always returns `{}` — biome reader silently disconnected**
+
+Line 1040: `getattr(stack, "BIOME_ID_MAP", None)`. `TerrainMaskStack` does not define `BIOME_ID_MAP`; this always returns `{}`. `numeric_id` is always `None`, and the function silently treats the full tile as the target biome. This is a **double disconnect**: the `biome_id` channel has zero writers (S19 gap sweep) AND the reader has no path to look up the ID — even after a writer is added, the reader must also be fixed.
+
+**S21-P0-6: vegetation_system.py vertex_grid O(N) Python nearest-neighbour per Poisson candidate**
+
+Lines 411–421: a Python dict of terrain vertices is built once, then `_sample_terrain` does a Python 3×3 cell-window nearest-neighbour scan for every Poisson candidate. At 1024² = 1M+ vertices × 10K candidates × LOD tiers, this is millions of Python dict lookups per scatter call. Must be replaced with a rasterised terrain-sample read.
+
+**S21-P0-7: terrain_stochastic_shader.py HLSL triangular weight is negative half the time → diagonal seams**
+
+Lines 163–166 (HLSL):
+```hlsl
+float3 w = float3(fracUV.x, fracUV.y, 1.0 - fracUV.x - fracUV.y);
+w = pow(saturate(w * sharpness), 2.0);
+```
+The third weight `1 - fracUV.x - fracUV.y` is negative for all texels in the upper-right triangle of every tile cell. `saturate` clamps it to 0, collapsing those cells to a 2-tap blend. This is exactly the Heitz 2019 triangular-basis failure mode the shader exists to prevent — a visible diagonal seam every tile. The Heitz/Mikkelsen hex-tiling fix requires a case-split `case_hi` branch (as in `build_hex_tiling_mask` at line 814) that the HLSL body does not implement.
+
+**S21-P0-8: terrain_stochastic_shader.py contrast correction is not the Heitz 2019 formula → fireflies**
+
+Line 135 (HLSL): `return mean + (blended - mean) * contrast;`
+
+Heitz 2019 §3.3 variance-preserving contrast requires `contrast = 1/sqrt(w.x² + w.y² + w.z²)`. The current shader uses a user-tunable scalar (default `contrast=1.4`). Under this formulation the blended output can exceed `[0, 1]`, producing fireflies and overbright specular. The formula is not the published algorithm.
+
+---
+
+### S21-WATER-ROADS — Water Network, Roads, Scatter, Quixel, Unity Export
+
+**S21-P0-9: _water_network.py Manning velocity field is O(H×W) pure Python → ~30s per tile**
+
+Lines 1551–1574: `compute_velocity_field` iterates every cell via a Python double for-loop computing Manning's equation. At 1024² ≈ 1M cells this takes >30 seconds. Should be:
+```python
+V = (1.0 / n_arr) * R_arr**(2/3) * np.sqrt(S_arr)
+```
+Drops to ~50ms.
+
+**S21-P0-10: _water_network.py `_ensure_drainage` topographic-order loop is O(N) pure Python**
+
+Lines 759–767 in the internal drainage sorter iterate every cell in topographic order through a Python for-loop. Same class of failure as E-3 but on the water network. On the critical path for every tile waterfall computation.
+
+**S21-P0-11: road_network.py A\* heuristic is inadmissible by design → silently returns wrong paths**
+
+Lines 213–222 of the heuristic function: the docstring explicitly states "Slightly inadmissible." In A\*, combined with `MAX_NODES = 200_000` cap, an inadmissible heuristic causes the algorithm to **return whatever cell is near the goal when the cap fires**, not the optimal path. Roads silently degrade to arbitrary approximations on large terrain. Fix: strip slope-penalty from the heuristic (already in the cost function); keep heuristic to pure Euclidean.
+
+**S21-P0-12: environment_scatter.py `LocationLayer.generate` Python triple-loop repulsion**
+
+Lines 1371–1401: repulsion checking iterates candidates × neighbour cells × accepted list in Python. At density=0.04 on a 1024² tile (~40K candidates), this is O(N×k) Python per tile, per species. Used in production for grass scatter. Must use scipy.spatial.cKDTree radius queries.
+
+**S21-P0-13: environment_scatter.py `_generate_multipass_scatter_placements` runs 90+ Poisson-disk calls per tile**
+
+Lines 1040–1093: 3 passes × ~30 species each triggering a full Poisson disk call = ~90 Poisson-disk computations per tile. Witcher 3 uses one stratified candidate pool that all species filter from.
+
+**S21-P0-14: environment_scatter.py `_filter_multipass_scatter_placements` strips species_id → catalog binding broken**
+
+Line 861: `placement_local["vegetation_type"] = base_type` overwrites species_id with coarse type (`"tree"`, `"bush"`, etc.) for rule-matched biomes. `_build_scatter_point_table_from_placements` reads `species_id` for asset path resolution — finds the coarse type instead, cannot resolve catalog paths. Rule-driven biome placements all fail to resolve the correct asset prototype.
+
+**S21-P0-15: terrain_quixel_ingest.py splatmap layer append always zeros the new layer — Quixel ingestion is a no-op**
+
+Lines 577–587:
+```python
+new_slice = np.zeros((rows, cols, 1), dtype=np.float32)
+expanded = np.concatenate([current, new_slice], axis=2)
+total = expanded.sum(axis=2, keepdims=True)
+...
+stack.set("splatmap_weights_layer", (expanded / total), ...)
+```
+The new layer is all zeros. Dividing by the sum renormalises existing layers to themselves. The Quixel layer permanently has zero blend weight. `pass_quixel_ingest` final renormalization (line 928–934) operates on a zero-sum new layer. **The entire Bundle K Quixel texturing pipeline produces no visible change to the splatmap.**
+
+**S21-P0-16: terrain_unity_export.py all tree instances ship at Z=0**
+
+`environment_scatter.py:3409` writes a placeholder `0.0` for instance Z-coordinate. `terrain_unity_export.py:1916–1917` reads `row[2]` and ships it verbatim. All trees in Unity sit at world-Y=0, far below terrain.
+
+**S21-P0-17: terrain_unity_export.py all tree instances use default +X wind bend — wind_field never read**
+
+Lines 1900–1911 compute `wind_bend_vertex_color` from `_WIND_DIR_DEFAULT = (1.0, 0.0)` — a constant — inside the per-tree loop. `stack.wind_field` is never consulted. All trees in every biome bend in +X regardless of terrain wind. Witcher 3/Horizon derive per-tree wind from the wind-field channel.
+
+**S21-P0-18: terrain_unity_export.py all tree instances ship with scale=1.0 — per-instance variance lost**
+
+Lines 1921–1922 output `widthScale=1.0, heightScale=1.0` for every tree. The scatter pipeline computes ±20% scale variance per instance; it is dropped here. Unity `TreeInstance` natively supports `widthScale`/`heightScale` — currently unused.
+
+**S21-P0-19: blender_capability_bridge.py boolean fallback always produces double-merged geometry**
+
+Lines 1062–1093: the fallback branch (triggered when `intersect_boolean` is absent) merges the cutter bmesh into the source bmesh and then **still attempts to call `intersect_boolean`**. In Blender 4.5, `intersect_boolean` IS present so the fallback never fires — but the pre-merge step runs before the boolean, adding the cutter geometry to the source before diffing. Boolean DIFFERENCE adds the cutter instead of subtracting it. Any agent using boolean ops gets corrupt geometry.
+
+**S21-P0-20: terrain_waterfalls.py lip particle emission normal points downward through cliff face**
+
+Line 2586: `(flow_nx*0.9, flow_ny*0.9, -0.436)` — initial emission direction is −26° pitch. Real waterfall lip particles emit horizontally (or upward) with gravity pulling them down. Current setting fires particles through the cliff face below the lip.
+
+---
+
+### S21-VALIDATION — Validation, Semantics, Providers, Test Gaps
+
+**S21-P0-21: terrain_golden_snapshots.py water-seam threshold 0.5 vs spec 0.2 (S19 regression still active)**
+
+Line 430: `ok = edge_std < 0.5`. The `SCENARIO_GOLDENS` dict at line 381 documents `"edge std < 0.2"`. The spec value is 0.2; the code uses 0.5 (2.5× too permissive). Reason string at line 431 still reads `"need < 0.5"`. S19 flagged this as a regression; it remains unfixed.
+
+**S21-P0-22: terrain_golden_snapshots.py tolerance parameter silently bypassed when golden_dir=None (S19 regression still active)**
+
+Line 153: `if tolerance > 0.0 and golden_dir is not None:` — callers passing `tolerance > 0` but no golden directory get hard failures instead of tolerance-gated comparisons. The function default is `golden_dir=None`, so the tolerance parameter is effectively disabled in the default call pattern.
+
+**S21-P0-23: terrain_golden_snapshots.py channel-divergence loop ignores tolerance entirely**
+
+Lines 189–205: even when the content-hash branch passes via `np.allclose`, the per-channel hash comparison is byte-for-byte with no tolerance applied. Any floating-point noise in any channel produces a hard `GOLDEN_CHANNEL_DIVERGENCE` failure. Tolerance has zero effect on this code path.
+
+**S21-P0-24: terrain_validation.py strata depth-ordering sign convention undocumented**
+
+Lines 1387–1388: the check `strata_depths[..., i+1] < strata_depths[..., i] - 1e-6` is correct if depth is signed-positive-down, wrong if depth is elevation (positive-up). The docstring says "layer 0 is the surface (youngest)"; no sign convention is declared. First deployment with elevation-as-depth will hard-fail every strata cell.
+
+**S21-P0-25: terrain_semantics.py `physics_collider_mask` — new phantom channel**
+
+Declared in `_ARRAY_CHANNELS` (line 611), `_CHANNEL_CONSTRAINTS` (line 813), and `UNITY_EXPORT_CHANNELS` (line 916). Zero `stack.set("physics_collider_mask", …)` writers anywhere in the production codebase. Unity receives a null/zero collider mask on every tile — physics collision is disabled for all terrain.
+
+**S21-P0-26: terrain_semantics.py `tidal` — new phantom channel**
+
+Declared in `_ARRAY_CHANNELS` (line 576) and `UNITY_EXPORT_CHANNELS` (line 929). Only writers are in test files. No production handler ever calls `stack.set("tidal", …)`.
+
+**S21-P0-27: terrain_semantics.py `decal_density` bypasses provenance via direct attribute assignment**
+
+Only writer is `stack.decal_density = {}` in `terrain_decal_placement.py:286`. This bypasses `stack.set()`, mutation tracking, dirty-flag propagation, and content-hash invalidation. Provenance for decal_density is always `None`; validators cannot audit it.
+
+**S21-P0-28: terrain_semantics.py `height_min_m`/`height_max_m` stale after height updates**
+
+Lines 686–689: `height_min_m` and `height_max_m` are computed from the initial `height` array at construction. `stack.set("height", new_arr)` (called by every erosion, stratigraphy, and fold pass) does **not** update these scalars. Unity `.raw` export uses these values for normalisation. After the first erosion pass, Unity's height decode will produce wrong world-space elevations.
+
+**S21-P0-29: hunyuan3d2_provider.py `download()` calls `thread.join()` with no timeout**
+
+Line 302: `thread.join()` with no `timeout=` argument. If the HuggingFace Space hangs (Space outage, rate-limit, network partition), the call blocks forever. The `timeout_s` constructor parameter is never consulted in the `download()` path. Will block CI pipelines indefinitely.
+
+**S21-P0-30: hunyuan3d2_provider.py `generate_blocking` bypasses ABC contract and `_jobs` registry**
+
+Lines 331–366: `generate_blocking()` overrides the ABC base with a thread-based implementation that does NOT call `submit()`/`poll()`/`download()`. As a result:
+- No job_id tracking (line 374 fabricates one from the GLB filename)
+- `_jobs` dict is never updated; `poll(<fabricated_id>)` raises `KeyError`
+- Liskov substitution violation — callers relying on the ABC contract get silent failures
+
+**S21-P0-31: meshy_provider.py raises in `__init__` without env var — blocks import**
+
+Line 103–104: `RuntimeError("MESHY_API_KEY not set")` raised at `__init__`. Instantiating `MeshyProvider` in any offline/test environment (CI, local dev without the key) hard-fails. `Hunyuan3D2Provider` tolerates missing env; the inconsistent contract makes the provider system unreliable as a unit in environments where only one backend is configured.
+
+---
+
+### S21-PERF — Major performance P1s (AAA tile viability)
+
+*(Not P0 correctness failures, but render pipelines at CDPR/Guerrilla tile sizes are blocked by these)*
+
+- **S21-P1-A: `_terrain_erosion.py:331–477`** — droplet outer loop 1000 × 30 steps × 49-cell Python brush = ~1.5M ops (re-confirms E-3 at full scale with brush detail)
+- **S21-P1-B: `terrain_advanced.py:1471`** — second copy of the Python hydraulic particle loop, separate from `_terrain_erosion`
+- **S21-P1-C: `vegetation_system.py:527–545`** — competition check Python dict-of-lists, 250K iterations per tile
+- **S21-P1-D: `_water_network.py:2731–2737`** — `compute_strahler_orders` O(N²) per segment dequeue (5K segments = 25M comparisons; build source-node index)
+- **S21-P1-E: `terrain_pipeline.py:407–414`** — `compute_hash` hashes ~2GB of channel data per pass (~4s overhead per pass × 30 passes = 2 min pure hashing per tile)
+- **S21-P1-F: `terrain_pipeline.py:660–666`** — `copy.deepcopy(state)` for Bundle N = ~2GB RAM doubled; OOM silently swallowed (`except: bundle_n_pre = None`)
+- **S21-P1-G: `vegetation_lsystem.py:666–667`** — `]` tip-mark depth off-by-one: last segment's depth compared against pre-pop depth; tips wrongly marked on inner branches
+
+---
+
+### S21-ADDITIONAL — Notable additional findings
+
+**S21-P1-H: terrain_advanced.py:1696–1712 wind erosion quantises to 4 cardinals only**
+
+Wind from 30° NNE collapses to pure N. AAA wind erosion (Geomorphic Atlas, RDR2) uses Bresenham multi-cell deposition with sub-cell precision. All diagonal wind directions produce incorrect erosion topology.
+
+**S21-P1-I: terrain_quixel_ingest.py:264–266 HDR EXR normalisation destroys HDR range**
+
+```python
+elif raw.max() > 2.0:
+    raw = raw / 255.0
+```
+For genuine HDR EXRs (max ≈ 12.0), this divides by 255 and silently destroys the dynamic range. Quixel displacement EXRs are 16-bit float and are truncated to near-zero.
+
+**S21-P1-J: road_network.py:1711–1722 `enforce_turn_radius` produces non-circular fillets**
+
+Arc midpoint is a pushed midpoint, not a true circular arc tangent. Produces visible kinks at road curves under bird's-eye render at city/highway tiers.
+
+**S21-P1-K: external_asset_provider.py:88–151 `validate()` runs two full GLB parsers**
+
+`trimesh.load` AND `pygltflib.GLTF2().load` both parse the same GLB file. ~2× parse cost per validated asset.
+
+**S21-P1-L: hunyuan3d2_provider.py:172–186 NameError fallback is string-sniffing on exception text**
+
+Line 204: `"NameError" in str(exc)` — if the HF Space updates its error message, the fallback dies silently.
+
+**S21-P1-M: terrain_pipeline.py:687–695 Bundle N exception handler is bare `except Exception: pass`**
+
+All Bundle N (QA gate) errors are silently swallowed. QA failures are invisible in logs.
+
+**S21-P1-N: terrain_semantics.py `UNITY_EXPORT_CHANNELS` missing 8 water channels**
+
+`water_surface_mask`, `water_surface_elevation_m`, `water_depth_m`, `bathymetry`, `water_depth_zone`, `flow_speed`, `wave_amplitude_per_vertex`, `riverbed_caustics` are all declared as stack channels but absent from `UNITY_EXPORT_CHANNELS`. Unity never receives any water-channel data beyond a global water plane.
+
+**S21-P1-O: terrain_semantics.py `compute_hash` non-deterministic for `mist_fog_volume` dict**
+
+Line 1031: `json.dumps(val, default=str)` on `mist_fog_volume` dict (which may contain numpy arrays per field doc at line 318). NumPy arrays serialised via `default=str` produce non-deterministic repr strings. Hash is non-deterministic whenever mist_fog_volume is populated.
+
+---
+
+### Section 21 grand total
+
+New P0 findings from this sweep: **31** (S21-P0-1 through S21-P0-31)
+New P1 findings: **26** (S21-P1-1 through S21-P1-10 + S21-P1-A through S21-P1-O)
+
+**Running cumulative grand total:**
+- **267 total confirmed P0 findings** (236 pre-S21 + 31 new)
+- **264 active unresolved P0 blockers** (3 previously fixed)
+- **Overall grade: D−** (floor — unchanged; systemic failures now confirmed across every subsystem)
+
+**Newly confirmed phantom channels (beyond S19/S20 list):**
+- `physics_collider_mask` (S21-P0-25)
+- `tidal` (S21-P0-26)
+- `decal_density` (S21-P0-27, via bypass)
+- **Borderline (single producer — one handler deletion turns them phantom):** `cliff_contour_spline`, `cave_wall_texture`, `bank_instability`, `wet_rock`, `shoreline_blend`, `mist_zone_mask`, `bathymetry`, `water_depth_zone`, `hero_feature_preview`
+
+**Top 10 by ship-impact (new from S21):**
+1. S21-P0-15 — Quixel splatmap append = no-op (entire Bundle K texturing pipeline produces no output)
+2. S21-P0-16/17/18 — All Unity trees at Z=0, same wind direction, scale=1.0
+3. S21-P0-7 — Stochastic shader diagonal seams on every tile
+4. S21-P0-11 — A* road heuristic inadmissible → wrong road paths silently
+5. S21-P0-9 — Manning velocity 30s/tile Python loop
+6. S21-P0-19 — Boolean fallback adds geometry instead of subtracting
+7. S21-P0-1/2 — Flow accumulation + drainage-basin O(N) Python at AAA sizes
+8. S21-P0-14 — Species_id stripped → all rule-driven biome placements unresolved
+9. S21-P0-29/30 — Hunyuan3D2 download hangs forever, generate_blocking silent failures
+10. S21-P0-25 — physics_collider_mask phantom → zero physics collision on terrain
+
+**End of Section 21.**
