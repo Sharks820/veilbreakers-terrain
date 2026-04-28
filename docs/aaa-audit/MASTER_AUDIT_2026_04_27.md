@@ -2854,3 +2854,296 @@ From `output/spreadsheet/GRADES_GAP_AUDIT_GRADES_VERIFIED_2026_04_28.csv` and `s
 **Revised running grand total (if Sections 18 and 19 ledgered):** **214 total P0 findings, 211 active unresolved** (209 master + S18-P0-1 + S18-P0-2 + S19-P0-1 + S19-P0-2 + S19-P0-3 = 214; minus 3 already-fixed legacy P0s referenced in Sections 11-17 corrections = 211 active).
 
 **End of Section 19.**
+
+---
+
+## Section 20 — Final Deep Dive: 8-Agent Sonnet Sweep (2026-04-28)
+
+*Eight independent Sonnet agents targeting the highest-risk unaudited handlers and active production passes. Each agent was given specific files and tasked with finding P0/P1 bugs, dead-code, wiring gaps, and math errors. All findings below are verified against current source.*
+
+---
+
+### S20-ASSETS — terrain_assets.py (945 lines)
+
+**S20-P0-1: Water exclusion absent from Bundle E scatter path**
+
+`compute_viability()` (lines 283–338) determines per-placement viability for all asset types. It checks slope, altitude, and biome rules — but **never reads `water_surface_elevation_m`**. The stack channel `water_surface_elevation_m` is never queried anywhere in `terrain_assets.py`. As a result, trees, rocks, and props are placed directly on top of water surfaces in every terrain run.
+
+Root cause: P0-A5-1 ("trees underwater") was identified in earlier sweeps but the fix was applied only to the original scatter path (`_scatter_engine.py`/`environment_scatter.py`). Bundle E uses `terrain_assets.py` as its viability engine; the fix never cascaded.
+
+- **File:** `veilbreakers_terrain/handlers/terrain_assets.py:283–338`
+- **Also missing:** `build_asset_context_rules()` never sets `forbidden_masks=("water_surface_mask",)` or equivalent
+- **Severity:** P0 — identical visual artifact to P0-A5-1 but on Bundle E assets (rocks, hero props, ground-cover patches)
+
+**S20-P1-1: `exclusion_radius_m` field declared but never enforced**
+
+`AssetRole` dataclass declares `exclusion_radius_m: float = 0.0` (line 109). No placement loop in `terrain_assets.py` reads this field. Hero assets with large exclusion radii silently cluster.
+
+**S20-P1-2: `hero_exclusion` channel never read in Bundle E path**
+
+The `hero_exclusion` channel (S19-P0-1, written nowhere) is also never *read* in the Bundle E critical path through `terrain_assets.py`. Even when eventually written, Bundle E will still not apply it without a code change here.
+
+**S20-P1-3: Altitude threshold unit mismatch**
+
+Altitude viability thresholds in `compute_viability()` are compared against `stack.height` (which may be normalised 0–1 or in world metres depending on pipeline state). No unit normalisation guard exists. Produces silent incorrect placement at extreme altitudes.
+
+**S20-P1-4: `_build_detail_density` O(N) Python loop**
+
+`_build_detail_density()` (lines 771–781) builds detail placement lists with a Python for-loop over all potential placements. On a 1025×1025 tile this is ≈1M iterations in Python. Should be vectorised with NumPy masking.
+
+---
+
+### S20-AUDIO — terrain_audio_zones.py (989 lines)
+
+**S20-P0-2: Entire RT60 physical modelling pipeline is dead code**
+
+`pass_audio_zones()` computes Norris-Eyring reverberation time for every zone and stores results in `stack.audio_zone_list`. The Unity exporter (`terrain_unity_export._audio_zones_json()`) **never reads `stack.audio_zone_list`** — it reads only the raw `audio_reverb_class` raster and applies a hardcoded lookup table. All Sabine/Norris-Eyring computation is silently discarded on every tile.
+
+Additionally, `export_zones_to_wwise_csv()` (line 887) is never called anywhere in the production pipeline.
+
+- **File:** `veilbreakers_terrain/handlers/terrain_audio_zones.py` / `terrain_unity_export.py`
+- **Severity:** P0 — 989 lines of audio physics code produce zero output. Unity builds use approximate hardcoded reverb, not computed values.
+
+**S20-P0-3: Sabine formula applied to open-sky terrain — RT60 overflow**
+
+`pass_audio_zones()` computes room-acoustics RT60 using `h_comp.std()` (standard deviation of heightmap in the zone) as the effective wall height. For open terrain this can produce values of 50–200m, driving Sabine's formula to RT60 > 100s — physically nonsensical and causing downstream consumers to clamp or crash.
+
+The Sabine/Norris-Eyring formula is a **closed-room** model. It is a category error to apply it to open-sky game terrain. The correct approach for outdoor reverb is distance-based early-reflection delay, not RT60.
+
+- **File:** `veilbreakers_terrain/handlers/terrain_audio_zones.py:502–548`
+- **Severity:** P0 — even if the pipeline were wired, the formula would produce invalid data
+
+**S20-P1-5: AO convention inverted in audio occlusion calculation**
+
+Line 565 uses `ao > 0.6` as "heavily occluded." Standard ambient-occlusion convention is AO=1.0 means fully lit (no occlusion), AO=0.0 means fully occluded. The threshold is backwards; heavily occluded areas are treated as open.
+
+---
+
+### S20-AUTO — autonomous_loop.py (592 lines)
+
+**S20-P0-4: `AAA_NORMAL_CONSISTENCY_MIN` defined but never used**
+
+`AAA_NORMAL_CONSISTENCY_MIN = 0.98` is defined at line 73 as a quality threshold for normal-map consistency. `select_fix_action()` (lines 521–592) makes no branch on normal consistency; the constant is never referenced outside the definition. Terrains with broken normal maps are never flagged for reprocessing by the autonomous loop.
+
+- **File:** `veilbreakers_terrain/handlers/autonomous_loop.py:73, 521–592`
+- **Severity:** HIGH (P1/P0 border) — the autonomous quality gate silently passes tiles with bad normals
+
+**S20-P1-6: Fix actions returned by `select_fix_action()` have no executor**
+
+`select_fix_action()` returns a string action name (e.g., `"smooth_heightmap"`, `"rebake_normals"`). No Blender executor, subprocess caller, or pass-reruns mechanism processes this return value in production. The loop is advisory-only; it produces log entries but triggers no remediation.
+
+**S20-P1-7: T-junction check O(B × N_verts) with Python outer loop**
+
+T-junction detection at lines 463–480 has an outer Python loop over boundary segments and inner NumPy operations. For 512×512 tiles, B ≈ 2048 boundary edges, N_verts ≈ 4096 — approximately 8M comparisons with repeated Python overhead. Estimated time: 12–30s per tile. Should be fully vectorised.
+
+---
+
+### S20-LIGHT — light_integration.py (700 lines)
+
+**S20-P0-5: Light and probe placements never exported to Unity manifest**
+
+`compute_light_placements()` and `compute_probe_placements()` produce placement lists that are stored only in local variables within `light_integration.py`. The Unity manifest builder (`terrain_unity_export.py`) has **no fields** for `light_placements.json` or `probe_placements.json` — neither `TerrainBundleDescriptor` nor `_build_manifest_dict()` reference them. All computed light/probe positions are silently discarded; Unity HDRP builds have zero terrain-authored lights.
+
+- **File:** `veilbreakers_terrain/handlers/light_integration.py`, `unity_plugin/Editor/VbTerrainImporter.cs`
+- **Severity:** P0 (CRITICAL) — dark fantasy game ships with zero volumetric lighting from terrain system
+
+**S20-P1-8: Shadow cost model incorrect — point vs spot parity**
+
+Shadow cost model assigns flat +3.0 cost to both point lights (which require 6 shadow faces, cubemap) and spot lights (which require 1 shadow face). This undercounts point-light shadow cost by 6×. HDRP light-budget enforcement will be consistently wrong, allowing 6× too many point shadow casters.
+
+**S20-P1-9: np.mgrid allocated inside feature loop**
+
+`np.mgrid[0:rows, 0:cols]` is allocated on every iteration of the feature placement loop (inside function body, not cached). On a 1025×1025 tile with 50+ light features this allocates ≈80MB per call, per feature. Should be computed once outside the loop.
+
+---
+
+### S20-UNITY — unity_plugin/Editor/VbTerrainImporter.cs
+
+**S20-P0-6: HDRP Terrain Lit shader never set up**
+
+`GetOrCreateSupplementalMaterial()` attempts shader lookup in order: `"Standard"` → `"Universal Render Pipeline/Lit"` — **HDRP Terrain Lit (`"HDRP/TerrainLit"`) is never attempted**. In HDRP Unity builds, the fallback hits `"Standard"` (not available in HDRP) or `"Universal Render Pipeline/Lit"` (URP, not HDRP). Result: all supplemental terrain materials are hot-pink (missing shader) in every HDRP build.
+
+- **File:** `unity_plugin/Editor/VbTerrainImporter.cs:GetOrCreateSupplementalMaterial()`
+- **Severity:** P0 — every HDRP terrain material is broken on first import
+
+**S20-P0-7: Reimport is not idempotent — `GenerateUniqueAssetPath` creates duplicate assets**
+
+`AssetDatabase.GenerateUniqueAssetPath()` is called on every reimport to avoid overwrites. This creates a new numbered asset (`terrain_001`, `terrain_002`, ...) on every reimport rather than updating the existing one. After N reimports the project has N copies of every terrain asset. The scene references the *original* path which no longer receives updates.
+
+- **File:** `unity_plugin/Editor/VbTerrainImporter.cs`
+- **Severity:** P0 — live-iteration workflow is broken; every change requires manual scene re-wiring
+
+**S20-P0-8: 8+ export artifact types silently dropped on import**
+
+`TerrainBundleDescriptor` has no fields for: HDRP mask map, water shader manifest, audio zones, gameplay zones, decal zones, wildlife zones, particle emitter zones, terrain normals binary. These files are produced by the Python pipeline but `VbTerrainImporter.cs` has no logic to read or apply them. All are silently ignored.
+
+- **Severity:** P0 (collective) — Unity HDRP workflow is missing the majority of the terrain data the Python pipeline produces
+
+**S20-P1-10: terrain_normals.bin declared in descriptor, never read**
+
+`terrain_normals.bin` appears in the file manifest descriptor but `VbTerrainImporter.cs` has no code path that reads or applies it. Terrain tangent-space normals are recomputed from the heightmap on import (Unity default), discarding any authored normal detail.
+
+---
+
+### S20-SIM — sim/ package (catenary.py, pbd_cloth.py, foam.py)
+
+**S20-P0-9: sim/ package entirely bypassed in production**
+
+The entire `veilbreakers_terrain/sim/` package (catenary rope physics, XPBD cloth, foam mask generation) is never imported by any bundle pass or production handler. Zero calls reach `sim/` during a terrain generation run. These systems exist only in test files.
+
+- **Severity:** P0 — declared in the system design as active physics systems; produces zero output
+
+**S20-P1-11: XPBD cloth velocity re-derivation is a mathematical no-op**
+
+`simulate_cloth()` at `pbd_cloth.py:213`:
+```python
+vel = (pos - (pos - vel * dt_sub)) / dt_sub
+```
+This simplifies algebraically to `vel = vel` — the constraint-correction pass (`pos` is modified in-place by constraint resolution) **never enters velocity**. Cloth has no positional damping; it will oscillate forever or diverge.
+
+**Fix:** Save `pos_before = pos.copy()` before constraint loop, then `vel = (pos - pos_before) / dt_sub`.
+
+**S20-P1-12: Catenary asymmetric anchor math error**
+
+`catenary.py` computes the catenary parameter `a` from equal-anchor-height assumption. When anchors are at different heights (the common case for terrain ropes), the horizontal distance `L` used in the Newton solver is the straight-line distance rather than the horizontal projection. This misplaces the lowest point of the rope by up to 20% of span length.
+
+---
+
+### S20-GRASS — procedural_grass.py (770 lines)
+
+**S20-P0-10: ProceduralGrassSystem not registered in terrain_master_registrar**
+
+`ProceduralGrassSystem` is defined in `procedural_grass.py` but is never registered in `terrain_master_registrar.py`. It is never called by any bundle pass. All terrain runs produce zero procedural grass. The system exists only in isolation.
+
+- **File:** `veilbreakers_terrain/handlers/procedural_grass.py`
+- **Severity:** P0 — ground-cover layer of dark fantasy terrain is entirely absent from output
+
+**S20-P1-13: Density calculation underestimates coverage**
+
+`_compute_density()` at line 428 sums fractional biome weights that are individually < 1.0 (each biome contributes its blend weight × base density). The sum of fractional contributions is consistently lower than target density. Result: sparse/patchy coverage even in dense-forest biomes.
+
+**S20-P1-14: O(N) Python record-building loop**
+
+Lines 545–561 build grass placement records with a Python for-loop. Vectorise with structured NumPy arrays or a list comprehension with pre-allocated output.
+
+---
+
+### S20-ASSETGEN — asset_generation.py (~780 lines)
+
+**S20-P0-11: asset_generation.py not wired to any terrain bundle pass**
+
+`asset_generation.py` is not imported or called by any bundle pass in `terrain_master_registrar.py`. AI-generated asset placement is dead code in every production terrain run.
+
+- **Severity:** P0
+
+**S20-P0-12: Parallel AI asset system with divergent data model**
+
+`asset_generation.py` defines its own `AssetRequest` / `AssetResult` data model incompatible with the `providers/` package's `GenerationRequest` / `GenerationResult`. Two systems exist in parallel with no cross-wiring. Any future integration attempt will require a data-model reconciliation pass.
+
+**S20-P0-13: HuggingFaceBackend calls shape-only endpoint — white meshes**
+
+`HuggingFaceBackend.generate()` calls the `/shape_generation` HF Space endpoint. This endpoint returns geometry only; no texture generation is requested or received. All HuggingFace-generated assets are untextured white meshes.
+
+**S20-P0-14: RunPodBackend passes local filesystem path to remote container**
+
+`RunPodBackend.generate()` at line 417 constructs a job payload with `"reference_image": str(local_path)`. The RunPod container receives a local Windows filesystem path that does not exist inside the container. All RunPod generation jobs fail silently with a file-not-found error inside the container.
+
+**S20-P1-15: Non-deterministic hash used as cache key**
+
+`generate_from_concept()` at line 755 uses `hash(full_prompt)` as the asset cache key. Python's `hash()` is randomised by `PYTHONHASHSEED`; the same prompt produces a different key each process invocation. The cache is effectively disabled in production.
+
+---
+
+### S20-MATH — Active production math bugs
+
+**S20-P0-15: Foam alpha formula inverted in terrain_waterfalls.py**
+
+Line 114:
+```python
+prox_ratio = saturate(obstacle_proximity / max(foam_radius, 1e-9))
+```
+This produces `prox_ratio = 0` at obstacle contact (where foam should be maximum) and `prox_ratio = 1` far from obstacles (where foam should be absent). The foam mask is physically inverted — every water surface ships with foam in open water and no foam at rock contacts.
+
+**Fix:** `prox_ratio = saturate(1.0 - obstacle_proximity / max(foam_radius, 1e-9))`
+
+- **File:** `veilbreakers_terrain/handlers/terrain_waterfalls.py:114`
+- **Severity:** P0 — fundamental visual correctness bug visible on every water surface
+
+**S20-P0-16: Brucks blend ignores scree weight — terrain_materials_v2.py**
+
+`_apply_brucks_blend()` at lines 613–620 uses only `cliff_idx` weight as `blend_alpha`, ignoring the scree component. The Brucks cliff-scree blend reduces to a standard lerp with no scree contribution. Cliff-to-scree transitions are visually incorrect; scree only appears at full cliff intensity.
+
+- **File:** `veilbreakers_terrain/handlers/terrain_materials_v2.py:613–620`
+- **Severity:** P0 — cliff material blending is qualitatively wrong vs. AAA cliff reference (RDR2, Horizon)
+
+**S20-P0-17: Overhang detection selects steep walls, not overhangs — terrain_cliffs.py**
+
+`_detect_overhangs()` at lines 857–858 applies `slope > 60°` threshold to identify overhangs. A 60° slope is a steep-but-climbable wall, not an overhang. True overhangs require `slope > 90°` (or, for heightmap terrains, a different geometric test such as normal.y < 0 or shadow-casting at low sun angles). The current implementation marks all steep cliffs as "overhangs" and no actual overhangs are detected.
+
+- **File:** `veilbreakers_terrain/handlers/terrain_cliffs.py:857–858`
+- **Severity:** P0 — overhang geometry logic is wrong; HDRP overhang-specific material treatment is applied to ordinary steep slopes
+
+**S20-P0-18: Fold deformation bypasses stack.set() protocol — terrain_stratigraphy.py**
+
+Line 453:
+```python
+stack.height = (h + delta).astype(np.float32)
+```
+Direct attribute assignment bypasses `TerrainMaskStack.set()`, which is required to trigger mutation tracking, dirty-flag propagation, and dependent-channel invalidation. Downstream passes that cache normalised height or depend on change-detection will read stale values after folding.
+
+- **File:** `veilbreakers_terrain/handlers/terrain_stratigraphy.py:453`
+- **Severity:** P0 — mutation tracking bypass; identical class of bug as the previously-fixed BUG-S3
+
+---
+
+### S20-DEAD — Dead code and phantom channels
+
+**S20-P0-19: terrain_banded_advanced.py entire module is dead code**
+
+`terrain_banded_advanced.py` (488 lines) implements an anisotropic Kuwahara filter pipeline. It is imported only by test files; no bundle pass or production handler references it. `terrain_banded.py` contains its own simpler (non-anisotropic) filter that runs instead. The advanced module's sector-assignment, ellipse-fitting, and structure-tensor pipelines produce zero output in any terrain run.
+
+**S20-P0-20: Three additional phantom read channels**
+
+Beyond the `hero_exclusion`, `biome_id`, and `ambient_occlusion_bake` phantom channels documented in Section 19, deep-dive agents confirmed three additional channels read in production but written nowhere:
+
+| Channel | Reader | Lines |
+|---------|--------|-------|
+| `lightmap_uv_chart_id` | `terrain_unity_export.py` | Read when building lightmap UV manifest |
+| `bedrock_height` | `terrain_stratigraphy.py:512` | Read for layer-delta modulation |
+| `sediment_height` | `terrain_stratigraphy.py:519` | Read for sediment accumulation display |
+
+All three channels resolve to `None` / zero array on every tile. The manifest omits lightmap UV chart IDs; stratigraphy modulation silently produces zero-delta output.
+
+**S20-P1-16: terrain_viewport_sync.py bare except silences all Blender errors**
+
+`_read_from_blender_context()` (line ~78) wraps the entire Blender context read in `except Exception: pass`. Any Blender API error (context mode wrong, object deleted, region not active) is silently swallowed. The viewport sync falls back to stale values without any log entry; debugging viewport-dependent features (ViewportVantage, P0-A7-3 Rule 2) is impossible.
+
+**S20-P1-17: FOV hardcoded at 60° instead of reading r3d.view_angle**
+
+`_read_from_blender_context()` returns `fov = 60.0` as a fallback for perspective viewports instead of reading `region_3d.view_angle`. The viewport-distance budget calculations in `ViewportVantage` will be wrong by up to 40° for any non-default Blender viewport.
+
+---
+
+### Section 20 grand total
+
+New P0 findings from this sweep: **20** (S20-P0-1 through S20-P0-20)
+New P1 findings: **17** (S20-P1-1 through S20-P1-17)
+
+**Revised cumulative grand total:**
+- **234 total confirmed P0 findings** (214 from Sections 1–19 + 20 new from Section 20)
+- **231 active unresolved P0 blockers** (234 total − 3 already-fixed)
+- **Overall grade: D−** (floor; no improvement — new findings reinforce systemic wiring failures)
+
+**Highest-priority new P0s for BATCH 0 / BATCH 1 of FIX_ORDER_CODEX:**
+1. S20-P0-15 — foam alpha inversion (1-line fix, ships wrong foam on every water tile)
+2. S20-P0-1 — water exclusion in Bundle E scatter path (trees/props on water)
+3. S20-P0-5 — light/probe placements never exported (entire lighting pipeline dark)
+4. S20-P0-6 — HDRP Terrain Lit shader lookup missing (hot-pink materials in every HDRP build)
+5. S20-P0-7 — reimport creates duplicate assets (live iteration broken)
+6. S20-P0-18 — fold deformation bypasses stack.set() (mutation tracking corrupted)
+7. S20-P0-16 — Brucks blend ignores scree (cliff material incorrect)
+8. S20-P0-17 — overhang detection wrong threshold (60° → steep wall, not overhang)
+9. S20-P0-10 — ProceduralGrassSystem not registered (ground cover absent)
+10. S20-P0-2 — audio RT60 pipeline dead code (1000-line system produces zero output)
+
+**End of Section 20.**

@@ -2186,5 +2186,62 @@ These test assertions currently encode buggy behaviour as correct. They will fai
 
 ---
 
+---
+
+## BATCH 7 — Section 20 Deep Dive P0s (2026-04-28 8-agent sweep)
+
+*Execute after Batches 0–6. These are net-new P0s not covered in the original 202-P0 codex.*
+
+### Priority 7A — Single-line / low-risk fixes (do first)
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-7-1 (foam alpha inversion) | `terrain_waterfalls.py:114` | Change `saturate(obstacle_proximity / max(foam_radius, 1e-9))` → `saturate(1.0 - obstacle_proximity / max(foam_radius, 1e-9))` |
+| FIX-7-2 (fold deformation stack protocol) | `terrain_stratigraphy.py:453` | Change `stack.height = (h + delta).astype(np.float32)` → `stack.set("height", (h + delta).astype(np.float32))` |
+| FIX-7-3 (XPBD velocity no-op) | `pbd_cloth.py:211–213` | Before constraint loop: `pos_before = pos.copy()`. After loop: `vel = (pos - pos_before) / dt_sub` |
+| FIX-7-4 (HDRP shader lookup) | `VbTerrainImporter.cs:GetOrCreateSupplementalMaterial()` | Add `"HDRP/TerrainLit"` as first shader candidate before `"Standard"` |
+| FIX-7-5 (AO convention in audio) | `terrain_audio_zones.py:565` | Change `ao > 0.6` → `ao < 0.4` (AO=0 = occluded, AO=1 = lit) |
+| FIX-7-6 (viewport FOV fallback) | `terrain_viewport_sync.py` | Replace hardcoded `fov = 60.0` with `region_3d.view_angle` read; keep 60.0 only if `region_3d` is unavailable |
+
+### Priority 7B — Wiring fixes (connect existing systems to pipeline)
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-7-7 (light export missing) | `terrain_unity_export.py` + `VbTerrainImporter.cs` | Add `light_placements.json` and `probe_placements.json` to manifest; add importer fields and `InstantiateLightsFromManifest()` method |
+| FIX-7-8 (audio dead code wiring) | `terrain_unity_export._audio_zones_json()` | Replace hardcoded reverb lookup table with read from `stack.audio_zone_list` (produced by `pass_audio_zones()`); remove hardcoded table |
+| FIX-7-9 (grass not registered) | `terrain_master_registrar.py` | Register `ProceduralGrassSystem` as a bundle pass; wire `hero_exclusion` read into grass density calculation |
+| FIX-7-10 (water exclusion Bundle E) | `terrain_assets.py:compute_viability()` | Add `water_surface_elevation_m` check: placements below water level are set to viability=0; add `forbidden_masks=("water_surface_mask",)` to `build_asset_context_rules()` |
+| FIX-7-11 (asset_generation wiring) | `terrain_master_registrar.py` + `asset_generation.py` | Either register `asset_generation.py` as a bundle pass OR delete it and route all AI asset calls through `providers/`. Do not leave both systems running in parallel. |
+
+### Priority 7C — Unity importer correctness
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-7-12 (reimport idempotency) | `VbTerrainImporter.cs` | Replace `GenerateUniqueAssetPath()` with a fixed deterministic path derived from the terrain tile ID; use `AssetDatabase.LoadAssetAtPath()` to update existing assets in place |
+| FIX-7-13 (silently dropped export types) | `VbTerrainImporter.cs` + `TerrainBundleDescriptor` | Add descriptor fields and importer handlers for: hdrp_mask_map, water_shader_manifest, audio_zones, gameplay_zones, decal_zones, wildlife_zones, particle_emitters, terrain_normals |
+
+### Priority 7D — Math correctness
+
+| Fix ID | File | Fix |
+|--------|------|-----|
+| FIX-7-14 (Brucks blend missing scree) | `terrain_materials_v2.py:613–620` | `blend_alpha` must be a function of both `cliff_idx` and `scree_idx` weights, not only `cliff_idx` |
+| FIX-7-15 (overhang threshold) | `terrain_cliffs.py:857–858` | Change threshold from `slope > 60°` to `slope > 88°` for heightmap overhang detection, or replace with shadow-based approach: cast vertical rays and detect re-entry |
+| FIX-7-16 (phantom channels) | `terrain_semantics.py` + writers | Add writers for `lightmap_uv_chart_id`, `bedrock_height`, `sediment_height` OR remove all reads that reference these channels |
+| FIX-7-17 (Sabine formula category error) | `terrain_audio_zones.py:502–548` | Replace closed-room Norris-Eyring RT60 with outdoor early-reflection delay model; or at minimum clamp RT60 to [0.05, 3.0] for open terrain until proper model is implemented |
+| FIX-7-18 (shadow cost model) | `light_integration.py` | Point light shadow cost = +18.0 (6 faces × 3.0); spot light shadow cost = +3.0 (1 face) |
+| FIX-7-19 (AAA_NORMAL_CONSISTENCY_MIN unused) | `autonomous_loop.py:select_fix_action()` | Add branch: `if metrics.normal_consistency < AAA_NORMAL_CONSISTENCY_MIN: return "rebake_normals"` |
+
+### Batch 7 summary
+
+| Batch 7 sub-group | Count | Notes |
+|-------------------|-------|-------|
+| 7A single-line fixes | 6 | Commit atomically, one fix per commit |
+| 7B wiring fixes | 5 | Each requires test coverage added in same commit |
+| 7C Unity importer | 2 | Coordinate with Unity scene owners before merging |
+| 7D math correctness | 6 | FIX-7-17 (Sabine) may be scoped as P1 if audio RT60 remains disconnected |
+| **Total new** | **19** | |
+
+---
+
 *End of FIX_ORDER_CODEX_2026_04_27.md*  
-*Total active P0s covered: 202. Execute batches in order 0→1→2→3→4→5→6.*
+*Total active P0s covered: 221 (202 original + 19 from Section 20 Batch 7). Execute batches in order 0→1→2→3→4→5→6→7.*
