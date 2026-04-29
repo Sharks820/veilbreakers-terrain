@@ -4,21 +4,19 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 42
+- High risk: 37
 - Medium risk: 1
-- Low risk: 1656
+- Low risk: 1661
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 32
+- Tool/Blender callables needing blocker/high evidence: 27
 
 ## Highest Risk Files
 
-- terrain_saliency.py: 4
 - terrain_path_contracts.py: 3
 - terrain_dem_import.py: 2
 - terrain_determinism_ci.py: 2
 - terrain_erosion_filter.py: 2
 - terrain_god_ray_hints.py: 2
-- terrain_horizon_lod.py: 2
 - terrain_legacy_bug_fixes.py: 2
 - terrain_navmesh_export.py: 2
 - terrain_palette_extract.py: 2
@@ -32,11 +30,13 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_delta_integrator.py: 1
 - terrain_fog_masks.py: 1
 - terrain_gameplay_zones.py: 1
+- terrain_horizon_lod.py: 1
 - terrain_performance_report.py: 1
 - terrain_readability_semantic.py: 1
 - terrain_rhythm.py: 1
 - terrain_texture_layer_stack.py: 1
 - terrain_wind_field.py: 1
+- terrain_world_math.py: 1
 
 ## Top Blocker/High Callables
 
@@ -55,7 +55,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_gameplay_zones.py:460 register_bundle_j_gameplay_zones_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_god_ray_hints.py:66 _normalize_sun_dir grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_god_ray_hints.py:418 register_bundle_l_god_ray_hints_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
-- HIGH terrain_horizon_lod.py:103 _sample_height_bilinear grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_horizon_lod.py:341 register_bundle_l_horizon_lod_pass grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_legacy_bug_fixes.py:32 _default_terrain_advanced_path grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_legacy_bug_fixes.py:113 _audit_pixel_units_in_file grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
@@ -71,10 +70,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_review_ingest.py:55 _coerce_location grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_review_ingest.py:192 pass_apply_review_blockers grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_rhythm.py:34 _positions_xy grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_saliency.py:66 _sample_height_bilinear grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- HIGH terrain_saliency.py:348 _rasterize_vantage_silhouettes_onto_grid grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- HIGH terrain_saliency.py:425 _compute_8factor_saliency grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
-- HIGH terrain_saliency.py:678 _saliency_quality_gate grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;camera_readability_probe
 - HIGH terrain_telemetry_dashboard.py:56 _count_populated_channels grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_telemetry_dashboard.py:96 _load_records grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_texture_layer_stack.py:45 TerrainTextureLayerStack.add_layer grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test

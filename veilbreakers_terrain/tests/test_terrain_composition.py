@@ -176,6 +176,16 @@ class TestStructuralMasks:
 
 
 class TestSaliency:
+    def test_sample_height_bilinear_interpolates_and_clamps_edges(self):
+        from veilbreakers_terrain.handlers.terrain_saliency import _sample_height_bilinear
+
+        height = np.array([[0.0, 10.0], [20.0, 30.0]], dtype=np.float64)
+
+        assert _sample_height_bilinear(height, 0.5, 0.5) == pytest.approx(15.0)
+        assert _sample_height_bilinear(height, -10.0, -10.0) == pytest.approx(0.0)
+        assert _sample_height_bilinear(height, 99.0, 99.0) == pytest.approx(30.0)
+        assert _sample_height_bilinear(np.array([[7.0]], dtype=np.float64), 0.5, 0.5) == pytest.approx(7.0)
+
     def test_compute_vantage_silhouettes_shape(self):
         from veilbreakers_terrain.handlers.terrain_saliency import compute_vantage_silhouettes
 
@@ -192,6 +202,41 @@ class TestSaliency:
         stack = _make_stack()
         s = compute_vantage_silhouettes(stack, [], ray_count=16)
         assert s.shape == (0, 16)
+
+    def test_rasterize_vantage_silhouettes_normalizes_ray_contributions(self):
+        from veilbreakers_terrain.handlers.terrain_saliency import (
+            _rasterize_vantage_silhouettes_onto_grid,
+        )
+
+        stack = _make_stack(tile=8)
+        empty = _rasterize_vantage_silhouettes_onto_grid(stack, [], np.zeros((0, 0)))
+        silhouettes = np.full((1, 8), 0.5, dtype=np.float64)
+        raster = _rasterize_vantage_silhouettes_onto_grid(
+            stack,
+            [(0.0, 0.0, 20.0)],
+            silhouettes,
+        )
+
+        assert empty.shape == stack.height.shape
+        assert np.count_nonzero(empty) == 0
+        assert raster.shape == stack.height.shape
+        assert raster.max() == pytest.approx(1.0)
+        assert raster.min() >= 0.0
+
+    def test_compute_8factor_saliency_uses_vantage_mask_and_clamps(self):
+        from veilbreakers_terrain.handlers.terrain_saliency import _compute_8factor_saliency
+
+        stack = _make_stack(tile=12)
+        zeros = np.zeros_like(stack.height, dtype=np.float64)
+        ones = np.ones_like(stack.height, dtype=np.float64)
+
+        sal_zero = _compute_8factor_saliency(stack, zeros)
+        sal_one = _compute_8factor_saliency(stack, ones)
+
+        assert sal_zero.shape == stack.height.shape
+        assert sal_zero.min() >= 0.0
+        assert sal_zero.max() <= 1.0
+        assert float(sal_one.mean()) > float(sal_zero.mean())
 
     def test_auto_sculpt_positive_kind(self):
         from veilbreakers_terrain.handlers.terrain_saliency import auto_sculpt_around_feature
@@ -247,6 +292,34 @@ class TestSaliency:
         register_saliency_pass()
         assert "saliency_refine" in TerrainPassController.PASS_REGISTRY
         TerrainPassController.clear_registry()
+
+    def test_saliency_quality_gate_flags_missing_flat_and_clipped_maps(self):
+        from veilbreakers_terrain.handlers.terrain_saliency import _saliency_quality_gate
+
+        missing = _make_stack(tile=8)
+        object.__setattr__(missing, "saliency_macro", None)
+        missing_issues = _saliency_quality_gate(None, missing)
+
+        flat = _make_stack(tile=8)
+        flat.set("saliency_macro", np.full_like(flat.height, 0.5, dtype=np.float64), "fixture")
+        flat_issues = _saliency_quality_gate(None, flat)
+
+        clipped = _make_stack(tile=8)
+        clipped.set("saliency_macro", np.full_like(clipped.height, 0.99, dtype=np.float64), "fixture")
+        clipped_issues = _saliency_quality_gate(None, clipped)
+
+        varied = _make_stack(tile=8)
+        varied.set(
+            "saliency_macro",
+            np.linspace(0.1, 0.9, varied.height.size, dtype=np.float64).reshape(varied.height.shape),
+            "fixture",
+        )
+        varied_issues = _saliency_quality_gate(None, varied)
+
+        assert {issue.code for issue in missing_issues} == {"SALIENCY_MACRO_MISSING"}
+        assert "SALIENCY_FLAT" in {issue.code for issue in flat_issues}
+        assert "SALIENCY_CLIPPED" in {issue.code for issue in clipped_issues}
+        assert varied_issues == []
 
 
 # ---------------------------------------------------------------------------
