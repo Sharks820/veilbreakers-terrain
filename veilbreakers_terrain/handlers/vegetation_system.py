@@ -39,6 +39,7 @@ except ImportError:
     np = None  # type: ignore[assignment]
 
 from .terrain_math import stack_world_to_cell
+from .terrain_rng import make_rng as _make_rng
 
 _world_to_cell = partial(stack_world_to_cell, rounding="floor")
 
@@ -1767,7 +1768,9 @@ def build_foliage_placement_manifest(
                 "category": p.get("category") or library_entries[species_to_id[species_key]].get("category"),
                 "moisture": float(p.get("moisture", 0.0)),
                 "tint_rgb": list(p.get("tint_rgb", [1.0, 1.0, 1.0])),
-                "color_variation_seed": int(p.get("color_variation_seed", random.randint(0, 2**31 - 1))),
+                "color_variation_seed": int(p.get("color_variation_seed") or int(
+                    _make_rng(tile_x, tile_y, int(float(wx) * 1000), int(float(wy) * 1000)).integers(2**31)
+                )),
             }
         )
         species_density[species_key] = species_density.get(species_key, 0) + 1
