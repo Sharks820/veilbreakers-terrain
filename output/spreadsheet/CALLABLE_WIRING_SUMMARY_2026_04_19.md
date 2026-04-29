@@ -7,14 +7,14 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Totals
 
-- Live handler callables scanned: `1938`
-- Callables missing from the grade sheet: `499`
-- Callables without any R9 grade attached via matching CSV row: `887`
+- Live handler callables scanned: `1945`
+- Callables missing from the grade sheet: `461`
+- Callables without any R9 grade attached via matching CSV row: `894`
 
 Status distribution:
-- `helper_reachable`: `1353`
+- `helper_reachable`: `1356`
 - `orphan_candidate`: `96`
-- `runtime_primary`: `247`
+- `runtime_primary`: `251`
 - `test_only_or_unwired`: `241`
 - `uninvoked_registrar`: `1`
 

@@ -282,6 +282,71 @@ def pass_prepare_heightmap_raw_u16(
     )
 
 
+def pass_prepare_unity_auxiliary_channels(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Populate Unity auxiliary masks derived from the live height stack."""
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    height = np.asarray(stack.height, dtype=np.float64)
+    rows, cols = height.shape
+    cell_size = max(float(stack.cell_size), 1e-6)
+
+    gy, gx = np.gradient(height, cell_size)
+    slope_deg = np.degrees(np.arctan(np.hypot(gx, gy))).astype(np.float32)
+    physics = np.zeros((rows, cols), dtype=np.uint8)
+    physics[slope_deg > 50.0] = 1
+    cave = stack.get("cave_candidate")
+    if cave is not None:
+        physics[np.asarray(cave, dtype=np.float32) > 0.0] = 2
+
+    chart = np.zeros((rows, cols), dtype=np.uint16)
+    chart_span = max(1, min(rows, cols) // 8)
+    chart_rows = (np.arange(rows, dtype=np.uint16) // chart_span)[:, None]
+    chart_cols = (np.arange(cols, dtype=np.uint16) // chart_span)[None, :]
+    chart[:, :] = chart_rows * np.uint16(max(1, (cols + chart_span - 1) // chart_span)) + chart_cols
+
+    padded = np.pad(height, 1, mode="edge")
+    neighborhood_mean = (
+        padded[:-2, :-2]
+        + padded[:-2, 1:-1]
+        + padded[:-2, 2:]
+        + padded[1:-1, :-2]
+        + padded[1:-1, 1:-1]
+        + padded[1:-1, 2:]
+        + padded[2:, :-2]
+        + padded[2:, 1:-1]
+        + padded[2:, 2:]
+    ) / 9.0
+    relief = max(float(height.max() - height.min()), 1e-6)
+    concavity = np.clip((neighborhood_mean - height) / relief, 0.0, 1.0)
+    ambient_occlusion = np.clip(0.35 + concavity * 0.65, 0.0, 1.0).astype(np.float32)
+
+    stack.set("physics_collider_mask", physics, "prepare_unity_auxiliary_channels")
+    stack.set("lightmap_uv_chart_id", chart, "prepare_unity_auxiliary_channels")
+    stack.set("ambient_occlusion_bake", ambient_occlusion, "prepare_unity_auxiliary_channels")
+
+    return PassResult(
+        pass_name="prepare_unity_auxiliary_channels",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=(
+            "physics_collider_mask",
+            "lightmap_uv_chart_id",
+            "ambient_occlusion_bake",
+        ),
+        metrics={
+            "physics_blocked_fraction": float((physics == 1).mean()),
+            "physics_interior_fraction": float((physics == 2).mean()),
+            "lightmap_chart_count": int(np.unique(chart).size),
+            "ao_mean": float(ambient_occlusion.mean()),
+            "region_scoped": region is not None,
+        },
+    )
+
+
 def register_bundle_j_terrain_normals_pass() -> None:
     from .terrain_pipeline import TerrainPassController
 
@@ -310,6 +375,26 @@ def register_bundle_j_heightmap_u16_pass() -> None:
             seed_namespace="prepare_heightmap_raw_u16",
             requires_scene_read=False,
             description="Bundle J: quantize world heightmap into Unity-ready uint16 channel",
+        )
+    )
+
+
+def register_bundle_j_unity_auxiliary_pass() -> None:
+    from .terrain_pipeline import TerrainPassController
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="prepare_unity_auxiliary_channels",
+            func=pass_prepare_unity_auxiliary_channels,
+            requires_channels=("height",),
+            produces_channels=(
+                "physics_collider_mask",
+                "lightmap_uv_chart_id",
+                "ambient_occlusion_bake",
+            ),
+            seed_namespace="prepare_unity_auxiliary_channels",
+            requires_scene_read=False,
+            description="Bundle J: derive Unity physics, lightmap, and AO channels from terrain height",
         )
     )
 
@@ -1232,6 +1317,15 @@ def export_unity_manifest(
             np.asarray(normals, dtype=np.float32),
             stack.populated_by_pass.get("terrain_normals", "prepare_terrain_normals"),
         )
+    if (
+        stack.get("physics_collider_mask") is None
+        or stack.get("lightmap_uv_chart_id") is None
+        or stack.get("ambient_occlusion_bake") is None
+    ):
+        pass_prepare_unity_auxiliary_channels(
+            TerrainPipelineState(intent=None, mask_stack=stack),  # type: ignore[arg-type]
+            None,
+        )
 
     files: Dict[str, Dict[str, Any]] = {}
     _write_raw_array(
@@ -1269,7 +1363,7 @@ def export_unity_manifest(
         "drainage", "bank_instability", "talus",
         "flow_direction", "flow_accumulation",
         "water_surface", "foam", "mist", "wet_rock", "tidal", "waterfall_velocity",
-        "biome_id", "macro_color", "roughness_variation", "snow_line_factor",
+        "biome_id", "corruption_map", "macro_color", "roughness_variation", "snow_line_factor",
         "strata_orientation", "rock_hardness",
         "strat_erosion_delta", "sediment_height", "bedrock_height",
         "coastline_delta", "karst_delta", "wind_erosion_delta", "glacial_delta",
@@ -1935,8 +2029,10 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 __all__ = [
     "pass_prepare_heightmap_raw_u16",
+    "pass_prepare_unity_auxiliary_channels",
     "register_bundle_j_heightmap_u16_pass",
     "register_bundle_j_terrain_normals_pass",
+    "register_bundle_j_unity_auxiliary_pass",
     "export_unity_manifest",
     "_export_heightmap",
     "_bit_depth_for_profile",

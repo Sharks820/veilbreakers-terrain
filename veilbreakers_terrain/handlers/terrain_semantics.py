@@ -347,6 +347,7 @@ class TerrainMaskStack:
 
     # Material-zoning masks (Pass 7)
     biome_id: Optional[np.ndarray] = None
+    corruption_map: Optional[np.ndarray] = None
     material_weights: Optional[np.ndarray] = None
     roughness_breakup: Optional[np.ndarray] = None
     roughness_variation: Optional[np.ndarray] = None
@@ -582,6 +583,7 @@ class TerrainMaskStack:
             "waterfall_velocity",
             "flow_speed",
             "biome_id",
+            "corruption_map",
             "material_weights",
             "roughness_breakup",
             "roughness_variation",
@@ -785,16 +787,16 @@ class TerrainMaskStack:
         direction = direction.lower()
         if direction == "north":
             # Neighbor is to the north → its south border (last row) is our constraint
-            object.__setattr__(self, "north_edge", h[-1, :].copy())
+            self.set("north_edge", h[-1, :].copy(), "import_neighbor_edge")
         elif direction == "south":
             # Neighbor is to the south → its north border (first row) is our constraint
-            object.__setattr__(self, "south_edge", h[0, :].copy())
+            self.set("south_edge", h[0, :].copy(), "import_neighbor_edge")
         elif direction == "east":
             # Neighbor is to the east → its west border (first col) is our constraint
-            object.__setattr__(self, "east_edge", h[:, 0].copy())
+            self.set("east_edge", h[:, 0].copy(), "import_neighbor_edge")
         elif direction == "west":
             # Neighbor is to the west → its east border (last col) is our constraint
-            object.__setattr__(self, "west_edge", h[:, -1].copy())
+            self.set("west_edge", h[:, -1].copy(), "import_neighbor_edge")
         else:
             raise ValueError(f"direction must be north/south/east/west, got {direction!r}")
 
@@ -896,6 +898,13 @@ class TerrainMaskStack:
                         f"Pass: {pass_name!r}."
                     )
             object.__setattr__(self, channel, arr)
+            if channel == "height":
+                if arr.size:
+                    object.__setattr__(self, "height_min_m", float(arr.min()))
+                    object.__setattr__(self, "height_max_m", float(arr.max()))
+                else:
+                    object.__setattr__(self, "height_min_m", 0.0)
+                    object.__setattr__(self, "height_max_m", 0.0)
         self.populated_by_pass[channel] = pass_name
         self.dirty_channels.discard(channel)
         # Any mutation invalidates cached hash

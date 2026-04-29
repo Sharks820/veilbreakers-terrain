@@ -72,6 +72,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     )
     pass_sequence = [
         "pass_generate_low_freq_hmap",
+        "biome_channels",
         "terrain_labels",
         "structural_masks",
         "pass_generate_high_freq_detail",
@@ -93,6 +94,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "navmesh",
             "prepare_terrain_normals",
             "prepare_heightmap_raw_u16",
+            "prepare_unity_auxiliary_channels",
         ):
             if prereq not in pass_sequence:
                 pass_sequence.insert(insert_at, prereq)
@@ -919,20 +921,25 @@ def pass_compute_terrain_labels(
     stack = state.mask_stack
     shape = stack.height.shape
 
-    label_channels = ("rock_label", "gravel_label", "water_label", "cliff_label")
     pre_stamped = 0
     coverage: dict = {}
-    for ch in label_channels:
-        existing = stack.get(ch)
+
+    def _label_array(channel: str) -> "np.ndarray":
+        nonlocal pre_stamped
+        existing = stack.get(channel)
         if existing is not None:
             # Preserve generator-stamped mask; clamp to [0, 1] (T-10-01-01)
             clamped = np.clip(np.asarray(existing, dtype=np.float32), 0.0, 1.0)
-            stack.set(ch, clamped, "terrain_labels")
             pre_stamped += 1
-            coverage[ch] = float(np.mean(clamped > 0.0))
-        else:
-            stack.set(ch, np.zeros(shape, dtype=np.float32), "terrain_labels")
-            coverage[ch] = 0.0
+            coverage[channel] = float(np.mean(clamped > 0.0))
+            return clamped
+        coverage[channel] = 0.0
+        return np.zeros(shape, dtype=np.float32)
+
+    stack.set("rock_label", _label_array("rock_label"), "terrain_labels")
+    stack.set("gravel_label", _label_array("gravel_label"), "terrain_labels")
+    stack.set("water_label", _label_array("water_label"), "terrain_labels")
+    stack.set("cliff_label", _label_array("cliff_label"), "terrain_labels")
 
     return PassResult(
         pass_name="terrain_labels",
@@ -942,7 +949,7 @@ def pass_compute_terrain_labels(
         produced_channels=("rock_label", "gravel_label", "water_label", "cliff_label"),
         metrics={
             "channels_pre_stamped": pre_stamped,
-            "channels_zeroed": len(label_channels) - pre_stamped,
+            "channels_zeroed": 4 - pre_stamped,
             **{f"coverage_{ch}": v for ch, v in coverage.items()},
         },
         issues=[],
@@ -964,6 +971,72 @@ def register_terrain_label_passes() -> None:
                 "Structural terrain labeling: initializes label channels; "
                 "feature generators stamp during generation."
             ),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Biome/corruption channel pass (Phase 2 writer contract)
+# ---------------------------------------------------------------------------
+
+
+def pass_compute_biome_channels(
+    state: "TerrainPipelineState",
+    region: Optional[BBox],
+) -> "PassResult":
+    """Populate numeric biome and corruption maps for downstream readers."""
+    import time
+    import numpy as np
+
+    from ._biome_grammar import generate_world_map_spec
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    hints = dict(getattr(state.intent, "composition_hints", {}) or {})
+    height = np.asarray(stack.height)
+    rows, cols = height.shape
+    biome_count = int(hints.get("biome_count", 6))
+    biome_count = max(1, min(biome_count, 32))
+    corruption_level = float(hints.get("corruption_level", 0.0))
+    spec = generate_world_map_spec(
+        width=cols,
+        height=rows,
+        world_size=float(stack.tile_size) * float(stack.cell_size),
+        biome_count=biome_count,
+        biomes=hints.get("biomes"),
+        seed=int(getattr(state.intent, "seed", 0)),
+        corruption_level=corruption_level,
+        transition_width_m=float(hints.get("transition_width_m", 15.0)),
+    )
+    stack.set("biome_id", spec.biome_ids.astype(np.int32), "biome_channels")
+    stack.set("corruption_map", spec.corruption_map.astype(np.float32), "biome_channels")
+
+    return PassResult(
+        pass_name="biome_channels",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("biome_id", "corruption_map"),
+        metrics={
+            "biome_count": int(len(set(spec.biome_ids.ravel().tolist()))),
+            "corruption_mean": float(spec.corruption_map.mean()),
+            "region_scoped": region is not None,
+        },
+    )
+
+
+def register_biome_channel_pass() -> None:
+    """Register the biome_channels pass on TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="biome_channels",
+            func=pass_compute_biome_channels,
+            requires_channels=("height",),
+            produces_channels=("biome_id", "corruption_map"),
+            seed_namespace="biome_channels",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Populate biome_id and corruption_map from deterministic world-map grammar.",
         )
     )
 
@@ -1385,6 +1458,7 @@ def register_default_passes(*, strict: bool = False) -> None:
     # which is emitted by pass_water_variants / pass_hydrology when elevation data
     # is available.  Skips gracefully when that channel is absent.
     register_pass_water_depth()
+    register_biome_channel_pass()
     register_terrain_label_passes()
     register_snow_line_pass()
     # macro_color is owned by Bundle K (see terrain_macro_color.pass_macro_color).
@@ -1398,6 +1472,8 @@ __all__ = [
     "build_default_pass_sequence",
     "derive_pass_seed",
     "register_default_passes",
+    "pass_compute_biome_channels",
+    "register_biome_channel_pass",
     "pass_compute_terrain_labels",
     "register_terrain_label_passes",
     "pass_compute_snow_line",

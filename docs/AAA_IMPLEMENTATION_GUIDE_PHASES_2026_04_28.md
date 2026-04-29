@@ -610,6 +610,31 @@ is intended, but downstream tests may need golden updates. Phase 1's
 2. Run a full pipeline. The `validation_full` channel-coverage report should
    list zero unwritten required channels.
 
+### Phase 2 completion evidence — 2026-04-29
+
+- `TerrainMaskStack.set("height", ...)` now refreshes `height_min_m` and
+  `height_max_m`, so manifest bounds cannot go stale after stack-protocol
+  writes.
+- Coastline retreat now publishes only `coastline_delta`; `integrate_deltas`
+  applies that delta to `height` exactly once.
+- Phase 2 writer coverage now has zero static gaps for
+  `TerrainMaskStack._ARRAY_CHANNELS`; added/wired writers for
+  `water_surface_elevation_m`, `pool_deepening_delta`,
+  `sediment_accumulation_at_base`, `biome_id`, `corruption_map`,
+  `hero_exclusion`, `bedrock_height`, `sediment_height`, `strata_height`,
+  `physics_collider_mask`, `lightmap_uv_chart_id`, and
+  `ambient_occlusion_bake`.
+- `REQUIRED_CHANNELS` now mirrors `TerrainMaskStack._ARRAY_CHANNELS`.
+- Guard tests landed in `veilbreakers_terrain/tests/test_phase2_stack_protocol.py`
+  and `veilbreakers_terrain/tests/test_texture_layer_stack.py`; these call live
+  production passes/helpers and assert provenance, dtype, shape, and behavior.
+- Verification run: `test_phase2_stack_protocol.py`,
+  `test_semantics_stack_runtime_helpers.py`, selected Bundle J/registrar/pipeline
+  tests, `test_texture_layer_stack.py`, `scan_callable_wiring.py`, and
+  `callable_census_gate.py --strict-zero` all passed. Verification matrix now
+  reports zero blockers and zero false A-grade rows; remaining high-risk rows
+  are the broader callable evidence backlog for later phases.
+
 ---
 
 <a id="phase-3"></a>

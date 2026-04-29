@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 import random
 import time
+import copy
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -1194,14 +1195,13 @@ def pass_coastline(
     """Bundle I pass: compute coastal wave energy, tidal zone, and cliff retreat.
 
     Consumes: height
-    Produces: tidal (mutates height when coastal_erosion_enabled)
+    Produces: tidal, coastline_delta
 
     Mutation behaviour
     ------------------
     When ``coastal_erosion_enabled`` is true the erosion delta returned by
-    ``apply_coastal_erosion`` is **applied directly to ``stack.height``**.
-    This mirrors how ``pass_waterfalls`` handles pool deltas and ensures the
-    shoreline is actually carved rather than the delta being discarded.
+    ``apply_coastal_erosion`` is accumulated into ``coastline_delta``. The
+    canonical ``integrate_deltas`` pass applies it to ``height`` exactly once.
 
     Hint keys consumed
     ------------------
@@ -1244,19 +1244,19 @@ def pass_coastline(
     retreat_mean = 0.0
     if apply_retreat:
         cumulative_delta = np.zeros_like(np.asarray(stack.height, dtype=np.float64))
+        working_stack = copy.copy(stack)
+        working_height = np.asarray(stack.height, dtype=np.float64).copy()
+        object.__setattr__(working_stack, "height", working_height)
         for _ in range(erosion_passes):
             delta = apply_coastal_erosion(
-                stack,
+                working_stack,
                 sea_level,
                 wave_direction=wave_dir,
                 wave_energy=scalar_wave_energy,
             )
             cumulative_delta += delta
-            # Apply each pass incrementally so subsequent passes see updated height
-            updated_height = (
-                np.asarray(stack.height, dtype=np.float64) + delta
-            ).astype(stack.height.dtype)
-            stack.set("height", updated_height, "coastline")
+            working_height = working_height + delta
+            object.__setattr__(working_stack, "height", working_height)
 
         retreat_mean = float(np.abs(cumulative_delta).mean())
         final_delta = cumulative_delta.astype(np.float32)
@@ -1266,7 +1266,7 @@ def pass_coastline(
 
     stack.set("coastline_delta", final_delta, "coastline")
 
-    produced = ("tidal", "coastline_delta", "height") if apply_retreat else ("tidal", "coastline_delta")
+    produced = ("tidal", "coastline_delta")
 
     return _PR(
         pass_name="coastline",

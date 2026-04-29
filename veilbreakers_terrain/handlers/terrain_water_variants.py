@@ -841,8 +841,14 @@ def pass_water_variants(
     # W-1: co-emit water_surface_mask (canonical binary successor) so downstream
     # consumers can prefer it over the ambiguous water_surface name.
     water_surface_mask = (water_surface > 0.0).astype(np.float32)
+    water_surface_elevation_m = np.where(
+        water_surface_mask > 0.0,
+        np.asarray(stack.height, dtype=np.float32),
+        0.0,
+    ).astype(np.float32)
     stack.set("water_surface", water_surface, "water_variants")
     stack.set("water_surface_mask", water_surface_mask, "water_variants")
+    stack.set("water_surface_elevation_m", water_surface_elevation_m, "water_variants")
     stack.set("wetness", wetness, "water_variants")
 
     return PassResult(
@@ -850,7 +856,12 @@ def pass_water_variants(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("water_surface", "water_surface_mask", "wetness"),
+        produced_channels=(
+            "water_surface",
+            "water_surface_mask",
+            "water_surface_elevation_m",
+            "wetness",
+        ),
         metrics={
             "wet_cells": int(np.count_nonzero(wetness > 0.3)),
             "surface_cells": int(np.count_nonzero(water_surface > 0.5)),

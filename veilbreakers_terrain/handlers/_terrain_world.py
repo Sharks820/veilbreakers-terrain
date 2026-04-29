@@ -1032,6 +1032,8 @@ def pass_structural_masks(
         stack=stack,
         pass_name="structural_masks",
     )
+    hero_exclusion = _protected_mask(state, stack.height.shape, "structural_masks")
+    stack.set("hero_exclusion", hero_exclusion.astype(np.float32), "structural_masks")
 
     return PassResult(
         pass_name="structural_masks",
@@ -1046,6 +1048,7 @@ def pass_structural_masks(
             "ridge",
             "basin",
             "saliency_macro",
+            "hero_exclusion",
         ),
         metrics={
             "max_slope_deg": float(np.degrees(stack.slope.max())),
@@ -1210,6 +1213,9 @@ def pass_erosion(
 
     # Region scoping: restore cells outside the region from the pre-pass snapshot.
     r_slice, c_slice = _region_slice(state, region)
+    sediment_base_out = getattr(hydro, "sediment_accumulation_at_base", None)
+    pool_deepening_out = getattr(hydro, "pool_deepening_delta", None)
+
     if region is not None:
         scoped = h_before.copy()
         scoped[r_slice, c_slice] = new_height[r_slice, c_slice]
@@ -1227,6 +1233,10 @@ def pass_erosion(
         drainage_out = _scope(hydro.drainage)
         bank_instability_out = _scope(hydro.bank_instability)
         talus_out = _scope(thermal.talus)
+        if sediment_base_out is not None:
+            sediment_base_out = _scope(np.asarray(sediment_base_out))
+        if pool_deepening_out is not None:
+            pool_deepening_out = _scope(np.asarray(pool_deepening_out))
     else:
         erosion_amount_out = hydro.erosion_amount
         deposition_amount_out = hydro.deposition_amount
@@ -1244,6 +1254,10 @@ def pass_erosion(
         drainage_out = np.where(protected, 0.0, drainage_out)
         bank_instability_out = np.where(protected, 0.0, bank_instability_out)
         talus_out = np.where(protected, 0.0, talus_out)
+        if sediment_base_out is not None:
+            sediment_base_out = np.where(protected, 0.0, sediment_base_out)
+        if pool_deepening_out is not None:
+            pool_deepening_out = np.where(protected, 0.0, pool_deepening_out)
 
     # Fix 12.2: Stream-Power Law solver (Cordonnier 2016 ε-topological-order)
     # Requires flow_accumulation from Phase 7 Priority-Flood. Falls back to
@@ -1299,6 +1313,18 @@ def pass_erosion(
     stack.set("drainage", drainage_out, "erosion")
     stack.set("bank_instability", bank_instability_out, "erosion")
     stack.set("talus", talus_out, "erosion")
+    if sediment_base_out is not None:
+        stack.set(
+            "sediment_accumulation_at_base",
+            np.asarray(sediment_base_out, dtype=np.float32),
+            "erosion",
+        )
+    if pool_deepening_out is not None:
+        stack.set(
+            "pool_deepening_delta",
+            np.asarray(pool_deepening_out, dtype=np.float32),
+            "erosion",
+        )
     _apply_post_height_seams(stack, "height", "hmap_low_freq")
 
     # Sediment mass-balance metric (AAA spec): ratio of total redeposited

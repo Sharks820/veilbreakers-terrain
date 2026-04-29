@@ -2038,6 +2038,9 @@ def handle_generate_terrain(params: dict) -> dict:
                 "bathymetry",
                 "pass_water_depth",
                 "materials_v2",
+                "prepare_terrain_normals",
+                "prepare_heightmap_raw_u16",
+                "prepare_unity_auxiliary_channels",
             ):
                 if production_pass not in pipeline:
                     pipeline.append(production_pass)
@@ -6014,6 +6017,7 @@ def handle_generate_road(params: dict) -> dict:
     width = int(params.get("width", 3))
     grade_strength = params.get("grade_strength", 0.8)
     seed = params.get("seed", 0)
+    mask_stack = params.get("mask_stack")
     requested_surface = str(params.get("surface", params.get("material_key", "dirt"))).strip().lower()
     raw_protected_zones = params.get("protected_zones") or []
     road_material_key = {
@@ -6176,6 +6180,9 @@ def handle_generate_road(params: dict) -> dict:
         shape=heightmap.shape,
         width_cells=float(width),
     )
+    if mask_stack is not None and hasattr(mask_stack, "set"):
+        mask_stack.set("road_mask", road_mask.astype(np.float32), "generate_road")
+        mask_stack.set("road_sdf_dist", road_sdf_dist.astype(np.float32), "generate_road")
 
     # Write graded Z values — fully vectorised, zero Python vertex loop.
     # 1. Flush bmesh to mesh to make vertex count canonical.

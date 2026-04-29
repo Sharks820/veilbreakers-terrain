@@ -989,6 +989,13 @@ def pass_stratigraphy(
         undercutting_strength=undercut_strength,
     )
     stack.set("strat_erosion_delta", erosion_delta, "stratigraphy")
+    sediment_height = np.maximum(-np.asarray(erosion_delta, dtype=np.float32), 0.0)
+    bedrock_height = (
+        np.asarray(stack.height, dtype=np.float32) - sediment_height
+    ).astype(np.float32)
+    stack.set("sediment_height", sediment_height, "stratigraphy")
+    stack.set("bedrock_height", bedrock_height, "stratigraphy")
+    stack.set("strata_height", np.asarray(stack.height, dtype=np.float32), "stratigraphy")
 
     # --- 5. Unconformity detection ----------------------------------------
     unconformity_mask = detect_unconformities(stack, strat_stack, erosion_delta)
@@ -1058,6 +1065,9 @@ def pass_stratigraphy(
             "rock_hardness",
             "strata_orientation",
             "strat_erosion_delta",
+            "sediment_height",
+            "bedrock_height",
+            "strata_height",
             "unconformity_mask",
             "intrusion_mask",
             "albedo_shift_rgb",

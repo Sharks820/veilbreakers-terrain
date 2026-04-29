@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
-from .terrain_semantics import ValidationIssue
+from .terrain_semantics import TerrainMaskStack, ValidationIssue
+
+
+REQUIRED_CHANNELS: Tuple[str, ...] = tuple(TerrainMaskStack._ARRAY_CHANNELS)
 
 
 # ---------------------------------------------------------------------------
