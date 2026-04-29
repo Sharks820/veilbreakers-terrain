@@ -4,16 +4,15 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 65
+- High risk: 57
 - Medium risk: 1
-- Low risk: 1633
+- Low risk: 1641
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 55
+- Tool/Blender callables needing blocker/high evidence: 47
 
 ## Highest Risk Files
 
 - procedural_grass.py: 8
-- terrain_readability_bands.py: 8
 - terrain_water_variants.py: 7
 - terrain_saliency.py: 4
 - terrain_path_contracts.py: 3
@@ -37,6 +36,7 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_gameplay_zones.py: 1
 - terrain_performance_report.py: 1
 - terrain_readability_semantic.py: 1
+- terrain_rhythm.py: 1
 
 ## Top Blocker/High Callables
 
@@ -75,14 +75,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_path_contracts.py:86 PathSegmentContract.length_m grade=D+ needs=direct_behavior_test;material_texture_contract_test
 - HIGH terrain_path_contracts.py:92 PathSegmentContract.max_observed_grade grade=D+ needs=direct_behavior_test;material_texture_contract_test
 - HIGH terrain_performance_report.py:44 _channel_bytes grade=A needs=direct_behavior_test;material_texture_contract_test
-- HIGH terrain_readability_bands.py:56 BandScore.clamp grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:61 _safe_std grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:71 _normalize_to_score grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:83 _band_silhouette grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:155 _band_volume grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:209 _band_value grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:261 _band_texture grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
-- HIGH terrain_readability_bands.py:324 _band_color grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
 - HIGH terrain_readability_semantic.py:566 _safe_asarray grade=A needs=direct_behavior_test;camera_readability_probe
 - HIGH terrain_review_ingest.py:55 _coerce_location grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_review_ingest.py:192 pass_apply_review_blockers grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke

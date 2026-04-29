@@ -13,10 +13,10 @@
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "HIGH": 65,
-    "LOW": 1633,
+    "HIGH": 57,
+    "LOW": 1641,
     "MEDIUM": 1
   },
-  "tool_blocker_count": 55,
+  "tool_blocker_count": 47,
   "total_callables": 1699
 }
