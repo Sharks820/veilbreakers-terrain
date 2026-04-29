@@ -371,3 +371,10 @@ pass_water_variants).
 | Callable/wiring proof | B- | Strict-zero passes, but many rows are conservative low grades requiring later remediation. |
 | Pipeline smoke | B | Fast controller smoke now proves rollback/provenance/scene-read/default-validation contracts without hanging. |
 | Whole-suite gate | B | Full post-suite is green; remaining weakness is warning hygiene and the fact that green tests do not prove real Blender/Unity visual-runtime output. |
+
+## Codex Phase 1 Closure Delta (2026-04-28)
+
+- Official Phase 1 slice now passes: `test_terrain_iteration.py`, `test_terrain_master_registrar.py`, and `test_terrain_validation.py` -> `88 passed in 28.44s`.
+- Handler bare-swallow grep is clean: no `except Exception: pass` or bare `except: pass` hits under `veilbreakers_terrain/handlers`.
+- `build_terrain_aaa_node_v6.py` now emits executable `validation_full` proof in default runs and records it in `BUILD_SUMMARY.json`.
+- Phase 1 exception/protocol tests grade moves to **A-** for this foundation slice. Remaining test-risk is warning hygiene and non-headless Blender/Unity runtime proof, which belongs to later visual/export phases.

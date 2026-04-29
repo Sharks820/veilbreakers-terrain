@@ -20,6 +20,11 @@ suite is green (`3509 passed, 4 skipped, 23 warnings in 1399.96s`). Phase 0 is
 clear to proceed into ordered implementation, while newly covered callable rows
 remain conservative low-grade remediation targets.
 
+**2026-04-28 Phase 1 closure:** Phase 1 foundation execution is complete.
+Official Phase 1 pytest slice passes (`88 passed in 28.44s`), handler
+bare-swallow grep is clean, strict callable zero remains green, and the default
+v6 build now logs canonical production `validation_full` execution.
+
 ### FIX-0A: Replace mock-stack visual QA tests with real `TerrainMaskStack`
 
 **Files:** `veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py`,

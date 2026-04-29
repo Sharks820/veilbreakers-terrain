@@ -209,6 +209,11 @@ python scripts/scan_callable_wiring.py
 <a id="phase-1"></a>
 ## PHASE 1 — FOUNDATION: ERROR PROPAGATION & PROTOCOL ENFORCEMENT
 
+**2026-04-28 execution status:** Complete and verified. Official Phase 1
+pytest slice passed (`88 passed in 28.44s`), handler bare-swallow grep is
+clean, strict callable zero still passes, and `build_terrain_aaa_node_v6.py`
+now logs canonical production `validation_full` execution during default runs.
+
 **Goal:** Make latent failures visible. Today, ~17 bare `except` clauses, a
 silent `PassDAG.resolve_pass`, a `TERRAIN_DEV_MODE` bypass, and
 `validation_minimal` everywhere mean that all subsequent phases would land

@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -54,6 +55,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(REPO_ROOT))
 
 FAILURES: list[dict] = []
+VALIDATION_FULL_PROOF: dict = {}
 
 SEED = 0xAAA6
 TILE_SIZE_M = 1024.0
@@ -256,6 +258,66 @@ def run_production_passes(heightmap):
         _fail("materials_v2", e)
 
     return mask_stack
+
+
+def run_validation_full_pipeline_proof():
+    """Run a tiny canonical production pipeline and record validation_full proof."""
+    import numpy as np
+
+    try:
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            BBox,
+            TerrainIntentState,
+            TerrainMaskStack,
+            TerrainPipelineState,
+        )
+    except ImportError as e:
+        _fail("validation_full_pipeline_import", e)
+        return {}
+
+    _log("Running canonical production pipeline proof...")
+    try:
+        height = np.zeros((33, 33), dtype=np.float32)
+        stack = TerrainMaskStack(
+            tile_size=32,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=height,
+        )
+        intent = TerrainIntentState(
+            seed=SEED,
+            region_bounds=BBox(0.0, 0.0, 32.0, 32.0),
+            tile_size=32,
+            cell_size=1.0,
+            quality_profile="production",
+        )
+        state = TerrainPipelineState(intent=intent, mask_stack=stack)
+        with tempfile.TemporaryDirectory() as td:
+            controller = TerrainPassController(state, checkpoint_dir=Path(td))
+            results = controller.run_pipeline(checkpoint=False)
+        executed = [r.pass_name for r in results]
+        statuses = {r.pass_name: r.status for r in results}
+        validation_status = statuses.get("validation_full")
+        if "validation_full" not in executed:
+            raise RuntimeError(f"validation_full missing from executed passes: {executed}")
+        _log(
+            "  canonical pipeline executed: "
+            + " -> ".join(executed)
+            + f" (validation_full={validation_status})"
+        )
+        return {
+            "executed_passes": executed,
+            "statuses": statuses,
+            "validation_full_present": True,
+            "validation_full_status": validation_status,
+        }
+    except Exception as e:
+        _fail("validation_full_pipeline", e)
+        return {"validation_full_present": False, "error": repr(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -887,6 +949,7 @@ def write_summary(heightmap, stack):
             "V6-R1: 1920x1080 @ 64 samples (was 1280x720 @ 128)",
         ],
         "channels_produced": channels,
+        "validation_full_pipeline_proof": VALIDATION_FULL_PROOF,
         "failures": FAILURES,
     }
     out_path = OUT_DIR / "BUILD_SUMMARY.json"
@@ -922,11 +985,13 @@ def write_generation_manifest() -> None:
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    global VALIDATION_FULL_PROOF
     t0 = time.perf_counter()
     _log("=== AAA Terrain Node v6 — D/F -> A/B target rebuild ===")
 
     heightmap = compose_heightmap()
     stack = run_production_passes(heightmap)
+    VALIDATION_FULL_PROOF = run_validation_full_pipeline_proof()
     build_blender_scene(heightmap, stack)
     summary = write_summary(heightmap, stack)
     write_generation_manifest()
