@@ -1693,8 +1693,9 @@ def export_unity_manifest(
                 extra={"species": key},
             )
 
-    if stack.decal_density and isinstance(stack.decal_density, dict):
-        for key, value in stack.decal_density.items():
+    _decal_dens = stack.get("decal_density")
+    if _decal_dens and isinstance(_decal_dens, dict):
+        for key, value in _decal_dens.items():
             _write_raw_array(
                 files,
                 output_dir,
@@ -1713,6 +1714,8 @@ def export_unity_manifest(
     supplemental_mesh_specs_json = _supplemental_mesh_specs_json(stack)
     particle_emitter_specs_json = _particle_emitter_specs_json(stack)
     water_shader_manifest_json = _water_shader_manifest_json(stack, profile=profile)
+    light_placements_json = _light_placements_json(stack)
+    probe_placements_json = _probe_placements_json(stack)
     ecosystem_meta_json = {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -1730,7 +1733,7 @@ def export_unity_manifest(
         "has_cloud_shadow": stack.cloud_shadow is not None,
         "has_navmesh": stack.navmesh_area_id is not None,
         "has_traversability": stack.traversability is not None,
-        "has_decals": bool(stack.decal_density),
+        "has_decals": bool(stack.get("decal_density")),
         "has_supplemental_mesh_specs": bool(supplemental_mesh_specs_json["mesh_specs"]),
         "has_particle_emitters": bool(particle_emitter_specs_json["emitters"]),
         "wind_field_descriptor": "wind_field.bin" if stack.wind_field is not None else None,
@@ -1758,6 +1761,15 @@ def export_unity_manifest(
         ("ecosystem_meta.json", ecosystem_meta_json),
     ):
         _write_json(files, output_dir, filename=name, payload=payload)
+    # D-7: atmospheric volumes — written only when the pass ran
+    _atm_vols = stack.get("atmospheric_volumes")
+    if _atm_vols is not None:
+        _write_json(
+            files,
+            output_dir,
+            filename="atmospheric_volumes.json",
+            payload=_atm_vols if isinstance(_atm_vols, dict) else {"volumes": list(_atm_vols)},
+        )
     if supplemental_mesh_specs_json["mesh_specs"]:
         _write_json(
             files,
@@ -1780,6 +1792,10 @@ def export_unity_manifest(
         filename="water_shader_manifest.json",
         payload=water_shader_manifest_json,
     )
+    # FIX-7-7: light and probe placement sidecars
+    if light_placements_json["lights"]:
+        _write_json(files, output_dir, filename="light_placements.json", payload=light_placements_json)
+    _write_json(files, output_dir, filename="probe_placements.json", payload=probe_placements_json)
 
     # ---------------------------------------------------------------------- #
     # Tree prototype list — derived from tree_instance_points column 4.
@@ -1811,7 +1827,9 @@ def export_unity_manifest(
     # so brief splash-zones don't inflate the baseline.
     # ---------------------------------------------------------------------- #
     water_level_unity: Optional[float] = None
-    ws = stack.get("water_surface_mask") or stack.get("water_surface")
+    ws = stack.get("water_surface_mask")
+    if ws is None:
+        ws = stack.get("water_surface")
     if ws is not None:
         ws_arr = np.asarray(ws, dtype=np.float64)
         nonzero = ws_arr[ws_arr > 0.0]
@@ -1905,6 +1923,9 @@ def export_unity_manifest(
         "tile_biome_id": biome_manifest["primary_biome_id"],
         "tile_biome_name": biome_manifest["primary_biome_name"],
         "biome_distribution": biome_manifest["distribution"],
+        "snow_line_factor": float(np.asarray(stack.get("snow_line_factor")).mean()) if stack.get("snow_line_factor") is not None else 0.0,
+        "has_water_surface": water_level_unity is not None,
+        "scatter_count": int(np.asarray(stack.tree_instance_points).shape[0]) if stack.tree_instance_points is not None and np.asarray(stack.tree_instance_points).ndim >= 1 else 0,
         "detail_density_max_per_cell": _DETAIL_DENSITY_MAX_PER_CELL,
         "tree_prototype_list": tree_prototype_list,
         "foliage_scatter_manifest": _build_foliage_scatter_manifest(),
@@ -1932,6 +1953,11 @@ def export_unity_manifest(
             batch_id=str(batch_id) if batch_id is not None else None,
         ),
     }
+    if stack.get("atmospheric_volumes") is not None:
+        manifest["atmospheric_volumes_file"] = "atmospheric_volumes.json"
+    if light_placements_json["lights"]:
+        manifest["light_placements_file"] = "light_placements.json"
+    manifest["probe_placements_file"] = "probe_placements.json"
     validation_issues = validate_bit_depth_contract(UnityExportContract(), files)
     validation_issues.extend(validate_mesh_attributes_present(REQUIRED_MESH_ATTRIBUTES))
     manifest["validation_issue_count"] = len(validation_issues)
@@ -1967,6 +1993,62 @@ def export_unity_manifest(
     manifest["files"] = files
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest
+
+
+def _light_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
+    """Build light placement descriptors from world props via light_integration."""
+    try:
+        from .light_integration import compute_light_placements
+        props: list = []
+        talus = stack.get("talus_boulder_placements")
+        if talus and isinstance(talus, (list, tuple)):
+            for p in talus:
+                if isinstance(p, dict) and "position" in p:
+                    props.append({"type": p.get("type", "boulder"), "position": p["position"]})
+        lights = compute_light_placements(props)
+        # Tuples → lists for JSON serialisation
+        for lt in lights:
+            for k in ("position", "color", "direction"):
+                if k in lt and isinstance(lt[k], tuple):
+                    lt[k] = list(lt[k])
+    except Exception:
+        lights = []
+    return {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "lights": lights,
+    }
+
+
+def _probe_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
+    """Compute UE5-style reflection/irradiance probe placements from the terrain."""
+    try:
+        from .light_integration import compute_probe_placements
+        height = stack.get("height")
+        if height is None:
+            return {
+                "schema_version": "1.0",
+                "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+                "probes": [],
+            }
+        water = stack.get("water_surface_mask")
+        probes = compute_probe_placements(
+            height,
+            cell_size=float(stack.cell_size),
+            world_origin_x=float(stack.world_origin_x),
+            world_origin_y=float(stack.world_origin_y),
+            water_surface=water,
+        )
+        for p in probes:
+            if "position" in p and isinstance(p["position"], tuple):
+                p["position"] = list(p["position"])
+    except Exception:
+        probes = []
+    return {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "probes": probes,
+    }
 
 
 def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
@@ -2055,7 +2137,7 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     zones: List[Dict[str, Any]] = []
-    arr = stack.gameplay_zone
+    arr = stack.get("gameplay_zone")
     if arr is None:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
@@ -2105,10 +2187,11 @@ def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     volumes: List[Dict[str, Any]] = []
-    if not stack.wildlife_affinity:
+    _wl = stack.get("wildlife_affinity") or {}
+    if not _wl:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "volumes": volumes}
 
-    for species, arr in stack.wildlife_affinity.items():
+    for species, arr in _wl.items():
         values = np.asarray(arr, dtype=np.float32)
         mask = values > 0.1
         if not mask.any():
@@ -2144,10 +2227,11 @@ def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     decals: Dict[str, List[Dict[str, Any]]] = {}
-    if not stack.decal_density or not isinstance(stack.decal_density, dict):
+    _dd = stack.get("decal_density")
+    if not _dd or not isinstance(_dd, dict):
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
-    for kind, arr in stack.decal_density.items():
+    for kind, arr in _dd.items():
         arr_np = np.asarray(arr, dtype=np.float32)
         coords = np.argwhere(arr_np > 0.5)
         if coords.size:
@@ -2286,6 +2370,17 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     tile_max_y = tile_min_y + float(stack.tile_size) * float(stack.cell_size)
     skipped_out_of_bounds = 0
 
+    # FIX-8-3: sample wind_field per instance instead of using a global default
+    _wind_arr = stack.get("wind_field")
+    _has_wind_field = (
+        _wind_arr is not None
+        and isinstance(_wind_arr, np.ndarray)
+        and _wind_arr.ndim == 3
+        and _wind_arr.shape[2] >= 2
+    )
+    # FIX-8-4: scale from optional columns 5/6 (scale_x, scale_z)
+    _has_scale = points.shape[1] >= 7
+
     for row in points:
         if not (tile_min_x <= float(row[0]) <= tile_max_x and tile_min_y <= float(row[1]) <= tile_max_y):
             skipped_out_of_bounds += 1
@@ -2295,15 +2390,39 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
             sampled_z = _terrain_height_at_world(stack, float(row[0]), float(row[1]))
             if sampled_z is not None:
                 tree_z = sampled_z
+
+        # FIX-8-3: per-instance wind direction from wind_field channel
+        _wind_dir = _WIND_DIR_DEFAULT
+        if _has_wind_field:
+            _cs = max(float(stack.cell_size), 1e-9)
+            _ci = int(np.clip(
+                round((float(row[0]) - float(stack.world_origin_x)) / _cs),
+                0, _wind_arr.shape[1] - 1,
+            ))
+            _ri = int(np.clip(
+                round((float(row[1]) - float(stack.world_origin_y)) / _cs),
+                0, _wind_arr.shape[0] - 1,
+            ))
+            _wx, _wz = float(_wind_arr[_ri, _ci, 0]), float(_wind_arr[_ri, _ci, 1])
+            _wn = float(np.sqrt(_wx * _wx + _wz * _wz))
+            if _wn > 1e-9:
+                _wind_dir = (_wx / _wn, _wz / _wn)
+
+        # FIX-8-4: per-instance scale from optional columns 5/6
+        width_scale = (
+            float(row[5]) if _has_scale and np.isfinite(row[5]) and float(row[5]) > 0.0 else 1.0
+        )
+        height_scale = (
+            float(row[6]) if _has_scale and np.isfinite(row[6]) and float(row[6]) > 0.0 else 1.0
+        )
+
         # Wind bend vertex color — Fix 13.2 / REQ-P13-002
-        # Two representative heights: root (0.0) and crown (tree_height)
         _representative_heights = np.array([0.0, _TREE_HEIGHT_DEFAULT], dtype=np.float32)
         _vcolors = compute_wind_bend_vertex_color(
             vertex_heights=_representative_heights,
             tree_height=_TREE_HEIGHT_DEFAULT,
-            wind_dir_xz=_WIND_DIR_DEFAULT,
+            wind_dir_xz=_wind_dir,
         )
-        # Serialize as list of RGBA dicts (root + crown)
         vertex_color_list = [
             {"r": float(_vcolors[i, 0]), "g": float(_vcolors[i, 1]),
              "b": float(_vcolors[i, 2]), "a": float(_vcolors[i, 3])}
@@ -2318,11 +2437,11 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                 ]),
                 "yaw_degrees": float(row[3]),
                 "prototype_id": int(row[4]),
-                "width_scale": 1.0,
-                "height_scale": 1.0,
+                "width_scale": width_scale,
+                "height_scale": height_scale,
                 "color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0},
                 "lightmap_color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0},
-                "vertex_color": vertex_color_list,  # NEW — Fix 13.2
+                "vertex_color": vertex_color_list,
             }
         )
     return {

@@ -152,7 +152,7 @@ class CliffStructure:
     ---------------------------
     strata_layers  : list of StrataLayer (3-7 items) representing sedimentary
                      banding.  Populated by ``carve_cliff_system``.
-    overhang_mask  : (H, W) bool — cells where cliff base normal · up > cos(60°)
+    overhang_mask  : (H, W) bool — cells where slope > 88° (near-vertical re-entrant face)
                      AND height delta > 2 m.  Populated by ``carve_cliff_system``.
     contour_spline : (M, 2) float64 — cubic B-spline sample points through the
                      Gaussian-smoothed Moore-neighbor contour.  Populated by

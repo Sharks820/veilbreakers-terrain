@@ -178,6 +178,15 @@ _CLASS_PRESET: Dict[int, str] = {
 # Speed of sound in air at 20 °C
 _SPEED_OF_SOUND_MS = 343.0
 
+# Zone classes that are open-air — Sabine/Eyring room model does not apply.
+_OUTDOOR_ZONE_CLASSES: frozenset = frozenset({
+    AudioReverbClass.OPEN_FIELD.value,
+    AudioReverbClass.FOREST_SPARSE.value,
+    AudioReverbClass.FOREST_DENSE.value,
+    AudioReverbClass.WATER_NEAR.value,
+    AudioReverbClass.MOUNTAIN_HIGH.value,
+})
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -294,6 +303,32 @@ def _sabine_rt60(
     else:
         rt60 = 0.161 * volume / (absorption * surface)
     return float(np.clip(rt60, 0.05, 10.0))
+
+
+def _outdoor_rt60(
+    cell_count: int,
+    cell_size: float,
+    absorption: float,
+    preset_rt60: float,
+) -> float:
+    """RT60 estimator for open-air terrain zones (FIX-7-17).
+
+    Outdoor acoustics are dominated by geometric spreading and ground
+    absorption, not by a reverberant field — the Sabine/Eyring room model
+    (which assumes enclosed walls) over-estimates decay time for open zones.
+
+    Model: scale the preset nominal RT60 by a zone-area factor so larger
+    open zones get a slightly longer coherent ground-reflection tail, then
+    reduce by the absorption coefficient.  Result is clamped to [0.05, 2.0] s
+    (outdoor RT60 never exceeds ~2 s in real terrain).
+    """
+    area_m2 = float(cell_count) * cell_size ** 2
+    # Normalise around a 100 m-radius reference open zone
+    area_factor = float(np.sqrt(max(area_m2, 1.0))) / (np.pi ** 0.5 * 100.0)
+    area_factor = float(np.clip(area_factor, 0.5, 2.0))
+    alpha = float(np.clip(absorption, 0.01, 0.999))
+    rt60 = preset_rt60 * area_factor * (1.0 - alpha * 0.5)
+    return float(np.clip(rt60, 0.05, 2.0))
 
 
 def _chamfer_distance_cells(cliff_mask: np.ndarray) -> np.ndarray:
@@ -568,12 +603,8 @@ def _classify_raster(stack: TerrainMaskStack) -> np.ndarray:
         cave = cave | overhang
 
     # Water surface
-    # W-1 fix: prefer water_surface_mask (unambiguous binary channel); fall
-    # back to legacy water_surface attribute for backwards compatibility.
     water_near = np.zeros(shape, dtype=bool)
-    _ws_mask = stack.get("water_surface_mask") if hasattr(stack, "get") else None
-    if _ws_mask is None:
-        _ws_mask = stack.get("water_surface") if hasattr(stack, "get") else None
+    _ws_mask = stack.get("water_surface_mask")
     if _ws_mask is not None:
         water_near |= np.asarray(_ws_mask) > 0.0
     if stack.wetness is not None:
@@ -727,15 +758,24 @@ def compute_audio_zone_list(
             if cell_count == 0:
                 continue
 
-            # Norris-Eyring RT60 for this specific zone instance.
+            # RT60 model: outdoor zones use sky-reflection model (FIX-7-17);
+            # enclosed zones (cave, canyon, interior) use Norris-Eyring.
             h_comp = h[comp_mask]
             mean_height_delta = float(h_comp.std()) if len(h_comp) > 1 else 1.0
-            rt60 = _sabine_rt60(
-                cell_count,
-                float(stack.cell_size),
-                mean_height_delta,
-                absorption,
-            )
+            if int(cls_val) in _OUTDOOR_ZONE_CLASSES:
+                rt60 = _outdoor_rt60(
+                    cell_count,
+                    float(stack.cell_size),
+                    absorption,
+                    preset["rt60"],
+                )
+            else:
+                rt60 = _sabine_rt60(
+                    cell_count,
+                    float(stack.cell_size),
+                    mean_height_delta,
+                    absorption,
+                )
 
             # Cliff echo delay (seconds → ms for Wwise/FMOD pre_delay slot).
             echo_delay_s = float(echo_delay_field[comp_mask].mean())

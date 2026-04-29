@@ -1779,7 +1779,9 @@ def compute_physical_foam_composite(
     # Source 4: Shoreline foam — 3-cell band at water_surface boundary
     # Detect edges where water_surface > 0 AND any neighbour == 0.
     # ------------------------------------------------------------------
-    ws_arr = stack.get("water_surface_mask") or stack.get("water_surface")
+    ws_arr = stack.get("water_surface_mask")
+    if ws_arr is None:
+        ws_arr = stack.get("water_surface")
 
     if ws_arr is not None:
         ws = np.asarray(ws_arr, dtype=np.float32)

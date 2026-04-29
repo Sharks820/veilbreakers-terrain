@@ -3104,7 +3104,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
             and max_moisture keys when moisture_map is provided.
         min_distance (float, default 3.0): Minimum distance between instances.
         seed (int, default 0): Random seed.
-        max_instances (int, default 5000): Cap on total instances.
+        max_instances (int, default 100000): Cap on total instances.
         max_tilt_angle (float, default 45.0): Maximum terrain slope in degrees.
             Points where terrain is steeper than this are rejected.
         moisture_map (list of list or None): Optional 2D moisture map [0,1]
@@ -3121,7 +3121,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
     rules = params.get("rules") or _DEFAULT_VEG_RULES
     min_distance = params.get("min_distance", 3.0)
     seed = params.get("seed", 0)
-    max_instances = params.get("max_instances", 5000)
+    max_instances = params.get("max_instances", 100_000)
     max_tilt_angle = params.get("max_tilt_angle", 45.0)
     moisture_map_raw = params.get("moisture_map", None)
     _stack = params.get("stack")

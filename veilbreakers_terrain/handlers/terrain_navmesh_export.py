@@ -92,7 +92,7 @@ _GAMEPLAY_ZONE_COSTS: Dict[int, Dict[str, Any]] = {
 
 
 def _gameplay_zone_cost_areas(stack: TerrainMaskStack) -> List[Dict[str, Any]]:
-    zones = stack.gameplay_zone
+    zones = stack.get("gameplay_zone")
     if zones is None:
         return []
     arr = np.asarray(zones)
@@ -196,7 +196,9 @@ def compute_navmesh_area_id(
         deep_water = np.asarray(water_depth_raw, dtype=np.float32) > 0.5
         out[deep_water] = NAVMESH_SWIM
     else:
-        _ws = stack.get("water_surface_mask") or stack.get("water_surface")
+        _ws = stack.get("water_surface_mask")
+        if _ws is None:
+            _ws = stack.get("water_surface")
         if _ws is not None:
             swim = np.asarray(_ws, dtype=np.float32) > 0.0
             out[swim] = NAVMESH_SWIM
@@ -322,7 +324,9 @@ def compute_traversability(
 
     # --- Water penalty ---
     water_cost = np.zeros(shape, dtype=np.float64)
-    _ws_b1b = stack.get("water_surface_mask") or stack.get("water_surface")
+    _ws_b1b = stack.get("water_surface_mask")
+    if _ws_b1b is None:
+        _ws_b1b = stack.get("water_surface")
     if _ws_b1b is not None:
         water_cost = np.where(
             np.asarray(_ws_b1b) > 0.0, 0.7, 0.0
@@ -576,6 +580,24 @@ def export_navmesh_json(
     output_path.write_text(
         json.dumps(descriptor, indent=2, sort_keys=True, default=_json_default)
     )
+
+    # D-2: Emit sibling .obj for Unity AI Navigation import.
+    # Unity's NavMesh baking pipeline cannot consume raw JSON; an OBJ walkable
+    # mesh gives the Editor-side import script geometry to bake into a NavMeshData asset.
+    obj_path = output_path.with_suffix(".obj")
+    verts = geometry["vertices"]
+    polys = geometry["triangles"]
+    areas = geometry["area_ids"]
+    with obj_path.open("w", encoding="utf-8") as _f:
+        _f.write("# VeilBreakers navmesh walkable geometry\n")
+        for v in verts:
+            _f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+        for i, p in enumerate(polys):
+            area = areas[i] if i < len(areas) else 0
+            _f.write(f"# area_id={area}\n")
+            _f.write(f"f {p[0]+1} {p[1]+1} {p[2]+1}\n")
+    descriptor["obj_path"] = str(obj_path)
+
     return descriptor
 
 

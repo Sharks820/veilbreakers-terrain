@@ -286,13 +286,15 @@ def _estimate_tri_count_per_lod(stack: TerrainMaskStack) -> Dict[int, int]:
 
     base_lod0 = int(2 * (rows - 1) * (cols - 1))
 
-    # Cliff-face surcharge on LOD0 only
+    # Cliff-face surcharge on LOD0 only.
+    # FIX-9-6: cliff edge geometry uses fan triangulation (center vertex per quad)
+    # → 4 tris per cliff cell rather than 2 (plain diagonal-split quad).
     cliff_surcharge = 0
     cliff_mask = stack.get("cliff_candidate")
     if cliff_mask is not None:
         cm = np.asarray(cliff_mask)
         if cm.shape == arr.shape:
-            cliff_surcharge = int(cm.sum()) * 2
+            cliff_surcharge = int(cm.sum()) * 4
 
     lod0_tris = base_lod0 + cliff_surcharge
 

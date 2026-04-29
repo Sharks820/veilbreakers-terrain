@@ -575,11 +575,11 @@ def compute_slope_material_weights(
             h_arr = np.asarray(stack.height, dtype=np.float64)
             H_s, W_s = h_arr.shape
             r_idx, c_idx = np.mgrid[0:H_s, 0:W_s]
-            pos_3d = np.stack([
-                c_idx.astype(np.float64),
-                r_idx.astype(np.float64),
-                h_arr,
-            ], axis=2)
+            # E-5: use world-space XYZ so triplanar UVs tile uniformly across tiles
+            _cs = float(stack.cell_size)
+            world_x = c_idx.astype(np.float64) * _cs + float(stack.world_origin_x)
+            world_z = r_idx.astype(np.float64) * _cs + float(stack.world_origin_y)
+            pos_3d = np.stack([world_x, h_arr, world_z], axis=2)
             normals_3d = np.zeros((H_s, W_s, 3), dtype=np.float64)
             normals_3d[..., 2] = 1.0  # default up-normal
 
@@ -614,9 +614,13 @@ def compute_slope_material_weights(
         ground_idx = rules.index_of("ground")
         try:
             scree_idx = rules.index_of("scree")
-            rock_boundary_weight = np.maximum(weights[:, :, cliff_idx], weights[:, :, scree_idx])
+            _orig_cliff = weights[:, :, cliff_idx].copy()
+            _orig_scree = weights[:, :, scree_idx].copy()
+            rock_boundary_weight = np.maximum(_orig_cliff, _orig_scree)
+            _has_scree = True
         except KeyError:
             rock_boundary_weight = weights[:, :, cliff_idx]
+            _has_scree = False
         strata_h = stack.get("strata_height")
         if strata_h is not None:
             rock_h_factor = np.asarray(strata_h, dtype=np.float32)
@@ -626,8 +630,15 @@ def compute_slope_material_weights(
                 rock_height_factor=rock_h_factor,
             )
             total_bd = b_rock + b_dirt + 1e-8
-            weights[:, :, cliff_idx] = (b_rock / total_bd).astype(np.float32)
+            b_rock_norm = (b_rock / total_bd).astype(np.float32)
             weights[:, :, ground_idx] = (b_dirt / total_bd).astype(np.float32)
+            if _has_scree:
+                # FIX-7-14: distribute b_rock proportionally between cliff and scree
+                _sum_cs = _orig_cliff + _orig_scree + 1e-9
+                weights[:, :, cliff_idx] = (b_rock_norm * (_orig_cliff / _sum_cs)).astype(np.float32)
+                weights[:, :, scree_idx] = (b_rock_norm * (_orig_scree / _sum_cs)).astype(np.float32)
+            else:
+                weights[:, :, cliff_idx] = b_rock_norm
     except KeyError:
         pass  # rule set doesn't have cliff or ground channel; skip silently
 
@@ -892,6 +903,34 @@ def pass_materials(
     stack.set("splatmap_weights_layer", new_weights, "materials_v2")
     stack.set("material_weights", new_weights, "materials_v2")
 
+    # E-2: ambient_occlusion_bake from curvature concavity proxy
+    _curvature = stack.get("curvature")
+    if _curvature is not None:
+        _ao = np.clip(0.5 + 0.5 * np.tanh(np.asarray(_curvature, dtype=np.float32) * 2.0), 0.0, 1.0)
+        stack.set("ambient_occlusion_bake", _ao.astype(np.float32), "materials_v2")
+
+    # E-3: terrain_displacement from blended per-layer displacement amplitudes
+    _disp = np.zeros(new_weights.shape[:2], dtype=np.float32)
+    for _i, _ch in enumerate(rules.channels):
+        _base_disp = float(getattr(_ch, "displacement_amplitude_m", 0.05))
+        _disp += new_weights[..., _i].astype(np.float32) * _base_disp
+    stack.set("terrain_displacement", _disp, "materials_v2")
+
+    # E-1: build TerrainTextureLayerStack for downstream Unity export and quixel_ingest
+    from .terrain_texture_layer_stack import TerrainTextureLayerStack, TextureLayer
+    _layer_stack = TerrainTextureLayerStack()
+    for _i, _ch in enumerate(rules.channels):
+        _layer_stack.add_layer(TextureLayer(
+            layer_id=_ch.channel_id,
+            terrain_mask_source="splatmap_weights_layer",
+            weight_map=new_weights[..., _i].astype(np.float32),
+            metallic=float(_ch.metallic),
+            tiling_scale=float(getattr(_ch, "tiling_scale", 1.0)),
+            texel_density_m=float(getattr(_ch, "texel_density_m", 0.1)),
+            color_space="sRGB",
+        ))
+    state.texture_layer_stack = _layer_stack
+
     # Aggregate metrics
     per_layer_coverage = new_weights.mean(axis=(0, 1))
     dominant = int(per_layer_coverage.argmax())
@@ -923,7 +962,7 @@ def pass_materials(
         status=status,
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("slope", "height"),
-        produced_channels=("splatmap_weights_layer", "material_weights"),
+        produced_channels=("splatmap_weights_layer", "material_weights", "ambient_occlusion_bake", "terrain_displacement"),
         metrics=metrics,
         issues=issues,
         warnings=warnings,
@@ -944,7 +983,7 @@ def register_bundle_b_material_passes() -> None:
             # overlap is intentional (quixel_ingest overrides materials_v2
             # for photoscanned biomes, see terrain_quixel_ingest.py).
             requires_channels=("slope", "height", "curvature"),
-            produces_channels=("splatmap_weights_layer", "material_weights"),
+            produces_channels=("splatmap_weights_layer", "material_weights", "ambient_occlusion_bake", "terrain_displacement"),
             seed_namespace="materials_v2",
             requires_scene_read=False,
             may_modify_geometry=False,

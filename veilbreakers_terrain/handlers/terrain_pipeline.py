@@ -144,12 +144,48 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         if validation_pass == "validation_full":
             pass_sequence.insert(composite_idx, "pass_morphology")
             composite_idx += 1
+            # C-1: glacial pass runs after morphology, before scatter/materials
+            pass_sequence.insert(composite_idx, "pass_glacial")
+            composite_idx += 1
+    if validation_pass == "validation_full":
+        insert_at = pass_sequence.index("validation_full")
+        for prereq in (
+            # C-7: terrain feature carving before scatter
+            "pass_terrain_features",
+            # C-8: sightline framing before scatter
+            "framing",
+            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
+            *(("waterfalls", "emit_particle_systems", "integrate_deltas", "materials_v2", "emit_overhang_meshes", "scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read else ("materials_v2",)),
+            # C-2: Bundle J ecosystem passes
+            "audio_zones",
+            "wildlife_zones",
+            "gameplay_zones",
+            "wind_field",
+            "cloud_shadow",
+            "decals",
+            "ecotones",
+            # C-3: Bundle K material ceiling passes
+            "stochastic_shader",
+            "macro_color",
+            "multiscale_breakup",
+            "shadow_clipmap",
+            "roughness_driver",
+            "quixel_ingest",
+            # C-4: Bundle L atmosphere + atmospheric volumes
+            "fog_masks",
+            "god_ray_hints",
+            "pass_atmospheric_volumes",
+            # C-9: post-scatter saliency refinement
+            "saliency_refine",
+            # C-6: navmesh export runs regardless of unity_export_opt_out
+            "pass_navmesh_export",
+        ):
+            if prereq not in pass_sequence:
+                pass_sequence.insert(insert_at, prereq)
+                insert_at += 1
     if validation_pass == "validation_full" and not unity_export_opt_out:
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
-            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
-            *(("waterfalls", "emit_particle_systems", "integrate_deltas", "materials_v2", "emit_overhang_meshes", "scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read else ("materials_v2",)),
-            "pass_navmesh_export",
             "prepare_terrain_normals",
             "prepare_heightmap_raw_u16",
             "prepare_unity_auxiliary_channels",

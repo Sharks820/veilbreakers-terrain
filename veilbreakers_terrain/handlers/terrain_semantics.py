@@ -1641,6 +1641,8 @@ class TerrainPipelineState:
     # a dict derived from ``particle_emitter_specs`` with engine-specific
     # fields added (e.g. "vfx_graph_asset_hint", "niagara_system_hint").
     particle_layer_specs: List[Dict[str, Any]] = field(default_factory=list)
+    # E-1: PBR layer stack built by pass_materials and consumed by terrain_unity_export.
+    texture_layer_stack: Optional[Any] = None
 
     @property
     def tile_x(self) -> int:

@@ -3502,11 +3502,7 @@ def validate_flow_direction_continuity(
     """
     issues: list[str] = []
 
-    fd_field = None
-    if hasattr(stack, "get"):
-        fd_field = stack.get("flow_direction")
-    if fd_field is None:
-        fd_field = getattr(stack, "flow_direction", None)
+    fd_field = stack.get("flow_direction")
     if fd_field is None:
         return ["flow_direction channel missing — cannot validate continuity"]
 

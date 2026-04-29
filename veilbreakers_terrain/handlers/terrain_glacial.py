@@ -351,7 +351,7 @@ def pass_glacial(
         consumed = ("height", "flow_accumulation")
 
     return PassResult(
-        pass_name="glacial",
+        pass_name="pass_glacial",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=consumed,

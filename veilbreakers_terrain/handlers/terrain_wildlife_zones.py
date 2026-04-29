@@ -222,7 +222,9 @@ def compute_wildlife_affinity(
 
     # --- Water mask + distance field ---
     water_mask: Optional[np.ndarray] = None
-    _ws_b1c = stack.get("water_surface_mask") or stack.get("water_surface")
+    _ws_b1c = stack.get("water_surface_mask")
+    if _ws_b1c is None:
+        _ws_b1c = stack.get("water_surface")
     if _ws_b1c is not None:
         water_mask = np.asarray(_ws_b1c) > 0.0
     elif stack.wetness is not None:

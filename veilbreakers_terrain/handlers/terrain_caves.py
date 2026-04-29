@@ -946,7 +946,7 @@ def pick_cave_archetype(
         # by checking if the stack carries a "biome_names" attribute)
         _biome_names = getattr(stack, "biome_names", None)
         if _biome_names is not None:
-            _biome_idx = int(round(_sample("biome", -1.0)))
+            _biome_idx = int(round(_sample("biome_id", -1.0)))
             if 0 <= _biome_idx < len(_biome_names):
                 _biome_str = str(_biome_names[_biome_idx]).lower()
 
@@ -4796,8 +4796,12 @@ def _build_chamber_mesh(name: str, width: float, depth: float, wall_height: floa
             uv_wet.data[loop_idx].uv = (u_wet, v_wet)
 
     # --- Custom split normals (per-face flat shading) ---
+    # FIX-9-15: Blender 4.1+ removed use_auto_smooth; initialize split normals
+    # via calc_normals_split() so normals_split_custom_set() works on 4.5+.
     if hasattr(mesh, "use_auto_smooth"):
         mesh.use_auto_smooth = True
+    elif hasattr(mesh, "calc_normals_split"):
+        mesh.calc_normals_split()
     custom_normals = []
     for pi, poly in enumerate(mesh.polygons):
         fn = face_normals[pi] if pi < len(face_normals) else (0.0, 0.0, 1.0)

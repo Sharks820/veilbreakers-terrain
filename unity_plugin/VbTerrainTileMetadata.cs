@@ -21,5 +21,26 @@ namespace VeilBreakers.TerrainImport
         public string ValidationStatus = "unknown";
         public int ValidationIssueCount;
         public string SeamContractWorldId = "unknown";
+
+        // Extended fields (D-1)
+        public int BiomeId;
+        public string ClimateZone = "temperate";
+        public bool WaterPresent;
+        public float WaterSurfaceElevationM;
+        public int ScatterCount;
+        public float Lod0DistanceM = 50f;
+        public float Lod1DistanceM = 150f;
+        public float Lod2DistanceM = 400f;
+        public float SnowLineFactor;
+        public string PrimaryBiomeName = "dark_fantasy_default";
+
+        [System.Serializable]
+        public struct ChannelBound
+        {
+            public string Name;
+            public float Min;
+            public float Max;
+        }
+        public ChannelBound[] ChannelBounds = System.Array.Empty<ChannelBound>();
     }
 }

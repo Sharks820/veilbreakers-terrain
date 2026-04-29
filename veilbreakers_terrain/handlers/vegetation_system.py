@@ -1141,7 +1141,7 @@ def scatter_biome_vegetation(
         biome_name (str): Key into BIOME_VEGETATION_SETS.
         min_distance (float, default 3.0): Minimum distance between instances.
         seed (int, default 42): Random seed.
-        max_instances (int, default 5000): Cap on total instances.
+        max_instances (int, default 100000): Cap on total instances.
         season (str, optional): Season variant (summer/autumn/winter/corrupted).
         bake_wind_colors (bool, default False): Whether to compute wind vertex
             colors on tree instances.
@@ -1199,7 +1199,7 @@ def scatter_biome_vegetation(
 
     min_distance = float(params.get("min_distance", 3.0))
     seed = int(params.get("seed", 42))
-    max_instances = int(params.get("max_instances", 5000))
+    max_instances = int(params.get("max_instances", 100_000))
     season = params.get("season")
     bake_wind_colors: bool = bool(params.get("bake_wind_colors", False))
     water_level = float(params.get("water_level", _DEFAULT_WATER_LEVEL))
@@ -1591,7 +1591,7 @@ def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
     """Compute a per-cell signed-distance-from-cliff in metres."""
     if stack is None or np is None:
         return None
-    cliff = stack.get("cliff_label") if hasattr(stack, "get") else getattr(stack, "cliff_label", None)
+    cliff = stack.get("cliff_label")
     if cliff is None:
         return None
     try:
@@ -1607,7 +1607,7 @@ def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
     """Compute distance-from-water in metres using bathymetry."""
     if stack is None or np is None:
         return None
-    bathy = stack.get("bathymetry") if hasattr(stack, "get") else getattr(stack, "bathymetry", None)
+    bathy = stack.get("bathymetry")
     if bathy is None:
         return None
     try:
@@ -1692,8 +1692,8 @@ def build_foliage_placement_manifest(
     # Stack-derived exclusion SDFs (computed lazily; None when no stack).
     cliff_sdf = _derive_cliff_sdf_m(stack)
     water_sdf = _derive_water_edge_sdf_m(stack)
-    road_sdf = (stack.get("road_sdf_dist") if hasattr(stack, "get") else getattr(stack, "road_sdf_dist", None)) if stack is not None else None
-    hero_excl = (stack.get("hero_exclusion") if hasattr(stack, "get") else getattr(stack, "hero_exclusion", None)) if stack is not None else None
+    road_sdf = stack.get("road_sdf_dist") if stack is not None else None
+    hero_excl = stack.get("hero_exclusion") if stack is not None else None
 
     # Terrain extents for normalised position.
     if stack is not None and getattr(stack, "height", None) is not None:

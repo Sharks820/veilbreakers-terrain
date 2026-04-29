@@ -1050,7 +1050,7 @@ def pass_atmospheric_volumes(
         density_scale=density_scale,
         heightmap=stack.height,
         ridge_mask=stack.get("ridge"),
-        water_mask=stack.get("water_surface_mask") or stack.get("water_surface"),
+        water_mask=stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface"),
         canopy_mask=stack.get("canopy_density"),
         cell_size=float(stack.cell_size),
         weather_hints=weather_hints,

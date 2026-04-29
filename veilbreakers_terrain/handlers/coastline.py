@@ -1239,15 +1239,21 @@ def pass_coastline(
         fetch_m=fetch_m,
         wind_speed_ms=wind_speed_ms,
     )
-    scalar_wave_energy = float(energy.mean()) * 100.0  # normalised scalar for erosion
 
     retreat_mean = 0.0
     if apply_retreat:
         cumulative_delta = np.zeros_like(np.asarray(stack.height, dtype=np.float64))
         working_stack = copy.copy(stack)
         working_height = np.asarray(stack.height, dtype=np.float64).copy()
-        object.__setattr__(working_stack, "height", working_height)
+        working_stack.set("height", working_height.astype(np.float32), "coastline")
         for _ in range(erosion_passes):
+            # Recompute wave field each pass so evolving coastline geometry is reflected
+            _pass_energy = compute_wave_energy(
+                working_stack, sea_level, wave_dir,
+                fetch_m=fetch_m,
+                wind_speed_ms=wind_speed_ms,
+            )
+            scalar_wave_energy = float(_pass_energy.mean()) * 100.0
             delta = apply_coastal_erosion(
                 working_stack,
                 sea_level,
@@ -1256,7 +1262,7 @@ def pass_coastline(
             )
             cumulative_delta += delta
             working_height = working_height + delta
-            object.__setattr__(working_stack, "height", working_height)
+            working_stack.set("height", working_height.astype(np.float32), "coastline")
 
         retreat_mean = float(np.abs(cumulative_delta).mean())
         final_delta = cumulative_delta.astype(np.float32)

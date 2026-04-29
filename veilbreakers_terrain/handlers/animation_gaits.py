@@ -87,7 +87,7 @@ class GaitSelector:
         if stack is None:
             return "run" if speed_mps >= 4.0 else self.default_gait
 
-        biome = getattr(stack, "biome_id", None)
+        biome = stack.get("biome_id") if hasattr(stack, "get") else getattr(stack, "biome_id", None)
         if biome is not None:
             arr = np.asarray(biome)
             if arr.size:

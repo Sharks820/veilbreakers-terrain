@@ -279,6 +279,24 @@ def compute_wind_field(
         basin = np.asarray(stack.basin)
         basin_factor = np.where(basin > 0, 0.5, 1.0)
 
+    # FIX-9-5: Dune slope gate — sand cannot be transported by wind on slopes
+    # steeper than the angle of repose (~34°). Linear rolloff from 30° → 90°
+    # so wind speed on near-vertical cliff faces approaches zero, preventing
+    # phantom sand transport artefacts on steep terrain.
+    _DUNE_SLOPE_GATE_MIN_RAD = math.radians(30.0)
+    _DUNE_SLOPE_GATE_MAX_RAD = math.radians(90.0)
+    dune_slope_gate = np.ones(shape, dtype=np.float64)
+    _slope_src = stack.get("slope")
+    if _slope_src is not None:
+        _slope = np.asarray(_slope_src, dtype=np.float64)
+        if _slope.shape == shape:
+            dune_slope_gate = np.clip(
+                1.0 - (_slope - _DUNE_SLOPE_GATE_MIN_RAD)
+                / (_DUNE_SLOPE_GATE_MAX_RAD - _DUNE_SLOPE_GATE_MIN_RAD),
+                0.0,
+                1.0,
+            )
+
     # Seed derived from tile coords + content hash for determinism
     seed = (
         int(stack.tile_x) * 73856093
@@ -305,7 +323,7 @@ def compute_wind_field(
         world_col_offset=world_col_offset,
     )
 
-    speed = base_speed_mps * altitude_factor * ridge_factor * basin_factor
+    speed = base_speed_mps * altitude_factor * ridge_factor * basin_factor * dune_slope_gate
 
     vx = (np.cos(prevailing_direction_rad) * speed + 0.25 * base_speed_mps * perturb_u).astype(np.float32)
     vy = (np.sin(prevailing_direction_rad) * speed + 0.25 * base_speed_mps * perturb_v).astype(np.float32)

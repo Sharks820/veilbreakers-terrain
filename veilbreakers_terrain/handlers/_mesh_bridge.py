@@ -1512,8 +1512,12 @@ def mesh_from_spec(
             custom_normals = [tuple(vertex.normal) for vertex in mesh_data.vertices]
             mesh_data.normals_split_custom_set_from_vertices(custom_normals)
         if hasattr(mesh_data, "use_auto_smooth"):
+            # Blender < 4.1 path
             mesh_data.use_auto_smooth = True
             mesh_data.auto_smooth_angle = math.radians(auto_smooth_angle)
+        elif hasattr(mesh_data, "calc_normals_split"):
+            # FIX-9-15: Blender 4.1+ path — initialize split normals without use_auto_smooth
+            mesh_data.calc_normals_split()
 
     obj = bpy.data.objects.new(obj_name, mesh_data)
     obj.location = location

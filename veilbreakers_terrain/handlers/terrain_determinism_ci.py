@@ -245,8 +245,80 @@ def detect_determinism_regressions(
     return issues
 
 
+def _hash_tile_output(tdir: str) -> str:
+    """SHA-256 over all deterministic artifact bytes in *tdir*, sorted by name."""
+    import hashlib
+    from pathlib import Path as _Path
+
+    h = hashlib.sha256()
+    for p in sorted(_Path(tdir).iterdir()):
+        if p.is_file():
+            h.update(p.name.encode("utf-8"))
+            h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+def run_determinism_check_subprocess(
+    seed: int,
+    runs: int = 2,
+    *,
+    size: int = 32,
+    scale: float = 50.0,
+    terrain_type: str = "mountains",
+) -> Dict[str, Any]:
+    """Run ``generate_tile`` ``runs`` times in isolated subprocesses, compare output hashes.
+
+    Each run starts a fresh interpreter so module-level globals, numpy RNG
+    state, and threading locals cannot leak between runs — the in-process
+    ``run_determinism_check`` cannot guarantee this.
+
+    Returns the same shape dict as ``run_determinism_check`` so callers are
+    interchangeable::
+
+        {"deterministic": bool, "hashes": list[str], "seed": int}
+    """
+    import subprocess
+    import sys
+    import tempfile
+
+    hashes: List[str] = []
+    for i in range(runs):
+        tdir = tempfile.mkdtemp(prefix=f"vb_det_{i}_")
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "veilbreakers_terrain.cli",
+                "generate_tile",
+                "--seed",
+                str(seed),
+                "--output-dir",
+                tdir,
+                "--size",
+                str(size),
+                "--scale",
+                str(scale),
+                "--terrain-type",
+                terrain_type,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        hashes.append(_hash_tile_output(tdir))
+
+    return {
+        "deterministic": all(h == hashes[0] for h in hashes),
+        "hashes": hashes,
+        "seed": int(seed),
+        "run_count": runs,
+        "requires_subprocess": True,
+    }
+
+
 __all__ = [
     "DeterminismRun",
     "run_determinism_check",
+    "run_determinism_check_subprocess",
     "detect_determinism_regressions",
 ]

@@ -355,7 +355,9 @@ def solve_outflow(
     water_surface: "np.ndarray | None" = None
     stack = getattr(water_network, "_mask_stack", None)
     if stack is not None:
-        ws = stack.get("water_surface_mask") or stack.get("water_surface")
+        ws = stack.get("water_surface_mask")
+        if ws is None:
+            ws = stack.get("water_surface")
         if ws is not None:
             water_surface = np.asarray(ws)
 
@@ -780,8 +782,8 @@ def compute_foam_mask(
     # Layer 2: Rapids — high accumulation on steep slope
     # ------------------------------------------------------------------
     foam_rapids = np.zeros((rows, cols), dtype=np.float64)
-    flow_acc = stack.flow_accumulation
-    slope_ch = stack.slope
+    flow_acc = stack.get("flow_accumulation")
+    slope_ch = stack.get("slope")
 
     if flow_acc is not None and slope_ch is not None:
         fa = np.asarray(flow_acc, dtype=np.float64)

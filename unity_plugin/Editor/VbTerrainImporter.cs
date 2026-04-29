@@ -44,12 +44,25 @@ namespace VeilBreakers.TerrainImport.Editor
             public string particle_emitter_specs_file = string.Empty;
             public string water_shader_manifest_file = "water_shader_manifest.json";
             public string supplemental_mesh_specs_file = string.Empty;
+            public string light_placements_file = string.Empty;
+            public string probe_placements_file = "probe_placements.json";
             public SeamContractPayload seam_contract = new SeamContractPayload();
             public string validation_status = "unknown";
             public int validation_issue_count;
             public string game_object_name = "VB_Terrain";
             public string terrain_data_asset_path = "Assets/VeilBreakersTerrain/Imported/TerrainData.asset";
             public string tile_metadata_asset_path = "Assets/VeilBreakersTerrain/Imported/TerrainTile.asset";
+            // Extended metadata fields (D-1)
+            public int tile_biome_id;
+            public string tile_biome_name = "dark_fantasy_default";
+            public string climate_zone = "temperate";
+            public float water_level_unity_units;
+            public bool has_water_surface;
+            public int scatter_count;
+            public float lod0_distance_m = 50f;
+            public float lod1_distance_m = 150f;
+            public float lod2_distance_m = 400f;
+            public float snow_line_factor;
         }
 
         [Serializable]
@@ -278,6 +291,16 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.SeamContractWorldId = descriptor.seam_contract != null
                 ? descriptor.seam_contract.world_id
                 : descriptor.world_id;
+            metadata.BiomeId = descriptor.tile_biome_id;
+            metadata.PrimaryBiomeName = descriptor.tile_biome_name ?? "dark_fantasy_default";
+            metadata.ClimateZone = descriptor.climate_zone ?? "temperate";
+            metadata.WaterPresent = descriptor.has_water_surface;
+            metadata.WaterSurfaceElevationM = descriptor.water_level_unity_units;
+            metadata.ScatterCount = descriptor.scatter_count;
+            metadata.Lod0DistanceM = descriptor.lod0_distance_m > 0f ? descriptor.lod0_distance_m : 50f;
+            metadata.Lod1DistanceM = descriptor.lod1_distance_m > 0f ? descriptor.lod1_distance_m : 150f;
+            metadata.Lod2DistanceM = descriptor.lod2_distance_m > 0f ? descriptor.lod2_distance_m : 400f;
+            metadata.SnowLineFactor = descriptor.snow_line_factor;
 
             CreateSupplementalMeshes(bundleDirectory, descriptor, terrainObject.transform);
             CreateSidecarReferences(bundleDirectory, descriptor, terrainObject.transform);
@@ -652,6 +675,8 @@ namespace VeilBreakers.TerrainImport.Editor
             CreateSidecarReference(bundleDirectory, parent, "Decals", descriptor.decals_file);
             CreateSidecarReference(bundleDirectory, parent, "ParticleEmitters", descriptor.particle_emitter_specs_file);
             CreateSidecarReference(bundleDirectory, parent, "WaterShaderManifest", descriptor.water_shader_manifest_file);
+            CreateSidecarReference(bundleDirectory, parent, "LightPlacements", descriptor.light_placements_file);
+            CreateSidecarReference(bundleDirectory, parent, "ProbePlacements", descriptor.probe_placements_file);
         }
 
         private static void CreateSidecarReference(
