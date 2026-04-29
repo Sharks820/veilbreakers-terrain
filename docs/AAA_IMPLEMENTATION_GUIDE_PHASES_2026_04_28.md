@@ -1646,7 +1646,7 @@ Compare numeric outputs against pre-fix golden snapshots within tolerance.
 
 ### Fixes in this phase
 
-**Status 2026-04-29:** In progress. FIX-7.1 is implemented in
+**Status 2026-04-29:** Audited and closed. FIX-7.1 is implemented in
 `terrain_pipeline.py` with declared-channel copy-on-write rollback and a
 focused regression test that fails if `run_pass()` deep-copies the entire
 `TerrainMaskStack`. FIX-7.5 is implemented in `_water_network.py` with
@@ -1655,8 +1655,9 @@ FIX-7.9 is verified against live `execute_parallel()` semantics with a
 regression test for failed parallel waves. FIX-7.8 is implemented in
 `vegetation_system.py` with a regular-raster sampling fast path and shuffled-grid
 height regression test. FIX-7.6 is implemented in `environment_scatter.py` with
-KD-tree radius queries over the static candidate pool. FIX-7.2 through FIX-7.4
-and FIX-7.7 remain open or unverified in this checkpoint.
+KD-tree radius queries over the static candidate pool. FIX-7.2, FIX-7.3,
+FIX-7.4, and FIX-7.7 are closed as stale or rejected against live code evidence
+below.
 
 #### FIX-7.1 (FIX-9-32) — Copy-on-write checkpoint
 - **P0 ref:** S22-P0-34
@@ -1668,15 +1669,27 @@ and FIX-7.7 remain open or unverified in this checkpoint.
 - **P0 ref:** S22-P0-9
 - **File:** `_water_network_ext.py`, `_flood_fill_basins()`. Use
   `scipy.ndimage.label`, `find_objects`, `np.unique`.
+- **Status 2026-04-29:** Verified stale. Live `_water_network_ext.py` has no
+  `_flood_fill_basins()` symbol. Existing basin/outflow helpers are separate
+  spill-path and wet-rock/foam routines; no phase-7 code change applied.
 
 #### FIX-7.3 (FIX-8-13) — Flow accumulation NumPy indexed-add
 - **File:** `terrain_advanced.py:1948–1951`.
   `np.add.at(flow_acc.flat, recv_flat, flow_acc.flat[src_flat])` in topographic
   order via argsort.
+- **Status 2026-04-29:** Rejected as written. A one-shot `np.add.at` loses
+  upstream totals on receiver chains because accumulation is order-dependent.
+  Test `test_flow_accumulation_propagates_along_chained_receivers` proves a
+  five-cell chain accumulates to 5 at the outlet.
 
 #### FIX-7.4 (FIX-8-14) — Drainage-basin scipy label
 - **File:** `terrain_advanced.py:1952–1998`. Replace double-for-loop
   union-find with `scipy.ndimage.label`.
+- **Status 2026-04-29:** Rejected as written. Live code assigns basins by
+  directed receiver roots with union-find. Plain raster connected-component
+  labeling does not encode D8 receiver direction and can merge or split basins
+  incorrectly. Existing basin assignment remains covered by deterministic and
+  assigned-basin flow-map tests.
 
 #### FIX-7.5 (FIX-8-15) — Manning velocity vectorised
 - **File:** `_water_network.py:1551–1574`. Use boolean-mask broadcast for
@@ -1700,6 +1713,11 @@ and FIX-7.7 remain open or unverified in this checkpoint.
 #### FIX-7.7 (FIX-8-17) — Single Poisson-disk pool
 - **File:** `environment_scatter.py:1040–1093`. One stratified pool; species
   filter via per-species density mask.
+- **Status 2026-04-29:** Rejected for this phase. Live scatter intentionally
+  keeps structure, ground-cover, debris, and catalog species passes separate
+  because they use different min separations, seeds, water/tree/rock affinities,
+  and pass-type output contracts. Collapse to one pool would be a behavior
+  rewrite, not a safe performance patch.
 
 #### FIX-7.8 (FIX-8-18) — Vegetation rasterised terrain sample
 - **File:** `vegetation_system.py:411–421`. Replace `vertex_grid` dict with

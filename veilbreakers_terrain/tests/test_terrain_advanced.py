@@ -456,6 +456,14 @@ class TestComputeFlowMap:
         # Center cell (2,2) should have highest accumulation
         assert fa[2, 2] == fa.max()
 
+    def test_flow_accumulation_propagates_along_chained_receivers(self):
+        """Accumulation must carry upstream totals through multi-cell chains."""
+        hmap = np.tile(np.array([5.0, 4.0, 3.0, 2.0, 1.0]), (3, 1))
+        result = compute_flow_map(hmap)
+        fa = np.asarray(result["flow_accumulation"], dtype=np.float64)
+
+        np.testing.assert_allclose(fa[:, -1], np.full(3, 5.0))
+
     def test_drainage_basins_assigned(self):
         """All cells are assigned to a drainage basin."""
         hmap = np.random.rand(8, 8)
