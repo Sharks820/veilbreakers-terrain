@@ -4,21 +4,19 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 121
+- High risk: 103
 - Medium risk: 1
-- Low risk: 1577
+- Low risk: 1595
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 98
+- Tool/Blender callables needing blocker/high evidence: 80
 
 ## Highest Risk Files
 
 - terrain_cliffs.py: 19
 - terrain_foliage_catalog.py: 13
-- terrain_morphology.py: 11
 - procedural_grass.py: 8
 - terrain_assets.py: 8
 - terrain_readability_bands.py: 8
-- terrain_masks.py: 7
 - terrain_water_variants.py: 7
 - terrain_saliency.py: 4
 - terrain_path_contracts.py: 3
@@ -37,6 +35,8 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_audio_zones.py: 1
 - terrain_delta_integrator.py: 1
 - terrain_fog_masks.py: 1
+- terrain_gameplay_zones.py: 1
+- terrain_performance_report.py: 1
 
 ## Top Blocker/High Callables
 
@@ -105,20 +105,20 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_horizon_lod.py:341 register_bundle_l_horizon_lod_pass grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_legacy_bug_fixes.py:32 _default_terrain_advanced_path grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_legacy_bug_fixes.py:113 _audit_pixel_units_in_file grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_masks.py:27 compute_slope grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_masks.py:49 compute_curvature grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_masks.py:73 compute_concavity grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_masks.py:90 compute_convexity grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_masks.py:107 extract_ridge_mask grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_masks.py:145 detect_basins grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_masks.py:266 compute_macro_saliency grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
-- HIGH terrain_morphology.py:63 _ridge_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:67 _canyon_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:71 _mesa_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:75 _pinnacle_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:79 _spur_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:83 _valley_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:287 _rng_from_seed grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_morphology.py:409 _template_by_id grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_navmesh_export.py:94 _gameplay_zone_cost_areas grade=B+ needs=direct_behavior_test
+- HIGH terrain_navmesh_export.py:652 register_bundle_j_navmesh_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_palette_extract.py:65 _labels_for grade=A needs=direct_behavior_test;visual_snapshot_or_metric
+- HIGH terrain_palette_extract.py:244 _label_for_rgb grade=B+ needs=direct_behavior_test;visual_snapshot_or_metric
+- HIGH terrain_path_contracts.py:48 material_stack_for_path grade=D+ needs=direct_behavior_test;material_texture_contract_test
+- HIGH terrain_path_contracts.py:86 PathSegmentContract.length_m grade=D+ needs=direct_behavior_test;material_texture_contract_test
+- HIGH terrain_path_contracts.py:92 PathSegmentContract.max_observed_grade grade=D+ needs=direct_behavior_test;material_texture_contract_test
+- HIGH terrain_performance_report.py:44 _channel_bytes grade=A needs=direct_behavior_test;material_texture_contract_test
+- HIGH terrain_readability_bands.py:56 BandScore.clamp grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_readability_bands.py:61 _safe_std grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_readability_bands.py:71 _normalize_to_score grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_readability_bands.py:83 _band_silhouette grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_readability_bands.py:155 _band_volume grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_readability_bands.py:209 _band_value grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_readability_bands.py:261 _band_texture grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
 
 Full CSV: `output/verification/CALLABLE_VERIFICATION_MATRIX.csv`

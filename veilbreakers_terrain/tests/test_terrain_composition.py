@@ -93,6 +93,84 @@ def _make_state(stack: TerrainMaskStack, intent: TerrainIntentState) -> TerrainP
 
 
 # ---------------------------------------------------------------------------
+# Structural mask direct behavior tests
+# ---------------------------------------------------------------------------
+
+
+class TestStructuralMasks:
+    def test_slope_and_curvature_match_analytic_plane_and_bowl(self):
+        from veilbreakers_terrain.handlers.terrain_masks import (
+            compute_curvature,
+            compute_slope,
+        )
+
+        rows, cols = np.mgrid[0:5, 0:5].astype(np.float64)
+        plane = cols * 2.0
+        slope = compute_slope(plane, cell_size=1.0)
+        np.testing.assert_allclose(slope, np.arctan(2.0), atol=1e-9)
+
+        bowl = rows**2 + cols**2
+        curvature = compute_curvature(bowl, cell_size=1.0)
+        np.testing.assert_allclose(curvature[1:-1, 1:-1], 4.0, atol=1e-9)
+
+    def test_concavity_convexity_ridge_basin_and_saliency_are_bounded(self):
+        from veilbreakers_terrain.handlers.terrain_masks import (
+            compute_concavity,
+            compute_convexity,
+            compute_curvature,
+            compute_macro_saliency,
+            detect_basins,
+            extract_ridge_mask,
+        )
+
+        h = np.array(
+            [
+                [5.0, 4.0, 5.0, 8.0, 9.0],
+                [4.0, 1.0, 4.0, 7.0, 8.0],
+                [5.0, 4.0, 5.0, 6.0, 7.0],
+                [8.0, 7.0, 6.0, 3.0, 6.0],
+                [9.0, 8.0, 7.0, 6.0, 9.0],
+            ],
+            dtype=np.float64,
+        )
+        curvature = compute_curvature(h, 1.0)
+        concavity = compute_concavity(curvature)
+        convexity = compute_convexity(curvature)
+        ridge = extract_ridge_mask(h, 1.0)
+        basins = detect_basins(h, min_area=1)
+        saliency = compute_macro_saliency(h, curvature, ridge)
+
+        assert concavity.shape == h.shape
+        assert convexity.shape == h.shape
+        assert concavity.max() <= 1.0 and concavity.min() >= 0.0
+        assert convexity.max() <= 1.0 and convexity.min() >= 0.0
+        assert ridge.dtype == bool
+        assert basins.dtype == np.int32
+        assert basins[1, 1] != 0
+        assert saliency.max() <= 1.0 and saliency.min() >= 0.0
+
+    def test_compute_base_masks_populates_protocol_channels(self):
+        from veilbreakers_terrain.handlers.terrain_masks import compute_base_masks
+
+        h = _make_height(tile=8)
+        stack = compute_base_masks(h, 2.0, (2, 3), pass_name="mask_test")
+
+        assert stack.tile_x == 2
+        assert stack.tile_y == 3
+        for channel in (
+            "slope",
+            "curvature",
+            "concavity",
+            "convexity",
+            "ridge",
+            "basin",
+            "saliency_macro",
+        ):
+            assert getattr(stack, channel) is not None
+            assert stack.populated_by_pass[channel] == "mask_test"
+
+
+# ---------------------------------------------------------------------------
 # Saliency tests
 # ---------------------------------------------------------------------------
 
@@ -177,6 +255,39 @@ class TestSaliency:
 
 
 class TestMorphology:
+    def test_template_param_helpers_set_sign_and_shape_fields(self):
+        from veilbreakers_terrain.handlers.terrain_morphology import (
+            _canyon_params,
+            _mesa_params,
+            _pinnacle_params,
+            _ridge_params,
+            _spur_params,
+            _valley_params,
+        )
+
+        assert _ridge_params(10.0, 0.2) == {"height_m": 10.0, "jaggedness": 0.2, "sign": 1.0}
+        assert _canyon_params(20.0, 0.7) == {"depth_m": 20.0, "rim_sharpness": 0.7, "sign": -1.0}
+        assert _mesa_params(30.0, 0.8) == {"height_m": 30.0, "flat_top": 0.8, "sign": 1.0}
+        assert _pinnacle_params(40.0, 0.9) == {"height_m": 40.0, "spike": 0.9, "sign": 1.0}
+        assert _spur_params(50.0, 0.4) == {"height_m": 50.0, "taper": 0.4, "sign": 1.0}
+        assert _valley_params(60.0, 0.5) == {"depth_m": 60.0, "broadness": 0.5, "sign": -1.0}
+
+    def test_rng_template_lookup_and_default_world_pos_are_deterministic(self):
+        from veilbreakers_terrain.handlers.terrain_morphology import (
+            _default_world_pos,
+            _rng_from_seed,
+            _template_by_id,
+        )
+
+        stack = _make_stack(tile=8)
+        rng_a = _rng_from_seed(123)
+        rng_b = _rng_from_seed(123)
+
+        np.testing.assert_array_equal(rng_a.integers(0, 100, size=5), rng_b.integers(0, 100, size=5))
+        assert _template_by_id("ridge_low_rolling").template_id == "ridge_low_rolling"
+        assert _template_by_id("missing") is None
+        assert _default_world_pos(stack) == pytest.approx((4.5, 4.5, float(stack.height.mean())))
+
     def test_default_templates_count(self):
         from veilbreakers_terrain.handlers.terrain_morphology import DEFAULT_TEMPLATES
 
@@ -288,6 +399,34 @@ class TestMorphology:
         assert any(t.kind == "mesa" for t in desert)
         # Unknown returns the full catalog
         assert len(unknown) >= 30
+
+    def test_register_morphology_pass(self):
+        from veilbreakers_terrain.handlers.terrain_morphology import register_morphology_pass
+        from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+        TerrainPassController.clear_registry()
+        register_morphology_pass()
+        assert "pass_morphology" in TerrainPassController.PASS_REGISTRY
+        pass_def = TerrainPassController.PASS_REGISTRY["pass_morphology"]
+        assert pass_def.produces_channels == ("morphology_delta",)
+        TerrainPassController.clear_registry()
+
+    def test_get_natural_arch_specs_places_mesh_specs(self, monkeypatch):
+        import veilbreakers_terrain.handlers.terrain_features as terrain_features
+        from veilbreakers_terrain.handlers.terrain_morphology import get_natural_arch_specs
+
+        monkeypatch.setattr(
+            terrain_features,
+            "generate_natural_arch",
+            lambda **kwargs: {"vertices": [(0, 0, 0)], "faces": [], "metadata": kwargs},
+        )
+        stack = _make_stack(tile=12)
+
+        specs = get_natural_arch_specs(stack, max_arches=2, seed=1)
+
+        assert 0 < len(specs) <= 2
+        assert specs[0]["mesh_spec"]["vertices"] == [(0, 0, 0)]
+        assert len(specs[0]["world_pos"]) == 3
 
 
 # ---------------------------------------------------------------------------
