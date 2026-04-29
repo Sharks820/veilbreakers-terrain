@@ -4,15 +4,14 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 57
+- High risk: 49
 - Medium risk: 1
-- Low risk: 1641
+- Low risk: 1649
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 47
+- Tool/Blender callables needing blocker/high evidence: 39
 
 ## Highest Risk Files
 
-- procedural_grass.py: 8
 - terrain_water_variants.py: 7
 - terrain_saliency.py: 4
 - terrain_path_contracts.py: 3
@@ -37,18 +36,11 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_performance_report.py: 1
 - terrain_readability_semantic.py: 1
 - terrain_rhythm.py: 1
+- terrain_texture_layer_stack.py: 1
 
 ## Top Blocker/High Callables
 
 - HIGH _water_network_ext.py:1003 _tileable_value_noise grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:229 _normalise_array grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:240 _stack_attr grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:246 _biome_id_to_name grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:307 ProceduralGrassSystem._eligibility_mask grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:412 ProceduralGrassSystem._sample_positions grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:447 ProceduralGrassSystem._poisson_thin grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:731 ProceduralGrassSystem._empty_manifest grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH procedural_grass.py:765 _density_maps_from_records grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_assets.py:825 pass_scatter_intelligent grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_audio_zones.py:952 register_bundle_j_audio_zones_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
 - HIGH terrain_cliffs.py:508 _label_connected_components grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test

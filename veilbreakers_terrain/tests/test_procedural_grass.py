@@ -14,6 +14,10 @@ from veilbreakers_terrain.handlers.procedural_grass import (
     GrassSpecies,
     ProceduralGrassSystem,
     VEILBREAKERS_GRASS_SPECIES,
+    _biome_id_to_name,
+    _density_maps_from_records,
+    _normalise_array,
+    _stack_attr,
     pass_procedural_grass,
     register_procedural_grass_pass,
 )
@@ -71,6 +75,94 @@ def test_grass_species_matches_biome_explicit():
     s = GrassSpecies(name="x", biomes=("thornwood_forest",))
     assert s.matches_biome("thornwood_forest")
     assert not s.matches_biome("desert")
+
+
+def test_normalise_array_handles_missing_constant_and_range():
+    assert _normalise_array(None) is None
+    np.testing.assert_array_equal(
+        _normalise_array(np.full((2, 2), 4.0, dtype=np.float32)),
+        np.zeros((2, 2), dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        _normalise_array(np.array([[2.0, 4.0], [6.0, 10.0]], dtype=np.float32)),
+        np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32),
+    )
+
+
+def test_stack_attr_and_biome_lookup_helpers():
+    stack = _flat_stack()
+
+    assert _stack_attr(None, "height", "missing") == "missing"
+    assert _stack_attr(stack, "height").shape == stack.height.shape
+    assert _stack_attr(stack, "does_not_exist", 123) == 123
+    assert _biome_id_to_name(DEFAULT_BIOME_ID_MAP["desert"], DEFAULT_BIOME_ID_MAP) == "desert"
+    assert _biome_id_to_name(999, DEFAULT_BIOME_ID_MAP) is None
+
+
+def test_eligibility_mask_combines_height_slope_water_hero_and_biome_gates():
+    stack = _flat_stack(size=6)
+    stack.height[0, 0] = 500.0
+    stack.slope[0, 1] = 90.0
+    _set_channel(stack, "water_surface_elevation_m", np.zeros_like(stack.height))
+    stack.water_surface_elevation_m[0, 2] = 100.0
+    hero = np.zeros_like(stack.height, dtype=np.float32)
+    hero[0, 3] = 1.0
+    _set_channel(stack, "hero_exclusion", hero)
+    biome_id = np.full(stack.height.shape, DEFAULT_BIOME_ID_MAP["thornwood_forest"], dtype=np.uint8)
+    biome_id[0, 4] = DEFAULT_BIOME_ID_MAP["desert"]
+    _set_channel(stack, "biome_id", biome_id)
+
+    species = GrassSpecies(
+        name="forest_grass",
+        height_range_m=(0.0, 100.0),
+        slope_max_deg=30.0,
+        wetness_affinity=0.3,
+        biomes=("thornwood_forest",),
+    )
+    system = ProceduralGrassSystem(rng_seed=10)
+
+    mask = system._eligibility_mask(
+        species,
+        stack,
+        cell_size_m=1.0,
+        sdf_road_min_m=0.0,
+        sdf_cliff_min_m=0.0,
+        water_edge_min_m=0.0,
+    )
+
+    assert mask.shape == stack.height.shape
+    assert mask[0, 0] == pytest.approx(0.0)
+    assert mask[0, 1] == pytest.approx(0.0)
+    assert mask[0, 2] == pytest.approx(0.0)
+    assert mask[0, 3] == pytest.approx(0.0)
+    assert mask[0, 4] == pytest.approx(0.0)
+    assert mask[1, 1] > 0.0
+
+
+def test_sample_positions_is_weighted_without_replacement():
+    system = ProceduralGrassSystem(rng_seed=11)
+    species = GrassSpecies(name="dense", density_per_sqm=1.0, min_spacing_m=0.0)
+    weight = np.zeros((4, 4), dtype=np.float32)
+    weight[1, 1] = 1.0
+    weight[2, 2] = 1.0
+
+    positions = system._sample_positions(weight, species, cell_size_m=1.0)
+
+    assert positions.shape == (2, 2)
+    assert {tuple(p) for p in positions} == {(1, 1), (2, 2)}
+    assert system._sample_positions(np.zeros((2, 2), dtype=np.float32), species, 1.0).shape == (0, 2)
+
+
+def test_poisson_thin_keeps_first_position_per_bucket():
+    positions = np.array([[0, 0], [0, 1], [3, 3], [4, 4], [9, 9]], dtype=np.int64)
+
+    thinned = ProceduralGrassSystem._poisson_thin(positions, cell_size_m=1.0, min_spacing_m=3.0)
+
+    assert thinned.tolist() == [[0, 0], [3, 3], [9, 9]]
+    np.testing.assert_array_equal(
+        ProceduralGrassSystem._poisson_thin(positions, cell_size_m=1.0, min_spacing_m=0.0),
+        positions,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +355,88 @@ def test_write_grass_manifest_atomic(tmp_path: Path):
     assert payload["mesh_library"][0]["species_key"] == "test_grass"
     assert payload["instances"][0]["position_world"] == [1.0, 2.0, 3.0]
     assert payload["instances"][0]["position_terrain_norm"] == [0.1, 0.2, 0.3]
+
+
+def test_empty_manifest_accepts_terrain_metadata_override():
+    sys_ = ProceduralGrassSystem()
+    terrain_meta = {
+        "tile_x": 4,
+        "tile_y": 5,
+        "tile_size": 64,
+        "cell_size": 2.0,
+        "world_origin": [8.0, 10.0],
+        "world_extent": [128.0, 128.0],
+        "height_min_m": 1.0,
+        "height_max_m": 9.0,
+    }
+
+    manifest = sys_._empty_manifest(
+        biome="thornwood_forest",
+        season="winter",
+        terrain_meta=terrain_meta,
+    )
+
+    assert manifest["biome"] == "thornwood_forest"
+    assert manifest["season"] == "winter"
+    assert manifest["terrain"] == terrain_meta
+    assert manifest["instances"] == []
+    assert manifest["lod_distribution"] == {"0": 0, "1": 0, "2": 0, "3": 0}
+
+
+def test_density_maps_from_records_bins_and_normalizes_species_layers():
+    records = [
+        GrassPlacementRecord(
+            species="grass_a",
+            position_world=(0.5, 0.5, 0.0),
+            position_terrain_norm=(0.0, 0.0, 0.0),
+            rotation_y_rad=0.0,
+            scale=1.0,
+            biome="thornwood_forest",
+            moisture=0.2,
+        ),
+        GrassPlacementRecord(
+            species="grass_a",
+            position_world=(0.6, 0.6, 0.0),
+            position_terrain_norm=(0.0, 0.0, 0.0),
+            rotation_y_rad=0.0,
+            scale=1.0,
+            biome="thornwood_forest",
+            moisture=0.2,
+        ),
+        GrassPlacementRecord(
+            species="grass_b",
+            position_world=(2.5, 1.5, 0.0),
+            position_terrain_norm=(0.0, 0.0, 0.0),
+            rotation_y_rad=0.0,
+            scale=1.0,
+            biome="desert",
+            moisture=0.0,
+        ),
+        GrassPlacementRecord(
+            species="outside",
+            position_world=(99.0, 99.0, 0.0),
+            position_terrain_norm=(0.0, 0.0, 0.0),
+            rotation_y_rad=0.0,
+            scale=1.0,
+            biome="unknown",
+            moisture=0.0,
+        ),
+    ]
+
+    grass_density, detail_density = _density_maps_from_records(
+        records,
+        shape=(4, 4),
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        cell_size=1.0,
+    )
+
+    assert grass_density.dtype == np.float32
+    assert grass_density[0, 0] == pytest.approx(1.0)
+    assert grass_density[1, 2] == pytest.approx(0.5)
+    assert set(detail_density) == {"grass_a", "grass_b"}
+    assert detail_density["grass_a"][0, 0] == pytest.approx(1.0)
+    assert detail_density["grass_b"][1, 2] == pytest.approx(1.0)
 
 
 def test_geometry_nodes_script_written(tmp_path: Path):
