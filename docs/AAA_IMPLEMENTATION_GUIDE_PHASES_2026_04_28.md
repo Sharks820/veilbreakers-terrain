@@ -209,10 +209,53 @@ python scripts/scan_callable_wiring.py
 <a id="phase-1"></a>
 ## PHASE 1 — FOUNDATION: ERROR PROPAGATION & PROTOCOL ENFORCEMENT
 
-**2026-04-28 execution status:** Complete and verified. Official Phase 1
-pytest slice passed (`88 passed in 28.44s`), handler bare-swallow grep is
-clean, strict callable zero still passes, and `build_terrain_aaa_node_v6.py`
-now logs canonical production `validation_full` execution during default runs.
+**2026-04-28 execution status:** Complete and verified for this
+implementation-guide Phase 1 foundation scope. Official Phase 1 pytest slice
+passed (`88 passed in 28.44s`), handler bare-swallow grep is clean, strict
+callable zero still passes, and `build_terrain_aaa_node_v6.py` now logs
+canonical production `validation_full` execution during default runs.
+
+**Scope warning:** This does **not** mean every legacy `FIX-1-*` item in
+`docs/aaa-audit/FIX_ORDER_CODEX_2026_04_27.md` is complete. That older sheet
+uses "Batch 1" IDs for several production pipeline/data fixes. The master
+index remaps most of those to later implementation phases. Treat this Phase 1
+as **foundation/alarm wiring complete**, not production-content wiring
+complete.
+
+### Phase 1 closure evidence matrix
+
+| Guide fix | Live status | Evidence |
+|---|---|---|
+| FIX-1.1 PassDAG missing pass raises | Done | `PassDAG.resolve_pass()` raises `PassNotRegisteredError`; focused test passed. |
+| FIX-1.2 no bare swallow | Done | `rg -n "except Exception:\s*pass|except:\s*pass" veilbreakers_terrain/handlers` returns no hits. |
+| FIX-1.3 no `TERRAIN_DEV_MODE` lock bypass | Done | `assert_anchor_integrity()` logs dev mode but still checks locked anchors; drift test passed. |
+| FIX-1.4 unknown quality profile raises | Done | unknown profile focused test passed. |
+| FIX-1.5 production uses `validation_full` | Done | `build_default_pass_sequence()` selects `validation_full`; v6 summary records `validation_full_present=true`. |
+| FIX-1.6 pass exception rollback | Done | validation hard-fail rollback focused test passed. |
+| FIX-1.7 parallel wave survivor merge | Done | failed-wave focused test passed. |
+| FIX-1.8 Protocol Rule 2 hard failure | Done | live `terrain_protocol.py` raises `ProtocolViolation` when no vantage and no opt-out. |
+| FIX-1.9 `_LP_STATE` / `_HR_STATE` locks | Done | module `RLock`s guard live-preview and hot-reload state read/write paths. |
+| FIX-1.10 active controller ContextVar | Done | no plain `_ACTIVE_CONTROLLER` global remains; `_ACTIVE_CONTROLLER_CTX` is sole active-controller store. |
+
+### Legacy Batch 1 reconciliation
+
+These are the old `FIX-1-*` IDs from `FIX_ORDER_CODEX_2026_04_27.md`. They
+are **not** all part of implementation-guide Phase 1.
+
+| Legacy fix | Implementation phase | Current live status |
+|---|---:|---|
+| FIX-1-1 materials_v2 in production pipeline | Phase 4 / FIX-4.3 | Partially covered by `validation_full` prereq injection; old compose-map block still does not literally append it after cliffs. Keep Phase 4 open. |
+| FIX-1-2 waterfalls in production pipeline | Phase 4 / FIX-4.4 | Open. v6 script runs waterfalls directly, but compose-map production pipeline still does not append `waterfalls`. |
+| FIX-1-3 `water_surface_elevation_m` writer + scatter exclusion | Phase 2 / FIX-2.10 | Partial. Writer exists in `terrain_water_variants.py`; scatter exclusion wiring was not found in `_scatter_engine.py`. Keep Phase 2 open. |
+| FIX-1-4 bridge detection validates water presence | Phase 5 / FIX-5.17 | Open. `_detect_bridges()` still detects height/valley gaps without water-mask/elevation gating. |
+| FIX-1-5 hydrology rerun after erosion | Phase 4 / FIX-4.5 | Open. compose-map sequence still runs `pass_hydrology -> erosion -> structural_masks` without second hydrology pass. |
+| FIX-1-6 validation_full in production pipeline | Phase 1 / FIX-1.5 | Done. |
+| FIX-1-7 Bundle N post-pipeline hook | Phase 4 / FIX-4.6 | Present in `TerrainPassController.run_pipeline()` as visible best-effort hook; later Phase 4 should still verify production semantics. |
+| FIX-1-8 scatter_intelligent in production pipeline | Phase 4 / FIX-4.7 | Open. Default pass sequence does not include `scatter_intelligent`. |
+| FIX-1-9 build script registers all passes | Phase 4 / FIX-4.1 | Open for direct v6 production pass path. The added proof helper uses controller registration, but `run_production_passes()` still imports direct pass functions. |
+| FIX-1-10 v6 quality profile `aaa_open_world` | Phase 4 / FIX-4.2 | Open. v6 direct `TerrainIntentState` still uses default profile. |
+| FIX-1-11 coastline delta double-apply | Phase 2 / FIX-2.6 | Open until Phase 2 verification. |
+| FIX-1-12 glacial delta double-apply | Phase 2 / FIX-2.7 | Open until Phase 2 verification. |
 
 **Goal:** Make latent failures visible. Today, ~17 bare `except` clauses, a
 silent `PassDAG.resolve_pass`, a `TERRAIN_DEV_MODE` bypass, and
