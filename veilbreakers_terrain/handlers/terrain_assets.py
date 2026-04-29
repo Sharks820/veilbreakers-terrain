@@ -280,6 +280,40 @@ def build_asset_context_rules() -> List[AssetContextRule]:
 # ---------------------------------------------------------------------------
 
 
+def _water_exclusion_mask(stack: TerrainMaskStack, height: np.ndarray) -> np.ndarray:
+    """Return cells where terrain scatter must not place assets."""
+    water = np.zeros(height.shape, dtype=bool)
+
+    elev = stack.get("water_surface_elevation_m")
+    if elev is not None:
+        elev_arr = np.asarray(elev, dtype=np.float32)
+        if elev_arr.shape == height.shape:
+            water |= elev_arr > (height + 0.05)
+
+    depth = stack.get("water_depth_m")
+    if depth is not None:
+        depth_arr = np.asarray(depth, dtype=np.float32)
+        if depth_arr.shape == height.shape:
+            water |= depth_arr > 0.05
+
+    mask = stack.get("water_surface_mask")
+    if mask is not None:
+        mask_arr = np.asarray(mask, dtype=np.float32)
+        if mask_arr.shape == height.shape:
+            water |= mask_arr > 0.5
+
+    legacy_surface = stack.get("water_surface")
+    if legacy_surface is not None:
+        surface_arr = np.asarray(legacy_surface, dtype=np.float32)
+        if surface_arr.shape == height.shape:
+            if float(np.nanmax(surface_arr)) <= 1.5:
+                water |= surface_arr > 0.5
+            else:
+                water |= surface_arr > (height + 0.05)
+
+    return water
+
+
 def compute_viability(
     rule: AssetContextRule,
     stack: TerrainMaskStack,
@@ -300,6 +334,7 @@ def compute_viability(
     # Altitude bounds (height channel is the authoritative elevation source)
     viable *= (height >= rule.min_altitude_m).astype(np.float32)
     viable *= (height <= rule.max_altitude_m).astype(np.float32)
+    viable *= (~_water_exclusion_mask(stack, height)).astype(np.float32)
 
     # Slope bounds
     slope = stack.get("slope")

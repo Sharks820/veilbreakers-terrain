@@ -2422,6 +2422,8 @@ def pass_waterfalls(
         _d_max = float(_d.max()) or 1.0
         rasterize_channel_to_atlas(_d / _d_max, f"{_atlas_base}/water_depth.png", bit_depth=16)
         stack.set("water_depth_atlas_path", f"{_atlas_base}/water_depth.png", "waterfalls")
+    else:
+        stack.set("water_depth_atlas_path", "", "waterfalls")
 
     # 7c. Publish particle-emitter seed specs for the VFX exporter.
     # AAA req #10 wiring fix (Phase R9+): the ``terrain_waterfalls_volumetric``
@@ -2459,8 +2461,7 @@ def pass_waterfalls(
     ]
     if caustic_map is not None:
         produced.append("caustic_atlas_path")
-    if _depth_arr is not None:
-        produced.append("water_depth_atlas_path")
+    produced.append("water_depth_atlas_path")
     if particle_emitter_specs:
         produced.append("particle_emitter_specs")
 
@@ -2699,9 +2700,9 @@ def register_bundle_c_passes() -> None:
                 "wet_rock",
                 "waterfall_velocity",
                 "wave_amplitude_per_vertex",
-                "particle_emitter_specs",
                 "foam_atlas_path",
                 "caustic_atlas_path",
+                "water_depth_atlas_path",
                 "riverbed_caustics",
                 "flow_speed",
             ),

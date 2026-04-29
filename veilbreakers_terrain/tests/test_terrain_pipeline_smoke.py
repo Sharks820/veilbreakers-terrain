@@ -211,6 +211,38 @@ def test_controller_default_pipeline_uses_validation_full_for_production():
     assert all(r.status in {"ok", "warning"} for r in results)
 
 
+def test_default_production_scene_pipeline_closes_legacy_batch_1_order():
+    from veilbreakers_terrain.handlers.terrain_pipeline import build_default_pass_sequence
+
+    state = _build_state(
+        tile_size=24,
+        include_scene_read=True,
+        quality_profile="production",
+    )
+    seq = build_default_pass_sequence(state.intent)
+
+    expected = (
+        "pass_hydrology",
+        "erosion",
+        "pass_hydrology",
+        "water_variants",
+        "bathymetry",
+        "pass_water_depth",
+        "materials_v2",
+        "waterfalls",
+        "emit_particle_systems",
+        "scatter_intelligent",
+        "validation_full",
+    )
+    for pass_name in expected:
+        assert pass_name in seq
+    assert seq.index("pass_hydrology") < seq.index("erosion")
+    assert seq.index("erosion") < seq.index("pass_hydrology", seq.index("erosion") + 1)
+    assert seq.index("materials_v2") < seq.index("scatter_intelligent")
+    assert seq.index("waterfalls") < seq.index("emit_particle_systems")
+    assert seq[-1] == "validation_full"
+
+
 def test_controller_default_pipeline_uses_validation_minimal_for_preview():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 

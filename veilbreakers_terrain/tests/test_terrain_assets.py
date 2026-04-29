@@ -182,6 +182,23 @@ def test_compute_viability_respects_forbidden_masks(stack):
     assert np.any(viab[h // 2 :, :] > 0.0)
 
 
+def test_compute_viability_excludes_water_surface_elevation_cells(stack):
+    h, w = stack.height.shape
+    water_elev = np.asarray(stack.height, dtype=np.float32).copy()
+    water_elev[:, : w // 2] += 2.0
+    stack.set("water_surface_elevation_m", water_elev, "test")
+    rule = AssetContextRule(
+        asset_id="grass_clump",
+        role=AssetRole.GROUND_COVER,
+        max_slope_rad=math.radians(25.0),
+    )
+
+    viab = compute_viability(rule, stack)
+
+    assert np.all(viab[:, : w // 2] == 0.0)
+    assert np.any(viab[:, w // 2 :] > 0.0)
+
+
 # ---------------------------------------------------------------------------
 # place_assets_by_zone
 # ---------------------------------------------------------------------------

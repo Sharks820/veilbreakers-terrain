@@ -910,6 +910,8 @@ def _detect_bridges(
     water_level: float = 0.0,
     heightmap=None,
     terrain_bounds=None,
+    water_mask=None,
+    water_surface_elevation_m=None,
 ) -> list:
     """Detect segments requiring bridges due to river/valley crossings."""
     PROFILE_SAMPLES = 32
@@ -919,6 +921,7 @@ def _detect_bridges(
         start3d, end3d, width, road_type = seg
         needs_bridge = False
         max_water_depth_m = 0.0
+        max_water_surface_m = float(water_level)
 
         for s in range(PROFILE_SAMPLES + 1):
             t = s / PROFILE_SAMPLES
@@ -926,11 +929,33 @@ def _detect_bridges(
             wy = start3d[1] + t * (end3d[1] - start3d[1])
             road_z = start3d[2] + t * (end3d[2] - start3d[2])
 
-            if road_z < water_level:
+            water_present = road_z < water_level
+            sample_water_level = float(water_level)
+            if heightmap is not None and terrain_bounds is not None:
+                terrain_z_for_water = _sample_heightmap_bilinear(
+                    heightmap, terrain_bounds, wx, wy
+                )
+                if water_surface_elevation_m is not None and terrain_z_for_water is not None:
+                    water_z = _sample_heightmap_bilinear(
+                        water_surface_elevation_m, terrain_bounds, wx, wy
+                    )
+                    if water_z is not None:
+                        sample_water_level = float(water_z)
+                        water_present = float(water_z) > float(terrain_z_for_water) + 0.05
+                elif water_mask is not None:
+                    wet_sample = _sample_heightmap_bilinear(
+                        water_mask, terrain_bounds, wx, wy
+                    )
+                    water_present = wet_sample is not None and float(wet_sample) > 0.5
+
+            if water_present:
+                max_water_surface_m = max(max_water_surface_m, sample_water_level)
+
+            if water_present and road_z < sample_water_level:
                 needs_bridge = True
                 max_water_depth_m = max(
                     max_water_depth_m,
-                    float(water_level) - float(road_z),
+                    sample_water_level - float(road_z),
                 )
 
             if heightmap is not None and terrain_bounds is not None:
@@ -938,12 +963,22 @@ def _detect_bridges(
                     heightmap, terrain_bounds, wx, wy
                 )
                 if terrain_z is not None:
-                    max_water_depth_m = max(
-                        max_water_depth_m,
-                        float(water_level) - float(terrain_z),
-                    )
+                    if water_surface_elevation_m is not None:
+                        water_z = _sample_heightmap_bilinear(
+                            water_surface_elevation_m, terrain_bounds, wx, wy
+                        )
+                        if water_z is not None:
+                            max_water_depth_m = max(
+                                max_water_depth_m,
+                                float(water_z) - float(terrain_z),
+                            )
+                    elif water_present:
+                        max_water_depth_m = max(
+                            max_water_depth_m,
+                            float(water_level) - float(terrain_z),
+                        )
                     gap = road_z - terrain_z
-                    if gap > _BRIDGE_VALLEY_DEPTH_M:
+                    if water_present and gap > _BRIDGE_VALLEY_DEPTH_M:
                         needs_bridge = True
 
         if not needs_bridge:
@@ -952,7 +987,7 @@ def _detect_bridges(
         clearance_m = max(_BRIDGE_WATER_CLEARANCE_M, max_water_depth_m * 0.5)
         deck_z = max(
             max(start3d[2], end3d[2]),
-            water_level + clearance_m,
+            max_water_surface_m + clearance_m,
         )
         deck_start = (start3d[0], start3d[1], deck_z)
         deck_end = (end3d[0], end3d[1], deck_z)
@@ -1268,6 +1303,8 @@ def compute_road_network(
     water_level=None,
     seed: int = 42,
     heightmap=None,
+    water_mask=None,
+    water_surface_elevation_m=None,
     cost_map=None,
     anchor_kinds: list | None = None,
     use_astar: bool = True,
@@ -1557,6 +1594,8 @@ def compute_road_network(
             water_level=water_level,
             heightmap=detect_hmap,
             terrain_bounds=detect_bounds,
+            water_mask=water_mask,
+            water_surface_elevation_m=water_surface_elevation_m,
         )
         bridge_mesh_specs = [_bridge_mesh_spec(b) for b in bridges]
 
@@ -1611,6 +1650,8 @@ def handle_compute_road_network(params: dict) -> dict:
     seed = params.get("seed", 42)
     anchor_kinds = params.get("anchor_kinds", None)
     heightmap = params.get("heightmap", None)
+    water_mask = params.get("water_mask", params.get("water_surface_mask", None))
+    water_surface_elevation_m = params.get("water_surface_elevation_m", None)
     cost_map = params.get("cost_map", None)
     use_astar = params.get("use_astar", True)
     rdp_epsilon = float(params.get("rdp_epsilon", 1.0))
@@ -1623,6 +1664,8 @@ def handle_compute_road_network(params: dict) -> dict:
         seed=seed,
         anchor_kinds=anchor_kinds,
         heightmap=heightmap,
+        water_mask=water_mask,
+        water_surface_elevation_m=water_surface_elevation_m,
         cost_map=cost_map,
         use_astar=use_astar,
         rdp_epsilon=rdp_epsilon,

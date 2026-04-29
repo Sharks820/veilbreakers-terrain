@@ -1505,6 +1505,13 @@ class TestControllerTerrainPath:
             "structural_masks",
             "cliffs",
             "emit_overhang_meshes",
+            "water_variants",
+            "bathymetry",
+            "pass_water_depth",
+            "materials_v2",
+            "waterfalls",
+            "emit_particle_systems",
+            "scatter_intelligent",
             "validation_full",
         ]
         assert params["world_origin_x"] == pytest.approx(-12.0)
@@ -1577,6 +1584,13 @@ class TestControllerTerrainPath:
             "integrate_deltas",
             "cliffs",
             "emit_overhang_meshes",
+            "water_variants",
+            "bathymetry",
+            "pass_water_depth",
+            "materials_v2",
+            "waterfalls",
+            "emit_particle_systems",
+            "scatter_intelligent",
             "validation_full",
         ]
         assert result["cave_pipeline_deferred"] is False
@@ -1641,8 +1655,16 @@ class TestControllerTerrainPath:
             "pass_hydrology",
             "erosion",
             "structural_masks",
+            "pass_hydrology",
             "cliffs",
             "emit_overhang_meshes",
+            "water_variants",
+            "bathymetry",
+            "pass_water_depth",
+            "materials_v2",
+            "waterfalls",
+            "emit_particle_systems",
+            "scatter_intelligent",
             "validation_full",
         ]
 

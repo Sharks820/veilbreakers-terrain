@@ -2017,6 +2017,7 @@ def handle_generate_terrain(params: dict) -> dict:
             pipeline.append("pass_hydrology")
             pipeline.append("erosion")
             pipeline.append("structural_masks")
+            pipeline.append("pass_hydrology")
             controller_params["erosion_profile"] = (
                 "temperate" if erosion == "hydraulic"
                 else "arid" if erosion == "thermal"
@@ -2029,10 +2030,36 @@ def handle_generate_terrain(params: dict) -> dict:
             pipeline.append("cliffs")
         if ("caves" in pipeline or "cliffs" in pipeline) and "emit_overhang_meshes" not in pipeline:
             pipeline.append("emit_overhang_meshes")
-        if "waterfalls" in pipeline and "emit_particle_systems" not in pipeline:
-            pipeline.append("emit_particle_systems")
         quality_profile_name = str(params.get("quality_profile", "production"))
         is_preview = quality_profile_name in ("preview", "mobile", "low")
+        if not is_preview:
+            for production_pass in (
+                "water_variants",
+                "bathymetry",
+                "pass_water_depth",
+                "materials_v2",
+            ):
+                if production_pass not in pipeline:
+                    pipeline.append(production_pass)
+            if params.get("waterfalls", True) and "waterfalls" not in pipeline:
+                pipeline.append("waterfalls")
+        if "waterfalls" in pipeline and "emit_particle_systems" not in pipeline:
+            pipeline.append("emit_particle_systems")
+        if (
+            not is_preview
+            and not params.get("skip_scatter", False)
+            and "scatter_intelligent" not in pipeline
+        ):
+            pipeline.append("scatter_intelligent")
+        if (
+            any(p in pipeline for p in ("waterfalls", "scatter_intelligent"))
+            and "scene_read" not in controller_params
+        ):
+            controller_params["scene_read"] = {
+                "timestamp": 0.0,
+                "reviewer": "compose_map",
+                "success_criteria": ("production_content_pipeline",),
+            }
         pipeline.append("validation_minimal" if is_preview else "validation_full")
         controller_params["pipeline"] = pipeline
 
@@ -3083,8 +3110,23 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
             )
             pipeline.insert(insert_at, "emit_particle_systems")
         if "validation_full" in pipeline and not unity_export_opt_out:
-            insert_at = pipeline.index("validation_full")
-            for prereq in ("materials_v2", "navmesh", "prepare_terrain_normals", "prepare_heightmap_raw_u16"):
+            scene_read_enabled = getattr(intent, "scene_read", None) is not None
+            ordered_prereqs = (
+                *(("water_variants", "bathymetry", "pass_water_depth") if scene_read_enabled else ()),
+                "materials_v2",
+                *(("waterfalls", "emit_particle_systems", "scatter_intelligent") if scene_read_enabled else ()),
+                "navmesh",
+                "prepare_terrain_normals",
+                "prepare_heightmap_raw_u16",
+            )
+            insert_at = min(
+                [
+                    pipeline.index(existing)
+                    for existing in (*ordered_prereqs, "validation_full")
+                    if existing in pipeline
+                ]
+            )
+            for prereq in ordered_prereqs:
                 if prereq not in pipeline:
                     pipeline.insert(insert_at, prereq)
                     insert_at += 1

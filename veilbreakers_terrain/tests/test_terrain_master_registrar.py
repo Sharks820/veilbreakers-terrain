@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from unittest.mock import patch
 
@@ -54,6 +56,29 @@ def test_master_registrar_produces_unified_pass_graph():
     assert registry_size >= 12, f"Expected ≥12 passes, got {registry_size}"
 
 
+def test_v6_script_registers_full_catalog_before_direct_pass_calls():
+    import scripts.build_terrain_aaa_node_v6 as v6
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    TerrainPassController.clear_registry()
+    try:
+        v6.register_terrain_passes_for_script()
+        for pass_name in ("materials_v2", "waterfalls", "scatter_intelligent", "validation_full"):
+            assert pass_name in TerrainPassController.PASS_REGISTRY
+    finally:
+        TerrainPassController.clear_registry()
+
+
+def test_v6_script_uses_aaa_open_world_for_direct_and_proof_intents():
+    import scripts.build_terrain_aaa_node_v6 as v6
+
+    direct_src = inspect.getsource(v6.run_production_passes)
+    proof_src = inspect.getsource(v6.run_validation_full_pipeline_proof)
+
+    assert 'quality_profile="aaa_open_world"' in direct_src
+    assert 'quality_profile="aaa_open_world"' in proof_src
+
+
 def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers():
     from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
@@ -84,12 +109,24 @@ def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers
     finally:
         TerrainPassController.clear_registry()
 
-    assert len(result["results"]) == 8
-    assert result["results"][-5]["pass_name"] == "materials_v2"
-    assert result["results"][-4]["pass_name"] == "navmesh"
-    assert result["results"][-3]["pass_name"] == "prepare_terrain_normals"
-    assert result["results"][-2]["pass_name"] == "prepare_heightmap_raw_u16"
-    assert result["results"][-1]["pass_name"] == "validation_full"
+    pass_names = [r["pass_name"] for r in result["results"]]
+    for expected in (
+        "water_variants",
+        "bathymetry",
+        "pass_water_depth",
+        "materials_v2",
+        "waterfalls",
+        "emit_particle_systems",
+        "scatter_intelligent",
+        "navmesh",
+        "prepare_terrain_normals",
+        "prepare_heightmap_raw_u16",
+        "validation_full",
+    ):
+        assert expected in pass_names
+    assert pass_names.index("materials_v2") < pass_names.index("scatter_intelligent")
+    assert pass_names.index("waterfalls") < pass_names.index("emit_particle_systems")
+    assert pass_names.index("validation_full") == len(pass_names) - 1
 
 
 def test_handle_run_terrain_pass_still_surfaces_truly_unknown_passes():
@@ -261,10 +298,17 @@ def test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_ful
     assert [r["pass_name"] for r in result["results"]] == [
         "macro_world",
         "structural_masks",
-        "navmesh",
+        "water_variants",
+        "bathymetry",
+        "pass_water_depth",
         "materials_v2",
+        "waterfalls",
+        "integrate_deltas",
+        "emit_particle_systems",
+        "scatter_intelligent",
         "prepare_terrain_normals",
         "prepare_heightmap_raw_u16",
+        "navmesh",
         "validation_full",
     ]
 

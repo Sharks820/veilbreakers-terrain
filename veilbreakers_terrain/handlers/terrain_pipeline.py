@@ -64,6 +64,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     quality_profile = str(getattr(intent, "quality_profile", "production"))
     composition_hints = dict(getattr(intent, "composition_hints", {}) or {})
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
+    has_scene_read = getattr(intent, "scene_read", None) is not None
     validation_pass = (
         "validation_minimal"
         if quality_profile in _PREVIEW_QUALITY_PROFILES
@@ -77,12 +78,18 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "pass_composite_hmap",
         validation_pass,
     ]
-    if getattr(intent, "scene_read", None) is not None:
+    if has_scene_read:
         pass_sequence[3:3] = ["pass_hydrology", "erosion"]
+        composite_idx = pass_sequence.index("pass_composite_hmap") + 1
+        for post_erosion in ("structural_masks", "pass_hydrology"):
+            pass_sequence.insert(composite_idx, post_erosion)
+            composite_idx += 1
     if validation_pass == "validation_full" and not unity_export_opt_out:
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
+            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
             "materials_v2",
+            *(("waterfalls", "emit_particle_systems", "scatter_intelligent") if has_scene_read else ()),
             "navmesh",
             "prepare_terrain_normals",
             "prepare_heightmap_raw_u16",

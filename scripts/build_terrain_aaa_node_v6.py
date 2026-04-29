@@ -74,6 +74,15 @@ SHORE_BLEND_M = 3.5  # widened blend zone for organic shoreline
 CLIFF_PASS_TIMEOUT_S = 120.0
 
 
+def register_terrain_passes_for_script() -> None:
+    """Register canonical pass catalog before any direct script pass calls."""
+    from veilbreakers_terrain.handlers.terrain_master_registrar import (
+        register_all_terrain_passes,
+    )
+
+    register_all_terrain_passes(strict=False)
+
+
 def _log(msg: str) -> None:
     print(f"[V6] {msg}", flush=True)
 
@@ -199,6 +208,7 @@ def run_production_passes(heightmap):
         bbox,
         int(TILE_SIZE_M),
         CELL_SIZE_M,
+        quality_profile="aaa_open_world",
     )
 
     state = TerrainPipelineState(intent, mask_stack)
@@ -293,7 +303,7 @@ def run_validation_full_pipeline_proof():
             region_bounds=BBox(0.0, 0.0, 32.0, 32.0),
             tile_size=32,
             cell_size=1.0,
-            quality_profile="production",
+            quality_profile="aaa_open_world",
         )
         state = TerrainPipelineState(intent=intent, mask_stack=stack)
         with tempfile.TemporaryDirectory() as td:
@@ -988,6 +998,7 @@ def main():
     global VALIDATION_FULL_PROOF
     t0 = time.perf_counter()
     _log("=== AAA Terrain Node v6 — D/F -> A/B target rebuild ===")
+    register_terrain_passes_for_script()
 
     heightmap = compose_heightmap()
     stack = run_production_passes(heightmap)

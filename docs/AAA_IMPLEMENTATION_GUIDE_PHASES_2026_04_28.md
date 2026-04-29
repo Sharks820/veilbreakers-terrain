@@ -244,16 +244,16 @@ are **not** all part of implementation-guide Phase 1.
 
 | Legacy fix | Implementation phase | Current live status |
 |---|---:|---|
-| FIX-1-1 materials_v2 in production pipeline | Phase 4 / FIX-4.3 | Partially covered by `validation_full` prereq injection; old compose-map block still does not literally append it after cliffs. Keep Phase 4 open. |
-| FIX-1-2 waterfalls in production pipeline | Phase 4 / FIX-4.4 | Open. v6 script runs waterfalls directly, but compose-map production pipeline still does not append `waterfalls`. |
-| FIX-1-3 `water_surface_elevation_m` writer + scatter exclusion | Phase 2 / FIX-2.10 | Partial. Writer exists in `terrain_water_variants.py`; scatter exclusion wiring was not found in `_scatter_engine.py`. Keep Phase 2 open. |
-| FIX-1-4 bridge detection validates water presence | Phase 5 / FIX-5.17 | Open. `_detect_bridges()` still detects height/valley gaps without water-mask/elevation gating. |
-| FIX-1-5 hydrology rerun after erosion | Phase 4 / FIX-4.5 | Open. compose-map sequence still runs `pass_hydrology -> erosion -> structural_masks` without second hydrology pass. |
+| FIX-1-1 materials_v2 in production pipeline | Phase 4 / FIX-4.3 | Done early in Batch 1 closure. `build_default_pass_sequence()`, `_execute_terrain_pipeline()`, and compose-map controller paths now inject `materials_v2` before full validation / scatter. |
+| FIX-1-2 waterfalls in production pipeline | Phase 4 / FIX-4.4 | Done early in Batch 1 closure. Scene-read-capable production paths append `waterfalls` and `emit_particle_systems`; no-scene paths still avoid scene-required passes. |
+| FIX-1-3 `water_surface_elevation_m` writer + scatter exclusion | Phase 2 / FIX-2.10 | Implementation landed before Phase 2 proof. `terrain_water_variants.py` writes `water_surface_elevation_m`; `terrain_assets.compute_viability()` excludes cells covered by canonical water elevation/depth/mask channels. Phase 2 proof still must verify coastline/glacial delta behavior. |
+| FIX-1-4 bridge detection validates water presence | Phase 5 / FIX-5.17 | Done early in Batch 1 closure. `_detect_bridges()` now accepts `water_mask` / `water_surface_elevation_m` and gates valley-gap bridge placement on sampled water presence. |
+| FIX-1-5 hydrology rerun after erosion | Phase 4 / FIX-4.5 | Done early in Batch 1 closure. Default scene-read and compose-map erosion paths now run `pass_hydrology -> erosion -> structural_masks -> pass_hydrology`. |
 | FIX-1-6 validation_full in production pipeline | Phase 1 / FIX-1.5 | Done. |
 | FIX-1-7 Bundle N post-pipeline hook | Phase 4 / FIX-4.6 | Present in `TerrainPassController.run_pipeline()` as visible best-effort hook; later Phase 4 should still verify production semantics. |
-| FIX-1-8 scatter_intelligent in production pipeline | Phase 4 / FIX-4.7 | Open. Default pass sequence does not include `scatter_intelligent`. |
-| FIX-1-9 build script registers all passes | Phase 4 / FIX-4.1 | Open for direct v6 production pass path. The added proof helper uses controller registration, but `run_production_passes()` still imports direct pass functions. |
-| FIX-1-10 v6 quality profile `aaa_open_world` | Phase 4 / FIX-4.2 | Open. v6 direct `TerrainIntentState` still uses default profile. |
+| FIX-1-8 scatter_intelligent in production pipeline | Phase 4 / FIX-4.7 | Done early in Batch 1 closure. Scene-read-capable production paths append `scatter_intelligent` after `materials_v2`; `skip_scatter=True` remains the explicit opt-out. |
+| FIX-1-9 build script registers all passes | Phase 4 / FIX-4.1 | Done early in Batch 1 closure. `build_terrain_aaa_node_v6.py` now calls `register_terrain_passes_for_script()` at script entry before direct pass calls. |
+| FIX-1-10 v6 quality profile `aaa_open_world` | Phase 4 / FIX-4.2 | Done early in Batch 1 closure. Direct and proof `TerrainIntentState(...)` construction in v6 now uses `quality_profile="aaa_open_world"`. |
 | FIX-1-11 coastline delta double-apply | Phase 2 / FIX-2.6 | Open until Phase 2 verification. |
 | FIX-1-12 glacial delta double-apply | Phase 2 / FIX-2.7 | Open until Phase 2 verification. |
 
@@ -510,6 +510,9 @@ is intended, but downstream tests may need golden updates. Phase 1's
 
 #### FIX-2.10 (FIX-1-3) — `water_surface_elevation_m` writer + scatter exclusion
 - **P0 ref:** P0-A5-1 / J3-P0-2 / S22-P0-8
+- **Status:** Writer and scatter exclusion are implemented before Phase 2
+  proof. Phase 2 proof still owns final double-apply validation for
+  FIX-2.6/FIX-2.7.
 - **File 1:** `terrain_water_variants.py:766`. After
   `stack.set("water_surface", ...)`, add:
   ```python
@@ -688,6 +691,7 @@ addition against a small tile and a 1024² tile before merging.
 
 #### FIX-4.1 (FIX-1-9) — Register all terrain passes at script entry
 - **P0 ref:** M6-P0-3 / M6-P0-7
+- **Status:** Done early in Batch 1 closure.
 - **File:** `scripts/build_terrain_aaa_node_v6.py:162` (top of `run_production_passes`).
 - ```python
   from veilbreakers_terrain.handlers.terrain_master_registrar import register_all_terrain_passes
@@ -696,11 +700,13 @@ addition against a small tile and a 1024² tile before merging.
 
 #### FIX-4.2 (FIX-1-10) — Pass `quality_profile="aaa_open_world"`
 - **P0 ref:** M6-P0-4
+- **Status:** Done early in Batch 1 closure.
 - **File:** `scripts/build_terrain_aaa_node_v6.py:194–200`.
 - Add `quality_profile="aaa_open_world"` to `TerrainIntentState(...)`.
 
 #### FIX-4.3 (FIX-1-1) — `materials_v2` in pipeline
 - **P0 ref:** I5-P0-3
+- **Status:** Done early in Batch 1 closure.
 - **File:** `environment.py:2028–2034`. After `pipeline.append("cliffs")`:
   ```python
   if "materials_v2" not in pipeline:
@@ -710,6 +716,7 @@ addition against a small tile and a 1024² tile before merging.
 
 #### FIX-4.4 (FIX-1-2) — Wire `waterfalls`
 - **P0 ref:** J2-P0-1
+- **Status:** Done early in Batch 1 closure.
 - **File:** `environment.py:2028–2034` and the secondary injector at
   `environment.py:3077–3089` (same edit). Insert:
   ```python
@@ -719,6 +726,7 @@ addition against a small tile and a 1024² tile before merging.
 
 #### FIX-4.5 (FIX-1-5) — Re-run `pass_hydrology` after erosion
 - **P0 ref:** I5-P0-2
+- **Status:** Done early in Batch 1 closure.
 - **File:** `environment.py:2016–2019`. Append a second `pass_hydrology` after
   `structural_masks` so flow direction reflects post-erosion topography.
 
@@ -740,6 +748,7 @@ addition against a small tile and a 1024² tile before merging.
 
 #### FIX-4.7 (FIX-1-8) — `scatter_intelligent` in pipeline
 - **P0 ref:** L3-P0-1
+- **Status:** Done early in Batch 1 closure.
 - **File:** `terrain_pipeline.py:559–569` and `environment.py:2004–2034`.
 - After `materials_v2`:
   ```python

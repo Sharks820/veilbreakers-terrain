@@ -245,6 +245,56 @@ class TestBridgeDetection:
         )
         assert bridges == []
 
+    def test_dry_valley_does_not_create_bridge_without_water_mask(self):
+        from veilbreakers_terrain.handlers.road_network import _detect_bridges
+
+        heightmap = [
+            [5.0, 5.0, 5.0, 5.0],
+            [-5.0, -5.0, -5.0, -5.0],
+            [5.0, 5.0, 5.0, 5.0],
+            [5.0, 5.0, 5.0, 5.0],
+        ]
+        dry_mask = [[0.0, 0.0, 0.0, 0.0] for _ in range(4)]
+        segments = [((0.0, 1.0, 2.0), (4.0, 1.0, 2.0), 4.0, "main")]
+
+        bridges = _detect_bridges(
+            segments,
+            water_level=0.0,
+            heightmap=heightmap,
+            terrain_bounds=(0.0, 0.0, 4.0, 4.0),
+            water_mask=dry_mask,
+        )
+
+        assert bridges == []
+
+    def test_water_surface_elevation_creates_bridge_over_wet_crossing(self):
+        from veilbreakers_terrain.handlers.road_network import _detect_bridges
+
+        heightmap = [
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ]
+        water_elev = [
+            [0.0, 0.0, 0.0, 0.0],
+            [3.0, 3.0, 3.0, 3.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ]
+        segments = [((0.0, 1.0, 1.0), (4.0, 1.0, 1.0), 4.0, "main")]
+
+        bridges = _detect_bridges(
+            segments,
+            water_level=0.0,
+            heightmap=heightmap,
+            terrain_bounds=(0.0, 0.0, 4.0, 4.0),
+            water_surface_elevation_m=water_elev,
+        )
+
+        assert len(bridges) == 1
+        assert bridges[0]["deck_start"][2] > 3.0
+
 
 class TestComputeRoadNetwork:
     """Test the main road network API."""
