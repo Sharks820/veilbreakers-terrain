@@ -130,6 +130,287 @@ def _build_two_cliff_state(tile_size: int = 48):
 
 
 # ---------------------------------------------------------------------------
+# Helper contracts
+# ---------------------------------------------------------------------------
+
+
+def test_repose_for_material_is_deterministic_and_material_bounded():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _repose_for_material
+
+    loose = _repose_for_material("loose_rock", rng_seed=11)
+    loose_again = _repose_for_material("loose_rock", rng_seed=11)
+    fallback = _repose_for_material("unknown_material", rng_seed=11)
+
+    assert loose == pytest.approx(loose_again)
+    assert math.radians(30.0) <= loose <= math.radians(35.0)
+    assert math.radians(32.0) <= fallback <= math.radians(36.0)
+
+
+def test_contour_smoothing_and_bspline_preserve_shape_contracts():
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        _fit_bspline_contour,
+        _smooth_contour_gaussian,
+    )
+
+    pts = np.array(
+        [[0.0, 0.0], [0.0, 4.0], [2.0, 6.0], [4.0, 4.0], [4.0, 0.0]],
+        dtype=np.float64,
+    )
+
+    smoothed = _smooth_contour_gaussian(pts, sigma=1.0, closed=True)
+    spline = _fit_bspline_contour(smoothed, n_samples=17, closed=True)
+    short = _fit_bspline_contour(pts[:3], n_samples=20, closed=False)
+
+    assert smoothed.shape == pts.shape
+    assert smoothed.dtype == np.float64
+    assert spline.shape == (17, 2)
+    np.testing.assert_array_equal(short, pts[:3])
+
+
+def test_moore_contour_helpers_cover_components_and_empty_masks():
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        _moore_contour_all_components,
+        _trace_moore_boundary,
+    )
+
+    empty = np.zeros((6, 6), dtype=bool)
+    mask = empty.copy()
+    mask[1:3, 1:3] = True
+    mask[4:6, 4:6] = True
+
+    assert _trace_moore_boundary(empty).shape == (0, 2)
+    boundary = _trace_moore_boundary(mask[:3, :3])
+    all_components = _moore_contour_all_components(mask)
+
+    assert boundary.ndim == 2
+    assert boundary.shape[1] == 2
+    assert all_components.shape[1] == 2
+    assert {tuple(p) for p in all_components}.issuperset({(1, 1), (4, 4)})
+
+
+def test_strata_layers_are_seeded_bounded_and_colored():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _build_strata_layers
+
+    layers_a = _build_strata_layers(40.0, 12.0, cliff_seed=99, n_layers=4)
+    layers_b = _build_strata_layers(40.0, 12.0, cliff_seed=99, n_layers=4)
+
+    assert len(layers_a) == 4
+    assert [layer.thickness_m for layer in layers_a] == pytest.approx(
+        [layer.thickness_m for layer in layers_b]
+    )
+    for layer in layers_a:
+        assert layer.thickness_m >= 0.3
+        assert 0.2 <= layer.hardness <= 0.9
+        assert len(layer.rgb_color) == 3
+        assert all(0.0 <= channel <= 1.0 for channel in layer.rgb_color)
+
+
+def test_apply_micro_erosion_only_erodes_faces_above_repose():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _apply_micro_erosion
+
+    height = np.full((3, 3), 10.0, dtype=np.float64)
+    face = np.zeros((3, 3), dtype=bool)
+    face[1, 1] = True
+    face[1, 2] = True
+    slope = np.full((3, 3), math.radians(20.0), dtype=np.float64)
+    slope[1, 1] = math.radians(70.0)
+
+    delta = _apply_micro_erosion(height, face, slope, math.radians(35.0), k=1.0)
+
+    assert delta[1, 1] < 0.0
+    assert delta[1, 2] == pytest.approx(0.0)
+    assert np.all(delta[~face] == 0.0)
+
+
+def test_region_to_slice_clamps_world_bounds_to_grid():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _region_to_slice
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+
+    state = _build_cliff_state(tile_size=8)
+    region = BBox(-50.0, -50.0, 500.0, 500.0)
+
+    rows, cols = _region_to_slice(state.mask_stack, region)
+
+    assert rows.start == 0
+    assert cols.start == 0
+    assert rows.stop == state.mask_stack.height.shape[0]
+    assert cols.stop == state.mask_stack.height.shape[1]
+
+
+def test_lip_polyline_postprocess_removes_duplicates_and_handles_empty():
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        _extract_lip_polyline,
+        _postprocess_lip_polyline,
+    )
+
+    empty = np.zeros((5, 5), dtype=bool)
+    mask = empty.copy()
+    mask[1:4, 1:4] = True
+    raw = np.array([[1, 1], [1, 1], [1, 2], [2, 2]], dtype=np.int32)
+
+    assert _extract_lip_polyline(empty, np.zeros((5, 5))).shape == (0, 2)
+    lip = _extract_lip_polyline(mask, np.zeros((5, 5)))
+    processed = _postprocess_lip_polyline(raw)
+
+    assert lip.ndim == 2
+    assert lip.shape[1] == 2
+    assert processed.shape[0] <= raw.shape[0]
+
+
+def test_cliff_base_trigger_accepts_degree_and_radian_slope_channels():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _cliff_base_trigger_mask
+
+    state = _build_cliff_state(tile_size=8)
+    slope_deg = np.full(state.mask_stack.height.shape, 5.0, dtype=np.float32)
+    slope_deg[2:4, 2:4] = 70.0
+    state.mask_stack.set("slope", slope_deg, "fixture")
+
+    degree_trigger = _cliff_base_trigger_mask(state.mask_stack, search_cells=2)
+    state.mask_stack.set("slope", np.radians(slope_deg), "fixture")
+    radian_trigger = _cliff_base_trigger_mask(state.mask_stack, search_cells=2)
+
+    assert degree_trigger.any()
+    np.testing.assert_array_equal(degree_trigger, radian_trigger)
+
+
+def test_generate_cliff_overhang_marks_drip_edges_deterministically():
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        CliffStructure,
+        _generate_cliff_overhang,
+    )
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+
+    cliff = CliffStructure(
+        cliff_id="cliff_overhang",
+        lip_polyline=np.array([[2, 2], [2, 5], [3, 6]], dtype=np.int32),
+        face_mask=np.ones((8, 8), dtype=bool),
+        world_bounds=BBox(0.0, 0.0, 8.0, 4.0),
+        min_height_m=0.0,
+        max_height_m=20.0,
+    )
+
+    spec_a = _generate_cliff_overhang(cliff, overhang_probability=1.0, seed=5)
+    spec_b = _generate_cliff_overhang(cliff, overhang_probability=1.0, seed=5)
+
+    assert spec_a == spec_b
+    assert spec_a["total_segments"] == 2
+    assert spec_a["overhang_count"] == 2
+    assert len(spec_a["drip_edge_verts"]) == 4
+    assert all(segment["is_drip_edge"] for segment in spec_a["segments"])
+
+
+def test_cell_center_world_converts_grid_to_z_up_xy():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _cell_center_world
+
+    state = _build_cliff_state(tile_size=8)
+    state.mask_stack.cell_size = 2.0
+    state.mask_stack.world_origin_x = 10.0
+    state.mask_stack.world_origin_y = -4.0
+
+    assert _cell_center_world(state.mask_stack, 3, 4) == pytest.approx((19.0, 3.0))
+
+
+def test_fbm2_is_deterministic_and_seed_sensitive():
+    from veilbreakers_terrain.handlers.terrain_cliffs import _fbm2
+
+    value_a = _fbm2(1.25, 3.5, octaves=3, amplitude=0.5, scale=1.0, seed=123)
+    value_b = _fbm2(1.25, 3.5, octaves=3, amplitude=0.5, scale=1.0, seed=123)
+    value_c = _fbm2(1.25, 3.5, octaves=3, amplitude=0.5, scale=1.0, seed=456)
+
+    assert value_a == pytest.approx(value_b)
+    assert value_a != pytest.approx(value_c)
+    assert -1.0 <= value_a <= 1.0
+
+
+def test_build_cliff_wall_mesh_spec_exports_geometry_and_metadata():
+    from veilbreakers_terrain.handlers.terrain_cliffs import (
+        StrataLayer,
+        _build_cliff_wall_mesh_spec,
+    )
+
+    state = _build_cliff_state(tile_size=8)
+    lip = np.array([[2, 2], [2, 5], [3, 6]], dtype=np.int32)
+    strata = [
+        StrataLayer(thickness_m=4.0, hardness=0.8, rgb_color=(0.2, 0.2, 0.2)),
+        StrataLayer(thickness_m=4.0, hardness=0.3, rgb_color=(0.7, 0.6, 0.5)),
+    ]
+
+    spec = _build_cliff_wall_mesh_spec(
+        lip,
+        wall_height=8.0,
+        stack=state.mask_stack,
+        segments_vertical=4,
+        noise_amplitude=0.0,
+        seed=12,
+        strata_layers=strata,
+    )
+
+    assert len(spec["vertices"]) == 15
+    assert len(spec["faces"]) == 8
+    assert spec["metadata"]["type"] == "cliff_wall"
+    assert spec["metadata"]["arc_length_m"] > 0.0
+    assert len(spec["metadata"]["material_indices"]) == len(spec["faces"])
+    assert spec["metadata"]["vegetation_anchors"]
+    assert spec["metadata"]["lod"][0]["level"] == 0
+
+
+def test_emit_overhang_meshes_directly_publishes_layer_cache():
+    from veilbreakers_terrain.handlers.terrain_cliffs import pass_emit_overhang_meshes
+
+    state = _build_cliff_state(tile_size=8)
+    state.mask_stack.set("cliff_mesh_specs", [{"mesh_id": "cliff_a"}], "fixture")
+    state.mask_stack.set("cave_mesh_specs", [{"mesh_id": "cave_a"}], "fixture")
+
+    result = pass_emit_overhang_meshes(state, region=None)
+
+    assert result.status == "ok"
+    assert result.metrics["mesh_spec_count"] == 2
+    assert len(state.mesh_layer_specs) == 1
+    assert list(state.mesh_layer_specs.values())[0] == [
+        {"mesh_id": "cliff_a"},
+        {"mesh_id": "cave_a"},
+    ]
+
+
+def test_protected_mask_for_cliffs_respects_zone_permissions():
+    from dataclasses import replace
+
+    from veilbreakers_terrain.handlers.terrain_cliffs import _protected_mask_for_cliffs
+    from veilbreakers_terrain.handlers.terrain_semantics import ProtectedZoneSpec
+
+    state = _build_cliff_state(tile_size=8)
+    zone = ProtectedZoneSpec(
+        zone_id="hero",
+        bounds=state.intent.region_bounds,
+        kind="hero_mesh",
+        forbidden_mutations=frozenset({"cliffs"}),
+    )
+    state.intent = replace(state.intent, protected_zones=(zone,))
+
+    mask = _protected_mask_for_cliffs(state, state.mask_stack.height.shape)
+
+    assert mask.shape == state.mask_stack.height.shape
+    assert mask.any()
+
+
+def test_pass_cliffs_direct_region_scope_publishes_contract_channels():
+    from veilbreakers_terrain.handlers.terrain_cliffs import pass_cliffs
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+
+    state = _build_cliff_state(tile_size=32)
+    region = BBox(0.0, 0.0, 33.0, 33.0)
+
+    result = pass_cliffs(state, region=region)
+
+    assert result.status in ("ok", "warning")
+    assert state.mask_stack.cliff_candidate is not None
+    assert state.mask_stack.get("cliff_mask") is not None
+    assert state.mask_stack.get("talus_mask") is not None
+    assert state.mask_stack.get("strata_mask") is not None
+    assert isinstance(state.mask_stack.get("cliff_mesh_specs"), list)
+
+
+# ---------------------------------------------------------------------------
 # Candidate mask
 # ---------------------------------------------------------------------------
 
