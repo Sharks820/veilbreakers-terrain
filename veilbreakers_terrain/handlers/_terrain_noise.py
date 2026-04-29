@@ -920,7 +920,7 @@ TERRAIN_PRESETS: dict[str, dict[str, Any]] = {
         "octaves": 8,
         "persistence": _FBM_GAIN,        # ≈ 0.5545 (Hurst H=0.85, not 0.5)
         "lacunarity": _FBM_LACUNARITY,
-        "amplitude_scale": 1.0,
+        "amplitude_scale": 1.1,
         "post_process": "power",
         "power": 1.6,
         "ridged_blend": 0.13,            # retuned for fast 2-D backend

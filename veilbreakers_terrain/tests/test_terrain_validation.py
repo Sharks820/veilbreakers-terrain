@@ -401,7 +401,7 @@ def test_material_coverage_skipped_when_not_populated():
     assert validate_material_coverage(stack, _make_intent(stack)) == []
 
 
-def test_material_texel_density_validator_accepts_default_two_layer_stack():
+def test_material_texel_density_validator_accepts_production_two_layer_stack():
     from veilbreakers_terrain.handlers.terrain_validation import (
         validate_material_texel_density_coherency,
     )
@@ -414,6 +414,7 @@ def test_material_texel_density_validator_accepts_default_two_layer_stack():
             "material_texel_density_m": {"ground": 256.0, "cliff": 512.0}
         },
     )
+    object.__setattr__(intent, "quality_profile", "production")
 
     assert validate_material_texel_density_coherency(stack, intent) == []
 
@@ -446,6 +447,7 @@ def test_material_texel_density_validator_uses_quality_profile_default_ratio():
 
     production_intent = _make_intent(stack)
     aaa_intent = _make_intent(stack)
+    object.__setattr__(production_intent, "quality_profile", "production")
     object.__setattr__(aaa_intent, "quality_profile", "aaa_open_world")
 
     assert validate_material_texel_density_coherency(stack, production_intent) == []
