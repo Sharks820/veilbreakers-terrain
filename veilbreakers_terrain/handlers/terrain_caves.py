@@ -779,7 +779,7 @@ def pick_cave_archetype(
     """Select the most plausible archetype for a location.
 
     Uses (in order of priority):
-      1. Biome context from ``stack.get("biome")`` channel (highest terrain
+      1. Biome context from ``stack.get("biome_id")`` channel (highest terrain
          signal): desert/arid/volcanic → LAVA_TUBE, arctic/tundra/snow →
          GLACIAL_MELT, temperate/forest → KARST_SINKHOLE, coastal → SEA_GROTTO,
          alpine/mountain → FISSURE.  Each biome match adds a strong score bonus

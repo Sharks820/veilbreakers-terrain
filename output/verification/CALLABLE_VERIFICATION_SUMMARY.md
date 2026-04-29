@@ -67,7 +67,7 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_assets.py:773 _build_tree_instance_array grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_assets.py:797 _build_detail_density grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_assets.py:825 pass_scatter_intelligent grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_audio_zones.py:953 register_bundle_j_audio_zones_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
+- HIGH terrain_audio_zones.py:952 register_bundle_j_audio_zones_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
 - HIGH terrain_budget_enforcer.py:217 _km2_from_stack grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_budget_enforcer.py:223 _count_unique_materials grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_budget_enforcer.py:235 _count_scatter_instances grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test

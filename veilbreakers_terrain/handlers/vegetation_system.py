@@ -980,8 +980,8 @@ def build_biome_density_map(
 ) -> "dict[str, Any]":
     """Build a per-species density map from a TerrainMaskStack and write it.
 
-    Reads ``stack.biome_id`` (uint8/int (H,W) array where each cell holds a
-    biome integer ID matching ``BIOME_ID_MAP``) to assign per-biome density
+    Reads ``stack.get("biome_id")`` (uint8/int (H,W) array where each cell
+    holds the canonical biome integer ID) to assign per-biome density
     values for every species in ``BIOME_VEGETATION_SETS[biome_name]``.
 
     The resulting ``density_map`` is a ``Dict[str, np.ndarray]`` where:
@@ -1018,7 +1018,7 @@ def build_biome_density_map(
     h_arr = np.asarray(stack.height, dtype=np.float32)
     H, W = h_arr.shape
 
-    biome_id_arr = getattr(stack, "biome_id", None)
+    biome_id_arr = stack.get("biome_id") if hasattr(stack, "get") else getattr(stack, "biome_id", None)
 
     # Collect all species entries across categories for this biome.
     biome = BIOME_VEGETATION_SETS[biome_name]
@@ -1033,13 +1033,11 @@ def build_biome_density_map(
     density_map: dict[str, Any] = {}
 
     if biome_id_arr is not None:
-        # Determine which cells belong to this biome.
-        # biome_id is a numeric ID; look up biome_name in BIOME_ID_MAP if it
-        # exists, otherwise treat all cells as belonging to this biome.
+        # Determine which cells belong to this biome. Numeric IDs follow the
+        # canonical insertion order of BIOME_VEGETATION_SETS.
         bid_arr = np.asarray(biome_id_arr)
-        biome_id_map: dict[str, int] = getattr(stack, "BIOME_ID_MAP", None) or {}
-        numeric_id = biome_id_map.get(biome_name)
-        if numeric_id is not None and bid_arr.shape == (H, W):
+        numeric_id = list(BIOME_VEGETATION_SETS.keys()).index(biome_name)
+        if bid_arr.shape == (H, W):
             biome_mask = (bid_arr == numeric_id).astype(np.float32)
         else:
             # biome_id populated but no numeric mapping — treat full tile as

@@ -689,6 +689,25 @@ medium because behaviour visibly changes when readers start finding data.
    show `populated=True` in its consumed-channels report.
 2. `pytest tests/test_terrain_*.py -k "biome or saliency or roughness or ao"`.
 
+### Phase 3 completion evidence — 2026-04-29
+- Fixed live phantom-reader defects in `terrain_texture_layer_stack.py`,
+  `vegetation_system.py`, and `terrain_audio_zones.py`; roughness and saliency
+  readers were already on canonical channel names.
+- `vegetation_system.build_biome_density_map()` now reads `stack.get("biome_id")`
+  and resolves numeric IDs from canonical biome order, not a phantom
+  `BIOME_ID_MAP` stack attribute.
+- `TerrainTextureLayerStack.validate()` now checks mask channels through
+  `stack.get(...)`, so channels stored through `TerrainMaskStack.set()` are not
+  reported as missing.
+- Audio cave classification now follows the ambient-occlusion convention used by
+  the audit: `ambient_occlusion_bake` near `0` means occluded/low-sky and near
+  `1` means lit/high-sky.
+- Verification run: exact stale-reader grep returned zero matches; py-compile
+  passed for touched modules/tests; targeted Phase 3 tests passed (`62 passed`);
+  broader selector `python -m pytest veilbreakers_terrain/tests -k "biome or
+  saliency or roughness or ao" -q` passed (`336 passed`, `3195 deselected`, 4
+  expected atmospheric-placement warnings).
+
 ---
 
 <a id="phase-4"></a>

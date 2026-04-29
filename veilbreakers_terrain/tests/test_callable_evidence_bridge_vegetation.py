@@ -231,14 +231,15 @@ def test_vegetation_system_places_lod_instances_and_density_maps():
     assert spec["species_density"]
 
     class Stack:
-        BIOME_ID_MAP = {"grasslands": 4}
-
         def __init__(self) -> None:
             import numpy as np
 
             self.height = np.zeros((3, 3), dtype=np.float32)
-            self.biome_id = np.full((3, 3), 4, dtype=np.uint8)
+            self._channels = {"biome_id": np.full((3, 3), 10, dtype=np.uint8)}
             self.writes = []
+
+        def get(self, name):
+            return self._channels.get(name)
 
         def set(self, name, value, source):
             self.writes.append((name, value, source))

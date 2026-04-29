@@ -557,12 +557,11 @@ def _classify_raster(stack: TerrainMaskStack) -> np.ndarray:
         conc_np = np.asarray(stack.concavity, dtype=np.float64)
         overhang_base = (cliff_np > 0.5) & (conc_np > 0.3)
         # Sky exposure proxy: ambient_occlusion_bake is in [0, 1] where
-        # 1 = fully occluded (low sky exposure ⇒ cave).  If unavailable,
+        # 0 = fully occluded (low sky exposure => cave).  If unavailable,
         # accept the geometric predicate as-is.
         if stack.ambient_occlusion_bake is not None:
             ao = np.asarray(stack.ambient_occlusion_bake, dtype=np.float64)
-            # Low sky exposure = AO > 0.6 (cell is heavily occluded).
-            low_sky = ao > 0.6
+            low_sky = ao < 0.4
             overhang = _audio_cc_filter(overhang_base & low_sky, min_cells)
         else:
             overhang = _audio_cc_filter(overhang_base, min_cells)

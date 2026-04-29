@@ -61,3 +61,16 @@ def test_normalized_weights_empty_stack_has_zero_layer_axis():
 
     assert weights.shape == (1, 1, 0)
     assert weights.dtype == np.float32
+
+
+def test_validate_uses_stack_get_for_mask_sources():
+    class GetOnlyStack:
+        def __init__(self) -> None:
+            self._channels = {"rock_mask": np.ones((2, 2), dtype=np.float32)}
+
+        def get(self, name: str):
+            return self._channels.get(name)
+
+    stack = TerrainTextureLayerStack(layers=[_layer("rock", np.ones((2, 2), dtype=np.float32))])
+
+    assert stack.validate(GetOnlyStack()) == []

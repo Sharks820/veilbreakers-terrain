@@ -50,11 +50,17 @@ class TerrainTextureLayerStack:
         for layer in self.layers:
             if not layer.terrain_mask_source:
                 issues.append(f"{layer.layer_id}: terrain_mask_source is empty")
-            elif terrain_stack is not None and not hasattr(terrain_stack, layer.terrain_mask_source):
-                issues.append(
-                    f"{layer.layer_id}: terrain_mask_source '{layer.terrain_mask_source}' "
-                    f"not found on stack"
+            elif terrain_stack is not None:
+                channel = (
+                    terrain_stack.get(layer.terrain_mask_source)
+                    if hasattr(terrain_stack, "get")
+                    else getattr(terrain_stack, layer.terrain_mask_source, None)
                 )
+                if channel is None:
+                    issues.append(
+                        f"{layer.layer_id}: terrain_mask_source '{layer.terrain_mask_source}' "
+                        f"not found on stack"
+                    )
             if layer.weight_map is None:
                 issues.append(f"{layer.layer_id}: missing weight_map")
             if layer.normal is None:

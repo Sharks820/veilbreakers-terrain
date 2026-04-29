@@ -299,13 +299,13 @@ def test_classify_raster_cave_requires_low_sky_exposure_when_ao_present():
     _attach_slope(stack)
     cliff = np.zeros_like(stack.height, dtype=np.float64)
     conc = np.zeros_like(stack.height, dtype=np.float64)
-    ao_high = np.zeros_like(stack.height, dtype=np.float64)
+    ao_low = np.ones_like(stack.height, dtype=np.float64)
     cliff[5:10, 5:10] = 1.0
     conc[5:10, 5:10] = 0.8
-    ao_high[5:10, 5:10] = 0.9  # heavily occluded ⇒ cave
+    ao_low[5:10, 5:10] = 0.1  # heavily occluded => cave
     stack.set("cliff_candidate", cliff, "test")
     stack.set("concavity", conc, "test")
-    stack.set("ambient_occlusion_bake", ao_high.astype(np.float32), "test")
+    stack.set("ambient_occlusion_bake", ao_low.astype(np.float32), "test")
 
     cls = _classify_raster(stack)
     assert (cls[5:10, 5:10] == AudioReverbClass.CAVE.value).any()
@@ -321,13 +321,13 @@ def test_classify_raster_cave_rejected_when_sky_exposure_high():
     _attach_slope(stack)
     cliff = np.zeros_like(stack.height, dtype=np.float64)
     conc = np.zeros_like(stack.height, dtype=np.float64)
-    ao_low = np.zeros_like(stack.height, dtype=np.float64)
+    ao_high = np.zeros_like(stack.height, dtype=np.float64)
     cliff[5:10, 5:10] = 1.0
     conc[5:10, 5:10] = 0.8
-    ao_low[5:10, 5:10] = 0.1  # sky-exposed cliff face ⇒ NOT a cave
+    ao_high[5:10, 5:10] = 0.9  # sky-exposed cliff face => NOT a cave
     stack.set("cliff_candidate", cliff, "test")
     stack.set("concavity", conc, "test")
-    stack.set("ambient_occlusion_bake", ao_low.astype(np.float32), "test")
+    stack.set("ambient_occlusion_bake", ao_high.astype(np.float32), "test")
 
     cls = _classify_raster(stack)
     assert not (cls[5:10, 5:10] == AudioReverbClass.CAVE.value).any()
