@@ -431,6 +431,7 @@ def register_glacial_pass() -> None:
             requires_channels=("height",),
             optional_channels=("slope", "flow_accumulation"),
             produces_channels=("snow_line_factor", "glacial_delta"),
+            overrides=("snow_line_factor", "glacial_delta"),
             seed_namespace="pass_glacial",
             requires_scene_read=False,
             may_modify_geometry=False,

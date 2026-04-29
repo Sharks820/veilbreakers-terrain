@@ -46,6 +46,9 @@ class FakeStack:
     road_sdf_dist: Optional[np.ndarray] = None
     hero_exclusion: Optional[np.ndarray] = None
 
+    def get(self, channel_name: str):
+        return getattr(self, channel_name, None)
+
 
 def _stack(size: int = 16) -> FakeStack:
     return FakeStack(

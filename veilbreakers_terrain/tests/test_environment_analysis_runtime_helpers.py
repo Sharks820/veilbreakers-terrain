@@ -143,7 +143,7 @@ def test_audio_zone_helpers_filter_boundaries_rt60_echo_classification_and_zone_
     delay = _cliff_echo_delay((4, 4), cleaned, cell_size=2.0)
 
     stack = _stack(np.zeros((4, 4), dtype=np.float32))
-    _set_channel(stack, "water_surface", np.ones((4, 4), dtype=np.float32))
+    _set_channel(stack, "water_surface_mask", np.ones((4, 4), dtype=np.float32))
     classes = _classify_raster(stack)
     zones = compute_audio_zone_list(stack)
 
@@ -425,7 +425,7 @@ def _make_composite_stack():
     cliff[3:9, 20:26] = 1.0
     conc[3:9, 20:26] = 0.8
     ao[3:9, 20:26] = 0.9
-    stack.set("water_surface", water, "test")
+    stack.set("water_surface_mask", water, "test")
     stack.set("cliff_candidate", cliff, "test")
     stack.set("concavity", conc, "test")
     stack.set("ambient_occlusion_bake", ao.astype(np.float32), "test")
@@ -511,7 +511,7 @@ def test_pass_audio_zones_publishes_audio_zone_list_opaque_channel():
     stack = state.mask_stack
     water = np.zeros_like(stack.height, dtype=np.float64)
     water[10:14, 10:14] = 1.0
-    stack.set("water_surface", water, "test")
+    stack.set("water_surface_mask", water, "test")
 
     result = pass_audio_zones(state, None)
     assert result.status == "ok"

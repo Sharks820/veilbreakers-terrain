@@ -38,10 +38,19 @@ import shutil
 import string
 import tempfile
 import time
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+
+warnings.warn(
+    "veilbreakers_terrain.handlers.asset_generation is deprecated (FIX-7-11). "
+    "Use veilbreakers_terrain.providers.Hunyuan3D2Provider or MeshyProvider instead. "
+    "This module will be removed once all callers are migrated to providers/.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = logging.getLogger(__name__)
 

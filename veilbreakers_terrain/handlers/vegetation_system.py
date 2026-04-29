@@ -1600,6 +1600,8 @@ def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
     """Compute a per-cell signed-distance-from-cliff in metres."""
     if stack is None or np is None:
         return None
+    if not hasattr(stack, "get"):
+        return None
     cliff = stack.get("cliff_label")
     if cliff is None:
         return None
@@ -1615,6 +1617,8 @@ def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
 def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
     """Compute distance-from-water in metres using bathymetry."""
     if stack is None or np is None:
+        return None
+    if not hasattr(stack, "get"):
         return None
     bathy = stack.get("bathymetry")
     if bathy is None:

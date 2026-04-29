@@ -553,6 +553,7 @@ def register_bundle_j_unity_auxiliary_pass() -> None:
                 "lightmap_uv_chart_id",
                 "ambient_occlusion_bake",
             ),
+            overrides=("ambient_occlusion_bake",),
             seed_namespace="prepare_unity_auxiliary_channels",
             requires_scene_read=False,
             description="Bundle J: derive Unity physics, lightmap, and AO channels from terrain height",

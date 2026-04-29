@@ -121,7 +121,7 @@ def test_audio_zones_water_sets_water_near(stack):
 
     water = np.zeros_like(stack.height, dtype=np.float64)
     water[12:15, 12:15] = 1.0
-    stack.set("water_surface", water, "test")
+    stack.set("water_surface_mask", water, "test")
     arr = compute_audio_reverb_zones(stack)
     assert (arr[12:15, 12:15] == AudioReverbClass.WATER_NEAR.value).any()
 
@@ -232,15 +232,17 @@ def test_wind_field_shape_and_dtype(stack):
     assert field.shape == stack.height.shape + (2,)
 
 
-def test_wind_field_faster_at_altitude(stack):
+def test_wind_field_faster_at_altitude():
     from veilbreakers_terrain.handlers.terrain_wind_field import compute_wind_field
 
-    field = compute_wind_field(stack, 0.0, 5.0)
+    # Use a bare stack (no slope/basin/ridge) so the altitude_factor (1×valley → 2×peak)
+    # is the sole determinant of wind speed. The paraboloid fixture attaches steep slopes
+    # and a basin that saturates the dune-slope gate and basin penalty, overpowering the
+    # altitude boost — isolating altitude here keeps the test invariant meaningful.
+    bare = _make_stack(tile_size=24, seed=7)
+    field = compute_wind_field(bare, 0.0, 5.0)
     speed = np.sqrt(field[..., 0] ** 2 + field[..., 1] ** 2)
-    h = np.asarray(stack.height)
-    np.unravel_index(np.argmax(h), h.shape)
-    np.unravel_index(np.argmin(h), h.shape)
-    # Not strict — perturbation can flip locally, use means of top/bottom quartiles
+    h = np.asarray(bare.height)
     top_mask = h >= np.quantile(h, 0.9)
     bot_mask = h <= np.quantile(h, 0.1)
     assert speed[top_mask].mean() >= speed[bot_mask].mean() * 0.95
@@ -327,7 +329,7 @@ def test_navmesh_area_id_classification(stack):
 
     water = np.zeros_like(stack.height, dtype=np.float64)
     water[0:3, 0:3] = 1.0
-    stack.set("water_surface", water, "test")
+    stack.set("water_surface_mask", water, "test")
     area = compute_navmesh_area_id(stack, max_walkable_slope_deg=60.0)
     assert area.dtype == np.uint8
     assert (area[0:3, 0:3] == NAVMESH_SWIM).all()
