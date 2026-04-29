@@ -248,3 +248,54 @@ def test_vegetation_system_places_lod_instances_and_density_maps():
     density = veg.build_biome_density_map(stack, "grasslands")
     assert density
     assert stack.writes and stack.writes[0][0] == "detail_density"
+
+
+def test_vegetation_placement_samples_regular_raster_by_world_axes(monkeypatch):
+    from veilbreakers_terrain.handlers import _scatter_engine
+
+    def _single_point(width, depth, min_distance, seed=0):
+        return [(1.6, 2.1)]
+
+    monkeypatch.setattr(_scatter_engine, "poisson_disk_sample", _single_point)
+    monkeypatch.setitem(
+        veg.BIOME_VEGETATION_SETS,
+        "phase7_test",
+        {
+            "trees": [],
+            "ground_cover": [
+                {
+                    "type": "probe_plant",
+                    "density": 1.0,
+                    "scale_range": (1.0, 1.0),
+                    "min_altitude": 0.0,
+                    "max_altitude": 1.0,
+                }
+            ],
+            "rocks": [],
+        },
+    )
+
+    vertices = [
+        (float(x), float(y), float(y * 10 + x))
+        for y in range(4)
+        for x in range(4)
+    ]
+    vertices = list(reversed(vertices))
+    normals = [(0.0, 0.0, 1.0) for _ in vertices]
+
+    placements = veg.compute_vegetation_placement(
+        vertices,
+        [],
+        normals,
+        "phase7_test",
+        (0.0, 0.0, 3.0, 3.0),
+        seed=7,
+        min_distance=0.5,
+        water_level=0.0,
+        camera_position=(1.6, 2.1, 5.0),
+        lod_distances=[1.0, 2.0],
+    )
+
+    assert len(placements) == 1
+    assert placements[0]["position"][:2] == pytest.approx((1.6, 2.1))
+    assert placements[0]["position"][2] == pytest.approx(22.0)

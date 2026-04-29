@@ -413,53 +413,109 @@ def compute_vegetation_placement(
     has_height_variation = max_h > min_h
     height_range = max_h - min_h if has_height_variation else 1.0
 
+    vertex_arr = np.asarray(terrain_vertices, dtype=np.float64)
+    normal_arr = np.asarray(terrain_normals, dtype=np.float64)
+    x_axis = np.unique(vertex_arr[:, 0])
+    y_axis = np.unique(vertex_arr[:, 1])
+    use_raster_sample = (
+        normal_arr.shape == (len(terrain_vertices), 3)
+        and x_axis.size * y_axis.size == len(terrain_vertices)
+    )
+    height_grid: np.ndarray | None = None
+    slope_grid: np.ndarray | None = None
+
+    if use_raster_sample:
+        x_lookup = {float(x): i for i, x in enumerate(x_axis.tolist())}
+        y_lookup = {float(y): i for i, y in enumerate(y_axis.tolist())}
+        height_grid = np.empty((y_axis.size, x_axis.size), dtype=np.float64)
+        normal_grid = np.empty((y_axis.size, x_axis.size, 3), dtype=np.float64)
+        filled = np.zeros((y_axis.size, x_axis.size), dtype=bool)
+
+        for i, (vx, vy, vz) in enumerate(terrain_vertices):
+            row = y_lookup[float(vy)]
+            col = x_lookup[float(vx)]
+            height_grid[row, col] = float(vz)
+            normal_grid[row, col] = normal_arr[i]
+            filled[row, col] = True
+
+        use_raster_sample = bool(np.all(filled))
+        if use_raster_sample:
+            normal_len = np.linalg.norm(normal_grid, axis=2)
+            nz_norm = np.ones_like(normal_len)
+            valid_normals = normal_len > 1e-12
+            nz_norm[valid_normals] = np.clip(
+                np.abs(normal_grid[:, :, 2][valid_normals]) / normal_len[valid_normals],
+                0.0,
+                1.0,
+            )
+            slope_grid = np.degrees(np.arccos(nz_norm))
+
     grid_res = max(1, int(math.sqrt(len(terrain_vertices))))
     cell_w = width / grid_res if grid_res > 0 else width
     cell_d = depth / grid_res if grid_res > 0 else depth
 
     vertex_grid: dict[tuple[int, int], list[int]] = {}
-    for i, (vx, vy, _vz) in enumerate(terrain_vertices):
-        gi = int((vx - min_x) / cell_w) if cell_w > 0 else 0
-        gj = int((vy - min_y) / cell_d) if cell_d > 0 else 0
-        gi = max(0, min(gi, grid_res - 1))
-        gj = max(0, min(gj, grid_res - 1))
-        vertex_grid.setdefault((gi, gj), []).append(i)
+    if not use_raster_sample:
+        for i, (vx, vy, _vz) in enumerate(terrain_vertices):
+            gi = int((vx - min_x) / cell_w) if cell_w > 0 else 0
+            gj = int((vy - min_y) / cell_d) if cell_d > 0 else 0
+            gi = max(0, min(gi, grid_res - 1))
+            gj = max(0, min(gj, grid_res - 1))
+            vertex_grid.setdefault((gi, gj), []).append(i)
+
+    def _nearest_axis_index(axis: np.ndarray, value: float) -> int:
+        idx = int(np.searchsorted(axis, value))
+        if idx <= 0:
+            return 0
+        if idx >= axis.size:
+            return int(axis.size - 1)
+        left = idx - 1
+        if abs(value - float(axis[left])) <= abs(float(axis[idx]) - value):
+            return left
+        return idx
 
     def _sample_terrain(px: float, py: float) -> tuple[float, float, float]:
         """Sample (normalised_height, slope_degrees, moisture) at world position."""
-        gi = int((px - min_x) / cell_w) if cell_w > 0 else 0
-        gj = int((py - min_y) / cell_d) if cell_d > 0 else 0
-        gi = max(0, min(gi, grid_res - 1))
-        gj = max(0, min(gj, grid_res - 1))
-
-        best_idx = -1
-        best_dist_sq = float("inf")
-        for di in range(-1, 2):
-            for dj in range(-1, 2):
-                ni, nj = gi + di, gj + dj
-                for vi in vertex_grid.get((ni, nj), []):
-                    vx, vy, _vz2 = terrain_vertices[vi]
-                    dsq = (px - vx) ** 2 + (py - vy) ** 2
-                    if dsq < best_dist_sq:
-                        best_dist_sq = dsq
-                        best_idx = vi
-
-        if best_idx < 0:
-            return 0.5, 0.0, 0.5
-
-        _vx, _vy, vz = terrain_vertices[best_idx]
-        norm_height = (vz - min_h) / height_range
-
-        nx, ny, nz = terrain_normals[best_idx]
-        normal_len = math.sqrt(nx * nx + ny * ny + nz * nz)
-        if normal_len > 1e-12:
-            nz_norm = max(0.0, min(1.0, abs(nz) / normal_len))
-            slope_deg = math.degrees(math.acos(nz_norm))
+        if use_raster_sample and height_grid is not None and slope_grid is not None:
+            ri = _nearest_axis_index(y_axis, py)
+            ci = _nearest_axis_index(x_axis, px)
+            vz = float(height_grid[ri, ci])
+            norm_height = (vz - min_h) / height_range
+            slope_deg = float(slope_grid[ri, ci])
         else:
-            slope_deg = 0.0
+            gi = int((px - min_x) / cell_w) if cell_w > 0 else 0
+            gj = int((py - min_y) / cell_d) if cell_d > 0 else 0
+            gi = max(0, min(gi, grid_res - 1))
+            gj = max(0, min(gj, grid_res - 1))
+
+            best_idx = -1
+            best_dist_sq = float("inf")
+            for di in range(-1, 2):
+                for dj in range(-1, 2):
+                    ni, nj = gi + di, gj + dj
+                    for vi in vertex_grid.get((ni, nj), []):
+                        vx, vy, _vz2 = terrain_vertices[vi]
+                        dsq = (px - vx) ** 2 + (py - vy) ** 2
+                        if dsq < best_dist_sq:
+                            best_dist_sq = dsq
+                            best_idx = vi
+
+            if best_idx < 0:
+                return 0.5, 0.0, 0.5
+
+            _vx, _vy, vz = terrain_vertices[best_idx]
+            norm_height = (vz - min_h) / height_range
+
+            nx, ny, nz = terrain_normals[best_idx]
+            normal_len = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if normal_len > 1e-12:
+                nz_norm = max(0.0, min(1.0, abs(nz) / normal_len))
+                slope_deg = math.degrees(math.acos(nz_norm))
+            else:
+                slope_deg = 0.0
 
         # Moisture: use explicit map if available, else derive from altitude.
-        # Low altitude → wetter (rivers, valleys); high altitude → drier.
+        # Low altitude -> wetter (rivers, valleys); high altitude -> drier.
         if moisture_map is not None:
             try:
                 rows = len(moisture_map)
@@ -470,7 +526,6 @@ def compute_vegetation_placement(
             except (IndexError, TypeError):
                 moisture = max(0.0, min(1.0, 1.0 - norm_height))
         else:
-            # Procedural moisture proxy: low altitude = wetter, with gentle curve
             moisture = max(0.0, min(1.0, 1.0 - norm_height ** 0.7))
 
         return norm_height, slope_deg, moisture

@@ -1652,8 +1652,10 @@ focused regression test that fails if `run_pass()` deep-copies the entire
 `TerrainMaskStack`. FIX-7.5 is implemented in `_water_network.py` with
 boolean-mask Manning velocity broadcast and a scalar-reference regression test.
 FIX-7.9 is verified against live `execute_parallel()` semantics with a
-regression test for failed parallel waves. FIX-7.2 through FIX-7.4 and
-FIX-7.6 through FIX-7.8 remain open or unverified in this checkpoint.
+regression test for failed parallel waves. FIX-7.8 is implemented in
+`vegetation_system.py` with a regular-raster sampling fast path and shuffled-grid
+height regression test. FIX-7.2 through FIX-7.4 and FIX-7.6 through FIX-7.7
+remain open or unverified in this checkpoint.
 
 #### FIX-7.1 (FIX-9-32) — Copy-on-write checkpoint
 - **P0 ref:** S22-P0-34
@@ -1695,6 +1697,12 @@ FIX-7.6 through FIX-7.8 remain open or unverified in this checkpoint.
 #### FIX-7.8 (FIX-8-18) — Vegetation rasterised terrain sample
 - **File:** `vegetation_system.py:411–421`. Replace `vertex_grid` dict with
   pre-indexed `stack.height/slope/wetness` raster lookups.
+- **Status 2026-04-29:** Done. `compute_vegetation_placement()` now detects
+  regular terrain vertex rasters, builds height and slope grids once, and
+  samples nearest raster cells by world-axis search. Irregular meshes fall back
+  to the existing spatial hash. Test
+  `test_vegetation_placement_samples_regular_raster_by_world_axes` proves
+  shuffled regular-grid vertices sample the correct world height.
 
 #### FIX-7.9 (FIX-9-14) — Preserve `content_hash` on exception
 - **P0 ref:** S22-P0-37
