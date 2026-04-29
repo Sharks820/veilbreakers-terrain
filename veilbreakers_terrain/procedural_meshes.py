@@ -17505,13 +17505,36 @@ def generate_rope_bridge_mesh(
     rope_r = 0.015
     rope_h = 0.7
     sag_factor = 0.06
+    sag_solver = "sim.catenary.catenary_with_sag"
+
+    try:
+        import numpy as _np
+        from veilbreakers_terrain.sim.catenary import catenary_with_sag
+
+        _curve = catenary_with_sag(
+            _np.array([0.0, -span / 2.0, 0.0], dtype=float),
+            _np.array([0.0, span / 2.0, 0.0], dtype=float),
+            sag_ratio=max(sag_factor, 0.001),
+            n_points=max(8, plank_count + 1),
+        )
+        _curve_z = _curve[:, 1]
+        _curve_y = _curve[:, 2]
+
+        def _sag_at(z: float, multiplier: float = 1.0) -> float:
+            return float(_np.interp(z, _curve_z, _curve_y)) * multiplier
+
+    except Exception:  # pragma: no cover - fallback for stripped sim deps
+        sag_solver = "fallback_sine"
+
+        def _sag_at(z: float, multiplier: float = 1.0) -> float:
+            t = (z + span / 2.0) / span
+            return -math.sin(t * math.pi) * span * sag_factor * multiplier
 
     if style == "simple":
         # Planks with catenary sag
         for i in range(plank_count):
             z = -span / 2 + (i + 0.5) * span / plank_count
-            t = (z + span / 2) / span
-            sag = -math.sin(t * math.pi) * span * sag_factor
+            sag = _sag_at(z)
             pv, pf = _make_box(0, sag, z, width / 2 * 0.9, 0.015, 0.07)
             parts.append((pv, pf))
 
@@ -17520,8 +17543,7 @@ def generate_rope_bridge_mesh(
         for sx in [-width / 2, width / 2]:
             for i in range(rope_segs):
                 z = -span / 2 + (i + 0.5) * span / rope_segs
-                t = (z + span / 2) / span
-                sag = -math.sin(t * math.pi) * span * sag_factor
+                sag = _sag_at(z)
                 # Vertical rope posts
                 pv, pf = _make_cylinder(sx, sag, z, rope_r * 2, rope_h, segments=4)
                 parts.append((pv, pf))
@@ -17535,8 +17557,7 @@ def generate_rope_bridge_mesh(
         # More planks, thicker ropes
         for i in range(plank_count):
             z = -span / 2 + (i + 0.5) * span / plank_count
-            t = (z + span / 2) / span
-            sag = -math.sin(t * math.pi) * span * sag_factor * 0.5
+            sag = _sag_at(z, 0.5)
             pv, pf = _make_box(0, sag, z, width / 2 * 0.95, 0.025, 0.08)
             parts.append((pv, pf))
 
@@ -17545,8 +17566,7 @@ def generate_rope_bridge_mesh(
         for sx in [-width / 2, width / 2]:
             for i in range(n_posts):
                 z = -span / 2 + (i + 0.5) * span / n_posts
-                t = (z + span / 2) / span
-                sag = -math.sin(t * math.pi) * span * sag_factor * 0.5
+                sag = _sag_at(z, 0.5)
                 pv, pf = _make_cylinder(sx, sag, z, rope_r * 3, rope_h,
                                         segments=6)
                 parts.append((pv, pf))
@@ -17569,8 +17589,7 @@ def generate_rope_bridge_mesh(
             if (i * 11 + 7) % 5 == 0:
                 continue  # Missing plank
             z = -span / 2 + (i + 0.5) * span / plank_count
-            t = (z + span / 2) / span
-            sag = -math.sin(t * math.pi) * span * sag_factor * 1.2
+            sag = _sag_at(z, 1.2)
             # Some planks are tilted/broken
             y_off = 0.02 * ((i * 7) % 3 - 1)
             pv, pf = _make_box(0, sag + y_off, z,
@@ -17583,8 +17602,7 @@ def generate_rope_bridge_mesh(
         for sx in [-width / 2, width / 2]:
             for i in range(n_posts):
                 z = -span / 2 + (i + 0.5) * span / n_posts
-                t = (z + span / 2) / span
-                sag = -math.sin(t * math.pi) * span * sag_factor * 1.2
+                sag = _sag_at(z, 1.2)
                 pv, pf = _make_cylinder(sx, sag, z, rope_r * 1.5,
                                         rope_h * (0.5 + 0.5 * ((i * 7) % 3) / 2),
                                         segments=4)
@@ -17592,7 +17610,7 @@ def generate_rope_bridge_mesh(
 
     verts, faces = _merge_meshes(*parts)
     return _make_result(f"RopeBridge_{style}", verts, faces,
-                        style=style, category="infrastructure")
+                        style=style, category="infrastructure", sag_solver=sag_solver)
 
 
 def generate_tent_mesh(

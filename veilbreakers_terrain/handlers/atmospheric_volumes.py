@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 import warnings
 from typing import Any, Optional
 
@@ -26,6 +27,8 @@ try:
     _NUMPY_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _NUMPY_AVAILABLE = False
+
+from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState
 
 
 # ---------------------------------------------------------------------------
@@ -1016,3 +1019,71 @@ def estimate_atmosphere_performance(
         "volume_type_counts": type_counts,
         "recommendation": recommendation,
     }
+
+
+def pass_atmospheric_volumes(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Populate atmospheric volume descriptors from live terrain channels."""
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    intent = state.intent
+    bounds_obj = region or intent.region_bounds
+    bounds = bounds_obj.to_tuple()
+    hints = dict(getattr(intent, "composition_hints", {}) or {})
+    biome = str(
+        hints.get("atmosphere_biome")
+        or hints.get("biome")
+        or getattr(intent, "biome_rules", None)
+        or "dark_forest"
+    )
+    density_scale = float(hints.get("atmosphere_density_scale", 1.0))
+    weather_hints = hints.get("weather_hints")
+    if weather_hints is not None and not isinstance(weather_hints, dict):
+        weather_hints = None
+
+    placements = compute_atmospheric_placements(
+        biome,
+        bounds,
+        seed=int(getattr(intent, "seed", 0)),
+        density_scale=density_scale,
+        heightmap=stack.height,
+        ridge_mask=stack.get("ridge"),
+        water_mask=stack.get("water_surface"),
+        canopy_mask=stack.get("canopy_density"),
+        cell_size=float(stack.cell_size),
+        weather_hints=weather_hints,
+    )
+    stack.set("atmospheric_volumes", placements, "pass_atmospheric_volumes")
+    perf = estimate_atmosphere_performance(placements)
+    return PassResult(
+        pass_name="pass_atmospheric_volumes",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("atmospheric_volumes",),
+        metrics={
+            "biome": biome,
+            "volume_count": len(placements),
+            "estimated_cost_ms": float(perf.get("cost_ms", 0.0)),
+            "region_scoped": region is not None,
+        },
+    )
+
+
+def register_atmospheric_volumes_pass() -> None:
+    from .terrain_pipeline import TerrainPassController
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_atmospheric_volumes",
+            func=pass_atmospheric_volumes,
+            requires_channels=("height",),
+            optional_channels=("ridge", "water_surface", "canopy_density"),
+            produces_channels=("atmospheric_volumes",),
+            seed_namespace="pass_atmospheric_volumes",
+            requires_scene_read=False,
+            description="Bundle L: terrain-aware atmospheric volume placement descriptors.",
+        )
+    )

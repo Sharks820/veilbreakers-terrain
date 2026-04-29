@@ -203,6 +203,31 @@ def test_protected_zones_info_when_no_baseline():
     assert any(i.code == "PROTECTED_BASELINE_ABSENT" for i in issues)
 
 
+def test_run_validation_suite_forwards_protected_zone_baseline():
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox, ProtectedZoneSpec
+    from veilbreakers_terrain.handlers.terrain_validation import (
+        run_validation_suite,
+        validate_protected_zones_untouched,
+    )
+
+    stack = _make_stack(tile_size=16)
+    baseline = _make_stack(tile_size=16)
+    _set_channel(baseline, "height", stack.height.copy())
+    stack.height[3, 3] += 10.0
+    zone = ProtectedZoneSpec("z1", BBox(2, 2, 6, 6), "hero_mesh")
+    intent = _make_intent(stack, protected_zones=(zone,))
+
+    report = run_validation_suite(
+        stack,
+        intent,
+        validators=[("validate_protected_zones_untouched", validate_protected_zones_untouched)],
+        baseline_stack=baseline,
+    )
+
+    assert any(i.code == "PROTECTED_ZONE_MUTATED" for i in report.hard_issues)
+    assert not any(i.code == "PROTECTED_BASELINE_ABSENT" for i in report.all_issues)
+
+
 # ---------------------------------------------------------------------------
 # 5. validate_tile_seam_continuity
 # ---------------------------------------------------------------------------

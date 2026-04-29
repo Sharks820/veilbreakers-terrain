@@ -10,11 +10,19 @@ Pure numpy. No bpy. Z-up world meters.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .terrain_semantics import TerrainMaskStack
+from .terrain_semantics import (
+    BBox,
+    PassDefinition,
+    PassResult,
+    TerrainMaskStack,
+    TerrainPipelineState,
+    ValidationIssue,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +406,96 @@ def list_templates_for_biome(biome: str) -> List[MorphologyTemplate]:
     return [t for t in DEFAULT_TEMPLATES if t.kind in allowed]
 
 
+def _template_by_id(template_id: str) -> Optional[MorphologyTemplate]:
+    for template in DEFAULT_TEMPLATES:
+        if template.template_id == template_id:
+            return template
+    return None
+
+
+def _default_world_pos(stack: TerrainMaskStack) -> Tuple[float, float, float]:
+    rows, cols = stack.height.shape
+    x = float(stack.world_origin_x) + cols * float(stack.cell_size) * 0.5
+    y = float(stack.world_origin_y) + rows * float(stack.cell_size) * 0.5
+    z = float(np.asarray(stack.height, dtype=np.float64).mean())
+    return (x, y, z)
+
+
+def pass_morphology(state: TerrainPipelineState, region: Optional[BBox]) -> PassResult:
+    """Apply authored morphology templates as a deferred height delta."""
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    hints = dict(getattr(state.intent, "composition_hints", {}) or {})
+    raw_specs = hints.get("morphology_specs")
+    if raw_specs is None:
+        raw_specs = tuple(getattr(state.intent, "morphology_templates", ()) or ())
+
+    delta = np.zeros_like(np.asarray(stack.height, dtype=np.float64), dtype=np.float64)
+    applied: list[str] = []
+    unknown: list[str] = []
+    default_pos = _default_world_pos(stack)
+
+    for idx, spec in enumerate(raw_specs or ()):
+        if isinstance(spec, str):
+            template_id = spec
+            world_pos = default_pos
+        elif isinstance(spec, dict):
+            template_id = str(spec.get("template_id") or spec.get("id") or spec.get("name") or "")
+            pos_raw = spec.get("world_pos") or spec.get("position") or spec.get("center") or default_pos
+            world_pos = tuple(float(v) for v in pos_raw[:3])  # type: ignore[index]
+        else:
+            continue
+
+        template = _template_by_id(template_id)
+        if template is None:
+            if template_id:
+                unknown.append(template_id)
+            continue
+
+        seed = int(getattr(state.intent, "seed", 0)) + idx
+        delta += apply_morphology_template(stack, template, world_pos, seed=seed)
+        applied.append(template.template_id)
+
+    stack.set("morphology_delta", delta.astype(np.float32), "pass_morphology")
+    return PassResult(
+        pass_name="pass_morphology",
+        status="ok" if not unknown else "warning",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("morphology_delta",),
+        metrics={
+            "applied_template_count": len(applied),
+            "unknown_template_count": len(unknown),
+            "delta_abs_max": float(np.max(np.abs(delta))) if delta.size else 0.0,
+            "region_scoped": region is not None,
+        },
+        warnings=[
+            ValidationIssue(
+                code="UNKNOWN_MORPHOLOGY_TEMPLATE",
+                severity="soft",
+                message=f"Unknown morphology templates ignored: {unknown}",
+            )
+        ] if unknown else [],
+    )
+
+
+def register_morphology_pass() -> None:
+    from .terrain_pipeline import TerrainPassController
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_morphology",
+            func=pass_morphology,
+            requires_channels=("height",),
+            produces_channels=("morphology_delta",),
+            seed_namespace="pass_morphology",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Bundle H morphology templates: deferred height deltas from authored landform specs.",
+        )
+    )
+
+
 def get_natural_arch_specs(
     stack: TerrainMaskStack,
     templates: tuple[str, ...] = (),
@@ -459,5 +557,7 @@ __all__ = [
     "DEFAULT_TEMPLATES",
     "apply_morphology_template",
     "list_templates_for_biome",
+    "pass_morphology",
+    "register_morphology_pass",
     "get_natural_arch_specs",
 ]

@@ -9,6 +9,59 @@ determinism, edge cases, and feature correctness.
 import pytest
 
 
+def test_lod1_faces_returns_simplified_face_list_not_count():
+    from veilbreakers_terrain.handlers.terrain_features import _lod1_faces
+
+    faces = [(i, i + 1, i + 2) for i in range(12)]
+    lod = _lod1_faces(faces, ratio=0.5)
+    assert isinstance(lod, list)
+    assert len(lod) == 6
+    assert all(isinstance(face, tuple) for face in lod)
+    assert all(face in faces for face in lod)
+
+
+def test_pass_terrain_features_writes_mesh_specs_channel():
+    import numpy as np
+
+    from veilbreakers_terrain.handlers.terrain_features import pass_terrain_features
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+    height = np.zeros((9, 9), dtype=np.float32)
+    stack = TerrainMaskStack(
+        tile_size=8,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    intent = TerrainIntentState(
+        seed=41,
+        region_bounds=BBox(0.0, 0.0, 8.0, 8.0),
+        tile_size=8,
+        cell_size=1.0,
+        composition_hints={
+            "terrain_feature_specs": [
+                {"kind": "natural_arch", "id": "arch_a", "params": {"span_width": 4.0}}
+            ]
+        },
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    result = pass_terrain_features(state, None)
+
+    assert result.status == "ok"
+    assert result.metrics["feature_mesh_count"] == 1
+    assert stack.terrain_feature_mesh_specs[0]["feature_id"] == "arch_a"
+    assert stack.populated_by_pass["terrain_feature_mesh_specs"] == "pass_terrain_features"
+
+
 # ===================================================================
 # Natural Arch Tests
 # ===================================================================

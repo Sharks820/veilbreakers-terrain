@@ -73,6 +73,17 @@ class TestCatenary:
         pts = solve_catenary(a, b, rope_length=11.0, n_points=8)
         assert pts.shape == (8, 3)
 
+    def test_rope_bridge_mesh_uses_sim_catenary_solver(self):
+        from veilbreakers_terrain.procedural_meshes import generate_rope_bridge_mesh
+
+        bridge = generate_rope_bridge_mesh(style="simple", span=8.0, width=1.5)
+        vertices = np.asarray(bridge["vertices"], dtype=np.float32)
+        center_band = np.abs(vertices[:, 2]) < 0.5
+        end_band = np.abs(np.abs(vertices[:, 2]) - 4.0) < 0.5
+
+        assert bridge["metadata"]["sag_solver"] == "sim.catenary.catenary_with_sag"
+        assert float(vertices[center_band, 1].min()) < float(vertices[end_band, 1].min())
+
 
 # ---------------------------------------------------------------------------
 # pbd_cloth tests

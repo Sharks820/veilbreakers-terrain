@@ -1028,6 +1028,9 @@ def pass_stratigraphy(
 
     # --- 7. Strata cross-section JSON export ------------------------------
     cross_section = export_strata_cross_section(stack, strat_stack)
+    from .terrain_geology_validator import validate_strata_consistency
+
+    issues.extend(validate_strata_consistency(stack))
 
     # --- Metrics ----------------------------------------------------------
     unconformity_frac = float(unconformity_mask.mean()) if unconformity_mask is not None else 0.0

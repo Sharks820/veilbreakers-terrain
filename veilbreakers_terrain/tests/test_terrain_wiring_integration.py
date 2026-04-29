@@ -143,7 +143,13 @@ def test_wiring_bundle_a_default_pipeline_runs(monkeypatch):
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     TerrainPassController.clear_registry()
 
-    assert len(results) == 4
+    assert [r.pass_name for r in results] == [
+        "macro_world",
+        "structural_masks",
+        "erosion",
+        "integrate_deltas",
+        "validation_minimal",
+    ]
     for r in results:
         assert r.status in ("ok", "warning"), f"{r.pass_name}: {r.status} {r.issues}"
 

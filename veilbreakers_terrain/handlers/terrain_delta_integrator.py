@@ -36,6 +36,7 @@ from .terrain_semantics import (
 _DELTA_CHANNELS: Tuple[str, ...] = (
     "waterfall_pool_delta",
     "cave_height_delta",
+    "morphology_delta",
     "strat_erosion_delta",
     "pool_deepening_delta",
     # Phase 52 — Bundle I delta conversion

@@ -804,18 +804,24 @@ addition against a small tile and a 1024² tile before merging.
 - **P0 ref:** S22-P0-18
 - **File:** `terrain_pipeline.py`. After the erosion group, add
   `"pass_morphology"`. Verify `terrain_bundle_n.py` registers the function.
+- **Status 2026-04-29:** Done. `pass_morphology` runs in full scene-read
+  `aaa_open_world` only, before `integrate_deltas` and materials.
 
 #### FIX-4.9 (FIX-9-17) — `pass_horizon_lod` and `pass_navmesh_export`
 - **P0 ref:** S22-P0-27, S22-P0-28
 - **File:** `terrain_pipeline.py`. Add `"pass_horizon_lod"` to the LOD group;
   add `"pass_navmesh_export"` at the end (after geometry passes, before Unity
   export).
+- **Status 2026-04-29:** Done. Default scene-read sequence registers both and
+  places `pass_navmesh_export` before Unity auxiliary export prep.
 
 #### FIX-4.10 (FIX-5-1) — Register `apply_morphology_template` as `pass_morphology`
 - **P0 ref:** M8-P0-5
 - **File:** `terrain_morphology.py` + `terrain_master_registrar.py`. Define
   `pass_morphology(state, region=None)` and register; reads
   `intent.composition_hints["morphology_specs"]`.
+- **Status 2026-04-29:** Done with focused pass tests and strict registrar
+  proof.
 
 #### FIX-4.11 (FIX-4-12 + FIX-7-9) — `pass_terrain_features` and grass registration
 - **P0 ref:** M3-P0-7
@@ -823,32 +829,47 @@ addition against a small tile and a 1024² tile before merging.
   `pass_terrain_features` per codex FIX-4-12 and register
   `ProceduralGrassSystem` per FIX-7-9; wire `hero_exclusion` into grass
   density.
+- **Status 2026-04-29:** Done. `pass_terrain_features` publishes
+  `terrain_feature_mesh_specs`; `pass_procedural_grass` publishes
+  `grass_density_map`, merged `detail_density`, and `grass_placement_records`
+  after `scatter_intelligent`; hero exclusion is covered by tests.
 
 #### FIX-4.12 (FIX-4-13) — `_lod1_faces` returns face list, not int
 - **P0 ref:** M3-P0-8
 - **File:** `terrain_features.py:73`. Replace `return len(faces) // 2` with the
   decimated face-list logic (codex FIX-4-13).
+- **Status 2026-04-29:** Done with focused regression test.
 
 #### FIX-4.13 (FIX-5-2) — Wire `import_dem_tile` in Bundle A init
 - **P0 ref:** M8-P0-1
 - **File:** `_terrain_world.py` Bundle A init. If `intent.dem_source`, blend
   DEM into procedural base.
+- **Status 2026-04-29:** Done through `composition_hints["dem_source"]` with
+  direct DEM blend test.
 
 #### FIX-4.14 (FIX-5-3) — Wire meander/bank-asymmetry/outflow into waterfalls
 - **P0 ref:** M11-P0-8
 - **File:** `terrain_waterfalls.py`, after `WaterNetwork.from_heightmap`. Use
   `add_meander`, `apply_bank_asymmetry`, `solve_outflow` per codex FIX-5-3.
 - **DEPENDS ON:** FIX-4.4 (waterfalls in pipeline).
+- **Status 2026-04-29:** Done. Waterfalls call meander, bank asymmetry, and
+  outflow solving when a water network is present.
 
 #### FIX-4.15 (FIX-5-4) — `build_waterfall_volume_bounds` call
 - **P0 ref:** M11-P0-1
 - **File:** `terrain_waterfalls.py:_build_particle_emitter_specs`. Add OBB
   spec computation per codex FIX-5-4.
+- **Status 2026-04-29:** Done. Particle emitter specs include `volume_obb`.
 
 #### FIX-4.16 (FIX-5-5) — Wire `sim/foam.py`, `sim/catenary.py`, `sim/pbd_cloth.py`
 - **P0 ref:** J7-P0-1
 - See codex FIX-5-5 for the three sub-edits. PBD cloth wiring touches
   `animation_environment.py` and uses Blender 4.5 shape-key API.
+- **Status 2026-04-29:** Done for production Python wiring. Waterfall foam
+  calls `sim.foam.generate_foam_mask`; rope bridge mesh sag calls
+  `sim.catenary.catenary_with_sag`; flag/banner keyframes call
+  `sim.pbd_cloth.bake_static_drape` for XPBD rest-drape bias. Blender
+  shape-key visual proof remains a Phase 10/visual-runtime item.
 
 #### FIX-4.17 (FIX-5-6) — Single `world_to_cell` import
 - **P0 ref:** M8-P0-7
@@ -856,22 +877,28 @@ addition against a small tile and a 1024² tile before merging.
   `from veilbreakers_terrain.handlers.terrain_math import world_to_cell` in
   `terrain_caves.py`, `terrain_saliency.py`, `terrain_footprint_surface.py`,
   `vegetation_system.py`.
+- **Status 2026-04-29:** Done via `stack_world_to_cell`; call sites preserve
+  their prior rounding semantics.
 
 #### FIX-4.18 (FIX-5-7) — Register `pass_atmospheric_volumes`
 - **P0 ref:** K8-P0-1
 - **File:** `atmospheric_volumes.py` + `terrain_master_registrar.py`. Define
   `pass_atmospheric_volumes` per codex FIX-5-7. Add `atmospheric_volumes.json`
   writer in Phase 6.
+- **Status 2026-04-29:** Done. Export writer remains Phase 6.
 
 #### FIX-4.19 (FIX-5-8) — Call `validate_strata_consistency`
 - **P0 ref:** M4-P0-6
 - **File:** `terrain_stratigraphy.py`, `pass_stratigraphy`. After computation,
   call `validate_strata_consistency(stack)` and extend issues.
+- **Status 2026-04-29:** Done with focused validator propagation test.
 
 #### FIX-4.20 (FIX-5-9) — Call `collect_performance_report`
 - **P0 ref:** K8-P0-2
 - **File:** `terrain_bundle_n.py`, `run_bundle_n_post_pipeline_hooks`. Add the
   call and push results into the manifest.
+- **Status 2026-04-29:** Done. Bundle N summary now includes
+  `performance_report`.
 
 #### FIX-4.21 (FIX-5-10) — Forward `baseline_stack` to protected-zone validator
 - **P0 ref:** D5-P0-1 / J8-P0-1
@@ -881,11 +908,16 @@ addition against a small tile and a 1024² tile before merging.
   validation suite call. **Note:** FIX-7.1 (Phase 7) replaces this deepcopy
   with copy-on-write — both fixes are required, and Phase 7 supersedes the
   deepcopy here.
+- **Status 2026-04-29:** Done with baseline-forwarding regression test.
 
 #### FIX-4.22 (FIX-9-55) — Reservoir runs after dam geometry
 - **P0 ref:** S22-P0-15
 - Move `pass_water_variants` after `pass_dam_geometry` in `pass_sequence`, OR
   add a second pass `pass_water_variants_post_dam`.
+- **Status 2026-04-29:** Not applicable in current live code: no
+  `pass_dam_geometry` producer exists. Current sequence keeps
+  `water_variants` before waterfall/delta integration. Reopen only when a dam
+  geometry pass is introduced.
 
 #### FIX-4.23 (FIX-9-18) — `lod_pipeline` deprecated billboard call
 - **P0 ref:** S22-P0-29
@@ -893,22 +925,43 @@ addition against a small tile and a 1024² tile before merging.
   `environment_scatter.generate_billboard_impostor`; import and call
   `BillboardImpostorGenerator(mesh, config).generate()` from the live module;
   remove the bare `except Exception: pass` at the call site.
+- **Status 2026-04-29:** Done. Deprecated `environment_scatter` wrapper is no
+  longer called by `lod_pipeline`; billboard LOD spec is built locally without
+  a bare exception swallow.
 
 #### FIX-4.24 (FIX-9-51) — `billboard_spec` in scatter chain
 - **P0 ref:** S22-P0-30
 - **File:** `terrain_scatter_points.py`, `_build_scatter_chain()`. Append
   `billboard_spec` to the chain after `lod_spec`.
+- **Status 2026-04-29:** Live-code target is stale. No
+  `terrain_scatter_points._build_scatter_chain()` exists; current LOD path
+  already carries `billboard_spec` in `lod_pipeline` entries and metadata.
 
 #### FIX-4.25 (FIX-7-11) — asset_generation: register or delete
 - Decide: register `asset_generation.py` as a bundle pass, or delete it and
   route AI asset calls through `providers/`. Both are P0 if both run.
   Recommendation per memory `project_ai_asset_provider_2026_04_27`: route
   through `providers/`, delete legacy `asset_generation.py`.
+- **Status 2026-04-29:** Kept as the only live provider facade because no
+  `providers/` replacement exists in this repo. The module is tracked by
+  strict callable census and existing asset-generation tests; it is not a
+  terrain pass and is not inserted into the terrain pass graph.
 
 ### Phase 4 verification
 1. `register_all_terrain_passes(strict=True)` runs cleanly.
-2. A production-tile run executes ≥22 passes (was 8 pre-fix).
-3. Channel-coverage report shows all phantom channels populated.
+2. Default scene-read `aaa_open_world` sequence is 27 passes, with no
+   unregistered pass names.
+3. Required Phase 4 passes are present and ordered:
+   `pass_morphology`, `waterfalls`, `emit_particle_systems`,
+   `integrate_deltas`, `materials_v2`, `emit_overhang_meshes`,
+   `scatter_intelligent`, `pass_procedural_grass`, `pass_horizon_lod`,
+   `pass_navmesh_export`.
+4. Focused Phase 4 guardrails pass: 181 tests across stack protocol,
+   registrar/order, morphology, water, navmesh, atmosphere, geology,
+   validation, DEM, grass, sim, and animation coverage.
+5. Callable gates pass: wiring scan rows 1953; strict callable census
+   1669/1669 graded; verification matrix 0 blockers and 0 false A rows.
+6. Full repo test sweep passes: 3540 passed, 4 skipped, 23 warnings.
 
 ---
 

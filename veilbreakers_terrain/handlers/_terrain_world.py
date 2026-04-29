@@ -599,6 +599,37 @@ def pass_generate_low_freq_hmap(
             terrain_type=terrain_type,
             octaves=low_freq_octaves,
         ).astype(np.float32)
+        hints = dict(getattr(intent, "composition_hints", {}) or {}) if intent else {}
+        dem_cfg = hints.get("dem_source")
+        if dem_cfg:
+            from .terrain_dem_import import DEMSource, import_dem_tile
+
+            if isinstance(dem_cfg, DEMSource):
+                dem_source = dem_cfg
+            elif isinstance(dem_cfg, dict):
+                dem_source = DEMSource(
+                    source_type=str(dem_cfg.get("source_type", "synthetic")),
+                    url_or_path=str(dem_cfg.get("url_or_path", "")),
+                    resolution_m=float(dem_cfg.get("resolution_m", cell_size)),
+                )
+            else:
+                dem_source = DEMSource(
+                    source_type="synthetic",
+                    url_or_path=str(dem_cfg),
+                    resolution_m=cell_size,
+                )
+            dem_tile = import_dem_tile(
+                dem_source,
+                intent.region_bounds,
+                target_shape=hmap_low.shape,
+                apply_egm96_offset=bool(hints.get("dem_apply_egm96_offset", False)),
+            )
+            h_min = float(np.min(hmap_low))
+            h_max = float(np.max(hmap_low))
+            h_range = max(h_max - h_min, 1.0)
+            dem_scaled = h_min + np.asarray(dem_tile.heightmap, dtype=np.float32) * h_range
+            blend = float(np.clip(hints.get("dem_blend_weight", 1.0), 0.0, 1.0))
+            hmap_low = ((1.0 - blend) * hmap_low + blend * dem_scaled).astype(np.float32)
 
     stack.set("hmap_low_freq", hmap_low, "pass_generate_low_freq_hmap")
     stack.set("height", hmap_low, "pass_generate_low_freq_hmap")
@@ -614,6 +645,7 @@ def pass_generate_low_freq_hmap(
             "elapsed_s": elapsed,
             "generated": not reused_existing,
             "reused_existing": reused_existing,
+            "dem_blended": bool((dict(getattr(intent, "composition_hints", {}) or {}) if intent else {}).get("dem_source")),
         },
     )
 
@@ -1215,6 +1247,10 @@ def pass_erosion(
     r_slice, c_slice = _region_slice(state, region)
     sediment_base_out = getattr(hydro, "sediment_accumulation_at_base", None)
     pool_deepening_out = getattr(hydro, "pool_deepening_delta", None)
+    if sediment_base_out is None:
+        sediment_base_out = np.zeros_like(h_before, dtype=np.float64)
+    if pool_deepening_out is None:
+        pool_deepening_out = np.zeros_like(h_before, dtype=np.float64)
 
     if region is not None:
         scoped = h_before.copy()
@@ -1233,10 +1269,8 @@ def pass_erosion(
         drainage_out = _scope(hydro.drainage)
         bank_instability_out = _scope(hydro.bank_instability)
         talus_out = _scope(thermal.talus)
-        if sediment_base_out is not None:
-            sediment_base_out = _scope(np.asarray(sediment_base_out))
-        if pool_deepening_out is not None:
-            pool_deepening_out = _scope(np.asarray(pool_deepening_out))
+        sediment_base_out = _scope(np.asarray(sediment_base_out))
+        pool_deepening_out = _scope(np.asarray(pool_deepening_out))
     else:
         erosion_amount_out = hydro.erosion_amount
         deposition_amount_out = hydro.deposition_amount
@@ -1254,10 +1288,8 @@ def pass_erosion(
         drainage_out = np.where(protected, 0.0, drainage_out)
         bank_instability_out = np.where(protected, 0.0, bank_instability_out)
         talus_out = np.where(protected, 0.0, talus_out)
-        if sediment_base_out is not None:
-            sediment_base_out = np.where(protected, 0.0, sediment_base_out)
-        if pool_deepening_out is not None:
-            pool_deepening_out = np.where(protected, 0.0, pool_deepening_out)
+        sediment_base_out = np.where(protected, 0.0, sediment_base_out)
+        pool_deepening_out = np.where(protected, 0.0, pool_deepening_out)
 
     # Fix 12.2: Stream-Power Law solver (Cordonnier 2016 ε-topological-order)
     # Requires flow_accumulation from Phase 7 Priority-Flood. Falls back to
@@ -1313,18 +1345,16 @@ def pass_erosion(
     stack.set("drainage", drainage_out, "erosion")
     stack.set("bank_instability", bank_instability_out, "erosion")
     stack.set("talus", talus_out, "erosion")
-    if sediment_base_out is not None:
-        stack.set(
-            "sediment_accumulation_at_base",
-            np.asarray(sediment_base_out, dtype=np.float32),
-            "erosion",
-        )
-    if pool_deepening_out is not None:
-        stack.set(
-            "pool_deepening_delta",
-            np.asarray(pool_deepening_out, dtype=np.float32),
-            "erosion",
-        )
+    stack.set(
+        "sediment_accumulation_at_base",
+        np.asarray(sediment_base_out, dtype=np.float32),
+        "erosion",
+    )
+    stack.set(
+        "pool_deepening_delta",
+        np.asarray(pool_deepening_out, dtype=np.float32),
+        "erosion",
+    )
     _apply_post_height_seams(stack, "height", "hmap_low_freq")
 
     # Sediment mass-balance metric (AAA spec): ratio of total redeposited

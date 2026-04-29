@@ -85,13 +85,15 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         for post_erosion in ("structural_masks", "pass_hydrology"):
             pass_sequence.insert(composite_idx, post_erosion)
             composite_idx += 1
+        if validation_pass == "validation_full":
+            pass_sequence.insert(composite_idx, "pass_morphology")
+            composite_idx += 1
     if validation_pass == "validation_full" and not unity_export_opt_out:
         insert_at = pass_sequence.index("validation_full")
         for prereq in (
             *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
-            "materials_v2",
-            *(("waterfalls", "emit_particle_systems", "scatter_intelligent") if has_scene_read else ()),
-            "navmesh",
+            *(("waterfalls", "emit_particle_systems", "integrate_deltas", "materials_v2", "emit_overhang_meshes", "scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read else ("materials_v2",)),
+            "pass_navmesh_export",
             "prepare_terrain_normals",
             "prepare_heightmap_raw_u16",
             "prepare_unity_auxiliary_channels",
@@ -722,6 +724,17 @@ class TerrainPassController:
         # ------------------------------------------------------------------
         # Normal execution
         # ------------------------------------------------------------------
+        pre_pipeline_mask_stack = copy.deepcopy(self.state.mask_stack)
+        setattr(self, "_pre_pipeline_baseline_stack", pre_pipeline_mask_stack)
+        validation_bound = False
+        try:
+            from .terrain_validation import bind_active_controller
+
+            bind_active_controller(self)
+            validation_bound = True
+        except Exception:  # noqa: BLE001
+            validation_bound = False
+
         bundle_n_pre_pipeline_state = None
         try:
             from .terrain_bundle_n import bundle_n_runtime_requests_determinism
@@ -732,11 +745,20 @@ class TerrainPassController:
             bundle_n_pre_pipeline_state = None
 
         results: List[PassResult] = []
-        for pass_name in pass_sequence:
-            res = self.run_pass(pass_name, region=region, checkpoint=checkpoint)
-            results.append(res)
-            if res.status == "failed":
-                break
+        try:
+            for pass_name in pass_sequence:
+                res = self.run_pass(pass_name, region=region, checkpoint=checkpoint)
+                results.append(res)
+                if res.status == "failed":
+                    break
+        finally:
+            if validation_bound:
+                try:
+                    from .terrain_validation import bind_active_controller
+
+                    bind_active_controller(None)
+                except Exception:  # noqa: BLE001
+                    pass
 
         # ------------------------------------------------------------------
         # Bundle N post-pipeline QA safety net.
@@ -1347,6 +1369,7 @@ def register_default_passes(*, strict: bool = False) -> None:
                 "ridge",
                 "basin",
                 "saliency_macro",
+                "hero_exclusion",
             ),
             seed_namespace="structural_masks",
             requires_scene_read=False,
@@ -1365,6 +1388,8 @@ def register_default_passes(*, strict: bool = False) -> None:
                 "drainage",
                 "bank_instability",
                 "talus",
+                "pool_deepening_delta",
+                "sediment_accumulation_at_base",
                 # Refined ridge field — declared producer so the PassDAG knows
                 # ``pass_erosion`` owns ``ridge_eroded``. ``ridge`` (raw) stays
                 # owned by ``structural_masks`` upstream.

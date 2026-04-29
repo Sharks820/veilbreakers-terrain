@@ -215,6 +215,8 @@ def _register_all_terrain_passes_impl(
         ("B-cliffs", f"{package_root}.terrain_cliffs", "register_bundle_b_passes"),
         # Height mutators — MUST run before scatter/materials
         ("G", f"{package_root}.terrain_banded", "register_bundle_g_passes"),
+        ("H-morphology", f"{package_root}.terrain_morphology", "register_morphology_pass"),
+        ("H-terrain-features", f"{package_root}.terrain_features", "register_terrain_features_pass"),
         ("H-framing", f"{package_root}.terrain_framing", "register_framing_pass"),
         ("F", f"{package_root}.terrain_caves", "register_bundle_f_passes"),
         ("I", f"{package_root}.terrain_geology_validator", "register_bundle_i_passes"),
@@ -222,6 +224,7 @@ def _register_all_terrain_passes_impl(
         # Material + scatter (consume final height + all candidate masks)
         ("B-materials", f"{package_root}.terrain_materials_v2", "register_bundle_b_material_passes"),
         ("E", f"{package_root}.terrain_assets", "register_bundle_e_passes"),
+        ("H-procedural-grass", f"{package_root}.procedural_grass", "register_procedural_grass_pass"),
         # Post-geometry validation + refinement
         ("D", f"{package_root}.terrain_validation", "register_bundle_d_passes"),
         ("H-saliency", f"{package_root}.terrain_saliency", "register_saliency_pass"),
@@ -229,6 +232,7 @@ def _register_all_terrain_passes_impl(
         ("J", f"{package_root}.terrain_bundle_j", "register_bundle_j_passes"),
         ("K", f"{package_root}.terrain_bundle_k", "register_bundle_k_passes"),
         ("L", f"{package_root}.terrain_bundle_l", "register_bundle_l_passes"),
+        ("L-atmospheric-volumes", f"{package_root}.atmospheric_volumes", "register_atmospheric_volumes_pass"),
         ("N", f"{package_root}.terrain_bundle_n", "register_bundle_n_passes"),
         ("O", f"{package_root}.terrain_bundle_o", "register_bundle_o_passes"),
     ]

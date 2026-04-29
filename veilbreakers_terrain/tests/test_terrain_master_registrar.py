@@ -117,13 +117,22 @@ def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers
         "materials_v2",
         "waterfalls",
         "emit_particle_systems",
+        "pass_morphology",
+        "integrate_deltas",
+        "materials_v2",
+        "emit_overhang_meshes",
         "scatter_intelligent",
-        "navmesh",
+        "pass_horizon_lod",
+        "pass_navmesh_export",
         "prepare_terrain_normals",
         "prepare_heightmap_raw_u16",
+        "prepare_unity_auxiliary_channels",
         "validation_full",
     ):
         assert expected in pass_names
+    assert pass_names.index("pass_morphology") < pass_names.index("integrate_deltas")
+    assert pass_names.index("waterfalls") < pass_names.index("integrate_deltas")
+    assert pass_names.index("integrate_deltas") < pass_names.index("materials_v2")
     assert pass_names.index("materials_v2") < pass_names.index("scatter_intelligent")
     assert pass_names.index("waterfalls") < pass_names.index("emit_particle_systems")
     assert pass_names.index("validation_full") == len(pass_names) - 1
@@ -175,14 +184,16 @@ def test_handle_run_terrain_pass_default_pipeline_runs_full_validation_without_s
     )
     assert [r["pass_name"] for r in result["results"]] == [
         "pass_generate_low_freq_hmap",
+        "biome_channels",
         "terrain_labels",
         "structural_masks",
         "pass_generate_high_freq_detail",
         "pass_composite_hmap",
         "materials_v2",
-        "navmesh",
+        "pass_navmesh_export",
         "prepare_terrain_normals",
         "prepare_heightmap_raw_u16",
+        "prepare_unity_auxiliary_channels",
         "validation_full",
     ]
 
@@ -298,17 +309,22 @@ def test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_ful
     assert [r["pass_name"] for r in result["results"]] == [
         "macro_world",
         "structural_masks",
+        "navmesh",
         "water_variants",
         "bathymetry",
         "pass_water_depth",
-        "materials_v2",
         "waterfalls",
-        "integrate_deltas",
         "emit_particle_systems",
+        "pass_morphology",
+        "integrate_deltas",
+        "materials_v2",
+        "emit_overhang_meshes",
         "scatter_intelligent",
+        "pass_horizon_lod",
+        "pass_navmesh_export",
         "prepare_terrain_normals",
         "prepare_heightmap_raw_u16",
-        "navmesh",
+        "prepare_unity_auxiliary_channels",
         "validation_full",
     ]
 

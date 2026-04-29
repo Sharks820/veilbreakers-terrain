@@ -39,6 +39,7 @@ def test_terrain_math_slope_helpers_are_unit_consistent():
         slope_degrees,
         slope_gradient_magnitude,
         slope_radians,
+        stack_world_to_cell,
         talus_height_units,
         world_to_cell,
     )
@@ -58,6 +59,12 @@ def test_terrain_math_slope_helpers_are_unit_consistent():
     assert dist[1, 2] == pytest.approx(2.0)
     assert world_to_cell(11.0, 21.0, 2.0, origin_x=10.0, origin_y=20.0) == (0, 0)
     assert world_to_cell(11.0, 21.0, 2.0, origin_x=10.0, origin_y=20.0, convention="center") == (0, 0)
+    state = _state()
+    state.mask_stack.world_origin_x = 10.0
+    state.mask_stack.world_origin_y = 20.0
+    state.mask_stack.cell_size = 2.0
+    assert stack_world_to_cell(state.mask_stack, 14.2, 24.2) == (2, 2)
+    assert stack_world_to_cell(state.mask_stack, 100.0, -100.0) == (0, 2)
     assert cell_to_world(2, 3, 2.0, origin_x=10.0, origin_y=20.0) == pytest.approx((17.0, 25.0))
     assert cell_to_world(2, 3, 2.0, origin_x=10.0, origin_y=20.0, convention="center") == pytest.approx((16.0, 24.0))
 

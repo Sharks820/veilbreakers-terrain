@@ -227,6 +227,55 @@ class TestMorphology:
         d2 = apply_morphology_template(stack, t, (16.0, 16.0, 50.0), seed=100)
         np.testing.assert_array_equal(d1, d2)
 
+    def test_pass_morphology_writes_deferred_delta_from_intent_template(self):
+        from veilbreakers_terrain.handlers.terrain_morphology import pass_morphology
+
+        stack = _make_stack(tile=48)
+        intent = TerrainIntentState(
+            seed=42,
+            region_bounds=BBox(0.0, 0.0, 48.0, 48.0),
+            tile_size=48,
+            cell_size=1.0,
+            morphology_templates=("ridge_low_rolling",),
+        )
+        state = _make_state(stack, intent)
+
+        result = pass_morphology(state, None)
+
+        assert result.status == "ok"
+        assert result.metrics["applied_template_count"] == 1
+        assert result.metrics["unknown_template_count"] == 0
+        assert "morphology_delta" in result.produced_channels
+        assert stack.morphology_delta is not None
+        assert stack.morphology_delta.dtype == np.float32
+        assert float(np.max(np.abs(stack.morphology_delta))) > 0.0
+
+    def test_pass_morphology_warns_and_keeps_channel_for_unknown_template(self):
+        from veilbreakers_terrain.handlers.terrain_morphology import pass_morphology
+
+        stack = _make_stack(tile=32)
+        intent = TerrainIntentState(
+            seed=99,
+            region_bounds=BBox(0.0, 0.0, 32.0, 32.0),
+            tile_size=32,
+            cell_size=1.0,
+            composition_hints={
+                "morphology_specs": [
+                    {"template_id": "missing_template", "world_pos": (16.0, 16.0, 20.0)}
+                ]
+            },
+        )
+        state = _make_state(stack, intent)
+
+        result = pass_morphology(state, None)
+
+        assert result.status == "warning"
+        assert result.metrics["applied_template_count"] == 0
+        assert result.metrics["unknown_template_count"] == 1
+        assert result.warnings and result.warnings[0].code == "UNKNOWN_MORPHOLOGY_TEMPLATE"
+        assert stack.morphology_delta is not None
+        assert np.count_nonzero(stack.morphology_delta) == 0
+
     def test_list_templates_for_biome(self):
         from veilbreakers_terrain.handlers.terrain_morphology import list_templates_for_biome
 

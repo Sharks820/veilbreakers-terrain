@@ -616,7 +616,7 @@ def test_pass_waterfalls_publishes_particle_emitter_specs():
     )
     # Every spec has the required VFX-emitter fields
     required = {"position", "normal", "bounds", "emission_rate",
-                "velocity", "lifetime", "material", "chain_id"}
+                "velocity", "lifetime", "material", "chain_id", "volume_obb"}
     for spec in specs:
         assert required.issubset(spec.keys()), (
             f"Emitter spec missing fields: {required - spec.keys()}"
@@ -625,6 +625,8 @@ def test_pass_waterfalls_publishes_particle_emitter_specs():
         assert spec["emission_rate"] > 0.0
         assert spec["velocity"] > 0.0
         assert spec["lifetime"] > 0.0
+        assert spec["volume_obb"]["volume_m3"] > 0.0
+        assert len(spec["volume_obb"]["axes"]) == 3
     # Result metrics advertise the count
     assert result.metrics["particle_emitter_count"] == len(specs)
     assert "particle_emitter_specs" in result.produced_channels

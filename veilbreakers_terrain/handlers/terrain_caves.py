@@ -48,6 +48,7 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+from .terrain_math import stack_world_to_cell as _world_to_cell
 
 
 # ---------------------------------------------------------------------------
@@ -654,23 +655,6 @@ class CaveStructure:
 # Populated by generate_cave_path; consumed by pass_caves to attach
 # cliff_face_entry flags and overhang geometry to CaveStructure.entrance_frame.
 _cliff_entry_meta: Dict[Tuple[float, float, float], Dict] = {}
-
-
-# ---------------------------------------------------------------------------
-# Helpers — world <-> grid coordinate math
-# ---------------------------------------------------------------------------
-
-
-def _world_to_cell(
-    stack: TerrainMaskStack, x: float, y: float
-) -> Tuple[int, int]:
-    """Return (row, col) for a world-space (x, y) position."""
-    col = int(round((x - stack.world_origin_x) / stack.cell_size))
-    row = int(round((y - stack.world_origin_y) / stack.cell_size))
-    rows, cols = stack.height.shape
-    col = max(0, min(cols - 1, col))
-    row = max(0, min(rows - 1, row))
-    return row, col
 
 
 def _cell_to_world(

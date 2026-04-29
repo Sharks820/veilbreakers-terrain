@@ -1068,6 +1068,36 @@ def _stokes_drag_amp(base_amp: float, intensity: float, c_drag: float = 0.3) -> 
     return base_amp / (1.0 + c_drag * v * v)
 
 
+def _pbd_cloth_rest_bias(
+    *,
+    segments: int,
+    cloth_kind: str,
+    wind_speed: float,
+) -> List[float]:
+    """Return per-segment XPBD rest-drape rotation bias for cloth props."""
+    try:
+        import copy
+        import numpy as np
+        from veilbreakers_terrain.sim.pbd_cloth import BANNER_PARAMS, FLAG_PARAMS, bake_static_drape
+
+        base = FLAG_PARAMS if cloth_kind == "flag" else BANNER_PARAMS
+        params = copy.copy(base)
+        params.rows = max(2, segments)
+        params.cols = 3
+        params.n_substeps = 2
+        params.n_constraint_iters = 3
+        params.wind_velocity = np.array([float(wind_speed), 0.25, 0.1], dtype=float)
+        rest = bake_static_drape(params, pin_top_row=True, n_steps=3)
+        grid = rest.reshape(params.rows, params.cols, 3)
+        sag = grid[:, -1, 2] - grid[0, -1, 2]
+        max_abs = float(np.max(np.abs(sag))) if sag.size else 0.0
+        if max_abs <= 1e-9:
+            return [0.0 for _ in range(segments)]
+        return [float(v / max_abs) * 0.035 for v in sag[:segments]]
+    except Exception:  # pragma: no cover - sim package can be stripped in Blender-only builds
+        return [0.0 for _ in range(segments)]
+
+
 def generate_flag_wind_keyframes(
     frame_count: int = 24,
     segments: int = 8,
@@ -1108,6 +1138,7 @@ def generate_flag_wind_keyframes(
     # stretches taut and amplitude drops (inverse of intuition — correct for
     # stretched cloth, not a limp flag).
     eff_amp = _stokes_drag_amp(0.12, wind_speed, c_drag) * intensity
+    rest_bias = _pbd_cloth_rest_bias(segments=n, cloth_kind="flag", wind_speed=wind_speed)
 
     # Frequency bands (Hz)
     wave_freqs = (
@@ -1131,6 +1162,7 @@ def generate_flag_wind_keyframes(
                 phase = omega * t + i * math.pi / n + phase_extra
                 val  += a_seg * rel_amp * math.sin(phase)
                 tang += a_seg * rel_amp * omega * math.cos(phase) / duration
+            val += rest_bias[i]
 
             kfs.append(_make_kf(f, val, "rotation", 1, fps,
                                  in_tangent=tang, out_tangent=tang,
@@ -1170,6 +1202,7 @@ def generate_banner_wind_keyframes(
     duration = fc / max(fps, 1e-9)
 
     eff_amp = _stokes_drag_amp(0.09, wind_speed, c_drag) * intensity
+    rest_bias = _pbd_cloth_rest_bias(segments=n, cloth_kind="banner", wind_speed=wind_speed)
 
     wave_freqs = (
         (0.8, 1.00, 0.0),
@@ -1192,6 +1225,7 @@ def generate_banner_wind_keyframes(
                 phase = omega * t + i * math.pi / n + phase_extra
                 val_y  += a_seg * rel_amp * math.sin(phase)
                 tang_y += a_seg * rel_amp * omega * math.cos(phase) / duration
+            val_y += rest_bias[i]
 
             # Front-back flutter (rotation X — 90° phase lead)
             val_x = 0.0

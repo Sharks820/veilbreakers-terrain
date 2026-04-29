@@ -24,6 +24,7 @@ from . import (
     terrain_budget_enforcer,
     terrain_determinism_ci,
     terrain_golden_snapshots,
+    terrain_performance_report,
     terrain_readability_bands,
     terrain_review_ingest,
     terrain_telemetry_dashboard,
@@ -38,6 +39,7 @@ BUNDLE_N_MODULES = (
     "terrain_determinism_ci",
     "terrain_readability_bands",
     "terrain_budget_enforcer",
+    "terrain_performance_report",
     "terrain_golden_snapshots",
     "terrain_review_ingest",
     "terrain_telemetry_dashboard",
@@ -50,6 +52,7 @@ BUNDLE_N_RUNTIME_CONTRACT = {
     "always_on_post_pipeline": (
         "enforce_budget",
         "compute_budget_report",
+        "collect_performance_report",
         "compute_readability_bands",
         "apply_review_blockers",
     ),
@@ -237,6 +240,7 @@ def register_bundle_n_passes() -> Dict[str, Any]:
     _ = terrain_determinism_ci.run_determinism_check
     _ = terrain_readability_bands.compute_readability_bands
     _ = terrain_budget_enforcer.enforce_budget
+    _ = terrain_performance_report.collect_performance_report
     _ = terrain_golden_snapshots.save_golden_snapshot
     _ = terrain_review_ingest.ingest_review_json
     _ = terrain_review_ingest.pass_apply_review_blockers
@@ -279,6 +283,7 @@ def run_bundle_n_post_pipeline_hooks(
         "budget_issue_count": 0,
         "budget_hard_issue_count": 0,
         "budget_report": {},
+        "performance_report": {},
         "readability_score": 0.0,
         "readability_band_scores": {},
     }
@@ -305,6 +310,14 @@ def run_bundle_n_post_pipeline_hooks(
         summary["budget_report"] = budget_report.as_dict()
     except Exception as exc:  # noqa: BLE001
         summary["budget_report_error"] = repr(exc)
+
+    try:
+        perf_report = terrain_performance_report.collect_performance_report(stack)
+        summary["performance_report"] = terrain_performance_report.serialize_performance_report(
+            perf_report
+        )
+    except Exception as exc:  # noqa: BLE001
+        summary["performance_report_error"] = repr(exc)
 
     bands = terrain_readability_bands.compute_readability_bands(stack)
     readability_score = terrain_readability_bands.aggregate_readability_score(bands)

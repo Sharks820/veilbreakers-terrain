@@ -1934,6 +1934,7 @@ def run_validation_suite(
             ]
         ]
     ] = None,
+    baseline_stack: Optional[TerrainMaskStack] = None,
 ) -> ValidationReport:
     """Run the registered validators (or a custom list) and aggregate issues.
 
@@ -1944,7 +1945,10 @@ def run_validation_suite(
     chosen = validators if validators is not None else list(DEFAULT_VALIDATORS)
     for name, fn in chosen:
         try:
-            issues = fn(stack, intent)
+            if name == "validate_protected_zones_untouched":
+                issues = fn(stack, intent, baseline_stack)  # type: ignore[misc]
+            else:
+                issues = fn(stack, intent)
         except Exception as exc:
             issues = [
                 ValidationIssue(
@@ -2020,7 +2024,17 @@ def pass_validation_full(
     most recent checkpoint is triggered.
     """
     t0 = time.perf_counter()
-    report = run_validation_suite(state.mask_stack, state.intent)
+    active_controller = _get_active_controller()
+    baseline_stack = (
+        getattr(active_controller, "_pre_pipeline_baseline_stack", None)
+        if active_controller is not None
+        else None
+    )
+    report = run_validation_suite(
+        state.mask_stack,
+        state.intent,
+        baseline_stack=baseline_stack,
+    )
 
     status = "ok"
     if report.hard_issues:
@@ -2032,7 +2046,6 @@ def pass_validation_full(
     metrics["region_scoped"] = region is not None
 
     triggered_rollback = False
-    active_controller = _get_active_controller()
     if status == "failed" and active_controller is not None:
         ctrl = active_controller
         if ctrl.state.checkpoints:

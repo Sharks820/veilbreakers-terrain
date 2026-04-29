@@ -30,12 +30,17 @@ from __future__ import annotations
 import math
 import random
 import warnings
+from functools import partial
 from typing import Any
 
 try:
     import numpy as np
 except ImportError:
     np = None  # type: ignore[assignment]
+
+from .terrain_math import stack_world_to_cell
+
+_world_to_cell = partial(stack_world_to_cell, rounding="floor")
 
 # ---------------------------------------------------------------------------
 # Canonical wind vertex color layout
@@ -1556,21 +1561,6 @@ def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
         return None
     cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
     return _edt(np.asarray(bathy, dtype=np.float32) <= 0).astype(np.float32) * cell_size
-
-
-def _world_to_cell(stack: Any, wx: float, wy: float) -> "tuple[int, int]":
-    cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
-    ox = float(getattr(stack, "world_origin_x", 0.0) or 0.0)
-    oy = float(getattr(stack, "world_origin_y", 0.0) or 0.0)
-    height = getattr(stack, "height", None)
-    if height is None:
-        return 0, 0
-    h, w = height.shape
-    ix = int((wx - ox) / cell_size)
-    iy = int((wy - oy) / cell_size)
-    ix = max(0, min(w - 1, ix))
-    iy = max(0, min(h - 1, iy))
-    return iy, ix
 
 
 def build_foliage_placement_manifest(

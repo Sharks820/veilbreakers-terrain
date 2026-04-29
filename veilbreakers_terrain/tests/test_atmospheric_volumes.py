@@ -8,6 +8,7 @@ from veilbreakers_terrain.handlers.atmospheric_volumes import (
     compute_atmospheric_placements,
     compute_volume_mesh_spec,
     estimate_atmosphere_performance,
+    pass_atmospheric_volumes,
 )
 
 
@@ -119,6 +120,43 @@ class TestComputeAtmosphericPlacements:
         )
         for p in placements:
             assert p["volume_type"] in ATMOSPHERIC_VOLUMES
+
+    def test_pass_atmospheric_volumes_writes_stack_channel(self):
+        import numpy as np
+
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            BBox,
+            TerrainIntentState,
+            TerrainMaskStack,
+            TerrainPipelineState,
+        )
+
+        height = np.arange(25, dtype=np.float32).reshape(5, 5)
+        stack = TerrainMaskStack(
+            tile_size=4,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=height,
+        )
+        stack.set("ridge", np.ones_like(height, dtype=np.float32), "test")
+        intent = TerrainIntentState(
+            seed=123,
+            region_bounds=BBox(0.0, 0.0, 4.0, 4.0),
+            tile_size=4,
+            cell_size=1.0,
+            composition_hints={"atmosphere_biome": "dark_forest"},
+        )
+        state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+        result = pass_atmospheric_volumes(state, None)
+
+        assert result.status == "ok"
+        assert "atmospheric_volumes" in result.produced_channels
+        assert stack.atmospheric_volumes
+        assert stack.populated_by_pass["atmospheric_volumes"] == "pass_atmospheric_volumes"
 
 
 # ---------------------------------------------------------------------------

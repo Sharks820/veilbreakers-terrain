@@ -14,9 +14,11 @@ from __future__ import annotations
 from functools import lru_cache
 import math
 import random
+import time
 from typing import Any
 
 from ._terrain_noise import _make_noise_generator
+from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainPipelineState
 
 
 # ---------------------------------------------------------------------------
@@ -71,9 +73,17 @@ def _compute_face_normals(verts: list[Vec3], faces: list[tuple[int, ...]]) -> li
     return [_face_normal(verts, f) for f in faces]
 
 
-def _lod1_faces(faces: list[tuple[int, ...]], ratio: float = 0.5) -> int:
-    """Return LOD_1 face count (half the LOD_0 count, minimum 4)."""
-    return max(4, int(len(faces) * ratio))
+def _lod1_faces(faces: list[tuple[int, ...]], ratio: float = 0.5) -> list[tuple[int, ...]]:
+    """Return a deterministic face-list simplification for LOD_1."""
+    if not faces:
+        return []
+    if len(faces) <= 4:
+        return list(faces)
+    target = max(4, min(len(faces), int(round(len(faces) * ratio))))
+    if target >= len(faces):
+        return list(faces)
+    step = len(faces) / float(target)
+    return [faces[min(len(faces) - 1, int(i * step))] for i in range(target)]
 
 
 def _material_metadata(*entries: tuple[str, float, str, float]) -> dict[str, dict]:
@@ -4586,3 +4596,92 @@ def generate_lava_flow(
         "vertex_count": len(vertices),
         "face_count": len(faces),
     }
+
+
+_PASS_FEATURE_GENERATORS = {
+    "canyon": generate_canyon,
+    "waterfall": generate_waterfall,
+    "cliff": generate_cliff_face,
+    "cliff_face": generate_cliff_face,
+    "swamp": generate_swamp_terrain,
+    "natural_arch": generate_natural_arch,
+    "arch": generate_natural_arch,
+    "geyser": generate_geyser,
+    "sinkhole": generate_sinkhole,
+    "floating_rocks": generate_floating_rocks,
+    "ice_formation": generate_ice_formation,
+    "lava_flow": generate_lava_flow,
+}
+
+
+def pass_terrain_features(
+    state: TerrainPipelineState,
+    region: BBox | None,
+) -> PassResult:
+    """Generate authored terrain feature mesh specs through the pass graph."""
+    t0 = time.perf_counter()
+    hints = dict(getattr(state.intent, "composition_hints", {}) or {})
+    raw_specs = hints.get("terrain_feature_specs")
+    if raw_specs is None:
+        raw_specs = [
+            {
+                "kind": getattr(feature, "feature_kind", ""),
+                "id": getattr(feature, "feature_id", ""),
+            }
+            for feature in getattr(state.intent, "hero_feature_specs", ()) or ()
+        ]
+
+    mesh_specs: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    seed = int(getattr(state.intent, "seed", 0))
+    for idx, raw in enumerate(raw_specs or ()):
+        if isinstance(raw, str):
+            kind = raw
+            params: dict[str, Any] = {}
+            feature_id = f"{kind}_{idx}"
+        elif isinstance(raw, dict):
+            kind = str(raw.get("kind") or raw.get("feature_kind") or raw.get("type") or "")
+            params = dict(raw.get("params") or {})
+            feature_id = str(raw.get("id") or raw.get("feature_id") or f"{kind}_{idx}")
+        else:
+            continue
+        generator = _PASS_FEATURE_GENERATORS.get(kind)
+        if generator is None:
+            if kind:
+                skipped.append(kind)
+            continue
+        params.setdefault("seed", seed + idx)
+        spec = generator(**params)
+        spec["feature_id"] = feature_id
+        spec["feature_kind"] = kind
+        mesh_specs.append(spec)
+
+    state.mask_stack.set("terrain_feature_mesh_specs", mesh_specs, "pass_terrain_features")
+    return PassResult(
+        pass_name="pass_terrain_features",
+        status="ok" if not skipped else "warning",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("terrain_feature_mesh_specs",),
+        metrics={
+            "feature_mesh_count": len(mesh_specs),
+            "skipped_feature_count": len(skipped),
+            "region_scoped": region is not None,
+        },
+    )
+
+
+def register_terrain_features_pass() -> None:
+    from .terrain_pipeline import TerrainPassController
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_terrain_features",
+            func=pass_terrain_features,
+            requires_channels=("height",),
+            produces_channels=("terrain_feature_mesh_specs",),
+            seed_namespace="pass_terrain_features",
+            requires_scene_read=False,
+            description="Bundle terrain features: authored mesh spec generation for hero terrain props.",
+        )
+    )

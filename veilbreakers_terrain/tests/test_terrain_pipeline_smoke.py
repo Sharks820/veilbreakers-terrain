@@ -228,16 +228,24 @@ def test_default_production_scene_pipeline_closes_legacy_batch_1_order():
         "water_variants",
         "bathymetry",
         "pass_water_depth",
-        "materials_v2",
         "waterfalls",
         "emit_particle_systems",
+        "pass_morphology",
+        "integrate_deltas",
+        "materials_v2",
+        "emit_overhang_meshes",
         "scatter_intelligent",
+        "pass_horizon_lod",
+        "pass_navmesh_export",
         "validation_full",
     )
     for pass_name in expected:
         assert pass_name in seq
     assert seq.index("pass_hydrology") < seq.index("erosion")
     assert seq.index("erosion") < seq.index("pass_hydrology", seq.index("erosion") + 1)
+    assert seq.index("waterfalls") < seq.index("integrate_deltas")
+    assert seq.index("pass_morphology") < seq.index("integrate_deltas")
+    assert seq.index("integrate_deltas") < seq.index("materials_v2")
     assert seq.index("materials_v2") < seq.index("scatter_intelligent")
     assert seq.index("waterfalls") < seq.index("emit_particle_systems")
     assert seq[-1] == "validation_full"

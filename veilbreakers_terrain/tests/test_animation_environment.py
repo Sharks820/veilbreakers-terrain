@@ -87,6 +87,11 @@ class TestFlags:
         bones = {kf.bone_name for kf in kfs}
         assert len(bones) >= 2  # root + at least one segment
 
+    def test_flag_rest_pose_uses_pbd_cloth_bias(self):
+        kfs = generate_flag_wind_keyframes(frame_count=1, segments=4, intensity=0.0)
+        values = [kf.value for kf in kfs if kf.channel == "rotation" and kf.axis == 1]
+        assert any(abs(v) > 0.0 for v in values)
+
 
 class TestInteractables:
     def test_chest_opens_to_angle(self):

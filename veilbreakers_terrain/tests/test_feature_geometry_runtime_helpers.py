@@ -18,8 +18,8 @@ def test_feature_normals_lod_and_material_metadata_contracts():
 
     assert normals[0] == pytest.approx((0.0, 0.0, 1.0))
     assert normals[1] == pytest.approx((0.0, 0.0, 1.0))
-    assert _lod1_faces([(0, 1, 2)] * 20) == 10
-    assert _lod1_faces([(0, 1, 2)] * 3) == 4
+    assert len(_lod1_faces([(0, 1, 2)] * 20)) == 10
+    assert _lod1_faces([(0, 1, 2)] * 3) == [(0, 1, 2)] * 3
     assert metadata["stone"] == {"roughness_hint": 0.8, "layer_type": "rock", "emission": 0.0}
     assert metadata["moss"]["layer_type"] == "organic"
 

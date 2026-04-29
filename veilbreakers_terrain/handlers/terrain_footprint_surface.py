@@ -15,6 +15,7 @@ from typing import List, Tuple
 import numpy as np
 
 from .terrain_semantics import TerrainMaskStack
+from .terrain_math import stack_world_to_cell as _world_to_cell
 
 
 @dataclass
@@ -26,17 +27,6 @@ class FootprintSurfacePoint:
     material_id: int
     wetness: float
     in_cave: bool
-
-
-def _world_to_cell(
-    stack: TerrainMaskStack, x: float, y: float
-) -> Tuple[int, int]:
-    col = int(round((x - stack.world_origin_x) / stack.cell_size))
-    row = int(round((y - stack.world_origin_y) / stack.cell_size))
-    h, w = stack.height.shape
-    col = int(np.clip(col, 0, w - 1))
-    row = int(np.clip(row, 0, h - 1))
-    return row, col
 
 
 def compute_footprint_surface_data(

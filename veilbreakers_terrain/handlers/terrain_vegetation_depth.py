@@ -1802,6 +1802,7 @@ def register_emergent_grass_pass() -> None:
             func=pass_emergent_grass,
             requires_channels=("splatmap_weights_layer",),
             produces_channels=("grass_density_map",),
+            overrides=("grass_density_map",),
             seed_namespace="emergent_grass",
             requires_scene_read=False,
             description="Bundle O — derive grass density map from splatmap ground weight (Fix 9.9).",

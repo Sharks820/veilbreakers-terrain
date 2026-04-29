@@ -60,29 +60,7 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
-
-
-# ---------------------------------------------------------------------------
-# World <-> grid helpers
-# ---------------------------------------------------------------------------
-
-
-def _world_to_cell(
-    stack: TerrainMaskStack, x: float, y: float
-) -> Tuple[int, int]:
-    """Convert world-space (x, y) to integer (row, col) grid indices.
-
-    Clamps to valid grid bounds so out-of-range world positions are mapped
-    to the nearest border cell rather than raising IndexError.
-    Sub-cell accuracy is preserved by rounding (not truncating) so that
-    world positions at the centre of a cell map correctly.
-    """
-    col = int(round((x - stack.world_origin_x) / stack.cell_size))
-    row = int(round((y - stack.world_origin_y) / stack.cell_size))
-    rows, cols = stack.height.shape
-    col = max(0, min(cols - 1, col))
-    row = max(0, min(rows - 1, row))
-    return row, col
+from .terrain_math import stack_world_to_cell as _world_to_cell
 
 
 def _sample_height_bilinear(height: np.ndarray, rf: float, cf: float) -> float:

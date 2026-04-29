@@ -1883,28 +1883,6 @@ def _setup_billboard_lod(
         ``True`` if billboard LOD was wired up, ``False`` if the template was
         skipped (too few vertices or not a tree type).
     """
-    # C-4/L-3: generate_billboard_impostor is from the deprecated D-grade L-system
-    # pipeline.  Use a local deprecation shim identical to the one in
-    # environment_scatter.py so callers are warned to migrate to the N-view
-    # Blender atlas bake in Phase 9C of the 12-phase plan.
-    import warnings as _warnings_lod
-    try:
-        from .vegetation_lsystem import generate_billboard_impostor as _gbi_raw
-        def generate_billboard_impostor(*args, **kwargs):  # type: ignore[misc]
-            _warnings_lod.warn(
-                "generate_billboard_impostor is deprecated (L-3/C-4); "
-                "implement N-view Blender atlas bake in Phase 9C.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return _gbi_raw(*args, **kwargs)
-    except ImportError:
-        def generate_billboard_impostor(*args, **kwargs):  # type: ignore[misc]
-            raise NotImplementedError(
-                "vegetation_lsystem.generate_billboard_impostor unavailable (L-3); "
-                "implement N-view Blender atlas bake in Phase 9C of the 12-phase plan."
-            )
-
     if veg_type not in _TREE_VEG_TYPES:
         return False
 
@@ -1929,21 +1907,8 @@ def _setup_billboard_lod(
     lod2_dist = lod_near_dist * _BILLBOARD_LOD_TIER_FACTORS[1]  # = lod_near_dist * 2
     bb_dist   = lod_near_dist * _BILLBOARD_LOD_TIER_FACTORS[2]  # = lod_near_dist * 4
 
-    # Get atlas bake parameters from vegetation_lsystem.
-    # Request 8 azimuth views + 1 top-down view = 9 total captures.
-    billboard_impostor = generate_billboard_impostor({
-        "object_name": template_obj.name,
-        "height": tree_height,
-        "width": max(tree_width, tree_depth),
-        "impostor_type": "cross",
-        "num_views": _BILLBOARD_TOTAL_VIEWS,   # 8 azimuth + 1 top
-        "azimuth_angles": _BILLBOARD_AZIMUTH_ANGLES,
-        "top_view_elevation": _BILLBOARD_TOP_VIEW_ELEVATION,
-        "resolution": 256,
-    })
-
     # Build cross-billboard geometry with full AAA spec (UVs, normals, tangents, alpha)
-    material_ref = billboard_impostor.get("atlas_material", "")
+    material_ref = f"{template_obj.name}_billboard_atlas"
     bb_spec = _make_billboard_lod_spec(
         tree_height=tree_height,
         tree_width=tree_width,

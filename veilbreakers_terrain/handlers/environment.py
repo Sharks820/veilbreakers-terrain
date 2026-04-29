@@ -2038,9 +2038,6 @@ def handle_generate_terrain(params: dict) -> dict:
                 "bathymetry",
                 "pass_water_depth",
                 "materials_v2",
-                "prepare_terrain_normals",
-                "prepare_heightmap_raw_u16",
-                "prepare_unity_auxiliary_channels",
             ):
                 if production_pass not in pipeline:
                     pipeline.append(production_pass)
@@ -2054,6 +2051,17 @@ def handle_generate_terrain(params: dict) -> dict:
             and "scatter_intelligent" not in pipeline
         ):
             pipeline.append("scatter_intelligent")
+        if not is_preview:
+            for production_pass in (
+                "pass_procedural_grass",
+                "pass_horizon_lod",
+                "pass_navmesh_export",
+                "prepare_terrain_normals",
+                "prepare_heightmap_raw_u16",
+                "prepare_unity_auxiliary_channels",
+            ):
+                if production_pass not in pipeline:
+                    pipeline.append(production_pass)
         if (
             any(p in pipeline for p in ("waterfalls", "scatter_intelligent"))
             and "scene_read" not in controller_params
@@ -3116,11 +3124,20 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
             scene_read_enabled = getattr(intent, "scene_read", None) is not None
             ordered_prereqs = (
                 *(("water_variants", "bathymetry", "pass_water_depth") if scene_read_enabled else ()),
-                "materials_v2",
-                *(("waterfalls", "emit_particle_systems", "scatter_intelligent") if scene_read_enabled else ()),
-                "navmesh",
+                *((
+                    "waterfalls",
+                    "emit_particle_systems",
+                    "pass_morphology",
+                    "integrate_deltas",
+                    "materials_v2",
+                    "emit_overhang_meshes",
+                    "scatter_intelligent",
+                    "pass_horizon_lod",
+                ) if scene_read_enabled else ("materials_v2",)),
+                "pass_navmesh_export",
                 "prepare_terrain_normals",
                 "prepare_heightmap_raw_u16",
+                "prepare_unity_auxiliary_channels",
             )
             insert_at = min(
                 [

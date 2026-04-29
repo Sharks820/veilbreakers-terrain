@@ -208,6 +208,29 @@ def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():
     np.testing.assert_allclose(stack.albedo_shift_rgb, 0.0)
 
 
+def test_pass_stratigraphy_includes_strata_validator_issues(monkeypatch):
+    from veilbreakers_terrain.handlers import terrain_geology_validator
+    from veilbreakers_terrain.handlers.terrain_semantics import ValidationIssue
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import pass_stratigraphy
+
+    sentinel = ValidationIssue(
+        code="STRATA_SENTINEL",
+        severity="soft",
+        message="validator called",
+    )
+    monkeypatch.setattr(
+        terrain_geology_validator,
+        "validate_strata_consistency",
+        lambda stack: [sentinel],
+    )
+    stack = _build_stack(heights="ramp")
+    state = _build_state(stack, hints={"intrusions_enabled": False, "fold_enabled": False})
+
+    result = pass_stratigraphy(state, None)
+
+    assert sentinel in result.issues
+
+
 # ---------------------------------------------------------------------------
 # Glacial
 # ---------------------------------------------------------------------------

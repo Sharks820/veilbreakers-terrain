@@ -14,8 +14,11 @@ from veilbreakers_terrain.handlers.procedural_grass import (
     GrassSpecies,
     ProceduralGrassSystem,
     VEILBREAKERS_GRASS_SPECIES,
+    pass_procedural_grass,
+    register_procedural_grass_pass,
 )
-from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState, TerrainMaskStack, TerrainPipelineState
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +165,44 @@ def test_water_excludes_submerged_cells():
     for r in records:
         wy = r.position_world[1]
         assert wy >= 8.0  # not in submerged top strip
+
+
+def test_pass_procedural_grass_writes_density_and_placement_channels():
+    stack = _flat_stack(size=16)
+    hero = np.zeros_like(stack.height, dtype=np.float32)
+    hero[:, :8] = 1.0
+    _set_channel(stack, "hero_exclusion", hero)
+    intent = TerrainIntentState(
+        seed=123,
+        region_bounds=BBox(0.0, 0.0, 16.0, 16.0),
+        tile_size=16,
+        cell_size=1.0,
+        composition_hints={
+            "grass_species_library": (
+                GrassSpecies(name="pass_grass", density_per_sqm=1.0, biomes=("*",), min_spacing_m=0.0),
+            ),
+            "grass_max_instances_per_species": 256,
+        },
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    result = pass_procedural_grass(state, region=None)
+
+    assert result.status == "ok"
+    assert stack.grass_density_map is not None
+    assert stack.detail_density is not None
+    assert "pass_grass" in stack.detail_density
+    assert stack.grass_placement_records
+    assert np.count_nonzero(stack.grass_density_map[:, :8]) == 0
+    assert np.count_nonzero(stack.grass_density_map[:, 8:]) > 0
+
+
+def test_register_procedural_grass_pass_adds_controller_entry():
+    TerrainPassController.PASS_REGISTRY.clear()
+    register_procedural_grass_pass()
+    definition = TerrainPassController.PASS_REGISTRY["pass_procedural_grass"]
+    assert "grass_density_map" in definition.produces_channels
+    assert "height" in definition.requires_channels
 
 
 def test_biome_filter_drops_wrong_biome():

@@ -352,6 +352,17 @@ def test_pass_navmesh_produces_two_channels(state):
     assert set(result.produced_channels) == {"navmesh_area_id", "traversability"}
 
 
+def test_pass_navmesh_export_alias_preserves_channels(state):
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import pass_navmesh_export
+
+    result = pass_navmesh_export(state, None)
+    assert result.status == "ok"
+    assert result.pass_name == "pass_navmesh_export"
+    assert state.mask_stack.navmesh_area_id is not None
+    assert state.mask_stack.traversability is not None
+    assert set(result.produced_channels) == {"navmesh_area_id", "traversability"}
+
+
 def test_export_navmesh_json_writes_file(state):
     from veilbreakers_terrain.handlers.terrain_navmesh_export import export_navmesh_json
 

@@ -42,6 +42,34 @@ def world_to_cell(world_x: float, world_y: float, cell_size: float,
         row = (world_y - origin_y) / cell_size - 0.5
     return int(row), int(col)
 
+def stack_world_to_cell(stack, world_x: float, world_y: float,
+                        *, rounding: str = "round",
+                        clamp: bool = True) -> Tuple[int, int]:
+    """Convert world coordinates to a stack-local (row, col) cell index."""
+    cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+    origin_x = float(getattr(stack, "world_origin_x", 0.0) or 0.0)
+    origin_y = float(getattr(stack, "world_origin_y", 0.0) or 0.0)
+    col_f = (float(world_x) - origin_x) / cell_size
+    row_f = (float(world_y) - origin_y) / cell_size
+    if rounding == "floor":
+        col = math.floor(col_f)
+        row = math.floor(row_f)
+    elif rounding == "ceil":
+        col = math.ceil(col_f)
+        row = math.ceil(row_f)
+    else:
+        col = round(col_f)
+        row = round(row_f)
+    row_i, col_i = int(row), int(col)
+    if clamp:
+        height = getattr(stack, "height", None)
+        if height is None:
+            return 0, 0
+        rows, cols = height.shape
+        col_i = max(0, min(cols - 1, col_i))
+        row_i = max(0, min(rows - 1, row_i))
+    return row_i, col_i
+
 def cell_to_world(row: int, col: int, cell_size: float,
                   origin_x: float = 0.0, origin_y: float = 0.0,
                   convention: str = "corner") -> Tuple[float, float]:

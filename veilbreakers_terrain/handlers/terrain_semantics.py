@@ -271,6 +271,7 @@ class TerrainMaskStack:
     strata_mask: Optional[np.ndarray] = None      # float32 (H,W) — cliff face cells with strata (CL-2)
     cave_candidate: Optional[np.ndarray] = None
     cave_height_delta: Optional[np.ndarray] = None
+    morphology_delta: Optional[np.ndarray] = None
     cave_wall_texture: Optional[np.ndarray] = None
     cave_stalactite_length: Optional[np.ndarray] = None
     cave_stalagmite_length: Optional[np.ndarray] = None
@@ -322,6 +323,7 @@ class TerrainMaskStack:
     # Fog volume descriptor for waterfall mist zones (engine-side VolumetricFogVolume).
     # Dict with keys: mask_2d (H,W ndarray), height_m (float), density_max (float), color (tuple).
     mist_fog_volume: Optional[Dict[str, Any]] = None
+    atmospheric_volumes: Optional[List[Dict[str, Any]]] = None
     # Resolved PNG atlas paths written by rasterize_channel_to_atlas in pass_waterfalls.
     # Bound into water_shader_manifest.json shader_textures block for Unity/Unreal import.
     foam_atlas_path: Optional[str] = None
@@ -417,6 +419,9 @@ class TerrainMaskStack:
     detail_density: Optional[Dict[str, np.ndarray]] = None
     # Legacy single-channel grass density export for Unity detail layers.
     grass_density_map: Optional[np.ndarray] = None
+    # JSON-compatible procedural grass placement records for downstream
+    # manifest/export writers.
+    grass_placement_records: Optional[List[Dict[str, Any]]] = None
     # Tree instance spawn list. Stored as ndarray of shape (N, 5):
     # (x, y, z, rot, prototype_id). Unity consumer: TerrainData.treeInstances.
     tree_instance_points: Optional[np.ndarray] = None
@@ -451,6 +456,7 @@ class TerrainMaskStack:
     # cannot represent directly (overhangs, cave mouth rings, cliff lips).
     cliff_mesh_specs: Optional[List[Dict[str, Any]]] = None
     cave_mesh_specs: Optional[List[Dict[str, Any]]] = None
+    terrain_feature_mesh_specs: Optional[List[Dict[str, Any]]] = None
     # Phase G — aggregated talus boulder scatter placements (species,
     # world position, power-law-sampled radius). Published by
     # ``terrain_cliffs.pass_cliffs`` and consumed by the scatter system.
@@ -556,6 +562,7 @@ class TerrainMaskStack:
             "cliff_contour_spline",
             "cave_candidate",
             "cave_height_delta",
+            "morphology_delta",
             "cave_wall_texture",
             "cave_stalactite_length",
             "cave_stalagmite_length",
@@ -840,11 +847,14 @@ class TerrainMaskStack:
         "wet_surface_decal",
         "cliff_mesh_specs",
         "cave_mesh_specs",
+        "terrain_feature_mesh_specs",
+        "grass_placement_records",
         "audio_zone_list",
         "particle_emitter_specs",
         "talus_boulder_placements",
         # Water atlas paths (str) and fog volume descriptor (dict)
         "mist_fog_volume",
+        "atmospheric_volumes",
         "foam_atlas_path",
         "caustic_atlas_path",
         "water_depth_atlas_path",
@@ -1109,7 +1119,19 @@ class TerrainMaskStack:
                 if getattr(self, name, None) is not None
             },
         }
-        arrays["__meta__"] = np.array(json.dumps(meta), dtype=object)
+        arrays["__meta__"] = np.array(
+            json.dumps(
+                meta,
+                default=lambda obj: (
+                    obj.tolist()
+                    if isinstance(obj, np.ndarray)
+                    else obj.item()
+                    if isinstance(obj, np.generic)
+                    else str(obj)
+                ),
+            ),
+            dtype=object,
+        )
         np.savez_compressed(path, **arrays)
 
     @classmethod

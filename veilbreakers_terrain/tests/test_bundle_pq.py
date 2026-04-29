@@ -42,7 +42,12 @@ from veilbreakers_terrain.handlers.terrain_weathering_timeline import (
     apply_weathering_event,
     generate_weathering_timeline,
 )
-from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainMaskStack
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    TerrainIntentState,
+    TerrainMaskStack,
+    TerrainPipelineState,
+)
 
 
 def _tiny_stack(size: int = 8) -> TerrainMaskStack:
@@ -92,6 +97,46 @@ class TestDEMImport:
         # import_dem_tile normalises to [0, 1]; reconstruct expected normalised array
         expected = (arr - arr.min()) / (arr.max() - arr.min())
         np.testing.assert_allclose(tile.heightmap, expected.astype(np.float32), rtol=1e-5)
+
+    def test_low_freq_height_pass_blends_dem_source(self, tmp_path: Path):
+        from veilbreakers_terrain.handlers._terrain_world import pass_generate_low_freq_hmap
+
+        arr = np.arange(25, dtype=np.float32).reshape(5, 5)
+        p = tmp_path / "dem.npy"
+        np.save(str(p), arr)
+        stack = TerrainMaskStack(
+            tile_size=4,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=np.zeros((5, 5), dtype=np.float32),
+        )
+        intent = TerrainIntentState(
+            seed=5,
+            region_bounds=BBox(0.0, 0.0, 4.0, 4.0),
+            tile_size=4,
+            cell_size=1.0,
+            composition_hints={
+                "dem_source": {
+                    "source_type": "local",
+                    "url_or_path": str(p),
+                    "resolution_m": 1.0,
+                },
+                "dem_blend_weight": 1.0,
+            },
+        )
+        state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+        result = pass_generate_low_freq_hmap(state, None)
+
+        assert result.metrics["dem_blended"] is True
+        expected_norm = (arr - arr.min()) / (arr.max() - arr.min())
+        actual_norm = (stack.hmap_low_freq - stack.hmap_low_freq.min()) / (
+            stack.hmap_low_freq.max() - stack.hmap_low_freq.min()
+        )
+        np.testing.assert_allclose(actual_norm, expected_norm, rtol=1e-5)
 
     def test_resample_shape(self):
         dem = np.arange(64, dtype=np.float32).reshape(8, 8)

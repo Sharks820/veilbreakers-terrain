@@ -1512,6 +1512,12 @@ class TestControllerTerrainPath:
             "waterfalls",
             "emit_particle_systems",
             "scatter_intelligent",
+            "pass_procedural_grass",
+            "pass_horizon_lod",
+            "pass_navmesh_export",
+            "prepare_terrain_normals",
+            "prepare_heightmap_raw_u16",
+            "prepare_unity_auxiliary_channels",
             "validation_full",
         ]
         assert params["world_origin_x"] == pytest.approx(-12.0)
@@ -1591,6 +1597,12 @@ class TestControllerTerrainPath:
             "waterfalls",
             "emit_particle_systems",
             "scatter_intelligent",
+            "pass_procedural_grass",
+            "pass_horizon_lod",
+            "pass_navmesh_export",
+            "prepare_terrain_normals",
+            "prepare_heightmap_raw_u16",
+            "prepare_unity_auxiliary_channels",
             "validation_full",
         ]
         assert result["cave_pipeline_deferred"] is False
@@ -1665,6 +1677,12 @@ class TestControllerTerrainPath:
             "waterfalls",
             "emit_particle_systems",
             "scatter_intelligent",
+            "pass_procedural_grass",
+            "pass_horizon_lod",
+            "pass_navmesh_export",
+            "prepare_terrain_normals",
+            "prepare_heightmap_raw_u16",
+            "prepare_unity_auxiliary_channels",
             "validation_full",
         ]
 

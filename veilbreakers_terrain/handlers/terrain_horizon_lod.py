@@ -341,17 +341,19 @@ def pass_horizon_lod(
 def register_bundle_l_horizon_lod_pass() -> None:
     from .terrain_pipeline import TerrainPassController
 
-    TerrainPassController.register_pass(
-        PassDefinition(
-            name="horizon_lod",
-            func=pass_horizon_lod,
-            requires_channels=("height",),
-            produces_channels=("lod_bias", "horizon_elevation_angles"),
-            seed_namespace="horizon_lod",
-            requires_scene_read=False,
-            description="Bundle L: silhouette-preserving far-terrain LOD + 360-sample horizon map",
+    for name in ("horizon_lod", "pass_horizon_lod"):
+        TerrainPassController.register_pass(
+            PassDefinition(
+                name=name,
+                func=pass_horizon_lod,
+                requires_channels=("height",),
+                produces_channels=("lod_bias", "horizon_elevation_angles"),
+                overrides=("lod_bias", "horizon_elevation_angles") if name == "pass_horizon_lod" else (),
+                seed_namespace=name,
+                requires_scene_read=False,
+                description="Bundle L: silhouette-preserving far-terrain LOD + 360-sample horizon map",
+            )
         )
-    )
 
 
 __all__ = [

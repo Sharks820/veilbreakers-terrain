@@ -133,10 +133,11 @@ def test_bundle_n_registrar_is_callable():
 
     contract = register_bundle_n_passes()
     assert "terrain_determinism_ci" in BUNDLE_N_MODULES
-    assert len(BUNDLE_N_MODULES) == 6
+    assert len(BUNDLE_N_MODULES) == 7
     assert contract == BUNDLE_N_RUNTIME_CONTRACT
     assert contract["registers_passes"] is False
     assert "compute_readability_bands" in contract["always_on_post_pipeline"]
+    assert "collect_performance_report" in contract["always_on_post_pipeline"]
     assert "apply_review_blockers" in contract["always_on_post_pipeline"]
     assert "run_determinism_check" in contract["opt_in_post_pipeline"]
 
@@ -187,9 +188,12 @@ def test_bundle_n_pipeline_hooks_attach_structured_budget_report():
     results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
 
     budget_report = results[-1].metrics["bundle_n"]["budget_report"]
+    perf_report = results[-1].metrics["bundle_n"]["performance_report"]
     assert "lod0_tris" in budget_report
     assert "unique_materials" in budget_report
     assert budget_report["lod0_tris"]["current"] >= 0
+    assert perf_report["status"] in {"ok", "over_budget"}
+    assert perf_report["triangle_count"]["terrain"] > 0
 
 
 def test_bundle_n_pipeline_hooks_apply_review_blockers_from_intent():

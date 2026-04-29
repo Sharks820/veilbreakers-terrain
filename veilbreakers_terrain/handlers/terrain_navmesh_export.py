@@ -597,20 +597,32 @@ def pass_navmesh(
     )
 
 
+def pass_navmesh_export(
+    state: TerrainPipelineState,
+    region: Optional[BBox],
+) -> PassResult:
+    """Canonical pipeline alias for Unity navmesh export sequencing."""
+    result = pass_navmesh(state, region)
+    result.pass_name = "pass_navmesh_export"
+    return result
+
+
 def register_bundle_j_navmesh_pass() -> None:
     from .terrain_pipeline import TerrainPassController
 
-    TerrainPassController.register_pass(
-        PassDefinition(
-            name="navmesh",
-            func=pass_navmesh,
-            requires_channels=("height",),
-            produces_channels=("navmesh_area_id", "traversability"),
-            seed_namespace="navmesh",
-            requires_scene_read=False,
-            description="Bundle J: navmesh area classification + traversability gradient",
+    for name, func in (("navmesh", pass_navmesh), ("pass_navmesh_export", pass_navmesh_export)):
+        TerrainPassController.register_pass(
+            PassDefinition(
+                name=name,
+                func=func,
+                requires_channels=("height",),
+                produces_channels=("navmesh_area_id", "traversability"),
+                overrides=("navmesh_area_id", "traversability") if name == "pass_navmesh_export" else (),
+                seed_namespace=name,
+                requires_scene_read=False,
+                description="Bundle J: navmesh area classification + traversability gradient",
+            )
         )
-    )
 
 
 __all__ = [
@@ -626,5 +638,6 @@ __all__ = [
     "compute_traversability",
     "export_navmesh_json",
     "pass_navmesh",
+    "pass_navmesh_export",
     "register_bundle_j_navmesh_pass",
 ]

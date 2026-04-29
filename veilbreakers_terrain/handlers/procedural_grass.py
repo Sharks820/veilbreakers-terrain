@@ -26,7 +26,8 @@ import math
 import os
 import random
 import string
-from dataclasses import dataclass, field
+import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
@@ -761,10 +762,111 @@ if __name__ == "__main__":
         }
 
 
+def _density_maps_from_records(
+    records: Sequence[GrassPlacementRecord],
+    shape: tuple[int, int],
+    world_origin_x: float,
+    world_origin_y: float,
+    cell_size: float,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    grass_density = np.zeros(shape, dtype=np.float32)
+    detail_density: dict[str, np.ndarray] = {}
+    rows, cols = shape
+    for record in records:
+        col = int(math.floor((record.position_world[0] - world_origin_x) / cell_size))
+        row = int(math.floor((record.position_world[1] - world_origin_y) / cell_size))
+        if row < 0 or row >= rows or col < 0 or col >= cols:
+            continue
+        grass_density[row, col] += 1.0
+        species_map = detail_density.setdefault(record.species, np.zeros(shape, dtype=np.float32))
+        species_map[row, col] += 1.0
+    if float(grass_density.max(initial=0.0)) > 0.0:
+        grass_density /= float(grass_density.max())
+    for species, density in list(detail_density.items()):
+        if float(density.max(initial=0.0)) > 0.0:
+            detail_density[species] = density / float(density.max())
+    return grass_density.astype(np.float32), detail_density
+
+
+def pass_procedural_grass(state: Any, region: Any = None) -> Any:
+    """Production pass that publishes grass density and placement records."""
+    from .terrain_pipeline import derive_pass_seed
+    from .terrain_semantics import PassResult
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    height = np.asarray(stack.height, dtype=np.float32)
+    hints = getattr(getattr(state, "intent", None), "composition_hints", {}) or {}
+    species_library = hints.get("grass_species_library", VEILBREAKERS_GRASS_SPECIES)
+    max_instances = int(hints.get("grass_max_instances_per_species", 25_000))
+    seed = derive_pass_seed(state.intent.seed, "procedural_grass", state.tile_x, state.tile_y, region)
+    system = ProceduralGrassSystem(rng_seed=seed)
+    records = system.generate_grass_placement(
+        stack,
+        species_library,
+        cell_size_m=float(getattr(stack, "cell_size", 1.0) or 1.0),
+        sdf_road_min_m=float(hints.get("grass_road_exclusion_m", 1.5)),
+        sdf_cliff_min_m=float(hints.get("grass_cliff_exclusion_m", 0.8)),
+        water_edge_min_m=float(hints.get("grass_water_edge_exclusion_m", 0.5)),
+        max_instances_per_species=max_instances,
+    )
+    density, detail_density = _density_maps_from_records(
+        records,
+        height.shape,
+        float(getattr(stack, "world_origin_x", 0.0) or 0.0),
+        float(getattr(stack, "world_origin_y", 0.0) or 0.0),
+        float(getattr(stack, "cell_size", 1.0) or 1.0),
+    )
+    stack.set("grass_density_map", density, "pass_procedural_grass")
+    merged_detail = dict(getattr(stack, "detail_density", None) or {})
+    merged_detail.update(detail_density)
+    stack.set("detail_density", merged_detail, "pass_procedural_grass")
+    stack.set(
+        "grass_placement_records",
+        [asdict(record) for record in records],
+        "pass_procedural_grass",
+    )
+    return PassResult(
+        pass_name="pass_procedural_grass",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height", "slope", "drainage", "biome_id", "hero_exclusion"),
+        produced_channels=("grass_density_map", "detail_density", "grass_placement_records"),
+        metrics={
+            "record_count": len(records),
+            "species_count": len(detail_density),
+            "density_nonzero_cells": int(np.count_nonzero(density)),
+        },
+        seed_used=seed,
+    )
+
+
+def register_procedural_grass_pass() -> None:
+    """Register procedural grass placement on TerrainPassController."""
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_procedural_grass",
+            func=pass_procedural_grass,
+            requires_channels=("height", "slope", "drainage", "biome_id"),
+            produces_channels=("grass_density_map", "detail_density", "grass_placement_records"),
+            overrides=("detail_density",),
+            seed_namespace="procedural_grass",
+            requires_scene_read=False,
+            supports_region_scope=True,
+            description="Generate grass detail density and placement records",
+        )
+    )
+
+
 __all__ = [
     "GrassSpecies",
     "GrassPlacementRecord",
     "ProceduralGrassSystem",
     "VEILBREAKERS_GRASS_SPECIES",
     "DEFAULT_BIOME_ID_MAP",
+    "pass_procedural_grass",
+    "register_procedural_grass_pass",
 ]

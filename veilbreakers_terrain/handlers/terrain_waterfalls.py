@@ -1837,6 +1837,40 @@ def compute_physical_foam_composite(
     composite = np.maximum(composite, shore_foam)
     composite = np.maximum(composite, wf_chain_foam)
 
+    try:
+        from ..sim.foam import generate_foam_mask as _sim_generate_foam_mask
+
+        water_mask = np.asarray(ws_arr, dtype=np.float32) > 0.0 if ws_arr is not None else (
+            np.maximum(wf_chain_foam, lip_mask) > 0.0
+        )
+        depth_arr = stack.get("water_depth_m")
+        if depth_arr is None:
+            depth_arr = stack.get("water_depth")
+        if depth_arr is None:
+            depth_arr = stack.get("bathymetry")
+        if depth_arr is None:
+            water_depth = water_mask.astype(np.float32) * 0.3
+        else:
+            water_depth = np.asarray(depth_arr, dtype=np.float32)
+        flow_speed_arr = stack.get("flow_speed")
+        if flow_speed_arr is None:
+            flow_speed_arr = np.maximum(rapid_foam, wf_chain_foam)
+        rock_arr = stack.get("cliff_candidate")
+        rock_mask = np.asarray(rock_arr, dtype=np.float32) > 0.5 if rock_arr is not None else np.zeros((rows, cols), dtype=bool)
+        sim_foam = _sim_generate_foam_mask(
+            h.astype(np.float32),
+            np.asarray(flow_speed_arr, dtype=np.float32),
+            water_mask,
+            water_depth,
+            rock_mask,
+            cell_size=float(stack.cell_size),
+            flow_dir=stack.get("waterfall_velocity"),
+            noise_seed=42,
+        )
+        composite = np.maximum(composite, sim_foam)
+    except Exception as exc:  # pragma: no cover - physical foam is additive
+        logger.debug("sim.foam composite contribution skipped: %s", exc)
+
     if _have_scipy:
         composite = gaussian_filter(composite, sigma=1.5).astype(np.float32)
 
@@ -2237,7 +2271,14 @@ def pass_waterfalls(
     Requires scene read: yes
     """
     from .terrain_pipeline import derive_pass_seed  # noqa: F401
-    from ._water_network_ext import compute_wet_rock_mask
+    from types import SimpleNamespace
+
+    from ._water_network_ext import (
+        add_meander,
+        apply_bank_asymmetry,
+        compute_wet_rock_mask,
+        solve_outflow,
+    )
 
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -2268,6 +2309,19 @@ def pass_waterfalls(
 
     # 3. Solve full chain per lip candidate (cap at 16 to bound work)
     _water_net = getattr(state, "water_network", None)
+    if _water_net is not None:
+        try:
+            add_meander(
+                _water_net,
+                amplitude=float(hints.get("water_meander_amplitude_m", 2.0)),
+                discharge=float(hints.get("water_discharge_m3s", 0.0)) or None,
+            )
+            apply_bank_asymmetry(
+                _water_net,
+                bias=float(hints.get("bank_asymmetry_bias", 0.3)),
+            )
+        except Exception as exc:  # pragma: no cover - best-effort network enrichment
+            logger.debug("WaterNetwork extension enrichment failed: %s", exc)
     chains: List[WaterfallChain] = []
     for lc in lips[:16]:
         try:
@@ -2276,6 +2330,21 @@ def pass_waterfalls(
             logger.debug("Waterfall solver failed for lip %s: %s", lc, exc)
             continue
         chains.append(chain)
+
+    outflow_network = _water_net or SimpleNamespace(
+        _heightmap=np.asarray(stack.height, dtype=np.float64),
+        _cell_size=float(stack.cell_size),
+        _world_origin_x=float(stack.world_origin_x),
+        _world_origin_y=float(stack.world_origin_y),
+        water_surface=stack.get("water_surface"),
+    )
+    for chain in chains:
+        try:
+            solved_cells = solve_outflow(outflow_network, chain.pool)
+            if solved_cells:
+                chain.outflow = tuple(_grid_to_world(stack, int(r), int(c)) for r, c in solved_cells)
+        except Exception as exc:  # pragma: no cover - keep waterfalls pass non-blocking
+            logger.debug("solve_outflow failed for %s: %s", chain.chain_id, exc)
 
     # 3b. Accumulate pool/outflow height deltas (non-destructive)
     pool_delta = np.zeros(h_shape, dtype=np.float64)
@@ -2528,7 +2597,10 @@ def _build_particle_emitter_specs(
         List of emitter spec dicts. Empty when there are no chains.
     """
     # Local import to avoid a circular import at module load time.
-    from .terrain_waterfalls_volumetric import build_particle_seed_zones
+    from .terrain_waterfalls_volumetric import (
+        build_particle_seed_zones,
+        build_waterfall_volume_bounds,
+    )
 
     specs: List[dict] = []
     if not chains:
@@ -2548,6 +2620,23 @@ def _build_particle_emitter_specs(
                 discharge_m3s=float(max(chain.lip.discharge_m3s, 0.01)),
                 wind_direction_rad=float(wind_direction_rad),
             )
+            volume_bounds = build_waterfall_volume_bounds(
+                lip_world_position=lip_pos,
+                pool_world_position=pool_pos,
+                flow_azimuth_rad=float(chain.flow_azimuth_rad),
+                lip_width_m=float(max(chain.lip.lip_width_m, 1.0)),
+                cascade_height_m=float(max(chain.total_drop_m, 0.5)),
+                mist_radius_m=float(max(chain.mist_radius_m, 1.0)),
+            )
+            volume_obb = {
+                "center": tuple(float(v) for v in volume_bounds.center),
+                "half_extents": tuple(float(v) for v in volume_bounds.half_extents),
+                "axes": tuple(
+                    tuple(float(component) for component in axis)
+                    for axis in volume_bounds.as_matrix_rows()
+                ),
+                "volume_m3": float(volume_bounds.volume_m3()),
+            }
         except Exception as exc:  # pragma: no cover — defensive only
             logger.debug("build_particle_seed_zones failed for %s: %s",
                          chain.chain_id, exc)
@@ -2613,6 +2702,7 @@ def _build_particle_emitter_specs(
                 "material": str(p["material"]),
                 "zone_name": str(zone.name),
                 "chain_id": str(chain.chain_id),
+                "volume_obb": volume_obb,
             })
 
     return specs
