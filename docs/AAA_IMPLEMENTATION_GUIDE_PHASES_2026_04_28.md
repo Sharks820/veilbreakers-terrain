@@ -1760,10 +1760,12 @@ break determinism unless seeds are explicit).
 **Risk:** **MEDIUM.** Output bytes will change once. After that, the same
 seed must produce the same bytes across runs.
 
-**Status 2026-04-29:** Started. FIX-8.1 implemented for stratigraphy and
-palette extraction, with focused repeatability/seed-scope tests. FIX-8.2,
-FIX-8.3, and FIX-8.4 remain open until the biome grammar, handler-wide RNG
-audit, and subprocess CI proof are complete.
+**Status 2026-04-29:** Implemented. FIX-8.1 through FIX-8.4 have live-code
+coverage: stratigraphy/palette RNGs use derived seeds; biome grammar and
+remaining handler `RandomState` sites were migrated; an AST guard blocks legacy
+or bare production RNG calls; `python -m veilbreakers_terrain.cli generate_tile`
+has a subprocess byte-identity test for `manifest.json`, `heightmap.bin`, and
+`splatmap_0.png`.
 
 **Verification criteria:**
 - `grep -rEn 'np\.random\.(random|uniform|choice|randint)|random\.random\(' veilbreakers_terrain/handlers/` returns 0 in production code.
@@ -1789,17 +1791,31 @@ audit, and subprocess CI proof are complete.
   `np.random.RandomState()` and bare `np.random.*` with
   `tile_rng(tile_id).<method>()`. Propagate `tile_id` through grammar rule
   signatures.
+- **Status 2026-04-29:** Done via `_rng_from_seed(..., seed_namespace)`, which
+  wraps `derive_pass_seed` while preserving the existing public seed-based
+  grammar signatures. All former `RandomState` sites in `_biome_grammar.py`
+  now use namespaced `default_rng` streams.
 
 #### FIX-8.3 (FIX-9-66) — Codebase-wide RNG audit
 - **Files:** all production handler files. Grep for the patterns above and
   replace each with `tile_rng(tile_id)` calls. Ensure `tile_id` flows through
   pipeline state.
+- **Status 2026-04-29:** Done for production forbidden-call surface. AST scan
+  over `veilbreakers_terrain/handlers` finds zero calls to
+  `np.random.RandomState`, bare `np.random.choice`, `np.random.randint`,
+  `np.random.random`, `np.random.uniform`, or `random.random`. Guard test:
+  `test_production_handlers_do_not_use_legacy_or_bare_rng_calls`.
 
 #### FIX-8.4 (FIX-9-59) — Subprocess determinism CI
 - **P0 ref:** S22-P0-61
 - **File:** `terrain_determinism_ci.py`, `DeterminismCITest.run()`. Use
   `subprocess.run([sys.executable, "-m", "veilbreakers_terrain.cli",
   "generate_tile", "--seed", seed], ...)` twice and diff outputs.
+- **Status 2026-04-29:** Done through the new
+  `veilbreakers_terrain.cli generate_tile` command and subprocess regression
+  test `test_generate_tile_cli_subprocess_outputs_are_byte_identical`, which
+  compares two independent runs for byte-identical `manifest.json`,
+  `heightmap.bin`, and `splatmap_0.png`.
 
 ### Phase 8 verification
 1. Two CLI invocations with `--seed 42` produce byte-identical

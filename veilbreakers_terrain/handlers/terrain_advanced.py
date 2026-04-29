@@ -31,6 +31,15 @@ _TERRAIN_LAYER_SCHEMA_VERSION = 3
 
 import numpy as np
 
+
+def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    from .terrain_pipeline import derive_pass_seed
+
+    return np.random.default_rng(
+        derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
+    )
+
+
 def _detect_grid_dims(bm) -> tuple[int, int]:
     """Detect actual (rows, cols) of a terrain grid mesh.
 
@@ -1006,7 +1015,7 @@ def apply_layer_operation(
         region += (blurred - region) * weight_box
     elif operation == "noise":
         # Spatially-coherent noise: seeded RNG, one value per cell in rect.
-        rng_np = np.random.RandomState(seed)
+        rng_np = _rng_from_seed(seed, "terrain_advanced_layer_noise")
         noise_arr = rng_np.normal(0.0, 0.5, size=region.shape).astype(np.float32)
         region += noise_arr * weight_box
     elif operation == "stamp":
@@ -1651,7 +1660,10 @@ def compute_erosion_brush(
         footprint |= in_brush
 
         # Pre-generate per-iteration wind noise as a full array (seeded RNG).
-        rng_np = np.random.RandomState(rng.randint(0, 2**31 - 1))
+        rng_np = _rng_from_seed(
+            rng.randint(0, 2**31 - 1),
+            "terrain_advanced_wind_erosion_noise",
+        )
 
         for _it in range(iterations):
             delta = np.zeros_like(result)
@@ -2233,7 +2245,10 @@ def compute_stamp_heightmap(
             # Add deterministic radial Gaussian noise for asymmetric ejecta rays.
             # Seed from resolution so different stamp sizes produce the same
             # qualitative pattern (scale-independent asymmetry).
-            rng_ej = np.random.RandomState(resolution_b ^ 0xDEAD)
+            rng_ej = _rng_from_seed(
+                resolution_b ^ 0xDEAD,
+                "terrain_advanced_crater_ejecta",
+            )
             noise_scale = h_rim * 0.4   # rays up to 40% of rim height
             # Noise varies with angle, not radius — creates radial ray pattern.
             angles = np.arctan2(

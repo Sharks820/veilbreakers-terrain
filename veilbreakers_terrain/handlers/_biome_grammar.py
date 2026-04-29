@@ -43,6 +43,14 @@ BIOME_ALIASES: dict[str, str] = {
 }
 
 
+def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    from .terrain_pipeline import derive_pass_seed
+
+    return np.random.default_rng(
+        derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
+    )
+
+
 def resolve_biome_name(name: str) -> str:
     """Return canonical BIOME_PALETTES key for name, applying aliases.
 
@@ -592,7 +600,7 @@ def apply_periglacial_patterns(
     if intensity <= 0.0:
         return heightmap.copy()
     h, w = heightmap.shape
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_periglacial")
 
     # --- Jittered-grid Voronoi centres -------------------------------------------
     # Auto-size: aim for ~12 polygon rows across the shorter axis.
@@ -729,7 +737,7 @@ def apply_desert_pavement(
     if intensity <= 0.0:
         return heightmap.copy(), np.zeros((h, w), dtype=np.float64)
 
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_desert_pavement")
 
     # ---- Pavement eligibility: flat + low-elevation zones ---------------
     gy_g, gx_g = np.gradient(heightmap)
@@ -863,7 +871,7 @@ def compute_spring_line_mask(
         Spring-line mask (H, W) float64 in [0, 1].
     """
     h, w = heightmap.shape
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_spring_line")
 
     elev_norm = (heightmap - heightmap.min()) / max((heightmap.max() - heightmap.min()), 1e-6)
 
@@ -980,7 +988,7 @@ def apply_landslide_scars(
     """
     h, w = heightmap.shape
     result = heightmap.copy()
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_landslide_scars")
 
     gy, gx = np.gradient(heightmap)
     slope = np.sqrt(gx ** 2 + gy ** 2)
@@ -1148,7 +1156,7 @@ def apply_hot_spring_features(
     """
     h, w = heightmap.shape
     result = heightmap.copy()
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_hot_spring_features")
     springs: list[dict] = []
 
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
@@ -1204,7 +1212,7 @@ def apply_hot_spring_features(
         # Angular lobes: amplitude = 15% of ring spacing, 4 lobes ± random phase
         lobe_phases = rng.uniform(0.0, 2.0 * math.pi, len(ring_rs))
         lobe_amps   = ring_rs * 0.15  # 15% of ring radius
-        lobe_counts = rng.randint(3, 7, size=len(ring_rs))
+        lobe_counts = rng.integers(3, 7, size=len(ring_rs))
         # Vectorised per-ring radius perturbation
         perturbed_rs = (
             ring_rs[:, np.newaxis, np.newaxis]
@@ -1312,7 +1320,7 @@ def apply_reef_platform(
     """
     h, w = heightmap.shape
     result = heightmap.copy().astype(np.float64)
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_reef_platform")
 
     underwater = heightmap < sea_level
     above = ~underwater
@@ -1496,7 +1504,7 @@ def apply_tafoni_weathering(
     if intensity <= 0.0:
         return heightmap.copy()
     result = heightmap.copy()
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_tafoni_weathering")
 
     # ---- Slope gate -------------------------------------------------------
     gy, gx = np.gradient(heightmap)
@@ -1757,7 +1765,7 @@ def apply_geological_folds(
     """
     h, w = heightmap.shape
     result = heightmap.copy()
-    rng = np.random.RandomState(seed)
+    rng = _rng_from_seed(seed, "biome_geological_folds")
 
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
     xs = np.arange(w, dtype=np.float64).reshape(1, -1)

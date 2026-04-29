@@ -1,22 +1,22 @@
 {
   "csv": "C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/output/verification/CALLABLE_VERIFICATION_MATRIX.csv",
   "domain_counts": {
-    "blender_tool": 1416,
+    "blender_tool": 1419,
     "camera_readability": 339,
     "core": 8,
-    "geometry_mesh": 1238,
-    "materials_texturing": 676,
-    "pipeline_wiring": 997,
-    "scatter_ecology": 679,
+    "geometry_mesh": 1241,
+    "materials_texturing": 663,
+    "pipeline_wiring": 1041,
+    "scatter_ecology": 681,
     "visual_qa": 350,
-    "water": 742
+    "water": 744
   },
   "false_grade_count": 0,
   "risk_counts": {
     "HIGH": 154,
-    "LOW": 1525,
+    "LOW": 1528,
     "MEDIUM": 1
   },
   "tool_blocker_count": 108,
-  "total_callables": 1680
+  "total_callables": 1683
 }

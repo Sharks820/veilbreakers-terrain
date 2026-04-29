@@ -69,6 +69,14 @@ _GRAD2 = np.array([
 ], dtype=np.float64)
 
 
+def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
+    from .terrain_pipeline import derive_pass_seed
+
+    return np.random.default_rng(
+        derive_pass_seed(int(seed), seed_namespace, 0, 0, None)
+    )
+
+
 def _build_permutation_table(seed: int) -> np.ndarray:
     """Build a 512-element permutation table from a seed.
 
@@ -76,7 +84,7 @@ def _build_permutation_table(seed: int) -> np.ndarray:
     is handled automatically via ``perm[i & 255]`` or direct indexing up
     to 511.
     """
-    rng = np.random.RandomState(seed & 0x7FFFFFFF)
+    rng = _rng_from_seed(seed & 0x7FFFFFFF, "terrain_noise_permutation")
     perm = np.arange(256, dtype=np.int32)
     rng.shuffle(perm)
     return np.concatenate([perm, perm])
@@ -1864,7 +1872,7 @@ def carve_river_path(
     # Wavelength = 10× channel width; amplitude = meander_strength × 2 × width.
     meander_wavelength = max(width * 10.0, 4.0)
     meander_amplitude = width * 2.0 * meander_strength
-    rng_m = np.random.RandomState(seed & 0x7FFFFFFF)
+    rng_m = _rng_from_seed(seed & 0x7FFFFFFF, "terrain_noise_river_meander")
     meander_phase = rng_m.uniform(0.0, 2.0 * math.pi)
 
     # Build displacement-adjusted path centres
@@ -2270,7 +2278,7 @@ def hydraulic_erosion(
     # consistent across different grid resolutions.
     min_slope_px = min_slope * cs
 
-    rng = np.random.RandomState(seed & 0x7FFFFFFF)
+    rng = _rng_from_seed(seed & 0x7FFFFFFF, "terrain_noise_hydraulic_erosion")
 
     # Pre-generate random start positions (batch for speed)
     start_x = rng.uniform(1.0, cols - 2.0, size=iterations)
