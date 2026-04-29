@@ -310,7 +310,13 @@ def pass_glacial(
     stack = state.mask_stack
 
     hints = dict(state.intent.composition_hints) if state.intent else {}
-    snow_alt = float(hints.get("snow_line_altitude_m", 2000.0))
+    if "snow_line_altitude_m" in hints:
+        snow_alt = float(hints["snow_line_altitude_m"])
+    elif "climate_zone" in hints and hasattr(hints["climate_zone"], "snow_line_m"):
+        snow_alt = float(hints["climate_zone"].snow_line_m)
+    else:
+        h_arr = np.asarray(stack.height, dtype=np.float64)
+        snow_alt = float(np.nanmax(h_arr)) * 0.8
 
     factor = compute_snow_line(stack, snow_alt)
 

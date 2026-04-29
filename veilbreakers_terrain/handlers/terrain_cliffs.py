@@ -854,8 +854,8 @@ def carve_cliff_system(
         overhang_mask_arr: Optional[np.ndarray] = None
         overhang_count = 0
         if slope_f is not None:
-            overhang_threshold_rad = math.radians(60.0)   # cos(60°) criterion
-            # Cells where the normal tilts past 60° from vertical = overhang zone
+            overhang_threshold_rad = math.radians(88.0)
+            # Only near-vertical/re-entrant faces qualify as overhang zones.
             overhang_candidate = face_mask & (slope_f > overhang_threshold_rad)
             if overhang_candidate.any() and rows > 1:
                 # height of cell one row above (row-1 in grid = higher in terrain)

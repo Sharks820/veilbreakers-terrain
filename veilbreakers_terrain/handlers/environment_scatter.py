@@ -858,7 +858,7 @@ def _filter_multipass_scatter_placements(
         if "species_id" not in placement_local and placement.get("vegetation_type"):
             placement_local["species_id"] = placement["vegetation_type"]
         placement_local["base_type"] = base_type
-        placement_local["vegetation_type"] = base_type
+        placement_local.setdefault("vegetation_type", base_type)
         scale_range = chosen_rule.get("scale_range")
         if (
             isinstance(scale_range, (tuple, list))
@@ -3402,17 +3402,26 @@ def handle_scatter_vegetation(params: dict) -> dict:
 
     # Fix 9.2: write tree_instance_points to stack for downstream exporters
     if _stack is not None and placements:
-        _tree_rows = [
-            (
-                p["position"][0] - terrain_half_x + terrain_origin_x,
-                p["position"][1] - terrain_half_y + terrain_origin_y,
-                0.0,  # z populated in instance loop above; use 0 here as placeholder
-                float(p.get("rotation_y", 0.0)),
-                float(p.get("prototype_id", 0)),
+        _tree_rows = []
+        for p in placements:
+            if p.get("base_type", p.get("vegetation_type")) != "tree":
+                continue
+            _world_pos = p.get("world_position")
+            if isinstance(_world_pos, (tuple, list)) and len(_world_pos) >= 3:
+                _tx, _ty, _tz = float(_world_pos[0]), float(_world_pos[1]), float(_world_pos[2])
+            else:
+                _tx = p["position"][0] - terrain_half_x + terrain_origin_x
+                _ty = p["position"][1] - terrain_half_y + terrain_origin_y
+                _tz = float(p.get("altitude", 0.0))
+            _tree_rows.append(
+                (
+                    _tx,
+                    _ty,
+                    _tz,
+                    float(p.get("rotation_y", 0.0)),
+                    float(p.get("prototype_id", 0)),
+                )
             )
-            for p in placements
-            if p.get("base_type", p.get("vegetation_type")) == "tree"
-        ]
         _tree_arr = (
             np.array(_tree_rows, dtype=np.float32).reshape(-1, 5)
             if _tree_rows

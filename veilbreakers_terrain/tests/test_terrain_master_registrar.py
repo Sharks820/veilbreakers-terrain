@@ -79,6 +79,17 @@ def test_v6_script_uses_aaa_open_world_for_direct_and_proof_intents():
     assert 'quality_profile="aaa_open_world"' in proof_src
 
 
+def test_v6_script_computes_slope_in_radians_with_cell_size():
+    import scripts.build_terrain_aaa_node_v6 as v6
+
+    src = inspect.getsource(v6.run_production_passes)
+
+    assert "np.degrees" not in src
+    assert "np.gradient(heightmap, axis=1) / CELL_SIZE_M" in src
+    assert "np.gradient(heightmap, axis=0) / CELL_SIZE_M" in src
+    assert "base_elevation_m=float(heightmap.min()) - 5.0" in src
+
+
 def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers():
     from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController

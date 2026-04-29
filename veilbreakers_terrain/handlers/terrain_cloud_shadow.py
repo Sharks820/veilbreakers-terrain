@@ -92,23 +92,20 @@ def _value_noise(
     hash_2d = perm[(xi[None, :] + perm_y[:, None]) & 255]  # (gh, gw)
     grid = hash_2d.astype(np.float64) / 255.0
 
-    # Fractional sample positions with animation offset applied
+    # Fractional sample positions with animation offset applied.  Keep these
+    # coordinates continuous; wrap only integer lattice indices below.
     ys = np.linspace(0.0, gh - 1.0, h_out) + offset_y
     xs = np.linspace(0.0, gw - 1.0, w_out) + offset_x
 
-    # Wrap offsets into grid range
-    ys = ys % (gh - 1.0)
-    xs = xs % (gw - 1.0)
+    y_floor = np.floor(ys).astype(np.int32)
+    x_floor = np.floor(xs).astype(np.int32)
+    ty = (ys - y_floor.astype(np.float64)).reshape(-1, 1)
+    tx = (xs - x_floor.astype(np.float64)).reshape(1, -1)
 
-    y0 = np.floor(ys).astype(np.int32)
-    x0 = np.floor(xs).astype(np.int32)
-    y1 = np.clip(y0 + 1, 0, gh - 1)
-    x1 = np.clip(x0 + 1, 0, gw - 1)
-    y0 = np.clip(y0, 0, gh - 1)
-    x0 = np.clip(x0, 0, gw - 1)
-
-    ty = (ys - np.floor(ys)).reshape(-1, 1)
-    tx = (xs - np.floor(xs)).reshape(1, -1)
+    y0 = y_floor % gh
+    x0 = x_floor % gw
+    y1 = (y_floor + 1) % gh
+    x1 = (x_floor + 1) % gw
 
     # Smoothstep fade — C1 continuous, no banding at cell boundaries
     ty = ty * ty * (3.0 - 2.0 * ty)

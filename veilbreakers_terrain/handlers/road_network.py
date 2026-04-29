@@ -207,19 +207,10 @@ def _astar_24dir(
     if (sr, sc) == (er, ec):
         return [start_world, end_world]
 
-    # Slope-aware heuristic (AAA §5.4): adds grade-excess penalty estimate to
-    # the straight-line lower bound. Slightly inadmissible but routes around
-    # steep terrain rather than through it, matching KCD2/TW3 road behaviour.
-    _goal_z = _h(er, ec)
     def _heuristic(r, c):
         dr = (r - er) * cell_h
         dc = (c - ec) * cell_w
-        eucl = math.sqrt(dr * dr + dc * dc)
-        if eucl > 1e-6:
-            est_grade_pct = abs(_h(r, c) - _goal_z) / eucl * 100.0
-            grade_excess = max(0.0, est_grade_pct - max_grade_pct)
-            return eucl + 0.5 * slope_penalty_weight * grade_excess * grade_excess
-        return eucl
+        return math.sqrt(dr * dr + dc * dc)
 
     # A* open set: (f, g, r, c, prev_dr, prev_dc, parent)
     # Use (r, c) -> (g, prev_dir, parent) closed dict

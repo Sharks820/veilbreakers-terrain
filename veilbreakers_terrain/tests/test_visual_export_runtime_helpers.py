@@ -375,7 +375,8 @@ def test_waterfall_foam_helpers_and_vertex_export_contract():
     assert saturate(-1.0) == 0.0
     assert saturate(2.0) == 1.0
     assert np.allclose(saturate(np.array([-1.0, 0.5, 2.0])), [0.0, 0.5, 1.0])
-    assert bake_foam_vertex_alpha(2.0, 0.0, foam_radius=2.0) == pytest.approx(1.0)
+    assert bake_foam_vertex_alpha(0.0, 0.0, foam_radius=2.0) == pytest.approx(1.0)
+    assert bake_foam_vertex_alpha(2.0, 0.0, foam_radius=2.0) == pytest.approx(0.0)
     assert bake_foam_vertex_alpha(2.0, 10.0, foam_radius=2.0) == pytest.approx(0.0)
     assert len(vertices) == 4
     assert {"position", "foam_alpha"} <= set(vertices[0])

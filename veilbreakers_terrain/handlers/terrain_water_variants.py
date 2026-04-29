@@ -752,7 +752,7 @@ def pass_water_variants(
         depth_norm = np.zeros_like(region_h)
     jitter = rng.uniform(-0.05, 0.05, size=region_h.shape).astype(np.float32)
     authored_wetness = np.clip(depth_norm.astype(np.float32) * 0.6 + jitter, 0.0, 1.0)
-    authored_ws = (authored_wetness > 0.75).astype(np.float32)
+    authored_ws = (authored_wetness > 0.55).astype(np.float32)
 
     # Merge into the output arrays, respecting protected cells.
     region_protected = protected[r_slice, c_slice]
@@ -1325,12 +1325,11 @@ def pass_bathymetry(
         bathymetry[r, c] = max(0, water_surface_elevation[r, c] - height[r, c])
 
     where ``water_surface_elevation`` is reconstructed from the height map:
-    for each connected water body we use the 95th-percentile height of the
-    cells in that body as the water-surface elevation (a robust estimator
-    that ignores sub-surface outliers while still respecting local variation).
+    for each connected water body we sample the dry-cell spill rim around the
+    body and use the highest rim elevation as the water-surface elevation.
     If ``water_surface`` holds float values in [0, 1] (the common mask
     convention) rather than absolute elevations, we detect this and fall back
-    to the per-body 95th-percentile terrain height approach.
+    to the per-body spill-rim approach.
 
     Depth zone classification
     -------------------------
@@ -1363,12 +1362,13 @@ def pass_bathymetry(
         water_depth_zone = np.zeros(h.shape, dtype=np.uint8)
         stack.set("bathymetry", bathymetry, "bathymetry")
         stack.set("water_depth_zone", water_depth_zone, "bathymetry")
+        stack.set("water_surface_elevation_m", h.astype(np.float32), "bathymetry")
         return PassResult(
             pass_name="bathymetry",
             status="ok",
             duration_seconds=time.perf_counter() - t0,
             consumed_channels=("height",),
-            produced_channels=("bathymetry", "water_depth_zone"),
+            produced_channels=("bathymetry", "water_depth_zone", "water_surface_elevation_m"),
             metrics={"wet_cells": 0, "max_depth_m": 0.0},
             issues=issues,
         )
@@ -1392,9 +1392,10 @@ def pass_bathymetry(
     else:
         wet_mask = (ws > 0.5)
         # Reconstruct per-body water surface elevation using connected-component
-        # analysis: each body's surface = 95th percentile height of wet cells
-        # (robust against sub-surface depressions deepening the estimate).
-        water_surface_elev = np.zeros_like(h)
+        # analysis: each body's surface = highest dry spill rim bordering the
+        # connected wet body. This preserves single-cell channels and steep
+        # basin lips that an interior percentile cannot see.
+        water_surface_elev = h.copy()
         if wet_mask.any():
             # Label connected components (4-connectivity for speed)
             # We implement a simple two-pass union-find flood fill without scipy
@@ -1431,8 +1432,9 @@ def pass_bathymetry(
                 if left >= 0 and wet_flat[left]:
                     _union(idx, left)
 
-            # Assign canonical labels and compute per-body height percentile
+            # Assign canonical labels and compute per-body spill rims.
             body_heights: dict = {}
+            body_rims: dict = {}
             for idx in range(rows * cols):
                 if not wet_flat[idx]:
                     continue
@@ -1440,9 +1442,18 @@ def pass_bathymetry(
                 r_i = idx // cols
                 c_i = idx % cols
                 body_heights.setdefault(root, []).append(float(h[r_i, c_i]))
+                rim_values = body_rims.setdefault(root, [])
+                for nr, nc in (
+                    (r_i - 1, c_i),
+                    (r_i + 1, c_i),
+                    (r_i, c_i - 1),
+                    (r_i, c_i + 1),
+                ):
+                    if 0 <= nr < rows and 0 <= nc < cols and not wet_mask[nr, nc]:
+                        rim_values.append(float(h[nr, nc]))
 
             body_surface: dict = {
-                root: float(np.percentile(heights, 95))
+                root: float(max(body_rims.get(root) or heights))
                 for root, heights in body_heights.items()
             }
 

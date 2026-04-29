@@ -566,6 +566,12 @@ def select_fix_action(
         if a:
             return a
 
+    # 2b. Bad normal consistency
+    if quality.get("normal_consistency", 1.0) < AAA_NORMAL_CONSISTENCY_MIN:
+        a = _try("rebake_normals")
+        if a:
+            return a
+
     # 3. Over poly budget
     if "max_poly_count" in targets:
         if quality.get("poly_count", 0) > targets["max_poly_count"]:

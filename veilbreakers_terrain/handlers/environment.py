@@ -52,6 +52,8 @@ def _require_bpy() -> None:
 
 logger = logging.getLogger(__name__)
 
+GLOBAL_LOG_FLOW_NORM = 12.0
+
 from ._terrain_noise import (  # noqa: E402
     generate_heightmap,
     carve_river_path,
@@ -2240,12 +2242,8 @@ def handle_generate_terrain(params: dict) -> dict:
         flow_result = compute_flow_map(heightmap)
         flow_acc = np.asarray(flow_result["flow_accumulation"], dtype=np.float64)
         # Normalize flow accumulation to [0, 1] using log scale
-        log_flow = np.log1p(flow_acc)
-        fa_max = log_flow.max()
-        if fa_max > 0:
-            moisture_map = log_flow / fa_max
-        else:
-            moisture_map = np.zeros_like(heightmap)
+        log_flow = np.nan_to_num(np.log1p(np.maximum(flow_acc, 0.0)), nan=0.0, posinf=GLOBAL_LOG_FLOW_NORM, neginf=0.0)
+        moisture_map = np.clip(log_flow / GLOBAL_LOG_FLOW_NORM, 0.0, 1.0)
 
     terrain_size = scale
     # Fix L2: respect caller-supplied object_location instead of hardcoding origin
@@ -2442,12 +2440,8 @@ def handle_generate_terrain_tile(params: dict) -> dict:
 
         flow_result = compute_flow_map(heightmap)
         flow_acc = np.asarray(flow_result["flow_accumulation"], dtype=np.float64)
-        log_flow = np.log1p(flow_acc)
-        fa_max = float(log_flow.max())
-        if fa_max > 0:
-            moisture_map = log_flow / fa_max
-        else:
-            moisture_map = np.zeros_like(heightmap)
+        log_flow = np.nan_to_num(np.log1p(np.maximum(flow_acc, 0.0)), nan=0.0, posinf=GLOBAL_LOG_FLOW_NORM, neginf=0.0)
+        moisture_map = np.clip(log_flow / GLOBAL_LOG_FLOW_NORM, 0.0, 1.0)
 
         splatmap = compute_world_splatmap_weights(
             heightmap,

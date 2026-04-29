@@ -111,7 +111,7 @@ def bake_foam_vertex_alpha(
     Returns:
         Per-vertex foam alpha in [0, 1].  Use as vertex alpha channel in water mesh.
     """
-    prox_ratio = saturate(obstacle_proximity / max(foam_radius, 1e-9))
+    prox_ratio = 1.0 - saturate(obstacle_proximity / max(foam_radius, 1e-9))
     speed_ratio = 1.0 - flow_speed / max(max_foam_speed, 1e-9)
     result = prox_ratio * speed_ratio
     return saturate(result)
@@ -2672,8 +2672,8 @@ def _build_particle_emitter_specs(
                 shape = "sphere"
                 # Thin disc approximated as half-sphere volume ~ 2/3 π r³
                 volume = (2.0 / 3.0) * math.pi * (zone.radius_m ** 3)
-                # Lip emits along flow direction, slightly downward
-                normal = (flow_nx * 0.9, flow_ny * 0.9, -0.436)  # ~-26° pitch
+                # Lip emits along flow direction with a slight upward lift.
+                normal = (flow_nx * 0.9, flow_ny * 0.9, 0.1)
             else:  # mist_zone
                 shape = "sphere"
                 volume = (2.0 / 3.0) * math.pi * (zone.radius_m ** 3)

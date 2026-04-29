@@ -1226,12 +1226,16 @@ def pass_erosion(
     stack.set("ridge_eroded", np.ascontiguousarray(ridge_out), "erosion")
 
     # --- Hydraulic erosion (secondary refinement on analytical output) ---
+    hydraulic_erodibility = None
+    if K_map is not None:
+        hydraulic_erodibility = np.clip(K_map / _K_BASE, 0.0, 1.0).astype(np.float32)
+
     hydro = apply_hydraulic_erosion_masks(
         h_after_analytical,
         iterations=profile_params["iterations"],
         seed=seed,
         hero_exclusion=hero_arg,
-        erodibility_map=K_map,
+        erodibility_map=hydraulic_erodibility,
     )
     # --- Thermal erosion (smooths sharp analytical features) ---
     thermal = apply_thermal_erosion_masks(

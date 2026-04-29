@@ -151,6 +151,27 @@ def test_flat_heightmap_quantizes_to_zero():
     assert int(quantized.max()) == 0
 
 
+def test_write_raw_array_scrubs_non_finite_float_values(tmp_path):
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
+
+    files = {}
+    arr = np.array([[np.nan, np.inf], [-np.inf, 1.25]], dtype=np.float32)
+
+    mod._write_raw_array(
+        files,
+        tmp_path,
+        filename="finite.raw",
+        channel="debug_float",
+        arr=arr,
+        encoding="raw_f32_le",
+        flip_vertical=False,
+    )
+
+    written = np.frombuffer((tmp_path / "finite.raw").read_bytes(), dtype="<f4").reshape(2, 2)
+    assert np.isfinite(written).all()
+    np.testing.assert_array_equal(written, np.array([[0.0, 0.0], [0.0, 1.25]], dtype=np.float32))
+
+
 def test_audio_zones_split_disconnected_components():
     from veilbreakers_terrain.handlers.terrain_unity_export import _audio_zones_json
 
@@ -269,6 +290,20 @@ def test_tree_instances_skip_out_of_bounds_points():
 
     assert len(payload["trees"]) == 1
     assert payload["skipped_out_of_bounds"] == 1
+
+
+def test_tree_instances_sample_height_when_row_z_is_zero():
+    from veilbreakers_terrain.handlers.terrain_unity_export import _tree_instances_json
+
+    stack = _make_stack()
+    _set_channel(stack, "tree_instance_points", np.array(
+        [[102.0, 202.0, 0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    ))
+
+    payload = _tree_instances_json(stack)
+
+    assert payload["trees"][0]["position"][1] == 13.0 * 0.85
 
 
 def test_mcp_unity_export_location_dispatches_to_public_handler():

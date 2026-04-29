@@ -208,6 +208,53 @@ def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():
     np.testing.assert_allclose(stack.albedo_shift_rgb, 0.0)
 
 
+def test_intrusions_are_ellipsoid_clipped_by_surface_depth():
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import (
+        StratigraphyLayer,
+        StratigraphyStack,
+        simulate_intrusions,
+    )
+
+    stack = _build_stack(tile_size=64, heights="flat")
+    stack.height[:, :32] = 2.0
+    stack.height[:, 32:] = 80.0
+    strat = StratigraphyStack(
+        base_elevation_m=0.0,
+        layers=[
+            StratigraphyLayer("upper", 0.4, 20.0),
+            StratigraphyLayer("lower", 0.8, 90.0),
+        ],
+    )
+
+    mask = simulate_intrusions(
+        stack,
+        strat,
+        rng=np.random.default_rng(7),
+        n_intrusions=8,
+        width_range_m=(4.0, 7.0),
+    )
+
+    assert mask.shape == stack.height.shape
+    assert float(mask.max()) > 0.0
+    assert float(mask[:, 32:].mean()) > float(mask[:, :32].mean())
+
+
+def test_validate_strata_consistency_rejects_negative_depths():
+    from veilbreakers_terrain.handlers.terrain_validation import validate_strata_consistency
+
+    stack = _build_stack(heights="flat")
+    strata = np.ones((stack.tile_size, stack.tile_size, 2), dtype=np.float32)
+    depths = np.zeros_like(strata)
+    depths[..., 0] = -0.25
+    depths[..., 1] = 1.0
+    object.__setattr__(stack, "strata_layers", strata)
+    object.__setattr__(stack, "strata_depths", depths)
+
+    issues = validate_strata_consistency(stack, _build_state(stack).intent)
+
+    assert any(issue.code == "STRATA_DEPTH_SIGN_INVALID" for issue in issues)
+
+
 def test_pass_stratigraphy_includes_strata_validator_issues(monkeypatch):
     from veilbreakers_terrain.handlers import terrain_geology_validator
     from veilbreakers_terrain.handlers.terrain_semantics import ValidationIssue
@@ -284,6 +331,17 @@ def test_pass_glacial_populates_snow_line():
     assert result.status == "ok"
     assert stack.snow_line_factor is not None
     assert "snow_coverage_fraction" in result.metrics
+
+
+def test_pass_glacial_defaults_snow_line_to_eighty_percent_of_max_height():
+    from veilbreakers_terrain.handlers.terrain_glacial import pass_glacial
+
+    stack = _build_stack(heights="ramp")
+    state = _build_state(stack, hints={})
+
+    result = pass_glacial(state, None)
+
+    assert result.metrics["snow_line_altitude_m"] == pytest.approx(float(stack.height.max()) * 0.8)
 
 
 # ---------------------------------------------------------------------------

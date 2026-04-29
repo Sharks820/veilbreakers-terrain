@@ -127,10 +127,9 @@ def pass_roughness_driver(
     slope_arr = stack.get("slope")
     slope_driven = False
     if slope_arr is not None:
-        s = np.asarray(slope_arr, dtype=np.float64)
-        s_max = float(s.max()) if s.size else 0.0
-        if s_max > 1e-9:
-            s_norm = np.clip(s / s_max, 0.0, 1.0)
+        s = np.abs(np.asarray(slope_arr, dtype=np.float64))
+        if s.size:
+            s_norm = np.clip(np.degrees(s) / 60.0, 0.0, 1.0)
             # Blend toward 0.90 (rough exposed rock) proportional to slope
             slope_weight = 0.35
             rough = rough * (1.0 - slope_weight * s_norm) + 0.90 * slope_weight * s_norm

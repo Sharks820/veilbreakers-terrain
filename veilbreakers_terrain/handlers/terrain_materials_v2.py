@@ -236,21 +236,26 @@ Handles overhangs and cave ceilings correctly; slope threshold cannot.
 """
 
 
-def compute_normal_z(heightmap: np.ndarray) -> np.ndarray:
+def compute_normal_z(heightmap: np.ndarray, cell_size_m: float = 1.0) -> np.ndarray:
     """Return the z-component of the unit surface normal for every cell.
 
-    Uses numpy gradient (consistent with existing codebase convention).
+    Uses numpy gradient divided by world-space cell size.
     Result is in [0, 1]: 1.0 = perfectly flat, approaching 0 = vertical wall.
 
     Formula (from CONTEXT.md Fix 10.1):
         dy, dx = np.gradient(heightmap)
+        dy /= cell_size_m
+        dx /= cell_size_m
         denom  = np.sqrt(dx**2 + dy**2 + 1.0)
         normal_z = 1.0 / denom
 
     NaN/Inf in heightmap are replaced with 0 before gradient (T-10-02-01).
     """
     h = np.nan_to_num(np.asarray(heightmap, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    cell_size = max(float(cell_size_m), 1e-9)
     dy, dx = np.gradient(h)
+    dy = dy / cell_size
+    dx = dx / cell_size
     denom = np.sqrt(dx ** 2 + dy ** 2 + 1.0)
     return np.clip(1.0 / denom, 0.0, 1.0).astype(np.float32)
 
@@ -527,7 +532,7 @@ def compute_slope_material_weights(
 
     # Fix 10.1 (REQ-P10-002): Compute surface normal z-component for rock masking.
     # normal_z < ROCK_NORMAL_THRESHOLD → rock face (replaces slope threshold).
-    surface_normal_z = compute_normal_z(stack.height)
+    surface_normal_z = compute_normal_z(stack.height, cell_size_m=float(getattr(stack, "cell_size", 1.0)))
 
     # Fix 10.4 (REQ-P10-006): Read snow_line_factor for top-facing snow mask.
     snow_line_factor = stack.get("snow_line_factor")
@@ -607,10 +612,15 @@ def compute_slope_material_weights(
     try:
         cliff_idx = rules.index_of("cliff")
         ground_idx = rules.index_of("ground")
+        try:
+            scree_idx = rules.index_of("scree")
+            rock_boundary_weight = np.maximum(weights[:, :, cliff_idx], weights[:, :, scree_idx])
+        except KeyError:
+            rock_boundary_weight = weights[:, :, cliff_idx]
         strata_h = stack.get("strata_height")
         if strata_h is not None:
             rock_h_factor = np.asarray(strata_h, dtype=np.float32)
-            blend_alpha = weights[:, :, cliff_idx].copy()
+            blend_alpha = rock_boundary_weight.copy()
             b_rock, b_dirt = apply_brucks_blend(
                 blend_alpha=blend_alpha,
                 rock_height_factor=rock_h_factor,

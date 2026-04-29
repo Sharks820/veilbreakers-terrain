@@ -129,9 +129,10 @@ Shader "VeilBreakers/TerrainLit_Stochastic_{TEMPLATE_ID}"
                 float4 blended = c0 * w.x + c1 * w.y + c2 * w.z;
                 // Contrast correction: expand toward mean to counteract
                 // the variance compression of weighted averaging.
-                // correction = mean + (blended - mean) * contrast_scale
+                // Heitz 2019 contrast scale = 1 / sqrt(dot(w, w)).
                 float4 mean = (c0 + c1 + c2) / 3.0;
-                return mean + (blended - mean) * contrast;
+                float contrastScale = 1.0 / sqrt(dot(w, w) + 1e-6);
+                return mean + (blended - mean) * contrastScale;
             }}
 
             // --- Main stochastic sampler ---
@@ -161,8 +162,16 @@ Shader "VeilBreakers/TerrainLit_Stochastic_{TEMPLATE_ID}"
                 float r2 = (h2.x - 0.5) * rotRange;
 
                 // Triangular blend weights (smooth, sum-to-1 partition of unity)
-                float3 w = float3(fracUV.x, fracUV.y, 1.0 - fracUV.x - fracUV.y);
-                w = pow(saturate(w * sharpness), 2.0);
+                float3 w;
+                if (fracUV.x + fracUV.y <= 1.0)
+                {{
+                    w = float3(1.0 - fracUV.x - fracUV.y, fracUV.x, fracUV.y);
+                }}
+                else
+                {{
+                    w = float3(fracUV.x + fracUV.y - 1.0, 1.0 - fracUV.x, 1.0 - fracUV.y);
+                }}
+                w = pow(saturate(w), sharpness);
                 w /= (w.x + w.y + w.z + 1e-6);
 
                 // Sample texture at 3 offset+rotated UVs
@@ -304,7 +313,8 @@ Shader "VeilBreakers/TerrainLit_HexStochastic_{TEMPLATE_ID}"
             {{
                 float4 blended = c0 * w.x + c1 * w.y + c2 * w.z;
                 float4 mean = (c0 + c1 + c2) / 3.0;
-                return mean + (blended - mean) * contrast;
+                float contrastScale = 1.0 / sqrt(dot(w, w) + 1e-6);
+                return mean + (blended - mean) * contrastScale;
             }}
 
             // --- Mikkelsen 2022 hex-tiling coordinate decomposition ---
@@ -317,7 +327,7 @@ Shader "VeilBreakers/TerrainLit_HexStochastic_{TEMPLATE_ID}"
             {{
                 float2 hp = mul(kRectToHex, uv);
                 float2 ip = floor(hp);
-                float2 fp = fp = hp - ip;
+                float2 fp = hp - ip;
 
                 // Partition each hex rhombus into two triangles.
                 // The point falls in one triangle; its 3 surrounding hex centers

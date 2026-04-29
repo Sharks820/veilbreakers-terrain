@@ -29,6 +29,7 @@ Pure numpy, no bpy. Z-up, world meters. All seeding is deterministic via
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -78,6 +79,7 @@ class StratigraphyLayer:
     color_hex: str = "#888888"
 
     def __post_init__(self) -> None:
+        self.strike_angle_rad = (float(self.azimuth_rad) + math.pi * 0.5) % (2.0 * math.pi)
         if not (0.0 <= self.hardness <= 1.0):
             raise ValueError(
                 f"StratigraphyLayer.hardness must be in [0,1], got {self.hardness}"
@@ -316,9 +318,7 @@ def apply_differential_erosion(
         )
 
     relative_exposure = h - neighbourhood_mean
-    exp_span = float(np.abs(relative_exposure).max())
-    if exp_span < 1e-6:
-        exp_span = 1.0
+    exp_span = max(float(np.abs(relative_exposure).max()), 1e-9)
     # Map to [0.5, 1.5]: exposed → 1.5, sheltered → 0.5
     exposure_mult = 1.0 + np.clip(relative_exposure / exp_span, -0.5, 0.5)
 
@@ -467,10 +467,8 @@ def detect_unconformities(
     Algorithm:
       For each cell, compute the erosion depth from ``erosion_delta``.
       If abs(erosion_depth) exceeds the thickness of the surface stratum,
-      the bed is truncated.  The truncation angle (geological bedding-plane
-      discordance) is:
-
-          truncation_angle_rad = arcsin(clip(|erosion_depth| / thickness, 0, 1))
+      the bed is truncated. The angular discordance is the dip difference
+      between the exposed stratum and the next older stratum.
 
       Cells where truncation occurs (truncation_angle > 0.1 rad ≈ 6°) are
       marked in the returned unconformity mask (0 = conformable, 1 = angular
@@ -506,12 +504,15 @@ def detect_unconformities(
     idx = np.searchsorted(bounds, z, side="right") - 1
     idx = np.clip(idx, 0, len(strat_stack.layers) - 1)
 
-    # Per-cell stratum thickness
+    # Per-cell stratum thickness and next-older dip contrast.
     cell_thickness = thicks[idx]
+    dips = np.array([L.dip_rad for L in strat_stack.layers], dtype=np.float64)
+    older_idx = np.clip(idx - 1, 0, len(strat_stack.layers) - 1)
+    dip_delta = np.abs(dips[idx] - dips[older_idx])
+    dip_delta = np.minimum(dip_delta, np.pi - dip_delta)
 
-    # Truncation angle per cell
-    ratio = np.clip(erosion_depth / np.where(cell_thickness < 1e-6, 1e-6, cell_thickness), 0.0, 1.0)
-    truncation_angle = np.arcsin(ratio)  # [0, π/2]
+    truncates = erosion_depth >= np.maximum(cell_thickness, 1e-6)
+    truncation_angle = np.where(truncates, dip_delta, 0.0)
 
     # Unconformity threshold: ≥ 6° = 0.1047 rad
     UNCONFORMITY_THRESHOLD_RAD = 0.1047
@@ -571,35 +572,45 @@ def simulate_intrusions(
     intrusion_mask = np.zeros((H, W), dtype=np.float32)
     albedo_shift = np.zeros((H, W, 3), dtype=np.float32)
 
-    # World-space grids
+    # World-space grids.  Dikes are modelled as rotated ellipsoids clipped by
+    # the local surface depth, then projected to the 2-D terrain channels.
     xs = np.arange(W, dtype=np.float64) * stack.cell_size
     ys = np.arange(H, dtype=np.float64) * stack.cell_size
+    xx, yy = np.meshgrid(xs, ys)
 
     tile_width_m = W * stack.cell_size
     tile_height_m = H * stack.cell_size
+    base_m = float(strat_stack.base_elevation_m)
+    total_thickness_m = max(float(sum(max(0.0, layer.thickness_m) for layer in strat_stack.layers)), 1e-6)
+    surface_depth_m = np.clip(h - base_m, 0.0, total_thickness_m)
 
     w_min, w_max = width_range_m
     for _ in range(n_intrusions):
-        # Dike centre X position — random across tile width
+        # Dike centre position and rotated strike direction across the tile.
         cx = float(rng.uniform(0.1, 0.9) * tile_width_m)
-        # Dike half-width (ellipse semi-axis in X)
-        a = float(rng.uniform(w_min, w_max))
-        # Dike half-height = half tile height (extends full depth, vertical)
-        b = tile_height_m * 0.5
+        cy = float(rng.uniform(0.1, 0.9) * tile_height_m)
+        strike = float(rng.uniform(0.0, 2.0 * math.pi))
+        cos_s = math.cos(strike)
+        sin_s = math.sin(strike)
 
-        # Slight sub-vertical dip (0–10°) in X as dike azimuth variation
-        dip_x = float(rng.uniform(-0.1, 0.1)) * tile_height_m  # horizontal lean
+        # Semi-axes: narrow lateral width, long strike length, near-full depth.
+        lateral_a = max(float(rng.uniform(w_min, w_max)), 1e-6)
+        along_b = max(tile_height_m * float(rng.uniform(0.35, 0.75)), lateral_a)
+        depth_c = max(total_thickness_m * float(rng.uniform(0.45, 0.95)), 1e-6)
+        depth_center_m = total_thickness_m * float(rng.uniform(0.35, 0.65))
 
-        # Ellipse distance in (X, Y) world space
-        dx = xs[np.newaxis, :] - cx
-        # Apply sub-vertical lean: shift x by (y/b)*dip_x
-        dy_frac = (ys[:, np.newaxis] - tile_height_m * 0.5) / max(b, 1e-6)
-        dx_adj = dx - dy_frac * dip_x
+        dx = xx - cx
+        dy = yy - cy
+        lateral = -sin_s * dx + cos_s * dy
+        along = cos_s * dx + sin_s * dy
+        depth_term = (surface_depth_m - depth_center_m) / depth_c
 
-        # Ellipse test: (dx/a)^2 ≤ 1
-        footprint = np.clip(1.0 - (dx_adj / max(a, 1e-6)) ** 2, 0.0, 1.0)
-        # Smooth mask: sqrt gives elliptical falloff weight
-        weight = np.sqrt(footprint).astype(np.float32)
+        ellipsoid_dist = (
+            (lateral / lateral_a) ** 2
+            + (along / along_b) ** 2
+            + depth_term ** 2
+        )
+        weight = np.sqrt(np.clip(1.0 - ellipsoid_dist, 0.0, 1.0)).astype(np.float32)
 
         intrusion_mask = np.maximum(intrusion_mask, weight)
 

@@ -587,9 +587,9 @@ def compute_light_budget(
         area   — 1.5  (area lights require multi-sample integration; most expensive base)
         <other>— 1.0  (fallback)
 
-    Shadow surcharge (per shadowing light):
-        Added directly once per shadowing light. The base type cost already
-        captures the relative complexity of point vs spot vs area lights.
+    Shadow surcharge:
+        Point lights pay six shadow-map faces (6 * shadow_cost). Spot/area
+        lights pay one shadow map face (shadow_cost).
 
     Flicker surcharge: flicker_cost per flickering light (CPU animation cost).
 
@@ -667,7 +667,10 @@ def compute_light_budget(
         light_cost = base
         if has_shadow:
             shadow_count += 1
-            light_cost += shadow_cost
+            if ltype == "point":
+                light_cost += shadow_cost * 6.0
+            else:
+                light_cost += shadow_cost
         if has_flicker:
             flicker_count += 1
             light_cost += flicker_cost

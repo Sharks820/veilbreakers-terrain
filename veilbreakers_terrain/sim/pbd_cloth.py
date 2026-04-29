@@ -201,6 +201,7 @@ def simulate_cloth(
             accel = (f_grav + f_wind) * inv_mass[:, None]
             vel = (vel + accel * dt_sub) * params.damping
             pos = pos + vel * dt_sub
+            pos_before_projection = pos.copy()
 
             lam_s  = np.zeros(len(p_s))
             lam_sh = np.zeros(len(p_sh))
@@ -210,7 +211,7 @@ def simulate_cloth(
                 pos, lam_sh = _project_xpbd(pos, p_sh, r_sh, inv_mass, params.k_shear,      dt_sub, lam_sh)
                 pos, lam_b  = _project_xpbd(pos, p_b,  r_b,  inv_mass, params.k_bend,       dt_sub, lam_b)
 
-            vel = (pos - (pos - vel * dt_sub)) / dt_sub  # re-derive vel from corrected pos
+            vel = (pos - pos_before_projection) / dt_sub
 
         history.append(pos.copy())
 

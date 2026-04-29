@@ -477,6 +477,38 @@ def test_apply_quixel_to_layer_creates_splatmap(stack):
     assert payload["asset_id"] == "rock_01"
 
 
+def test_apply_quixel_to_layer_appends_visible_weight(stack):
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        QuixelAsset,
+        apply_quixel_to_layer,
+    )
+
+    stack.set("splatmap_weights_layer", np.ones((*stack.height.shape, 1), dtype=np.float32), "test")
+    asset = QuixelAsset(asset_id="moss_01", textures={})
+
+    apply_quixel_to_layer(stack, "moss_layer", asset)
+
+    weights = stack.splatmap_weights_layer
+    assert weights.shape[-1] == 2
+    assert float(weights[..., -1].min()) > 0.0
+    np.testing.assert_allclose(weights.sum(axis=2), 1.0, atol=1e-6)
+
+
+def test_apply_quixel_to_layer_blends_albedo_in_linear_space(stack):
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        QuixelAsset,
+        apply_quixel_to_layer,
+    )
+
+    asset = QuixelAsset(asset_id="albedo_01", textures={})
+    albedo = np.full((*stack.height.shape, 3), 0.5, dtype=np.float32)
+
+    apply_quixel_to_layer(stack, "albedo_layer", asset, albedo_array=albedo)
+
+    expected_linear = ((0.5 + 0.055) / 1.055) ** 2.4
+    np.testing.assert_allclose(stack.macro_color[..., 0], expected_linear, atol=1e-6)
+
+
 def test_pass_quixel_ingest_with_assets_param(state):
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,

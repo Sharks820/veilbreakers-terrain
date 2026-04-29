@@ -441,7 +441,8 @@ class TestMultipassScatterIntegration:
 
         assert [item["position"] for item in placements] == [(75.0, 50.0)]
         assert placements[0]["species_id"] == "talus_boulder"
-        assert placements[0]["vegetation_type"] == "rock"
+        assert placements[0]["vegetation_type"] == "talus_boulder"
+        assert placements[0]["base_type"] == "rock"
 
     def test_generate_multipass_scatter_placements_filters_to_requested_types(self):
         from veilbreakers_terrain.handlers.environment_scatter import _generate_multipass_scatter_placements
@@ -473,7 +474,8 @@ class TestMultipassScatterIntegration:
         )
 
         assert len(placements) > 0
-        assert {item["vegetation_type"] for item in placements} == {"tree"}
+        assert {item["base_type"] for item in placements} == {"tree"}
+        assert {item["vegetation_type"] for item in placements} >= {"tree_oak"}
 
     def test_multipass_placements_convert_to_canonical_scatter_point_table(self):
         from veilbreakers_terrain.handlers.environment_scatter import (
@@ -601,9 +603,11 @@ class TestMultipassScatterIntegration:
         )
 
         species = {item["species_id"] for item in filtered}
-        base_types = {item["vegetation_type"] for item in filtered}
+        base_types = {item["base_type"] for item in filtered}
+        vegetation_types = {item["vegetation_type"] for item in filtered}
 
         assert {"talus_boulder", "reeds", "log_fallen"} <= species
+        assert {"talus_boulder", "reeds", "log_fallen"} <= vegetation_types
         assert {"rock", "grass", "tree"} <= base_types
 
 

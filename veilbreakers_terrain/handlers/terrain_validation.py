@@ -1320,10 +1320,11 @@ def validate_strata_consistency(
     index 0 is the *surface* (youngest) and index N-1 is the *deepest* (oldest).
     For each cell the algorithm checks two invariants:
 
-    1. **Monotonic depth increase** — the depth value (if supplied via
-       ``strata_depths`` channel of the same shape) must increase with layer
-       index at every cell.  A reversal indicates a layer was authored
-       upside-down or a deformation pass corrupted the stack order.
+    1. **Positive-down monotonic depth increase** — the depth value (if
+       supplied via ``strata_depths`` channel of the same shape) must be
+       non-negative and increase with layer index at every cell.  A negative
+       value or reversal indicates a layer was authored upside-down or a
+       deformation pass corrupted the stack order.
 
     2. **No zero-thickness sandwich** — a layer should not have zero weight
        (presence = 0) while the layers on both sides of it have non-zero weight.
@@ -1381,6 +1382,23 @@ def validate_strata_consistency(
                 )
             )
         else:
+            negative_depths = strata_depths < -1e-6
+            if bool(np.any(negative_depths)):
+                bad_negatives = int(negative_depths.sum())
+                issues.append(
+                    ValidationIssue(
+                        code="STRATA_DEPTH_SIGN_INVALID",
+                        severity="hard",
+                        message=(
+                            f"strata_depths has {bad_negatives} negative values; "
+                            "strata depth convention is positive-down and must be >= 0"
+                        ),
+                        remediation=(
+                            "Write strata_depths as positive-down metres from the local "
+                            "surface; do not store signed elevation offsets."
+                        ),
+                    )
+                )
             # For each cell, check that depth[..., i+1] >= depth[..., i]
             # (deepest = largest depth value = oldest = highest layer index)
             bad_inversions = 0

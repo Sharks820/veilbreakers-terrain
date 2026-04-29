@@ -505,6 +505,17 @@ class TestSelectFixAction:
         actions = ["repair", "remesh", "decimate"]
         assert select_fix_action(quality, targets, actions) == "remesh"
 
+    def test_rebake_normals_when_normal_consistency_low(self):
+        """Selects 'rebake_normals' when normal consistency misses AAA floor."""
+        from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action
+
+        quality = {"poly_count": 1000, "has_non_manifold": False,
+                    "has_degenerate_faces": False, "topology_grade": "A",
+                    "normal_consistency": 0.8, "uv_coverage": 1.0}
+        targets = {"min_topology_grade": "B"}
+        actions = ["rebake_normals", "remesh"]
+        assert select_fix_action(quality, targets, actions) == "rebake_normals"
+
     def test_returns_none_when_all_targets_met(self):
         """Returns None when all targets are satisfied."""
         from veilbreakers_terrain.handlers.autonomous_loop import select_fix_action

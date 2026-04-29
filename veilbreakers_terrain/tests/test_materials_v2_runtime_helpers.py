@@ -37,6 +37,17 @@ def test_compute_normal_z_handles_flat_steep_and_invalid_height_values():
     assert np.isfinite(compute_normal_z(invalid)).all()
 
 
+def test_compute_normal_z_scales_gradient_by_cell_size():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import compute_normal_z
+
+    ramp = np.tile(np.arange(5, dtype=np.float32) * 10.0, (5, 1))
+    fine = compute_normal_z(ramp, cell_size_m=1.0)
+    coarse = compute_normal_z(ramp, cell_size_m=10.0)
+
+    assert float(coarse[1:-1, 1:-1].mean()) > float(fine[1:-1, 1:-1].mean())
+    assert float(coarse[2, 2]) == pytest.approx(1.0 / np.sqrt(2.0), abs=1e-6)
+
+
 def test_apply_brucks_blend_returns_nonnegative_competing_weights():
     from veilbreakers_terrain.handlers.terrain_materials_v2 import apply_brucks_blend
 

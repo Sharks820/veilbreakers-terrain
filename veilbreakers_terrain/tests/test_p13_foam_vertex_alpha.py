@@ -1,7 +1,7 @@
 """Tests for Fix 13.1: foam vertex alpha baking formula.
 
 REQ-P13-001: Foam vertex alpha baked into water mesh export.
-Formula: saturate(obstacle_proximity / foam_radius) * (1 - flow_speed / max_foam_speed)
+Formula: (1 - saturate(obstacle_proximity / foam_radius)) * (1 - flow_speed / max_foam_speed)
 """
 import importlib
 import inspect
@@ -38,15 +38,15 @@ class TestSaturate:
 class TestFoamVertexAlpha:
     """REQ-P13-001 — bake_foam_vertex_alpha formula verification."""
 
-    def test_full_proximity_zero_speed_gives_one(self):
+    def test_zero_proximity_zero_speed_gives_one(self):
         result = bake_foam_vertex_alpha(
-            obstacle_proximity=FOAM_RADIUS_DEFAULT,
+            obstacle_proximity=0.0,
             flow_speed=0.0,
         )
         assert abs(result - 1.0) < 1e-6, f"Expected 1.0, got {result}"
 
-    def test_zero_proximity_gives_zero(self):
-        result = bake_foam_vertex_alpha(obstacle_proximity=0.0, flow_speed=0.0)
+    def test_radius_proximity_gives_zero(self):
+        result = bake_foam_vertex_alpha(obstacle_proximity=FOAM_RADIUS_DEFAULT, flow_speed=0.0)
         assert abs(result - 0.0) < 1e-6
 
     def test_max_speed_gives_zero(self):
@@ -72,7 +72,7 @@ class TestFoamVertexAlpha:
         assert abs(result - 0.5) < 1e-6
 
     def test_half_proximity_half_speed(self):
-        # saturate(0.5/2.0 * (1 - 2.5/5.0)) = saturate(0.5 * 0.5) = 0.25
+        # (1 - saturate(1.0/2.0)) * (1 - 2.5/5.0) = 0.5 * 0.5 = 0.25
         result = bake_foam_vertex_alpha(
             obstacle_proximity=FOAM_RADIUS_DEFAULT / 2,
             flow_speed=MAX_FOAM_SPEED_DEFAULT / 2,
@@ -85,12 +85,12 @@ class TestFoamVertexAlpha:
         result = bake_foam_vertex_alpha(prox, speed)
         assert isinstance(result, np.ndarray)
         assert result.shape == (3,)
-        np.testing.assert_allclose(result, [0.0, 0.5, 1.0], atol=1e-6)
+        np.testing.assert_allclose(result, [1.0, 0.5, 0.0], atol=1e-6)
 
     def test_custom_foam_radius(self):
-        # obstacle_proximity=4.0, foam_radius=4.0, flow_speed=0 -> 1.0
+        # obstacle_proximity=0.0, foam_radius=4.0, flow_speed=0 -> 1.0
         result = bake_foam_vertex_alpha(
-            obstacle_proximity=4.0, flow_speed=0.0, foam_radius=4.0
+            obstacle_proximity=0.0, flow_speed=0.0, foam_radius=4.0
         )
         assert abs(result - 1.0) < 1e-6
 

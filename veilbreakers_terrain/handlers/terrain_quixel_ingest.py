@@ -426,7 +426,12 @@ _UNITY_MAX_SPLATMAP_LAYERS: int = 4
 # Default weight for a newly registered Quixel layer when no existing
 # splatmap channel maps to it.  1/N equal-weight distribution is applied
 # across all layers after the new one is appended so the sum stays ≈ 1.
-_DEFAULT_NEW_LAYER_WEIGHT: float = 0.0
+_DEFAULT_NEW_LAYER_WEIGHT: float = 0.25
+
+
+def _srgb_to_linear(values: np.ndarray) -> np.ndarray:
+    v = np.clip(np.asarray(values, dtype=np.float32), 0.0, 1.0)
+    return np.where(v <= 0.04045, v / 12.92, ((v + 0.055) / 1.055) ** 2.4).astype(np.float32)
 
 
 def _bilinear_sample_texture(
@@ -570,11 +575,18 @@ def apply_quixel_to_layer(
                 ))
             raise ValueError(issue.message)
 
-        # Append a zero-weight slice for the new layer, then redistribute
+        # Append a non-zero weight slice for the new layer, then redistribute
         # the remaining weight budget so all layers sum to 1.0 per texel.
-        # The new layer starts at 0 weight; callers that have a real weight
-        # mask should assign it directly via stack.splatmap_weights_layer.
-        new_slice = np.zeros((rows, cols, 1), dtype=np.float32)
+        # If no authored coverage mask is available, give the new layer a
+        # conservative initial share so the layer is actually visible.
+        initial_weight = min(
+            1.0,
+            max(
+                _DEFAULT_NEW_LAYER_WEIGHT,
+                1.0 / float(current_layers + 1),
+            ),
+        )
+        new_slice = np.full((rows, cols, 1), initial_weight, dtype=np.float32)
         expanded = np.concatenate([current, new_slice], axis=2)
 
         # Re-normalise: divide by channel-wise sum, guard against zero rows.
@@ -598,9 +610,9 @@ def apply_quixel_to_layer(
     layer_weight = stack.splatmap_weights_layer[:, :, layer_idx]  # (H, W)
 
     if albedo_array is not None:
-        sampled_albedo = _bilinear_sample_texture(
+        sampled_albedo = _srgb_to_linear(_bilinear_sample_texture(
             albedo_array.astype(np.float32), uv_y, uv_x
-        )  # (H, W, 3)
+        ))  # (H, W, 3)
         if stack.macro_color is None:
             stack.set(
                 "macro_color",

@@ -1230,8 +1230,8 @@ def generate_lod_specs(
             else None
         )
 
-        # LOD3 → billboard (unless disabled)
-        if include_billboard and level == len(ratios) - 1 and level >= 3:
+        # Final LOD -> billboard (unless disabled).
+        if include_billboard and level >= len(ratios) - 1:
             lod_specs.append(
                 _make_billboard_spec(
                     src_verts, aabb, base_name, level,

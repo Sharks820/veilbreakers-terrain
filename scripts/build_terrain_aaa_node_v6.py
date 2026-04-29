@@ -185,10 +185,10 @@ def run_production_passes(heightmap):
         return None
 
     _log("Computing slope mask...")
-    dz_dx = np.gradient(heightmap, axis=1)
-    dz_dy = np.gradient(heightmap, axis=0)
-    slope = np.degrees(np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2))).astype(np.float32)
-    _log(f"  slope: mean={slope.mean():.1f}  max={slope.max():.1f}")
+    dz_dx = np.gradient(heightmap, axis=1) / CELL_SIZE_M
+    dz_dy = np.gradient(heightmap, axis=0) / CELL_SIZE_M
+    slope = np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2)).astype(np.float32)
+    _log(f"  slope(rad): mean={slope.mean():.3f}  max={slope.max():.3f}")
 
     bbox = BBox(X_MIN, Y_MIN, X_MAX, Y_MAX)
 
@@ -216,12 +216,15 @@ def run_production_passes(heightmap):
     _log("Computing rock hardness...")
     try:
         from veilbreakers_terrain.handlers.terrain_stratigraphy import StratigraphyLayer
-        strat = StratigraphyStack(layers=[
-            StratigraphyLayer("basement",  hardness=0.9, thickness_m=200.0, rock_type="igneous"),
-            StratigraphyLayer("limestone", hardness=0.65, thickness_m=80.0, rock_type="sedimentary"),
-            StratigraphyLayer("shale",     hardness=0.35, thickness_m=40.0, rock_type="sedimentary"),
-            StratigraphyLayer("topsoil",   hardness=0.15, thickness_m=2.0,  rock_type="sedimentary"),
-        ])
+        strat = StratigraphyStack(
+            base_elevation_m=float(heightmap.min()) - 5.0,
+            layers=[
+                StratigraphyLayer("basement",  hardness=0.9, thickness_m=200.0, rock_type="igneous"),
+                StratigraphyLayer("limestone", hardness=0.65, thickness_m=80.0, rock_type="sedimentary"),
+                StratigraphyLayer("shale",     hardness=0.35, thickness_m=40.0, rock_type="sedimentary"),
+                StratigraphyLayer("topsoil",   hardness=0.15, thickness_m=2.0,  rock_type="sedimentary"),
+            ],
+        )
         compute_rock_hardness(mask_stack, strat)
         _log("  rock_hardness OK")
     except Exception as e:

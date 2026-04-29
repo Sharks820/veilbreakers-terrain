@@ -620,6 +620,23 @@ def test_w1_water_surface_elevation_m_is_world_space():
     )
 
 
+def test_bathymetry_uses_spill_rim_for_single_cell_channel():
+    from veilbreakers_terrain.handlers.terrain_water_variants import pass_bathymetry
+
+    state = _make_state(rows=5, cols=5)
+    h = np.full((5, 5), 10.0, dtype=np.float32)
+    h[2, 2] = 1.0
+    state.mask_stack.set("height", h, "test")
+    state.mask_stack.set("water_surface", np.zeros_like(h, dtype=np.float32), "test")
+    state.mask_stack.water_surface[2, 2] = 1.0
+
+    pass_bathymetry(state, region=None)
+
+    assert state.mask_stack.water_surface_elevation_m[2, 2] == pytest.approx(10.0)
+    assert state.mask_stack.bathymetry[2, 2] == pytest.approx(9.0)
+    assert state.mask_stack.water_depth_zone[2, 2] == 3
+
+
 def test_w1_mask_and_elevation_are_distinct_channels():
     """water_surface_mask and water_surface_elevation_m must be independent arrays."""
     from veilbreakers_terrain.handlers.terrain_water_variants import pass_bathymetry

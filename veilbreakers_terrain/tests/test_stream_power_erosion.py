@@ -274,19 +274,8 @@ class TestHydraulicErodibility:
 
         np.testing.assert_allclose(result, dem, rtol=1e-9, atol=1e-9)
 
-    def test_erodibility_map_preserves_absolute_magnitude_for_realistic_K_values(self):
-        """Regression guard for the [0,1] scale bug that attenuated absolute K_maps.
-
-        Production caller ``pass_erosion`` builds ``K_map`` from
-        ``_K_BASE + rock_hardness * _K_STRATA_SCALE`` with range ~[0.0002, 0.001]
-        — these are absolute stream-power K magnitudes, not normalized [0,1]
-        control weights. A prior regression applied ``clip(arr, 0, 1) * 2.0``
-        which collapsed these values by 500–2500x and made hydraulic erosion
-        effectively inert on any rock-populated tile. This test asserts that
-        a uniform K = _K_BASE map exactly matches the no-map baseline, and
-        that a uniform K = 0.5e-3 map still produces meaningful erosion
-        within a factor of 2 of that baseline.
-        """
+    def test_hydraulic_erodibility_map_is_normalized_multiplier(self):
+        """Hydraulic erodibility is a [0,1] multiplier, not stream-power K."""
         from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
 
         dem = _make_sloped_dem(32).astype(np.float64)
@@ -296,46 +285,26 @@ class TestHydraulicErodibility:
         ).height
         baseline_loss = float((dem - baseline).sum())
 
-        # K = _K_BASE (1e-3) must reproduce the no-map baseline exactly
-        # (neutral absolute-K magnitude).
-        k_base = apply_hydraulic_erosion_masks(
+        half = apply_hydraulic_erosion_masks(
             dem,
             iterations=500,
             seed=11,
-            erodibility_map=np.full_like(dem, 1e-3),
+            erodibility_map=np.full_like(dem, 0.5),
         ).height
-        np.testing.assert_allclose(k_base, baseline, rtol=1e-7, atol=1e-7)
+        half_loss = float((dem - half).sum())
 
-        # K = 0.5e-3 (soft-rock tier from the realistic K_map range) must
-        # still produce meaningful erosion within a factor of 2 of baseline.
-        # Under the regressed ``* 2.0`` scale this value collapsed to ~0.001
-        # effective scale and erosion was essentially inert.
-        k_half = apply_hydraulic_erosion_masks(
+        overbright = apply_hydraulic_erosion_masks(
             dem,
             iterations=500,
             seed=11,
-            erodibility_map=np.full_like(dem, 5e-4),
+            erodibility_map=np.full_like(dem, 500.0),
         ).height
-        k_half_loss = float((dem - k_half).sum())
 
         assert baseline_loss > 1e-3, (
             "baseline hydraulic erosion on sloped DEM should remove measurable material"
         )
-        assert k_half_loss > 0.0, (
-            "K = 0.5e-3 hydraulic erosion must not be fully inert"
-        )
-        # Ratio in either direction must stay within a factor of 2 of baseline.
-        ratio_down = baseline_loss / max(k_half_loss, 1e-12)
-        ratio_up = k_half_loss / max(baseline_loss, 1e-12)
-        assert ratio_down < 2.0 + 1e-6, (
-            f"K = 0.5e-3 erosion ({k_half_loss:.6f}) is >2x weaker than "
-            f"baseline ({baseline_loss:.6f}); erodibility_map may be treated "
-            f"as a normalized [0,1] weight instead of an absolute-K magnitude."
-        )
-        assert ratio_up < 2.0 + 1e-6, (
-            f"K = 0.5e-3 erosion ({k_half_loss:.6f}) is >2x stronger than "
-            f"baseline ({baseline_loss:.6f})."
-        )
+        assert 0.0 < half_loss < baseline_loss
+        np.testing.assert_allclose(overbright, baseline, rtol=1e-7, atol=1e-7)
 
 
 # ---------------------------------------------------------------------------

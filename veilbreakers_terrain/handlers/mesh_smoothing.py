@@ -79,6 +79,83 @@ def _build_laplacian(n: int, neighbors: List[Set[int]]):
     return A - identity
 
 
+def _cotangent(a: np.ndarray, b: np.ndarray) -> float:
+    cross = float(np.linalg.norm(np.cross(a, b)))
+    if cross <= 1e-12:
+        return 0.0
+    return float(np.dot(a, b)) / cross
+
+
+def _iter_triangles(face: Tuple[int, ...]):
+    if len(face) < 3:
+        return
+    for i in range(1, len(face) - 1):
+        yield (face[0], face[i], face[i + 1])
+
+
+def _build_cotangent_laplacian(
+    verts: np.ndarray,
+    faces: List[Tuple[int, ...]],
+    neighbors: List[Set[int]],
+):
+    """Build row-normalized cotangent Laplacian with graph fallback.
+
+    Pinkall/Polthier cotangent weights preserve triangulation geometry better
+    than uniform neighbor averaging. Negative obtuse-triangle weights are
+    clamped to zero for smoothing stability.
+    """
+    n = int(len(verts))
+    weights: list[dict[int, float]] = [dict() for _ in range(n)]
+
+    def add_edge(a: int, b: int, w: float) -> None:
+        if a == b or w <= 0.0:
+            return
+        weights[a][b] = weights[a].get(b, 0.0) + w
+        weights[b][a] = weights[b].get(a, 0.0) + w
+
+    for face in faces:
+        for ia, ib, ic in _iter_triangles(face):
+            va, vb, vc = verts[ia], verts[ib], verts[ic]
+            cot_a = max(0.0, _cotangent(vb - va, vc - va))
+            cot_b = max(0.0, _cotangent(va - vb, vc - vb))
+            cot_c = max(0.0, _cotangent(va - vc, vb - vc))
+            add_edge(ib, ic, 0.5 * cot_a)
+            add_edge(ia, ic, 0.5 * cot_b)
+            add_edge(ia, ib, 0.5 * cot_c)
+
+    for i, nb in enumerate(neighbors):
+        if weights[i] or not nb:
+            continue
+        uniform = 1.0 / len(nb)
+        for j in nb:
+            weights[i][j] = uniform
+
+    if _csr_matrix is None:
+        L = np.zeros((n, n), dtype=np.float64)
+        for i, row in enumerate(weights):
+            total = float(sum(row.values()))
+            if total <= 1e-12:
+                L[i, i] = -1.0
+                continue
+            for j, w in row.items():
+                L[i, j] = float(w) / total
+            L[i, i] -= 1.0
+        return L
+
+    rows, cols, data = [], [], []
+    for i, row in enumerate(weights):
+        total = float(sum(row.values()))
+        if total <= 1e-12:
+            continue
+        for j, w in row.items():
+            rows.append(i)
+            cols.append(j)
+            data.append(float(w) / total)
+    A = _csr_matrix((data, (rows, cols)), shape=(n, n), dtype=np.float64)
+    identity = _csr_matrix(np.eye(n, dtype=np.float64))
+    return A - identity
+
+
 def _compute_face_normal(
     v0: np.ndarray, v1: np.ndarray, v2: np.ndarray
 ) -> np.ndarray:
@@ -286,7 +363,7 @@ def smooth_assembled_mesh(
     # Build adjacency graph once — O(F * face_len)
     # ------------------------------------------------------------------
     neighbors = _build_adjacency(n, faces)
-    L = _build_laplacian(n, neighbors)
+    L = _build_cotangent_laplacian(current, faces, neighbors) if faces else _build_laplacian(n, neighbors)
 
     # ------------------------------------------------------------------
     # Build fixed-vertex mask (feature preservation + boundary)

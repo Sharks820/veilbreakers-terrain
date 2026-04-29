@@ -61,6 +61,28 @@ def test_build_laplacian_computes_average_neighbor_delta():
     assert delta[2] == pytest.approx((0.0, -2.0, 0.0))
 
 
+def test_cotangent_laplacian_weights_irregular_triangles_by_geometry():
+    from veilbreakers_terrain.handlers.mesh_smoothing import _build_adjacency, _build_cotangent_laplacian
+
+    verts = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [2.0, 3.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    faces = [(0, 1, 2), (1, 3, 2)]
+    laplacian = _build_cotangent_laplacian(verts, faces, _build_adjacency(4, faces))
+    dense = laplacian.toarray() if hasattr(laplacian, "toarray") else laplacian
+
+    assert dense[1, 2] != pytest.approx(dense[1, 0])
+    assert dense[1, 0] > 0.0
+    assert dense[1, 2] > 0.0
+    assert dense[1].sum() == pytest.approx(0.0)
+
+
 def test_compute_face_normal_handles_unit_and_degenerate_faces():
     from veilbreakers_terrain.handlers.mesh_smoothing import _compute_face_normal
 

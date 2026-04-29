@@ -99,7 +99,12 @@ def _quantize_heightmap(stack: TerrainMaskStack) -> np.ndarray:
 
 def _compute_terrain_normals_zup(heightmap: np.ndarray, cell_size: float) -> np.ndarray:
     """Compute a Z-up normal field from a world-unit heightmap."""
-    h = np.asarray(heightmap, dtype=np.float64)
+    h = np.nan_to_num(
+        np.asarray(heightmap, dtype=np.float64),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
     if h.ndim != 2:
         raise ValueError("heightmap must be 2D")
     if h.size == 0:
@@ -108,8 +113,7 @@ def _compute_terrain_normals_zup(heightmap: np.ndarray, cell_size: float) -> np.
     spacing = max(float(cell_size), 1e-9)
     dzdy, dzdx = np.gradient(h, spacing, spacing, edge_order=1)
     normals = np.stack((-dzdx, -dzdy, np.ones_like(h, dtype=np.float64)), axis=-1)
-    lengths = np.linalg.norm(normals, axis=-1, keepdims=True)
-    lengths = np.where(lengths <= 1e-9, 1.0, lengths)
+    lengths = np.maximum(np.linalg.norm(normals, axis=-1, keepdims=True), 1e-9)
     normals = normals / lengths
     return normals.astype(np.float32)
 
@@ -509,6 +513,8 @@ def _write_raw_array(
     flip_vertical: bool = True,
 ) -> str:
     arr_np = np.asarray(arr)
+    if np.issubdtype(arr_np.dtype, np.floating):
+        arr_np = np.nan_to_num(arr_np, nan=0.0, posinf=0.0, neginf=0.0)
     export_arr = _ensure_little_endian(_flip_for_unity(arr_np) if flip_vertical else arr_np)
     target = output_dir / filename
     target.write_bytes(export_arr.tobytes())
@@ -1135,6 +1141,18 @@ def _terrain_normal_at(stack: TerrainMaskStack, row: int, col: int) -> list[floa
         return [0.0, 0.0, 1.0]
     normal /= norm
     return [float(normal[0]), float(normal[1]), float(normal[2])]
+
+
+def _terrain_height_at_world(stack: TerrainMaskStack, world_x: float, world_y: float) -> float | None:
+    h = np.asarray(stack.height, dtype=np.float64) if stack.height is not None else None
+    if h is None or h.ndim != 2 or h.size == 0:
+        return None
+    cs = max(float(stack.cell_size), 1e-9)
+    col = int(round((float(world_x) - float(stack.world_origin_x)) / cs))
+    row = int(round((float(world_y) - float(stack.world_origin_y)) / cs))
+    row = max(0, min(h.shape[0] - 1, row))
+    col = max(0, min(h.shape[1] - 1, col))
+    return float(h[row, col])
 
 
 def _quantize_detail_density(arr: np.ndarray) -> np.ndarray:
@@ -1989,6 +2007,11 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         if not (tile_min_x <= float(row[0]) <= tile_max_x and tile_min_y <= float(row[1]) <= tile_max_y):
             skipped_out_of_bounds += 1
             continue
+        tree_z = float(row[2])
+        if not np.isfinite(tree_z) or abs(tree_z) <= 1e-9:
+            sampled_z = _terrain_height_at_world(stack, float(row[0]), float(row[1]))
+            if sampled_z is not None:
+                tree_z = sampled_z
         # Wind bend vertex color — Fix 13.2 / REQ-P13-002
         # Two representative heights: root (0.0) and crown (tree_height)
         _representative_heights = np.array([0.0, _TREE_HEIGHT_DEFAULT], dtype=np.float32)
@@ -2008,7 +2031,7 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                 "position": _zup_to_unity_vector([
                     _apply_unity_scale(float(row[0])),
                     _apply_unity_scale(float(row[1])),
-                    _apply_unity_scale(float(row[2])),
+                    _apply_unity_scale(tree_z),
                 ]),
                 "yaw_degrees": float(row[3]),
                 "prototype_id": int(row[4]),

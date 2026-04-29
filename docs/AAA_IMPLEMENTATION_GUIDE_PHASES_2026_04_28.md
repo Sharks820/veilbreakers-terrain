@@ -1416,6 +1416,41 @@ must be regenerated.
 - **File:** `terrain_unity_export.py:1921–1922`. Read placement
   `scale_x`/`scale_z`; emit as `widthScale`/`heightScale`.
 
+### Phase 5 implementation status — 2026-04-29
+
+- **Done in live code:** FIX-5.1, FIX-5.2, FIX-5.3, FIX-5.4, FIX-5.5,
+  FIX-5.6, FIX-5.8, FIX-5.9, FIX-5.15, FIX-5.16, FIX-5.18, FIX-5.21,
+  FIX-5.22, FIX-5.23, FIX-5.24, FIX-5.26, FIX-5.27, FIX-5.28, FIX-5.29,
+  FIX-5.30, FIX-5.31, FIX-5.32, FIX-5.45, FIX-5.49, FIX-5.50, FIX-5.52,
+  FIX-5.38, FIX-5.54, FIX-5.62, FIX-5.63, FIX-5.65, FIX-5.66, FIX-5.67,
+  FIX-5.68, FIX-5.72, FIX-5.74, FIX-5.75, FIX-5.76, FIX-5.77, FIX-5.79.
+- **Already done / stale target by live-code scan:** FIX-5.10 (wind field
+  already uses stack height shape), FIX-5.13 and FIX-5.14 (named functions no
+  longer exist in `terrain_waterfalls_volumetric.py`), FIX-5.17 (bridge gate
+  already completed in Batch 1), FIX-5.19 (no `_place_hero_features()` target
+  in `terrain_framing.py`), FIX-5.20 (no `_cut_meander_loop()` target in
+  `_water_network_ext.py`).
+- **Verification added/updated:** spill-rim bathymetry, finite Unity raw
+  float export, cell-size-aware normals, foam-alpha inversion, v6 slope units,
+  normalized hydraulic erodibility, glacial default snow line, point-vs-spot
+  shadow costs, normal-consistency repair action, species-id preservation,
+  ellipsoid/depth-clipped intrusions, positive-down strata-depth validation,
+  cloud-shadow integer lattice wrap, terrain-height tree export fallback,
+  Quixel visible new-layer weights, sRGB-to-linear albedo blending, XPBD
+  velocity correction, cotangent mesh smoothing, and 88-degree overhang
+  detection.
+- **Latest verification run:** targeted Phase 5 guard set passed (`35 passed`),
+  terrain cliffs passed (`25 passed`), registrar recovery tests passed
+  (`2 passed`), `scan_callable_wiring.py` passed with 1959 rows,
+  `callable_census_gate.py --strict-zero` passed with 1674/1674 graded, and
+  verification matrix reports 0 blockers / 0 false A rows. Advisory high-risk
+  callable backlog remains at 153 rows for later evidence hardening.
+- **Outstanding for later Phase 5 sweep:** FIX-5.25, FIX-5.33 through
+  FIX-5.37, FIX-5.39 through FIX-5.44, FIX-5.46 through FIX-5.48, FIX-5.51, FIX-5.53, FIX-5.55 through
+  FIX-5.61, FIX-5.64, FIX-5.69 through FIX-5.71, FIX-5.73, FIX-5.78,
+  FIX-5.80, and FIX-5.81 still need either live-code proof or implementation
+  before Phase 5 can be called fully closed.
+
 ### Phase 5 verification
 1. Run a 1024² tile end-to-end. Erosion completes in seconds, not minutes.
 2. Foam alpha histogram is concentrated in `[0, 1]` not `[-1, 0]`.

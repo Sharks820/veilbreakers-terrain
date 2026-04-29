@@ -637,7 +637,16 @@ class TestLightBudget:
             {"shadow": True, "flicker": None},
         ]
         result = compute_light_budget(lights, shadow_cost=3.0)
-        assert result["estimated_cost"] == 4.0  # 1 base + 3 shadow
+        assert result["estimated_cost"] == 19.0  # 1 base + 6 point-shadow faces * 3
+
+    def test_spot_shadow_uses_single_shadow_face_cost(self):
+        from veilbreakers_terrain.handlers.light_integration import compute_light_budget
+
+        result = compute_light_budget(
+            [{"light_type": "spot", "shadow": True, "flicker": None}],
+            shadow_cost=3.0,
+        )
+        assert result["estimated_cost"] == 3.8  # 0.8 base + 1 spot-shadow face * 3
 
     def test_flicker_lights_cost_more(self):
         from veilbreakers_terrain.handlers.light_integration import compute_light_budget

@@ -1443,7 +1443,9 @@ def _apply_terrain_preset(
         else:
             cy = (world_center_y - world_origin_y) / max(cell_size, 1e-10)
         max_r = min(rows, cols) / 2.0
-        crater_r = preset.get("crater_radius", 0.3) * max_r
+        if max_r < 1e-9:
+            return hmap
+        crater_r = max(float(preset.get("crater_radius", 0.3)) * max_r, 1e-9)
         crater_depth = preset.get("crater_depth", 0.4)
 
         y_coords, x_coords = np.mgrid[0:rows, 0:cols]

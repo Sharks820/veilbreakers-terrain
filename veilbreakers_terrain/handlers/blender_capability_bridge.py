@@ -1065,31 +1065,14 @@ def bmesh_op(
             other, err = _get_mesh_object(bpy, other_object_name)
             if err:
                 return err
-            # bmesh.ops.intersect_boolean needs a bmesh with the other mesh baked in.
-            other_bm = bmesh_mod.new()
-            other_bm.from_mesh(other.data)
-            try:
-                # Copy geometry from the other bmesh into this one so we can
-                # run the boolean in a single bmesh.
-                bmesh_mod.ops.create_cube(bm, size=0.0)  # no-op to keep API warm
-                # Fall back to the object-level boolean when bmesh lacks the op.
-                if not hasattr(bmesh_mod.ops, "intersect_boolean"):
-                    bm.free()
-                    other_bm.free()
-                    return _modifier_boolean_fallback(
-                        bpy, obj, other, boolean_op.upper(),
-                    )
-                # intersect_boolean expects both operands' geometry present.
-                temp_mesh = bpy.data.meshes.new(name="__tmp_bool_other__")
-                other_bm.to_mesh(temp_mesh)
-                bm.from_mesh(temp_mesh)
-                bpy.data.meshes.remove(temp_mesh)
-                bmesh_mod.ops.intersect_boolean(
-                    bm, geom=list(bm.faces),
-                    target=0, operation=boolean_op.upper(),
+            if not hasattr(bmesh_mod.ops, "intersect_boolean"):
+                return _modifier_boolean_fallback(
+                    bpy, obj, other, boolean_op.upper(),
                 )
-            finally:
-                other_bm.free()
+            bmesh_mod.ops.intersect_boolean(
+                bm, geom=list(bm.faces),
+                target=0, operation=boolean_op.upper(),
+            )
         bm.to_mesh(me)
         me.update()
     finally:

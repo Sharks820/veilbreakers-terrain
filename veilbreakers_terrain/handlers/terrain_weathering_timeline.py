@@ -90,9 +90,7 @@ def apply_weathering_event(
             "weathering_timeline",
         )
 
-    wet = np.asarray(stack.wetness, dtype=np.float64)
-    max_existing = float(wet.max()) if wet.size else 0.0
-    ceil_val = max(1.0, max_existing * 2.0)
+    wet = np.clip(np.asarray(stack.wetness, dtype=np.float64), 0.0, 1.0)
 
     intensity = float(event.intensity)
     kind = event.kind
@@ -117,17 +115,19 @@ def apply_weathering_event(
             weight = np.clip(fa / max(fa_max, 1e-9), 0.0, 1.0)
         else:
             weight = alt_inv
-        wet = np.clip(wet + intensity * (0.5 + 0.5 * weight), 0.0, ceil_val)
+        rain_weight = np.clip(0.5 + 0.5 * weight, 0.0, 1.0)
+        wet = 1.0 - (1.0 - wet) * np.exp(-intensity * rain_weight)
 
     elif kind == "thaw":
         # Thaw releases previously frozen moisture; slope routes it downhill
         slope_drain = np.clip(0.5 + 0.5 * slope_norm, 0.5, 1.0)
-        wet = np.clip(wet + intensity * slope_drain, 0.0, ceil_val)
+        wet = 1.0 - (1.0 - wet) * np.exp(-intensity * slope_drain)
 
     elif kind in ("drought", "wind"):
         # Exposure = higher elevation + steeper slopes dry faster
         exposure = np.clip(0.4 * (1.0 - alt_inv) + 0.6 * slope_norm, 0.0, 1.0)
-        wet = np.clip(wet - intensity * (0.3 + 0.7 * exposure), 0.0, ceil_val)
+        drain_rate = np.clip(0.3 + 0.7 * exposure, 0.0, 1.0)
+        wet = wet * np.exp(-intensity * drain_rate)
 
     elif kind == "freeze":
         # Wetness is locked in place; write an ice_factor channel
