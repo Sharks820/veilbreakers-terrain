@@ -393,6 +393,7 @@ class TerrainMaskStack:
     # Bundle K channels
     stochastic_uv_mask: Optional[np.ndarray] = None
     shadow_map: Optional[np.ndarray] = None
+    shadow_clipmap: Optional[np.ndarray] = None
 
     # -- Unity integratable channels (AAA round-trip contract) --
     # Per-layer splatmap weights (Unity Terrain Layer alphamaps). Shape (H, W, L).
@@ -658,6 +659,7 @@ class TerrainMaskStack:
             # Bundle I AAA geology channels (terrain_stratigraphy upgrade)
             "stochastic_uv_mask",
             "shadow_map",
+            "shadow_clipmap",
             "unconformity_mask",
             "intrusion_mask",
             "albedo_shift_rgb",

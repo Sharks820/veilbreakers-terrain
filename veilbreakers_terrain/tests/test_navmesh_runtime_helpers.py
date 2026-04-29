@@ -66,3 +66,19 @@ def test_build_navmesh_geometry_skips_blocked_quads_and_adds_transition_links():
     assert geometry["triangles"] == [[0, 1, 3], [1, 4, 3], [1, 2, 4], [2, 5, 4]]
     assert len(geometry["off_mesh_connections"]) >= 4
     assert {link["area"] for link in geometry["off_mesh_connections"]} == {NAVMESH_WALKABLE}
+
+
+def test_export_navmesh_json_includes_gameplay_zone_cost_areas(tmp_path):
+    from veilbreakers_terrain.handlers.terrain_navmesh_export import export_navmesh_json
+
+    stack = _stack()
+    zones = np.zeros((3, 3), dtype=np.int32)
+    zones[1:, 1:] = 6
+    stack.set("gameplay_zone", zones, "test")
+
+    descriptor = export_navmesh_json(stack, tmp_path / "navmesh.json")
+
+    costs = descriptor["gameplay_zone_cost_areas"]
+    assert costs[0]["zone_id"] == 6
+    assert costs[0]["navmesh_area"] == 2
+    assert costs[0]["cost_multiplier"] > 1.0

@@ -37,6 +37,12 @@ namespace VeilBreakers.TerrainImport.Editor
             public DetailLayerDescriptor[] detail_layers = Array.Empty<DetailLayerDescriptor>();
             public TreePrototypeDescriptor[] tree_prototypes = Array.Empty<TreePrototypeDescriptor>();
             public string tree_instances_file = "tree_instances.json";
+            public string audio_zones_file = "audio_zones.json";
+            public string gameplay_zones_file = "gameplay_zones.json";
+            public string wildlife_zones_file = "wildlife_zones.json";
+            public string decals_file = "decals.json";
+            public string particle_emitter_specs_file = string.Empty;
+            public string water_shader_manifest_file = "water_shader_manifest.json";
             public string supplemental_mesh_specs_file = string.Empty;
             public SeamContractPayload seam_contract = new SeamContractPayload();
             public string validation_status = "unknown";
@@ -263,8 +269,18 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.WorldId = descriptor.world_id;
             metadata.TileX = descriptor.tile_x;
             metadata.TileY = descriptor.tile_y;
+            metadata.TileSize = descriptor.tile_size;
+            metadata.CellSize = descriptor.cell_size;
+            metadata.HeightMinMeters = descriptor.height_min_m;
+            metadata.HeightMaxMeters = descriptor.height_max_m;
+            metadata.ValidationStatus = descriptor.validation_status;
+            metadata.ValidationIssueCount = descriptor.validation_issue_count;
+            metadata.SeamContractWorldId = descriptor.seam_contract != null
+                ? descriptor.seam_contract.world_id
+                : descriptor.world_id;
 
             CreateSupplementalMeshes(bundleDirectory, descriptor, terrainObject.transform);
+            CreateSidecarReferences(bundleDirectory, descriptor, terrainObject.transform);
 
             EditorUtility.SetDirty(terrainData);
             EditorUtility.SetDirty(terrain);
@@ -283,26 +299,30 @@ namespace VeilBreakers.TerrainImport.Editor
             TerrainBundleDescriptor descriptor
         )
         {
-            var assetPath = AssetDatabase.GenerateUniqueAssetPath(descriptor.terrain_data_asset_path);
+            var assetPath = descriptor.terrain_data_asset_path;
             EnsureAssetFolder(Path.GetDirectoryName(assetPath)?.Replace("\\", "/"));
 
-            var terrainData = new TerrainData
+            var terrainData = AssetDatabase.LoadAssetAtPath<TerrainData>(assetPath);
+            var createAsset = terrainData == null;
+            if (terrainData == null)
             {
-                heightmapResolution = Mathf.Max(33, descriptor.heightmap.width),
-                alphamapResolution = descriptor.splatmaps != null && descriptor.splatmaps.Length > 0
-                    ? Mathf.Max(16, descriptor.splatmaps[0].width)
-                    : 16,
-                baseMapResolution = 1024,
-                size = new Vector3(
-                    Mathf.Max(descriptor.terrain_size_x_m, descriptor.tile_size * descriptor.cell_size),
-                    Mathf.Max(descriptor.height_max_m - descriptor.height_min_m, 1.0f),
-                    Mathf.Max(descriptor.terrain_size_z_m, descriptor.tile_size * descriptor.cell_size)
-                ),
-                wavingGrassStrength = 0.4f,
-                wavingGrassSpeed = 0.5f,
-                wavingGrassAmount = 0.5f,
-                wavingGrassTint = Color.white
-            };
+                terrainData = new TerrainData();
+            }
+
+            terrainData.heightmapResolution = Mathf.Max(33, descriptor.heightmap.width);
+            terrainData.alphamapResolution = descriptor.splatmaps != null && descriptor.splatmaps.Length > 0
+                ? Mathf.Max(16, descriptor.splatmaps[0].width)
+                : 16;
+            terrainData.baseMapResolution = 1024;
+            terrainData.size = new Vector3(
+                Mathf.Max(descriptor.terrain_size_x_m, descriptor.tile_size * descriptor.cell_size),
+                Mathf.Max(descriptor.height_max_m - descriptor.height_min_m, 1.0f),
+                Mathf.Max(descriptor.terrain_size_z_m, descriptor.tile_size * descriptor.cell_size)
+            );
+            terrainData.wavingGrassStrength = 0.4f;
+            terrainData.wavingGrassSpeed = 0.5f;
+            terrainData.wavingGrassAmount = 0.5f;
+            terrainData.wavingGrassTint = Color.white;
 
             ApplyHeightmap(bundleDirectory, descriptor, terrainData);
             ApplyTerrainLayers(bundleDirectory, descriptor, terrainData);
@@ -310,7 +330,11 @@ namespace VeilBreakers.TerrainImport.Editor
             ApplyDetailLayers(bundleDirectory, descriptor, terrainData);
             ApplyTreeInstances(bundleDirectory, descriptor, terrainData);
 
-            AssetDatabase.CreateAsset(terrainData, assetPath);
+            if (createAsset)
+            {
+                AssetDatabase.CreateAsset(terrainData, assetPath);
+            }
+            EditorUtility.SetDirty(terrainData);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             return terrainData;
@@ -614,6 +638,52 @@ namespace VeilBreakers.TerrainImport.Editor
                     materialCache
                 );
             }
+        }
+
+        private static void CreateSidecarReferences(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            Transform parent
+        )
+        {
+            CreateSidecarReference(bundleDirectory, parent, "AudioZones", descriptor.audio_zones_file);
+            CreateSidecarReference(bundleDirectory, parent, "GameplayZones", descriptor.gameplay_zones_file);
+            CreateSidecarReference(bundleDirectory, parent, "WildlifeZones", descriptor.wildlife_zones_file);
+            CreateSidecarReference(bundleDirectory, parent, "Decals", descriptor.decals_file);
+            CreateSidecarReference(bundleDirectory, parent, "ParticleEmitters", descriptor.particle_emitter_specs_file);
+            CreateSidecarReference(bundleDirectory, parent, "WaterShaderManifest", descriptor.water_shader_manifest_file);
+        }
+
+        private static void CreateSidecarReference(
+            string bundleDirectory,
+            Transform parent,
+            string payloadType,
+            string relativeFile
+        )
+        {
+            if (string.IsNullOrEmpty(relativeFile))
+            {
+                return;
+            }
+
+            var payloadPath = Path.Combine(bundleDirectory, relativeFile);
+            if (!File.Exists(payloadPath))
+            {
+                Debug.LogWarning($"VeilBreakers terrain import missing {payloadType} sidecar: {relativeFile}");
+                return;
+            }
+
+            var go = new GameObject($"VB_{payloadType}");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale = Vector3.one;
+
+            var reference = go.AddComponent<VbTerrainSidecarReference>();
+            reference.PayloadType = payloadType;
+            reference.RelativeFile = relativeFile;
+            reference.JsonPayload = File.ReadAllText(payloadPath);
+            reference.ByteSize = reference.JsonPayload.Length;
         }
 
         private static Mesh BuildSupplementalMesh(
@@ -931,10 +1001,18 @@ namespace VeilBreakers.TerrainImport.Editor
                 return existing;
             }
 
-            var shader = Shader.Find("Standard");
+            var shader = Shader.Find("HDRP/TerrainLit");
+            if (shader == null)
+            {
+                shader = Shader.Find("HDRP/Lit");
+            }
             if (shader == null)
             {
                 shader = Shader.Find("Universal Render Pipeline/Lit");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Standard");
             }
             if (shader == null)
             {
@@ -1056,7 +1134,15 @@ namespace VeilBreakers.TerrainImport.Editor
             var material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
             if (material == null)
             {
-                var shader = Shader.Find("Universal Render Pipeline/Lit");
+                var shader = Shader.Find("HDRP/TerrainLit");
+                if (shader == null)
+                {
+                    shader = Shader.Find("HDRP/Lit");
+                }
+                if (shader == null)
+                {
+                    shader = Shader.Find("Universal Render Pipeline/Lit");
+                }
                 if (shader == null)
                 {
                     shader = Shader.Find("Standard");

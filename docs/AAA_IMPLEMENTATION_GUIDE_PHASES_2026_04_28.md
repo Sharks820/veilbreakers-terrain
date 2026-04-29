@@ -1483,6 +1483,16 @@ with several of these. Coordinate with Unity scene owners.
 
 ### Fixes in this phase
 
+**Status 2026-04-29:** Partially implemented and committed as a Phase 6
+checkpoint. Done in live code: FIX-6.1, FIX-6.3, FIX-6.4 through FIX-6.9,
+FIX-6.13 through FIX-6.18, FIX-6.20, FIX-6.22 through FIX-6.25. Still open:
+FIX-6.2 hard-raise/write_export_manifest semantics, FIX-6.10 canonical
+`output/terrain_data/` path split, FIX-6.12 Unity NavMesh `.asset` bake,
+FIX-6.19 protocol decorators, FIX-6.21 light/probe JSON import, and FIX-6.26
+manifest block on seam mismatch. Verification run so far:
+`test_terrain_unity_export_bridge.py`, `test_navmesh_runtime_helpers.py`,
+`test_p13_unity_scale_factor.py`, and `TestUnityExportContracts`.
+
 #### FIX-6.1 (FIX-2-1) — Manifest height bounds unscaled
 - **P0 ref:** I7-P0-1
 - **File:** `terrain_unity_export.py:1548–1549`. Remove `_apply_unity_scale`

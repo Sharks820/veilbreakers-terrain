@@ -93,21 +93,21 @@ class TestUnityScaleAppliedToManifest:
             f"cell_size: expected {expected}, got {manifest['cell_size']}"
         )
 
-    def test_height_min_scaled(self):
+    def test_height_min_stays_in_terrain_meters_with_unity_units_sidecar(self):
         stack = _make_minimal_stack()
         with tempfile.TemporaryDirectory() as td:
             manifest = export_unity_manifest(stack, Path(td))
-        expected = 0.0 * UNITY_SCALE_FACTOR
-        assert abs(manifest["height_min_m"] - expected) < 1e-6
+        assert abs(manifest["height_min_m"] - 0.0) < 1e-6
+        assert abs(manifest["height_min_unity_units"] - 0.0 * UNITY_SCALE_FACTOR) < 1e-6
 
-    def test_height_max_scaled(self):
+    def test_height_max_stays_in_terrain_meters_with_unity_units_sidecar(self):
         stack = _make_minimal_stack()
         with tempfile.TemporaryDirectory() as td:
             manifest = export_unity_manifest(stack, Path(td))
-        expected = 100.0 * UNITY_SCALE_FACTOR
-        assert abs(manifest["height_max_m"] - expected) < 1e-6, (
-            f"height_max_m: expected {expected}, got {manifest['height_max_m']}"
+        assert abs(manifest["height_max_m"] - 100.0) < 1e-6, (
+            f"height_max_m: expected 100.0, got {manifest['height_max_m']}"
         )
+        assert abs(manifest["height_max_unity_units"] - 100.0 * UNITY_SCALE_FACTOR) < 1e-6
 
     def test_unity_world_origin_scaled(self):
         stack = _make_minimal_stack()

@@ -260,7 +260,7 @@ def validate_bit_depth_contract(
                 )
         if kind == "splatmap":
             enc = meta.get("encoding", "")
-            if enc and enc != contract.splatmap_encoding:
+            if enc != contract.splatmap_encoding:
                 issues.append(
                     ValidationIssue(
                         code="SPLATMAP_ENCODING_VIOLATION",

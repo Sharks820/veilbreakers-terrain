@@ -518,6 +518,14 @@ class TestUnityExportContracts:
         issues = validate_bit_depth_contract(c, meta)
         assert any(i.code == "SPLATMAP_ENCODING_VIOLATION" for i in issues)
 
+    def test_splatmap_encoding_missing_key_is_violation(self):
+        c = UnityExportContract()
+        meta = {
+            "splatmap_00.raw": {"bit_depth": 8},
+        }
+        issues = validate_bit_depth_contract(c, meta)
+        assert any(i.code == "SPLATMAP_ENCODING_VIOLATION" for i in issues)
+
     def test_terrain_normals_encoding_violation_detected(self):
         c = UnityExportContract()
         meta = {

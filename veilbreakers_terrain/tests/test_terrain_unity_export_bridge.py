@@ -79,7 +79,7 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     stack = _make_stack()
 
     with tempfile.TemporaryDirectory() as td:
-        export_unity_manifest(stack, Path(td))
+        manifest = export_unity_manifest(stack, Path(td))
         descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
 
     assert descriptor["heightmap"]["file"] == "heightmap.raw"
@@ -87,6 +87,10 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     assert descriptor["terrain_layers"][0]["terrain_layer_asset_path"].endswith(".terrainlayer")
     assert descriptor["validation_status"] == "passed"
     assert descriptor["unity_world_origin"][1] == 10.0 * UNITY_SCALE_FACTOR
+    assert manifest["height_min_m"] == 10.0
+    assert manifest["height_max_m"] == 22.0
+    assert descriptor["height_min_m"] == 10.0 * UNITY_SCALE_FACTOR
+    assert descriptor["height_max_m"] == 22.0 * UNITY_SCALE_FACTOR
 
 
 def test_heightmap_raw_export_is_flipped_once(monkeypatch):
@@ -224,6 +228,113 @@ def test_shadow_clipmap_contract_accepts_float32_npy():
     assert issues == []
 
 
+def test_export_manifest_writes_phase6_array_channels():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.set("grass_density_map", np.full((5, 5), 0.25, dtype=np.float32), "test")
+    stack.set("terrain_displacement", np.full((5, 5), 0.1, dtype=np.float32), "test")
+    stack.set("shadow_clipmap", np.full((5, 5), 0.75, dtype=np.float32), "test")
+    stack.set("corruption_map", np.full((5, 5), 0.5, dtype=np.float32), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td))
+
+    for filename in (
+        "grass_density_map.bin",
+        "terrain_displacement.bin",
+        "shadow_clipmap.bin",
+        "corruption_map.bin",
+    ):
+        assert filename in manifest["files"]
+        assert manifest["files"][filename]["shape"] == [5, 5]
+
+
+def test_export_manifest_records_tile_biome_distribution():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.biome_names = ["forest", "swamp"]
+    stack.set("biome_id", np.array(
+        [
+            [0, 0, 1, 1, 1],
+            [0, 0, 1, 1, 1],
+            [0, 0, 1, 1, 1],
+            [0, 0, 1, 1, 1],
+            [0, 0, 1, 1, 1],
+        ],
+        dtype=np.uint8,
+    ), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td))
+
+    assert manifest["tile_biome_id"] == 1
+    assert manifest["tile_biome_name"] == "swamp"
+    assert manifest["biome_distribution"][0]["cell_count"] == 15
+
+
+def test_phase6_zone_json_contains_priority_z_radius_density_and_normal_rotation():
+    from veilbreakers_terrain.handlers.terrain_unity_export import (
+        _decals_json,
+        _gameplay_zones_json,
+        _wildlife_zones_json,
+    )
+
+    stack = _make_stack()
+    gameplay = np.zeros((5, 5), dtype=np.int32)
+    gameplay[1:3, 1:3] = 6
+    gameplay[3:5, 3:5] = 1
+    stack.set("gameplay_zone", gameplay, "test")
+    wildlife = np.zeros((5, 5), dtype=np.float32)
+    wildlife[1:4, 1:4] = 0.8
+    stack.set("wildlife_affinity", {"wolf": wildlife}, "test")
+    decal = np.zeros((5, 5), dtype=np.float32)
+    decal[2, 2] = 1.0
+    stack.set("decal_density", {"mud": decal}, "test")
+
+    zones = _gameplay_zones_json(stack)["zones"]
+    assert zones[0]["priority"] >= zones[-1]["priority"]
+    assert zones[0]["z_max_m"] > zones[0]["z_min_m"]
+    assert zones[0]["trigger_radius_m"] > 0.0
+
+    volume = _wildlife_zones_json(stack)["volumes"][0]
+    assert volume["area_m2"] == 9 * stack.cell_size ** 2
+    assert volume["density_per_area_m2"] > 0.0
+
+    placement = _decals_json(stack)["decals"]["mud"]["placements"][0]
+    assert "rotation_euler_degrees" in placement
+    assert len(placement["rotation_euler_degrees"]) == 3
+
+
+def test_unity_plugin_metadata_and_descriptor_cover_phase6_files():
+    repo_root = Path(__file__).resolve().parents[2]
+    importer_source = (repo_root / "unity_plugin" / "Editor" / "VbTerrainImporter.cs").read_text(encoding="utf-8")
+    metadata_source = (repo_root / "unity_plugin" / "VbTerrainTileMetadata.cs").read_text(encoding="utf-8")
+
+    for token in (
+        "audio_zones_file",
+        "gameplay_zones_file",
+        "wildlife_zones_file",
+        "decals_file",
+        "particle_emitter_specs_file",
+        "water_shader_manifest_file",
+    ):
+        assert token in importer_source
+
+    for token in (
+        "TileSize",
+        "CellSize",
+        "HeightMinMeters",
+        "HeightMaxMeters",
+        "HeightScaleFactor",
+        "ValidationStatus",
+        "ValidationIssueCount",
+        "SeamContractWorldId",
+    ):
+        assert token in metadata_source
+
+
 def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
     repo_root = Path(__file__).resolve().parents[2]
     importer_path = repo_root / "unity_plugin" / "Editor" / "VbTerrainImporter.cs"
@@ -245,6 +356,10 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "MeshFilter",
         "MeshRenderer",
         "VbTerrainTileMetadata",
+        "CreateSidecarReferences",
+        "VbTerrainSidecarReference",
+        "AssetDatabase.LoadAssetAtPath<TerrainData>",
+        "Shader.Find(\"HDRP/TerrainLit\")",
         "TryAppendSupplementalFaceTriangles",
         "TryEarClipSupplementalPolygon",
         "mesh.SetUVs(1, dripMask)",

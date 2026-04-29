@@ -17,7 +17,12 @@ import numpy as np
 
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainMaskStack, TerrainPipelineState
 from .terrain_chunking import build_tile_seam_contract
-from .terrain_unity_export_contracts import UnityExportContract, validate_bit_depth_contract
+from .terrain_unity_export_contracts import (
+    REQUIRED_MESH_ATTRIBUTES,
+    UnityExportContract,
+    validate_bit_depth_contract,
+    validate_mesh_attributes_present,
+)
 
 
 _DETAIL_DENSITY_MAX_PER_CELL = 16
@@ -1005,6 +1010,50 @@ def _component_vertical_extent(
     )
 
 
+def _biome_manifest_json(stack: TerrainMaskStack) -> Dict[str, Any]:
+    """Summarize dominant biome and per-biome cell distribution for Unity."""
+    biome = stack.biome_id
+    if biome is None:
+        return {
+            "primary_biome_id": None,
+            "primary_biome_name": None,
+            "distribution": [],
+        }
+
+    arr = np.asarray(biome)
+    if arr.size == 0:
+        return {
+            "primary_biome_id": None,
+            "primary_biome_name": None,
+            "distribution": [],
+        }
+
+    vals, counts = np.unique(arr.astype(np.int64), return_counts=True)
+    total = max(int(counts.sum()), 1)
+    names_raw = getattr(stack, "biome_names", None)
+    biome_names = list(names_raw) if isinstance(names_raw, (list, tuple)) else []
+
+    rows: List[Dict[str, Any]] = []
+    for val, count in zip(vals.tolist(), counts.tolist()):
+        idx = int(val)
+        name = biome_names[idx] if 0 <= idx < len(biome_names) else f"biome_{idx}"
+        rows.append(
+            {
+                "biome_id": idx,
+                "biome_name": str(name),
+                "cell_count": int(count),
+                "fraction": float(count) / float(total),
+            }
+        )
+    rows.sort(key=lambda item: (-int(item["cell_count"]), int(item["biome_id"])))
+    primary = rows[0] if rows else None
+    return {
+        "primary_biome_id": None if primary is None else int(primary["biome_id"]),
+        "primary_biome_name": None if primary is None else str(primary["biome_name"]),
+        "distribution": rows,
+    }
+
+
 def _build_unity_import_descriptor(
     stack: TerrainMaskStack,
     manifest: Dict[str, Any],
@@ -1071,8 +1120,8 @@ def _build_unity_import_descriptor(
         "unity_world_origin": list(manifest["unity_world_origin"]),
         "terrain_size_x_m": float(int(manifest["tile_size"]) * float(manifest["cell_size"])),
         "terrain_size_z_m": float(int(manifest["tile_size"]) * float(manifest["cell_size"])),
-        "height_min_m": manifest.get("height_min_m"),
-        "height_max_m": manifest.get("height_max_m"),
+        "height_min_m": manifest.get("height_min_unity_units", manifest.get("height_min_m")),
+        "height_max_m": manifest.get("height_max_unity_units", manifest.get("height_max_m")),
         "heightmap": {
             "file": "heightmap.raw",
             "width": height_cols,
@@ -1092,6 +1141,16 @@ def _build_unity_import_descriptor(
         "gameplay_zones_file": "gameplay_zones.json",
         "wildlife_zones_file": "wildlife_zones.json",
         "decals_file": "decals.json",
+        "particle_emitter_specs_file": (
+            "particle_emitter_specs.json"
+            if "particle_emitter_specs.json" in files
+            else ""
+        ),
+        "water_shader_manifest_file": (
+            "water_shader_manifest.json"
+            if "water_shader_manifest.json" in files
+            else ""
+        ),
         "supplemental_mesh_specs_file": (
             "supplemental_mesh_specs.json"
             if "supplemental_mesh_specs.json" in files
@@ -1382,6 +1441,7 @@ def export_unity_manifest(
         "flow_direction", "flow_accumulation",
         "water_surface", "foam", "mist", "wet_rock", "tidal", "waterfall_velocity",
         "biome_id", "corruption_map", "macro_color", "roughness_variation", "snow_line_factor",
+        "grass_density_map", "terrain_displacement", "shadow_clipmap",
         "strata_orientation", "rock_hardness",
         "strat_erosion_delta", "sediment_height", "bedrock_height",
         "coastline_delta", "karst_delta", "wind_erosion_delta", "glacial_delta",
@@ -1640,6 +1700,7 @@ def export_unity_manifest(
     determinism_hash = stack.compute_hash()
     world_id = str(getattr(stack, "world_id", "unknown"))
     batch_id = getattr(stack, "batch_id", None)
+    biome_manifest = _biome_manifest_json(stack)
     terrain_base_y = (
         float(stack.height_min_m)
         if stack.height_min_m is not None
@@ -1657,8 +1718,18 @@ def export_unity_manifest(
         "unity_world_origin": _apply_unity_scale(
             [float(stack.world_origin_x), terrain_base_y, float(stack.world_origin_y)]
         ),
-        "height_min_m": _apply_unity_scale(float(stack.height_min_m)) if stack.height_min_m is not None else None,
-        "height_max_m": _apply_unity_scale(float(stack.height_max_m)) if stack.height_max_m is not None else None,
+        "height_min_m": float(stack.height_min_m) if stack.height_min_m is not None else None,
+        "height_max_m": float(stack.height_max_m) if stack.height_max_m is not None else None,
+        "height_min_unity_units": (
+            _apply_unity_scale(float(stack.height_min_m))
+            if stack.height_min_m is not None
+            else None
+        ),
+        "height_max_unity_units": (
+            _apply_unity_scale(float(stack.height_max_m))
+            if stack.height_max_m is not None
+            else None
+        ),
         "height_scale_factor": UNITY_SCALE_FACTOR,
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
         "source_coordinate_system": stack.coordinate_system,
@@ -1679,6 +1750,9 @@ def export_unity_manifest(
         "splatmap_group_count": len(splatmap_files),
         "splatmap_layer_count": len(splatmap_layer_meta),
         "splatmap_layers": splatmap_layer_meta,
+        "tile_biome_id": biome_manifest["primary_biome_id"],
+        "tile_biome_name": biome_manifest["primary_biome_name"],
+        "biome_distribution": biome_manifest["distribution"],
         "detail_density_max_per_cell": _DETAIL_DENSITY_MAX_PER_CELL,
         "tree_prototype_list": tree_prototype_list,
         "foliage_scatter_manifest": _build_foliage_scatter_manifest(),
@@ -1707,6 +1781,7 @@ def export_unity_manifest(
         ),
     }
     validation_issues = validate_bit_depth_contract(UnityExportContract(), files)
+    validation_issues.extend(validate_mesh_attributes_present(REQUIRED_MESH_ATTRIBUTES))
     manifest["validation_issue_count"] = len(validation_issues)
     manifest["validation_issues"] = [
         {
@@ -1748,24 +1823,58 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     if arr is None:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
+    try:
+        from .terrain_audio_zones import AudioReverbClass, REVERB_PRESETS, compute_audio_zone_list
+        enriched_zones = list(stack.audio_zone_list or compute_audio_zone_list(stack))
+        class_name_fallback = {
+            int(AudioReverbClass.OPEN_FIELD): "open_field",
+            int(AudioReverbClass.FOREST_DENSE): "forest_dense",
+            int(AudioReverbClass.FOREST_SPARSE): "forest_sparse",
+            int(AudioReverbClass.CAVE): "cave",
+            int(AudioReverbClass.CANYON): "canyon",
+            int(AudioReverbClass.WATER_NEAR): "water_near",
+            int(AudioReverbClass.MOUNTAIN_HIGH): "mountain_high",
+            int(AudioReverbClass.INTERIOR): "interior",
+        }
+    except Exception:
+        REVERB_PRESETS = {}
+        enriched_zones = []
+        class_name_fallback = {
+            0: "open_field",
+            1: "forest_dense",
+            2: "forest_sparse",
+            3: "cave",
+            4: "canyon",
+            5: "water_near",
+            6: "mountain_high",
+            7: "interior",
+        }
+
+    enriched_by_class: Dict[int, List[Dict[str, Any]]] = {}
+    for zone in enriched_zones:
+        try:
+            enriched_by_class.setdefault(int(zone.get("class_id", 0)), []).append(zone)
+        except Exception:
+            continue
+
     arr_np = np.asarray(arr)
-    class_params = {
-        0: ("open_field", 0.15, 0.2, 0.4),
-        1: ("forest_dense", 0.45, 0.3, 0.7),
-        2: ("forest_sparse", 0.3, 0.25, 0.55),
-        3: ("cave_tight", 0.8, 0.6, 1.2),
-        4: ("canyon_long", 0.7, 0.55, 1.6),
-        5: ("water_near", 0.35, 0.3, 0.5),
-        6: ("mountain_high", 0.2, 0.15, 0.45),
-        7: ("interior", 0.5, 0.4, 0.9),
-    }
     world_tile_extent = stack.tile_size * stack.cell_size
     for val in np.unique(arr_np).tolist():
-        name, wet, er, tail = class_params.get(int(val), ("unknown", 0.2, 0.2, 0.5))
+        class_queue = enriched_by_class.get(int(val), [])
         mask = arr_np == val
         if not mask.any():
             continue
-        for rr, cc in _iter_connected_components(mask):
+        for component_index, (rr, cc) in enumerate(_iter_connected_components(mask)):
+            enriched = class_queue[min(component_index, len(class_queue) - 1)] if class_queue else {}
+            name = str(
+                enriched.get("preset")
+                or enriched.get("reverb_preset")
+                or class_name_fallback.get(int(val), "unknown")
+            )
+            preset = REVERB_PRESETS.get(name, {})
+            wet = float(enriched.get("wet_send_default", enriched.get("dry_wet_ratio", 0.2)))
+            er = float(preset.get("pre_delay", 0.2))
+            tail = float(enriched.get("rt60_seconds", enriched.get("rt60", preset.get("rt60", 0.5))))
             min_z, max_z = _component_vertical_extent(
                 stack,
                 rr,
@@ -1782,6 +1891,10 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                     "wet_mix": wet,
                     "early_reflections": er,
                     "tail_length": tail,
+                    "zone_id": enriched.get("id", f"{name}_{component_index:03d}"),
+                    "rt60_seconds": tail,
+                    "echo_delay_ms": float(enriched.get("echo_delay_ms", 0.0)),
+                    "occlusion_weight": float(enriched.get("occlusion_weight", 0.0)),
                     "cell_count": int(rr.size),
                 }
             )
@@ -1824,10 +1937,17 @@ def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                     "bounds": _component_bounds(stack, rr, cc, min_z, max_z),
                     "kind": name,
                     "reason": reason,
+                    "priority": int(val),
+                    "z_min_m": float(min_z),
+                    "z_max_m": float(max_z),
+                    "trigger_radius_m": float(
+                        max(stack.cell_size, np.sqrt(float(rr.size)) * float(stack.cell_size) * 0.5)
+                    ),
                     "suggestion_tags": [],
                     "cell_count": int(rr.size),
                 }
             )
+    zones.sort(key=lambda zone: (int(zone["priority"]), int(zone["cell_count"])), reverse=True)
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
 
@@ -1857,6 +1977,12 @@ def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                     "bounds": _component_bounds(stack, rr, cc, min_z, max_z),
                     "species": species,
                     "density": float(component_values.mean()) if component_values.size else 0.0,
+                    "area_m2": float(rr.size) * float(stack.cell_size) ** 2,
+                    "density_per_area_m2": (
+                        float(component_values.sum()) / max(float(rr.size) * float(stack.cell_size) ** 2, 1e-9)
+                    ),
+                    "z_min_m": float(min_z),
+                    "z_max_m": float(max_z),
                     "cell_count": int(rr.size),
                     "spawn_rules": {},
                 }
@@ -1882,6 +2008,10 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
             jitter_hash = ((int(r) * 73856093) ^ (int(c) * 19349663)) & 0xFFFFFFFF
             rotation = float((jitter_hash % 36000) / 100.0)
             scale = float(np.clip(0.8 + strength * 0.6, 0.8, 1.4))
+            normal_zup = _terrain_normal_at(stack, int(r), int(c))
+            normal_unity = _zup_to_unity_vector(normal_zup)
+            pitch = float(np.degrees(np.arctan2(normal_unity[2], max(normal_unity[1], 1e-6))))
+            roll = float(-np.degrees(np.arctan2(normal_unity[0], max(normal_unity[1], 1e-6))))
             position_zup = [
                 _apply_unity_scale(float(stack.world_origin_x + c * stack.cell_size)),
                 _apply_unity_scale(float(stack.world_origin_y + r * stack.cell_size)),
@@ -1890,9 +2020,10 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
             placements.append(
                 {
                     "position": _zup_to_unity_vector(position_zup),
-                    "normal": _zup_to_unity_vector(_terrain_normal_at(stack, int(r), int(c))),
+                    "normal": normal_unity,
                     "scale": scale,
                     "rotation": rotation,
+                    "rotation_euler_degrees": [pitch, rotation, roll],
                     "strength": strength,
                 }
             )

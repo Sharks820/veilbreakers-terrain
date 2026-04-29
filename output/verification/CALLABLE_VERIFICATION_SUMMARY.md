@@ -2,11 +2,11 @@
 
 This report treats grade rows as claims, not proof. A callable needs executable evidence.
 
-- Total callables: 1674
+- Total callables: 1676
 - Blockers: 0
-- High risk: 153
+- High risk: 154
 - Medium risk: 1
-- Low risk: 1520
+- Low risk: 1521
 - A-grade rows with no executable evidence: 0
 - Tool/Blender callables needing blocker/high evidence: 108
 
@@ -32,11 +32,11 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_god_ray_hints.py: 2
 - terrain_horizon_lod.py: 2
 - terrain_legacy_bug_fixes.py: 2
+- terrain_navmesh_export.py: 2
 - terrain_palette_extract.py: 2
 - terrain_review_ingest.py: 2
 - terrain_telemetry_dashboard.py: 2
 - terrain_wildlife_zones.py: 2
-- _water_network_ext.py: 1
 
 ## Top Blocker/High Callables
 

@@ -80,6 +80,47 @@ _AREA_LEGEND: Dict[str, int] = {
 }
 
 
+_GAMEPLAY_ZONE_COSTS: Dict[int, Dict[str, Any]] = {
+    0: {"name": "safe", "area": NAVMESH_WALKABLE, "cost_multiplier": 1.0},
+    1: {"name": "combat", "area": NAVMESH_REDUCED_SPEED, "cost_multiplier": 1.15},
+    2: {"name": "stealth", "area": NAVMESH_REDUCED_SPEED, "cost_multiplier": 1.25},
+    3: {"name": "exploration", "area": NAVMESH_WALKABLE, "cost_multiplier": 1.0},
+    4: {"name": "boss_arena", "area": NAVMESH_REDUCED_SPEED, "cost_multiplier": 1.35},
+    5: {"name": "narrative", "area": NAVMESH_WALKABLE, "cost_multiplier": 0.95},
+    6: {"name": "puzzle", "area": NAVMESH_REDUCED_SPEED, "cost_multiplier": 1.20},
+}
+
+
+def _gameplay_zone_cost_areas(stack: TerrainMaskStack) -> List[Dict[str, Any]]:
+    zones = stack.gameplay_zone
+    if zones is None:
+        return []
+    arr = np.asarray(zones)
+    if arr.size == 0:
+        return []
+    vals, counts = np.unique(arr.astype(np.int64), return_counts=True)
+    total = max(int(counts.sum()), 1)
+    rows: List[Dict[str, Any]] = []
+    for val, count in zip(vals.tolist(), counts.tolist()):
+        zone_id = int(val)
+        spec = _GAMEPLAY_ZONE_COSTS.get(
+            zone_id,
+            {"name": f"zone_{zone_id}", "area": NAVMESH_WALKABLE, "cost_multiplier": 1.0},
+        )
+        rows.append(
+            {
+                "zone_id": zone_id,
+                "zone_name": str(spec["name"]),
+                "navmesh_area": int(spec["area"]),
+                "cost_multiplier": float(spec["cost_multiplier"]),
+                "cell_count": int(count),
+                "fraction": float(count) / float(total),
+            }
+        )
+    rows.sort(key=lambda item: (int(item["zone_id"])), reverse=True)
+    return rows
+
+
 def compute_navmesh_area_id(
     stack: TerrainMaskStack,
     max_walkable_slope_deg: float = 30.0,
@@ -498,6 +539,7 @@ def export_navmesh_json(
         "verts": geometry["vertices"],
         "polys": geometry["triangles"],
         "areas": geometry["area_ids"],
+        "gameplay_zone_cost_areas": _gameplay_zone_cost_areas(stack),
         "off_mesh_connections": geometry["off_mesh_connections"],
         "stats": {
             "cell_counts": distribution,
