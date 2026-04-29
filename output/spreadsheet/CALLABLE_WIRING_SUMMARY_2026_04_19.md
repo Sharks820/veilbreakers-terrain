@@ -7,15 +7,15 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Totals
 
-- Live handler callables scanned: `1936`
-- Callables missing from the grade sheet: `497`
-- Callables without any R9 grade attached via matching CSV row: `885`
+- Live handler callables scanned: `1938`
+- Callables missing from the grade sheet: `499`
+- Callables without any R9 grade attached via matching CSV row: `887`
 
 Status distribution:
-- `helper_reachable`: `1352`
+- `helper_reachable`: `1353`
 - `orphan_candidate`: `96`
 - `runtime_primary`: `247`
-- `test_only_or_unwired`: `240`
+- `test_only_or_unwired`: `241`
 - `uninvoked_registrar`: `1`
 
 ## Highest-Risk Files
@@ -39,7 +39,7 @@ Status distribution:
 - `terrain_blender_safety.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_checkpoints.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
 - `terrain_hot_reload.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
-- `terrain_reference_locks.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
+- `terrain_pass_dag.py`: `5` callable(s) flagged as orphaned, registrar-only, or test-only
 
 ## Interpretation
 

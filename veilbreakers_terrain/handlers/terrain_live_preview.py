@@ -30,10 +30,10 @@ def _clone_stack_for_diff(stack: Any) -> Any:
     for name in stack._ARRAY_CHANNELS:
         val = getattr(stack, name, None)
         if val is not None:
-            setattr(clone, name, val.copy())
+            object.__setattr__(clone, name, val.copy())
     # populated_by_pass is a dict
-    clone.populated_by_pass = dict(stack.populated_by_pass)
-    clone.dirty_channels = set(stack.dirty_channels)
+    object.__setattr__(clone, "populated_by_pass", dict(stack.populated_by_pass))
+    object.__setattr__(clone, "dirty_channels", set(stack.dirty_channels))
     return clone
 
 

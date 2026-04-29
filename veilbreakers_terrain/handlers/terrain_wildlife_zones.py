@@ -367,10 +367,9 @@ def compute_wildlife_affinity(
 
         affinity_maps[rule.species] = np.clip(score, 0.0, 1.0).astype(np.float32)
 
-    if stack.wildlife_affinity is None:
-        stack.wildlife_affinity = {}
-    stack.wildlife_affinity.update(affinity_maps)
-    stack.populated_by_pass["wildlife_affinity"] = "wildlife_zones"
+    wildlife_affinity = dict(stack.wildlife_affinity or {})
+    wildlife_affinity.update(affinity_maps)
+    stack.set("wildlife_affinity", wildlife_affinity, "wildlife_zones")
     return affinity_maps
 
 
@@ -434,9 +433,9 @@ def pass_wildlife_zones(
 
     affinity = compute_wildlife_affinity(stack, rules, habitat_weights=habitat_weights)
 
-    if stack.wildlife_affinity is None:
-        stack.wildlife_affinity = {}
-    stack.wildlife_affinity.update(affinity)
+    wildlife_affinity = dict(stack.wildlife_affinity or {})
+    wildlife_affinity.update(affinity)
+    stack.set("wildlife_affinity", wildlife_affinity, "wildlife_zones")
 
     metrics: Dict[str, Any] = {}
     for species, arr in affinity.items():

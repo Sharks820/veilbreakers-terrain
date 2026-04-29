@@ -25,6 +25,16 @@ from .terrain_semantics import (
 def _walk_scene() -> dict:
     """Walk bpy.data to extract real scene state when running in Blender."""
     result = {}
+
+    def _coerce_vec3(raw) -> Optional[Tuple[float, float, float]]:
+        try:
+            values = tuple(float(v) for v in raw)
+        except (TypeError, ValueError):
+            return None
+        if len(values) < 3:
+            return None
+        return values[:3]
+
     try:
         import bpy
         # Collect objects with vb_feature_id custom property
@@ -43,15 +53,18 @@ def _walk_scene() -> dict:
         # local -Z; matrix_world.col[2] is local +Z and points backward.
         cam = bpy.context.scene.camera
         if cam:
-            backward = cam.matrix_world.col[2][:3]
-            forward = tuple(float(-v) for v in backward)
-            loc = tuple(float(v) for v in cam.location)
-            result["focal_direction"] = list(forward)
-            result["focal_point"] = [
-                loc[0] + forward[0] * 10.0,
-                loc[1] + forward[1] * 10.0,
-                loc[2] + forward[2] * 10.0,
-            ]
+            backward = _coerce_vec3(cam.matrix_world.col[2][:3])
+            loc = _coerce_vec3(cam.location)
+            # Pytest's MagicMock bpy stubs evaluate truthy but do not expose
+            # real 3D vectors. Treat that as headless/no-live-scene data.
+            if backward is not None and loc is not None:
+                forward = tuple(float(-v) for v in backward)
+                result["focal_direction"] = list(forward)
+                result["focal_point"] = [
+                    loc[0] + forward[0] * 10.0,
+                    loc[1] + forward[1] * 10.0,
+                    loc[2] + forward[2] * 10.0,
+                ]
 
         # Waterfall chain empties
         waterfall_chains = []

@@ -84,7 +84,11 @@ def apply_weathering_event(
     H, W = h.shape
 
     if stack.wetness is None:
-        stack.wetness = np.zeros((H, W), dtype=np.float32)
+        stack.set(
+            "wetness",
+            np.zeros((H, W), dtype=np.float32),
+            "weathering_timeline",
+        )
 
     wet = np.asarray(stack.wetness, dtype=np.float64)
     max_existing = float(wet.max()) if wet.size else 0.0
@@ -138,4 +142,4 @@ def apply_weathering_event(
     else:
         return
 
-    stack.wetness = wet.astype(np.float32)
+    stack.set("wetness", wet.astype(np.float32), "weathering_timeline")

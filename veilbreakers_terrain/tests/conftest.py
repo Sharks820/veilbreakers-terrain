@@ -101,8 +101,8 @@ for _mod_name in _BLENDER_MODS:
 def strict_provenance():
     """Enable stack-bypass detection for all tests.
 
-    Sets TerrainMaskStack._STRICT_PROVENANCE=True so that any direct channel
-    assignment (stack.slope = arr) raises AttributeError instead of the
+    Sets TerrainMaskStack._STRICT_PROVENANCE=True so that direct channel
+    assignment raises AttributeError instead of the
     production warning.  This surfaces the 179 SimpleNamespace-mock bypass
     patterns that previously hid stack-bypass bugs from the test suite.
     """

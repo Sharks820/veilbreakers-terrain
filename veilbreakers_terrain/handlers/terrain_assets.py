@@ -847,8 +847,7 @@ def pass_scatter_intelligent(
     # detail_density is a dict channel; preserve existing vegetation layers.
     existing_detail = dict(stack.detail_density or {})
     existing_detail.update(detail)
-    stack.detail_density = existing_detail
-    stack.populated_by_pass["detail_density"] = "scatter_intelligent"
+    stack.set("detail_density", existing_detail, "scatter_intelligent")
 
     # Expose full placement dict as a side-effect for downstream bundles.
     # TerrainPipelineState is a mutable dataclass — setattr is fine.

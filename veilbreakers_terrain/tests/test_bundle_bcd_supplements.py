@@ -374,7 +374,7 @@ def test_load_quality_profile_all_four():
 
 
 def test_load_quality_profile_unknown_raises():
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError):
         load_quality_profile("cinematic_2050")
 
 

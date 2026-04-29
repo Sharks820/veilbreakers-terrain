@@ -3908,3 +3908,181 @@ New P0 findings from this final sweep: **67** (S22-P0-1 through S22-P0-67)
 
 **End of Section 22. The audit is now complete.**
 
+---
+
+## Section 23 — Codex Phase-1 / Test-Gate Verification Addendum (2026-04-28)
+
+**Source:** Live Codex re-audit of Phase 1 + pre-Phase-1 implementation files, the master audit, fix-order sheet, implementation phase guide, and test audit. Evidence came from direct reads of the named files, Serena symbol overviews, callable/wiring scripts, and focused pytest runs.
+
+**Verdict:** **NO-GO.** Several Phase 1 implementation fixes are real, but the test gate is not trustworthy enough to certify them. The immediate next phase must be a **Phase 0 test-harness repair and proof-gate phase** before more production fixes land.
+
+### S23-P0-1 — Pre-Phase-1 visual QA tests are still show-tests, not production gates
+
+`test_terrain_visual_qa_channels.py` still builds stacks with `types.SimpleNamespace`; `test_visual_qa_golden.py` still uses `_StubStack`. These tests bypass `TerrainMaskStack.set()`, `populated_by_pass`, `_ARRAY_CHANNELS`, dirty tracking, dtype contracts, and strict provenance. They passed as a group (`81 passed`) while still exercising duck-typed mocks, not production stack behavior.
+
+**Impact:** Visual QA can pass on tests while production fails from stack-bypass, wrong channel names, missing provenance, or phantom channels. This is the exact false-confidence failure called out in the test audit.
+
+**Required fix:** Replace SimpleNamespace/_StubStack helpers with real `TerrainMaskStack` fixtures and `stack.set(channel, value, producer)` calls. Add assertions that each checked channel has `populated_by_pass[channel]` and that the visual gate covers production channels beyond the current six-channel subset.
+
+### S23-P0-2 — `REQUIRED_STACK_CHANNELS` still validates only six channels
+
+`terrain_visual_qa.REQUIRED_STACK_CHANNELS` still covers only `height`, `water_surface_mask`, `water_depth_m`, `cliff_mask`, `talus_mask`, and `strata_mask`.
+
+**Impact:** The visual QA gate still misses confirmed production P0 families: `water_surface_elevation_m`, `flow_accumulation`, `splatmap_weights_layer`, `navmesh_area_id`, `terrain_normals`, `ambient_occlusion_bake`, `wetness`, `foam`, `mist`, gameplay zones, traversability, road masks, and export-prep channels.
+
+**Required fix:** Expand the gate to a P0-aware production channel manifest and add negative tests with deliberately broken real `TerrainMaskStack` instances.
+
+### S23-P0-3 — `TerrainPassController.run_pipeline()` default still ends in `validation_minimal`
+
+`environment._execute_terrain_pipeline()` has a profile-aware `validation_full` path for non-preview profiles, but direct `TerrainPassController.run_pipeline()` still hardcodes the default sequence ending in `validation_minimal`.
+
+**Impact:** Direct controller callers can still run production-looking pipelines without the 17-validator `validation_full` suite. Phase 1 is only partially implemented.
+
+**Required fix:** Move profile-aware default-pipeline construction into the controller or a shared helper so every production path gets the same terminal validation behavior. Add a direct controller test proving production/default quality runs `validation_full`.
+
+### S23-P0-4 — Phase 1 tests are stale against intended exception semantics
+
+`run_pass()` now catches pass exceptions, rolls back the mask stack, records a failed `PassResult`, and returns it. `PassDAG.execute_parallel()` only treats actual `future.result()` exceptions as wave failures. A focused test still expects raw `RuntimeError("boom")` propagation and fails with `DID NOT RAISE`.
+
+**Impact:** The test no longer proves either desired contract: it does not verify rollback-return semantics, and it does not verify that failed `PassResult` objects fail the parallel wave. A worker pass can fail, return `PassResult(status="failed")`, and be merged/recorded without a `WaveExecutionError` unless code explicitly checks failed statuses.
+
+**Required fix:** Define one contract and test it: failed `PassResult` from any wave member must become a `WaveExecutionError` after surviving results are merged. Test must assert survivor merge plus failed-pass aggregation, not raw exception propagation.
+
+### S23-P0-5 — Headless scene-read dispatch crashes on fake `bpy`
+
+`terrain_scene_read._walk_scene()` treats the pytest `bpy` MagicMock camera as a real camera, then indexes empty `loc` / `forward` tuples. Focused evidence: `test_mcp_dispatch.py` failed `terrain_capture_scene_read` dispatch with `IndexError: tuple index out of range`; Bundle R scene-read wrapper tests failed the same way.
+
+**Impact:** The MCP/dispatch scene-read path is broken in the default non-Blender test environment. Rule-1 scene-read tests cannot be trusted until the fake-bpy detection path is fixed.
+
+**Required fix:** Detect fake/mock `bpy` objects or validate camera vector length before indexing. In headless tests, `_walk_scene()` should return `{}` unless a real Blender camera object is present. Keep `ChannelNotWrittenError` re-raise behavior.
+
+### S23-P0-6 — Reference locks no longer bypass dev mode, but production lock creation is orphaned
+
+`TERRAIN_DEV_MODE=1` no longer early-returns in `assert_anchor_integrity()`, which is good. However, live handler grep finds no production caller of `lock_anchor()`. `ProtocolGate.rule_3_lock_reference_empties()` can only detect drift when locks were previously populated.
+
+**Impact:** The lock check can pass because there are no locks, not because anchors are intact. This is a wiring gap, not the old env-var bypass.
+
+**Required fix:** Capture `scene_read.lockable_anchors` / intent anchors into the lock registry at the protocol boundary before mutating passes run. Add a regression test with `TERRAIN_DEV_MODE=1`, one locked anchor, and a drifted current anchor.
+
+### S23-P1-1 — `PassDAG.resolve_pass()` fix exists but lacks a direct regression test
+
+Live code raises `PassNotRegisteredError`, but callable census still flags `terrain_pass_dag.py::resolve_pass` as uncovered. Existing tests cover `PassDAG.from_registry(["macro_world", "missing_pass"])`, not direct `resolve_pass("missing")`.
+
+**Required fix:** Add a direct unit test for `resolve_pass("missing")` and assert exception type/message includes requested pass and registered pass list.
+
+### S23-P1-2 — Strict provenance fixture exposed stale validation tests
+
+`conftest.py` enables `TerrainMaskStack._STRICT_PROVENANCE = True`, but many validation tests still assign `stack.slope = ...`, `stack.height = ...`, `stack.splatmap_weights_layer = ...`, etc. Focused validation run reported `22 failed, 22 passed`.
+
+**Impact:** Strict provenance is correct, but the existing tests are not converted. Until conversion, suite failures are test rot, not reliable product signal.
+
+**Required fix:** Convert validator fixtures to use `stack.set(...)` or a helper that mutates arrays intentionally while preserving provenance expectations. Keep a small number of explicit bypass-negative tests.
+
+### S23-P1-3 — Smoke pipeline tests are too slow/hanging to be reliable quick gates
+
+Focused smoke tests stalled long enough to require process cleanup. The tests run full pipeline paths instead of small deterministic pass doubles.
+
+**Impact:** A quick Phase 1 gate that can hang is not a gate. It slows iteration and hides whether a fix failed or merely timed out.
+
+**Required fix:** Split smoke into two layers: fast unit gate with tiny pass doubles and a marked slow integration gate with explicit timeouts/artifact paths.
+
+### S23-P1-4 — Test audit is partly stale after partial implementation
+
+The test audit says `test_terrain_pipeline_smoke.py::test_mask_stack_channels_populated_after_each_pass` only checks non-None. Live test now also checks `populated_by_pass` presence. It remains weak because it does not assert exact producer equality, declared channel coverage, or nonzero variance.
+
+**Required fix:** Update `TEST_AUDIT_2026_04_28.md` to distinguish improved-but-partial coverage from the older pure non-None critique.
+
+### S23-P1-5 — Fix-order and phase guide still point at stale test paths
+
+The phase guide verification command references `tests/test_pass_dag.py` and `tests/test_terrain_pipeline.py`; this repo uses `veilbreakers_terrain/tests/`, and those two named files do not exist.
+
+**Impact:** A developer following the guide cannot reproduce the intended Phase 1 proof.
+
+**Required fix:** Replace stale verification commands with existing focused tests and add the missing direct tests in the correct package path.
+
+### Section 23 required order correction
+
+Before Phase 1 can be called complete, insert **Phase 0 — Test Harness and Proof Gate Repair**:
+
+1. Replace mock stack visual-QA tests with real `TerrainMaskStack`.
+2. Convert direct assignment tests to `stack.set()` or explicit bypass-negative cases.
+3. Fix headless scene-read fake-bpy crash.
+4. Add direct tests for `PassDAG.resolve_pass`, `TERRAIN_DEV_MODE` reference lock behavior, production `validation_full`, unknown quality profile `ValueError`, and parallel-wave failed-result handling.
+5. Split smoke into fast deterministic unit gates and marked slow integration gates.
+6. Only then execute Phase 1 production fixes and claim coverage.
+
+**End of Section 23.**
+
+---
+
+## Section 24 — Codex GSD Scrub Progress Addendum (2026-04-28)
+
+**Source:** GSD audit-fix workflow applied inline, Serena symbol checks, Context7 pytest best-practice check, strict-provenance grep sweep, focused pytest, and ordered `pytest -x` runs.
+
+**Status:** **IN PROGRESS / NOT CLEAN YET.** Phase 0 gate quality improved materially, but full-suite proof is still running through heavy terrain bands and cannot be called complete until it exits green.
+
+### S24-P0-1 — Strict-provenance sweep found real production stack bypasses
+
+Live grep found production writes that bypassed `TerrainMaskStack.set()`:
+- `terrain_weathering_timeline.py`: `stack.wetness = ...`
+- `terrain_stratigraphy.py`: `stack.height = ...`
+- `coastline.py`: incremental `stack.height = ...`
+- `terrain_assets.py`: `stack.detail_density = ...`
+- `terrain_decal_placement.py`: `stack.decal_density = ...`
+- `terrain_vegetation_depth.py`: `stack.detail_density = ...`
+- `terrain_wildlife_zones.py`: `stack.wildlife_affinity = ...`
+
+**Fix applied in working tree:** Convert these production writes to `stack.set(channel, value, producer)`. `py_compile` passed for patched production files.
+
+**Required remaining proof:** Run focused behavioral tests for each patched pass family and a full ordered suite. Direct-write grep must remain clean for production handlers except explicit non-stack mock fallbacks.
+
+### S24-P0-2 — Several "unit" tests were actually stale fixtures
+
+Strict provenance exposed direct test fixture writes in:
+- `test_terrain_validation.py`
+- `test_bundle_egjn_supplements.py`
+- `test_bundle_pq.py`
+- `test_environment_analysis_runtime_helpers.py`
+- `test_environment_handlers.py`
+- `test_terrain_iteration.py`
+- `test_terrain_unity_export_bridge.py`
+- `test_terrain_water_vegetation_depth.py`
+- `test_wind_waterfall_poi_phase14.py`
+
+**Fix applied in working tree:** Convert relevant fixture writes to `stack.set(...)` or small helpers. Keep direct assignment only where test uses duck-typed non-`TerrainMaskStack` objects or explicitly proves bypass rejection.
+
+**Context7/pytest best-practice note:** Reusable fixture/helpers and deterministic small pass doubles are preferred over repeated monkeypatch/direct mock logic for meaningful unit gates.
+
+### S24-P0-3 — Iteration velocity tests were hiding full erosion runtime inside unit gates
+
+`test_terrain_iteration.py` ran real `erosion` in region/live-preview/cache tests, causing hangs and making failures hard to classify.
+
+**Fix applied in working tree:** Add deterministic synthetic registered pass helpers for region execution, live preview, cache speedup, and DAG parallel execution. Full `test_terrain_iteration.py` now passes quickly (`31 passed in 0.87s` in focused run).
+
+### S24-P0-4 — Focused repaired gates now pass
+
+Live focused evidence after repairs:
+- `test_terrain_validation.py`: `44 passed`
+- dispatch/protocol/profile/DAG focused slice: `5 passed`
+- combined Phase 0/Phase 1 repaired slice: `307 passed in 1.29s`
+- `test_terrain_iteration.py`: `31 passed in 0.87s`
+- `test_bundle_egjn_supplements.py`: `63 passed`
+- `test_bundle_pq.py`: `32 passed`
+- `test_environment_analysis_runtime_helpers.py`: `22 passed`
+- selected environment controller path tests: `3 passed`
+- `test_terrain_unity_export_bridge.py`: `13 passed`
+- `test_terrain_water_vegetation_depth.py`: `46 passed`
+- `test_wind_waterfall_poi_phase14.py`: `22 passed`
+
+### S24-P0-5 — Full-suite status remains unresolved
+
+Ordered `python -m pytest veilbreakers_terrain/tests -x -q` advanced past previously failing strict-provenance points and reached beyond 30%, but it is still CPU-bound in heavy terrain tests at time of this addendum.
+
+**No-go rule:** Do not mark scrub complete until:
+1. ordered full-suite run exits with no failure, or every next failure is isolated and fixed;
+2. callable census and wiring scan are refreshed after final code changes;
+3. production direct-channel assignment grep stays clean;
+4. visual QA mock-stack debt is either fixed or explicitly left as remaining Phase 0 blocker.
+
+**End of Section 24.**
+

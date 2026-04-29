@@ -112,7 +112,7 @@ def test_handle_run_terrain_pass_still_surfaces_truly_unknown_passes():
         TerrainPassController.clear_registry()
 
 
-def test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read():
+def test_handle_run_terrain_pass_default_pipeline_runs_full_validation_without_scene_read():
     from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
@@ -130,14 +130,23 @@ def test_handle_run_terrain_pass_default_pipeline_is_safe_without_scene_read():
     finally:
         TerrainPassController.clear_registry()
 
-    assert result["ok"] is True
+    assert all(r["status"] in {"ok", "warning"} for r in result["results"])
+    assert not any(
+        issue["severity"] == "hard"
+        for r in result["results"]
+        for issue in r.get("issues", [])
+    )
     assert [r["pass_name"] for r in result["results"]] == [
         "pass_generate_low_freq_hmap",
         "terrain_labels",
         "structural_masks",
         "pass_generate_high_freq_detail",
         "pass_composite_hmap",
-        "validation_minimal",
+        "materials_v2",
+        "navmesh",
+        "prepare_terrain_normals",
+        "prepare_heightmap_raw_u16",
+        "validation_full",
     ]
 
 

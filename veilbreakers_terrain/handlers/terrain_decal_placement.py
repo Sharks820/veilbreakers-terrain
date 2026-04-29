@@ -282,10 +282,9 @@ def pass_decals(
     for kind in DecalKind:
         layers[kind.value] = compute_decal_density(stack, kind)
 
-    if stack.decal_density is None:
-        stack.decal_density = {}
-    stack.decal_density.update(layers)
-    stack.populated_by_pass["decal_density"] = "decals"
+    decal_density = dict(stack.decal_density or {})
+    decal_density.update(layers)
+    stack.set("decal_density", decal_density, "decals")
 
     metrics = {
         name: {

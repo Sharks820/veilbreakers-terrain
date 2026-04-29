@@ -103,6 +103,53 @@ def _tempdir():
     return tempfile.TemporaryDirectory()
 
 
+def _register_height_delta_pass(
+    name: str,
+    delta: float = 1.0,
+    delay_s: float = 0.0,
+    *,
+    channel: str = "height",
+    requires_channels=(),
+):
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
+
+    def _pass(state, region):
+        if delay_s > 0.0:
+            time.sleep(delay_s)
+        height = np.asarray(state.mask_stack.height, dtype=np.float64).copy()
+        if region is None:
+            height = height + delta
+        else:
+            rows, cols = height.shape
+            min_c = max(0, int(region.min_x / state.mask_stack.cell_size))
+            max_c = min(cols, int(np.ceil(region.max_x / state.mask_stack.cell_size)))
+            min_r = max(0, int(region.min_y / state.mask_stack.cell_size))
+            max_r = min(rows, int(np.ceil(region.max_y / state.mask_stack.cell_size)))
+            height[min_r:max_r, min_c:max_c] += delta
+        state.mask_stack.set(channel, height, name)
+        return PassResult(
+            pass_name=name,
+            status="ok",
+            duration_seconds=max(delay_s, 1e-6),
+            produced_channels=(channel,),
+            metrics={"region_seen": region is not None},
+        )
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name=name,
+            func=_pass,
+            requires_channels=tuple(requires_channels),
+            produces_channels=(channel,),
+            overrides=(channel,),
+            requires_scene_read=False,
+            seed_namespace=name,
+        )
+    )
+    return TerrainPassController.get_pass(name)
+
+
 # ===========================================================================
 # 1–5. DirtyTracker
 # ===========================================================================
@@ -289,18 +336,17 @@ def test_execute_region_runs_pass_sequence():
     with _tempdir() as td:
         state = _build_state(tile_size=32)
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
-        # Prereqs
-        controller.run_pass("macro_world", checkpoint=False)
-        controller.run_pass("structural_masks", checkpoint=False)
+        _register_height_delta_pass("test_region_delta", delta=2.0)
         results = execute_region(
             controller,
-            ["erosion"],
+            ["test_region_delta"],
             BBox(10, 10, 20, 20),
             pad=True,
             checkpoint=False,
         )
         assert len(results) == 1
-        assert results[0].pass_name == "erosion"
+        assert results[0].pass_name == "test_region_delta"
+        assert results[0].metrics["region_seen"] is True
 
 
 # ===========================================================================
@@ -391,14 +437,26 @@ def test_pass_dag_execute_parallel_runs_all():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with _tempdir() as td:
+        TerrainPassController.clear_registry()
+        _register_height_delta_pass("dag_root", delta=0.5)
+        _register_height_delta_pass(
+            "dag_slope",
+            delta=1.0,
+            channel="slope",
+            requires_channels=("height",),
+        )
+        _register_height_delta_pass(
+            "dag_wetness",
+            delta=1.5,
+            channel="wetness",
+            requires_channels=("height",),
+        )
         state = _build_state(tile_size=24)
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         dag = PassDAG.from_registry()
         results = dag.execute_parallel(controller, max_workers=2, checkpoint=False)
         names = {r.pass_name for r in results}
-        assert "macro_world" in names
-        assert "structural_masks" in names
-        assert "erosion" in names
+        assert names == {"dag_root", "dag_slope", "dag_wetness"}
 
 
 def test_pass_dag_from_registry_rejects_unknown_pass_names():
@@ -408,8 +466,17 @@ def test_pass_dag_from_registry_rejects_unknown_pass_names():
         PassDAG.from_registry(["macro_world", "missing_pass"])
 
 
+def test_pass_dag_resolve_pass_rejects_unknown_pass_names():
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG, PassNotRegisteredError
+
+    dag = PassDAG.from_registry(["macro_world"])
+
+    with pytest.raises(PassNotRegisteredError, match="missing_pass"):
+        dag.resolve_pass("missing_pass")
+
+
 def test_pass_dag_execute_parallel_propagates_worker_failures():
-    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG, WaveExecutionError
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
@@ -430,8 +497,9 @@ def test_pass_dag_execute_parallel_propagates_worker_failures():
     controller = TerrainPassController(state)
     dag = PassDAG.from_registry(["macro_world", "explode_wave"])
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(WaveExecutionError, match="explode_wave"):
         dag.execute_parallel(controller, max_workers=2, checkpoint=False)
+    assert state.mask_stack.populated_by_pass.get("height") == "macro_world"
 
 
 def test_pass_dag_execute_parallel_is_actually_parallel_for_independent_passes():
@@ -551,12 +619,10 @@ def test_live_preview_session_apply_edit_changes_hash():
     with _tempdir() as td:
         state = _build_state(tile_size=24)
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
-        # Prereqs for erosion (requires scene_read + height + structural_masks)
-        controller.run_pass("macro_world", checkpoint=False)
-        controller.run_pass("structural_masks", checkpoint=False)
+        _register_height_delta_pass("test_live_preview_delta", delta=1.0)
         session = LivePreviewSession(controller=controller)
         h0 = session.current_hash()
-        h1 = session.apply_edit({"passes": ["erosion"], "region": None, "use_cache": True})
+        h1 = session.apply_edit({"passes": ["test_live_preview_delta"], "region": None, "use_cache": True})
         assert h0 != h1
         diff_info = session.diff_preview(h0, h1)
         assert diff_info["identical"] is False
@@ -582,21 +648,22 @@ def test_iteration_velocity_cache_delivers_speedup():
     with _tempdir() as td:
         state = _build_state(tile_size=48)
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
+        pass_names = ("test_speed_a", "test_speed_b", "test_speed_c")
+        for name in pass_names:
+            _register_height_delta_pass(name, delta=0.25, delay_s=0.01)
 
         # Cold baseline — run pipeline passes directly, no cache
         baseline = IterationMetrics()
         t0 = time.perf_counter()
-        r1 = controller.run_pass("macro_world", checkpoint=False)
-        r2 = controller.run_pass("structural_masks", checkpoint=False)
-        r3 = controller.run_pass("erosion", checkpoint=False)
+        cold_results = [controller.run_pass(name, checkpoint=False) for name in pass_names]
         baseline.total_duration_s = time.perf_counter() - t0
-        for r in (r1, r2, r3):
+        for r in cold_results:
             baseline.total_passes_run += 1
             baseline.pass_names.append(r.pass_name)
 
         # Warm run via mask cache
         cache = MaskCache(max_entries=32)
-        pdefs = [TerrainPassController.get_pass(n) for n in ("macro_world", "structural_masks", "erosion")]
+        pdefs = [TerrainPassController.get_pass(n) for n in pass_names]
         # Prime the cache
         for p in pdefs:
             pass_with_cache(p, state, None, cache)

@@ -6,6 +6,111 @@
 
 ---
 
+## CODEX PREFLIGHT SUPERSESSION — 2026-04-28
+
+Live Phase 1 verification found that the implementation order below cannot be
+executed safely until the test harness can detect the failures it is supposed
+to guard. Insert these fixes before `FIX-1-1`.
+
+### FIX-0A: Replace mock-stack visual QA tests with real `TerrainMaskStack`
+
+**Files:** `veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py`,
+`veilbreakers_terrain/tests/test_visual_qa_golden.py`
+
+**Action:** Modify
+**Change:** Replace `types.SimpleNamespace` / `_StubStack` helpers with real
+`TerrainMaskStack` fixtures populated through `stack.set(channel, value,
+"test_fixture")`. Add negative tests that fail on direct channel assignment or
+wrong channel names.
+
+---
+
+### FIX-0B: Expand visual QA channel gate beyond six legacy channels
+
+**File:** `veilbreakers_terrain/handlers/terrain_visual_qa.py`
+
+**Action:** Modify
+**Change:** Expand `REQUIRED_STACK_CHANNELS` to cover P0-relevant production
+channels (`water_surface_elevation_m`, `flow_accumulation`,
+`splatmap_weights_layer`, `navmesh_area_id`, `terrain_normals`,
+`ambient_occlusion_bake`, `wetness`, `foam`, `mist`, `gameplay_zone`,
+`traversability`, `road_mask`, etc.). Update tests so the expected checked
+count is a production manifest, not the old six-channel list.
+
+---
+
+### FIX-0C: Convert strict-provenance test fixtures to `stack.set(...)`
+
+**Files:** `veilbreakers_terrain/tests/test_terrain_validation.py` and any
+strict-provenance failures discovered by pytest.
+
+**Action:** Modify
+**Change:** Replace fixture writes like `stack.slope = arr` and
+`stack.height = arr` with `stack.set("slope", arr, "test_fixture")` and
+`stack.set("height", arr, "test_fixture")`. Keep direct assignment only in
+explicit tests that assert bypass rejection.
+
+---
+
+### FIX-0D: Fix headless scene-read fake-bpy crash
+
+**File:** `veilbreakers_terrain/handlers/terrain_scene_read.py`
+
+**Action:** Modify
+**Change:** `_walk_scene()` must not treat pytest `MagicMock` camera objects as
+real Blender cameras. Validate camera vectors as length-3 numeric coordinates
+before indexing. If validation fails in headless mode, return `{}` and let
+caller-supplied scene-read params populate the snapshot. Keep
+`except ChannelNotWrittenError: raise`.
+
+---
+
+### FIX-0E: Align stale Phase 1 tests to current contracts
+
+**Files:** `veilbreakers_terrain/tests/test_terrain_iteration.py`,
+`veilbreakers_terrain/tests/test_bundle_bcd_supplements.py`,
+`veilbreakers_terrain/tests/test_bundle_r.py`,
+`veilbreakers_terrain/tests/test_terrain_master_registrar.py`
+
+**Action:** Modify
+**Change:** Update stale tests:
+- unknown quality profile expects `ValueError`, not `KeyError`;
+- Protocol Rule 2 without viewport and without opt-out expects
+  `ProtocolViolation`, not warning;
+- parallel-wave failed `PassResult` is aggregated into a wave failure after
+  survivor merge, not raw `RuntimeError`;
+- production/default pipeline tests assert `validation_full` behavior instead
+  of freezing `validation_minimal`.
+
+---
+
+### FIX-0F: Split smoke tests into fast proof gates and slow integration gates
+
+**File:** `veilbreakers_terrain/tests/test_terrain_pipeline_smoke.py`
+
+**Action:** Modify
+**Change:** Use tiny pass doubles for controller contracts (`run_pass`
+rollback, provenance, checkpoint restore, scene-read requirement). Mark
+full-pipeline runs as slow/integration with explicit timeouts so Phase 1
+verification cannot hang indefinitely.
+
+---
+
+### FIX-0G: Add missing direct proof tests
+
+**Files:** New or existing tests under `veilbreakers_terrain/tests/`
+
+**Action:** Add
+**Change:** Add direct regression tests for:
+- `PassDAG.resolve_pass("missing")` raises `PassNotRegisteredError`;
+- `TERRAIN_DEV_MODE=1` does not skip locked-anchor drift;
+- `TerrainPassController.run_pipeline()` production/default path reaches
+  `validation_full`;
+- failed parallel-wave `PassResult` surfaces as a wave failure;
+- visual QA fails deliberately broken real stacks.
+
+---
+
 ## EXECUTIVE SUMMARY (read first)
 
 | Metric | Value |

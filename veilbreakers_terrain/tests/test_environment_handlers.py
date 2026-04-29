@@ -1505,7 +1505,7 @@ class TestControllerTerrainPath:
             "structural_masks",
             "cliffs",
             "emit_overhang_meshes",
-            "validation_minimal",
+            "validation_full",
         ]
         assert params["world_origin_x"] == pytest.approx(-12.0)
         assert params["world_origin_y"] == pytest.approx(-18.0)
@@ -1577,7 +1577,7 @@ class TestControllerTerrainPath:
             "integrate_deltas",
             "cliffs",
             "emit_overhang_meshes",
-            "validation_minimal",
+            "validation_full",
         ]
         assert result["cave_pipeline_deferred"] is False
 
@@ -1643,7 +1643,7 @@ class TestControllerTerrainPath:
             "structural_masks",
             "cliffs",
             "emit_overhang_meshes",
-            "validation_minimal",
+            "validation_full",
         ]
 
     def test_controller_path_forwards_quality_profile_hints_and_viewport_vantage(self):

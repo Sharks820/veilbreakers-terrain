@@ -42,6 +42,11 @@ def _make_stack() -> TerrainMaskStack:
     return stack
 
 
+def _set_channel(stack: TerrainMaskStack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 def test_export_manifest_records_contract_failures(monkeypatch):
     import veilbreakers_terrain.handlers.terrain_unity_export as mod
 
@@ -169,7 +174,7 @@ def test_export_manifest_flags_non_unity_heightmap_resolution():
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     stack = _make_stack()
-    stack.height = np.ones((6, 6), dtype=np.float32)
+    _set_channel(stack, "height", np.ones((6, 6), dtype=np.float32))
     stack.set("splatmap_weights_layer", np.ones((6, 6, 1), dtype=np.float32), "test")
 
     with tempfile.TemporaryDirectory() as td:
@@ -252,13 +257,13 @@ def test_tree_instances_skip_out_of_bounds_points():
     from veilbreakers_terrain.handlers.terrain_unity_export import _tree_instances_json
 
     stack = _make_stack()
-    stack.tree_instance_points = np.array(
+    _set_channel(stack, "tree_instance_points", np.array(
         [
             [101.0, 201.0, 15.0, 0.0, 1.0],
             [500.0, 800.0, 20.0, 45.0, 2.0],
         ],
         dtype=np.float64,
-    )
+    ))
 
     payload = _tree_instances_json(stack)
 

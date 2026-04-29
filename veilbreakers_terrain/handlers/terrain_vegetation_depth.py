@@ -1672,8 +1672,7 @@ def pass_vegetation_depth(
             stack, forest_mask, seed, detail_density=merged
         )
 
-    stack.detail_density = merged
-    stack.populated_by_pass["detail_density"] = "vegetation_depth"
+    stack.set("detail_density", merged, "vegetation_depth")
 
     total_density = float(
         sum(float(arr.mean()) for arr in merged.values() if arr.size)

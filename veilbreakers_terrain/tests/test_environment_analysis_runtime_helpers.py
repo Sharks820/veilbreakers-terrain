@@ -25,6 +25,11 @@ def _stack(height: np.ndarray | None = None):
     )
 
 
+def _set_channel(stack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 def test_atmospheric_noise_helpers_are_deterministic_and_bounded():
     from veilbreakers_terrain.handlers.atmospheric_volumes import (
         _grad2,
@@ -138,7 +143,7 @@ def test_audio_zone_helpers_filter_boundaries_rt60_echo_classification_and_zone_
     delay = _cliff_echo_delay((4, 4), cleaned, cell_size=2.0)
 
     stack = _stack(np.zeros((4, 4), dtype=np.float32))
-    stack.water_surface = np.ones((4, 4), dtype=np.float32)
+    _set_channel(stack, "water_surface", np.ones((4, 4), dtype=np.float32))
     classes = _classify_raster(stack)
     zones = compute_audio_zone_list(stack)
 
@@ -340,7 +345,7 @@ def test_classify_raster_canyon_from_steep_parallel_walls():
         dist = abs(r - 16)
         if dist < 4:
             h[r, :] = 20.0 + dist * 40.0
-    stack.height = h
+    _set_channel(stack, "height", h)
     _attach_slope(stack)
     conc = np.zeros_like(h)
     conc[14:18, :] = -0.3

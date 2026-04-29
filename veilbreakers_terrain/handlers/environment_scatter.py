@@ -1239,7 +1239,7 @@ def _write_tree_instance_points(
         stack.set("tree_instance_points", arr, "location_layer")
     else:
         # Fallback for simple namespace mocks used in tests
-        stack.tree_instance_points = arr
+        object.__setattr__(stack, "tree_instance_points", arr)
 
 
 # ---------------------------------------------------------------------------

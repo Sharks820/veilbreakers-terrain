@@ -286,3 +286,53 @@ Source files cross-referenced for P0 verification:
 `handlers/terrain_water_variants.py` (pass_water_variants line 845, pass_bathymetry
 line 1463 — confirmed `water_surface_elevation_m` is NOT produced by
 pass_water_variants).
+
+---
+
+## Codex Live Re-Audit Addendum — Phase 1 / Pre-Phase-1 Tests (2026-04-28)
+
+**Verdict:** The original D- grade still stands. Some individual tests have improved, but the suite is not a trustworthy Phase 1 gate.
+
+### Updated live evidence
+
+- `test_terrain_visual_qa_channels.py` + `test_visual_qa_golden.py`: `81 passed`, but the result is low-value because the tests still use `types.SimpleNamespace` and `_StubStack` instead of production `TerrainMaskStack`.
+- `python scripts/callable_census_gate.py`: `62 uncovered / 1653 total (96.2% graded)`.
+- `python scripts/scan_callable_wiring.py`: `1937` rows; summary still shows `96 orphan_candidate`, `240 test_only_or_unwired`, and `1 uninvoked_registrar`.
+- Focused `test_terrain_iteration.py::test_pass_dag_execute_parallel_propagates_worker_failures`: failed with `DID NOT RAISE` because implementation returns `PassResult(status="failed")` instead of propagating raw `RuntimeError`.
+- Focused master-registrar tests: failed under headless `bpy` stub because `terrain_scene_read._walk_scene()` indexed fake camera vectors.
+- Focused unknown quality profile test: failed because test expects `KeyError` while Phase 1 spec and live code use `ValueError`.
+- Focused smoke pipeline tests stalled/hung long enough to require process cleanup; these are not reliable quick gates.
+
+### Corrections to this audit
+
+- `test_terrain_pipeline_smoke.py::test_mask_stack_channels_populated_after_each_pass` is no longer pure `not None`. It now checks `populated_by_pass` presence for the explicit height/structural/erosion channel lists. The test is still partial because it does not:
+  - iterate each pass's declared `produces_channels`,
+  - assert `populated_by_pass[channel] == pass.name`,
+  - assert dtype/range contracts,
+  - assert nonzero variance for non-degenerate outputs.
+
+### Current Phase 0 requirements before any Phase 1 completion claim
+
+1. Replace `SimpleNamespace` / `_StubStack` visual-QA fixtures with real `TerrainMaskStack` fixtures.
+2. Expand `REQUIRED_STACK_CHANNELS` to P0-relevant production channels and add deliberately broken-stack negative tests.
+3. Convert validator tests that assign `stack.<channel> = ...` to `stack.set(...)`, except explicit negative tests for bypass rejection.
+4. Fix `terrain_scene_read._walk_scene()` so fake/mock `bpy` does not masquerade as real Blender scene data.
+5. Add missing direct tests:
+   - `PassDAG.resolve_pass("missing")` raises `PassNotRegisteredError`;
+   - `TERRAIN_DEV_MODE=1` still checks a locked, drifted anchor;
+   - direct controller production/default pipeline runs `validation_full`;
+   - unknown quality profile raises `ValueError`;
+   - parallel-wave failed `PassResult` is aggregated into `WaveExecutionError`.
+6. Split smoke tests into fast unit proof gates and marked slow integration tests with explicit timeouts.
+
+**Resulting test-grade split:**
+
+| Area | Grade | Reason |
+|---|---:|---|
+| Visual QA tests | F | Many green tests, but mock-stack only; gate remains six-channel and P0-blind. |
+| Phase 1 exception tests | D | Stale expectations; do not prove current rollback/failure semantics. |
+| Validation tests | D+ | Some strong validators exist, but strict provenance exposes many stale direct-assignment fixtures. |
+| Pipeline smoke | C- / unstable | Some real provenance checks, but hangs and lacks exact producer/declared-channel assertions. |
+| Callable/wiring proof | C | Census exists and gives useful signals, but unresolved uncovered/orphan buckets remain. |
+
+**No-go rule:** Do not mark Phase 1 complete while any Phase 0 item above remains open.

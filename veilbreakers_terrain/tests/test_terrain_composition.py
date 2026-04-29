@@ -51,6 +51,11 @@ def _make_stack(tile: int = 32) -> TerrainMaskStack:
     return stack
 
 
+def _set_channel(stack: TerrainMaskStack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 def _make_intent(
     *,
     vantages=(),
@@ -462,7 +467,7 @@ class TestNegativeSpace:
         from veilbreakers_terrain.handlers.terrain_negative_space import compute_quiet_zone_ratio
 
         stack = _make_stack()
-        stack.saliency_macro = np.zeros_like(stack.saliency_macro)
+        _set_channel(stack, "saliency_macro", np.zeros_like(stack.saliency_macro))
         stack.saliency_macro[:16, :] = 0.9  # half busy
         ratio = compute_quiet_zone_ratio(stack)
         assert ratio == pytest.approx(
@@ -474,7 +479,7 @@ class TestNegativeSpace:
 
         stack = _make_stack()
         # Force everything busy
-        stack.saliency_macro = np.ones_like(stack.saliency_macro) * 0.9
+        _set_channel(stack, "saliency_macro", np.ones_like(stack.saliency_macro) * 0.9)
         mask = enforce_quiet_zone(stack, min_ratio=0.5)
         assert mask.dtype == bool
         assert mask.sum() / mask.size >= 0.5
@@ -483,7 +488,7 @@ class TestNegativeSpace:
         from veilbreakers_terrain.handlers.terrain_negative_space import validate_negative_space
 
         stack = _make_stack()
-        stack.saliency_macro = np.zeros_like(stack.saliency_macro)
+        _set_channel(stack, "saliency_macro", np.zeros_like(stack.saliency_macro))
         issues = validate_negative_space(stack, min_ratio=0.4)
         # A fully quiet saliency map must not trip any validator:
         # no insufficient quiet zone, no density budget overflow, no
@@ -494,7 +499,7 @@ class TestNegativeSpace:
         from veilbreakers_terrain.handlers.terrain_negative_space import validate_negative_space
 
         stack = _make_stack()
-        stack.saliency_macro = np.ones_like(stack.saliency_macro) * 0.9
+        _set_channel(stack, "saliency_macro", np.ones_like(stack.saliency_macro) * 0.9)
         issues = validate_negative_space(stack, min_ratio=0.4)
         # A fully busy map trips quiet-zone, feature-density, AND
         # peak-spacing validators — all three signals are legitimate

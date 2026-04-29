@@ -396,6 +396,12 @@ class PassDAG:
                         res.metrics["wave_wall_time_s"] = round(
                             t_done - submit_times[pname], 6
                         )
+                        if res.status == "failed":
+                            wave_failures.append((
+                                pname,
+                                RuntimeError(str(res.metrics.get("error", "pass returned failed status"))),
+                            ))
+                            continue
                         wave_results[pname] = res
                     except Exception as exc:  # noqa: BLE001
                         wave_failures.append((pname, exc))

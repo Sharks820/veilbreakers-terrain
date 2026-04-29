@@ -1253,9 +1253,10 @@ def pass_coastline(
             )
             cumulative_delta += delta
             # Apply each pass incrementally so subsequent passes see updated height
-            stack.height = (
+            updated_height = (
                 np.asarray(stack.height, dtype=np.float64) + delta
             ).astype(stack.height.dtype)
+            stack.set("height", updated_height, "coastline")
 
         retreat_mean = float(np.abs(cumulative_delta).mean())
         final_delta = cumulative_delta.astype(np.float32)

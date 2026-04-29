@@ -127,7 +127,11 @@ def test_rollback_last_checkpoint_restores_state():
         save_checkpoint(controller, "baseline")
         baseline_hash = controller.state.mask_stack.compute_hash()
         # Mutate
-        controller.state.mask_stack.height += 100.0
+        controller.state.mask_stack.set(
+            "height",
+            controller.state.mask_stack.height + 100.0,
+            "test_mutation",
+        )
         assert controller.state.mask_stack.compute_hash() != baseline_hash
         rollback_last_checkpoint(controller)
         assert controller.state.mask_stack.compute_hash() == baseline_hash
@@ -154,7 +158,11 @@ def test_rollback_to_by_id():
         controller, _ = _make_controller(checkpoint_dir=td)
         ckpt1 = save_checkpoint(controller, "p1")
         hash1 = controller.state.mask_stack.compute_hash()
-        controller.state.mask_stack.height += 5.0
+        controller.state.mask_stack.set(
+            "height",
+            controller.state.mask_stack.height + 5.0,
+            "test_mutation",
+        )
         save_checkpoint(controller, "p2")
         rollback_to(controller, ckpt1.checkpoint_id)
         assert controller.state.mask_stack.compute_hash() == hash1
@@ -167,7 +175,11 @@ def test_rollback_to_by_label():
         controller, _ = _make_controller(checkpoint_dir=td)
         save_checkpoint(controller, "p1", label="clean")
         hash1 = controller.state.mask_stack.compute_hash()
-        controller.state.mask_stack.height += 5.0
+        controller.state.mask_stack.set(
+            "height",
+            controller.state.mask_stack.height + 5.0,
+            "test_mutation",
+        )
         save_checkpoint(controller, "p2")
         rollback_to(controller, "clean")
         assert controller.state.mask_stack.compute_hash() == hash1

@@ -72,6 +72,11 @@ def _tiny_stack(size: int = 8) -> TerrainMaskStack:
     )
 
 
+def _set_channel(stack: TerrainMaskStack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Bundle E — asset metadata taxonomy
 # ---------------------------------------------------------------------------
@@ -346,7 +351,7 @@ class TestSemanticReadability:
 
     def test_cliff_without_slope_fails(self):
         stack = _tiny_stack()
-        stack.cliff_candidate = np.ones((8, 8), dtype=np.float32)
+        _set_channel(stack, "cliff_candidate", np.ones((8, 8), dtype=np.float32))
         issues = check_cliff_silhouette_readability(stack)
         assert any(i.code == "CLIFF_READABILITY_NO_SLOPE" for i in issues)
 
@@ -354,15 +359,15 @@ class TestSemanticReadability:
         stack = _tiny_stack(size=64)
         cliff = np.zeros((64, 64), dtype=np.float32)
         cliff[0, 0] = 1.0  # 1 out of 4096 < 0.5%
-        stack.cliff_candidate = cliff
-        stack.slope = np.full((64, 64), 1.0, dtype=np.float32)
+        _set_channel(stack, "cliff_candidate", cliff)
+        _set_channel(stack, "slope", np.full((64, 64), 1.0, dtype=np.float32))
         issues = check_cliff_silhouette_readability(stack)
         assert any(i.code == "CLIFF_READABILITY_UNDERFOOTED" for i in issues)
 
     def test_soft_lip_cliff_fails(self):
         stack = _tiny_stack(size=32)
-        stack.cliff_candidate = np.ones((32, 32), dtype=np.float32)
-        stack.slope = np.full((32, 32), 0.1, dtype=np.float32)
+        _set_channel(stack, "cliff_candidate", np.ones((32, 32), dtype=np.float32))
+        _set_channel(stack, "slope", np.full((32, 32), 0.1, dtype=np.float32))
         issues = check_cliff_silhouette_readability(stack)
         assert any(i.code == "CLIFF_READABILITY_SOFT_LIP" for i in issues)
 
@@ -374,9 +379,9 @@ class TestSemanticReadability:
         cliff[:, 15:17] = 1.0
         slope = np.zeros((32, 32), dtype=np.float32)
         slope[:, 15:17] = 1.2
-        stack.height = h
-        stack.cliff_candidate = cliff
-        stack.slope = slope
+        _set_channel(stack, "height", h)
+        _set_channel(stack, "cliff_candidate", cliff)
+        _set_channel(stack, "slope", slope)
         assert check_cliff_silhouette_readability(stack) == []
 
     def test_waterfall_chain_complete(self):
@@ -425,8 +430,8 @@ class TestSemanticReadability:
 
     def test_run_semantic_readability_audit_aggregates(self):
         stack = _tiny_stack(size=32)
-        stack.cliff_candidate = np.ones((32, 32), dtype=np.float32)
-        stack.slope = np.full((32, 32), 0.1, dtype=np.float32)
+        _set_channel(stack, "cliff_candidate", np.ones((32, 32), dtype=np.float32))
+        _set_channel(stack, "slope", np.full((32, 32), 0.1, dtype=np.float32))
         chains = [{"source": 1, "lip": 1, "pool": None, "outflow": 1}]
         caves = [{"framing_markers": [], "damp_signal": None}]
         issues = run_semantic_readability_audit(
@@ -551,7 +556,7 @@ class TestPerformanceReport:
     def test_empty_height_not_available(self):
         # Build a stack, then null out height to simulate unpopulated
         stack = _tiny_stack()
-        stack.height = np.zeros((0, 0), dtype=np.float32)
+        _set_channel(stack, "height", np.zeros((0, 0), dtype=np.float32))
         rep = collect_performance_report(stack)
         assert rep.status == "not_available"
 
@@ -564,7 +569,7 @@ class TestPerformanceReport:
 
     def test_never_fake_ok_when_height_zero(self):
         stack = _tiny_stack()
-        stack.height = np.zeros((0, 0), dtype=np.float32)
+        _set_channel(stack, "height", np.zeros((0, 0), dtype=np.float32))
         rep = collect_performance_report(stack)
         assert rep.status != "ok"
 
@@ -579,13 +584,13 @@ class TestPerformanceReport:
 
     def test_material_count_from_splatmap(self):
         stack = _tiny_stack(size=8)
-        stack.splatmap_weights_layer = np.zeros((8, 8, 4), dtype=np.float32)
+        _set_channel(stack, "splatmap_weights_layer", np.zeros((8, 8, 4), dtype=np.float32))
         rep = collect_performance_report(stack)
         assert rep.material_count == 4
 
     def test_tree_instance_count(self):
         stack = _tiny_stack(size=8)
-        stack.tree_instance_points = np.zeros((17, 5), dtype=np.float32)
+        _set_channel(stack, "tree_instance_points", np.zeros((17, 5), dtype=np.float32))
         rep = collect_performance_report(stack)
         assert rep.instance_count["trees"] == 17
 

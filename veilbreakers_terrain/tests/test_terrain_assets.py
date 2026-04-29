@@ -402,7 +402,7 @@ def test_pass_populates_detail_density(stack, intent):
 def test_pass_preserves_existing_detail_density(stack, intent):
     sentinel = np.full(stack.height.shape, 0.5, dtype=np.float32)
     state = TerrainPipelineState(intent=intent, mask_stack=stack)
-    state.mask_stack.detail_density = {"canopy": sentinel.copy()}
+    state.mask_stack.set("detail_density", {"canopy": sentinel.copy()}, "test_fixture")
     with tempfile.TemporaryDirectory() as td:
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         controller.run_pass("scatter_intelligent", checkpoint=False)

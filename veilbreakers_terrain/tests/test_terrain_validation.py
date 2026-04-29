@@ -31,6 +31,17 @@ def _make_stack(tile_size=16, cell_size=1.0, seed=0):
     )
 
 
+def _set_channel(stack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
+def _force_channel(stack, channel: str, value):
+    object.__setattr__(stack, channel, value)
+    stack.populated_by_pass[channel] = "test_invalid_fixture"
+    return value
+
+
 def _make_intent(stack, protected_zones=(), hero_specs=(), composition_hints=None):
     from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState
 
@@ -110,7 +121,7 @@ def test_slope_distribution_ok():
     from veilbreakers_terrain.handlers.terrain_validation import validate_slope_distribution
 
     stack = _make_stack()
-    stack.slope = np.random.default_rng(0).uniform(0.0, 1.0, stack.height.shape)
+    _set_channel(stack, "slope", np.random.default_rng(0).uniform(0.0, 1.0, stack.height.shape))
     issues = validate_slope_distribution(stack, _make_intent(stack))
     assert issues == []
 
@@ -119,7 +130,7 @@ def test_slope_distribution_fails_uniform():
     from veilbreakers_terrain.handlers.terrain_validation import validate_slope_distribution
 
     stack = _make_stack()
-    stack.slope = np.full(stack.height.shape, 0.5, dtype=np.float64)
+    _set_channel(stack, "slope", np.full(stack.height.shape, 0.5, dtype=np.float64))
     issues = validate_slope_distribution(stack, _make_intent(stack))
     assert any(i.code == "SLOPE_UNIFORM" for i in issues)
 
@@ -136,7 +147,7 @@ def test_check_focal_composition_respects_radian_slope_units():
     from veilbreakers_terrain.handlers.terrain_validation import check_focal_composition
 
     stack = _make_stack()
-    stack.slope = np.full(stack.height.shape, np.radians(35.0), dtype=np.float32)
+    _set_channel(stack, "slope", np.full(stack.height.shape, np.radians(35.0), dtype=np.float32))
     issues = check_focal_composition(stack)
     assert not any("Only 0.0% of terrain is steep" in issue.message for issue in issues)
 
@@ -156,7 +167,7 @@ def test_protected_zones_ok_with_baseline():
     zone = ProtectedZoneSpec("z1", BBox(2, 2, 6, 6), "hero_mesh")
     intent = _make_intent(stack, protected_zones=(zone,))
     baseline = _make_stack(tile_size=16)
-    baseline.height = stack.height.copy()
+    _set_channel(baseline, "height", stack.height.copy())
     issues = validate_protected_zones_untouched(stack, intent, baseline_stack=baseline)
     assert issues == []
 
@@ -169,7 +180,7 @@ def test_protected_zones_hard_fail_on_mutation():
 
     stack = _make_stack(tile_size=16)
     baseline = _make_stack(tile_size=16)
-    baseline.height = stack.height.copy()
+    _set_channel(baseline, "height", stack.height.copy())
     stack.height[3, 3] += 10.0  # mutate inside zone
     zone = ProtectedZoneSpec("z1", BBox(2, 2, 6, 6), "hero_mesh")
     intent = _make_intent(stack, protected_zones=(zone,))
@@ -203,7 +214,7 @@ def test_seam_ok_smooth_edges():
     stack = _make_stack(tile_size=16)
     # Replace with a smooth gradient so edges are mellow
     xs = np.linspace(0, 10, 16)
-    stack.height = np.broadcast_to(xs, (16, 16)).copy()
+    _set_channel(stack, "height", np.broadcast_to(xs, (16, 16)).copy())
     assert validate_tile_seam_continuity(stack, _make_intent(stack)) == []
 
 
@@ -227,8 +238,8 @@ def test_mass_conservation_ok():
     )
 
     stack = _make_stack()
-    stack.erosion_amount = np.full(stack.height.shape, 1.0, dtype=np.float64)
-    stack.deposition_amount = np.full(stack.height.shape, 1.02, dtype=np.float64)
+    _set_channel(stack, "erosion_amount", np.full(stack.height.shape, 1.0, dtype=np.float64))
+    _set_channel(stack, "deposition_amount", np.full(stack.height.shape, 1.02, dtype=np.float64))
     issues = validate_erosion_mass_conservation(stack, _make_intent(stack))
     assert issues == []
 
@@ -239,8 +250,8 @@ def test_mass_conservation_soft_fail_imbalance():
     )
 
     stack = _make_stack()
-    stack.erosion_amount = np.full(stack.height.shape, 10.0, dtype=np.float64)
-    stack.deposition_amount = np.full(stack.height.shape, 1.0, dtype=np.float64)
+    _set_channel(stack, "erosion_amount", np.full(stack.height.shape, 10.0, dtype=np.float64))
+    _set_channel(stack, "deposition_amount", np.full(stack.height.shape, 1.0, dtype=np.float64))
     issues = validate_erosion_mass_conservation(stack, _make_intent(stack))
     assert any(i.code == "EROSION_MASS_IMBALANCE" for i in issues)
 
@@ -267,7 +278,7 @@ def test_hero_feature_ok_when_mask_populated():
     )
 
     stack = _make_stack(tile_size=16)
-    stack.cliff_candidate = np.zeros(stack.height.shape, dtype=np.float32)
+    _set_channel(stack, "cliff_candidate", np.zeros(stack.height.shape, dtype=np.float32))
     stack.cliff_candidate[6:10, 6:10] = 1.0
     spec = HeroFeatureSpec(
         feature_id="c1",
@@ -304,7 +315,7 @@ def test_hero_feature_hard_fail_when_signature_missing():
     )
 
     stack = _make_stack(tile_size=16)
-    stack.cliff_candidate = np.zeros(stack.height.shape, dtype=np.float32)
+    _set_channel(stack, "cliff_candidate", np.zeros(stack.height.shape, dtype=np.float32))
     spec = HeroFeatureSpec(
         feature_id="c1",
         feature_kind="cliff",
@@ -330,7 +341,7 @@ def test_material_coverage_ok():
     weights[..., 1] = 0.3
     weights[..., 2] = 0.2
     weights[..., 3] = 0.2
-    stack.splatmap_weights_layer = weights
+    _set_channel(stack, "splatmap_weights_layer", weights)
     assert validate_material_coverage(stack, _make_intent(stack)) == []
 
 
@@ -341,7 +352,7 @@ def test_material_coverage_fails_sum_mismatch():
     weights = np.zeros((16, 16, 3), dtype=np.float32)
     weights[..., 0] = 0.5
     # Sum = 0.5, not 1.0
-    stack.splatmap_weights_layer = weights
+    _set_channel(stack, "splatmap_weights_layer", weights)
     issues = validate_material_coverage(stack, _make_intent(stack))
     assert any(i.code == "MATERIAL_COVERAGE_GAP" for i in issues)
 
@@ -353,7 +364,7 @@ def test_material_coverage_soft_fail_layer_dominates():
     weights = np.zeros((16, 16, 2), dtype=np.float32)
     weights[..., 0] = 0.9
     weights[..., 1] = 0.1
-    stack.splatmap_weights_layer = weights
+    _set_channel(stack, "splatmap_weights_layer", weights)
     issues = validate_material_coverage(stack, _make_intent(stack))
     assert any(i.code == "MATERIAL_LAYER_DOMINATES" for i in issues)
 
@@ -371,7 +382,7 @@ def test_material_texel_density_validator_accepts_default_two_layer_stack():
     )
 
     stack = _make_stack(tile_size=16)
-    stack.splatmap_weights_layer = np.full((16, 16, 2), 0.5, dtype=np.float32)
+    _set_channel(stack, "splatmap_weights_layer", np.full((16, 16, 2), 0.5, dtype=np.float32))
     intent = _make_intent(
         stack,
         composition_hints={
@@ -388,7 +399,7 @@ def test_material_texel_density_validator_flags_below_tier():
     )
 
     stack = _make_stack(tile_size=16)
-    stack.splatmap_weights_layer = np.full((16, 16, 2), 0.5, dtype=np.float32)
+    _set_channel(stack, "splatmap_weights_layer", np.full((16, 16, 2), 0.5, dtype=np.float32))
     intent = _make_intent(
         stack,
         composition_hints={
@@ -406,7 +417,7 @@ def test_material_texel_density_validator_uses_quality_profile_default_ratio():
     )
 
     stack = _make_stack(tile_size=16)
-    stack.splatmap_weights_layer = np.full((16, 16, 2), 0.5, dtype=np.float32)
+    _set_channel(stack, "splatmap_weights_layer", np.full((16, 16, 2), 0.5, dtype=np.float32))
 
     production_intent = _make_intent(stack)
     aaa_intent = _make_intent(stack)
@@ -467,7 +478,7 @@ def test_channel_dtypes_ok():
     from veilbreakers_terrain.handlers.terrain_validation import validate_channel_dtypes
 
     stack = _make_stack()
-    stack.slope = np.zeros(stack.height.shape, dtype=np.float32)
+    _set_channel(stack, "slope", np.zeros(stack.height.shape, dtype=np.float32))
     assert validate_channel_dtypes(stack, _make_intent(stack)) == []
 
 
@@ -475,8 +486,8 @@ def test_channel_dtypes_accepts_semantic_mask_kinds():
     from veilbreakers_terrain.handlers.terrain_validation import validate_channel_dtypes
 
     stack = _make_stack()
-    stack.ridge = np.zeros(stack.height.shape, dtype=bool)
-    stack.basin = np.zeros(stack.height.shape, dtype=np.int32)
+    _set_channel(stack, "ridge", np.zeros(stack.height.shape, dtype=bool))
+    _set_channel(stack, "basin", np.zeros(stack.height.shape, dtype=np.int32))
 
     assert validate_channel_dtypes(stack, _make_intent(stack)) == []
 
@@ -486,7 +497,7 @@ def test_channel_dtypes_fails_wrong_kind():
 
     stack = _make_stack()
     # heightmap_raw_u16 must be unsigned, not float
-    stack.heightmap_raw_u16 = np.zeros(stack.height.shape, dtype=np.float32)
+    _force_channel(stack, "heightmap_raw_u16", np.zeros(stack.height.shape, dtype=np.float32))
     issues = validate_channel_dtypes(stack, _make_intent(stack))
     assert any(i.code == "CHANNEL_DTYPE_MISMATCH" for i in issues)
 
@@ -520,9 +531,9 @@ def test_unity_export_ok_when_channels_populated():
 
     stack = _make_stack()
     shape = stack.height.shape
-    stack.heightmap_raw_u16 = np.zeros(shape, dtype=np.uint16)
-    stack.splatmap_weights_layer = np.zeros((*shape, 2), dtype=np.float32)
-    stack.navmesh_area_id = np.zeros(shape, dtype=np.int32)
+    _set_channel(stack, "heightmap_raw_u16", np.zeros(shape, dtype=np.uint16))
+    _set_channel(stack, "splatmap_weights_layer", np.zeros((*shape, 2), dtype=np.float32))
+    _set_channel(stack, "navmesh_area_id", np.zeros(shape, dtype=np.uint8))
     assert validate_unity_export_ready(stack, _make_intent(stack)) == []
 
 
@@ -546,11 +557,11 @@ def test_run_validation_suite_ok_when_clean():
     from veilbreakers_terrain.handlers.terrain_validation import run_validation_suite
 
     stack = _make_stack()
-    stack.slope = np.random.default_rng(0).uniform(0, 1, stack.height.shape)
+    _set_channel(stack, "slope", np.random.default_rng(0).uniform(0, 1, stack.height.shape))
     shape = stack.height.shape
-    stack.heightmap_raw_u16 = np.zeros(shape, dtype=np.uint16)
-    stack.splatmap_weights_layer = np.full((*shape, 2), 0.5, dtype=np.float32)
-    stack.navmesh_area_id = np.zeros(shape, dtype=np.int32)
+    _set_channel(stack, "heightmap_raw_u16", np.zeros(shape, dtype=np.uint16))
+    _set_channel(stack, "splatmap_weights_layer", np.full((*shape, 2), 0.5, dtype=np.float32))
+    _set_channel(stack, "navmesh_area_id", np.zeros(shape, dtype=np.uint8))
     report = run_validation_suite(stack, _make_intent(stack))
     assert report.overall_status in ("ok", "warning")
     assert len(report.hard_issues) == 0
@@ -560,11 +571,11 @@ def test_run_validation_suite_surfaces_material_texel_density_issues():
     from veilbreakers_terrain.handlers.terrain_validation import run_validation_suite
 
     stack = _make_stack()
-    stack.slope = np.random.default_rng(0).uniform(0, 1, stack.height.shape)
+    _set_channel(stack, "slope", np.random.default_rng(0).uniform(0, 1, stack.height.shape))
     shape = stack.height.shape
-    stack.heightmap_raw_u16 = np.zeros(shape, dtype=np.uint16)
-    stack.splatmap_weights_layer = np.full((*shape, 2), 0.5, dtype=np.float32)
-    stack.navmesh_area_id = np.zeros(shape, dtype=np.int32)
+    _set_channel(stack, "heightmap_raw_u16", np.zeros(shape, dtype=np.uint16))
+    _set_channel(stack, "splatmap_weights_layer", np.full((*shape, 2), 0.5, dtype=np.float32))
+    _set_channel(stack, "navmesh_area_id", np.zeros(shape, dtype=np.uint8))
     intent = _make_intent(
         stack,
         composition_hints={

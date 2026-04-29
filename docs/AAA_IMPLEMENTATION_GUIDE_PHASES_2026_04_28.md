@@ -14,24 +14,30 @@ need to re-open the audit or codex while executing a phase.
 Within each phase, individual fixes can be commits in any order unless a
 `DEPENDS ON` tag is present.
 
+**Codex 2026-04-28 supersession:** Live Phase 1 verification found that the
+test harness is not trustworthy enough to certify implementation fixes. Insert
+**Phase 0 — Test Harness and Proof Gate Repair** before Phase 1. Phase 1 may
+not be marked complete until Phase 0 gates pass.
+
 ---
 
 ## TABLE OF CONTENTS
 
 0. [Cardinal rules and protocol](#cardinal-rules)
-1. [Phase 1 — Foundation: error propagation & protocol enforcement](#phase-1)
-2. [Phase 2 — Stack protocol: writers and bypass conversions](#phase-2)
-3. [Phase 3 — Wrong channel names and phantom reads](#phase-3)
-4. [Phase 4 — Pipeline wiring and pass sequencing](#phase-4)
-5. [Phase 5 — Core math and physics correctness](#phase-5)
-6. [Phase 6 — Unity export: contracts, paths, schemas](#phase-6)
-7. [Phase 7 — Performance: vectorisation and copy-on-write](#phase-7)
-8. [Phase 8 — Determinism: per-tile RNG everywhere](#phase-8)
-9. [Phase 9 — Visual QA and test strengthening](#phase-9)
-10. [Phase 10 — Architecture polish](#phase-10)
-11. [Cross-cutting concerns](#cross-cutting)
-12. [Commit strategy](#commit-strategy)
-13. [Master fix-ID index](#master-index)
+1. [Phase 0 — Test harness and proof gate repair](#phase-0)
+2. [Phase 1 — Foundation: error propagation & protocol enforcement](#phase-1)
+3. [Phase 2 — Stack protocol: writers and bypass conversions](#phase-2)
+4. [Phase 3 — Wrong channel names and phantom reads](#phase-3)
+5. [Phase 4 — Pipeline wiring and pass sequencing](#phase-4)
+6. [Phase 5 — Core math and physics correctness](#phase-5)
+7. [Phase 6 — Unity export: contracts, paths, schemas](#phase-6)
+8. [Phase 7 — Performance: vectorisation and copy-on-write](#phase-7)
+9. [Phase 8 — Determinism: per-tile RNG everywhere](#phase-8)
+10. [Phase 9 — Visual QA and test strengthening](#phase-9)
+11. [Phase 10 — Architecture polish](#phase-10)
+12. [Cross-cutting concerns](#cross-cutting)
+13. [Commit strategy](#commit-strategy)
+14. [Master fix-ID index](#master-index)
 
 ---
 
@@ -83,6 +89,110 @@ when the corresponding fix lands. **Update them in the same commit:**
 
 ---
 
+<a id="phase-0"></a>
+## PHASE 0 — TEST HARNESS AND PROOF GATE REPAIR
+
+**Goal:** Make tests prove real product contracts before production fixes
+continue. Live Codex verification found green tests that use mock stacks,
+stale exception expectations, stale test paths, and smoke tests that can hang.
+Those cannot certify Phase 1.
+
+**Prerequisites:** None. This phase precedes all production phases.
+
+**Risk:** **LOW for product runtime, HIGH for CI noise.** Most changes are test
+fixture repairs, but they will expose existing failures that were previously
+hidden by mocks or stale expectations.
+
+**Verification criteria for Phase 0 completion:**
+- `test_terrain_visual_qa_channels.py` and `test_visual_qa_golden.py` use real
+  `TerrainMaskStack` fixtures for channel validation paths.
+- `REQUIRED_STACK_CHANNELS` covers P0-relevant production channels, not only six
+  legacy visual channels.
+- Direct stack-channel assignment in tests is either removed or isolated to
+  explicit bypass-negative tests.
+- `terrain_capture_scene_read` dispatch works under headless pytest stubs and
+  still re-raises `ChannelNotWrittenError`.
+- Direct tests exist for:
+  - `PassDAG.resolve_pass("missing")` -> `PassNotRegisteredError`;
+  - unknown quality profile -> `ValueError`;
+  - `TERRAIN_DEV_MODE=1` does not skip a locked-anchor drift check;
+  - production/default controller path runs `validation_full`;
+  - parallel-wave failed `PassResult` becomes a wave failure after survivors merge.
+- Smoke tests are split into fast unit gates and marked slow integration gates
+  with explicit timeouts.
+
+### Phase 0 fixes
+
+#### FIX-0.1 — Replace visual-QA mock stacks with real `TerrainMaskStack`
+- **Files:** `veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py`,
+  `veilbreakers_terrain/tests/test_visual_qa_golden.py`.
+- **Change:** Replace `types.SimpleNamespace` and `_StubStack` helpers with a
+  fixture that constructs `TerrainMaskStack` and populates channels via
+  `stack.set(channel, arr, "test_fixture")`.
+- **Gate:** A wrong channel name or direct bypass must fail under
+  `_STRICT_PROVENANCE=True`.
+
+#### FIX-0.2 — Expand visual-QA channel manifest and negative fixtures
+- **File:** `veilbreakers_terrain/handlers/terrain_visual_qa.py`.
+- **Change:** Expand `REQUIRED_STACK_CHANNELS` to include P0-relevant production
+  channels such as `slope`, `curvature`, `ridge`, `basin`, `flow_accumulation`,
+  `wetness`, `drainage`, `water_surface_elevation_m`, `foam`, `mist`,
+  `splatmap_weights_layer`, `biome_id`, `navmesh_area_id`,
+  `heightmap_raw_u16`, `terrain_normals`, `ambient_occlusion_bake`,
+  `gameplay_zone`, `traversability`, and `road_mask`.
+- **Gate:** Add at least one deliberately broken stack for each major P0 family.
+
+#### FIX-0.3 — Convert validation fixtures away from direct assignment
+- **Files:** `veilbreakers_terrain/tests/test_terrain_validation.py` and any
+  failing tests surfaced by `_STRICT_PROVENANCE=True`.
+- **Change:** Use `stack.set(...)` for fixture writes. Keep direct assignment
+  only in explicit tests that assert bypasses fail.
+
+#### FIX-0.4 — Fix headless scene-read fake-bpy handling
+- **File:** `veilbreakers_terrain/handlers/terrain_scene_read.py`.
+- **Change:** Treat MagicMock/fake `bpy` camera objects as absent unless vector
+  fields validate as 3 numeric coordinates. Preserve
+  `except ChannelNotWrittenError: raise`.
+- **Gate:** `test_mcp_dispatch.py::test_dispatch_scene_read_happy_path` and
+  Bundle R scene-read wrapper tests pass headlessly.
+
+#### FIX-0.5 — Align stale Phase 1 tests to intended contracts
+- **Files:** `test_terrain_iteration.py`, `test_bundle_bcd_supplements.py`,
+  `test_bundle_r.py`, `test_terrain_master_registrar.py`.
+- **Change:** Update stale assertions:
+  - unknown quality profile expects `ValueError`;
+  - Rule 2 no-vantage/no-opt-out expects `ProtocolViolation`;
+  - parallel wave failure expects failed-result aggregation, not raw
+    `RuntimeError`;
+  - production pipeline tests assert `validation_full`, not hardcoded minimal
+    sequence.
+
+#### FIX-0.6 — Split smoke into fast and slow gates
+- **File:** `veilbreakers_terrain/tests/test_terrain_pipeline_smoke.py`.
+- **Change:** Add small pass-double tests for controller contracts. Mark full
+  pipeline runs as slow/integration and enforce timeout behavior.
+
+### Phase 0 verification
+
+Run these before Phase 1:
+
+```powershell
+python -m pytest `
+  veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py `
+  veilbreakers_terrain/tests/test_visual_qa_golden.py `
+  veilbreakers_terrain/tests/test_terrain_iteration.py `
+  veilbreakers_terrain/tests/test_bundle_bcd_supplements.py `
+  veilbreakers_terrain/tests/test_bundle_r.py `
+  veilbreakers_terrain/tests/test_terrain_master_registrar.py `
+  veilbreakers_terrain/tests/test_terrain_validation.py `
+  -q
+
+python scripts/callable_census_gate.py
+python scripts/scan_callable_wiring.py
+```
+
+---
+
 <a id="phase-1"></a>
 ## PHASE 1 — FOUNDATION: ERROR PROPAGATION & PROTOCOL ENFORCEMENT
 
@@ -91,7 +201,8 @@ silent `PassDAG.resolve_pass`, a `TERRAIN_DEV_MODE` bypass, and
 `validation_minimal` everywhere mean that all subsequent phases would land
 fixes against an uninstrumented pipeline. This phase wires the alarm system.
 
-**Prerequisites:** None — this is the entry phase.
+**Prerequisites:** Phase 0. Do not start Phase 1 until the test harness can
+catch the failures Phase 1 is supposed to surface.
 
 **Risk:** **HIGH.** Surfacing latent failures will likely reveal pre-existing
 bugs that were previously swallowed. Run the full pytest suite *before*
@@ -104,6 +215,10 @@ distinguish pre-existing from newly-surfaced.
 - Setting `TERRAIN_DEV_MODE=1` no longer skips reference-lock validation.
 - A production-profile pipeline run logs `validation_full` execution.
 - Pipeline-level rollback executes on a forced pass exception.
+- Reference locks are actually populated before mutation; a drifted locked
+  anchor fails even with `TERRAIN_DEV_MODE=1`.
+- `TerrainPassController.run_pipeline()` direct default production path cannot
+  silently use `validation_minimal`.
 
 ### Fixes in this phase
 
@@ -236,10 +351,11 @@ distinguish pre-existing from newly-surfaced.
   ContextVar exclusively.
 
 ### Phase 1 verification
-1. `pytest tests/test_pass_dag.py tests/test_terrain_pipeline.py -k "raises or rollback or rule"`
-2. Run `scripts/build_terrain_aaa_node_v6.py` once with default args. Confirm
+1. Run the Phase 0 verification command first; it must be green.
+2. `python -m pytest veilbreakers_terrain/tests/test_terrain_iteration.py veilbreakers_terrain/tests/test_terrain_master_registrar.py veilbreakers_terrain/tests/test_terrain_validation.py -q`
+3. Run `scripts/build_terrain_aaa_node_v6.py` once with default args. Confirm
    `validation_full` appears in the executed-pass log and the run completes.
-3. `grep -rn "except Exception:\s*pass" veilbreakers_terrain/handlers/` returns 0.
+4. `rg -n "except Exception:\\s*pass|except:\\s*pass" veilbreakers_terrain/handlers` returns 0 production hits.
 
 ---
 

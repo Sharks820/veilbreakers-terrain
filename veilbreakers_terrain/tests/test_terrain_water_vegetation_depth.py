@@ -83,6 +83,11 @@ def _make_stack(rows: int = 32, cols: int = 32) -> TerrainMaskStack:
     )
 
 
+def _set_channel(stack: TerrainMaskStack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 def _make_state(rows: int = 32, cols: int = 32, seed: int = 4242) -> TerrainPipelineState:
     stack = _make_stack(rows, cols)
     region = BBox(0.0, 0.0, float(cols) * 2.0, float(rows) * 2.0)
@@ -262,9 +267,9 @@ def test_hot_spring_shape_validation():
 def test_wetland_detection_low_slope_high_wetness():
     stack = _make_stack()
     shape = stack.height.shape
-    stack.wetness = np.zeros(shape, dtype=np.float32)
+    _set_channel(stack, "wetness", np.zeros(shape, dtype=np.float32))
     stack.wetness[5:12, 5:12] = 0.9
-    stack.slope = np.ones(shape, dtype=np.float32) * 0.8
+    _set_channel(stack, "slope", np.ones(shape, dtype=np.float32) * 0.8)
     stack.slope[5:12, 5:12] = 0.05
     wetlands = detect_wetlands(stack)
     assert len(wetlands) >= 1
@@ -283,15 +288,15 @@ def test_wetland_empty_when_no_wetness():
 
 def test_seasonal_dry_reduces_wetness():
     stack = _make_stack()
-    stack.wetness = np.full(stack.height.shape, 0.8, dtype=np.float32)
+    _set_channel(stack, "wetness", np.full(stack.height.shape, 0.8, dtype=np.float32))
     apply_seasonal_water_state(stack, SeasonalState.DRY)
     assert float(stack.wetness.mean()) < 0.8
 
 
 def test_seasonal_wet_increases_wetness_and_water_surface():
     stack = _make_stack()
-    stack.wetness = np.full(stack.height.shape, 0.3, dtype=np.float32)
-    stack.water_surface = np.full(stack.height.shape, 0.2, dtype=np.float32)
+    _set_channel(stack, "wetness", np.full(stack.height.shape, 0.3, dtype=np.float32))
+    _set_channel(stack, "water_surface", np.full(stack.height.shape, 0.2, dtype=np.float32))
     apply_seasonal_water_state(stack, SeasonalState.WET)
     assert float(stack.wetness.mean()) > 0.3
     assert float(stack.water_surface.mean()) > 0.2
@@ -307,7 +312,7 @@ def test_seasonal_frozen_sets_tidal():
 def test_seasonal_normal_is_noop_on_wetness():
     stack = _make_stack()
     original = np.full(stack.height.shape, 0.5, dtype=np.float32)
-    stack.wetness = original.copy()
+    _set_channel(stack, "wetness", original.copy())
     apply_seasonal_water_state(stack, SeasonalState.NORMAL)
     assert np.allclose(stack.wetness, original)
 
@@ -325,8 +330,8 @@ def test_seasonal_invalid_type_raises():
 
 def test_compute_vegetation_layers_returns_four_distinct_layers():
     stack = _make_stack()
-    stack.slope = np.random.default_rng(1).uniform(0, 1, stack.height.shape).astype(np.float32)
-    stack.wetness = np.random.default_rng(2).uniform(0, 1, stack.height.shape).astype(np.float32)
+    _set_channel(stack, "slope", np.random.default_rng(1).uniform(0, 1, stack.height.shape).astype(np.float32))
+    _set_channel(stack, "wetness", np.random.default_rng(2).uniform(0, 1, stack.height.shape).astype(np.float32))
     layers = compute_vegetation_layers(stack)
     assert isinstance(layers, VegetationLayers)
     arrs = [
@@ -542,7 +547,7 @@ def test_pass_vegetation_depth_region_scope_leaves_outside_unchanged():
     state = _make_state(rows=32, cols=32)
     # Seed detail_density with a sentinel
     sentinel = np.full(state.mask_stack.height.shape, 0.777, dtype=np.float32)
-    state.mask_stack.detail_density = {"canopy": sentinel.copy()}
+    state.mask_stack.set("detail_density", {"canopy": sentinel.copy()}, "test_fixture")
     # Region covers only top-left quadrant
     region = BBox(0.0, 0.0, 16.0, 16.0)
     pass_vegetation_depth(state, region=region)

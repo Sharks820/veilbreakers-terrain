@@ -58,6 +58,11 @@ def _tiny_stack(size: int = 8) -> TerrainMaskStack:
     )
 
 
+def _set_channel(stack: TerrainMaskStack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Bundle P — DEM import
 # ---------------------------------------------------------------------------
@@ -216,27 +221,27 @@ class TestDestructibility:
 
     def test_soft_rock_generates_patches(self):
         stack = _tiny_stack(16)
-        stack.rock_hardness = np.full((16, 16), 0.2, dtype=np.float32)
+        _set_channel(stack, "rock_hardness", np.full((16, 16), 0.2, dtype=np.float32))
         patches = detect_destructibility_patches(stack)
         assert len(patches) > 0
         assert all(isinstance(p, DestructibilityPatch) for p in patches)
 
     def test_hard_rock_generates_no_patches(self):
         stack = _tiny_stack(16)
-        stack.rock_hardness = np.full((16, 16), 0.9, dtype=np.float32)
+        _set_channel(stack, "rock_hardness", np.full((16, 16), 0.9, dtype=np.float32))
         patches = detect_destructibility_patches(stack)
         assert patches == []
 
     def test_wet_soft_rock_is_mud(self):
         stack = _tiny_stack(16)
-        stack.rock_hardness = np.full((16, 16), 0.1, dtype=np.float32)
-        stack.wetness = np.full((16, 16), 0.9, dtype=np.float32)
+        _set_channel(stack, "rock_hardness", np.full((16, 16), 0.1, dtype=np.float32))
+        _set_channel(stack, "wetness", np.full((16, 16), 0.9, dtype=np.float32))
         patches = detect_destructibility_patches(stack)
         assert any(p.debris_type == "mud" for p in patches)
 
     def test_export_destructibility_json(self, tmp_path: Path):
         stack = _tiny_stack(16)
-        stack.rock_hardness = np.full((16, 16), 0.2, dtype=np.float32)
+        _set_channel(stack, "rock_hardness", np.full((16, 16), 0.2, dtype=np.float32))
         patches = detect_destructibility_patches(stack)
         out = tmp_path / "dest.json"
         export_destructibility_json(patches, out)
@@ -269,7 +274,7 @@ class TestWeatheringTimeline:
 
     def test_apply_rain_increases_wetness(self):
         stack = _tiny_stack(8)
-        stack.wetness = np.full((8, 8), 0.1, dtype=np.float32)
+        _set_channel(stack, "wetness", np.full((8, 8), 0.1, dtype=np.float32))
         before = stack.wetness.copy()
         apply_weathering_event(stack, WeatheringEvent(1.0, "rain", 0.3))
         assert (stack.wetness >= before).all()
@@ -277,13 +282,13 @@ class TestWeatheringTimeline:
 
     def test_apply_drought_decreases_wetness(self):
         stack = _tiny_stack(8)
-        stack.wetness = np.full((8, 8), 0.5, dtype=np.float32)
+        _set_channel(stack, "wetness", np.full((8, 8), 0.5, dtype=np.float32))
         apply_weathering_event(stack, WeatheringEvent(1.0, "drought", 0.3))
         assert stack.wetness.max() < 0.5 + 1e-6
 
     def test_apply_freeze_is_noop(self):
         stack = _tiny_stack(8)
-        stack.wetness = np.full((8, 8), 0.4, dtype=np.float32)
+        _set_channel(stack, "wetness", np.full((8, 8), 0.4, dtype=np.float32))
         before = stack.wetness.copy()
         apply_weathering_event(stack, WeatheringEvent(1.0, "freeze", 0.5))
         np.testing.assert_array_equal(stack.wetness, before)

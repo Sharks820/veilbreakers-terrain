@@ -40,6 +40,11 @@ def _make_stack(size: int = 32, with_mist: bool = False):
     return stack
 
 
+def _set_channel(stack, channel: str, value):
+    stack.set(channel, value, "test_fixture")
+    return value
+
+
 def _make_pipeline_state(stack):
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
@@ -242,7 +247,7 @@ class TestWaterfallMistPass:
         h = np.zeros((40, 40), dtype=np.float32)
         h[:20, :] = 25.0
         stack = _make_stack(size=40, with_mist=False)
-        stack.height = h
+        _set_channel(stack, "height", h)
 
         lips = detect_waterfall_lip_candidates(stack, min_drainage=1.0, min_drop_m=3.0)
         assert lips, "Expected at least one lip candidate on the synthetic cliff"

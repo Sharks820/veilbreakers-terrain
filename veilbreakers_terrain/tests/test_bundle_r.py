@@ -119,15 +119,12 @@ def test_rule_2_attached_viewport_passes():
     ProtocolGate.rule_2_sync_to_user_viewport(state)
 
 
-def test_rule_2_missing_viewport_logs_warning(caplog):
-    import logging
-    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
+def test_rule_2_missing_viewport_raises_protocol_violation():
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate, ProtocolViolation
 
     state = _make_state(include_viewport=False)
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(ProtocolViolation, match="Rule 2"):
         ProtocolGate.rule_2_sync_to_user_viewport(state)
-    assert any("rule_2" in r.message.lower() or "viewport" in r.message.lower()
-               for r in caplog.records)
 
 
 def test_rule_2_out_of_view_ok_bypasses():

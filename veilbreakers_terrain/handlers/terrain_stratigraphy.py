@@ -450,7 +450,7 @@ def simulate_fold_deformation(
 
     delta = amplitude_m * sin_term * exp_decay  # (H, W)
 
-    stack.height = (h + delta).astype(stack.height.dtype)
+    stack.set("height", (h + delta).astype(stack.height.dtype), "stratigraphy")
     return delta.astype(np.float64)
 
 

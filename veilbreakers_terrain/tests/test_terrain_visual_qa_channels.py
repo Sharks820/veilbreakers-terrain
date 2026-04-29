@@ -10,8 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import types
-
 import numpy as np
 import pytest
 
@@ -32,12 +30,40 @@ from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(**kwargs) -> types.SimpleNamespace:
-    """Build a minimal duck-typed stack namespace with provided channel arrays."""
-    return types.SimpleNamespace(**kwargs)
+def _make_stack(**kwargs):
+    """Build a production TerrainMaskStack with provided channel arrays."""
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+
+    height = np.asarray(
+        kwargs.pop("height", np.zeros((8, 8), dtype=np.float32))
+    )
+    stack = TerrainMaskStack(
+        tile_size=max(int(height.shape[0]) - 1, 0) if height.ndim >= 2 else 0,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    for channel, value in kwargs.items():
+        if value is None:
+            object.__setattr__(stack, channel, None)
+        elif hasattr(stack, channel):
+            stack.set(channel, value, "test_fixture")
+        else:
+            object.__setattr__(stack, channel, value)
+    return stack
 
 
-def _valid_stack() -> types.SimpleNamespace:
+def _force_channel(stack, channel: str, value):
+    object.__setattr__(stack, channel, value)
+    if value is not None and hasattr(stack, "populated_by_pass"):
+        stack.populated_by_pass[channel] = "test_invalid_fixture"
+    return value
+
+
+def _valid_stack():
     """Return a stack that passes all REQUIRED_STACK_CHANNELS checks."""
     size = (8, 8)
     return _make_stack(
@@ -74,7 +100,7 @@ def test_missing_channel_reported():
 def test_none_channel_counts_as_missing():
     """A channel present but set to None counts as missing."""
     stack = _valid_stack()
-    stack.water_depth_m = None
+    _force_channel(stack, "water_depth_m", None)
     result = validate_stack_channels(stack)
     assert result["ok"] is False
     assert "water_depth_m" in result["missing"]
@@ -88,7 +114,7 @@ def test_none_channel_counts_as_missing():
 def test_dtype_mismatch_integer_for_float_channel():
     """An integer array for a float channel is reported in dtype_mismatch."""
     stack = _valid_stack()
-    stack.height = np.array([[100, 200], [300, 400]], dtype=np.int32)
+    _force_channel(stack, "height", np.array([[100, 200], [300, 400]], dtype=np.int32))
     result = validate_stack_channels(stack)
     assert result["ok"] is False
     assert "height" in result["dtype_mismatch"]
@@ -97,7 +123,7 @@ def test_dtype_mismatch_integer_for_float_channel():
 def test_dtype_mismatch_does_not_block_other_channels():
     """Only the mismatched channel is flagged; others still checked."""
     stack = _valid_stack()
-    stack.talus_mask = np.array([[0, 1], [1, 0]], dtype=np.uint8)
+    _force_channel(stack, "talus_mask", np.array([[0, 1], [1, 0]], dtype=np.uint8))
     result = validate_stack_channels(stack)
     assert "talus_mask" in result["dtype_mismatch"]
     # Other channels should still be checked (checked count includes talus_mask)
@@ -113,7 +139,7 @@ def test_range_violation_above_max():
     """Values exceeding the channel max are reported in range_violations."""
     stack = _valid_stack()
     # water_surface_mask max is 1.0 — set a value of 1.5
-    stack.water_surface_mask = np.full((4, 4), 1.5, dtype=np.float32)
+    stack.set("water_surface_mask", np.full((4, 4), 1.5, dtype=np.float32), "test_fixture")
     result = validate_stack_channels(stack)
     assert result["ok"] is False
     assert "water_surface_mask" in result["range_violations"]
@@ -123,7 +149,7 @@ def test_range_violation_below_min():
     """Values below the channel min are reported in range_violations."""
     stack = _valid_stack()
     # height min is 0.0 — set negative elevation
-    stack.height = np.full((4, 4), -10.0, dtype=np.float32)
+    stack.set("height", np.full((4, 4), -10.0, dtype=np.float32), "test_fixture")
     result = validate_stack_channels(stack)
     assert result["ok"] is False
     assert "height" in result["range_violations"]
@@ -132,7 +158,11 @@ def test_range_violation_below_min():
 def test_range_at_boundary_passes():
     """Exact boundary values (0.0 and max) must not be flagged."""
     stack = _valid_stack()
-    stack.water_surface_mask = np.array([[0.0, 1.0], [0.5, 0.0]], dtype=np.float32)
+    stack.set(
+        "water_surface_mask",
+        np.array([[0.0, 1.0], [0.5, 0.0]], dtype=np.float32),
+        "test_fixture",
+    )
     result = validate_stack_channels(stack)
     assert "water_surface_mask" not in result["range_violations"]
 
@@ -169,7 +199,7 @@ def test_all_pass_custom_channels():
 def test_empty_array_does_not_crash():
     """Empty (size-0) arrays skip range checks but count as checked."""
     stack = _valid_stack()
-    stack.cliff_mask = np.array([], dtype=np.float32).reshape(0, 4)
+    stack.set("cliff_mask", np.array([], dtype=np.float32).reshape(0, 4), "test_fixture")
     result = validate_stack_channels(stack)
     # No crash; cliff_mask should be checked (skipped range check gracefully)
     assert isinstance(result, dict)
@@ -211,7 +241,7 @@ def test_handler_survives_non_stack_object():
 # ---------------------------------------------------------------------------
 
 
-def _scenario_stack() -> types.SimpleNamespace:
+def _scenario_stack():
     """Stack with real values suitable for scenario golden testing."""
     h = np.linspace(0.0, 200.0, 64, dtype=np.float32).reshape(8, 8)
     w = np.full((8, 8), 0.05, dtype=np.float32)
@@ -232,7 +262,7 @@ def test_scenario_water_present_passes():
 def test_scenario_water_present_fails_when_dry():
     """water_present scenario fails when mask is all-zero."""
     stack = _scenario_stack()
-    stack.water_surface_mask = np.zeros((8, 8), dtype=np.float32)
+    stack.set("water_surface_mask", np.zeros((8, 8), dtype=np.float32), "test_fixture")
     result = run_scenario_goldens(stack, scenarios={"water_present": SCENARIO_GOLDENS["water_present"]})
     assert result["results"]["water_present"]["ok"] is False
     assert result["failed"] == 1
@@ -248,7 +278,7 @@ def test_scenario_cliff_present_passes():
 def test_scenario_cliff_present_fails_when_flat():
     """cliff_present scenario fails when cliff_mask is all low values."""
     stack = _scenario_stack()
-    stack.cliff_mask = np.full((8, 8), 0.1, dtype=np.float32)
+    stack.set("cliff_mask", np.full((8, 8), 0.1, dtype=np.float32), "test_fixture")
     result = run_scenario_goldens(stack, scenarios={"cliff_present": SCENARIO_GOLDENS["cliff_present"]})
     assert result["results"]["cliff_present"]["ok"] is False
 
@@ -263,7 +293,7 @@ def test_scenario_heightmap_range_passes():
 def test_scenario_heightmap_range_fails_flat_terrain():
     """heightmap_range scenario fails when terrain is perfectly flat."""
     stack = _scenario_stack()
-    stack.height = np.full((8, 8), 100.0, dtype=np.float32)
+    stack.set("height", np.full((8, 8), 100.0, dtype=np.float32), "test_fixture")
     result = run_scenario_goldens(stack, scenarios={"heightmap_range": SCENARIO_GOLDENS["heightmap_range"]})
     assert result["results"]["heightmap_range"]["ok"] is False
 
@@ -271,7 +301,7 @@ def test_scenario_heightmap_range_fails_flat_terrain():
 def test_scenario_no_water_seam_passes_uniform():
     """no_water_seam passes when edges are uniform (std == 0)."""
     stack = _scenario_stack()
-    stack.water_depth_m = np.full((8, 8), 5.0, dtype=np.float32)
+    stack.set("water_depth_m", np.full((8, 8), 5.0, dtype=np.float32), "test_fixture")
     result = run_scenario_goldens(stack, scenarios={"no_water_seam": SCENARIO_GOLDENS["no_water_seam"]})
     assert result["results"]["no_water_seam"]["ok"] is True
 
@@ -282,7 +312,7 @@ def test_scenario_no_water_seam_fails_abrupt_edge():
     wd = np.full((8, 8), 5.0, dtype=np.float32)
     # Inject a large spike on the first row to blow up std
     wd[0, :] = np.array([0.0, 100.0, 0.0, 100.0, 0.0, 100.0, 0.0, 100.0], dtype=np.float32)
-    stack.water_depth_m = wd
+    stack.set("water_depth_m", wd, "test_fixture")
     result = run_scenario_goldens(stack, scenarios={"no_water_seam": SCENARIO_GOLDENS["no_water_seam"]})
     assert result["results"]["no_water_seam"]["ok"] is False
 
