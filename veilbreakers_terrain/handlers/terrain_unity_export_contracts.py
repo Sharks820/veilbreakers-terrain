@@ -9,11 +9,18 @@ attributes required by the Unity shader + geometry-node consumer.
 from __future__ import annotations
 
 import json
+from importlib import metadata as importlib_metadata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from .terrain_semantics import TerrainMaskStack, ValidationIssue
+
+
+try:
+    CONTRACT_VERSION = importlib_metadata.version("veilbreakers-terrain")
+except importlib_metadata.PackageNotFoundError:  # pragma: no cover - editable tree fallback
+    CONTRACT_VERSION = "0+local"
 
 
 REQUIRED_CHANNELS: Tuple[str, ...] = tuple(TerrainMaskStack._ARRAY_CHANNELS)
@@ -153,7 +160,7 @@ def write_export_manifest(output_dir: Path, files: Dict[str, Dict[str, Any]]) ->
                     f"manifest file {fname!r} missing required key {required!r}"
                 )
     manifest_path = output_dir / "manifest.json"
-    payload = {"version": "1.0", "files": files}
+    payload = {"version": CONTRACT_VERSION, "files": files}
     manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
     return manifest_path
 

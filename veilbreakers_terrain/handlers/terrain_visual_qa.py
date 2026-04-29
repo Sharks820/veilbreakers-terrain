@@ -472,6 +472,125 @@ def validate_channel_manifest(
     }
 
 
+def _array_or_none(stack: Any, channel: str) -> Optional[np.ndarray]:
+    value = getattr(stack, channel, None)
+    if value is None:
+        return None
+    try:
+        arr = np.asarray(value)
+    except Exception:
+        return None
+    if arr.size == 0:
+        return None
+    return arr
+
+
+def _qa_result(name: str, ok: bool, reason: str) -> Dict[str, Any]:
+    return {"name": name, "ok": bool(ok), "reason": str(reason)}
+
+
+def _check_stochastic_seam(stack: Any) -> Dict[str, Any]:
+    arr = _array_or_none(stack, "stochastic_uv_mask")
+    if arr is None:
+        arr = _array_or_none(stack, "splatmap_weights_layer")
+    if arr is None:
+        return _qa_result("stochastic_seam", False, "missing stochastic_uv_mask or splatmap_weights_layer")
+    if arr.ndim == 3:
+        arr = arr[..., 0]
+    if arr.ndim != 2 or min(arr.shape) < 3:
+        return _qa_result("stochastic_seam", False, f"bad shape {arr.shape}")
+
+    n = min(arr.shape)
+    idx = np.arange(n - 1)
+    diag = arr[idx, idx]
+    adjacent = arr[idx, idx + 1]
+    diag_delta = np.asarray(diag, dtype=np.float64) - np.asarray(adjacent, dtype=np.float64)
+    seam_variance = float(np.nanvar(diag_delta))
+    seam_score = max(seam_variance, float(np.nanmean(np.abs(diag_delta))))
+    return _qa_result(
+        "stochastic_seam",
+        seam_score <= 0.2,
+        f"diagonal_score={seam_score:.4f} variance={seam_variance:.4f} (need <= 0.2)",
+    )
+
+
+def _check_foam_alpha(stack: Any) -> Dict[str, Any]:
+    foam = _array_or_none(stack, "foam")
+    if foam is None:
+        return _qa_result("foam_alpha", False, "missing foam")
+    finite = np.isfinite(foam)
+    if not finite.all():
+        return _qa_result("foam_alpha", False, "non-finite foam values")
+    lo = float(np.nanmin(foam))
+    hi = float(np.nanmax(foam))
+    return _qa_result("foam_alpha", lo >= 0.0 and hi <= 1.0, f"range=[{lo:.4f},{hi:.4f}]")
+
+
+def _check_water_elevation(stack: Any) -> Dict[str, Any]:
+    mask = _array_or_none(stack, "water_surface_mask")
+    elev = _array_or_none(stack, "water_surface_elevation_m")
+    if mask is None or elev is None:
+        return _qa_result("water_elevation", False, "missing water_surface_mask or water_surface_elevation_m")
+    wet = np.asarray(mask) > 0.01
+    if not wet.any():
+        return _qa_result("water_elevation", True, "no water cells")
+    wet_elev = np.asarray(elev)[wet]
+    ok = bool(np.isfinite(wet_elev).all() and float(np.nanmax(wet_elev)) > 0.0)
+    return _qa_result(
+        "water_elevation",
+        ok,
+        f"wet_cells={int(wet.sum())} max_elevation={float(np.nanmax(wet_elev)):.4f}",
+    )
+
+
+def _check_tree_z_export(stack: Any) -> Dict[str, Any]:
+    points = _array_or_none(stack, "tree_instance_points")
+    if points is None:
+        return _qa_result("tree_z_export", True, "no tree_instance_points")
+    if points.ndim != 2 or points.shape[1] < 3:
+        return _qa_result("tree_z_export", False, f"bad shape {points.shape}")
+    height = _array_or_none(stack, "height")
+    non_flat = height is not None and (float(np.nanmax(height)) - float(np.nanmin(height))) > 1e-5
+    z = np.asarray(points[:, 2], dtype=np.float64)
+    ok = (not non_flat) or bool(np.all(np.abs(z) > 1e-6))
+    return _qa_result("tree_z_export", ok, f"tree_count={len(z)} zero_z={int((np.abs(z) <= 1e-6).sum())}")
+
+
+def _check_phantom_channel_writers(stack: Any) -> Dict[str, Any]:
+    populated = getattr(stack, "populated_by_pass", {}) or {}
+    missing_writers: List[str] = []
+    for channel in REQUIRED_STACK_CHANNELS:
+        if _array_or_none(stack, channel) is not None and not populated.get(channel):
+            missing_writers.append(channel)
+    return _qa_result(
+        "phantom_channel_writers",
+        not missing_writers,
+        "missing_writers=" + ",".join(missing_writers[:8]) if missing_writers else "all present channels have writers",
+    )
+
+
+def run_checks(stack: Any) -> Dict[str, Any]:
+    """Run Phase 9 visual-QA contract checks on a stack-like object.
+
+    This is code-level validation only; it does not claim rendered visual
+    quality. Blender viewport/render proof remains a separate gate.
+    """
+    checks = [
+        _check_stochastic_seam(stack),
+        _check_foam_alpha(stack),
+        _check_water_elevation(stack),
+        _check_tree_z_export(stack),
+        _check_phantom_channel_writers(stack),
+    ]
+    failed = [check for check in checks if not check["ok"]]
+    return {
+        "ok": not failed,
+        "checks": checks,
+        "failed": failed,
+        "failed_names": [check["name"] for check in failed],
+    }
+
+
 def handle_visual_qa_validate_channels(
     stack: Any,
     required_channels: Optional[Dict[str, Tuple[str, Tuple[float, float]]]] = None,

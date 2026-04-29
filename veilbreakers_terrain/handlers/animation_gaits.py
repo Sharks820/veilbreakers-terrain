@@ -6,6 +6,18 @@ No Blender imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+
+
+BIOME_GAIT_MAP: dict[int, str] = {
+    0: "walk",
+    1: "wade",
+    2: "scramble",
+    3: "trudge",
+    4: "crouch",
+}
 
 
 @dataclass
@@ -34,4 +46,46 @@ class Keyframe:
     out_tangent: float = 0.0
 
 
-__all__ = ["Keyframe"]
+@dataclass
+class GaitSelector:
+    """Select terrain-aware locomotion gait from stack biome/material data."""
+
+    default_gait: str = "walk"
+
+    def select_gait(
+        self,
+        speed_mps: float = 1.0,
+        *,
+        stack: Any = None,
+        row: int | None = None,
+        col: int | None = None,
+    ) -> str:
+        if stack is None:
+            return "run" if speed_mps >= 4.0 else self.default_gait
+
+        biome = getattr(stack, "biome_id", None)
+        if biome is not None:
+            arr = np.asarray(biome)
+            if arr.size:
+                rr = int(np.clip(row if row is not None else arr.shape[0] // 2, 0, arr.shape[0] - 1))
+                cc = int(np.clip(col if col is not None else arr.shape[1] // 2, 0, arr.shape[1] - 1))
+                gait = BIOME_GAIT_MAP.get(int(arr[rr, cc]))
+                if gait:
+                    return gait
+
+        material = getattr(stack, "splatmap_weights_layer", None)
+        if material is not None:
+            weights = np.asarray(material)
+            if weights.ndim == 3 and weights.shape[2] >= 2 and weights.size:
+                rr = int(np.clip(row if row is not None else weights.shape[0] // 2, 0, weights.shape[0] - 1))
+                cc = int(np.clip(col if col is not None else weights.shape[1] // 2, 0, weights.shape[1] - 1))
+                layer = int(np.argmax(weights[rr, cc]))
+                if layer == 1:
+                    return "wade"
+                if layer == 2:
+                    return "scramble"
+
+        return "run" if speed_mps >= 4.0 else self.default_gait
+
+
+__all__ = ["BIOME_GAIT_MAP", "GaitSelector", "Keyframe"]

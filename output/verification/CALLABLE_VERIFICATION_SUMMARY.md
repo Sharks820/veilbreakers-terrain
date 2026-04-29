@@ -2,20 +2,19 @@
 
 This report treats grade rows as claims, not proof. A callable needs executable evidence.
 
-- Total callables: 1683
+- Total callables: 1692
 - Blockers: 0
-- High risk: 154
+- High risk: 142
 - Medium risk: 1
-- Low risk: 1528
+- Low risk: 1549
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 108
+- Tool/Blender callables needing blocker/high evidence: 107
 
 ## Highest Risk Files
 
 - terrain_cliffs.py: 19
 - terrain_foliage_catalog.py: 13
 - asset_generation.py: 11
-- terrain_bundle_n.py: 11
 - terrain_morphology.py: 11
 - procedural_grass.py: 8
 - terrain_assets.py: 8
@@ -37,6 +36,7 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_review_ingest.py: 2
 - terrain_telemetry_dashboard.py: 2
 - terrain_wildlife_zones.py: 2
+- _water_network_ext.py: 1
 
 ## Top Blocker/High Callables
 
@@ -77,17 +77,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_budget_enforcer.py:324 _estimate_npz_mb grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_budget_enforcer.py:464 compute_budget_report grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_budget_enforcer.py:532 _issue_for grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
-- HIGH terrain_bundle_n.py:68 get_bundle_n_runtime_contract grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:83 _runtime_options grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:91 _determinism_runs grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:104 bundle_n_runtime_requests_determinism grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:110 _skip_runtime_hooks grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:133 _attach_issues grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:144 _merge_bundle_n_metrics grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:152 _review_findings_from_intent grade=B+ needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:200 _validation_issue_from_review_payload grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:227 _default_snapshot_id grade=A needs=direct_behavior_test;camera_readability_probe
-- HIGH terrain_bundle_n.py:251 run_bundle_n_post_pipeline_hooks grade=B+ needs=direct_behavior_test;camera_readability_probe
 - HIGH terrain_cliffs.py:75 _repose_for_material grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_cliffs.py:189 _smooth_contour_gaussian grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_cliffs.py:239 _fit_bspline_contour grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
@@ -120,5 +109,16 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_foliage_catalog.py:226 _slope grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
 - HIGH terrain_foliage_catalog.py:825 species_for_biome grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
 - HIGH terrain_foliage_catalog.py:868 _derive_species_constraints grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1020 default_asset_catalog_path grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1051 AssetManifest._maybe_reload grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1061 AssetManifest._load_locked grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1089 AssetManifest.reload grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1094 AssetManifest.asset_ids grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1099 AssetManifest.get_asset grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1111 AssetManifest.assets_for_species grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1118 AssetManifest.choose_for_species grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1166 get_default_asset_manifest grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_foliage_catalog.py:1175 set_default_asset_manifest grade=D+ needs=direct_behavior_test;visual_snapshot_or_metric;material_texture_contract_test;camera_readability_probe
+- HIGH terrain_gameplay_zones.py:460 register_bundle_j_gameplay_zones_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 
 Full CSV: `output/verification/CALLABLE_VERIFICATION_MATRIX.csv`

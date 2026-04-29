@@ -45,6 +45,7 @@ class GoldenSnapshot:
     tile_size: int = 0
     cell_size: float = 1.0
     populated_by_pass: Dict[str, str] = field(default_factory=dict)
+    npz_path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -65,6 +66,7 @@ class GoldenSnapshot:
             tile_size=int(data.get("tile_size", 0)),
             cell_size=float(data.get("cell_size", 1.0)),
             populated_by_pass=dict(data.get("populated_by_pass", {})),
+            npz_path=str(data.get("npz_path", "")),
         )
 
 
@@ -114,9 +116,8 @@ def save_golden_snapshot(
     # BUG-R8-A9-026: write companion .npz for tolerance-based comparison
     npz_path = json_path.with_suffix(".npz")
     stack.to_npz(npz_path)
-    snap_dict = snap.to_dict()
-    snap_dict["npz_path"] = str(npz_path)
-    json_path.write_text(json.dumps(snap_dict, sort_keys=True, indent=2))
+    snap.npz_path = str(npz_path)
+    json_path.write_text(json.dumps(snap.to_dict(), sort_keys=True, indent=2))
     return snap
 
 
@@ -146,12 +147,21 @@ def compare_against_golden(
     issues: List[ValidationIssue] = []
     current_hash = stack.compute_hash()
     hash_match = current_hash == golden.content_hash
+    tolerance_close_channels: set[str] = set()
 
     if not hash_match:
         # BUG-R8-A9-025: tolerance path — load npz and compare with np.allclose
         tolerance_passed = False
-        if tolerance > 0.0 and golden_dir is not None:
-            npz_path = Path(golden_dir) / f"{golden.snapshot_id}.golden.npz"
+        if tolerance > 0.0:
+            npz_path = (
+                Path(golden.npz_path)
+                if golden.npz_path
+                else (
+                    Path(golden_dir) / f"{golden.snapshot_id}.golden.npz"
+                    if golden_dir is not None
+                    else Path(f"{golden.snapshot_id}.golden.npz")
+                )
+            )
             if npz_path.exists():
                 try:
                     golden_stack = TerrainMaskStack.from_npz(npz_path)
@@ -165,6 +175,7 @@ def compare_against_golden(
                         if not np.allclose(np.asarray(cur_arr), np.asarray(gld_arr), atol=tolerance):
                             all_close = False
                             break
+                        tolerance_close_channels.add(ch)
                     tolerance_passed = all_close
                 except Exception:
                     tolerance_passed = False
@@ -190,6 +201,8 @@ def compare_against_golden(
     divergences: List[str] = []
     for ch, h in golden.channel_hashes.items():
         if current_channels.get(ch) != h:
+            if tolerance > 0.0 and ch in tolerance_close_channels:
+                continue
             divergences.append(ch)
 
     if divergences:
@@ -427,8 +440,8 @@ def _run_scenario(name: str, spec: Dict[str, Any], stack: Any) -> Dict[str, Any]
             arr[:, -1].ravel(),
         ])
         edge_std = float(np.nanstd(edge_values))
-        ok = edge_std < 0.5
-        reason = f"edge_std={edge_std:.4f} ({'pass' if ok else 'fail, need < 0.5'})"
+        ok = edge_std < 0.2
+        reason = f"edge_std={edge_std:.4f} ({'pass' if ok else 'fail, need < 0.2'})"
         return {"ok": ok, "reason": reason}
 
     return {"ok": False, "reason": f"unknown scenario '{name}'"}

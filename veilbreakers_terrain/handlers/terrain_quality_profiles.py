@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import warnings
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -807,6 +808,13 @@ def load_quality_profile(
         )
 
     profile = _BUILTIN_PROFILES[name]
+    if name == "production":
+        warnings.warn(
+            "quality profile 'production' is deprecated; use 'standard' or "
+            "'aaa_open_world' for new terrain intents",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if profile.extends:
         # Recurse down the full chain before merging upward

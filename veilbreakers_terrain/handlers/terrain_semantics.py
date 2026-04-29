@@ -1337,7 +1337,7 @@ class TerrainIntentState:
     protected_zones: Tuple[ProtectedZoneSpec, ...] = ()
     hero_feature_specs: Tuple[HeroFeatureSpec, ...] = ()
     water_system_spec: Optional[WaterSystemSpec] = None
-    quality_profile: str = "production"
+    quality_profile: str = "aaa_open_world"
     biome_rules: Optional[str] = None
 
     scene_read: Optional[TerrainSceneRead] = None

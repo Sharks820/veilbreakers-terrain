@@ -1835,6 +1835,15 @@ regression tests for newly-fixed bugs.
 
 **Risk:** **LOW.** Tests only.
 
+**Status 2026-04-29:** Implemented at code-contract level. Blender runtime was
+unavailable during this pass, so this does not claim rendered visual quality.
+`terrain_visual_qa.run_checks(stack)` now checks stochastic seam score, foam
+alpha range, water elevation, tree Z export, and phantom channel writer
+provenance. Bundle N records the visual QA report and can block via
+`bundle_n_runtime.visual_qa_blocking`. Golden tolerance, contract version,
+quality-profile deprecation/default, and terrain-aware gait selection were
+patched with focused regression tests.
+
 **Verification criteria:**
 - `terrain_visual_qa.run_checks(stack)` includes: stochastic seam, foam alpha,
   water elevation, tree Z, phantom channel.
@@ -1848,6 +1857,8 @@ regression tests for newly-fixed bugs.
   diagonal triplanar samples), foam alpha range `[0,1]`, water elevation
   non-zero on non-ocean tile, tree Z non-zero on non-flat tile, phantom
   channel coverage (every `REQUIRED_CHANNELS` member has writer count >0).
+- **Status 2026-04-29:** Done through `run_checks(stack)` and named helper
+  checks. Guard test deliberately breaks each P0 family.
 
 #### FIX-9.2 (FIX-9-58) — Bundle N condition battery
 - **P0 ref:** S22-P0-35
@@ -1855,6 +1866,8 @@ regression tests for newly-fixed bugs.
   `water_depth_m < 0.01 and slope < 0.05` with
   `_check_stochastic_seams()`, `_check_phantom_channel_reads()`,
   `_check_tree_z_export()`, `_check_foam_alpha()`.
+- **Status 2026-04-29:** Done through Bundle N `visual_qa_report`; blocking
+  hard issues are enabled by `bundle_n_runtime.visual_qa_blocking`.
 
 #### FIX-9.3 (FIX-6-10) — Quality profile deprecation warning
 - **P0 ref:** M6-P0-8
@@ -1862,26 +1875,36 @@ regression tests for newly-fixed bugs.
   `"production"`. Change `TerrainIntentState` default to `"aaa_open_world"`.
 - **Note:** The hard error for unknown profiles already lands in Phase 1
   (FIX-1.4); this is the soft-deprecation companion.
+- **Status 2026-04-29:** Done. `load_quality_profile("production")` emits
+  `DeprecationWarning`; `TerrainIntentState` default is now
+  `"aaa_open_world"`.
 
 #### FIX-9.4 (FIX-9-9) — Contract version dynamic
 - **P0 ref:** S22-P0-52
 - **File:** `terrain_unity_export_contracts.py`.
   `CONTRACT_VERSION = importlib.metadata.version("veilbreakers-terrain")`.
+- **Status 2026-04-29:** Done. Manifest writer uses `CONTRACT_VERSION`.
 
 #### FIX-9.5 (FIX-8-9) — Seam threshold 0.5 → 0.2
 - **File:** `terrain_golden_snapshots.py:430`. Update reason string too.
+- **Status 2026-04-29:** Done.
 
 #### FIX-9.6 (FIX-8-10) — Tolerance applies regardless of golden_dir
 - **File:** `terrain_golden_snapshots.py:153`. Remove `and golden_dir is not None`.
+- **Status 2026-04-29:** Done. Loaded golden snapshots retain companion
+  `npz_path`, so tolerance works without explicitly passing `golden_dir`.
 
 #### FIX-9.7 (FIX-8-11) — Tolerance in per-channel loop
 - **File:** `terrain_golden_snapshots.py:189–205`. Use `np.allclose` not
   byte equality.
+- **Status 2026-04-29:** Done. Channels passing tolerance are not reported as
+  `GOLDEN_CHANNEL_DIVERGENCE`.
 
 #### FIX-9.8 (FIX-9-10) — Gait selection from terrain data
 - **P0 ref:** S22-P0-60
 - **File:** `animation_gaits.py`, `GaitSelector.select_gait()`. Accept
   `stack`; read `biome_id` and material weights; use `BIOME_GAIT_MAP`.
+- **Status 2026-04-29:** Done with `GaitSelector` and `BIOME_GAIT_MAP`.
 
 ### Phase 9 verification
 1. Visual-QA report flags each P0 family on a deliberately-broken tile.

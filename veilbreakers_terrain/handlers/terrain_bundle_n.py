@@ -28,6 +28,7 @@ from . import (
     terrain_readability_bands,
     terrain_review_ingest,
     terrain_telemetry_dashboard,
+    terrain_visual_qa,
 )
 from .terrain_semantics import PassResult, TerrainPipelineState, ValidationIssue
 
@@ -53,6 +54,7 @@ BUNDLE_N_RUNTIME_CONTRACT = {
         "enforce_budget",
         "compute_budget_report",
         "collect_performance_report",
+        "run_visual_qa_checks",
         "compute_readability_bands",
         "apply_review_blockers",
     ),
@@ -245,6 +247,7 @@ def register_bundle_n_passes() -> Dict[str, Any]:
     _ = terrain_review_ingest.ingest_review_json
     _ = terrain_review_ingest.pass_apply_review_blockers
     _ = terrain_telemetry_dashboard.record_telemetry
+    _ = terrain_visual_qa.run_checks
     return get_bundle_n_runtime_contract()
 
 
@@ -318,6 +321,30 @@ def run_bundle_n_post_pipeline_hooks(
         )
     except Exception as exc:  # noqa: BLE001
         summary["performance_report_error"] = repr(exc)
+
+    try:
+        visual_report = terrain_visual_qa.run_checks(stack)
+        summary["visual_qa_report"] = visual_report
+        summary["visual_qa_failed_names"] = list(visual_report.get("failed_names", []))
+        if options.get("visual_qa_blocking") and not visual_report.get("ok", False):
+            _attach_issues(
+                last,
+                [
+                    ValidationIssue(
+                        code=f"BUNDLE_N_VISUAL_QA_{str(check.get('name', 'unknown')).upper()}",
+                        severity="hard",
+                        message=str(check.get("reason", "visual QA check failed")),
+                        remediation=(
+                            "Fix the named terrain channel contract before "
+                            "shipping this tile."
+                        ),
+                    )
+                    for check in visual_report.get("failed", [])
+                    if isinstance(check, Mapping)
+                ],
+            )
+    except Exception as exc:  # noqa: BLE001
+        summary["visual_qa_error"] = repr(exc)
 
     bands = terrain_readability_bands.compute_readability_bands(stack)
     readability_score = terrain_readability_bands.aggregate_readability_score(bands)

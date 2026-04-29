@@ -196,7 +196,7 @@ def resolve_budget(
     except Exception:
         return TerrainBudget()
 
-    lod0 = 250_000
+    lod0 = max(int(profile.triangle_budget), 1)
     lod1 = max(int(round(lod0 * 0.4)), 1)
     lod2 = max(int(round(lod0 * 0.2)), 1)
     max_npz_mb = max(
