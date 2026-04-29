@@ -4,15 +4,14 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 37
+- High risk: 34
 - Medium risk: 1
-- Low risk: 1661
+- Low risk: 1664
 - A-grade rows with no executable evidence: 0
 - Tool/Blender callables needing blocker/high evidence: 27
 
 ## Highest Risk Files
 
-- terrain_path_contracts.py: 3
 - terrain_dem_import.py: 2
 - terrain_determinism_ci.py: 2
 - terrain_erosion_filter.py: 2
@@ -62,9 +61,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_navmesh_export.py:652 register_bundle_j_navmesh_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_palette_extract.py:65 _labels_for grade=A needs=direct_behavior_test;visual_snapshot_or_metric
 - HIGH terrain_palette_extract.py:244 _label_for_rgb grade=B+ needs=direct_behavior_test;visual_snapshot_or_metric
-- HIGH terrain_path_contracts.py:48 material_stack_for_path grade=D+ needs=direct_behavior_test;material_texture_contract_test
-- HIGH terrain_path_contracts.py:86 PathSegmentContract.length_m grade=D+ needs=direct_behavior_test;material_texture_contract_test
-- HIGH terrain_path_contracts.py:92 PathSegmentContract.max_observed_grade grade=D+ needs=direct_behavior_test;material_texture_contract_test
 - HIGH terrain_performance_report.py:44 _channel_bytes grade=A needs=direct_behavior_test;material_texture_contract_test
 - HIGH terrain_readability_semantic.py:566 _safe_asarray grade=A needs=direct_behavior_test;camera_readability_probe
 - HIGH terrain_review_ingest.py:55 _coerce_location grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke

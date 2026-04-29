@@ -193,6 +193,57 @@ def test_path_network_contract_rejects_segment_grade_above_budget():
     assert "path_grade_exceeds_budget" in codes
 
 
+def test_material_stack_for_path_maps_surface_and_bridge_types():
+    from veilbreakers_terrain.handlers.terrain_path_contracts import material_stack_for_path
+
+    assert material_stack_for_path("trail") == (
+        "road_core",
+        "road_edge",
+        "approach_transition",
+        "dirt_path",
+    )
+    assert material_stack_for_path("gravel_road")[-1] == "gravel"
+    assert material_stack_for_path("paved")[-1] == "cobblestone_floor"
+    assert material_stack_for_path("rope", bridge=True) == (
+        "wood_planks",
+        "bridge_edge",
+        "approach_transition",
+    )
+    assert material_stack_for_path("stone", bridge=True)[0] == "stone_deck"
+    assert material_stack_for_path("")[-1] == "terrain_path"
+
+
+def test_path_segment_length_and_grade_handle_3d_and_vertical_segments():
+    from veilbreakers_terrain.handlers.terrain_path_contracts import PathSegmentContract
+
+    segment = PathSegmentContract(
+        segment_id="path_0",
+        segment_type="path",
+        points=((0.0, 0.0, 0.0), (3.0, 4.0, 0.0), (6.0, 4.0, 3.0)),
+        width_m=2.0,
+        material_stack=("dirt_path",),
+    )
+    vertical = PathSegmentContract(
+        segment_id="vertical",
+        segment_type="path",
+        points=((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        width_m=2.0,
+        material_stack=("dirt_path",),
+    )
+    flat_vertical = PathSegmentContract(
+        segment_id="flat_vertical",
+        segment_type="path",
+        points=((0.0, 0.0, 2.0), (0.0, 0.0, 2.0)),
+        width_m=2.0,
+        material_stack=("dirt_path",),
+    )
+
+    assert segment.length_m() == pytest.approx(5.0 + (18.0 ** 0.5))
+    assert segment.max_observed_grade() == pytest.approx(1.0)
+    assert vertical.max_observed_grade() == float("inf")
+    assert flat_vertical.max_observed_grade() == pytest.approx(0.0)
+
+
 def test_scatter_table_validation_requires_full_point_contract():
     from veilbreakers_terrain.handlers.terrain_scatter_points import (
         ScatterPoint,
