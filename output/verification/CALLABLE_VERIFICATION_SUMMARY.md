@@ -2,11 +2,11 @@
 
 This report treats grade rows as claims, not proof. A callable needs executable evidence.
 
-- Total callables: 1676
+- Total callables: 1679
 - Blockers: 0
 - High risk: 154
 - Medium risk: 1
-- Low risk: 1521
+- Low risk: 1524
 - A-grade rows with no executable evidence: 0
 - Tool/Blender callables needing blocker/high evidence: 108
 

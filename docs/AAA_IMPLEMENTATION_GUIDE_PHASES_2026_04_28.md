@@ -1646,6 +1646,12 @@ Compare numeric outputs against pre-fix golden snapshots within tolerance.
 
 ### Fixes in this phase
 
+**Status 2026-04-29:** Started. FIX-7.1 is implemented in
+`terrain_pipeline.py` with declared-channel copy-on-write rollback and a
+focused regression test that fails if `run_pass()` deep-copies the entire
+`TerrainMaskStack`. FIX-7.2 through FIX-7.9 remain open or unverified in this
+checkpoint.
+
 #### FIX-7.1 (FIX-9-32) — Copy-on-write checkpoint
 - **P0 ref:** S22-P0-34
 - **File:** `terrain_pipeline.py`, `_checkpoint_pass_state()`.

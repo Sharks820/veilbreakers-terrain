@@ -26,8 +26,9 @@ import json
 import logging
 import time
 import uuid
+import dataclasses
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -57,6 +58,61 @@ def _make_gate_issue(code: str, severity: str, message: str) -> ValidationIssue:
 
 
 _PREVIEW_QUALITY_PROFILES = frozenset({"preview", "mobile", "low"})
+_ABSENT_CHANNEL = object()
+
+
+def _copy_checkpoint_value(value: Any) -> Any:
+    """Copy one checkpoint channel without walking the whole stack object."""
+    try:
+        import numpy as _np
+        if isinstance(value, _np.ndarray):
+            return value.copy()
+    except ImportError:  # pragma: no cover
+        pass
+    return copy.deepcopy(value)
+
+
+def _checkpoint_pass_state(
+    stack: TerrainMaskStack,
+    channels: Iterable[str],
+) -> Dict[str, Any]:
+    """Snapshot only channels a pass may dirty, plus cheap stack metadata."""
+    field_names = {field.name for field in dataclasses.fields(TerrainMaskStack)}
+    unique_channels = sorted({str(ch) for ch in channels if str(ch) in field_names})
+    values: Dict[str, Any] = {}
+    for channel in unique_channels:
+        value = getattr(stack, channel, _ABSENT_CHANNEL)
+        values[channel] = (
+            _ABSENT_CHANNEL
+            if value is _ABSENT_CHANNEL
+            else _copy_checkpoint_value(value)
+        )
+    return {
+        "channels": values,
+        "populated_by_pass": dict(stack.populated_by_pass),
+        "dirty_channels": set(stack.dirty_channels),
+        "content_hash": stack.content_hash,
+        "height_min_m": stack.height_min_m,
+        "height_max_m": stack.height_max_m,
+    }
+
+
+def _restore_pass_state(
+    stack: TerrainMaskStack,
+    snapshot: Dict[str, Any],
+) -> None:
+    """Restore a copy-on-write pass snapshot in place."""
+    for channel, value in snapshot["channels"].items():
+        if value is _ABSENT_CHANNEL:
+            continue
+        object.__setattr__(stack, channel, _copy_checkpoint_value(value))
+    stack.populated_by_pass.clear()
+    stack.populated_by_pass.update(snapshot["populated_by_pass"])
+    stack.dirty_channels.clear()
+    stack.dirty_channels.update(snapshot["dirty_channels"])
+    stack.content_hash = snapshot["content_hash"]
+    stack.height_min_m = snapshot["height_min_m"]
+    stack.height_max_m = snapshot["height_max_m"]
 
 
 def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
@@ -465,10 +521,14 @@ class TerrainPassController:
             region,
         )
 
-        # K5-P0-1: snapshot mask_stack before execution so a failing pass can
-        # be rolled back to a clean state.  Phase 7 will replace this deepcopy
-        # with a copy-on-write scheme; for now correctness beats performance.
-        stack_snapshot = copy.deepcopy(self.state.mask_stack)
+        # Phase 7.1: copy-on-write rollback. Snapshot only declared output /
+        # override channels instead of deepcopying the entire TerrainMaskStack.
+        stack_snapshot = _checkpoint_pass_state(
+            self.state.mask_stack,
+            set(definition.produces_channels)
+            | set(definition.overrides)
+            | {"height"},
+        )
 
         _provenance_before = dict(self.state.mask_stack.populated_by_pass)
         t0 = time.perf_counter()
@@ -479,7 +539,7 @@ class TerrainPassController:
                 "Pass %r raised exception — rolling back mask_stack: %s",
                 pass_name, exc, exc_info=exc,
             )
-            self.state.mask_stack = stack_snapshot
+            _restore_pass_state(self.state.mask_stack, stack_snapshot)
             result = PassResult(
                 pass_name=pass_name,
                 status="failed",
