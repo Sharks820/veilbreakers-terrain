@@ -154,9 +154,10 @@ def test_compute_wet_rock_mask_boosts_adjacent_cells_for_high_flow_sources():
     from veilbreakers_terrain.handlers._water_network_ext import compute_wet_rock_mask
 
     stack = _build_stack(size=30)
-    stack.flow_accumulation = np.ones_like(stack.height)
-    stack.flow_accumulation[10, 10] = 100.0
-    stack.flow_accumulation[20, 20] = 5.0
+    flow_accumulation = np.ones_like(stack.height)
+    flow_accumulation[10, 10] = 100.0
+    flow_accumulation[20, 20] = 5.0
+    stack.set("flow_accumulation", flow_accumulation, "test_fixture")
 
     net = _FakeNetwork()
     net.nodes[0] = _FakeNode(node_id=0, world_x=10.0, world_y=10.0, world_z=0.0)
@@ -172,9 +173,10 @@ def test_compute_wet_rock_mask_fallback_keeps_seed_strength(monkeypatch: pytest.
     import veilbreakers_terrain.handlers._water_network_ext as water_ext
 
     stack = _build_stack(size=30)
-    stack.flow_accumulation = np.ones_like(stack.height)
-    stack.flow_accumulation[12, 12] = 80.0
-    stack.flow_accumulation[18, 18] = 4.0
+    flow_accumulation = np.ones_like(stack.height)
+    flow_accumulation[12, 12] = 80.0
+    flow_accumulation[18, 18] = 4.0
+    stack.set("flow_accumulation", flow_accumulation, "test_fixture")
 
     net = _FakeNetwork()
     net.nodes[0] = _FakeNode(node_id=0, world_x=12.0, world_y=12.0, world_z=0.0)

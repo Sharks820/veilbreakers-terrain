@@ -336,3 +336,38 @@ pass_water_variants).
 | Callable/wiring proof | C | Census exists and gives useful signals, but unresolved uncovered/orphan buckets remain. |
 
 **No-go rule:** Do not mark Phase 1 complete while any Phase 0 item above remains open.
+
+---
+
+## Codex Continued Test-Gate Re-Audit Delta (2026-04-28)
+
+**Verdict:** Improved, but still no-go. Earlier stale-test findings, strict callable zero, and the smoke hang are now fixed, but the suite still is not a complete quality gate until a full post-patch run completes.
+
+### Resolved since the first live addendum
+
+- Visual QA stack fixtures were converted away from `types.SimpleNamespace` / `_StubStack`; focused visual/procedural-grass slice passes (`94 passed`).
+- Direct `PassDAG.resolve_pass("missing_pass")` regression now exists and asserts `PassNotRegisteredError`.
+- Parallel DAG failure test now matches the implemented contract: failed `PassResult` becomes `WaveExecutionError` after survivor collection/merge.
+- Unknown quality profile tests now expect `ValueError`.
+- Headless fake-bpy scene-read crash has focused coverage through the repaired registrar/Bundle R slice.
+- Direct controller production/default pipeline now uses `validation_full` through shared `build_default_pass_sequence()`; preview keeps `validation_minimal`.
+- Visual QA required-channel manifest now covers representative structural, hydrology/water, Unity export, navigation, gameplay, traversal, and road channels; visual QA focused slice passes (`82 passed`).
+- Callable census strict-zero now passes (`1654 graded / 1654 total`, `0 uncovered`).
+- Pipeline smoke now runs as a fast controller gate (`10 passed in 0.84s`) instead of hanging or taking ~60s.
+- `test_terrain_waterfalls.py` and `test_water_network_upgrade.py` strict-provenance fixture gaps are fixed; focused slice passes (`43 passed`).
+
+### Still not a trustworthy final gate
+
+- Full-suite proof has not been rerun green after the latest stale-test patch; current proof is focused and targeted, not whole-suite completion.
+- Newly covered callable rows include conservative low grades; strict-zero proves no callable is missing from the matrix, not that every callable is high quality.
+
+### Updated grades
+
+| Area | Grade | Reason |
+|---|---:|---|
+| Visual QA fixture realism | B | Real stack fixtures now used in focused visual tests; manifest fixtures cover expanded required channels. |
+| Visual QA production coverage | C+ | Expanded from six legacy channels to representative structural, water, export, navmesh, gameplay, traversal, and road channels; still not render/Blender proof. |
+| Phase 1 exception tests | B | Direct DAG, profile, parallel-wave, and controller default validation tests now match live contracts. |
+| Callable/wiring proof | B- | Strict-zero passes, but many rows are conservative low grades requiring later remediation. |
+| Pipeline smoke | B | Fast controller smoke now proves rollback/provenance/scene-read/default-validation contracts without hanging. |
+| Whole-suite gate | Incomplete | Focused slices pass; post-patch full-suite green proof is still missing. |

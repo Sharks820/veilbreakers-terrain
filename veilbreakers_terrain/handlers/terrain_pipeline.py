@@ -56,6 +56,43 @@ def _make_gate_issue(code: str, severity: str, message: str) -> ValidationIssue:
     return ValidationIssue(code=code, severity=severity, message=message)
 
 
+_PREVIEW_QUALITY_PROFILES = frozenset({"preview", "mobile", "low"})
+
+
+def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
+    """Return the canonical default terrain pipeline for an intent."""
+    quality_profile = str(getattr(intent, "quality_profile", "production"))
+    composition_hints = dict(getattr(intent, "composition_hints", {}) or {})
+    unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
+    validation_pass = (
+        "validation_minimal"
+        if quality_profile in _PREVIEW_QUALITY_PROFILES
+        else "validation_full"
+    )
+    pass_sequence = [
+        "pass_generate_low_freq_hmap",
+        "terrain_labels",
+        "structural_masks",
+        "pass_generate_high_freq_detail",
+        "pass_composite_hmap",
+        validation_pass,
+    ]
+    if getattr(intent, "scene_read", None) is not None:
+        pass_sequence[3:3] = ["pass_hydrology", "erosion"]
+    if validation_pass == "validation_full" and not unity_export_opt_out:
+        insert_at = pass_sequence.index("validation_full")
+        for prereq in (
+            "materials_v2",
+            "navmesh",
+            "prepare_terrain_normals",
+            "prepare_heightmap_raw_u16",
+        ):
+            if prereq not in pass_sequence:
+                pass_sequence.insert(insert_at, prereq)
+                insert_at += 1
+    return pass_sequence
+
+
 # ---------------------------------------------------------------------------
 # Determinism seed derivation (§5.12)
 # ---------------------------------------------------------------------------
@@ -571,16 +608,21 @@ class TerrainPassController:
             self.state.intent = intent
 
         if pass_sequence is None:
-            pass_sequence = [
-                "pass_generate_low_freq_hmap",
-                "terrain_labels",   # Fix 10.10 / REQ-P10-001: must be before structural_masks
-                "structural_masks",
-                "pass_generate_high_freq_detail",
-                "pass_composite_hmap",
-                "validation_minimal",
+            pass_sequence = build_default_pass_sequence(self.state.intent)
+            missing_default_passes = [
+                name for name in pass_sequence if name not in self.PASS_REGISTRY
             ]
-            if getattr(self.state.intent, "scene_read", None) is not None:
-                pass_sequence[3:3] = ["pass_hydrology", "erosion"]
+            if missing_default_passes:
+                try:
+                    from .terrain_master_registrar import register_all_terrain_passes
+
+                    register_all_terrain_passes(strict=False)
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning(
+                        "run_pipeline: could not register default passes %s: %s",
+                        missing_default_passes,
+                        exc,
+                    )
         else:
             pass_sequence = list(pass_sequence)
 
@@ -1346,6 +1388,7 @@ def register_default_passes(*, strict: bool = False) -> None:
 __all__ = [
     "TerrainPassController",
     "PipelineSubsystemError",
+    "build_default_pass_sequence",
     "derive_pass_seed",
     "register_default_passes",
     "pass_compute_terrain_labels",

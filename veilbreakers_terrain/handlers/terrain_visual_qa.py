@@ -331,15 +331,33 @@ def handle_visual_qa_set_shading(
 # V-1: Channel validation
 # ---------------------------------------------------------------------------
 
-# Maps channel name → (dtype_family, (min_value, max_value))
-# dtype_family is "float" or "bool".
+# Maps channel name -> (dtype_family, (min_value, max_value)).
+# dtype_family is "float", "integer", or "bool".
 REQUIRED_STACK_CHANNELS: Dict[str, Tuple[str, Tuple[float, float]]] = {
     "height":              ("float", (0.0, 9000.0)),
+    "slope":               ("float", (0.0, 90.0)),
+    "curvature":           ("float", (-1000.0, 1000.0)),
+    "ridge":               ("float", (0.0, 1.0)),
+    "basin":               ("float", (0.0, 1.0)),
+    "flow_accumulation":   ("float", (0.0, 1.0e12)),
+    "wetness":             ("float", (0.0, 1.0)),
+    "drainage":            ("float", (0.0, 1.0e12)),
     "water_surface_mask":  ("float", (0.0, 1.0)),
+    "water_surface_elevation_m": ("float", (0.0, 9000.0)),
     "water_depth_m":       ("float", (0.0, 500.0)),
     "cliff_mask":          ("float", (0.0, 1.0)),
     "talus_mask":          ("float", (0.0, 1.0)),
     "strata_mask":         ("float", (0.0, 1.0)),
+    "foam":                ("float", (0.0, 1.0)),
+    "mist":                ("float", (0.0, 1.0)),
+    "splatmap_weights_layer": ("float", (0.0, 1.0)),
+    "heightmap_raw_u16":   ("integer", (0.0, 65535.0)),
+    "terrain_normals":     ("float", (-1.0, 1.0)),
+    "ambient_occlusion_bake": ("float", (0.0, 1.0)),
+    "navmesh_area_id":     ("integer", (0.0, 255.0)),
+    "gameplay_zone":       ("integer", (0.0, 255.0)),
+    "traversability":      ("float", (0.0, 1.0)),
+    "road_mask":           ("float", (0.0, 1.0)),
 }
 
 
@@ -375,6 +393,11 @@ def validate_stack_channels(
         # dtype check
         if dtype_family == "float":
             if not np.issubdtype(arr.dtype, np.floating):
+                dtype_mismatch.append(channel)
+                checked += 1
+                continue
+        elif dtype_family == "integer":
+            if not np.issubdtype(arr.dtype, np.integer):
                 dtype_mismatch.append(channel)
                 checked += 1
                 continue

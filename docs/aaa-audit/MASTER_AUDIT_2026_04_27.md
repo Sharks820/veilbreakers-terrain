@@ -3978,13 +3978,13 @@ Live code raises `PassNotRegisteredError`, but callable census still flags `terr
 
 **Required fix:** Convert validator fixtures to use `stack.set(...)` or a helper that mutates arrays intentionally while preserving provenance expectations. Keep a small number of explicit bypass-negative tests.
 
-### S23-P1-3 — Smoke pipeline tests are too slow/hanging to be reliable quick gates
+### S23-P1-3 — Smoke pipeline tests were too slow/hanging to be reliable quick gates
 
-Focused smoke tests stalled long enough to require process cleanup. The tests run full pipeline paths instead of small deterministic pass doubles.
+Historical Section 23 evidence: focused smoke tests stalled long enough to require process cleanup because they ran full pipeline paths instead of small deterministic pass doubles. Current Section 25 evidence supersedes this state: `test_terrain_pipeline_smoke.py` now passes as a fast controller gate (`10 passed in 0.84s`).
 
 **Impact:** A quick Phase 1 gate that can hang is not a gate. It slows iteration and hides whether a fix failed or merely timed out.
 
-**Required fix:** Split smoke into two layers: fast unit gate with tiny pass doubles and a marked slow integration gate with explicit timeouts/artifact paths.
+**Required fix:** Resolved for the fast gate by deterministic pass doubles. Keep true full-pipeline coverage marked as slow/integration with explicit timeout/artifact paths.
 
 ### S23-P1-4 — Test audit is partly stale after partial implementation
 
@@ -4086,3 +4086,62 @@ Ordered `python -m pytest veilbreakers_terrain/tests -x -q` advanced past previo
 
 **End of Section 24.**
 
+---
+
+## Section 25 — Codex Continued Scrub Delta (2026-04-28)
+
+**Source:** Post-push live audit continuation using Serena symbol reads, callable census gates, Context7 pytest guidance, direct grep, and focused pytest evidence from the committed Phase 0 / Phase 1 repair slice.
+
+**Status:** **NO-GO / NOT CLEAN.** Several Section 23 findings are now fixed, the strict callable zero gate now passes, and the fast smoke gate is stable. The audit still cannot be closed because a post-patch full-suite green run has not completed.
+
+### S25-RESOLVED — Section 23 stale test failures now have direct proof
+
+The following Section 23 items are no longer current blockers:
+- S23-P0-1 mock-stack visual QA fixtures: `test_terrain_visual_qa_channels.py` and `test_visual_qa_golden.py` no longer contain `types.SimpleNamespace`, `SimpleNamespace`, or `_StubStack` for the visual QA stack fixtures.
+- S23-P0-4 stale parallel-wave exception semantics: `PassDAG.execute_parallel()` now treats `PassResult(status="failed")` as a wave failure after collecting and merging surviving pass outputs.
+- S23-P0-5 fake-bpy scene-read crash: `_walk_scene()` now validates camera vector shape/numeric content before indexing.
+- S23-P1-1 missing direct `resolve_pass()` regression: `test_pass_dag_resolve_pass_rejects_unknown_pass_names()` directly asserts `PassNotRegisteredError`.
+- S23-P1-2 strict-provenance fixture rot: current focused suites that previously failed from direct assignment now pass after `stack.set(...)` conversion.
+- S25-P0-3 direct controller default validation split: `build_default_pass_sequence()` is now shared by the environment handler and `TerrainPassController.run_pipeline()`. Production/default quality reaches `validation_full` with Unity export prep prerequisites; preview/mobile/low keeps `validation_minimal`.
+- S25-P0-2 six-channel visual QA manifest: `REQUIRED_STACK_CHANNELS` now covers terrain structure, hydrology/water, Unity export, navigation, gameplay, traversal, and road masks. The validator now supports integer channels for `heightmap_raw_u16`, `navmesh_area_id`, and `gameplay_zone`.
+- S25-P0-1 strict callable zero gate: `GRADES_VERIFIED.csv` now covers all 1654 live callables; `--strict-zero` passes. Many new rows are conservative grades, so this closes the orphaned-callable gate but not underlying quality debt.
+- S25-P1-2 smoke-gate instability: `test_terrain_pipeline_smoke.py` now uses a deterministic fast erosion pass double for controller contracts and keeps production/full-validation proof as a separate direct test.
+- S25-P1-3 strict-provenance test rot in waterfalls/water-network tests: `test_terrain_waterfalls.py` and `test_water_network_upgrade.py` no longer write `stack.drainage` / `stack.flow_accumulation` directly; fixtures use `stack.set(..., "test_fixture")`.
+
+Evidence:
+- `python -m pytest veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py veilbreakers_terrain/tests/test_visual_qa_golden.py veilbreakers_terrain/tests/test_procedural_grass.py -q` -> `94 passed`.
+- `python -m pytest veilbreakers_terrain/tests/test_bundle_bcd_supplements.py veilbreakers_terrain/tests/test_bundle_r.py veilbreakers_terrain/tests/test_terrain_master_registrar.py veilbreakers_terrain/tests/test_terrain_iteration.py::test_pass_dag_resolve_pass_rejects_unknown_pass_names veilbreakers_terrain/tests/test_terrain_iteration.py::test_pass_dag_execute_parallel_propagates_worker_failures -q` -> `134 passed`.
+- `python -m pytest veilbreakers_terrain/tests/test_terrain_pipeline_smoke.py -q --durations=10` -> `10 passed in 0.84s`.
+- `python -m pytest veilbreakers_terrain/tests/test_terrain_waterfalls.py veilbreakers_terrain/tests/test_water_network_upgrade.py -q` -> `43 passed in 1.61s`.
+- `python -m pytest veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_default_pipeline_runs_full_validation_without_scene_read veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_full veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_skips_heightmap_injection_when_unity_export_opted_out -q` -> `3 passed`.
+- `python -m pytest veilbreakers_terrain/tests/test_p7_priority_flood.py::test_default_pipeline_runs_hydrology_before_erosion -q` -> `1 passed`.
+- `python -m pytest veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py veilbreakers_terrain/tests/test_visual_qa_golden.py -q` -> `82 passed`.
+- `python scripts/callable_census_gate.py --strict-zero` -> `PASS: strict callable coverage has 0 uncovered callables.`
+- `rg -n 'stack\.(drainage|flow_accumulation)\s*=|populated_by_pass\["(drainage|flow_accumulation)"\]' veilbreakers_terrain/tests/test_terrain_waterfalls.py veilbreakers_terrain/tests/test_water_network_upgrade.py` -> no hits.
+- Serena `find_referencing_symbols` shows `PassDAG.resolve_pass()` directly referenced by the new test.
+- Serena `find_referencing_symbols` shows `build_default_pass_sequence()` referenced by both `environment._execute_terrain_pipeline()` and `TerrainPassController.run_pipeline()`.
+
+### S25-P0-1 — Strict callable zero gate closed, but grade quality remains conservative
+
+`python scripts/callable_census_gate.py --strict-zero` now passes:
+- `1654 graded / 1654 total`
+- `0 uncovered`
+- `100.0% coverage`
+
+This closes the mechanical orphaned-callable gate. It does **not** mean every callable is production-quality; the newly added rows intentionally preserve weak grades where wiring, tests, or runtime proof remain weak.
+
+High-signal weak rows still include `_scatter_engine.cluster_density_map`, `_scatter_engine.edge_scatter`, `_scatter_engine.apply_collision_exclusion`, `asset_generation.*` backend functions, `terrain_golden_snapshots.handle_run_scenario_goldens`, `terrain_waterfalls.rasterize_channel_to_atlas`, and `vegetation_system.build_foliage_placement_manifest`.
+
+**Impact:** The suite now has a true zero-uncovered callable gate, but the grade matrix is not a blanket approval. Lower-grade rows remain remediation targets during later phases.
+
+**Required follow-up:** Use the conservative low-grade rows as the next callable-quality backlog; do not convert them to A/B without production path and test evidence.
+
+### S25-P1-1 — Audit script output can dirty stale historical artifacts
+
+Running `scripts/scan_callable_wiring.py` and `scripts/build_master_callable_audit.py` refreshed tracked 2026-04-19 artifacts (`MASTER_AUDIT_2026_04_19.md`, `CALLABLE_WIRING_AUDIT_2026_04_19.csv`, `MASTER_CALLABLE_AUDIT_2026_04_19.csv`). These are not the P0 source of truth for this scrub.
+
+**Impact:** Developers can accidentally commit regenerated stale-date artifacts and confuse the audit chain.
+
+**Required fix:** Either route refreshed callable output into date-current files or document that 2026-04-19 artifacts are generated reports and not canonical for Phase 0/1 closure.
+
+**End of Section 25.**

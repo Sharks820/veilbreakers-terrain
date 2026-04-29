@@ -230,13 +230,35 @@ def _force_channel(stack: TerrainMaskStack, channel: str, value):
 
 def _full_valid_stack():
     """Return a TerrainMaskStack with all REQUIRED_STACK_CHANNELS in-range."""
+    splat = np.zeros((1, 3, 4), dtype=np.float32)
+    splat[..., 0] = 1.0
+    normals = np.zeros((1, 3, 3), dtype=np.float32)
+    normals[..., 2] = 1.0
     return _make_stack(
         height=np.array([[0.0, 500.0, 9000.0]], dtype=np.float32),
+        slope=np.array([[0.0, 30.0, 90.0]], dtype=np.float32),
+        curvature=np.array([[-1.0, 0.0, 1.0]], dtype=np.float32),
+        ridge=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        basin=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        flow_accumulation=np.array([[0.0, 100.0, 1000.0]], dtype=np.float32),
+        wetness=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        drainage=np.array([[0.0, 100.0, 1000.0]], dtype=np.float32),
         water_surface_mask=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        water_surface_elevation_m=np.array([[0.0, 500.0, 9000.0]], dtype=np.float32),
         water_depth_m=np.array([[0.0, 100.0, 500.0]], dtype=np.float32),
         cliff_mask=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
         talus_mask=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
         strata_mask=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        foam=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        mist=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        splatmap_weights_layer=splat,
+        heightmap_raw_u16=np.array([[0, 32768, 65535]], dtype=np.uint16),
+        terrain_normals=normals,
+        ambient_occlusion_bake=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        navmesh_area_id=np.array([[0, 1, 255]], dtype=np.uint8),
+        gameplay_zone=np.array([[0, 2, 255]], dtype=np.uint8),
+        traversability=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+        road_mask=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
     )
 
 

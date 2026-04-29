@@ -2758,7 +2758,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     """Execute a terrain pass or pipeline and return live controller state."""
     # Local imports to avoid circular dependency at module load.
     from .terrain_master_registrar import register_all_terrain_passes
-    from .terrain_pipeline import TerrainPassController
+    from .terrain_pipeline import TerrainPassController, build_default_pass_sequence
     from .terrain_semantics import (
         BBox,
         ProtectedZoneSpec,
@@ -3052,18 +3052,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
 
     if pipeline is None and pass_name is None:
-        _qp_name2 = str(params.get("quality_profile", "production"))
-        _is_preview_qp2 = _qp_name2 in ("preview", "mobile", "low")
-        pipeline = [
-            "pass_generate_low_freq_hmap",
-            "terrain_labels",
-            "structural_masks",
-            "pass_generate_high_freq_detail",
-            "pass_composite_hmap",
-            "validation_minimal" if _is_preview_qp2 else "validation_full",
-        ]
-        if scene_read is not None:
-            pipeline[3:3] = ["pass_hydrology", "erosion"]
+        pipeline = build_default_pass_sequence(intent)
 
     if pipeline is not None:
         pipeline = list(pipeline)

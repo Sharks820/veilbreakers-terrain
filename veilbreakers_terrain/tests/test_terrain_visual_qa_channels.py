@@ -66,13 +66,35 @@ def _force_channel(stack, channel: str, value):
 def _valid_stack():
     """Return a stack that passes all REQUIRED_STACK_CHANNELS checks."""
     size = (8, 8)
+    splat = np.zeros((8, 8, 4), dtype=np.float32)
+    splat[..., 0] = 1.0
+    normals = np.zeros((8, 8, 3), dtype=np.float32)
+    normals[..., 2] = 1.0
     return _make_stack(
         height=np.full(size, 500.0, dtype=np.float32),
+        slope=np.full(size, 15.0, dtype=np.float32),
+        curvature=np.zeros(size, dtype=np.float32),
+        ridge=np.full(size, 0.2, dtype=np.float32),
+        basin=np.full(size, 0.1, dtype=np.float32),
+        flow_accumulation=np.full(size, 32.0, dtype=np.float32),
+        wetness=np.full(size, 0.4, dtype=np.float32),
+        drainage=np.full(size, 12.0, dtype=np.float32),
         water_surface_mask=np.full(size, 0.5, dtype=np.float32),
+        water_surface_elevation_m=np.full(size, 510.0, dtype=np.float32),
         water_depth_m=np.full(size, 10.0, dtype=np.float32),
         cliff_mask=np.full(size, 0.3, dtype=np.float32),
         talus_mask=np.full(size, 0.1, dtype=np.float32),
         strata_mask=np.full(size, 0.2, dtype=np.float32),
+        foam=np.full(size, 0.1, dtype=np.float32),
+        mist=np.full(size, 0.1, dtype=np.float32),
+        splatmap_weights_layer=splat,
+        heightmap_raw_u16=np.full(size, 32768, dtype=np.uint16),
+        terrain_normals=normals,
+        ambient_occlusion_bake=np.full(size, 0.5, dtype=np.float32),
+        navmesh_area_id=np.full(size, 1, dtype=np.uint8),
+        gameplay_zone=np.full(size, 2, dtype=np.uint8),
+        traversability=np.full(size, 0.8, dtype=np.float32),
+        road_mask=np.zeros(size, dtype=np.float32),
     )
 
 
@@ -118,6 +140,19 @@ def test_dtype_mismatch_integer_for_float_channel():
     result = validate_stack_channels(stack)
     assert result["ok"] is False
     assert "height" in result["dtype_mismatch"]
+
+
+def test_dtype_mismatch_float_for_integer_channel():
+    """A float array for an integer channel is reported in dtype_mismatch."""
+    stack = _valid_stack()
+    _force_channel(
+        stack,
+        "navmesh_area_id",
+        np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32),
+    )
+    result = validate_stack_channels(stack)
+    assert result["ok"] is False
+    assert "navmesh_area_id" in result["dtype_mismatch"]
 
 
 def test_dtype_mismatch_does_not_block_other_channels():

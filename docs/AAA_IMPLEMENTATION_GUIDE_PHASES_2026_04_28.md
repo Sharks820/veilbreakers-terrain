@@ -121,6 +121,20 @@ hidden by mocks or stale expectations.
 - Smoke tests are split into fast unit gates and marked slow integration gates
   with explicit timeouts.
 
+**2026-04-28 continued scrub status:** Phase 0 is mostly repaired, not
+complete. Visual QA stack fixtures, direct `PassDAG.resolve_pass()` coverage,
+parallel-wave failed-result coverage, fake-bpy scene-read handling, unknown
+quality-profile `ValueError`, production/default controller `validation_full`,
+preview controller `validation_minimal`, smoke-gate speed/stability, strict
+callable zero, and many strict-provenance fixture conversions now have focused
+proof. `REQUIRED_STACK_CHANNELS` has been expanded beyond the six legacy
+channels and now includes representative structural, water, Unity export,
+navigation, gameplay, traversal, and road channels. Remaining Phase 0 blockers
+are:
+- rerun a post-patch full-suite gate;
+- work down conservative low-grade callable rows during later implementation
+  phases instead of treating strict-zero as quality approval.
+
 ### Phase 0 fixes
 
 #### FIX-0.1 — Replace visual-QA mock stacks with real `TerrainMaskStack`

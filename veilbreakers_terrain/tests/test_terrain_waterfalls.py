@@ -71,8 +71,7 @@ def _build_stack(height: np.ndarray, tile_size: int | None = None):
         tile_y=0,
         height=height,
     )
-    stack.drainage = drainage
-    stack.populated_by_pass["drainage"] = "test_fixture"
+    stack.set("drainage", drainage, "test_fixture")
     return stack
 
 
