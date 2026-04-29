@@ -24,6 +24,13 @@ import pytest
 from veilbreakers_terrain.handlers.terrain_assets import (
     AssetContextRule,
     AssetRole,
+    _build_detail_density,
+    _build_tree_instance_array,
+    _cell_to_world,
+    _cluster_around,
+    _poisson_in_mask,
+    _region_mask,
+    _water_exclusion_mask,
     build_asset_context_rules,
     classify_asset_role,
     cluster_rocks_for_cliffs,
@@ -199,6 +206,94 @@ def test_compute_viability_excludes_water_surface_elevation_cells(stack):
     assert np.any(viab[:, w // 2 :] > 0.0)
 
 
+def test_water_exclusion_mask_merges_authoritative_water_channels():
+    stack = _make_stack(tile_size=3)
+    height = np.full((4, 4), 10.0, dtype=np.float32)
+    stack.height[...] = height
+    stack.set("water_surface_elevation_m", height.copy(), "test")
+    stack.get("water_surface_elevation_m")[0, 0] = 10.2
+    depth = np.zeros_like(height)
+    depth[1, 1] = 0.2
+    stack.set("water_depth_m", depth, "test")
+    surface_mask = np.zeros_like(height)
+    surface_mask[2, 2] = 1.0
+    stack.set("water_surface_mask", surface_mask, "test")
+    legacy = height.copy()
+    legacy[3, 3] = 11.0
+    stack.set("water_surface", legacy, "test")
+
+    water = _water_exclusion_mask(stack, height)
+
+    assert water.dtype == bool
+    assert water.shape == height.shape
+    assert water[0, 0]
+    assert water[1, 1]
+    assert water[2, 2]
+    assert water[3, 3]
+    assert not water[0, 1]
+
+
+def test_cell_to_world_uses_cell_centres_and_height_channel(stack):
+    stack.cell_size = 2.0
+    stack.world_origin_x = 100.0
+    stack.world_origin_y = -50.0
+    stack.height[3, 4] = 77.0
+
+    assert _cell_to_world(stack, 3, 4) == pytest.approx((109.0, -43.0, 77.0))
+
+
+def test_region_mask_selects_world_space_cell_centres():
+    stack = _make_stack(tile_size=3)
+    stack.cell_size = 2.0
+    stack.world_origin_x = 10.0
+    stack.world_origin_y = 20.0
+    stack.height[...] = 0.0
+
+    mask = _region_mask(stack, BBox(13.0, 23.0, 17.0, 27.0))
+
+    assert mask.shape == (4, 4)
+    assert mask[1, 1]
+    assert mask[2, 3]
+    assert not mask[0, 0]
+    assert not mask[3, 0]
+
+
+def test_region_mask_none_returns_none(stack):
+    assert _region_mask(stack, None) is None
+
+
+def test_poisson_in_mask_is_deterministic_and_respects_region():
+    viability = np.ones((8, 8), dtype=np.float32)
+    region = np.zeros_like(viability, dtype=bool)
+    region[2:6, 3:7] = True
+
+    cells_a = _poisson_in_mask(viability, 1.0, 2.0, seed=44, region_mask=region)
+    cells_b = _poisson_in_mask(viability, 1.0, 2.0, seed=44, region_mask=region)
+
+    assert cells_a == cells_b
+    assert cells_a
+    for row, col in cells_a:
+        assert region[row, col]
+    for idx, (row_a, col_a) in enumerate(cells_a):
+        for row_b, col_b in cells_a[idx + 1 :]:
+            distance = math.hypot(col_a - col_b, row_a - row_b)
+            assert distance >= 2.0 - 1e-6
+
+
+def test_poisson_in_mask_rejects_empty_or_invalid_inputs():
+    viability = np.zeros((4, 4), dtype=np.float32)
+
+    assert _poisson_in_mask(viability, 1.0, 1.0, seed=1) == []
+    assert _poisson_in_mask(np.ones((4, 4), dtype=np.float32), 1.0, 0.0, seed=1) == []
+    assert _poisson_in_mask(
+        np.ones((4, 4), dtype=np.float32),
+        1.0,
+        1.0,
+        seed=1,
+        region_mask=np.zeros((4, 4), dtype=bool),
+    ) == []
+
+
 # ---------------------------------------------------------------------------
 # place_assets_by_zone
 # ---------------------------------------------------------------------------
@@ -341,6 +436,131 @@ def test_scatter_debris_for_caves_clusters_near_mouth(stack, intent):
     cave[4, 4] = 1.0
     points = scatter_debris_for_caves(stack, cave, intent)
     assert len(points) >= 3
+
+
+def test_cluster_around_is_deterministic_and_region_scoped(stack, intent):
+    hot = np.zeros(stack.height.shape, dtype=np.float32)
+    hot[3, 3] = 1.0
+    hot[20, 20] = 1.0
+    region = BBox(0.0, 0.0, 8.0, 8.0)
+
+    points_a = _cluster_around(
+        stack,
+        hot,
+        intent,
+        namespace="audit_cluster",
+        min_per_center=2,
+        max_per_center=2,
+        radius_m=2.0,
+        region=region,
+    )
+    points_b = _cluster_around(
+        stack,
+        hot,
+        intent,
+        namespace="audit_cluster",
+        min_per_center=2,
+        max_per_center=2,
+        radius_m=2.0,
+        region=region,
+    )
+
+    assert points_a == points_b
+    assert len(points_a) == 2
+    for x, y, _z in points_a:
+        assert 0.0 <= x <= 8.0
+        assert 0.0 <= y <= 8.0
+
+
+def test_cluster_around_rejects_missing_bad_shape_and_bad_cell_size(stack, intent):
+    assert _cluster_around(
+        stack,
+        None,
+        intent,
+        namespace="empty",
+        min_per_center=1,
+        max_per_center=1,
+        radius_m=1.0,
+    ) == []
+    assert _cluster_around(
+        stack,
+        np.ones((2, 2), dtype=np.float32),
+        intent,
+        namespace="bad_shape",
+        min_per_center=1,
+        max_per_center=1,
+        radius_m=1.0,
+    ) == []
+
+    stack.cell_size = 0.0
+    assert _cluster_around(
+        stack,
+        np.ones(stack.height.shape, dtype=np.float32),
+        intent,
+        namespace="bad_cell",
+        min_per_center=1,
+        max_per_center=1,
+        radius_m=1.0,
+    ) == []
+
+
+def test_build_tree_instance_array_flattens_tree_like_roles_only():
+    placements = {
+        "oak_tree": [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)],
+        "bush": [(7.0, 8.0, 9.0)],
+        "grass": [(10.0, 11.0, 12.0)],
+        "unknown": [(13.0, 14.0, 15.0)],
+    }
+    rules = [
+        AssetContextRule("oak_tree", AssetRole.VEGETATION_LARGE),
+        AssetContextRule("bush", AssetRole.VEGETATION_SMALL),
+        AssetContextRule("grass", AssetRole.GROUND_COVER),
+    ]
+    rng = np.random.default_rng(7)
+
+    arr = _build_tree_instance_array(placements, rules, rng)
+
+    assert arr.shape == (3, 5)
+    np.testing.assert_allclose(arr[:, :3], np.array(placements["oak_tree"] + placements["bush"]))
+    assert np.all(arr[:, 3] >= 0.0)
+    assert np.all(arr[:, 3] <= 2.0 * math.pi)
+    assert arr[:, 4].tolist() == [0.0, 0.0, 1.0]
+
+
+def test_build_tree_instance_array_returns_empty_contract_for_non_tree_roles():
+    arr = _build_tree_instance_array(
+        {"grass": [(1.0, 1.0, 0.0)]},
+        [AssetContextRule("grass", AssetRole.GROUND_COVER)],
+        np.random.default_rng(1),
+    )
+
+    assert arr.shape == (0, 5)
+    assert arr.dtype == np.float32
+
+
+def test_build_detail_density_bins_ground_cover_by_cell():
+    stack = _make_stack(tile_size=3)
+    stack.height[...] = 0.0
+    stack.cell_size = 2.0
+    stack.world_origin_x = 10.0
+    stack.world_origin_y = 20.0
+    placements = {
+        "grass": [(11.0, 21.0, 0.0), (11.5, 21.5, 0.0), (17.9, 27.9, 0.0)],
+        "oak": [(13.0, 23.0, 0.0)],
+    }
+    rules = [
+        AssetContextRule("grass", AssetRole.GROUND_COVER),
+        AssetContextRule("oak", AssetRole.VEGETATION_LARGE),
+    ]
+
+    density = _build_detail_density(placements, rules, stack)
+
+    assert set(density) == {"grass"}
+    assert density["grass"].shape == (4, 4)
+    assert density["grass"].dtype == np.float32
+    assert density["grass"][0, 0] == pytest.approx(2.0)
+    assert density["grass"][3, 3] == pytest.approx(1.0)
+    assert float(density["grass"].sum()) == pytest.approx(3.0)
 
 
 # ---------------------------------------------------------------------------

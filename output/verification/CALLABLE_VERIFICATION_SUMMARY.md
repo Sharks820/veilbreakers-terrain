@@ -4,17 +4,16 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 90
+- High risk: 83
 - Medium risk: 1
-- Low risk: 1608
+- Low risk: 1615
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 80
+- Tool/Blender callables needing blocker/high evidence: 73
 
 ## Highest Risk Files
 
 - terrain_cliffs.py: 19
 - procedural_grass.py: 8
-- terrain_assets.py: 8
 - terrain_readability_bands.py: 8
 - terrain_water_variants.py: 7
 - terrain_saliency.py: 4
@@ -31,6 +30,7 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_telemetry_dashboard.py: 2
 - terrain_wildlife_zones.py: 2
 - _water_network_ext.py: 1
+- terrain_assets.py: 1
 - terrain_audio_zones.py: 1
 - terrain_delta_integrator.py: 1
 - terrain_fog_masks.py: 1
@@ -49,13 +49,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH procedural_grass.py:447 ProceduralGrassSystem._poisson_thin grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH procedural_grass.py:731 ProceduralGrassSystem._empty_manifest grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH procedural_grass.py:765 _density_maps_from_records grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:283 _water_exclusion_mask grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:381 _cell_to_world grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:397 _poisson_in_mask grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:493 _region_mask grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:565 _cluster_around grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:773 _build_tree_instance_array grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_assets.py:797 _build_detail_density grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_assets.py:825 pass_scatter_intelligent grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_audio_zones.py:952 register_bundle_j_audio_zones_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
 - HIGH terrain_cliffs.py:75 _repose_for_material grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
@@ -120,5 +113,12 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_telemetry_dashboard.py:96 _load_records grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_texture_layer_stack.py:45 TerrainTextureLayerStack.add_layer grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
 - HIGH terrain_water_variants.py:112 _as_polyline grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_water_variants.py:879 register_water_variants_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_water_variants.py:909 get_geyser_specs grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_water_variants.py:942 get_swamp_specs grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_water_variants.py:991 _fbm_noise_2d grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_water_variants.py:1066 generate_water_bottom_mesh grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_water_variants.py:1524 register_bathymetry_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_wildlife_zones.py:84 _window_score grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
 
 Full CSV: `output/verification/CALLABLE_VERIFICATION_MATRIX.csv`
