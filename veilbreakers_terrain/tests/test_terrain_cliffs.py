@@ -507,7 +507,7 @@ def test_add_cliff_ledges_scales_with_span():
     cliff = cliffs[0]
     # span is ~35m => count should be 3
     add_cliff_ledges(cliff, height=state.mask_stack.height)
-    assert 1 <= len(cliff.ledges) <= 3
+    assert len(cliff.ledges) == 3
 
 
 def test_add_cliff_ledges_honors_explicit_count():

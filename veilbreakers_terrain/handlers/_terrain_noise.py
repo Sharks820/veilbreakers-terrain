@@ -12,7 +12,7 @@ Provides:
     fallback retained only for environment.handle_generate_road disaster
     recovery. New code must use road_network._astar_24dir via
     compute_road_network.
-  - TERRAIN_PRESETS: Parameter dicts for 10 terrain types
+  - TERRAIN_PRESETS: Parameter dicts for 11 terrain types
   - BIOME_RULES: Default dark-fantasy biome rules
 
 Performance notes (2026-03):

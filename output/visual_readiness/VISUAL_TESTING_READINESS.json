@@ -1,5 +1,5 @@
 {
-  "allow_no_blender": true,
+  "allow_no_blender": false,
   "blender_runtime_detected": false,
   "blockers": [
     "placeholder_png",

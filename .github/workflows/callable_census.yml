@@ -16,4 +16,4 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
       - name: Run callable census gate
-        run: python scripts/callable_census_gate.py --report
+        run: python scripts/callable_census_gate.py --strict-zero

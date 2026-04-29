@@ -462,9 +462,7 @@ def _compute_8factor_saliency(
     f1_height = _norm01(np.maximum(h - median_h, 0.0))
 
     # Factor 2: Distance from water (if water mask or water channel available)
-    water_mask = getattr(stack, 'water', None)
-    if water_mask is None:
-        water_mask = getattr(stack, 'river', None)
+    water_mask = stack.get("water_surface_mask")
     if water_mask is not None:
         wm = np.asarray(water_mask, dtype=np.float64)
         # Distance transform (approximate via iterative erosion fallback)

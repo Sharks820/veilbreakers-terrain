@@ -118,9 +118,7 @@ def _merge_pass_outputs(
         except ImportError:
             val = copy.deepcopy(val)
 
-        object.__setattr__(target_stack, channel, val)
-        target_stack.populated_by_pass[channel] = source_result.pass_name
-        target_stack.dirty_channels.discard(channel)
+        target_stack.set(channel, val, source_result.pass_name)
 
     target_stack.height_min_m = source_stack.height_min_m
     target_stack.height_max_m = source_stack.height_max_m

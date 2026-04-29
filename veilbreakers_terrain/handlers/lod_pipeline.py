@@ -1989,7 +1989,7 @@ def _setup_billboard_lod(
     template_obj["lod_billboard_type"]         = bb_spec["impostor_type"]
     template_obj["lod_billboard_vertex_count"] = bb_spec["vertex_count"]
     template_obj["lod_billboard_face_count"]   = bb_spec["face_count"]
-    template_obj["lod_billboard_atlas_res"]    = billboard_impostor.get("atlas_resolution", 256)
+    template_obj["lod_billboard_atlas_res"]    = bb_spec.get("atlas_resolution", 256)
     template_obj["lod_billboard_tree_height"]  = tree_height
     template_obj["lod_billboard_tree_width"]   = max(tree_width, tree_depth)
     template_obj["lod_billboard_material_ref"] = material_ref

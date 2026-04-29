@@ -213,11 +213,24 @@ class TestGenerateHeightmap:
 class TestTerrainPresets:
     """Test TERRAIN_PRESETS configuration dict."""
 
-    def test_has_eleven_terrain_types(self):
-        """TERRAIN_PRESETS has the current 11 terrain types."""
+    def test_terrain_preset_registry_matches_expected_catalog(self):
+        """TERRAIN_PRESETS is the explicit 11-entry terrain catalog."""
         from veilbreakers_terrain.handlers._terrain_noise import TERRAIN_PRESETS
 
-        assert len(TERRAIN_PRESETS) == 11
+        expected = {
+            "mountains",
+            "hills",
+            "plains",
+            "volcanic",
+            "canyon",
+            "cliffs",
+            "flat",
+            "coastal",
+            "swamp",
+            "chaotic",
+            "desert",
+        }
+        assert set(TERRAIN_PRESETS) == expected
 
     def test_required_terrain_types_present(self):
         """All required terrain types are present."""
@@ -687,11 +700,3 @@ class TestGenerateRoadPathGrid:
         # With snapshot fix the two-segment error should be within 50% of the
         # single-segment error.  Without the fix, drift would easily double it.
         assert mae2 <= mae1 * 1.5 + 0.05
-
-
-# NOTE: ``TestGenerateRoadPath`` (class exercising the deleted world-space
-# ``generate_road_path`` helper) was removed 2026-04-23 when the dormant
-# function was deleted per the deep-dive remediation guide. Production road
-# routing now goes through ``road_network.compute_road_network`` + the 24-dir
-# world-space solver — see ``test_road_astar_24dir.py`` and
-# ``test_road_pipeline.py`` for the live coverage.
