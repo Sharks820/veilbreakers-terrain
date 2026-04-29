@@ -1651,8 +1651,9 @@ Compare numeric outputs against pre-fix golden snapshots within tolerance.
 focused regression test that fails if `run_pass()` deep-copies the entire
 `TerrainMaskStack`. FIX-7.5 is implemented in `_water_network.py` with
 boolean-mask Manning velocity broadcast and a scalar-reference regression test.
-FIX-7.2 through FIX-7.4 and FIX-7.6 through FIX-7.9 remain open or unverified
-in this checkpoint.
+FIX-7.9 is verified against live `execute_parallel()` semantics with a
+regression test for failed parallel waves. FIX-7.2 through FIX-7.4 and
+FIX-7.6 through FIX-7.8 remain open or unverified in this checkpoint.
 
 #### FIX-7.1 (FIX-9-32) — Copy-on-write checkpoint
 - **P0 ref:** S22-P0-34
@@ -1699,6 +1700,12 @@ in this checkpoint.
 - **P0 ref:** S22-P0-37
 - **File:** `terrain_pass_dag.py`, `_resolve_graph()`. Save `prev_hash`
   before execute; restore on exception.
+- **Status 2026-04-29:** Verified stale as written. Live code has
+  `PassDAG.execute_parallel()`, not `_resolve_graph()`. Successful passes in a
+  partially failed wave are intentionally merged before `WaveExecutionError`;
+  restoring the pre-wave hash would be wrong. Test
+  `test_pass_dag_wave_failure_keeps_merged_content_hash_current` proves the
+  post-failure hash matches the merged state.
 
 ### Phase 7 verification
 1. New perf test: 1024² tile build under 60 s.

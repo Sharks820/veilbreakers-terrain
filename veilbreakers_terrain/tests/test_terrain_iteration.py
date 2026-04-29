@@ -502,6 +502,44 @@ def test_pass_dag_execute_parallel_propagates_worker_failures():
     assert state.mask_stack.populated_by_pass.get("height") == "macro_world"
 
 
+def test_pass_dag_wave_failure_keeps_merged_content_hash_current():
+    from veilbreakers_terrain.handlers.terrain_pass_dag import (
+        PassDAG,
+        WaveExecutionError,
+    )
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
+
+    def _explode(state, region):
+        raise RuntimeError("boom")
+
+    TerrainPassController.clear_registry()
+    _register_height_delta_pass("dag_success", delta=2.0, channel="slope")
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="explode_wave",
+            func=_explode,
+            requires_channels=(),
+            produces_channels=(),
+            seed_namespace="explode_wave",
+        )
+    )
+
+    state = _build_state(tile_size=24)
+    initial_hash = state.mask_stack.compute_hash()
+    controller = TerrainPassController(state)
+    dag = PassDAG.from_registry(["dag_success", "explode_wave"])
+
+    with pytest.raises(WaveExecutionError, match="explode_wave"):
+        dag.execute_parallel(controller, max_workers=2, checkpoint=False)
+
+    assert state.mask_stack.populated_by_pass.get("slope") == "dag_success"
+    after_failure_hash = state.mask_stack.content_hash
+    assert after_failure_hash is not None
+    assert after_failure_hash != initial_hash
+    assert after_failure_hash == state.mask_stack.compute_hash()
+
+
 def test_pass_dag_execute_parallel_is_actually_parallel_for_independent_passes():
     from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
