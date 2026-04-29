@@ -76,12 +76,14 @@ def _labels_for(image: np.ndarray, centroids: np.ndarray) -> np.ndarray:
 def extract_palette_from_image(
     image_array: np.ndarray,
     k: int = 8,
+    seed: int = 0,
 ) -> List[PaletteEntry]:
     """Run deterministic numpy k-means on RGB pixels and return palette.
 
     Args:
         image_array: ``(H, W, 3)`` or ``(N, 3)`` float [0,1] or uint8.
         k: Number of clusters (default 8).
+        seed: Root seed used for deterministic centroid initialisation.
     """
     if k <= 0:
         raise ValueError("k must be positive")
@@ -103,7 +105,11 @@ def extract_palette_from_image(
         return []
 
     k = min(k, n)
-    rng = np.random.default_rng(0)
+    from .terrain_pipeline import derive_pass_seed
+
+    rng = np.random.default_rng(
+        derive_pass_seed(int(seed), "palette_extract", 0, 0, None)
+    )
     init_idx = rng.choice(n, size=k, replace=False)
     centroids = pixels[init_idx].copy()
 

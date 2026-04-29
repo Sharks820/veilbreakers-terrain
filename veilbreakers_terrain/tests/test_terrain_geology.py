@@ -17,7 +17,12 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _build_stack(tile_size: int = 32, heights: str = "ramp"):
+def _build_stack(
+    tile_size: int = 32,
+    heights: str = "ramp",
+    tile_x: int = 0,
+    tile_y: int = 0,
+):
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     H = W = tile_size
@@ -43,8 +48,8 @@ def _build_stack(tile_size: int = 32, heights: str = "ramp"):
         cell_size=1.0,
         world_origin_x=0.0,
         world_origin_y=0.0,
-        tile_x=0,
-        tile_y=0,
+        tile_x=tile_x,
+        tile_y=tile_y,
         height=h,
     )
 
@@ -188,6 +193,23 @@ def test_pass_stratigraphy_populates_channels():
     assert stack.rock_hardness is not None
     assert stack.strata_orientation is not None
     assert "hardness_mean" in result.metrics
+
+
+def test_pass_stratigraphy_rng_is_repeatable_and_tile_scoped():
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import pass_stratigraphy
+
+    hints = {"intrusion_count": 2}
+    stack_a = _build_stack(tile_size=16, heights="ramp", tile_x=0, tile_y=0)
+    stack_b = _build_stack(tile_size=16, heights="ramp", tile_x=0, tile_y=0)
+    stack_c = _build_stack(tile_size=16, heights="ramp", tile_x=1, tile_y=0)
+
+    pass_stratigraphy(_build_state(stack_a, seed=123, hints=hints), None)
+    pass_stratigraphy(_build_state(stack_b, seed=123, hints=hints), None)
+    pass_stratigraphy(_build_state(stack_c, seed=123, hints=hints), None)
+
+    np.testing.assert_allclose(stack_a.height, stack_b.height)
+    np.testing.assert_allclose(stack_a.intrusion_mask, stack_b.intrusion_mask)
+    assert not np.allclose(stack_a.height, stack_c.height)
 
 
 def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():

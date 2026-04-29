@@ -1760,6 +1760,11 @@ break determinism unless seeds are explicit).
 **Risk:** **MEDIUM.** Output bytes will change once. After that, the same
 seed must produce the same bytes across runs.
 
+**Status 2026-04-29:** Started. FIX-8.1 implemented for stratigraphy and
+palette extraction, with focused repeatability/seed-scope tests. FIX-8.2,
+FIX-8.3, and FIX-8.4 remain open until the biome grammar, handler-wide RNG
+audit, and subprocess CI proof are complete.
+
 **Verification criteria:**
 - `grep -rEn 'np\.random\.(random|uniform|choice|randint)|random\.random\(' veilbreakers_terrain/handlers/` returns 0 in production code.
 - Subprocess-based determinism CI: two `python -m veilbreakers_terrain.cli generate_tile --seed 42` invocations produce byte-identical outputs.
@@ -1771,6 +1776,12 @@ seed must produce the same bytes across runs.
 - **Files:** `terrain_stratigraphy.py:420, 569, 794`,
   `terrain_palette_extract.py:106`. Replace `np.random.default_rng(0/1/42)`
   with `derive_pass_seed(intent.seed, "<tag>")`.
+- **Status 2026-04-29:** Done for the named files. Stratigraphy stack/fold/
+  intrusion RNGs now flow through `derive_pass_seed` with tile coordinates;
+  palette centroid initialization now accepts a root seed and derives a stable
+  palette namespace seed. Guard tests:
+  `test_pass_stratigraphy_rng_is_repeatable_and_tile_scoped` and
+  `TestPaletteExtract.test_palette_seed_is_repeatable_and_seed_scoped`.
 
 #### FIX-8.2 (FIX-9-60) — `tile_rng` in biome grammar
 - **P0 ref:** S22-P0-62 / S22-P0-67

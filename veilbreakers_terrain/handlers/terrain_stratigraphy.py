@@ -45,6 +45,26 @@ from .terrain_semantics import (
 )
 
 
+def _rng_from_pass_seed(
+    intent_seed: int,
+    seed_namespace: str,
+    tile_x: int = 0,
+    tile_y: int = 0,
+    region: Optional[BBox] = None,
+) -> np.random.Generator:
+    from .terrain_pipeline import derive_pass_seed
+
+    return np.random.default_rng(
+        derive_pass_seed(
+            int(intent_seed),
+            seed_namespace,
+            int(tile_x),
+            int(tile_y),
+            region,
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -417,7 +437,7 @@ def simulate_fold_deformation(
     H, W = h.shape
 
     if rng is None:
-        rng = np.random.default_rng(0)
+        rng = _rng_from_pass_seed(0, "stratigraphy_fold_default")
 
     # World-space X and Y coordinate grids
     tile_width_m = W * stack.cell_size
@@ -567,7 +587,7 @@ def simulate_intrusions(
     H, W = h.shape
 
     if rng is None:
-        rng = np.random.default_rng(1)
+        rng = _rng_from_pass_seed(0, "stratigraphy_intrusion_default")
 
     intrusion_mask = np.zeros((H, W), dtype=np.float32)
     albedo_shift = np.zeros((H, W, 3), dtype=np.float32)
@@ -802,7 +822,7 @@ def _default_strat_stack_from_hints(
     all three rock types across a geologically plausible depth sequence.
     """
     if rng is None:
-        rng = np.random.default_rng(42)
+        rng = _rng_from_pass_seed(0, "stratigraphy_stack_default")
 
     base = float(hints.get("stratigraphy_base_elevation_m", -50.0))
     dip_variation = float(hints.get("strata_dip_variation_rad", 0.087))  # ±5°
@@ -958,9 +978,11 @@ def pass_stratigraphy(
 
     hints = dict(state.intent.composition_hints) if state.intent else {}
 
-    # Derive a deterministic seed for this pass
+    # Derive deterministic per-stage seeds for this pass.
     seed = int(state.intent.seed) if state.intent else 0
-    rng = np.random.default_rng(seed ^ 0x53747261)  # XOR with "Stra"
+    tile_x = int(getattr(state, "tile_x", 0))
+    tile_y = int(getattr(state, "tile_y", 0))
+    rng = _rng_from_pass_seed(seed, "stratigraphy_stack", tile_x, tile_y, region)
 
     # --- 1. Build stratigraphic column ------------------------------------
     strat_stack = _default_strat_stack_from_hints(hints, rng=rng)
@@ -980,7 +1002,7 @@ def pass_stratigraphy(
         fold_phase      = hints.get("fold_phase_rad")
         fold_delta = simulate_fold_deformation(
             stack, strat_stack,
-            rng=np.random.default_rng(seed ^ 0x466F6C64),  # XOR "Fold"
+            rng=_rng_from_pass_seed(seed, "stratigraphy_fold", tile_x, tile_y, region),
             amplitude_m=float(fold_amplitude) if fold_amplitude is not None else None,
             wavelength_m=float(fold_wavelength) if fold_wavelength is not None else None,
             phase_rad=float(fold_phase) if fold_phase is not None else None,
@@ -1020,7 +1042,7 @@ def pass_stratigraphy(
         iron_strength = float(hints.get("intrusion_iron_stain", 0.3))
         simulate_intrusions(
             stack, strat_stack,
-            rng=np.random.default_rng(seed ^ 0x44696B65),  # XOR "Dike"
+            rng=_rng_from_pass_seed(seed, "stratigraphy_intrusion", tile_x, tile_y, region),
             n_intrusions=n_int,
             width_range_m=(w_min, w_max),
             albedo_iron_stain_strength=iron_strength,

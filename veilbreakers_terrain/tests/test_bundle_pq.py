@@ -194,6 +194,21 @@ class TestPaletteExtract:
         weights = [e.weight for e in palette]
         assert weights == sorted(weights, reverse=True)
 
+    def test_palette_seed_is_repeatable_and_seed_scoped(self):
+        rng = np.random.default_rng(123)
+        img = rng.random((12, 12, 3)).astype(np.float32)
+
+        palette_a = extract_palette_from_image(img, k=4, seed=5)
+        palette_b = extract_palette_from_image(img, k=4, seed=5)
+        palette_c = extract_palette_from_image(img, k=4, seed=6)
+
+        assert [entry.color_rgb for entry in palette_a] == [
+            entry.color_rgb for entry in palette_b
+        ]
+        assert [entry.color_rgb for entry in palette_a] != [
+            entry.color_rgb for entry in palette_c
+        ]
+
     def test_palette_handles_uint8(self):
         img = (np.ones((8, 8, 3)) * 128).astype(np.uint8)
         palette = extract_palette_from_image(img, k=2)
