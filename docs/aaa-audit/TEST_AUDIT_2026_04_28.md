@@ -356,9 +356,9 @@ pass_water_variants).
 - Pipeline smoke now runs as a fast controller gate (`10 passed in 0.84s`) instead of hanging or taking ~60s.
 - `test_terrain_waterfalls.py` and `test_water_network_upgrade.py` strict-provenance fixture gaps are fixed; focused slice passes (`43 passed`).
 
-### Still not a trustworthy final gate
+### Remaining caveats after full-suite green
 
-- Full-suite proof has not been rerun green after the latest stale-test patch; current proof is focused and targeted, not whole-suite completion.
+- Full-suite proof now exists: `python -m pytest veilbreakers_terrain/tests -x -q` -> `3509 passed, 4 skipped, 23 warnings in 1399.96s`.
 - Newly covered callable rows include conservative low grades; strict-zero proves no callable is missing from the matrix, not that every callable is high quality.
 
 ### Updated grades
@@ -370,4 +370,4 @@ pass_water_variants).
 | Phase 1 exception tests | B | Direct DAG, profile, parallel-wave, and controller default validation tests now match live contracts. |
 | Callable/wiring proof | B- | Strict-zero passes, but many rows are conservative low grades requiring later remediation. |
 | Pipeline smoke | B | Fast controller smoke now proves rollback/provenance/scene-read/default-validation contracts without hanging. |
-| Whole-suite gate | Incomplete | Focused slices pass; post-patch full-suite green proof is still missing. |
+| Whole-suite gate | B | Full post-suite is green; remaining weakness is warning hygiene and the fact that green tests do not prove real Blender/Unity visual-runtime output. |

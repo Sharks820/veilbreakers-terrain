@@ -15,9 +15,10 @@ to guard. Insert these fixes before `FIX-1-1`.
 **2026-04-28 continued scrub delta:** FIX-0A, FIX-0B, most of FIX-0C, FIX-0D,
 FIX-0F, and the direct DAG/profile/parallel-wave/controller-default portions of
 FIX-0E/FIX-0G now have focused proof. `python scripts/callable_census_gate.py
---strict-zero` now passes with `0` uncovered callables. Do not proceed past
-Phase 0 yet: a post-patch full-suite green run is still missing, and many newly
-covered callable rows remain conservative low-grade remediation targets.
+--strict-zero` now passes with `0` uncovered callables. The post-patch full
+suite is green (`3509 passed, 4 skipped, 23 warnings in 1399.96s`). Phase 0 is
+clear to proceed into ordered implementation, while newly covered callable rows
+remain conservative low-grade remediation targets.
 
 ### FIX-0A: Replace mock-stack visual QA tests with real `TerrainMaskStack`
 

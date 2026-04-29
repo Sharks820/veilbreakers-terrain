@@ -4019,7 +4019,7 @@ Before Phase 1 can be called complete, insert **Phase 0 — Test Harness and Pro
 
 **Source:** GSD audit-fix workflow applied inline, Serena symbol checks, Context7 pytest best-practice check, strict-provenance grep sweep, focused pytest, and ordered `pytest -x` runs.
 
-**Status:** **IN PROGRESS / NOT CLEAN YET.** Phase 0 gate quality improved materially, but full-suite proof is still running through heavy terrain bands and cannot be called complete until it exits green.
+**Status:** **SUPERSEDED BY SECTION 25.** Phase 0 gate quality improved materially. The later Section 25 post-suite run completed green.
 
 ### S24-P0-1 — Strict-provenance sweep found real production stack bypasses
 
@@ -4074,15 +4074,11 @@ Live focused evidence after repairs:
 - `test_terrain_water_vegetation_depth.py`: `46 passed`
 - `test_wind_waterfall_poi_phase14.py`: `22 passed`
 
-### S24-P0-5 — Full-suite status remains unresolved
+### S24-P0-5 — Full-suite status superseded by Section 25 green run
 
-Ordered `python -m pytest veilbreakers_terrain/tests -x -q` advanced past previously failing strict-provenance points and reached beyond 30%, but it is still CPU-bound in heavy terrain tests at time of this addendum.
+Historical Section 24 state: ordered `python -m pytest veilbreakers_terrain/tests -x -q` advanced past previously failing strict-provenance points and reached beyond 30%, but was still CPU-bound in heavy terrain tests at time of that addendum. Section 25 supersedes this with a completed green run: `3509 passed, 4 skipped, 23 warnings in 1399.96s`.
 
-**No-go rule:** Do not mark scrub complete until:
-1. ordered full-suite run exits with no failure, or every next failure is isolated and fixed;
-2. callable census and wiring scan are refreshed after final code changes;
-3. production direct-channel assignment grep stays clean;
-4. visual QA mock-stack debt is either fixed or explicitly left as remaining Phase 0 blocker.
+**Current gate state:** Full-suite proof is closed for this scrub slice. Continue using the callable census, direct-channel grep, and visual QA fixture checks as regression gates in later phases.
 
 **End of Section 24.**
 
@@ -4092,7 +4088,7 @@ Ordered `python -m pytest veilbreakers_terrain/tests -x -q` advanced past previo
 
 **Source:** Post-push live audit continuation using Serena symbol reads, callable census gates, Context7 pytest guidance, direct grep, and focused pytest evidence from the committed Phase 0 / Phase 1 repair slice.
 
-**Status:** **NO-GO / NOT CLEAN.** Several Section 23 findings are now fixed, the strict callable zero gate now passes, and the fast smoke gate is stable. The audit still cannot be closed because a post-patch full-suite green run has not completed.
+**Status:** **PHASE 0 PROOF GATE GREEN / MASTER AUDIT STILL OPEN.** Section 23 stale-test blockers are fixed, the strict callable zero gate passes, the fast smoke gate is stable, and the full post-suite run completed green. This clears the Phase 0 proof-gate blocker for starting ordered implementation. It does not close the full master audit; lower-grade callable rows and later production/visual/export findings remain active remediation targets.
 
 ### S25-RESOLVED — Section 23 stale test failures now have direct proof
 
@@ -4116,6 +4112,7 @@ Evidence:
 - `python -m pytest veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_default_pipeline_runs_full_validation_without_scene_read veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_full veilbreakers_terrain/tests/test_terrain_master_registrar.py::test_handle_run_terrain_pass_skips_heightmap_injection_when_unity_export_opted_out -q` -> `3 passed`.
 - `python -m pytest veilbreakers_terrain/tests/test_p7_priority_flood.py::test_default_pipeline_runs_hydrology_before_erosion -q` -> `1 passed`.
 - `python -m pytest veilbreakers_terrain/tests/test_terrain_visual_qa_channels.py veilbreakers_terrain/tests/test_visual_qa_golden.py -q` -> `82 passed`.
+- `python -m pytest veilbreakers_terrain/tests -x -q` -> `3509 passed, 4 skipped, 23 warnings in 1399.96s (0:23:19)`.
 - `python scripts/callable_census_gate.py --strict-zero` -> `PASS: strict callable coverage has 0 uncovered callables.`
 - `rg -n 'stack\.(drainage|flow_accumulation)\s*=|populated_by_pass\["(drainage|flow_accumulation)"\]' veilbreakers_terrain/tests/test_terrain_waterfalls.py veilbreakers_terrain/tests/test_water_network_upgrade.py` -> no hits.
 - Serena `find_referencing_symbols` shows `PassDAG.resolve_pass()` directly referenced by the new test.
