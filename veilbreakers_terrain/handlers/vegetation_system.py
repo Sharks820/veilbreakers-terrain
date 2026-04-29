@@ -1220,8 +1220,11 @@ def scatter_biome_vegetation(
     # returns the primary-biome weight [0,1] at any world XY position.
     # The transition is a smooth-step ramp centred on ecotone_boundary
     # and spanning ecotone_blend_width.
+    # H-1: prefer per-cell ecotone_blend_weights channel produced by pass_ecotones.
     # ------------------------------------------------------------------
     adjacent_biome: str | None = params.get("adjacent_biome")
+    _ecotone_channel = stack.get("ecotone_blend_weights") if stack is not None else None
+    _use_channel_blend: bool = _ecotone_channel is not None and np is not None
     ecotone_blend_width: float = float(params.get("ecotone_blend_width", 20.0))
     ecotone_axis: str = str(params.get("ecotone_axis", "x")).lower()
 
@@ -1247,6 +1250,11 @@ def scatter_biome_vegetation(
 
         def ecotone_alpha_fn(wx: float, wy: float) -> float:  # type: ignore[misc]
             """Return primary-biome weight [0,1] at world position."""
+            if _use_channel_blend and stack is not None and np is not None:
+                iy, ix = _world_to_cell(stack, float(wx), float(wy))
+                ch = np.asarray(_ecotone_channel)
+                if ch.ndim == 3 and ch.shape[2] > 0:
+                    return float(np.clip(ch[iy, ix, 0], 0.0, 1.0))
             coord = wx if ecotone_axis == "x" else wy
             mid = _ecotone_mid[0]
             # Signed distance from boundary midpoint.
