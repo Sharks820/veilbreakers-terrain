@@ -282,7 +282,7 @@ def pass_decals(
     for kind in DecalKind:
         layers[kind.value] = compute_decal_density(stack, kind)
 
-    decal_density = dict(stack.decal_density or {})
+    decal_density = dict(stack.get("decal_density") or {})
     decal_density.update(layers)
     stack.set("decal_density", decal_density, "decals")
 

@@ -840,15 +840,29 @@ def pass_water_variants(
     # Write back any detector-augmented channels.
     # W-1: co-emit water_surface_mask (canonical binary successor) so downstream
     # consumers can prefer it over the ambiguous water_surface name.
-    water_surface_mask = (water_surface > 0.0).astype(np.float32)
-    water_surface_elevation_m = np.where(
-        water_surface_mask > 0.0,
+    # Region-aware: when called with a non-None region, merge into existing mask
+    # rather than overwriting the whole tile — otherwise a second region call
+    # obliterates the first region's contributions.
+    water_surface_mask_full = (water_surface > 0.0).astype(np.float32)
+    water_surface_elevation_m_full = np.where(
+        water_surface_mask_full > 0.0,
         np.asarray(stack.height, dtype=np.float32),
         0.0,
     ).astype(np.float32)
+    if region is not None:
+        existing_mask = stack.get("water_surface_mask")
+        existing_elev = stack.get("water_surface_elevation_m")
+        if existing_mask is not None:
+            merged_mask = np.asarray(existing_mask, dtype=np.float32).copy()
+            merged_mask[r_slice, c_slice] = water_surface_mask_full[r_slice, c_slice]
+            water_surface_mask_full = merged_mask
+        if existing_elev is not None:
+            merged_elev = np.asarray(existing_elev, dtype=np.float32).copy()
+            merged_elev[r_slice, c_slice] = water_surface_elevation_m_full[r_slice, c_slice]
+            water_surface_elevation_m_full = merged_elev
     stack.set("water_surface", water_surface, "water_variants")
-    stack.set("water_surface_mask", water_surface_mask, "water_variants")
-    stack.set("water_surface_elevation_m", water_surface_elevation_m, "water_variants")
+    stack.set("water_surface_mask", water_surface_mask_full, "water_variants")
+    stack.set("water_surface_elevation_m", water_surface_elevation_m_full, "water_variants")
     stack.set("wetness", wetness, "water_variants")
 
     return PassResult(

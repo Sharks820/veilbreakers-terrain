@@ -415,10 +415,31 @@ def get_ice_formation_specs(
     return results
 
 
+def register_glacial_pass() -> None:
+    """Register pass_glacial with TerrainPassController (Bundle I — glacial)."""
+    from .terrain_pipeline import TerrainPassController
+    from .terrain_semantics import PassDefinition
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_glacial",
+            func=pass_glacial,
+            requires_channels=("height",),
+            optional_channels=("slope", "flow_accumulation"),
+            produces_channels=("snow_line_factor", "glacial_delta"),
+            seed_namespace="pass_glacial",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Bundle I: altitude snow-line + optional U-valley glacial carve.",
+        )
+    )
+
+
 __all__ = [
     "carve_u_valley",
     "scatter_moraines",
     "compute_snow_line",
     "pass_glacial",
     "get_ice_formation_specs",
+    "register_glacial_pass",
 ]

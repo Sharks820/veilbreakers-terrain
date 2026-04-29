@@ -220,6 +220,7 @@ def _register_all_terrain_passes_impl(
         ("H-framing", f"{package_root}.terrain_framing", "register_framing_pass"),
         ("F", f"{package_root}.terrain_caves", "register_bundle_f_passes"),
         ("I", f"{package_root}.terrain_geology_validator", "register_bundle_i_passes"),
+        ("I-glacial", f"{package_root}.terrain_glacial", "register_glacial_pass"),
         ("C", f"{package_root}.terrain_waterfalls", "register_bundle_c_passes"),
         # Material + scatter (consume final height + all candidate masks)
         ("B-materials", f"{package_root}.terrain_materials_v2", "register_bundle_b_material_passes"),

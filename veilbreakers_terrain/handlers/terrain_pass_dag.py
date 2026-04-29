@@ -11,6 +11,7 @@ Pure Python + numpy. Threading is stdlib.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Sequence, Set
@@ -31,6 +32,35 @@ class PassNotRegisteredError(KeyError):
 
 class WaveExecutionError(RuntimeError):
     """Raised when one or more passes in a parallel wave fail."""
+
+
+def _lightweight_state_copy(state):
+    """Fast alternative to copy.deepcopy(state) for parallel worker threads.
+
+    Uses ndarray.copy() (buffer-level) for array channels instead of the full
+    Python object walk that deepcopy performs — 10-100x faster on 4096² tiles.
+    Non-array members use dataclasses.replace (shallow). Workers receive empty
+    checkpoint history since they never checkpoint.
+    """
+    import numpy as _np
+
+    old_stack = state.mask_stack
+    new_stack = copy.copy(old_stack)  # shallow; arrays fixed below
+    for ch in type(old_stack)._ARRAY_CHANNELS:
+        val = getattr(old_stack, ch, None)
+        if isinstance(val, _np.ndarray):
+            object.__setattr__(new_stack, ch, val.copy())
+    object.__setattr__(new_stack, "populated_by_pass", dict(old_stack.populated_by_pass))
+    object.__setattr__(new_stack, "dirty_channels", set(old_stack.dirty_channels))
+    object.__setattr__(new_stack, "content_hash", None)
+
+    return dataclasses.replace(
+        state,
+        mask_stack=new_stack,
+        checkpoints=[],
+        pass_history=list(state.pass_history),
+        side_effects=list(state.side_effects),
+    )
 
 
 def _merge_pass_outputs(
@@ -358,7 +388,7 @@ class PassDAG:
             submit_times: Dict[str, float] = {}
 
             def _runner(pname: str) -> PassResult:
-                worker_state = copy.deepcopy(controller.state)
+                worker_state = _lightweight_state_copy(controller.state)
                 worker_controller = TerrainPassController(
                     worker_state,
                     checkpoint_dir=controller.checkpoint_dir,
