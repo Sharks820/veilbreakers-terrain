@@ -195,9 +195,11 @@ def compute_navmesh_area_id(
     if water_depth_raw is not None:
         deep_water = np.asarray(water_depth_raw, dtype=np.float32) > 0.5
         out[deep_water] = NAVMESH_SWIM
-    elif stack.water_surface is not None:
-        swim = np.asarray(stack.water_surface, dtype=np.float32) > 0.0
-        out[swim] = NAVMESH_SWIM
+    else:
+        _ws = stack.get("water_surface_mask") or stack.get("water_surface")
+        if _ws is not None:
+            swim = np.asarray(_ws, dtype=np.float32) > 0.0
+            out[swim] = NAVMESH_SWIM
 
     # 6. Hard cliff — force cliff_blocked for extreme slopes (not swim)
     hard_blocked = slope_deg >= float(climb_max_slope_deg)
@@ -320,9 +322,10 @@ def compute_traversability(
 
     # --- Water penalty ---
     water_cost = np.zeros(shape, dtype=np.float64)
-    if stack.water_surface is not None:
+    _ws_b1b = stack.get("water_surface_mask") or stack.get("water_surface")
+    if _ws_b1b is not None:
         water_cost = np.where(
-            np.asarray(stack.water_surface) > 0.0, 0.7, 0.0
+            np.asarray(_ws_b1b) > 0.0, 0.7, 0.0
         )
 
     # --- Narrow-pass penalty via EDT of obstacle mask ---

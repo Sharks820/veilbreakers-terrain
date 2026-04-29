@@ -1338,7 +1338,7 @@ def apply_reef_platform(
     # ---- Tidal / proximity gate -----------------------------------------
     tidal = tidal_range
     if tidal is None and stack is not None:
-        tidal = getattr(stack, "tidal", None)
+        tidal = stack.get("tidal")
 
     if tidal is not None:
         tidal_arr = np.broadcast_to(np.asarray(tidal, dtype=np.float64), (h, w))

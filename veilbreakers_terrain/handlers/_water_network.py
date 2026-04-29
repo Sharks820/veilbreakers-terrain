@@ -3108,8 +3108,8 @@ def detect_river_mouth_zones(
     Returns:
         Float32 (H, W) mask: 1.0 at river mouth / transition cells, 0.0 elsewhere.
     """
-    fa = getattr(stack, "flow_accumulation", None)
-    fd = getattr(stack, "flow_direction", None)
+    fa = stack.get("flow_accumulation")
+    fd = stack.get("flow_direction")
     if fa is None or fd is None:
         h = np.asarray(stack.height)
         return np.zeros(h.shape, dtype=np.float32)
@@ -3310,8 +3310,8 @@ def pass_river_convergence(
     t0 = _time.perf_counter()
     stack = state.mask_stack
 
-    fa = getattr(stack, "flow_accumulation", None)
-    fd = getattr(stack, "flow_direction", None)
+    fa = stack.get("flow_accumulation")
+    fd = stack.get("flow_direction")
 
     if fa is None or fd is None:
         return PassResult(

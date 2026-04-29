@@ -355,7 +355,7 @@ def solve_outflow(
     water_surface: "np.ndarray | None" = None
     stack = getattr(water_network, "_mask_stack", None)
     if stack is not None:
-        ws = getattr(stack, "water_surface", None)
+        ws = stack.get("water_surface_mask") or stack.get("water_surface")
         if ws is not None:
             water_surface = np.asarray(ws)
 
@@ -598,7 +598,7 @@ def compute_wet_rock_mask(
     seed_strength = np.zeros((rows, cols), dtype=np.float64)
 
     fa_norm = None
-    fa = getattr(stack, "flow_accumulation", None)
+    fa = stack.get("flow_accumulation")
     if fa is not None:
         fa_arr = np.asarray(fa, dtype=np.float64)
         if fa_arr.shape == h.shape:
@@ -631,7 +631,7 @@ def compute_wet_rock_mask(
             return 1.0
         return 0.55 + 0.45 * max(norm_candidates)
 
-    surface = stack.water_surface
+    surface = stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface")
     if surface is not None:
         surface_arr = np.asarray(surface)
         if surface_arr.shape == h.shape:

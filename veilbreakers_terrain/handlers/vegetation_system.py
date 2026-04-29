@@ -1591,7 +1591,7 @@ def _derive_cliff_sdf_m(stack: Any) -> "Any | None":
     """Compute a per-cell signed-distance-from-cliff in metres."""
     if stack is None or np is None:
         return None
-    cliff = getattr(stack, "cliff_label", None)
+    cliff = stack.get("cliff_label") if hasattr(stack, "get") else getattr(stack, "cliff_label", None)
     if cliff is None:
         return None
     try:
@@ -1607,7 +1607,7 @@ def _derive_water_edge_sdf_m(stack: Any) -> "Any | None":
     """Compute distance-from-water in metres using bathymetry."""
     if stack is None or np is None:
         return None
-    bathy = getattr(stack, "bathymetry", None)
+    bathy = stack.get("bathymetry") if hasattr(stack, "get") else getattr(stack, "bathymetry", None)
     if bathy is None:
         return None
     try:
@@ -1692,8 +1692,8 @@ def build_foliage_placement_manifest(
     # Stack-derived exclusion SDFs (computed lazily; None when no stack).
     cliff_sdf = _derive_cliff_sdf_m(stack)
     water_sdf = _derive_water_edge_sdf_m(stack)
-    road_sdf = getattr(stack, "road_sdf_dist", None) if stack is not None else None
-    hero_excl = getattr(stack, "hero_exclusion", None) if stack is not None else None
+    road_sdf = (stack.get("road_sdf_dist") if hasattr(stack, "get") else getattr(stack, "road_sdf_dist", None)) if stack is not None else None
+    hero_excl = (stack.get("hero_exclusion") if hasattr(stack, "get") else getattr(stack, "hero_exclusion", None)) if stack is not None else None
 
     # Terrain extents for normalised position.
     if stack is not None and getattr(stack, "height", None) is not None:

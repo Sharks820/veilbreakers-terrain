@@ -1811,7 +1811,7 @@ def export_unity_manifest(
     # so brief splash-zones don't inflate the baseline.
     # ---------------------------------------------------------------------- #
     water_level_unity: Optional[float] = None
-    ws = stack.get("water_surface")
+    ws = stack.get("water_surface_mask") or stack.get("water_surface")
     if ws is not None:
         ws_arr = np.asarray(ws, dtype=np.float64)
         nonzero = ws_arr[ws_arr > 0.0]

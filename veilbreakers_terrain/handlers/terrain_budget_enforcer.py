@@ -238,7 +238,7 @@ def _count_scatter_instances(stack: TerrainMaskStack) -> int:
     if tree is not None:
         total += int(np.asarray(tree).shape[0])
     # detail_density dict: sum populated instance estimates
-    detail = getattr(stack, "detail_density", None)
+    detail = stack.get("detail_density")
     if isinstance(detail, dict):
         for _k, v in detail.items():
             arr = np.asarray(v, dtype=np.float64)

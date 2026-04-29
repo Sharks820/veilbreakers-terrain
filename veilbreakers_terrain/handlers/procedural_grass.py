@@ -818,7 +818,7 @@ def pass_procedural_grass(state: Any, region: Any = None) -> Any:
         float(getattr(stack, "cell_size", 1.0) or 1.0),
     )
     stack.set("grass_density_map", density, "pass_procedural_grass")
-    merged_detail = dict(getattr(stack, "detail_density", None) or {})
+    merged_detail = dict(stack.get("detail_density") or {})
     merged_detail.update(detail_density)
     stack.set("detail_density", merged_detail, "pass_procedural_grass")
     stack.set(

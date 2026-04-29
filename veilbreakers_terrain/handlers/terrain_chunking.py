@@ -690,10 +690,10 @@ def apply_seam_boundary_conditions(
         Stack fields to seam-lock. Defaults to ``("height",)``. Any missing
         or non-2-D channels are ignored.
     """
-    north_edge = getattr(stack, "north_edge", None)
-    south_edge = getattr(stack, "south_edge", None)
-    east_edge = getattr(stack, "east_edge", None)
-    west_edge = getattr(stack, "west_edge", None)
+    north_edge = stack.get("north_edge")
+    south_edge = stack.get("south_edge")
+    east_edge = stack.get("east_edge")
+    west_edge = stack.get("west_edge")
 
     mutated = False
     for channel in tuple(dict.fromkeys(str(ch) for ch in channels)):

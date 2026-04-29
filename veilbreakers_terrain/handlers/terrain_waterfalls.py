@@ -1779,7 +1779,7 @@ def compute_physical_foam_composite(
     # Source 4: Shoreline foam — 3-cell band at water_surface boundary
     # Detect edges where water_surface > 0 AND any neighbour == 0.
     # ------------------------------------------------------------------
-    ws_arr = getattr(stack, "water_surface", None)
+    ws_arr = stack.get("water_surface_mask") or stack.get("water_surface")
 
     if ws_arr is not None:
         ws = np.asarray(ws_arr, dtype=np.float32)
@@ -2336,7 +2336,7 @@ def pass_waterfalls(
         _cell_size=float(stack.cell_size),
         _world_origin_x=float(stack.world_origin_x),
         _world_origin_y=float(stack.world_origin_y),
-        water_surface=stack.get("water_surface"),
+        water_surface=stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface"),
     )
     for chain in chains:
         try:
