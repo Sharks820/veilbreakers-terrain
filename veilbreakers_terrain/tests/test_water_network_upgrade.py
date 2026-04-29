@@ -72,9 +72,143 @@ def _build_stack(size: int = 40):
     )
 
 
+def _scalar_velocity_reference(
+    water_network,
+    heightmap: np.ndarray,
+    flow_accumulation: np.ndarray,
+    flow_direction: np.ndarray,
+    *,
+    cell_size: float,
+    manning_n_river: float,
+    manning_n_stream: float,
+    river_threshold: float,
+    foam_velocity_threshold: float,
+    foam_gradient_threshold: float,
+) -> dict[str, np.ndarray]:
+    hmap = np.asarray(heightmap, dtype=np.float64)
+    fa = np.asarray(flow_accumulation, dtype=np.float64)
+    fd = np.asarray(flow_direction, dtype=np.int32)
+    rows, cols = hmap.shape
+    speed = np.zeros((rows, cols), dtype=np.float64)
+    vx = np.zeros((rows, cols), dtype=np.float64)
+    vy = np.zeros((rows, cols), dtype=np.float64)
+
+    dh_dr, dh_dc = np.gradient(hmap, cell_size)
+    slope_field = np.sqrt(dh_dr ** 2 + dh_dc ** 2)
+    slope_clamped = np.clip(slope_field, 1e-5, 1.0)
+
+    d8_dx = np.array(
+        [float(dc) for dr, dc in water_network._D8_OFFSETS],
+        dtype=np.float64,
+    )
+    d8_dy = np.array(
+        [-float(dr) for dr, dc in water_network._D8_OFFSETS],
+        dtype=np.float64,
+    )
+    d8_dist = np.array(water_network._D8_DISTANCES, dtype=np.float64)
+    d8_dx /= d8_dist
+    d8_dy /= d8_dist
+
+    for r in range(rows):
+        for c in range(cols):
+            acc = float(fa[r, c])
+            if acc < 1.0:
+                continue
+            d = int(fd[r, c])
+            if d < 0:
+                continue
+
+            width = water_network.compute_river_width(acc)
+            depth = water_network._compute_river_depth(acc)
+            hydraulic_radius = (width * depth) / (width + 2.0 * depth)
+            roughness = manning_n_river if acc >= river_threshold else manning_n_stream
+            velocity = (
+                (1.0 / roughness)
+                * (hydraulic_radius ** (2.0 / 3.0))
+                * math.sqrt(float(slope_clamped[r, c]))
+            )
+            speed[r, c] = velocity
+            vx[r, c] = velocity * d8_dx[d]
+            vy[r, c] = velocity * d8_dy[d]
+
+    foam_mask = (
+        (speed > foam_velocity_threshold)
+        | (slope_field > foam_gradient_threshold)
+    ) & (fa > 10.0)
+    return {"vx": vx, "vy": vy, "speed": speed, "foam_mask": foam_mask}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_compute_velocity_field_matches_scalar_manning_reference():
+    import veilbreakers_terrain.handlers._water_network as water_network
+
+    heightmap = np.array(
+        [
+            [9.0, 8.5, 8.0, 7.8],
+            [8.2, 7.9, 7.4, 7.0],
+            [7.7, 7.2, 6.8, 6.1],
+        ],
+        dtype=np.float64,
+    )
+    flow_accumulation = np.array(
+        [
+            [0.0, 1.0, 12.0, 3000.0],
+            [2.0, 35.0, 1800.0, 2500.0],
+            [0.5, 15.0, 75.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    flow_direction = np.array(
+        [
+            [-1, 2, 2, 4],
+            [1, 3, 4, 5],
+            [0, 0, 6, -1],
+        ],
+        dtype=np.int32,
+    )
+    kwargs = {
+        "cell_size": 2.0,
+        "manning_n_river": 0.033,
+        "manning_n_stream": 0.052,
+        "river_threshold": 2000.0,
+        "foam_velocity_threshold": 1.5,
+        "foam_gradient_threshold": 0.12,
+    }
+
+    vectorized = water_network.compute_velocity_field(
+        heightmap,
+        flow_accumulation,
+        flow_direction,
+        **kwargs,
+    )
+    scalar = _scalar_velocity_reference(
+        water_network,
+        heightmap,
+        flow_accumulation,
+        flow_direction,
+        **kwargs,
+    )
+
+    np.testing.assert_allclose(
+        vectorized["speed"],
+        scalar["speed"].astype(np.float32),
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        vectorized["vx"],
+        scalar["vx"].astype(np.float32),
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        vectorized["vy"],
+        scalar["vy"].astype(np.float32),
+        rtol=1e-6,
+    )
+    np.testing.assert_array_equal(vectorized["foam_mask"], scalar["foam_mask"])
 
 
 def test_add_meander_increases_path_length():

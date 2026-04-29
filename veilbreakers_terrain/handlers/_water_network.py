@@ -1548,30 +1548,38 @@ def compute_velocity_field(
     _d8_dy /= _d8_dist
 
     # --- Manning velocity per cell ------------------------------------------
-    for r in range(H):
-        for c in range(W):
-            acc = float(fa[r, c])
-            if acc < 1.0:
-                continue
-            d = int(fd[r, c])
-            if d < 0:
-                continue
+    valid = (fa >= 1.0) & (fd >= 0)
+    if np.any(valid):
+        acc = fa[valid]
+        d = fd[valid]
 
-            w = compute_river_width(acc)
-            dep = _compute_river_depth(acc)
-            area = w * dep
-            wetted_p = w + 2.0 * dep
-            if wetted_p < 1e-9:
-                continue
-            R = area / wetted_p
+        width = np.clip(
+            1.0 + np.sqrt(acc * 0.002),
+            1.0,
+            20.0,
+        )
+        base_depth = 0.3 + 0.001 * np.power(acc, 0.4)
+        depth = np.maximum(base_depth, width / 20.0)
+        depth = np.minimum(depth, width / 8.0)
+        depth = np.clip(depth, 0.3, 4.0)
 
-            S = float(slope_clamped[r, c])
-            n = manning_n_river if acc >= river_threshold else manning_n_stream
-            V = (1.0 / n) * (R ** (2.0 / 3.0)) * math.sqrt(S)
+        wetted_p = width + 2.0 * depth
+        hydraulic_radius = (width * depth) / wetted_p
+        slope = slope_clamped[valid]
+        roughness = np.where(
+            acc >= river_threshold,
+            manning_n_river,
+            manning_n_stream,
+        )
+        velocity = (
+            (1.0 / roughness)
+            * np.power(hydraulic_radius, 2.0 / 3.0)
+            * np.sqrt(slope)
+        )
 
-            speed[r, c] = V
-            vx[r, c] = V * _d8_dx[d]
-            vy[r, c] = V * _d8_dy[d]
+        speed[valid] = velocity
+        vx[valid] = velocity * _d8_dx[d]
+        vy[valid] = velocity * _d8_dy[d]
 
     # --- Foam mask: turbulent rapid cells -----------------------------------
     foam_mask = (speed > foam_velocity_threshold) | (slope_field > foam_gradient_threshold)

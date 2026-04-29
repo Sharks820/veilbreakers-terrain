@@ -1646,11 +1646,13 @@ Compare numeric outputs against pre-fix golden snapshots within tolerance.
 
 ### Fixes in this phase
 
-**Status 2026-04-29:** Started. FIX-7.1 is implemented in
+**Status 2026-04-29:** In progress. FIX-7.1 is implemented in
 `terrain_pipeline.py` with declared-channel copy-on-write rollback and a
 focused regression test that fails if `run_pass()` deep-copies the entire
-`TerrainMaskStack`. FIX-7.2 through FIX-7.9 remain open or unverified in this
-checkpoint.
+`TerrainMaskStack`. FIX-7.5 is implemented in `_water_network.py` with
+boolean-mask Manning velocity broadcast and a scalar-reference regression test.
+FIX-7.2 through FIX-7.4 and FIX-7.6 through FIX-7.9 remain open or unverified
+in this checkpoint.
 
 #### FIX-7.1 (FIX-9-32) — Copy-on-write checkpoint
 - **P0 ref:** S22-P0-34
@@ -1675,6 +1677,11 @@ checkpoint.
 #### FIX-7.5 (FIX-8-15) — Manning velocity vectorised
 - **File:** `_water_network.py:1551–1574`. Use boolean-mask broadcast for
   `n_arr`, `V`, `vx`, `vy`. See codex FIX-8-15 block.
+- **Status 2026-04-29:** Done. `compute_velocity_field()` now computes
+  width, depth, hydraulic radius, roughness, scalar velocity, and velocity
+  components through one valid-flow boolean mask. Test
+  `test_compute_velocity_field_matches_scalar_manning_reference` pins the
+  vectorized output to the previous scalar Manning equation.
 
 #### FIX-7.6 (FIX-8-16) — LocationLayer KD-tree repulsion
 - **File:** `environment_scatter.py:1371–1401`.
