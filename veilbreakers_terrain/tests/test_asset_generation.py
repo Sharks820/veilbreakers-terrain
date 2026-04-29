@@ -7,11 +7,14 @@ monkey-patched at the call site.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+import veilbreakers_terrain.handlers.asset_generation as asset_generation
 from veilbreakers_terrain.handlers.asset_generation import (
     AssetGenerationBackend,
     AssetGenerationPipeline,
@@ -22,6 +25,10 @@ from veilbreakers_terrain.handlers.asset_generation import (
     PipelineConfig,
     RodinBackend,
     RunPodBackend,
+    _atomic_copy,
+    _atomic_write_json,
+    _progress,
+    _retry,
     apply_preset,
     validate_glb,
 )
@@ -124,6 +131,50 @@ def test_validate_glb_accepts_valid(tmp_path: Path):
     assert validate_glb(p)
 
 
+def test_progress_prints_desc_without_tqdm(monkeypatch, capsys):
+    monkeypatch.setattr(asset_generation, "_tqdm", None)
+
+    out = list(_progress([1, 2, 3], desc="asset pass"))
+
+    assert out == [1, 2, 3]
+    assert "asset pass" in capsys.readouterr().out
+
+
+def test_retry_retries_then_returns(monkeypatch):
+    monkeypatch.setattr(asset_generation.time, "sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("try again")
+        return "ok"
+
+    assert _retry(flaky, max_attempts=2, base_delay_s=0.01, label="unit") == "ok"
+    assert calls["n"] == 2
+
+
+def test_retry_raises_last_exception(monkeypatch):
+    monkeypatch.setattr(asset_generation.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(ValueError, match="final"):
+        _retry(lambda: (_ for _ in ()).throw(ValueError("final")), max_attempts=2)
+
+
+def test_atomic_copy_and_json_replace_tmp_files(tmp_path: Path):
+    src = tmp_path / "src.glb"
+    dst = tmp_path / "nested" / "out.glb"
+    src.write_bytes(b"glTF" + b"x" * 2048)
+
+    copied = _atomic_copy(src, dst)
+    json_path = _atomic_write_json(tmp_path / "nested" / "meta.json", {"b": 2, "a": 1})
+
+    assert copied == dst
+    assert dst.read_bytes() == src.read_bytes()
+    assert json.loads(json_path.read_text()) == {"a": 1, "b": 2}
+    assert not list((tmp_path / "nested").glob("*.tmp"))
+
+
 # ---------------------------------------------------------------------------
 # Backend selection
 # ---------------------------------------------------------------------------
@@ -150,6 +201,13 @@ def test_pipeline_picks_rodin_backend():
     pipe = AssetGenerationPipeline()
     backend = pipe._backend(AssetGenerationBackend.RODIN)
     assert isinstance(backend, RodinBackend)
+
+
+def test_pipeline_build_backend_rejects_unknown_backend():
+    pipe = AssetGenerationPipeline()
+
+    with pytest.raises(ValueError, match="Unknown backend"):
+        pipe._build_backend("bad")  # type: ignore[arg-type]
 
 
 def test_pipeline_caches_backend_instances():
@@ -258,11 +316,82 @@ def test_huggingface_backend_construct_with_token():
     assert b.space.startswith("tencent/")
 
 
+def test_huggingface_lazy_client_and_wrap_image(monkeypatch, tmp_path: Path):
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, space, hf_token=None):
+            seen["space"] = space
+            seen["hf_token"] = hf_token
+
+    def fake_handle_file(path: str) -> str:
+        return f"wrapped:{Path(path).name}"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "gradio_client",
+        SimpleNamespace(Client=FakeClient, handle_file=fake_handle_file),
+    )
+    image = tmp_path / "ref.png"
+    image.write_bytes(b"png")
+    backend = HuggingFaceBackend(space="space/test", hf_token="tok")
+
+    client = backend._client()
+    wrapped = backend._wrap_image(image)
+
+    assert isinstance(client, FakeClient)
+    assert seen == {"space": "space/test", "hf_token": "tok"}
+    assert wrapped == "wrapped:ref.png"
+    assert backend._wrap_image(None) is None
+
+
 def test_runpod_backend_construct_logs_warning(caplog):
     with caplog.at_level("WARNING"):
         RunPodBackend(endpoint_id=None, api_key=None)
 
 
+def test_runpod_lazy_import_and_download_stream(monkeypatch, tmp_path: Path):
+    fake_runpod = SimpleNamespace(api_key=None)
+    monkeypatch.setitem(sys.modules, "runpod", fake_runpod)
+
+    backend = RunPodBackend(endpoint_id="ep", api_key="key")
+    assert backend._runpod() is fake_runpod
+    assert fake_runpod.api_key == "key"
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield b"glTF"
+            yield b"x" * 2048
+
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        SimpleNamespace(get=lambda *args, **kwargs: FakeResponse()),
+    )
+
+    dest = RunPodBackend._download("https://example.invalid/out.glb", tmp_path / "out.glb")
+    assert dest.read_bytes().startswith(b"glTF")
+
+
 def test_rodin_backend_construct_logs_warning(caplog):
     with caplog.at_level("WARNING"):
         RodinBackend(api_key=None)
+
+
+def test_rodin_lazy_requests_and_headers(monkeypatch):
+    fake_requests = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+    backend = RodinBackend(api_key="rodin-key", base_url="https://api.test/")
+
+    assert backend._requests() is fake_requests
+    assert backend._headers() == {"Authorization": "Bearer rodin-key"}
+    assert backend.base_url == "https://api.test"

@@ -4,9 +4,9 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 132
+- High risk: 121
 - Medium risk: 1
-- Low risk: 1566
+- Low risk: 1577
 - A-grade rows with no executable evidence: 0
 - Tool/Blender callables needing blocker/high evidence: 98
 
@@ -14,7 +14,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - terrain_cliffs.py: 19
 - terrain_foliage_catalog.py: 13
-- asset_generation.py: 11
 - terrain_morphology.py: 11
 - procedural_grass.py: 8
 - terrain_assets.py: 8
@@ -37,21 +36,11 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - _water_network_ext.py: 1
 - terrain_audio_zones.py: 1
 - terrain_delta_integrator.py: 1
+- terrain_fog_masks.py: 1
 
 ## Top Blocker/High Callables
 
 - HIGH _water_network_ext.py:1003 _tileable_value_noise grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH asset_generation.py:58 _progress grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:240 _retry grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:275 _atomic_copy grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:319 HuggingFaceBackend._client grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:330 HuggingFaceBackend._wrap_image grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:395 RunPodBackend._runpod grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:454 RunPodBackend._download grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:498 RodinBackend._requests grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:505 RodinBackend._headers grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:657 AssetGenerationPipeline._build_backend grade=C- needs=direct_behavior_test
-- HIGH asset_generation.py:770 _atomic_write_json grade=C- needs=direct_behavior_test
 - HIGH procedural_grass.py:229 _normalise_array grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH procedural_grass.py:240 _stack_attr grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH procedural_grass.py:246 _biome_id_to_name grade=B- needs=direct_behavior_test;blender_or_mcp_tool_smoke
@@ -120,5 +109,16 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_masks.py:49 compute_curvature grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
 - HIGH terrain_masks.py:73 compute_concavity grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
 - HIGH terrain_masks.py:90 compute_convexity grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
+- HIGH terrain_masks.py:107 extract_ridge_mask grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
+- HIGH terrain_masks.py:145 detect_basins grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
+- HIGH terrain_masks.py:266 compute_macro_saliency grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;visual_snapshot_or_metric
+- HIGH terrain_morphology.py:63 _ridge_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:67 _canyon_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:71 _mesa_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:75 _pinnacle_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:79 _spur_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:83 _valley_params grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:287 _rng_from_seed grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
+- HIGH terrain_morphology.py:409 _template_by_id grade=B needs=direct_behavior_test;blender_or_mcp_tool_smoke
 
 Full CSV: `output/verification/CALLABLE_VERIFICATION_MATRIX.csv`
