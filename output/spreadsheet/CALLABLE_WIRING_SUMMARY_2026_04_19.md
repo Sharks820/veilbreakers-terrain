@@ -13,9 +13,9 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 Status distribution:
 - `helper_reachable`: `1356`
-- `orphan_candidate`: `96`
+- `orphan_candidate`: `95`
 - `runtime_primary`: `251`
-- `test_only_or_unwired`: `241`
+- `test_only_or_unwired`: `242`
 - `uninvoked_registrar`: `1`
 
 ## Highest-Risk Files
