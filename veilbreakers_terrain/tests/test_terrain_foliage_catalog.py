@@ -14,10 +14,13 @@ water-only foliage.
 from __future__ import annotations
 
 import math
+import json
+import random
 
 import numpy as np
 import pytest
 
+import veilbreakers_terrain.handlers.terrain_foliage_catalog as foliage_catalog
 from veilbreakers_terrain.handlers.terrain_foliage_catalog import (
     AssetManifest,
     EXPECTED_CATEGORIES,
@@ -26,10 +29,15 @@ from veilbreakers_terrain.handlers.terrain_foliage_catalog import (
     SpeciesSpec,
     categories_covered,
     external_model_assets_required,
+    default_asset_catalog_path,
+    get_default_asset_manifest,
     manifest_entries,
     resolve_model_asset,
+    set_default_asset_manifest,
     species_for_biome,
     species_ids_by_category,
+    _derive_species_constraints,
+    _slope,
 )
 from veilbreakers_terrain.handlers.environment_scatter import (
     _SPECIES_CONSTRAINTS,
@@ -114,6 +122,34 @@ class TestFoliageCatalogCoverage:
             for key in ("min_sep", "max_slope", "alt_min", "alt_max",
                         "moisture_min", "moisture_max"):
                 assert key in row, f"{sid} missing constraint key {key}"
+
+    def test_slope_helper_converts_degrees_to_radians(self):
+        lo, hi = _slope(15.0, 45.0)
+
+        assert lo == pytest.approx(math.radians(15.0))
+        assert hi == pytest.approx(math.radians(45.0))
+
+    def test_species_for_biome_filters_catalog_by_mask(self):
+        forest_species = species_for_biome("forest")
+        swamp_species = species_for_biome("swamp")
+
+        assert forest_species
+        assert swamp_species
+        assert all("forest" in spec.biome_mask for spec in forest_species)
+        assert any(spec.species_id == "grass_lush" for spec in swamp_species)
+
+    def test_derive_species_constraints_normalizes_catalog_ranges(self):
+        constraints = _derive_species_constraints()
+        pine = constraints["tree_pine"]
+
+        assert set(constraints) == set(FOLIAGE_SPECIES_CATALOG)
+        assert pine["alt_min"] == pytest.approx(
+            FOLIAGE_SPECIES_CATALOG["tree_pine"].min_altitude_m / 3000.0
+        )
+        assert pine["max_slope"] == pytest.approx(
+            math.degrees(FOLIAGE_SPECIES_CATALOG["tree_pine"].max_slope_rad)
+        )
+        assert pine["moisture_min"] <= pine["moisture_max"]
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +305,93 @@ class TestFoliageManifestIntegration:
 
 
 class TestAssetManifestRuntimeContract:
+    def _catalog_path(self, tmp_path):
+        path = tmp_path / "catalog.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "assets": {
+                        "oak_lod0": {
+                            "asset_id": "oak_lod0",
+                            "category": "oak",
+                            "display_category": "tree",
+                            "lods": [
+                                {"path": "Assets/Oak_LOD0.glb"},
+                                {"path": "Assets/Oak_LOD1.glb"},
+                            ],
+                            "pbr_maps": {"base_color": "oak.png"},
+                        },
+                        "boulder_lod0": {
+                            "asset_id": "boulder_lod0",
+                            "category": "boulder",
+                            "display_category": "rock",
+                            "lods": [{"path": "Assets/Boulder_LOD0.glb"}],
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_default_asset_catalog_path_points_to_repo_assets_folder(self):
+        path = default_asset_catalog_path()
+
+        assert path.name == "catalog.json"
+        assert path.parent.name == "foliage"
+        assert path.parent.parent.name == "assets"
+
+    def test_asset_manifest_reload_lookup_species_choice_and_lods(self, tmp_path):
+        manifest = AssetManifest(path=self._catalog_path(tmp_path))
+        manifest._maybe_reload()
+
+        assert set(manifest.asset_ids()) == {"oak_lod0", "boulder_lod0"}
+        assert manifest.get_asset("oak_lod0")["category"] == "oak"
+        assert manifest.get_asset("_fallback_tree")["fallback"] is True
+        species_asset_ids = [a["asset_id"] for a in manifest.assets_for_species("tree_oak")]
+        assert set(species_asset_ids) == {"oak_lod0"}
+        assert manifest.choose_for_species("tree_oak", rng=random.Random(1))["asset_id"] == "oak_lod0"
+        assert manifest.choose_for_species("unknown_species")["fallback"] is True
+        assert manifest.lod_paths("oak_lod0") == ["Assets/Oak_LOD0.glb", "Assets/Oak_LOD1.glb"]
+
+        stats = manifest.stats()
+        assert stats["asset_count"] == 2
+        assert stats["categories"]["oak"] == 1
+
+        manifest.reload()
+        assert "oak_lod0" in manifest.asset_ids()
+
+    def test_asset_manifest_load_locked_merges_overrides_without_file(self, tmp_path):
+        manifest = AssetManifest(
+            path=tmp_path / "missing.json",
+            overrides={
+                "fern_lod0": {
+                    "asset_id": "fern_lod0",
+                    "category": "fern",
+                    "display_category": "grass",
+                    "lods": [],
+                }
+            },
+        )
+
+        manifest._load_locked(123.0)
+
+        assert manifest._loaded is True
+        assert manifest.asset_ids() == ["fern_lod0"]
+        assert manifest.assets_for_category("grass")[0]["asset_id"] == "fern_lod0"
+
+    def test_default_asset_manifest_set_get_and_reset(self):
+        original = foliage_catalog._DEFAULT_MANIFEST
+        custom = AssetManifest(overrides={"oak_lod0": {"asset_id": "oak_lod0", "category": "oak"}})
+
+        try:
+            set_default_asset_manifest(custom)
+            assert get_default_asset_manifest() is custom
+            set_default_asset_manifest(None)
+            assert get_default_asset_manifest() is not custom
+        finally:
+            set_default_asset_manifest(original)
+
     def test_asset_manifest_returns_defensive_copies_for_category_lookups(self):
         manifest = AssetManifest(
             overrides={
