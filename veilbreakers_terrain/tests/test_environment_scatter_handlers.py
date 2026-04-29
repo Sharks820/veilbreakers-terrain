@@ -1052,6 +1052,24 @@ class TestLocationLayer:
                     f"Points {i} and {j} are {dist:.3f}m apart — less than repulsion {rr}m"
                 )
 
+    def test_large_repulsion_checks_beyond_adjacent_cells(self):
+        """Repulsion larger than one cell still excludes all near accepted points."""
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
+
+        rr = 5.0
+        ll = LocationLayer(cell_size=2.0, density=0.5, repulsion_radius=rr, seed=3)
+        result = ll.generate(20.0, 20.0)
+        if len(result) < 2:
+            return
+
+        xy = result[:, :2].astype(np.float64)
+        for i in range(len(xy)):
+            delta = xy[i + 1:] - xy[i]
+            if len(delta) == 0:
+                continue
+            dist_sq = np.einsum("ij,ij->i", delta, delta)
+            assert np.all(dist_sq >= (rr * rr) - 1e-5)
+
     def test_deterministic_same_seed(self):
         """Same seed → identical output."""
         from veilbreakers_terrain.handlers.environment_scatter import LocationLayer

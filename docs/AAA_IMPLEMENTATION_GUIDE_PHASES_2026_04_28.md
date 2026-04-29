@@ -1654,8 +1654,9 @@ boolean-mask Manning velocity broadcast and a scalar-reference regression test.
 FIX-7.9 is verified against live `execute_parallel()` semantics with a
 regression test for failed parallel waves. FIX-7.8 is implemented in
 `vegetation_system.py` with a regular-raster sampling fast path and shuffled-grid
-height regression test. FIX-7.2 through FIX-7.4 and FIX-7.6 through FIX-7.7
-remain open or unverified in this checkpoint.
+height regression test. FIX-7.6 is implemented in `environment_scatter.py` with
+KD-tree radius queries over the static candidate pool. FIX-7.2 through FIX-7.4
+and FIX-7.7 remain open or unverified in this checkpoint.
 
 #### FIX-7.1 (FIX-9-32) — Copy-on-write checkpoint
 - **P0 ref:** S22-P0-34
@@ -1689,6 +1690,12 @@ remain open or unverified in this checkpoint.
 #### FIX-7.6 (FIX-8-16) — LocationLayer KD-tree repulsion
 - **File:** `environment_scatter.py:1371–1401`.
   `scipy.spatial.cKDTree(accepted_xy).query_ball_point(candidate_xy, min_dist)`.
+- **Status 2026-04-29:** Done. `LocationLayer.generate()` now builds one
+  `scipy.spatial.cKDTree` for the static candidate XY pool and uses
+  `query_ball_point` plus the greedy accepted mask for exact radius rejection.
+  The scalar 3x3-cell fallback remains for environments without SciPy. Test
+  `test_large_repulsion_checks_beyond_adjacent_cells` proves repulsion works
+  when the radius spans beyond adjacent cells.
 
 #### FIX-7.7 (FIX-8-17) — Single Poisson-disk pool
 - **File:** `environment_scatter.py:1040–1093`. One stratified pool; species

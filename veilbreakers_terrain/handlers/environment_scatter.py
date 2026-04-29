@@ -1362,43 +1362,72 @@ class LocationLayer:
         cy_flat = cy_all.ravel()
         total = cx_flat.shape[0]
 
-        # --- Per-cell repulsion in raster order ---
-        # Candidate positions are pre-computed; the Python loop only decides
-        # accept/reject using the 3x3 neighbour dict — no inner candidate-gen cost.
-        accepted_per_cell: dict = {}
         all_instances: list = []
 
-        for flat_idx in range(total):
-            grid_i = flat_idx // (n_cols * n_candidates)
-            rem = flat_idx % (n_cols * n_candidates)
-            grid_j = rem // n_candidates
-
+        def _append_instance(flat_idx: int) -> None:
             cx = float(cx_flat[flat_idx])
             cy = float(cy_flat[flat_idx])
+            z = height_sample_fn(cx, cy) if height_sample_fn is not None else 0.0
+            rot = wind_sample_fn(cx, cy) if wind_sample_fn is not None else 0.0
+            all_instances.append((cx, cy, float(z), float(rot), float(prototype_id)))
 
-            key = (grid_i, grid_j)
-            accepted_per_cell.setdefault(key, [])
+        try:
+            from scipy.spatial import cKDTree as _cKDTree
+        except ImportError:
+            _cKDTree = None
 
-            accepted = True
-            for di in (-1, 0, 1):
-                if not accepted:
-                    break
-                for dj in (-1, 0, 1):
-                    ni, nj = grid_i + di, grid_j + dj
-                    for px, py in accepted_per_cell.get((ni, nj), ()):
-                        ddx = cx - px
-                        ddy = cy - py
-                        if ddx * ddx + ddy * ddy < rr_sq:
-                            accepted = False
-                            break
+        if _cKDTree is not None and self.repulsion_radius > 0.0:
+            candidate_xy = np.column_stack((cx_flat, cy_flat))
+            candidate_tree = _cKDTree(candidate_xy)
+            accepted_mask = np.zeros(total, dtype=bool)
+
+            for flat_idx in range(total):
+                neighbor_idx = candidate_tree.query_ball_point(
+                    candidate_xy[flat_idx],
+                    self.repulsion_radius,
+                )
+                accepted_neighbors = [idx for idx in neighbor_idx if accepted_mask[idx]]
+                if accepted_neighbors:
+                    delta = candidate_xy[accepted_neighbors] - candidate_xy[flat_idx]
+                    if np.any(np.einsum("ij,ij->i", delta, delta) < rr_sq):
+                        continue
+
+                accepted_mask[flat_idx] = True
+                _append_instance(flat_idx)
+        else:
+            # Fallback for minimal Python environments without SciPy. Candidate
+            # positions are still precomputed; only accept/reject remains scalar.
+            accepted_per_cell: dict = {}
+
+            for flat_idx in range(total):
+                grid_i = flat_idx // (n_cols * n_candidates)
+                rem = flat_idx % (n_cols * n_candidates)
+                grid_j = rem // n_candidates
+
+                cx = float(cx_flat[flat_idx])
+                cy = float(cy_flat[flat_idx])
+
+                key = (grid_i, grid_j)
+                accepted_per_cell.setdefault(key, [])
+
+                accepted = True
+                for di in (-1, 0, 1):
                     if not accepted:
                         break
+                    for dj in (-1, 0, 1):
+                        ni, nj = grid_i + di, grid_j + dj
+                        for px, py in accepted_per_cell.get((ni, nj), ()):
+                            ddx = cx - px
+                            ddy = cy - py
+                            if ddx * ddx + ddy * ddy < rr_sq:
+                                accepted = False
+                                break
+                        if not accepted:
+                            break
 
-            if accepted:
-                accepted_per_cell[key].append((cx, cy))
-                z = height_sample_fn(cx, cy) if height_sample_fn is not None else 0.0
-                rot = wind_sample_fn(cx, cy) if wind_sample_fn is not None else 0.0
-                all_instances.append((cx, cy, float(z), float(rot), float(prototype_id)))
+                if accepted:
+                    accepted_per_cell[key].append((cx, cy))
+                    _append_instance(flat_idx)
 
         if not all_instances:
             return np.empty((0, 5), dtype=np.float32)
