@@ -4,15 +4,14 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 
 - Total callables: 1699
 - Blockers: 0
-- High risk: 49
+- High risk: 42
 - Medium risk: 1
-- Low risk: 1649
+- Low risk: 1656
 - A-grade rows with no executable evidence: 0
-- Tool/Blender callables needing blocker/high evidence: 39
+- Tool/Blender callables needing blocker/high evidence: 32
 
 ## Highest Risk Files
 
-- terrain_water_variants.py: 7
 - terrain_saliency.py: 4
 - terrain_path_contracts.py: 3
 - terrain_dem_import.py: 2
@@ -37,6 +36,7 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - terrain_readability_semantic.py: 1
 - terrain_rhythm.py: 1
 - terrain_texture_layer_stack.py: 1
+- terrain_wind_field.py: 1
 
 ## Top Blocker/High Callables
 
@@ -78,13 +78,6 @@ This report treats grade rows as claims, not proof. A callable needs executable 
 - HIGH terrain_telemetry_dashboard.py:56 _count_populated_channels grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_telemetry_dashboard.py:96 _load_records grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke;camera_readability_probe
 - HIGH terrain_texture_layer_stack.py:45 TerrainTextureLayerStack.add_layer grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke;material_texture_contract_test
-- HIGH terrain_water_variants.py:112 _as_polyline grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_water_variants.py:879 register_water_variants_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_water_variants.py:909 get_geyser_specs grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_water_variants.py:942 get_swamp_specs grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_water_variants.py:991 _fbm_noise_2d grade=D+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_water_variants.py:1066 generate_water_bottom_mesh grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
-- HIGH terrain_water_variants.py:1524 register_bathymetry_pass grade=A needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_wildlife_zones.py:84 _window_score grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_wildlife_zones.py:96 _distance_to_mask grade=B+ needs=direct_behavior_test;blender_or_mcp_tool_smoke
 - HIGH terrain_wind_field.py:353 register_bundle_j_wind_field_pass grade=A- needs=direct_behavior_test;blender_or_mcp_tool_smoke

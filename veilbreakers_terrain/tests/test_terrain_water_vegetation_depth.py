@@ -19,12 +19,17 @@ from veilbreakers_terrain.handlers.terrain_semantics import (
     TerrainSceneRead,
 )
 from veilbreakers_terrain.handlers.terrain_water_variants import (
+    BOTTOM_MAT_GRAVEL,
+    BOTTOM_MAT_ROCK,
+    BOTTOM_MAT_SILT,
     BraidedChannels,
     Estuary,
     HotSpring,
     KarstSpring,
     SeasonalState,
     Wetland,
+    _as_polyline,
+    _fbm_noise_2d,
     apply_seasonal_water_state,
     detect_estuary,
     detect_hot_springs,
@@ -32,7 +37,12 @@ from veilbreakers_terrain.handlers.terrain_water_variants import (
     detect_perched_lakes,
     detect_wetlands,
     generate_braided_channels,
+    generate_water_bottom_mesh,
+    get_geyser_specs,
+    get_swamp_specs,
     pass_water_variants,
+    register_bathymetry_pass,
+    register_water_variants_pass,
 )
 from veilbreakers_terrain.handlers.terrain_vegetation_depth import (
     DisturbancePatch,
@@ -112,6 +122,100 @@ def _make_state(rows: int = 32, cols: int = 32, seed: int = 4242) -> TerrainPipe
         scene_read=scene_read,
     )
     return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+# ---------------------------------------------------------------------------
+# Water variant helper contracts
+# ---------------------------------------------------------------------------
+
+
+def test_as_polyline_accepts_2d_and_3d_paths_and_rejects_bad_shape():
+    line_2d = _as_polyline([[0.0, 1.0], [2.0, 3.0]])
+    line_3d = _as_polyline(np.array([[0.0, 1.0, 9.0], [2.0, 3.0, 8.0]], dtype=np.float64))
+
+    assert line_2d.dtype == np.float32
+    assert line_2d.shape == (2, 2)
+    np.testing.assert_allclose(line_3d, np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32))
+    with pytest.raises(ValueError, match="river_path"):
+        _as_polyline(np.array([[1.0], [2.0]], dtype=np.float32))
+
+
+def test_register_water_and_bathymetry_passes_publish_expected_contracts():
+    register_water_variants_pass()
+    register_bathymetry_pass()
+
+    water_def = TerrainPassController.PASS_REGISTRY["water_variants"]
+    bathy_def = TerrainPassController.PASS_REGISTRY["bathymetry"]
+
+    assert "water_surface_elevation_m" in water_def.produces_channels
+    assert "wetness" in water_def.overrides
+    assert "water_depth_zone" in bathy_def.produces_channels
+    assert "water_surface" in bathy_def.requires_channels
+
+
+def test_geyser_and_swamp_specs_return_empty_when_no_sites_detected():
+    stack = _make_stack()
+
+    assert get_geyser_specs(stack) == []
+    assert get_swamp_specs(stack) == []
+
+
+def test_fbm_noise_2d_is_deterministic_normalized_and_shaped():
+    rng_a = np.random.default_rng(123)
+    rng_b = np.random.default_rng(123)
+
+    noise_a = _fbm_noise_2d(8, 6, scale=4.0, octaves=2, persistence=0.5, rng=rng_a)
+    noise_b = _fbm_noise_2d(8, 6, scale=4.0, octaves=2, persistence=0.5, rng=rng_b)
+
+    assert noise_a.shape == (8, 6)
+    assert noise_a.dtype == np.float32
+    np.testing.assert_allclose(noise_a, noise_b)
+    assert float(noise_a.min()) >= 0.0
+    assert float(noise_a.max()) <= 1.0
+
+
+def test_generate_water_bottom_mesh_empty_and_shape_mismatch_paths():
+    stack = _make_stack(rows=4, cols=4)
+
+    empty = generate_water_bottom_mesh(stack, np.zeros(stack.height.shape, dtype=bool))
+    assert empty["verts"].shape == (0, 3)
+    assert empty["faces"].shape == (0, 4)
+
+    with pytest.raises(ValueError, match="water_body_mask shape"):
+        generate_water_bottom_mesh(stack, np.zeros((2, 2), dtype=bool))
+
+
+def test_generate_water_bottom_mesh_outputs_materialized_bottom_geometry():
+    stack = _make_stack(rows=5, cols=5)
+    water = np.zeros(stack.height.shape, dtype=bool)
+    water[1:4, 1:4] = True
+    flow = np.zeros(stack.height.shape, dtype=np.float32)
+    flow[1, 1] = 1.0
+    flow[2, 2] = 0.5
+    flow[3, 3] = 0.05
+    _set_channel(stack, "flow_accumulation", flow)
+    bathymetry = np.zeros(stack.height.shape, dtype=np.float32)
+    bathymetry[water] = 2.0
+    _set_channel(stack, "bathymetry", bathymetry)
+
+    mesh = generate_water_bottom_mesh(
+        stack,
+        water,
+        cell_size_override=1.0,
+        ripple_amplitude_m=0.05,
+        ripple_scale=4.0,
+        seed=99,
+    )
+
+    assert mesh["verts"].dtype == np.float32
+    assert mesh["faces"].dtype == np.int32
+    assert mesh["faces"].shape == (9, 4)
+    assert mesh["uvs"].shape == (9, 4, 2)
+    assert {BOTTOM_MAT_SILT, BOTTOM_MAT_GRAVEL, BOTTOM_MAT_ROCK}.issubset(
+        set(mesh["material_indices"].tolist())
+    )
+    assert mesh["depth_stats"]["mean_depth_m"] == pytest.approx(2.0)
+    assert mesh["depth_stats"]["max_depth_m"] == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------
