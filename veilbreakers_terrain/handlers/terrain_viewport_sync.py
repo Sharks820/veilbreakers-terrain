@@ -61,6 +61,8 @@ def _read_from_blender_context() -> "dict | None":
                         if r3d.view_perspective == 'CAMERA'
                         and bpy.context.scene.camera is not None
                         and hasattr(bpy.context.scene.camera.data, 'angle')
+                        else math.degrees(float(r3d.view_angle))
+                        if hasattr(r3d, 'view_angle')
                         else 60.0
                     ),
                     "distance": r3d.view_distance,
