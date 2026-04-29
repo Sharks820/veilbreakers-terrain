@@ -265,13 +265,13 @@ def test_meshy_provider_id():
     assert MeshyProvider.provider_id == "meshy"
 
 
-def test_meshy_no_key_raises(monkeypatch):
-    """MeshyProvider() must raise RuntimeError when MESHY_API_KEY is unset."""
+def test_meshy_no_key_submit_raises(monkeypatch):
+    """MeshyProvider can be constructed offline; submit requires MESHY_API_KEY."""
     from veilbreakers_terrain.providers.meshy_provider import MeshyProvider
 
     monkeypatch.delenv("MESHY_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="MESHY_API_KEY not set"):
-        MeshyProvider()
+        MeshyProvider().submit(AssetGenerationRequest(species_id="oak", prompt="oak"))
 
 
 def test_meshy_is_subclass():

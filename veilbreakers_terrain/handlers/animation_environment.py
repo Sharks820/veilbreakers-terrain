@@ -39,7 +39,7 @@ import inspect
 import math
 from typing import Any, Dict, List
 
-from .animation_gaits import Keyframe
+from .animation_gaits import Keyframe, keyframe_to_dict
 
 VALID_ENV_TYPES: frozenset = frozenset({
     "door_open", "door_close", "door_slam", "door_creak",
@@ -2016,7 +2016,7 @@ _DISPATCH: Dict[str, Any] = {
 }
 
 
-def generate_env_keyframes(params: Dict[str, Any]) -> List[Keyframe]:
+def generate_env_keyframes(params: Dict[str, Any]) -> List[Keyframe] | List[Dict[str, Any]]:
     """Dispatch to the appropriate generator based on params['env_type'].
 
     Validates env_type against VALID_ENV_TYPES, introspects the target
@@ -2038,7 +2038,10 @@ def generate_env_keyframes(params: Dict[str, Any]) -> List[Keyframe]:
     fn = _DISPATCH[env_type]
     sig = inspect.signature(fn)
     kwargs = {k: v for k, v in params.items() if k in sig.parameters}
-    return fn(**kwargs)
+    keyframes = fn(**kwargs)
+    if params.get("as_dicts") or params.get("json_serializable"):
+        return [keyframe_to_dict(kf) for kf in keyframes]
+    return keyframes
 
 
 __all__ = [

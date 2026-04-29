@@ -185,7 +185,7 @@ def enforce_feature_budget(
             break
         t = _tri_estimate(f)
         if tris_used + t > budget.max_total_tris:
-            break
+            continue
         kept.append(f)
         tris_used += t
 

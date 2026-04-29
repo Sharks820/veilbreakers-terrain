@@ -8,7 +8,7 @@ exceeded so the controller can downgrade or roll back.
 Budget targets (AAA / VeilBreakers ship spec):
   - Triangles: LOD0 250k, LOD1 100k, LOD2 50k (per-tile visible)
   - Unique materials: ≤8 per tile
-  - Scatter instances: ≤2000 visible at once
+  - Scatter instances: ≤100,000 visible per km2
   - Archive size: ≤64 MB per tile .npz
 
 Pure numpy — no bpy. See plan §19.
@@ -93,7 +93,7 @@ class BudgetReport:
 
     # Scatter
     scatter_instances: int = 0
-    scatter_instances_max: int = 2000
+    scatter_instances_max: int = 100_000
     scatter_over: bool = False
     scatter_utilization: float = 0.0
 
@@ -156,7 +156,7 @@ class TerrainBudget:
 
     max_hero_features_per_km2: float = 4.0
     max_unique_materials: int = 8        # AAA spec: ≤8 per tile
-    max_scatter_instances: int = 2000    # AAA spec: ≤2000 visible
+    max_scatter_instances: int = 100_000  # AAA spec: ≥100k/km2 scatter support
     max_npz_mb: float = 64.0
     # Soft-warn thresholds as a fraction of max (default 80%)
     warn_fraction: float = 0.80
@@ -209,7 +209,7 @@ def resolve_budget(
         max_tri_lod2=lod2,
         max_tri_count=lod0,
         max_unique_materials=max(int(profile.splatmap_layer_count), 1),
-        max_scatter_instances=max(int(profile.max_tree_count), 250),
+        max_scatter_instances=max(int(profile.max_tree_count), 100_000),
         max_npz_mb=float(max_npz_mb),
     )
 
@@ -479,7 +479,7 @@ def compute_budget_report(
       unique active splatmap layers ≤ 8
 
     Scatter budget:
-      visible instance count (tree_instance_points + detail_density sum) ≤ 2000
+      visible instance count (tree_instance_points + detail_density sum) ≤ 100,000
     """
     b = resolve_budget(intent=intent, budget=budget)
     usage = compute_tile_budget_usage(stack, budget=b, intent=intent)
@@ -569,7 +569,7 @@ def enforce_budget(
     Checks (in order):
     1. Per-LOD triangle budgets: LOD0 ≤ 250k, LOD1 ≤ 100k, LOD2 ≤ 50k
     2. Material count: unique active splatmap layers ≤ 8
-    3. Scatter instances: ≤ 2000 visible
+    3. Scatter instances: ≤ 100,000 visible
     4. Archive size: ≤ 64 MB per tile .npz
     5. Hero feature density: ≤ 4 per km2
     6. Unity batch limits (per-chunk):

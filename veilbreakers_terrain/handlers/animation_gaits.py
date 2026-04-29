@@ -6,6 +6,7 @@ No Blender imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 import numpy as np
@@ -44,6 +45,29 @@ class Keyframe:
     time: float = 0.0
     in_tangent: float = 0.0
     out_tangent: float = 0.0
+
+
+def _json_safe_float(value: float) -> float | str | None:
+    v = float(value)
+    if math.isfinite(v):
+        return v
+    if math.isinf(v):
+        return "Infinity" if v > 0 else "-Infinity"
+    return None
+
+
+def keyframe_to_dict(kf: Keyframe) -> dict[str, Any]:
+    """Return a JSON-serialisable Unity Animator keyframe dict."""
+    return {
+        "frame": int(kf.frame),
+        "value": _json_safe_float(kf.value),
+        "channel": str(kf.channel),
+        "axis": int(kf.axis),
+        "bone_name": str(kf.bone_name),
+        "time": _json_safe_float(kf.time),
+        "in_tangent": _json_safe_float(kf.in_tangent),
+        "out_tangent": _json_safe_float(kf.out_tangent),
+    }
 
 
 @dataclass
@@ -88,4 +112,4 @@ class GaitSelector:
         return "run" if speed_mps >= 4.0 else self.default_gait
 
 
-__all__ = ["BIOME_GAIT_MAP", "GaitSelector", "Keyframe"]
+__all__ = ["BIOME_GAIT_MAP", "GaitSelector", "Keyframe", "keyframe_to_dict"]

@@ -299,7 +299,12 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
             if entry is None:
                 raise KeyError(f"[hunyuan3d2] unknown job_id {job_id!r}")
             thread, holder = entry
-        thread.join()
+        thread.join(timeout=self._timeout_s)
+        if thread.is_alive():
+            raise TimeoutError(
+                f"[hunyuan3d2] job {job_id} download timed out after "
+                f"{self._timeout_s}s for species {species_id}"
+            )
 
         with self._jobs_lock:
             status = holder["status"]
@@ -335,47 +340,10 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         timeout_s: float = 1800.0,
         max_tris: int = 100_000,
     ) -> AssetJobResult:
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        result_box: dict[str, Any] = {"glb": None, "exc": None}
-
-        def _runner() -> None:
-            try:
-                result_box["glb"] = self._hf_generate_blocking(request, dest_dir)
-            except BaseException as exc:  # noqa: BLE001
-                result_box["exc"] = exc
-
-        worker = threading.Thread(
-            target=_runner,
-            daemon=True,
-            name=f"hy3d-blocking-{request.species_id[:16]}",
-        )
-        worker.start()
-        worker.join(timeout=timeout_s)
-        if worker.is_alive():
-            raise TimeoutError(
-                f"[hunyuan3d2] generate_blocking timed out after {timeout_s}s "
-                f"for species {request.species_id}"
-            )
-        if result_box["exc"] is not None:
-            raise result_box["exc"]  # type: ignore[misc]
-        glb_path = result_box["glb"]
-        if glb_path is None:
-            raise RuntimeError(
-                f"[hunyuan3d2] generate_blocking finished with no glb_path for "
-                f"species {request.species_id}"
-            )
-
-        result = self.validate(
-            glb_path,
-            species_id=request.species_id,
+        return super().generate_blocking(
+            request,
+            dest_dir,
+            poll_interval_s=poll_interval_s,
+            timeout_s=timeout_s,
             max_tris=max_tris,
-            require_pbr=request.require_pbr,
         )
-        result.job_id = glb_path.stem
-        if not result.validated:
-            logger.warning(
-                "[hunyuan3d2] asset %s validation issues: %s",
-                request.species_id,
-                result.validation_issues,
-            )
-        return result

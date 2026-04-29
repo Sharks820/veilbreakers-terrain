@@ -43,6 +43,158 @@ def _apply_unity_scale(v: "float | list[float]") -> "float | list[float]":
     return float(v) * UNITY_SCALE_FACTOR
 
 
+def write_animation_clip_yaml(
+    keyframes: List[Any],
+    path: Path,
+    *,
+    clip_name: str = "VeilBreakersTerrainClip",
+    frame_rate: float = 60.0,
+) -> Dict[str, Any]:
+    """Write Unity `.anim` YAML from animation_environment keyframes."""
+    from .animation_gaits import keyframe_to_dict
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    grouped: Dict[tuple[str, str, int], List[Dict[str, Any]]] = {}
+    for raw in keyframes:
+        kf = keyframe_to_dict(raw)
+        key = (str(kf["bone_name"]), str(kf["channel"]), int(kf["axis"]))
+        grouped.setdefault(key, []).append(kf)
+
+    axis_name = {0: "x", 1: "y", 2: "z"}
+    property_name = {
+        "location": "m_LocalPosition",
+        "rotation": "localEulerAnglesRaw",
+        "scale": "m_LocalScale",
+    }
+
+    def _float_yaml(value: Any) -> float:
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    lines = [
+        "%YAML 1.1",
+        "%TAG !u! tag:unity3d.com,2011:",
+        "--- !u!74 &7400000",
+        "AnimationClip:",
+        "  m_ObjectHideFlags: 0",
+        "  m_CorrespondingSourceObject: {fileID: 0}",
+        "  m_PrefabInstance: {fileID: 0}",
+        "  m_PrefabAsset: {fileID: 0}",
+        f"  m_Name: {clip_name}",
+        "  serializedVersion: 6",
+        "  m_Legacy: 0",
+        "  m_Compressed: 0",
+        "  m_UseHighQualityCurve: 1",
+        "  m_RotationCurves: []",
+        "  m_CompressedRotationCurves: []",
+        "  m_EulerCurves:",
+    ]
+
+    regular_groups: Dict[tuple[str, str, int], List[Dict[str, Any]]] = {}
+    for key, values in grouped.items():
+        bone, channel, axis = key
+        target = "  m_EulerCurves:" if channel == "rotation" else "  m_PositionCurves:" if channel == "location" else "  m_ScaleCurves:"
+        if target == "  m_EulerCurves:":
+            curve_header = "  - curve:"
+            lines.append(curve_header)
+            lines.append("      serializedVersion: 2")
+            lines.append("      m_Curve:")
+            for item in sorted(values, key=lambda d: (float(d["time"]), int(d["frame"]))):
+                lines.append(
+                    "      - serializedVersion: 3"
+                )
+                lines.append(f"        time: {_float_yaml(item['time']):.6f}")
+                lines.append(f"        value: {_float_yaml(item['value']):.9g}")
+                lines.append(f"        inSlope: {_float_yaml(item['in_tangent']):.9g}")
+                lines.append(f"        outSlope: {_float_yaml(item['out_tangent']):.9g}")
+                lines.append("        tangentMode: 0")
+                lines.append("        weightedMode: 0")
+                lines.append("        inWeight: 0.33333334")
+                lines.append("        outWeight: 0.33333334")
+            lines.append("      m_PreInfinity: 2")
+            lines.append("      m_PostInfinity: 2")
+            lines.append("      m_RotationOrder: 4")
+            lines.append(f"    path: {bone}")
+            lines.append(f"    attribute: {property_name.get(channel, channel)}.{axis_name.get(axis, 'x')}")
+            lines.append("    classID: 4")
+            lines.append("    script: {fileID: 0}")
+        else:
+            regular_groups[key] = values
+
+    for section_name, channel_name in (("m_PositionCurves", "location"), ("m_ScaleCurves", "scale")):
+        lines.append(f"  {section_name}:")
+        for (bone, channel, axis), values in sorted(regular_groups.items()):
+            if channel != channel_name:
+                continue
+            lines.append("  - curve:")
+            lines.append("      serializedVersion: 2")
+            lines.append("      m_Curve:")
+            for item in sorted(values, key=lambda d: (float(d["time"]), int(d["frame"]))):
+                lines.append("      - serializedVersion: 3")
+                lines.append(f"        time: {_float_yaml(item['time']):.6f}")
+                lines.append(f"        value: {_float_yaml(item['value']):.9g}")
+                lines.append(f"        inSlope: {_float_yaml(item['in_tangent']):.9g}")
+                lines.append(f"        outSlope: {_float_yaml(item['out_tangent']):.9g}")
+                lines.append("        tangentMode: 0")
+                lines.append("        weightedMode: 0")
+                lines.append("        inWeight: 0.33333334")
+                lines.append("        outWeight: 0.33333334")
+            lines.append("      m_PreInfinity: 2")
+            lines.append("      m_PostInfinity: 2")
+            lines.append("      m_RotationOrder: 4")
+            lines.append(f"    path: {bone}")
+            lines.append(f"    attribute: {property_name.get(channel, channel)}.{axis_name.get(axis, 'x')}")
+            lines.append("    classID: 4")
+            lines.append("    script: {fileID: 0}")
+
+    lines.extend([
+        "  m_FloatCurves: []",
+        "  m_PPtrCurves: []",
+        "  m_SampleRate: " + f"{float(frame_rate):.6f}",
+        "  m_WrapMode: 0",
+        "  m_Bounds:",
+        "    m_Center: {x: 0, y: 0, z: 0}",
+        "    m_Extent: {x: 0, y: 0, z: 0}",
+        "  m_ClipBindingConstant:",
+        "    genericBindings: []",
+        "    pptrCurveMapping: []",
+        "  m_AnimationClipSettings:",
+        "    serializedVersion: 2",
+        "    m_AdditiveReferencePoseClip: {fileID: 0}",
+        "    m_AdditiveReferencePoseTime: 0",
+        "    m_StartTime: 0",
+        "    m_StopTime: 0",
+        "    m_OrientationOffsetY: 0",
+        "    m_Level: 0",
+        "    m_CycleOffset: 0",
+        "    m_HasAdditiveReferencePose: 0",
+        "    m_LoopTime: 0",
+        "    m_LoopBlend: 0",
+        "    m_LoopBlendOrientation: 0",
+        "    m_LoopBlendPositionY: 0",
+        "    m_LoopBlendPositionXZ: 0",
+        "    m_KeepOriginalOrientation: 0",
+        "    m_KeepOriginalPositionY: 1",
+        "    m_KeepOriginalPositionXZ: 0",
+        "    m_HeightFromFeet: 0",
+        "    m_Mirror: 0",
+        "  m_EditorCurves: []",
+        "  m_EulerEditorCurves: []",
+        "  m_HasGenericRootTransform: 0",
+        "  m_HasMotionFloatCurves: 0",
+        "  m_Events: []",
+        "",
+    ])
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return {
+        "path": str(path),
+        "clip_name": clip_name,
+        "keyframe_count": sum(len(v) for v in grouped.values()),
+        "curve_count": len(grouped),
+        "encoding": "unity_anim_yaml",
+    }
+
+
 def _is_unity_heightmap_resolution(n: int) -> bool:
     """Return True when ``n`` matches Unity Terrain's 2^k + 1 contract."""
     return n >= 33 and ((n - 1) & (n - 2)) == 0
@@ -2191,6 +2343,7 @@ __all__ = [
     "_export_heightmap",
     "_bit_depth_for_profile",
     "compute_wind_bend_vertex_color",
+    "write_animation_clip_yaml",
     "_water_shader_manifest_json",
     "UNITY_SCALE_FACTOR",
     "_apply_unity_scale",

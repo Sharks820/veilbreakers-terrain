@@ -1507,7 +1507,10 @@ def mesh_from_spec(
     if smooth_shading:
         for poly in mesh_data.polygons:
             poly.use_smooth = True
-        # Auto-smooth: Blender 3.x has use_auto_smooth, 4.x uses sharp edges
+        mesh_data.update()
+        if hasattr(mesh_data, "normals_split_custom_set_from_vertices"):
+            custom_normals = [tuple(vertex.normal) for vertex in mesh_data.vertices]
+            mesh_data.normals_split_custom_set_from_vertices(custom_normals)
         if hasattr(mesh_data, "use_auto_smooth"):
             mesh_data.use_auto_smooth = True
             mesh_data.auto_smooth_angle = math.radians(auto_smooth_angle)

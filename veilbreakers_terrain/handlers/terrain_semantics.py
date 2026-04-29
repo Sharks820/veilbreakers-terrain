@@ -351,6 +351,9 @@ class TerrainMaskStack:
     biome_id: Optional[np.ndarray] = None
     corruption_map: Optional[np.ndarray] = None
     material_weights: Optional[np.ndarray] = None
+    # Ecotone blend weights for biome-boundary transitions. Shape (H, W, E),
+    # one layer per ecotone graph edge. Values are 0..1, highest at boundary.
+    ecotone_blend_weights: Optional[np.ndarray] = None
     roughness_breakup: Optional[np.ndarray] = None
     roughness_variation: Optional[np.ndarray] = None
     macro_color: Optional[np.ndarray] = None
@@ -593,6 +596,7 @@ class TerrainMaskStack:
             "biome_id",
             "corruption_map",
             "material_weights",
+            "ecotone_blend_weights",
             "roughness_breakup",
             "roughness_variation",
             "macro_color",

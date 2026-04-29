@@ -1934,55 +1934,79 @@ ecotone widths, late-bound architectural cleanup.
 - **P0 ref:** M9-P0-1 / L3-P0-2
 - **Files:** `terrain_budget_enforcer.py:159` (`max_scatter_instances = 100_000`)
   and `environment.py:8406` (`max_veg_instances=100_000`).
+- **Status 2026-04-29:** Done. Default budget and profile-resolved budget
+  accept 100k scatter instances; multibiome vegetation default cap is 100k.
 
 #### FIX-10.2 (FIX-6-2) — Ecotone width per-pair lookup
 - **P0 ref:** M10-P0-1
 - **File:** `terrain_ecotone_graph.py:124`. Use `DEFAULT_ECOTONE_WIDTH_M`
   table; fall back to 30 m.
+- **Status 2026-04-29:** Done with `DEFAULT_ECOTONE_WIDTH_M` and 30m fallback.
 
 #### FIX-10.3 (FIX-6-3) — Ecotone blend weight channel
 - **P0 ref:** M10-P0-2
 - **File:** `terrain_ecotone_graph.py:167–202`. Rasterise edges to a 3D
   blend-weight channel via `distance_transform_edt`; write
   `ecotone_blend_weights`.
+- **Status 2026-04-29:** Done. `ecotone_blend_weights` is declared in
+  `TerrainMaskStack`, persisted as an array channel, and produced by
+  `pass_ecotones`.
 
 #### FIX-10.4 (FIX-4-1) — `Keyframe` JSON-serialisable
 - **P0 ref:** M1-P0-02
 - **File:** `animation_gaits.py:11–34`. Add `keyframe_to_dict(kf)` helper;
   update animation handlers to call it.
+- **Status 2026-04-29:** Done. `generate_env_keyframes(..., as_dicts=True)`
+  returns JSON-safe keyframe dicts.
 
 #### FIX-10.5 (FIX-4-2) — `.anim` serialiser
 - **P0 ref:** M1-P0-07
 - **File:** `terrain_unity_export.py` (new function).
   `write_animation_clip_yaml()` per codex FIX-4-2.
+- **Status 2026-04-29:** Done at code level. Focused test writes a `.anim`
+  YAML file; Unity Editor import still needs an available Unity runtime.
 
 #### FIX-10.6 (FIX-4-5) — `enforce_feature_budget` continue not break
 - **P0 ref:** M2-P0-5
 - **File:** `terrain_hierarchy.py:188`. `break` → `continue`.
+- **Status 2026-04-29:** Done. Regression keeps a later fitting feature after
+  an earlier over-budget feature.
 
 #### FIX-10.7 (FIX-8-6) — Hunyuan3D download timeout
 - **File:** `hunyuan3d2_provider.py:302`. `thread.join(timeout=self.timeout_s)`;
   if alive after timeout, raise `TimeoutError`.
+- **Status 2026-04-29:** Done. `download()` uses provider timeout and raises
+  `TimeoutError` if the worker thread remains alive.
 
 #### FIX-10.8 (FIX-8-7) — Meshy init does not require API key
 - **File:** `meshy_provider.py:103–104`. Move `MESHY_API_KEY` check from
   `__init__` to `submit()`.
+- **Status 2026-04-29:** Done. Provider can be constructed offline; network
+  operations still require `MESHY_API_KEY`.
 
 #### FIX-10.9 (FIX-8-27) — Hunyuan3D2 follows ABC contract
 - **File:** `hunyuan3d2_provider.py:331–366`. Refactor `generate_blocking`
   to call `submit()` → `poll()` loop → `download()`; populate `_jobs` dict.
+- **Status 2026-04-29:** Done. `generate_blocking()` delegates to the ABC
+  submit/poll/download flow.
 
 #### FIX-10.10 (FIX-9-15) — Blender 4.5 custom-normals API
 - **File:** `_mesh_bridge.py`, `apply_smoothing()`. Replace
   `mesh.use_auto_smooth` / `mesh.auto_smooth_angle` with
   `mesh.normals_split_custom_set_from_vertices(...)`. Remove the bare
   `except AttributeError: pass`.
+- **Status 2026-04-29:** Done at code level. Blender runtime was unavailable,
+  so validation is source/API guard only.
 
 ### Phase 10 verification
-1. End-to-end production run: 100k scatter instances render with no
-   budget-enforcer rejection.
-2. A 2-biome boundary tile shows a ≥30m blend zone, not a razor cut.
-3. `write_animation_clip_yaml(...)` produces a Unity-importable `.anim`.
+1. `test_phase10_architecture_polish.py` proves 100k scatter instances are
+   accepted by the budget report.
+2. `test_phase10_architecture_polish.py` proves a two-biome boundary produces
+   an H,W,E `ecotone_blend_weights` channel with a 30m fallback blend zone.
+3. `write_animation_clip_yaml(...)` writes `.anim` YAML from generated
+   keyframes; Unity import remains a runtime-only follow-up.
+4. `callable_census_gate --strict-zero` reports 1699/1699 graded callables and
+   0 uncovered callables after Phase 10.
 
 ---
 

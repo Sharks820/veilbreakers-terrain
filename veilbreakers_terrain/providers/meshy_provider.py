@@ -91,7 +91,7 @@ class MeshyProvider(ExternalAssetProvider):
         ----------
         api_key:
             Meshy AI API key. Falls back to MESHY_API_KEY env var.
-            Raises RuntimeError if neither is set.
+            Required when submit/poll/download contacts Meshy.
         ai_model:
             Meshy model to use (default: "meshy-4", the latest).
         topology:
@@ -100,9 +100,6 @@ class MeshyProvider(ExternalAssetProvider):
             Default hard timeout for generate_blocking() in seconds.
         """
         self._api_key = api_key or os.environ.get("MESHY_API_KEY", "")
-        if not self._api_key:
-            raise RuntimeError("MESHY_API_KEY not set")
-
         self._ai_model = ai_model
         self._topology = topology
         self._timeout_s = timeout_s
@@ -118,6 +115,8 @@ class MeshyProvider(ExternalAssetProvider):
     # ------------------------------------------------------------------
 
     def _auth_headers(self) -> dict[str, str]:
+        if not self._api_key:
+            raise RuntimeError("MESHY_API_KEY not set")
         return {"Authorization": f"Bearer {self._api_key}"}
 
     def _poll_raw(self, job_id: str) -> dict:
@@ -134,6 +133,8 @@ class MeshyProvider(ExternalAssetProvider):
 
     def submit(self, request: AssetGenerationRequest) -> str:
         """POST image-to-3D job to Meshy and return the task_id."""
+        if not self._api_key:
+            raise RuntimeError("MESHY_API_KEY not set")
         requests = _get_requests()
 
         payload: dict = {

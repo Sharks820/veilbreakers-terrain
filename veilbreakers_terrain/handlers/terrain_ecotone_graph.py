@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .terrain_math import distance_field_edt
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -22,6 +23,17 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+DEFAULT_ECOTONE_WIDTH_M: Dict[Tuple[int, int], float] = {
+    (0, 1): 45.0,
+    (0, 2): 35.0,
+    (1, 2): 55.0,
+    (1, 3): 40.0,
+    (2, 3): 30.0,
+    (2, 4): 50.0,
+    (3, 4): 35.0,
+}
+FALLBACK_ECOTONE_WIDTH_M = 30.0
 
 
 @dataclass
@@ -93,6 +105,64 @@ def _find_adjacencies(biome: np.ndarray) -> Dict[Tuple[int, int], int]:
     return pairs
 
 
+def _ecotone_width_for_pair(a: int, b: int) -> float:
+    """Return ship default ecotone width for biome pair, in metres."""
+    key = (min(int(a), int(b)), max(int(a), int(b)))
+    return float(DEFAULT_ECOTONE_WIDTH_M.get(key, FALLBACK_ECOTONE_WIDTH_M))
+
+
+def _edge_boundary_mask(biome: np.ndarray, a: int, b: int) -> np.ndarray:
+    """Return cells touching an a/b biome border."""
+    arr = np.asarray(biome, dtype=np.int64)
+    boundary = np.zeros(arr.shape, dtype=bool)
+    pair_h = (
+        ((arr[:, :-1] == a) & (arr[:, 1:] == b))
+        | ((arr[:, :-1] == b) & (arr[:, 1:] == a))
+    )
+    if pair_h.any():
+        boundary[:, :-1] |= pair_h
+        boundary[:, 1:] |= pair_h
+    pair_v = (
+        ((arr[:-1, :] == a) & (arr[1:, :] == b))
+        | ((arr[:-1, :] == b) & (arr[1:, :] == a))
+    )
+    if pair_v.any():
+        boundary[:-1, :] |= pair_v
+        boundary[1:, :] |= pair_v
+    return boundary
+
+
+def _smoothstep01(x: np.ndarray) -> np.ndarray:
+    t = np.clip(np.asarray(x, dtype=np.float32), 0.0, 1.0)
+    return (t * t * (3.0 - 2.0 * t)).astype(np.float32)
+
+
+def rasterize_ecotone_blend_weights(
+    stack: TerrainMaskStack,
+    graph: Dict[str, Any],
+) -> np.ndarray:
+    """Rasterize ecotone graph edges into a Unity-ready H,W,E weight channel."""
+    shape = np.asarray(stack.height).shape
+    edges = list(graph.get("edges", []))
+    if stack.biome_id is None or not edges:
+        return np.zeros((shape[0], shape[1], 0), dtype=np.float32)
+
+    biome = np.asarray(stack.biome_id, dtype=np.int64)
+    layers: List[np.ndarray] = []
+    for edge in edges:
+        a = int(edge["from_biome"])
+        b = int(edge["to_biome"])
+        width_m = max(float(edge.get("transition_width_m", FALLBACK_ECOTONE_WIDTH_M)), 1e-6)
+        boundary = _edge_boundary_mask(biome, a, b)
+        if not boundary.any():
+            layers.append(np.zeros(biome.shape, dtype=np.float32))
+            continue
+        dist_m = distance_field_edt(boundary, cell_size=float(stack.cell_size))
+        influence = np.maximum(0.0, 1.0 - (dist_m / width_m))
+        layers.append(_smoothstep01(influence))
+    return np.stack(layers, axis=-1).astype(np.float32)
+
+
 def build_ecotone_graph(stack: TerrainMaskStack) -> Dict[str, Any]:
     """Return a dict describing the biome adjacency graph.
 
@@ -120,8 +190,7 @@ def build_ecotone_graph(stack: TerrainMaskStack) -> Dict[str, Any]:
 
     edges: List[EcotoneEdge] = []
     for (a, b), shared in sorted(adjacencies.items()):
-        # Transition width scales with shared border length (cells * cell_size)
-        width = float(max(2, min(32, int(round(shared ** 0.5)))) * stack.cell_size)
+        width = _ecotone_width_for_pair(a, b)
         edges.append(
             EcotoneEdge(
                 from_biome=a,
@@ -185,6 +254,8 @@ def pass_ecotones(
         stack.set("traversability", compute_traversability(stack), "ecotones")
 
     graph = build_ecotone_graph(stack)
+    blend_weights = rasterize_ecotone_blend_weights(stack, graph)
+    stack.set("ecotone_blend_weights", blend_weights, "ecotones")
     issues = validate_ecotone_smoothness(graph)
 
     return PassResult(
@@ -192,7 +263,7 @@ def pass_ecotones(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("traversability",),
+        produced_channels=("traversability", "ecotone_blend_weights"),
         metrics={
             "node_count": len(graph["nodes"]),
             "edge_count": len(graph["edges"]),
@@ -210,7 +281,7 @@ def register_bundle_j_ecotones_pass() -> None:
             name="ecotones",
             func=pass_ecotones,
             requires_channels=("height",),
-            produces_channels=("traversability",),
+            produces_channels=("traversability", "ecotone_blend_weights"),
             # OVERRIDE: navmesh (Bundle J) writes ``traversability`` first when
             # it runs. ``pass_ecotones`` explicitly guards with
             # `if stack.traversability is None` so the navmesh value survives
@@ -228,7 +299,10 @@ def register_bundle_j_ecotones_pass() -> None:
 
 __all__ = [
     "EcotoneEdge",
+    "DEFAULT_ECOTONE_WIDTH_M",
+    "FALLBACK_ECOTONE_WIDTH_M",
     "build_ecotone_graph",
+    "rasterize_ecotone_blend_weights",
     "validate_ecotone_smoothness",
     "pass_ecotones",
     "register_bundle_j_ecotones_pass",

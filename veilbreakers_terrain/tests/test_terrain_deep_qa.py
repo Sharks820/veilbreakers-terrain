@@ -508,7 +508,7 @@ def test_budget_resolve_uses_quality_profile_defaults():
     budget = resolve_budget(intent=state.intent)
     assert budget.max_tri_lod0 == 100_000
     assert budget.max_unique_materials == 4
-    assert budget.max_scatter_instances == 250
+    assert budget.max_scatter_instances == 100_000
 
 
 def test_budget_enforce_clean_tile_no_issues():

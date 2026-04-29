@@ -8358,7 +8358,7 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
         erosion_iterations (int): Default 5000.
         scatter_vegetation (bool): Whether to scatter per-biome vegetation. Default True.
         min_veg_distance (float): Min spacing between vegetation instances. Default 4.0.
-        max_veg_instances (int): Cap per biome. Default 2000.
+        max_veg_instances (int): Cap per biome. Default 100000.
         transition_width_m (float): Blend zone width in meters. Default 15.0.
 
     Returns dict with:
@@ -8458,7 +8458,7 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
                     "biome_name": biome_name,
                     "min_distance": params.get("min_veg_distance", 4.0),
                     "seed": seed + _stable_seed_offset(biome_name),
-                    "max_instances": params.get("max_veg_instances", 2000),
+                    "max_instances": params.get("max_veg_instances", 100_000),
                     "season": "corrupted" if corruption_level > 0.5 else None,
                     "bake_wind_colors": True,
                     "water_level": 0.05,
