@@ -167,6 +167,31 @@ def test_contour_smoothing_and_bspline_preserve_shape_contracts():
     np.testing.assert_array_equal(short, pts[:3])
 
 
+def test_bspline_no_scipy_fallback_returns_exact_requested_sample_count(monkeypatch):
+    from veilbreakers_terrain.handlers.terrain_cliffs import _fit_bspline_contour
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ImportError("blocked scipy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    pts = np.array(
+        [[0.0, 0.0], [0.0, 4.0], [2.0, 6.0], [4.0, 4.0], [4.0, 0.0]],
+        dtype=np.float64,
+    )
+
+    spline = _fit_bspline_contour(pts, n_samples=17, closed=True)
+
+    assert spline.shape == (17, 2)
+    assert np.isfinite(spline).all()
+
+
 def test_moore_contour_helpers_cover_components_and_empty_masks():
     from veilbreakers_terrain.handlers.terrain_cliffs import (
         _moore_contour_all_components,

@@ -231,11 +231,18 @@ def compute_probe_placements(
                 from scipy.ndimage import gaussian_filter as _gf
                 sig_water = _gf(water_mask, sigma=sigma_cells)
             except ImportError:
-                # Manual two-pass box blur fallback
+                # Manual separable box blur fallback. np.convolve(mode="same")
+                # grows tiny inputs when the kernel is wider than the row, so
+                # use explicit reflect padding to preserve stack shape.
                 k = max(1, int(sigma_cells * 2))
-                box = np.ones((1, 2 * k + 1)) / (2 * k + 1)
-                tmp = np.apply_along_axis(lambda r: np.convolve(r, box[0], mode="same"), 1, water_mask)
-                sig_water = np.apply_along_axis(lambda r: np.convolve(r, box[0], mode="same"), 0, tmp)
+                kernel = np.ones(2 * k + 1, dtype=np.float64) / float(2 * k + 1)
+
+                def _box_same(row: np.ndarray) -> np.ndarray:
+                    padded = np.pad(row, k, mode="reflect")
+                    return np.convolve(padded, kernel, mode="valid")
+
+                tmp = np.apply_along_axis(_box_same, 1, water_mask)
+                sig_water = np.apply_along_axis(_box_same, 0, tmp)
             # Normalise
             sw_max = float(sig_water.max())
             sig_water = sig_water / sw_max if sw_max > 1e-12 else sig_water

@@ -8,6 +8,7 @@ readme = "README.md"
 dependencies = [
     "numpy>=1.26.0",
     "opensimplex>=0.4.5",
+    "scipy>=1.14.1",
 ]
 
 [project.optional-dependencies]

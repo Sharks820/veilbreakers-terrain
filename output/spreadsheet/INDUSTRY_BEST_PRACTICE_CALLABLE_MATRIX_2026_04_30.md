@@ -1,6 +1,6 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-04-30T22:29:11.452211+00:00
+- Generated: 2026-04-30T23:37:48.285757+00:00
 - Grade source: `docs\aaa-audit\GRADES_VERIFIED.csv`
 - Total callables covered: **1729**
 - Output CSV: `output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_30.csv`
@@ -11,8 +11,8 @@
 
 ## Grade Status
 
-- VERIFIED_LOW_RISK: 1726
-- LOCK_WITH_REGRESSION_GATES: 3
+- VERIFIED_LOW_RISK: 1727
+- LOCK_WITH_REGRESSION_GATES: 2
 
 ## Domain Coverage
 

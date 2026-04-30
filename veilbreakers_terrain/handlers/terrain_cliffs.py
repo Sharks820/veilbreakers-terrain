@@ -289,13 +289,14 @@ def _fit_bspline_contour(
         p = np.vstack([pts_f[:1], pts_f, pts_f[-1:]])  # clamp ends
 
     segs = n  # number of segments
-    t_per_seg = n_samples // max(segs, 1)
-    t_per_seg = max(t_per_seg, 2)
+    base_samples = max(1, n_samples // max(segs, 1))
+    extra_samples = max(0, n_samples - base_samples * segs)
     out_pts: List[np.ndarray] = []
 
     for i in range(1, segs + 1):
         p0, p1, p2, p3 = p[i - 1], p[i], p[i + 1], p[i + 2] if (i + 2) < len(p) else p[-1]
-        ts = np.linspace(0.0, 1.0, t_per_seg, endpoint=(i == segs))
+        sample_count = base_samples + (1 if (i - 1) < extra_samples else 0)
+        ts = np.linspace(0.0, 1.0, sample_count, endpoint=(i == segs))
         # Catmull-Rom formula
         seg = np.outer(
             (-ts**3 + 2*ts**2 - ts) * 0.5, p0
@@ -308,7 +309,15 @@ def _fit_bspline_contour(
         )
         out_pts.append(seg)
 
-    return np.vstack(out_pts) if out_pts else pts_f.copy()
+    if not out_pts:
+        return pts_f.copy()
+    result = np.vstack(out_pts)
+    if result.shape[0] > n_samples:
+        return result[:n_samples]
+    if result.shape[0] < n_samples:
+        pad = np.repeat(result[-1:, :], n_samples - result.shape[0], axis=0)
+        return np.vstack([result, pad])
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -1070,6 +1070,35 @@ class TestLocationLayer:
             dist_sq = np.einsum("ij,ij->i", delta, delta)
             assert np.all(dist_sq >= (rr * rr) - 1e-5)
 
+    def test_large_repulsion_no_scipy_fallback_checks_dynamic_cell_radius(self, monkeypatch):
+        """Pure-Python fallback must not regress to adjacent-cell-only checks."""
+        from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
+
+        import builtins
+
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "scipy" or name.startswith("scipy."):
+                raise ImportError("blocked scipy")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+        rr = 5.0
+        ll = LocationLayer(cell_size=2.0, density=0.5, repulsion_radius=rr, seed=3)
+        result = ll.generate(20.0, 20.0)
+        if len(result) < 2:
+            return
+
+        xy = result[:, :2].astype(np.float64)
+        for i in range(len(xy)):
+            delta = xy[i + 1:] - xy[i]
+            if len(delta) == 0:
+                continue
+            dist_sq = np.einsum("ij,ij->i", delta, delta)
+            assert np.all(dist_sq >= (rr * rr) - 1e-5)
+
     def test_deterministic_same_seed(self):
         """Same seed → identical output."""
         from veilbreakers_terrain.handlers.environment_scatter import LocationLayer

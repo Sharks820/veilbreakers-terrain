@@ -271,6 +271,28 @@ def test_cloud_shadow_range(stack):
     assert mask.shape == stack.height.shape
 
 
+def test_cloud_shadow_no_scipy_blur_preserves_shape(monkeypatch):
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ImportError("blocked scipy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    tiny = _make_stack(tile_size=4, seed=11)
+    mask = compute_cloud_shadow_mask(tiny, seed=42, cloud_density=0.5, cloud_blur_sigma=6.0)
+
+    assert mask.shape == tiny.height.shape
+    assert mask.dtype == np.float32
+    assert np.isfinite(mask).all()
+
+
 def test_cloud_shadow_determinism(stack):
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
 

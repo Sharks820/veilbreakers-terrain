@@ -24,9 +24,9 @@ veilbreakers_terrain/tests/test_coverage_gaps.py,37,structure_only,P1,no,no,yes,
 veilbreakers_terrain/tests/test_cross_feature.py,34,soft_guardrail,P1,no,no,no,no,no,no,no,no,"Cross-feature invariants are useful, but skip paths make it soft instead of fail-closed."
 veilbreakers_terrain/tests/test_delta_integrator.py,11,logic_guardrail,P2,no,no,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_dem_import_runtime_helpers.py,2,logic_guardrail,P2,no,no,no,no,no,no,no,no,
-veilbreakers_terrain/tests/test_environment_analysis_runtime_helpers.py,22,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_environment_analysis_runtime_helpers.py,23,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_environment_handlers.py,132,structure_only,P1,no,yes,yes,no,no,no,no,no,
-veilbreakers_terrain/tests/test_environment_scatter_handlers.py,83,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_environment_scatter_handlers.py,84,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_erosion_config.py,7,logic_guardrail,P2,no,no,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_erosion_freq_split.py,31,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_external_asset_provider.py,22,structure_only,P1,no,yes,yes,no,no,no,no,no,
@@ -37,7 +37,7 @@ veilbreakers_terrain/tests/test_geometric_quality.py,21,logic_guardrail,P2,no,no
 veilbreakers_terrain/tests/test_live_readiness_regressions.py,12,live_guardrail,P0,no,yes,no,yes,no,no,yes,no,
 veilbreakers_terrain/tests/test_live_tooling_runtime_helpers.py,12,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_lod_material_live_readiness.py,6,live_guardrail,P0,no,yes,no,yes,no,no,yes,no,
-veilbreakers_terrain/tests/test_master_audit_blocker_closure.py,4,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_master_audit_blocker_closure.py,5,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_materials_v2_runtime_helpers.py,9,logic_guardrail,P2,no,no,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_mcp_dispatch.py,113,live_guardrail,P0,no,yes,no,yes,no,no,yes,no,
 veilbreakers_terrain/tests/test_mesh_bridge_lod_helpers.py,3,logic_guardrail,P2,no,no,no,no,no,no,no,no,
@@ -99,11 +99,11 @@ veilbreakers_terrain/tests/test_terrain_cave_adapter.py,13,live_guardrail,P0,no,
 veilbreakers_terrain/tests/test_terrain_caves.py,29,live_guardrail,P0,no,no,no,no,no,yes,no,no,High-value pass-level guardrail currently blocked by undeclared cave channels and archetype drift.
 veilbreakers_terrain/tests/test_terrain_checkpoints.py,17,live_guardrail,P0,no,no,yes,no,no,yes,no,no,High-value runtime guardrail that currently catches a real Windows NPZ temp-path failure.
 veilbreakers_terrain/tests/test_terrain_chunking.py,33,live_guardrail,P0,no,no,no,no,no,no,no,yes,Current compute_chunk_lod integer contract is verified; downsampling behavior is covered through _downsample_heightmap callers.
-veilbreakers_terrain/tests/test_terrain_cliffs.py,40,live_guardrail,P0,no,no,yes,no,no,yes,no,no,High-value pass-level guardrail currently blocked by undeclared cliff channel writes.
+veilbreakers_terrain/tests/test_terrain_cliffs.py,41,live_guardrail,P0,no,yes,yes,no,no,yes,no,no,High-value pass-level guardrail currently blocked by undeclared cliff channel writes.
 veilbreakers_terrain/tests/test_terrain_composition.py,46,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_terrain_deep_qa.py,39,structure_only,P1,no,yes,yes,no,no,no,no,no,
 veilbreakers_terrain/tests/test_terrain_depth.py,69,logic_guardrail,P2,no,no,no,no,no,no,no,no,
-veilbreakers_terrain/tests/test_terrain_ecosystem.py,43,live_guardrail,P0,no,no,yes,no,no,yes,no,no,
+veilbreakers_terrain/tests/test_terrain_ecosystem.py,44,live_guardrail,P0,no,yes,yes,no,no,yes,no,no,
 veilbreakers_terrain/tests/test_terrain_erosion.py,17,logic_guardrail,P2,no,no,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_terrain_erosion_filter.py,14,structure_only,P1,no,no,yes,no,no,no,no,no,
 veilbreakers_terrain/tests/test_terrain_features_phase14.py,12,logic_guardrail,P2,no,no,no,no,no,no,no,no,

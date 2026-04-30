@@ -209,7 +209,37 @@ def _audio_cc_filter(mask: np.ndarray, min_cells: int) -> np.ndarray:
                 cleaned |= comp
         return cleaned
     except ImportError:
-        return mask
+        mask_bool = np.asarray(mask, dtype=bool)
+        cleaned = np.zeros_like(mask_bool)
+        visited = np.zeros_like(mask_bool)
+        rows, cols = mask_bool.shape
+        for r in range(rows):
+            for c in range(cols):
+                if visited[r, c] or not mask_bool[r, c]:
+                    continue
+                stack = [(r, c)]
+                component: list[tuple[int, int]] = []
+                visited[r, c] = True
+                while stack:
+                    cr, cc = stack.pop()
+                    component.append((cr, cc))
+                    for dr in (-1, 0, 1):
+                        for dc in (-1, 0, 1):
+                            if dr == 0 and dc == 0:
+                                continue
+                            nr, nc = cr + dr, cc + dc
+                            if (
+                                0 <= nr < rows
+                                and 0 <= nc < cols
+                                and not visited[nr, nc]
+                                and mask_bool[nr, nc]
+                            ):
+                                visited[nr, nc] = True
+                                stack.append((nr, nc))
+                if len(component) >= min_cells:
+                    for cr, cc in component:
+                        cleaned[cr, cc] = True
+        return cleaned
 
 
 def _component_boundary_polygon(
