@@ -25,7 +25,11 @@ jobs:
           pip install -e ".[dev]"
           BLENDER_PYDEPS="$RUNNER_TEMP/blender_pydeps"
           mkdir -p "$BLENDER_PYDEPS"
-          python -m pip install --upgrade --target "$BLENDER_PYDEPS" opensimplex
+          python -m pip install --upgrade --target "$BLENDER_PYDEPS" --no-deps opensimplex
+          if find "$BLENDER_PYDEPS" -maxdepth 1 -name "numpy*" | grep -q .; then
+            echo "Unexpected CPython-host NumPy wheel in Blender PYTHONPATH"
+            exit 1
+          fi
 
       - name: Run visual testing readiness gate
         id: visual_gate
