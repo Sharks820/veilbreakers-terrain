@@ -34,13 +34,13 @@ def register_all(strict: bool = False) -> Any:
 
     Returns
     -------
-    Whatever ``register_all_terrain_passes`` returns (currently a
-    registration report; see ``terrain_master_registrar``).
+    Loaded bundle labels from ``register_all_terrain_passes_detailed``.
     """
     # Lazy import so importing this package does not require bpy at collect-time.
-    from .terrain_master_registrar import register_all_terrain_passes
+    from .terrain_master_registrar import register_all_terrain_passes_detailed
 
-    return register_all_terrain_passes(strict=strict)
+    loaded, _errors = register_all_terrain_passes_detailed(strict=strict)
+    return loaded
 
 
 def _build_command_handlers() -> Dict[str, Callable]:
@@ -354,6 +354,13 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 biome_name=params.get("biome_name", "dark_forest"),
                 area_bounds=tuple(params.get("area_bounds", [0, 0, 100, 100])),
                 seed=params.get("seed", 42),
+                density_scale=float(params.get("density_scale", 1.0)),
+                heightmap=params.get("heightmap"),
+                ridge_mask=params.get("ridge_mask"),
+                water_mask=params.get("water_mask"),
+                canopy_mask=params.get("canopy_mask"),
+                cell_size=float(params.get("cell_size", 1.0)),
+                weather_hints=params.get("weather_hints"),
             )
 
         def _handle_volume_mesh_spec(params: dict) -> dict:
@@ -1054,7 +1061,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
         _qp = _il.import_module(f"{_pkg}.terrain_quality_profiles")
 
         def _handle_load_quality_profile(params: dict) -> dict:
-            name = (params or {}).get("name", "production")
+            name = (params or {}).get("name", "aaa_open_world")
             try:
                 profile = _qp.load_quality_profile(name)
             except KeyError as err:

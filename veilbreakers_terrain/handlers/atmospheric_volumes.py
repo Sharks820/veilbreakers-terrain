@@ -324,6 +324,22 @@ def compute_atmospheric_placements(
             "Pass heightmap=stack.height for terrain-correct placement.",
             stacklevel=2,
         )
+    elif _NUMPY_AVAILABLE:
+        heightmap = np.asarray(heightmap, dtype=np.float64)
+        if heightmap.ndim != 2 or 0 in heightmap.shape:
+            raise ValueError("heightmap must be a non-empty 2-D array")
+
+        def _coerce_mask(mask: "Optional[Any]", name: str) -> "Optional[Any]":
+            if mask is None:
+                return None
+            arr = np.asarray(mask, dtype=np.float64)
+            if arr.shape != heightmap.shape:
+                raise ValueError(f"{name} shape {arr.shape} does not match heightmap shape {heightmap.shape}")
+            return arr
+
+        ridge_mask = _coerce_mask(ridge_mask, "ridge_mask")
+        water_mask = _coerce_mask(water_mask, "water_mask")
+        canopy_mask = _coerce_mask(canopy_mask, "canopy_mask")
 
     rng = random.Random(seed)
     rules = BIOME_ATMOSPHERE_RULES.get(biome_name, _DEFAULT_ATMOSPHERE)

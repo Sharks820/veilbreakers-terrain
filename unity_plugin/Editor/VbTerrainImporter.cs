@@ -32,6 +32,7 @@ namespace VeilBreakers.TerrainImport.Editor
             public float height_max_m = 1.0f;
             public HeightmapDescriptor heightmap = new HeightmapDescriptor();
             public string terrain_normals_file = string.Empty;
+            public string terrain_normal_map_file = string.Empty;
             public SplatmapDescriptor[] splatmaps = Array.Empty<SplatmapDescriptor>();
             public TerrainLayerDescriptor[] terrain_layers = Array.Empty<TerrainLayerDescriptor>();
             public DetailLayerDescriptor[] detail_layers = Array.Empty<DetailLayerDescriptor>();
@@ -291,6 +292,12 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.SeamContractWorldId = descriptor.seam_contract != null
                 ? descriptor.seam_contract.world_id
                 : descriptor.world_id;
+            metadata.TerrainNormalsFile = descriptor.terrain_normals_file ?? string.Empty;
+            metadata.TerrainNormalMapFile = descriptor.terrain_normal_map_file ?? string.Empty;
+            metadata.TerrainNormalMapAssetPath = ImportTerrainNormalMapAsset(
+                bundleDirectory,
+                descriptor
+            );
             metadata.BiomeId = descriptor.tile_biome_id;
             metadata.PrimaryBiomeName = descriptor.tile_biome_name ?? "dark_fantasy_default";
             metadata.ClimateZone = descriptor.climate_zone ?? "temperate";
@@ -1113,6 +1120,67 @@ namespace VeilBreakers.TerrainImport.Editor
             EditorUtility.SetDirty(layer);
             AssetDatabase.SaveAssets();
             return layer;
+        }
+
+        private static string ImportTerrainNormalMapAsset(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor
+        )
+        {
+            if (descriptor == null || string.IsNullOrEmpty(descriptor.terrain_normal_map_file))
+            {
+                return string.Empty;
+            }
+
+            var sourcePath = Path.Combine(bundleDirectory, descriptor.terrain_normal_map_file);
+            if (!File.Exists(sourcePath))
+            {
+                Debug.LogWarning(
+                    $"VeilBreakers terrain import missing normal-map texture: {descriptor.terrain_normal_map_file}"
+                );
+                return string.Empty;
+            }
+
+            var assetFolder = Path.GetDirectoryName(descriptor.terrain_data_asset_path)?.Replace("\\", "/");
+            if (string.IsNullOrEmpty(assetFolder))
+            {
+                assetFolder = "Assets/VeilBreakersTerrain/Generated";
+            }
+
+            var assetPath = $"{assetFolder}/{Path.GetFileName(descriptor.terrain_normal_map_file)}";
+            var texture = ImportTextureAsset(sourcePath, assetPath, normalMap: true);
+            return texture != null ? assetPath : string.Empty;
+        }
+
+        private static Texture2D ImportTextureAsset(
+            string sourcePath,
+            string assetPath,
+            bool normalMap
+        )
+        {
+            var normalizedAssetPath = assetPath.Replace("\\", "/");
+            EnsureAssetFolder(Path.GetDirectoryName(normalizedAssetPath)?.Replace("\\", "/"));
+
+            var sourceFullPath = Path.GetFullPath(sourcePath);
+            var destinationFullPath = Path.GetFullPath(normalizedAssetPath);
+            if (!string.Equals(sourceFullPath, destinationFullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Copy(sourceFullPath, destinationFullPath, true);
+            }
+
+            AssetDatabase.ImportAsset(normalizedAssetPath, ImportAssetOptions.ForceUpdate);
+            var importer = AssetImporter.GetAtPath(normalizedAssetPath) as TextureImporter;
+            if (importer != null)
+            {
+                importer.textureType = normalMap ? TextureImporterType.NormalMap : TextureImporterType.Default;
+                importer.sRGBTexture = !normalMap;
+                importer.mipmapEnabled = true;
+                importer.wrapMode = TextureWrapMode.Repeat;
+                importer.filterMode = FilterMode.Bilinear;
+                importer.SaveAndReimport();
+            }
+
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(normalizedAssetPath);
         }
 
         private static Texture2D GetOrCreateSolidTexture(string assetPath, Color color)

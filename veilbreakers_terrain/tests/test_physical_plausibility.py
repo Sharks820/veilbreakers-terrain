@@ -120,14 +120,18 @@ class TestRiverFlowsDownhill:
         flow_acc = flow_result["flow_accumulation"]
         hmap = np.asarray(mountain_heightmap, dtype=np.float64)
 
-        # Start from the cell with highest flow accumulation
-        max_idx = np.unravel_index(flow_acc.argmax(), flow_acc.shape)
-        # trace_river_from_flow expects numpy arrays (our fixture already converts)
-        path = trace_river_from_flow(
-            flow_dir, flow_acc, int(max_idx[0]), int(max_idx[1]), min_accumulation=10.0
-        )
-        if len(path) < 2:
-            pytest.skip("No river path long enough to test")
+        # Pick a deterministic channel candidate with a non-trivial downstream
+        # path. The absolute maximum can sit on a terminal edge cell, which
+        # proves little about monotonicity.
+        path: list[tuple[int, int]] = []
+        candidates = np.argwhere(flow_acc >= 10.0)
+        for r, c in candidates:
+            candidate = trace_river_from_flow(
+                flow_dir, flow_acc, int(r), int(c), min_accumulation=1.0
+            )
+            if len(candidate) > len(path):
+                path = candidate
+        assert len(path) >= 2, "Flow fixture must expose a traceable downstream river path"
 
         elevations = [hmap[r, c] for r, c in path]
         for i in range(1, len(elevations)):
@@ -257,21 +261,31 @@ class TestErosionVShapedValleys:
     """Hydraulic erosion should carve valleys with V-shaped cross-sections."""
 
     def test_erosion_carves_channels(self, mountain_heightmap, eroded_masks):
-        """Eroded terrain should have lower values along high-drainage paths."""
-        delta = mountain_heightmap - eroded_masks.height
-        # Most erosion should happen where drainage is high
+        """Hydraulic erosion should concentrate material transport in channels.
+
+        Net final height can rise in depositional reaches, so this checks the
+        explicit erosion/deposition masks instead of treating all height gain
+        as a failed carve.
+        """
         drainage = eroded_masks.drainage
         high_drain = drainage > np.percentile(drainage, 90)
-        low_drain = drainage < np.percentile(drainage, 10)
+        low_drain = drainage <= np.percentile(drainage, 10)
 
-        if high_drain.sum() == 0 or low_drain.sum() == 0:
-            pytest.skip("Not enough drainage variation")
+        assert high_drain.sum() > 0, "Erosion fixture must expose high-drainage cells"
+        assert low_drain.sum() > 0, "Erosion fixture must expose low-drainage cells"
 
-        avg_erosion_high = delta[high_drain].mean()
-        avg_erosion_low = delta[low_drain].mean()
+        avg_erosion_high = eroded_masks.erosion_amount[high_drain].mean()
+        avg_erosion_low = eroded_masks.erosion_amount[low_drain].mean()
+        transport = eroded_masks.erosion_amount + eroded_masks.deposition_amount
+        avg_transport_high = transport[high_drain].mean()
+        avg_transport_low = transport[low_drain].mean()
         assert avg_erosion_high > avg_erosion_low, (
             f"Erosion not concentrated in channels: high-drain={avg_erosion_high:.6f}, "
             f"low-drain={avg_erosion_low:.6f}"
+        )
+        assert avg_transport_high > avg_transport_low, (
+            f"Sediment transport not concentrated in channels: "
+            f"high-drain={avg_transport_high:.6f}, low-drain={avg_transport_low:.6f}"
         )
 
     def test_erosion_amount_positive(self, eroded_masks):
@@ -286,9 +300,8 @@ class TestErosionVShapedValleys:
         """Wetness should correlate positively with drainage."""
         wet = eroded_masks.wetness.ravel()
         drain = eroded_masks.drainage.ravel()
-        # Only check if there's variation
-        if wet.std() < 1e-12 or drain.std() < 1e-12:
-            pytest.skip("No variation in wetness or drainage")
+        assert wet.std() >= 1e-12, "Erosion fixture must expose wetness variation"
+        assert drain.std() >= 1e-12, "Erosion fixture must expose drainage variation"
         correlation = np.corrcoef(wet, drain)[0, 1]
         assert correlation > 0.0, f"Wetness-drainage correlation={correlation:.3f} should be positive"
 
@@ -309,8 +322,7 @@ class TestErosionVShapedValleys:
 
         # Extract a cross-section centered on the channel
         half_width = min(10, best_col, cols - best_col - 1)
-        if half_width < 3:
-            pytest.skip("Channel too close to edge for cross-section")
+        assert half_width >= 3, "Erosion fixture must expose an interior channel cross-section"
 
         cross = height[best_row, best_col - half_width:best_col + half_width + 1]
         center_h = cross[half_width]
@@ -456,8 +468,7 @@ class TestWaterNetworkPhysics:
         total_erosion = eroded_masks.erosion_amount.sum()
         total_deposition = eroded_masks.deposition_amount.sum()
         # Allow significant deviation since some sediment leaves the map
-        if total_erosion < 1e-6:
-            pytest.skip("Negligible erosion")
+        assert total_erosion >= 1e-6, "Erosion fixture must produce measurable erosion"
         ratio = total_deposition / total_erosion
         assert 0.01 < ratio < 100.0, (
             f"Erosion/deposition ratio {ratio:.3f} extremely unbalanced"

@@ -230,6 +230,27 @@ def test_pass_stratigraphy_sets_declared_outputs_when_intrusions_disabled():
     np.testing.assert_allclose(stack.albedo_shift_rgb, 0.0)
 
 
+def test_pass_stratigraphy_defers_erosion_delta_to_integrator():
+    from veilbreakers_terrain.handlers.terrain_stratigraphy import pass_stratigraphy
+
+    stack = _build_stack(heights="ramp")
+    before = stack.height.copy()
+    state = _build_state(
+        stack,
+        hints={
+            "intrusions_enabled": False,
+            "fold_enabled": False,
+            "erosion_max_fraction": 0.15,
+        },
+    )
+
+    pass_stratigraphy(state, None)
+
+    assert stack.strat_erosion_delta is not None
+    np.testing.assert_allclose(stack.height, before)
+    assert stack.populated_by_pass["strat_erosion_delta"] == "stratigraphy"
+
+
 def test_intrusions_are_ellipsoid_clipped_by_surface_depth():
     from veilbreakers_terrain.handlers.terrain_stratigraphy import (
         StratigraphyLayer,
@@ -551,6 +572,17 @@ def test_detect_and_carve_karst():
     assert delta.min() < 0.0
 
 
+def test_uvala_composition_is_additive_for_overlapping_depressions():
+    from veilbreakers_terrain.handlers.terrain_karst import _compose_uvala
+
+    base = np.array([[0.0, -2.0]], dtype=np.float64)
+    added = np.array([[-1.5, -3.0]], dtype=np.float64)
+
+    out = _compose_uvala(base, added)
+
+    np.testing.assert_allclose(out, [[-1.5, -5.0]])
+
+
 def test_pass_karst_runs_without_hardness():
     from veilbreakers_terrain.handlers.terrain_karst import pass_karst
 
@@ -559,6 +591,23 @@ def test_pass_karst_runs_without_hardness():
     result = pass_karst(state, None)
     assert result.status == "ok"
     assert result.metrics["feature_count"] == 0
+
+
+def test_coastline_uses_water_surface_elevation_as_mean_sea_level():
+    from veilbreakers_terrain.handlers.coastline import pass_coastline
+
+    stack = _build_stack(tile_size=16, heights="ramp")
+    stack.set(
+        "water_surface_elevation_m",
+        np.full(stack.height.shape, 40.0, dtype=np.float32),
+        "test",
+    )
+    state = _build_state(stack, hints={"sea_level_m": 0.0, "tidal_range_m": 2.0})
+
+    result = pass_coastline(state, None)
+
+    assert result.metrics["sea_level_m"] == pytest.approx(40.0)
+    assert stack.tidal is not None
 
 
 # ---------------------------------------------------------------------------

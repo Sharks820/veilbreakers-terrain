@@ -276,7 +276,7 @@ High priority (read fully, assessed thoroughly):
 Medium priority (skimmed):
 `test_terrain_banded.py`, `test_terrain_best_practice_guardrail.py`,
 `test_coverage_gaps.py`, `test_live_readiness_regressions.py`,
-`test_scatter_engine_forest_pack.py`, `test_terrain_deep_qa.py`,
+`test_scatter_engine_distribution.py`, `test_terrain_deep_qa.py`,
 `test_terrain_materials.py`, `test_phase_l_triple_judge.py`,
 `test_w2_w4_water_depth_seam.py`.
 

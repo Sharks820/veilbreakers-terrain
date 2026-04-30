@@ -176,7 +176,7 @@ The default `pass_sequence` has 6 entries. `wildlife_zones` is not one of them. 
 entry.setdefault("lod_meshes", [])
 entry.setdefault("atlas_path", None)
 entry.setdefault("unity_render_mode", "terrain_tree")
-entry.setdefault("forestpack_reference_layer", f"FP_REF_{key}")
+entry.setdefault("render_batch_key", key)
 entry.setdefault("wind_color_baked", False)
 entry.setdefault("physics_collider", "none")
 ```

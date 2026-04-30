@@ -36,7 +36,11 @@ def _make_minimal_stack(tile_size: int = 16) -> "TerrainMaskStack":
     )
 
 
-def _make_intent(seed: int = 42, erosion_profile: str = "temperate"):
+def _make_intent(
+    seed: int = 42,
+    erosion_profile: str = "temperate",
+    quality_profile: str = "aaa_open_world",
+):
     from veilbreakers_terrain.handlers.terrain_semantics import (
         TerrainIntentState,
         BBox,
@@ -63,6 +67,7 @@ def _make_intent(seed: int = 42, erosion_profile: str = "temperate"):
         tile_size=16,
         cell_size=1.0,
         erosion_profile=erosion_profile,
+        quality_profile=quality_profile,
         scene_read=scene_read,
     )
 
@@ -363,6 +368,66 @@ class TestPassFunctionBehavior:
             state.mask_stack.hmap_low_freq,
             state.mask_stack.height,
         )
+
+    def test_pass_erosion_quality_profile_controls_iteration_budget(self, monkeypatch):
+        """AAA quality profiles must drive erosion cost/quality, not dead config."""
+        from types import SimpleNamespace
+
+        import veilbreakers_terrain.handlers._terrain_world as world_mod
+
+        hydraulic_iterations: list[int] = []
+        thermal_iterations: list[int] = []
+
+        def fake_analytical(height, cfg, seed, cell_size):
+            return SimpleNamespace(
+                height_delta=np.zeros_like(height, dtype=np.float32),
+                ridge_map=np.zeros_like(height, dtype=np.float32),
+            )
+
+        def fake_hydraulic(height, iterations, seed, hero_exclusion, erodibility_map):
+            hydraulic_iterations.append(int(iterations))
+            zeros = np.zeros_like(height, dtype=np.float32)
+            return SimpleNamespace(
+                height=np.asarray(height, dtype=np.float32),
+                erosion_amount=zeros,
+                deposition_amount=zeros,
+                wetness=zeros,
+                drainage=zeros,
+                bank_instability=zeros,
+                sediment_accumulation_at_base=zeros,
+                pool_deepening_delta=zeros,
+            )
+
+        def fake_thermal(height, iterations, talus_angle, cell_size):
+            thermal_iterations.append(int(iterations))
+            return SimpleNamespace(
+                height=np.asarray(height, dtype=np.float32),
+                talus=np.zeros_like(height, dtype=np.float32),
+            )
+
+        monkeypatch.setattr(world_mod, "apply_analytical_erosion", fake_analytical)
+        monkeypatch.setattr(world_mod, "apply_hydraulic_erosion_masks", fake_hydraulic)
+        monkeypatch.setattr(world_mod, "apply_thermal_erosion_masks", fake_thermal)
+        monkeypatch.setattr(
+            world_mod,
+            "compute_stream_power_erosion",
+            lambda height, **_kwargs: np.asarray(height, dtype=np.float32),
+        )
+
+        mobile = _make_state()
+        mobile.intent = _make_intent(quality_profile="mobile")
+        mobile.mask_stack.set("hmap_low_freq", np.ones((16, 16), dtype=np.float32), "test")
+        aaa = _make_state()
+        aaa.intent = _make_intent(quality_profile="aaa_open_world")
+        aaa.mask_stack.set("hmap_low_freq", np.ones((16, 16), dtype=np.float32), "test")
+
+        mobile_result = world_mod.pass_erosion(mobile, None)
+        aaa_result = world_mod.pass_erosion(aaa, None)
+
+        assert mobile_result.metrics["quality_profile"] == "mobile"
+        assert aaa_result.metrics["quality_profile"] == "aaa_open_world"
+        assert hydraulic_iterations[1] > hydraulic_iterations[0]
+        assert thermal_iterations[1] > thermal_iterations[0]
 
     def test_macro_world_pipeline_reapplies_neighbor_seams_after_generation(self):
         from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController

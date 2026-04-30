@@ -1,12 +1,30 @@
 {
   "matrix_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\spreadsheet\\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_26.csv",
-  "live_count": 1565,
-  "matrix_count": 1565,
+  "live_count": 1713,
+  "matrix_count": 1723,
   "is_blocking": false,
   "missing_rows": [],
   "field_gaps": {},
   "unknown_domains": {},
-  "duplicate_names": {
+  "p0_rows": {},
+  "non_a_rows": {},
+  "grade_status_blocks": {},
+  "verification_blocks": {},
+  "strict_modes": {
+    "duplicate_names_blocking": false,
+    "p0_rows_blocking": false,
+    "non_a_rows_blocking": false,
+    "grade_status_blocking": false,
+    "verification_blocking": false
+  },
+  "duplicate_names": {},
+  "reviewed_duplicate_names": {
+    "_rng_from_seed": [
+      "_biome_grammar.py::_rng_from_seed",
+      "_terrain_noise.py::_rng_from_seed",
+      "terrain_advanced.py::_rng_from_seed",
+      "terrain_morphology.py::_rng_from_seed"
+    ],
     "_face_normal": [
       "_mesh_bridge.py::_face_normal",
       "autonomous_loop.py::_face_normal",
@@ -17,38 +35,6 @@
     "_dot3": [
       "_mesh_bridge.py::_dot3",
       "mesh.py::_dot3"
-    ],
-    "generate_canyon": [
-      "_scatter_engine.py::generate_canyon",
-      "terrain_features.py::generate_canyon"
-    ],
-    "generate_waterfall": [
-      "_scatter_engine.py::generate_waterfall",
-      "terrain_features.py::generate_waterfall"
-    ],
-    "generate_cliff_face": [
-      "_scatter_engine.py::generate_cliff_face",
-      "terrain_features.py::generate_cliff_face"
-    ],
-    "generate_swamp_terrain": [
-      "_scatter_engine.py::generate_swamp_terrain",
-      "terrain_features.py::generate_swamp_terrain"
-    ],
-    "generate_sinkhole": [
-      "_scatter_engine.py::generate_sinkhole",
-      "terrain_features.py::generate_sinkhole"
-    ],
-    "generate_floating_rocks": [
-      "_scatter_engine.py::generate_floating_rocks",
-      "terrain_features.py::generate_floating_rocks"
-    ],
-    "generate_ice_formation": [
-      "_scatter_engine.py::generate_ice_formation",
-      "terrain_features.py::generate_ice_formation"
-    ],
-    "generate_lava_flow": [
-      "_scatter_engine.py::generate_lava_flow",
-      "terrain_features.py::generate_lava_flow"
     ],
     "apply_thermal_erosion": [
       "_terrain_erosion.py::apply_thermal_erosion",
@@ -120,6 +106,14 @@
       "_water_network_ext.py::_world_to_grid",
       "terrain_waterfalls.py::_world_to_grid"
     ],
+    "generate": [
+      "asset_generation.py::AssetGenerationPipeline.generate",
+      "asset_generation.py::HuggingFaceBackend.generate",
+      "asset_generation.py::RodinBackend.generate",
+      "asset_generation.py::RunPodBackend.generate",
+      "asset_generation.py::_BackendBase.generate",
+      "environment_scatter.py::LocationLayer.generate"
+    ],
     "_cross": [
       "autonomous_loop.py::_cross",
       "lod_pipeline.py::_cross",
@@ -162,9 +156,18 @@
       "environment.py::_apply_road_profile_to_heightmap",
       "terrain_twelve_step.py::_apply_road_profile_to_heightmap"
     ],
+    "generate_billboard_impostor": [
+      "environment_scatter.py::generate_billboard_impostor",
+      "environment_scatter.py::generate_billboard_impostor",
+      "vegetation_lsystem.py::generate_billboard_impostor"
+    ],
     "_dist3": [
       "light_integration.py::_dist3",
       "road_network.py::_dist3"
+    ],
+    "validate": [
+      "lod_pipeline.py::SceneBudgetValidator.validate",
+      "terrain_texture_layer_stack.py::TerrainTextureLayerStack.validate"
     ],
     "_build_adjacency": [
       "mesh_smoothing.py::_build_adjacency",
@@ -190,11 +193,6 @@
       "terrain_budget_enforcer.py::BudgetReport.as_dict",
       "terrain_ecotone_graph.py::EcotoneEdge.as_dict",
       "terrain_vegetation_depth.py::VegetationLayers.as_dict"
-    ],
-    "_world_to_cell": [
-      "terrain_caves.py::_world_to_cell",
-      "terrain_footprint_surface.py::_world_to_cell",
-      "terrain_saliency.py::_world_to_cell"
     ],
     "_region_to_slice": [
       "terrain_caves.py::_region_to_slice",

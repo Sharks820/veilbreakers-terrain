@@ -808,7 +808,8 @@ def apply_desert_pavement(
     # At the cell boundary d1 == d2; normalise so the boundary is at 1.0.
     d_sum = d1 + d2
     # edge_t = 0 at stone centres, 1 at Voronoi boundaries
-    edge_t = np.where(d_sum > 1e-6, d1 / (d_sum * 0.5), 1.0)
+    edge_t = np.ones_like(d1, dtype=np.float64)
+    np.divide(d1, d_sum * 0.5, out=edge_t, where=d_sum > 1e-6)
     edge_t = np.clip(edge_t, 0.0, 1.0)
 
     # ---- Stone top surface: slightly raised, rounded polygon shape ------

@@ -9,6 +9,13 @@ import math
 import pytest
 
 
+def _terrain_kwargs(bounds):
+    min_x, _min_y, max_x, _max_y = bounds
+    cell_size = max((max_x - min_x) / 8.0, 1.0)
+    heightmap = [[float(r + c) for c in range(8)] for r in range(8)]
+    return {"heightmap": heightmap, "cell_size": cell_size}
+
+
 # ===================================================================
 # World Map Generator Tests (Task #45)
 # ===================================================================
@@ -765,8 +772,9 @@ class TestComputeAtmosphericPlacements:
     def test_dark_forest_placements(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
+        bounds = (0, 0, 100, 100)
         result = compute_atmospheric_placements(
-            "dark_forest", (0, 0, 100, 100), seed=42
+            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(result) > 0
         vol_types = {p["volume_type"] for p in result}
@@ -775,8 +783,9 @@ class TestComputeAtmosphericPlacements:
     def test_corrupted_swamp_placements(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
+        bounds = (0, 0, 200, 200)
         result = compute_atmospheric_placements(
-            "corrupted_swamp", (0, 0, 200, 200), seed=42
+            "corrupted_swamp", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         vol_types = {p["volume_type"] for p in result}
         assert "ground_fog" in vol_types
@@ -785,16 +794,18 @@ class TestComputeAtmosphericPlacements:
     def test_unknown_biome_uses_default(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
+        bounds = (0, 0, 50, 50)
         result = compute_atmospheric_placements(
-            "nonexistent_biome", (0, 0, 50, 50), seed=42
+            "nonexistent_biome", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(result) > 0
 
     def test_placement_structure(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
+        bounds = (0, 0, 80, 80)
         result = compute_atmospheric_placements(
-            "enchanted_glade", (0, 0, 80, 80), seed=42
+            "enchanted_glade", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         for p in result:
             assert "volume_type" in p
@@ -812,7 +823,9 @@ class TestComputeAtmosphericPlacements:
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
         bounds = (10, 20, 50, 60)
-        result = compute_atmospheric_placements("dark_forest", bounds, seed=42)
+        result = compute_atmospheric_placements(
+            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
+        )
         for p in result:
             assert bounds[0] <= p["position"][0] <= bounds[2]
             assert bounds[1] <= p["position"][1] <= bounds[3]
@@ -820,19 +833,25 @@ class TestComputeAtmosphericPlacements:
     def test_density_scale_increases_count(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
+        bounds = (0, 0, 100, 100)
         base = compute_atmospheric_placements(
-            "dark_forest", (0, 0, 100, 100), seed=42, density_scale=1.0
+            "dark_forest", bounds, seed=42, density_scale=1.0, **_terrain_kwargs(bounds)
         )
         scaled = compute_atmospheric_placements(
-            "dark_forest", (0, 0, 100, 100), seed=42, density_scale=2.0
+            "dark_forest", bounds, seed=42, density_scale=2.0, **_terrain_kwargs(bounds)
         )
         assert len(scaled) >= len(base)
 
     def test_deterministic(self):
         from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
 
-        r1 = compute_atmospheric_placements("volcanic_wastes", (0, 0, 100, 100), seed=42)
-        r2 = compute_atmospheric_placements("volcanic_wastes", (0, 0, 100, 100), seed=42)
+        bounds = (0, 0, 100, 100)
+        r1 = compute_atmospheric_placements(
+            "volcanic_wastes", bounds, seed=42, **_terrain_kwargs(bounds)
+        )
+        r2 = compute_atmospheric_placements(
+            "volcanic_wastes", bounds, seed=42, **_terrain_kwargs(bounds)
+        )
         assert len(r1) == len(r2)
         for a, b in zip(r1, r2):
             assert a["volume_type"] == b["volume_type"]
@@ -845,8 +864,40 @@ class TestComputeAtmosphericPlacements:
         )
 
         for biome in BIOME_ATMOSPHERE_RULES:
-            result = compute_atmospheric_placements(biome, (0, 0, 100, 100), seed=42)
+            bounds = (0, 0, 100, 100)
+            result = compute_atmospheric_placements(
+                biome, bounds, seed=42, **_terrain_kwargs(bounds)
+            )
             assert len(result) > 0, f"Biome '{biome}' produced no volumes"
+
+    def test_heightmap_lists_use_terrain_z_positions(self):
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
+
+        heightmap = [[float(r * 10 + c) for c in range(8)] for r in range(8)]
+
+        result = compute_atmospheric_placements(
+            "dark_forest",
+            (0, 0, 8, 8),
+            seed=42,
+            heightmap=heightmap,
+            cell_size=1.0,
+        )
+
+        assert result
+        assert all("terrain_z" in placement for placement in result)
+        assert all(placement["position"][2] >= placement["terrain_z"] for placement in result)
+
+    def test_heightmap_mask_shape_mismatch_fails_closed(self):
+        from veilbreakers_terrain.handlers.atmospheric_volumes import compute_atmospheric_placements
+
+        with pytest.raises(ValueError, match="ridge_mask shape"):
+            compute_atmospheric_placements(
+                "dark_forest",
+                (0, 0, 8, 8),
+                seed=42,
+                heightmap=[[0.0] * 8 for _ in range(8)],
+                ridge_mask=[[1.0] * 7 for _ in range(7)],
+            )
 
 
 class TestVolumeMeshSpec:
@@ -1045,9 +1096,31 @@ class TestHandlerExecution:
             "biome_name": "dark_forest",
             "area_bounds": [0, 0, 100, 100],
             "seed": 42,
+            "heightmap": _terrain_kwargs((0, 0, 100, 100))["heightmap"],
+            "cell_size": _terrain_kwargs((0, 0, 100, 100))["cell_size"],
         })
         assert isinstance(result, list)
         assert len(result) > 0
+
+    def test_atmospheric_handler_passes_terrain_context(self):
+        from veilbreakers_terrain.handlers import COMMAND_HANDLERS
+
+        heightmap = [[float(r + c) for c in range(8)] for r in range(8)]
+        result = COMMAND_HANDLERS["env_compute_atmospheric_placements"]({
+            "biome_name": "dark_forest",
+            "area_bounds": [0, 0, 8, 8],
+            "seed": 42,
+            "density_scale": 1.5,
+            "heightmap": heightmap,
+            "ridge_mask": [[1.0] * 8 for _ in range(8)],
+            "water_mask": [[0.0] * 8 for _ in range(8)],
+            "canopy_mask": [[0.25] * 8 for _ in range(8)],
+            "cell_size": 1.0,
+            "weather_hints": {"wind_dir_deg": 90.0},
+        })
+
+        assert result
+        assert all("terrain_z" in placement for placement in result)
 
     def test_volume_mesh_handler_returns_dict(self):
         from veilbreakers_terrain.handlers import COMMAND_HANDLERS

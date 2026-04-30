@@ -195,6 +195,30 @@ def test_meso_band_shows_nonzero_warp_displacement():
     assert not np.allclose(bands.meso_band, plain_norm, atol=1e-6)
 
 
+def test_anti_grain_smoothing_kernel_scales_with_resolution(monkeypatch):
+    from veilbreakers_terrain.handlers import terrain_banded
+
+    radii: list[int] = []
+
+    def _fake_filter(arr, radius):
+        radii.append(radius)
+        return arr
+
+    monkeypatch.setattr(terrain_banded, "_kuwahara_filter", _fake_filter)
+
+    terrain_banded.apply_anti_grain_smoothing(
+        np.ones((256, 256), dtype=np.float32),
+        strength=1.0,
+    )
+    terrain_banded.apply_anti_grain_smoothing(
+        np.ones((1024, 1024), dtype=np.float32),
+        strength=1.0,
+    )
+
+    assert radii[0] == 1
+    assert radii[1] > radii[0]
+
+
 # ---------------------------------------------------------------------------
 # 6. Strata band is near-horizontal
 # ---------------------------------------------------------------------------

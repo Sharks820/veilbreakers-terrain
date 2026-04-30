@@ -44,3 +44,24 @@ repomix-output.*
 
 # Claude Code local state
 .claude/
+
+# Local tool state
+.serena/
+
+# Generated terrain/runtime outputs
+export/
+output/3dsmax/
+output/unity/
+output/aaa_node_v4/
+output/aaa_node_v5/
+output/aaa_node_v6/
+output/aaa_node_v*_build.log
+output/pytest-tmp/
+output/test_artifacts/checkpoint_helpers/*/
+output/test_artifacts/terrain_validation/*/
+output/test_hunyuan3d2/
+output/test_rock_*.png
+
+# Temporary audit reconstruction fragments
+docs/aaa-audit/.master_audit_section*_onward.md
+docs/aaa-audit/temp_reconstruct_*.md

@@ -27,7 +27,7 @@
 | **P1** | `StratigraphyLayer` | 8/10 (80%) | `color_hex` is dead (declared, derivable from `color_rgb`, never read). `strike_angle_rad` is read once for export only. Otherwise all wired. |
 | **OK** | `PathSegmentContract` | 12/13 (92%) | Every field read in `validate_path_network_contract` and `to_dict`. Only `metadata` rarely inspected. |
 | **OK** | `SpeciesSpec` (foliage) | 19/27 (70%, but several DEPRECATED) | The 4 explicitly DEPRECATED mirror fields (`slope_max_deg`, `altitude_min_m`, `altitude_max_m`, `wetness_tolerance`) are validated in `__post_init__` only. Excluding deprecated mirrors → 19/23 = 82% wired. Effectively OK. |
-| **OK** | `GrassSpecies` | 11/12 (92%) | `forestpack_reference_layer` is dead (declared, never read by any handler). All other 11 fields wired in `procedural_grass.py`. |
+| **OK** | `GrassSpecies` | 12/12 (100%) | 2026-04-29 refresh: retired DCC field replaced by `render_batch_key`; active fields are wired in `procedural_grass.py`. |
 | **OK** | `TerrainIntentState` | 11/13 (85%) | Confirmed in F3: `morphology_templates`, `biome_rules` are dead. The other 11 fields are read across many passes. |
 | **OK** | `HeroFeatureSpec` | 8/10 (80%) | `silhouette_vantages`, `parameters` rarely read; `budget` is read by hierarchy enforcer; rest wired. |
 | **OK** | `TerrainBudget` | 11/12 (92%) | All but `chunk_grid` wired (chunk_grid declared but never referenced beyond `__init__`). |
@@ -225,8 +225,8 @@ Pure data carrier. Every field consumed by `handle_generate_multi_biome_world`.
 ### `TerrainBudget` (11/12 — 92%)
 All quality-budget fields read in `terrain_bundle_n.py` and `terrain_budget_enforcer.py`. Only `chunk_grid` (line 171) declared but never indexed downstream.
 
-### `GrassSpecies` (11/12 — 92%)
-`procedural_grass.py:131-559` reads every field except `forestpack_reference_layer`, which is a Forest-Pack interop hint that never reaches export.
+### `GrassSpecies` (12/12 — 100%)
+2026-04-29 refresh: the retired DCC interop hint was removed and replaced with `render_batch_key`; active fields are consumed by manifest/runtime scatter paths.
 
 ### `SpeciesSpec` (foliage; 19/23 effective — 82%)
 4 fields are explicitly marked DEPRECATED in source comments (lines 151-159: `slope_max_deg`, `altitude_min_m`, `altitude_max_m`, `wetness_tolerance`). They exist for backward-compatibility and `__post_init__` enforces consistency. Excluding the deprecated mirrors → all 19 active fields read in `environment_scatter.py:2893-2937` and `terrain_foliage_catalog.py:819-893`.

@@ -58,6 +58,7 @@ class CallableVisitor(ast.NodeVisitor):
     def __init__(self, file_name: str) -> None:
         self.file_name = file_name
         self.class_stack: List[str] = []
+        self.function_stack: List[str] = []
         self.records: List[CallableDef] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
@@ -66,12 +67,18 @@ class CallableVisitor(ast.NodeVisitor):
         self.class_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._record(node)
+        if not self.function_stack:
+            self._record(node)
+        self.function_stack.append(node.name)
         self.generic_visit(node)
+        self.function_stack.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._record(node)
+        if not self.function_stack:
+            self._record(node)
+        self.function_stack.append(node.name)
         self.generic_visit(node)
+        self.function_stack.pop()
 
     def _record(self, node: ast.AST) -> None:
         assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -96,6 +103,7 @@ class UsageVisitor(ast.NodeVisitor):
     def __init__(self, file_name: str) -> None:
         self.file_name = file_name
         self.name_calls: List[Tuple[str, CallSite]] = []
+        self.name_reads: List[Tuple[str, CallSite]] = []
         self.attr_calls: List[Tuple[str, CallSite]] = []
         self.attr_reads: List[Tuple[str, CallSite]] = []
 
@@ -108,6 +116,11 @@ class UsageVisitor(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:  # noqa: N802
         self.attr_reads.append((node.attr, CallSite(self.file_name, node.lineno, "attr_read")))
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:  # noqa: N802
+        if isinstance(node.ctx, ast.Load):
+            self.name_reads.append((node.id, CallSite(self.file_name, node.lineno, "name_read")))
         self.generic_visit(node)
 
 
@@ -206,6 +219,8 @@ def collect_defs() -> Tuple[List[CallableDef], Dict[str, List[CallableDef]]]:
     records: List[CallableDef] = []
     by_file: Dict[str, List[CallableDef]] = defaultdict(list)
     for path in sorted(HANDLERS_DIR.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
         visitor = CallableVisitor(path.name)
         visitor.visit(parse_module(path))
         records.extend(visitor.records)
@@ -213,8 +228,9 @@ def collect_defs() -> Tuple[List[CallableDef], Dict[str, List[CallableDef]]]:
     return records, by_file
 
 
-def collect_usages() -> Tuple[DefaultDict[str, List[CallSite]], DefaultDict[str, List[CallSite]], DefaultDict[str, List[CallSite]]]:
+def collect_usages() -> Tuple[DefaultDict[str, List[CallSite]], DefaultDict[str, List[CallSite]], DefaultDict[str, List[CallSite]], DefaultDict[str, List[CallSite]]]:
     direct: DefaultDict[str, List[CallSite]] = defaultdict(list)
+    name_read: DefaultDict[str, List[CallSite]] = defaultdict(list)
     attr_call: DefaultDict[str, List[CallSite]] = defaultdict(list)
     attr_read: DefaultDict[str, List[CallSite]] = defaultdict(list)
     for path in sorted((REPO_ROOT / "veilbreakers_terrain").rglob("*.py")):
@@ -223,11 +239,13 @@ def collect_usages() -> Tuple[DefaultDict[str, List[CallSite]], DefaultDict[str,
         visitor.visit(parse_module(path))
         for name, site in visitor.name_calls:
             direct[name].append(site)
+        for name, site in visitor.name_reads:
+            name_read[name].append(site)
         for name, site in visitor.attr_calls:
             attr_call[name].append(site)
         for name, site in visitor.attr_reads:
             attr_read[name].append(site)
-    return direct, attr_call, attr_read
+    return direct, name_read, attr_call, attr_read
 
 
 def collect_resolved_usages(
@@ -541,8 +559,12 @@ def load_grade_index() -> DefaultDict[Tuple[str, str], List[dict]]:
     index: DefaultDict[Tuple[str, str], List[dict]] = defaultdict(list)
     with CSV_PATH.open(newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
-            key = ((row.get("File") or "").strip(), (row.get("Function") or "").strip())
-            index[key].append(row)
+            file_name = (row.get("File") or "").strip()
+            function_name = (row.get("Function") or "").strip()
+            if not file_name or not function_name:
+                continue
+            index[(file_name, function_name)].append(row)
+            index[(file_name, function_name.split(".")[-1])].append(row)
     return index
 
 
@@ -622,7 +644,7 @@ def classify_status(
     if "module_registrar" in exposure_tags:
         return "registrar_declared_only"
     if test_sites:
-        return "test_only_or_unwired"
+        return "direct_test_covered"
     if callable_def.name.startswith("register_"):
         return "uninvoked_registrar"
     return "orphan_candidate"
@@ -640,8 +662,9 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
     file_risk = Counter()
     uncovered = 0
     no_r9 = 0
+    true_risk_statuses = {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only"}
     for row in rows:
-        if row["status"] in {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only", "test_only_or_unwired"}:
+        if row["status"] in true_risk_statuses:
             file_risk[row["file"]] += 1
         if row["csv_rows"] == "0":
             uncovered += 1
@@ -673,8 +696,11 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
             "",
         ]
     )
-    for file_name, count in top_risks:
-        lines.append(f"- `{file_name}`: `{count}` callable(s) flagged as orphaned, registrar-only, or test-only")
+    if top_risks:
+        for file_name, count in top_risks:
+            lines.append(f"- `{file_name}`: `{count}` callable(s) flagged as orphaned or registrar-only")
+    else:
+        lines.append("- None")
     lines.extend(
         [
             "",
@@ -684,10 +710,10 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
             "- `helper_reachable`: not a primary surface, but called from non-test code.",
             "- `registrar_declared_only`: function appears in a module-local registrar, but the scan found no evidence that the registrar itself is loaded by the primary runtime surfaces.",
             "- `uninvoked_registrar`: registration helper exists but has no discovered non-test caller.",
-            "- `test_only_or_unwired`: only referenced by tests or not clearly used by runtime.",
+            "- `direct_test_covered`: not a primary runtime surface, but has direct behavior-contract test coverage.",
             "- `orphan_candidate`: no discovered runtime exposure, non-test callsite, or test caller.",
             "",
-            "This is a static scan. False positives are possible where dispatch is fully dynamic, but the flagged rows are exactly the set that need human review before claiming there are no wiring gaps.",
+            "This is a static scan. False positives are possible where dispatch is fully dynamic. True-risk rows are statuses `orphan_candidate`, `uninvoked_registrar`, and `registrar_declared_only`.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -696,20 +722,23 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     defs, defs_by_file = collect_defs()
-    direct_calls, attr_calls, attr_reads = collect_usages()
+    direct_calls, name_reads, attr_calls, attr_reads = collect_usages()
     resolved_calls = collect_resolved_usages(defs_by_file)
     exposure = collect_runtime_exposure(defs_by_file)
     grade_index = load_grade_index()
 
     rows: List[dict] = []
     for record in sorted(defs, key=lambda item: (item.file, item.lineno, item.qualified_name)):
-        key = (record.file, record.name)
-        grade_rows = grade_index.get(key, [])
+        grade_rows = grade_index.get((record.file, record.qualified_name), [])
+        if not grade_rows:
+            grade_rows = grade_index.get((record.file, record.name), [])
         name_sites = direct_calls.get(record.name, [])
+        name_read_sites = name_reads.get(record.name, [])
         attr_sites = attr_calls.get(record.name, [])
         read_sites = attr_reads.get(record.name, [])
         resolved_sites = resolved_calls.get((record.file, record.qualified_name), [])
         direct_non_test, direct_test = split_sites(name_sites)
+        name_read_non_test, name_read_test = split_sites(name_read_sites)
         attr_non_test, attr_test = split_sites(attr_sites)
         read_non_test, read_test = split_sites(read_sites)
         resolved_non_test, resolved_test = split_sites(resolved_sites)
@@ -720,9 +749,9 @@ def main() -> None:
         status = classify_status(
             record,
             exposure_tags,
-            direct_non_test + resolved_non_test,
-            attr_non_test,
-            direct_test + attr_test + read_test + resolved_test,
+            direct_non_test + resolved_non_test + name_read_non_test,
+            attr_non_test + read_non_test,
+            direct_test + name_read_test + attr_test + read_test + resolved_test,
             grade_rows,
         )
         csv_grade = latest_grade(grade_rows[0]) if grade_rows else ""
@@ -746,8 +775,8 @@ def main() -> None:
             "test_direct_calls": str(len(direct_test)),
             "test_attr_calls": str(len(attr_test)),
             "test_attr_reads": str(len(read_test)),
-            "sample_non_test_callers": sample_sites(direct_non_test + resolved_non_test + attr_non_test + read_non_test),
-            "sample_test_callers": sample_sites(direct_test + resolved_test + attr_test + read_test),
+            "sample_non_test_callers": sample_sites(direct_non_test + resolved_non_test + name_read_non_test + attr_non_test + read_non_test),
+            "sample_test_callers": sample_sites(direct_test + resolved_test + name_read_test + attr_test + read_test),
             "status": status,
         }
         rows.append(row)

@@ -159,6 +159,63 @@ def test_cliff_channel_is_triplanar():
     assert cliff.triplanar is True
 
 
+def test_ruleset_priority_order_is_descending_and_stable():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        MaterialChannel,
+        MaterialRuleSet,
+    )
+
+    rules = MaterialRuleSet(
+        channels=(
+            MaterialChannel(channel_id="base", priority=0),
+            MaterialChannel(channel_id="hero", priority=20),
+            MaterialChannel(channel_id="detail", priority=20),
+        ),
+        default_channel_id="base",
+    )
+
+    assert rules.priority_order() == (1, 2, 0)
+
+
+def test_material_priority_claims_overlapping_cells():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        MaterialChannel,
+        MaterialRuleSet,
+        compute_slope_material_weights,
+    )
+
+    state = _build_state()
+    state.mask_stack.set("slope", np.full_like(state.mask_stack.height, 0.1), "test")
+    rules = MaterialRuleSet(
+        channels=(
+            MaterialChannel(channel_id="base", base_weight=1.0),
+            MaterialChannel(channel_id="hero", base_weight=1.0, priority=10),
+        ),
+        default_channel_id="base",
+    )
+
+    weights = compute_slope_material_weights(state.mask_stack, rules)
+    assert float(weights[:, :, rules.index_of("hero")].mean()) == pytest.approx(1.0)
+    assert float(weights[:, :, rules.index_of("base")].mean()) == pytest.approx(0.0)
+
+
+def test_apply_region_mask_lerps_instead_of_multiplying():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import _apply_region_mask
+
+    base = np.zeros((2, 2, 2), dtype=np.float32)
+    base[:, :, 0] = 1.0
+    authored = np.zeros((2, 2, 2), dtype=np.float32)
+    authored[:, :, 1] = 1.0
+    mask = np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32)
+
+    blended = _apply_region_mask(base, authored, mask)
+
+    np.testing.assert_allclose(blended[0, 0], [1.0, 0.0])
+    np.testing.assert_allclose(blended[0, 1], [0.75, 0.25])
+    np.testing.assert_allclose(blended[1, 0], [0.5, 0.5])
+    np.testing.assert_allclose(blended[1, 1], [0.0, 1.0])
+
+
 # ---------------------------------------------------------------------------
 # compute_slope_material_weights
 # ---------------------------------------------------------------------------

@@ -224,10 +224,7 @@ def _build_state(tile_size: int = 24, seed: int = 7):
 def test_cliff_echo_delay_chamfer_fallback_matches_scipy_within_tolerance():
     from veilbreakers_terrain.handlers.terrain_audio_zones import _cliff_echo_delay
 
-    try:
-        import scipy  # noqa: F401
-    except ImportError:
-        pytest.skip("SciPy not installed — cannot compare to ground truth")
+    import scipy  # noqa: F401
 
     cliff = np.zeros((16, 16), dtype=bool)
     cliff[3, 4] = True

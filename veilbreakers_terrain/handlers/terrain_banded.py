@@ -496,8 +496,12 @@ def apply_anti_grain_smoothing(
     if strength <= 0 or band.size == 0:
         return band
 
-    # Map strength → Kuwahara radius (1–4 range covering light to heavy passes).
-    radius = max(1, min(4, int(round(strength * 4.0))))
+    # Map strength + resolution to an odd Kuwahara radius. A 256px tile uses a
+    # 3px reference kernel; higher-resolution tiles scale in world detail space.
+    resolution = max(int(band.shape[0]), int(band.shape[1]))
+    kernel_size = max(3, int((resolution / 256.0) * 3.0 * float(strength)))
+    kernel_size |= 1
+    radius = max(1, min(8, kernel_size // 2))
 
     arr = band.astype(np.float64)
     filtered = _kuwahara_filter(arr, radius)

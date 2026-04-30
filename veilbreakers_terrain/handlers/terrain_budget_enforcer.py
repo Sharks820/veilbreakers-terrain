@@ -188,7 +188,7 @@ def resolve_budget(
     if intent is None:
         return TerrainBudget()
 
-    profile_name = str(getattr(intent, "quality_profile", "production") or "production")
+    profile_name = str(getattr(intent, "quality_profile", "aaa_open_world") or "aaa_open_world")
     try:
         from .terrain_quality_profiles import load_quality_profile
 

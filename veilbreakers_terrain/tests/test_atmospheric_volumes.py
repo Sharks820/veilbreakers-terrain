@@ -12,6 +12,13 @@ from veilbreakers_terrain.handlers.atmospheric_volumes import (
 )
 
 
+def _terrain_kwargs(bounds):
+    min_x, _min_y, max_x, _max_y = bounds
+    cell_size = max((max_x - min_x) / 8.0, 1.0)
+    heightmap = [[float(r + c) for c in range(8)] for r in range(8)]
+    return {"heightmap": heightmap, "cell_size": cell_size}
+
+
 # ---------------------------------------------------------------------------
 # Volume definitions
 # ---------------------------------------------------------------------------
@@ -63,20 +70,23 @@ class TestBiomeRules:
 
 class TestComputeAtmosphericPlacements:
     def test_known_biome(self):
+        bounds = (0, 0, 100, 100)
         placements = compute_atmospheric_placements(
-            "dark_forest", (0, 0, 100, 100), seed=42
+            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(placements) > 0
 
     def test_unknown_biome_uses_default(self):
+        bounds = (0, 0, 50, 50)
         placements = compute_atmospheric_placements(
-            "unknown_biome", (0, 0, 50, 50), seed=42
+            "unknown_biome", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         assert len(placements) > 0
 
     def test_placement_structure(self):
+        bounds = (0, 0, 100, 100)
         placements = compute_atmospheric_placements(
-            "corrupted_swamp", (0, 0, 100, 100)
+            "corrupted_swamp", bounds, **_terrain_kwargs(bounds)
         )
         for p in placements:
             assert "volume_type" in p
@@ -92,7 +102,7 @@ class TestComputeAtmosphericPlacements:
     def test_placements_within_bounds(self):
         bounds = (10, 20, 50, 80)
         placements = compute_atmospheric_placements(
-            "dark_forest", bounds, seed=42
+            "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         for p in placements:
             x, y, z = p["position"]
@@ -100,23 +110,30 @@ class TestComputeAtmosphericPlacements:
             assert bounds[1] <= y <= bounds[3]
 
     def test_density_scale(self):
+        bounds = (0, 0, 100, 100)
         base = compute_atmospheric_placements(
-            "frozen_peaks", (0, 0, 100, 100), density_scale=1.0
+            "frozen_peaks", bounds, density_scale=1.0, **_terrain_kwargs(bounds)
         )
         scaled = compute_atmospheric_placements(
-            "frozen_peaks", (0, 0, 100, 100), density_scale=2.0
+            "frozen_peaks", bounds, density_scale=2.0, **_terrain_kwargs(bounds)
         )
         # More density should produce equal or more volumes
         assert len(scaled) >= len(base)
 
     def test_deterministic(self):
-        p1 = compute_atmospheric_placements("ancient_ruins", (0, 0, 50, 50), seed=42)
-        p2 = compute_atmospheric_placements("ancient_ruins", (0, 0, 50, 50), seed=42)
+        bounds = (0, 0, 50, 50)
+        p1 = compute_atmospheric_placements(
+            "ancient_ruins", bounds, seed=42, **_terrain_kwargs(bounds)
+        )
+        p2 = compute_atmospheric_placements(
+            "ancient_ruins", bounds, seed=42, **_terrain_kwargs(bounds)
+        )
         assert p1 == p2
 
     def test_valid_volume_types(self):
+        bounds = (0, 0, 100, 100)
         placements = compute_atmospheric_placements(
-            "enchanted_glade", (0, 0, 100, 100)
+            "enchanted_glade", bounds, **_terrain_kwargs(bounds)
         )
         for p in placements:
             assert p["volume_type"] in ATMOSPHERIC_VOLUMES

@@ -460,11 +460,13 @@ class TestObservationAndSafetyDispatch:
         assert listed["status"] == "ok"
         assert "production" in listed["profiles"]
 
-        loaded = COMMAND_HANDLERS["terrain_load_quality_profile"]({"name": "production"})
+        with pytest.warns(DeprecationWarning, match="production"):
+            loaded = COMMAND_HANDLERS["terrain_load_quality_profile"]({"name": "production"})
         assert loaded["status"] == "ok"
         assert loaded["profile"]["name"] == "production"
 
-        applied = COMMAND_HANDLERS["terrain_apply_quality_profile"]({"name": "production"})
+        with pytest.warns(DeprecationWarning, match="production"):
+            applied = COMMAND_HANDLERS["terrain_apply_quality_profile"]({"name": "production"})
         assert applied["status"] == "ok"
         assert applied["profile"]["name"] == "production"
 

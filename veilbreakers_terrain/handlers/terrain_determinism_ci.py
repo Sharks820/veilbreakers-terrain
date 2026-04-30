@@ -250,10 +250,14 @@ def _hash_tile_output(tdir: str) -> str:
     import hashlib
     from pathlib import Path as _Path
 
+    root = _Path(tdir)
+    if not root.exists():
+        raise FileNotFoundError(f"determinism output directory missing: {tdir}")
     h = hashlib.sha256()
-    for p in sorted(_Path(tdir).iterdir()):
+    for p in sorted(root.rglob("*")):
         if p.is_file():
-            h.update(p.name.encode("utf-8"))
+            rel = p.relative_to(root).as_posix()
+            h.update(rel.encode("utf-8"))
             h.update(p.read_bytes())
     return h.hexdigest()
 
@@ -283,29 +287,29 @@ def run_determinism_check_subprocess(
 
     hashes: List[str] = []
     for i in range(runs):
-        tdir = tempfile.mkdtemp(prefix=f"vb_det_{i}_")
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "veilbreakers_terrain.cli",
-                "generate_tile",
-                "--seed",
-                str(seed),
-                "--output-dir",
-                tdir,
-                "--size",
-                str(size),
-                "--scale",
-                str(scale),
-                "--terrain-type",
-                terrain_type,
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        hashes.append(_hash_tile_output(tdir))
+        with tempfile.TemporaryDirectory(prefix=f"vb_det_{i}_") as tdir:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "veilbreakers_terrain.cli",
+                    "generate_tile",
+                    "--seed",
+                    str(seed),
+                    "--output-dir",
+                    tdir,
+                    "--size",
+                    str(size),
+                    "--scale",
+                    str(scale),
+                    "--terrain-type",
+                    terrain_type,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            hashes.append(_hash_tile_output(tdir))
 
     return {
         "deterministic": all(h == hashes[0] for h in hashes),

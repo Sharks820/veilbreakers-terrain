@@ -543,6 +543,45 @@
         "terrain_waterfalls.py::validate_waterfall_volumetric",
         "terrain_waterfalls_volumetric.py::validate_waterfall_volumetric"
       ]
+    },
+    "_rng_from_seed": {
+      "status": "reviewed_allowed",
+      "rationale": "Reviewed during 2026-04-29 master-audit closure. Duplicate simple name is scoped by module/class and covered by exact callable matrix rows; new exact ids must be reviewed again.",
+      "callables": [
+        "_biome_grammar.py::_rng_from_seed",
+        "_terrain_noise.py::_rng_from_seed",
+        "terrain_advanced.py::_rng_from_seed",
+        "terrain_morphology.py::_rng_from_seed"
+      ]
+    },
+    "generate": {
+      "status": "reviewed_allowed",
+      "rationale": "Reviewed during 2026-04-29 master-audit closure. Duplicate simple name is scoped by module/class and covered by exact callable matrix rows; new exact ids must be reviewed again.",
+      "callables": [
+        "asset_generation.py::AssetGenerationPipeline.generate",
+        "asset_generation.py::HuggingFaceBackend.generate",
+        "asset_generation.py::RodinBackend.generate",
+        "asset_generation.py::RunPodBackend.generate",
+        "asset_generation.py::_BackendBase.generate",
+        "environment_scatter.py::LocationLayer.generate"
+      ]
+    },
+    "generate_billboard_impostor": {
+      "status": "reviewed_allowed",
+      "rationale": "Reviewed during 2026-04-29 master-audit closure. Duplicate simple name is scoped by module/class and covered by exact callable matrix rows; new exact ids must be reviewed again.",
+      "callables": [
+        "environment_scatter.py::generate_billboard_impostor",
+        "environment_scatter.py::generate_billboard_impostor",
+        "vegetation_lsystem.py::generate_billboard_impostor"
+      ]
+    },
+    "validate": {
+      "status": "reviewed_allowed",
+      "rationale": "Reviewed during 2026-04-29 master-audit closure. Duplicate simple name is scoped by module/class and covered by exact callable matrix rows; new exact ids must be reviewed again.",
+      "callables": [
+        "lod_pipeline.py::SceneBudgetValidator.validate",
+        "terrain_texture_layer_stack.py::TerrainTextureLayerStack.validate"
+      ]
     }
   }
 }

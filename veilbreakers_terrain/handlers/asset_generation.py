@@ -9,8 +9,8 @@ without caring which service produced it:
 * **RunPod** — paid GPU workers running Hunyuan3D-2 docker images. Async job
   submission with polling. Used when HF queue is saturated and turnaround
   matters.
-* **Rodin** (Hyperhuman / Deemos) — best topology for hero assets that will
-  be retopologised in 3ds Max 2027. Image-to-3D via REST.
+* **Rodin** (Hyperhuman / Deemos) — strong topology for hero assets that will
+  be retopologised in Blender or the current artist DCC. Image-to-3D via REST.
 
 The module is import-safe with **no hard dependency** on the cloud SDKs:
 ``gradio_client``, ``runpod``, and ``requests`` are imported lazily so the
@@ -117,8 +117,8 @@ class AssetRequest:
             directory layout and downstream manifest tagging.
         output_name: Stem for the produced GLB file (no extension).
         target_poly_count: Game-ready triangle budget. Backends respect
-            this only as a *hint*; final retopo happens in 3ds Max
-            ProOptimizer.
+            this only as a *hint*; final retopo happens in Blender or the
+            current artist DCC.
         seed: Optional generation seed. Backends that don't support seeds
             will ignore this.
         metadata: Free-form dict written next to the GLB as a sidecar

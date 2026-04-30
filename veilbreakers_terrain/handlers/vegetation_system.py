@@ -354,7 +354,9 @@ def compute_vegetation_placement(
     min_distance : float
         Minimum distance between placed vegetation instances (Poisson disk r).
     water_level : float
-        Normalised height [0, 1] below which no vegetation is placed.
+        Water rejection threshold. Values in [0, 1] are interpreted as a
+        normalised fraction of the current terrain height range; values outside
+        that range are interpreted as world-space metres.
     exclusion_zones : list of dict or None
         PROP-004 -- axis-aligned rectangular no-plant zones.
     moisture_map : array-like or None
@@ -413,6 +415,12 @@ def compute_vegetation_placement(
     max_h = max(heights)
     has_height_variation = max_h > min_h
     height_range = max_h - min_h if has_height_variation else 1.0
+    water_level_f = float(water_level)
+    water_level_world = (
+        float(min_h) + water_level_f * float(height_range)
+        if 0.0 <= water_level_f <= 1.0
+        else water_level_f
+    )
 
     vertex_arr = np.asarray(terrain_vertices, dtype=np.float64)
     normal_arr = np.asarray(terrain_normals, dtype=np.float64)
@@ -475,8 +483,8 @@ def compute_vegetation_placement(
             return left
         return idx
 
-    def _sample_terrain(px: float, py: float) -> tuple[float, float, float]:
-        """Sample (normalised_height, slope_degrees, moisture) at world position."""
+    def _sample_terrain(px: float, py: float) -> tuple[float, float, float, float]:
+        """Sample (normalised_height, world_z, slope_degrees, moisture)."""
         if use_raster_sample and height_grid is not None and slope_grid is not None:
             ri = _nearest_axis_index(y_axis, py)
             ci = _nearest_axis_index(x_axis, px)
@@ -502,9 +510,11 @@ def compute_vegetation_placement(
                             best_idx = vi
 
             if best_idx < 0:
-                return 0.5, 0.0, 0.5
+                fallback_z = float(min_h) + 0.5 * float(height_range)
+                return 0.5, fallback_z, 0.0, 0.5
 
             _vx, _vy, vz = terrain_vertices[best_idx]
+            vz = float(vz)
             norm_height = (vz - min_h) / height_range
 
             nx, ny, nz = terrain_normals[best_idx]
@@ -529,7 +539,7 @@ def compute_vegetation_placement(
         else:
             moisture = max(0.0, min(1.0, 1.0 - norm_height ** 0.7))
 
-        return norm_height, slope_deg, moisture
+        return norm_height, float(vz), slope_deg, moisture
 
     # ------------------------------------------------------------------
     # LOD tier boundaries — AAA hierarchical density control
@@ -632,7 +642,7 @@ def compute_vegetation_placement(
             if lod_hint == 2 and cam_dist < lod_mid_m:
                 continue
 
-            norm_h, slope_deg, moisture = _sample_terrain(wx, wy)
+            norm_h, terrain_z, slope_deg, moisture = _sample_terrain(wx, wy)
 
             # 1. Exclusion zones
             if exclusion_zones:
@@ -646,7 +656,7 @@ def compute_vegetation_placement(
                     continue
 
             # 2. Water level filter
-            if has_height_variation and norm_h < water_level:
+            if has_height_variation and terrain_z < water_level_world:
                 continue
 
             # 3. Ecotone alpha: determine whether this position should draw
@@ -1499,8 +1509,8 @@ def scatter_biome_vegetation(
     if _mask_stack is not None:
         build_biome_density_map(_mask_stack, biome_name)
 
-    # Wave 5 — emit foliage placement manifest when requested.
-    # See docs/FOLIAGE_WAVE5_RESEARCH.md for the schema.
+    # Emit foliage placement manifest when requested.
+    # See docs/FOLIAGE_MANIFEST_PIPELINE.md for the current schema.
     if params.get("emit_manifest"):
         mesh_library_path = params.get("mesh_library_path")
         if mesh_library_path is None:
@@ -1529,13 +1539,12 @@ def scatter_biome_vegetation(
 
 
 # ===========================================================================
-# Wave 5 — foliage placement manifest emission.
+# Foliage placement manifest emission.
 #
 # Pure-logic, Blender-free helpers that translate the placement spec produced
-# by :func:`build_vegetation_placement_spec` into a Unity / Forest Pack /
-# 3ds Max compatible manifest. Schema documented in
-# ``docs/FOLIAGE_WAVE5_RESEARCH.md`` (section "foliage_placement_manifest.json
-# Schema"). Schema version: 1.0.
+# by :func:`build_vegetation_placement_spec` into the Unity Terrain /
+# GPU-instancing manifest documented in ``docs/FOLIAGE_MANIFEST_PIPELINE.md``.
+# Schema version: 1.0.
 # ===========================================================================
 
 
@@ -1589,7 +1598,7 @@ def load_mesh_library(library_path: "str | Any") -> dict[str, dict[str, Any]]:
         entry.setdefault("lod_meshes", [])
         entry.setdefault("atlas_path", None)
         entry.setdefault("unity_render_mode", "terrain_tree")
-        entry.setdefault("forestpack_reference_layer", f"FP_REF_{key}")
+        entry.setdefault("render_batch_key", key)
         entry.setdefault("wind_color_baked", False)
         entry.setdefault("physics_collider", "none")
         out[str(key)] = entry

@@ -8,30 +8,37 @@ from __future__ import annotations
 
 import json
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-import veilbreakers_terrain.handlers.asset_generation as asset_generation
-from veilbreakers_terrain.handlers.asset_generation import (
-    AssetGenerationBackend,
-    AssetGenerationPipeline,
-    AssetRequest,
-    DARK_FANTASY_PRESETS,
-    HuggingFaceBackend,
-    KNOWN_CATEGORIES,
-    PipelineConfig,
-    RodinBackend,
-    RunPodBackend,
-    _atomic_copy,
-    _atomic_write_json,
-    _progress,
-    _retry,
-    apply_preset,
-    validate_glb,
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message="veilbreakers_terrain.handlers.asset_generation is deprecated.*",
+        category=DeprecationWarning,
+    )
+    import veilbreakers_terrain.handlers.asset_generation as asset_generation
+    from veilbreakers_terrain.handlers.asset_generation import (
+        AssetGenerationBackend,
+        AssetGenerationPipeline,
+        AssetRequest,
+        DARK_FANTASY_PRESETS,
+        HuggingFaceBackend,
+        KNOWN_CATEGORIES,
+        PipelineConfig,
+        RodinBackend,
+        RunPodBackend,
+        _atomic_copy,
+        _atomic_write_json,
+        _progress,
+        _retry,
+        apply_preset,
+        validate_glb,
+    )
 
 
 # ---------------------------------------------------------------------------

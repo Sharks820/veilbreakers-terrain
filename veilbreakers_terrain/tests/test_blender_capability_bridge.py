@@ -15,6 +15,7 @@ Two pillars:
 from __future__ import annotations
 
 import csv
+import builtins
 import sys
 from pathlib import Path
 from types import SimpleNamespace, ModuleType
@@ -107,7 +108,8 @@ def test_blender_capability_audit_has_full_coverage() -> None:
         / "docs" / "BLENDER_INTEGRATION_AUDIT.csv"
     )
     assert csv_path.exists(), f"missing audit CSV: {csv_path}"
-    rows = list(csv.DictReader(csv_path.open("r", encoding="utf-8")))
+    with csv_path.open("r", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
     assert len(rows) >= 40, f"audit CSV has only {len(rows)} rows"
     # Every Phase J command should appear somewhere in the CSV.
     blob = csv_path.read_text(encoding="utf-8")
@@ -115,16 +117,20 @@ def test_blender_capability_audit_has_full_coverage() -> None:
         assert cmd in blob, f"audit CSV doesn't mention {cmd}"
 
 
-def test_dispatch_returns_error_when_bpy_missing() -> None:
+def test_dispatch_returns_error_when_bpy_missing(monkeypatch) -> None:
     """Without bpy, the bridge returns a structured bpy_unavailable error."""
-    # Ensure bpy isn't accidentally importable during this test.
-    if "bpy" in sys.modules:
-        pytest.skip("bpy is available in this environment; error path untested")
+    monkeypatch.delitem(sys.modules, "bpy", raising=False)
+    real_import = builtins.__import__
+
+    def _block_bpy_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "bpy":
+            raise ModuleNotFoundError("No module named 'bpy'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _block_bpy_import)
     r = dispatch("modifier_list", {"object_name": "foo"})
     assert r["status"] == "error"
-    # Could be bpy_unavailable or object_not_found depending on env.
-    assert r["error"] in {"bpy_unavailable", "handler_exception",
-                          "object_not_found", "not_a_mesh"}
+    assert r["error"] == "bpy_unavailable"
 
 
 # ---------------------------------------------------------------------------

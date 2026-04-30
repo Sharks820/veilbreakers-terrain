@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import argparse
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -41,9 +42,9 @@ MANUAL_NOTES: Dict[str, Dict[str, str]] = {
         "notes": "Packaging smoke plus source-text grep. Useful for file presence, weak for callable behavior.",
     },
     "veilbreakers_terrain/tests/test_world_map_light_atmosphere.py": {
-        "label": "mixed_runtime_and_stale",
+        "label": "live_guardrail",
         "priority": "P0",
-        "notes": "Contains live handler execution, but also stale recommendation/cost thresholds and wrapper paths that omit terrain-aware heightmap context.",
+        "notes": "Live handler execution with terrain-aware heightmap, mask, density, cell-size, and weather wrapper coverage.",
     },
     "veilbreakers_terrain/tests/test_road_coastline_terrain_features.py": {
         "label": "live_guardrail_expensive",
@@ -56,9 +57,9 @@ MANUAL_NOTES: Dict[str, Dict[str, str]] = {
         "notes": "Large file, but current runtime is efficient (~0.47s for 396 collected tests). Not a priority inefficiency target.",
     },
     "veilbreakers_terrain/tests/test_terrain_chunking.py": {
-        "label": "live_guardrail_stale_api",
+        "label": "live_guardrail",
         "priority": "P0",
-        "notes": "Catches real contract drift, but expected behavior is stale versus current compute_chunk_lod return type.",
+        "notes": "Current compute_chunk_lod integer contract is verified; downsampling behavior is covered through _downsample_heightmap callers.",
     },
     "veilbreakers_terrain/tests/test_terrain_checkpoints.py": {
         "label": "live_guardrail",
@@ -101,6 +102,11 @@ def collect_counts() -> Counter:
         text=True,
         check=False,
     )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "pytest collection failed while building test guardrail audit:\n"
+            f"{proc.stdout}\n{proc.stderr}"
+        )
     counts: Counter = Counter()
     for line in proc.stdout.splitlines():
         line = line.strip()
@@ -133,6 +139,14 @@ def default_priority(label: str) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--strict-quality",
+        action="store_true",
+        help="Fail if stale, mixed-stale, or uncollected test files are present.",
+    )
+    args = parser.parse_args()
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     collected_counts = collect_counts()
     rows = []
@@ -219,6 +233,18 @@ def main() -> None:
 
     print(f"Wrote {OUTPUT_CSV}")
     print(f"Wrote {OUTPUT_MD}")
+
+    stale_rows = [
+        row for row in rows
+        if row["label"] in {"live_guardrail_stale_api", "mixed_runtime_and_stale"}
+    ]
+    uncollected_rows = [row for row in rows if int(row["collected_tests"]) == 0]
+    if args.strict_quality and (stale_rows or uncollected_rows):
+        for row in stale_rows:
+            print(f"STALE_TEST_GUARDRAIL: {row['test_file']} [{row['label']}] {row['notes']}")
+        for row in uncollected_rows:
+            print(f"UNWIRED_TEST_FILE: {row['test_file']} collected_tests=0")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

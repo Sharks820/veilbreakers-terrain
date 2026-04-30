@@ -1123,16 +1123,34 @@ def pass_erosion(
             region,
         )
     profile = intent.erosion_profile or "temperate"
+    quality_name = getattr(intent, "quality_profile", None) or "aaa_open_world"
+    try:
+        from .terrain_quality_profiles import load_quality_profile
+
+        quality = load_quality_profile(str(quality_name))
+    except Exception:  # noqa: BLE001 - fall back to project default profile
+        from .terrain_quality_profiles import load_quality_profile
+
+        quality = load_quality_profile("aaa_open_world")
 
     # AAA hydraulic erosion: minimum 50k particles (Olsen 2004 / Gaea reference).
     # Prior values of 200–600 produced smooth but geologically implausible output
     # (no coherent drainage networks, no alluvial fans, no ridge-to-valley transport).
-    # The secondary apply_hydraulic_erosion_masks call below uses these counts.
+    # The quality-profile value is scaled so aaa_open_world(2000) preserves the
+    # established 50k temperate budget while lower tiers remain genuinely lower.
+    quality_hydraulic = max(1, int(quality.hydraulic_erosion_iterations) * 25)
+    quality_thermal = max(0, int(quality.thermal_erosion_iterations))
+    climate_params = {
+        "temperate": dict(iteration_scale=1.0, talus_offset=7.0),
+        "arid":      dict(iteration_scale=0.8, talus_offset=12.0),
+        "alpine":    dict(iteration_scale=1.2, talus_offset=2.0),
+    }.get(profile, dict(iteration_scale=1.0, talus_offset=7.0))
     profile_params = {
-        "temperate": dict(iterations=50_000, talus_angle=40.0),
-        "arid":      dict(iterations=40_000, talus_angle=45.0),   # drier = less flow
-        "alpine":    dict(iterations=60_000, talus_angle=35.0),   # glacial = more
-    }.get(profile, dict(iterations=50_000, talus_angle=40.0))
+        "iterations": max(1, int(round(quality_hydraulic * climate_params["iteration_scale"]))),
+        "thermal_iterations": quality_thermal,
+        "talus_angle": float(quality.talus_angle_degrees) + float(climate_params["talus_offset"]),
+        "quality_profile": quality.name,
+    }
 
     # Fix 12.3: Variable erodibility from rock_hardness channel
     _K_BASE: float = 0.001           # soft sediment baseline
@@ -1240,7 +1258,7 @@ def pass_erosion(
     # --- Thermal erosion (smooths sharp analytical features) ---
     thermal = apply_thermal_erosion_masks(
         hydro.height,
-        iterations=6,
+        iterations=profile_params["thermal_iterations"],
         talus_angle=profile_params["talus_angle"],
         cell_size=stack.cell_size,
     )
@@ -1389,8 +1407,9 @@ def pass_erosion(
         ),
         metrics={
             "profile": profile,
+            "quality_profile": profile_params["quality_profile"],
             "hydraulic_iterations": profile_params["iterations"],
-            "thermal_iterations": 6,
+            "thermal_iterations": profile_params["thermal_iterations"],
             "total_erosion": _total_erosion,
             "total_deposition": _total_deposition,
             "sediment_mass_balance_ratio": _mass_balance_ratio,

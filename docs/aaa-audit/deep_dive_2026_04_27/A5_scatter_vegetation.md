@@ -29,7 +29,7 @@ Fix Required: Add water surface check to validate_scatter_point_table(). Wire st
 File: _scatter_engine.py:144-246
 Severity: EXCELLENT
 
-Bridson O(n) algorithm with grid acceleration. Density-weighted radius: r_local = min_distance / max(density_val, 0.05). Matches Forest Pack Pro/Houdini standards.
+Bridson O(n) algorithm with grid acceleration. Density-weighted radius: r_local = min_distance / max(density_val, 0.05). Matches Houdini/UE PCG-style density scatter standards.
 
 Validation checks: duplicate positions (mm-rounded), species diversity heuristic, quaternion unit-length, height/position Z mismatch detection.
 

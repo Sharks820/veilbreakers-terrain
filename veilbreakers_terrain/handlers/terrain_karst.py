@@ -316,6 +316,20 @@ def detect_karst_candidates(
 # ---------------------------------------------------------------------------
 
 
+def _compose_uvala(base_delta: np.ndarray, depression_delta: np.ndarray) -> np.ndarray:
+    """Additive uvala composition for overlapping karst depressions.
+
+    Depression deltas are signed: values below zero carve downward. Additive
+    composition preserves compound-basin depth when dolines overlap; using
+    ``minimum`` alone drops all but the deepest depression and creates phantom
+    "completed" uvalas with no combined carve.
+    """
+    return np.asarray(base_delta, dtype=np.float64) + np.minimum(
+        0.0,
+        np.asarray(depression_delta, dtype=np.float64),
+    )
+
+
 def carve_karst_features(
     stack: TerrainMaskStack,
     features: List[KarstFeature],
@@ -334,10 +348,9 @@ def carve_karst_features(
       - Profile is slightly elliptical (1.2x in the collapse-orientation axis)
         so each feature has a unique collapse direction based on a hash of its
         world position.
-    **Uvala** — when two or more sinkholes overlap (centres within 1.5x their
-      combined radii), their individual deltas compose via np.minimum so
-      depressions merge into the elongated compound basins characteristic of
-      coalescent dissolution (Ford & Williams 2007).
+    **Uvala** — when sinkholes overlap, their signed depression deltas compose
+      additively via ``base + min(0, depression)`` so compound basins deepen
+      instead of merely selecting the deepest single source.
     **Polje** — flat-floored shallow basin using a superellipse (n=4) profile:
       near-flat interior with a sharp rim transition, aspect ratio 2.5:1
       matching real karstic poljes.
@@ -393,7 +406,7 @@ def carve_karst_features(
             )
             # Zero outside the feature radius
             depth_arr = np.where(dist_norm < 1.0, depth_arr, 0.0)
-            delta = np.minimum(delta, -depth_arr)
+            delta = _compose_uvala(delta, -depth_arr)
 
         elif f.kind == "polje":
             # Superellipse (n=4): near-flat interior, sharp rim, elongated 2.5:1
@@ -407,7 +420,7 @@ def carve_karst_features(
             t_blend = np.clip(1.0 - dist_super ** 0.25, 0.0, 1.0)
             depth_arr = depth_scale * t_blend
             inside = dist_super < 1.0
-            delta = np.where(inside, np.minimum(delta, -depth_arr), delta)
+            delta = np.where(inside, _compose_uvala(delta, -depth_arr), delta)
 
     return delta
 
@@ -544,6 +557,7 @@ __all__ = [
     "SinkholeSpec",
     "KarstFeature",
     "detect_karst_candidates",
+    "_compose_uvala",
     "carve_karst_features",
     "pass_karst",
     "get_sinkhole_specs",

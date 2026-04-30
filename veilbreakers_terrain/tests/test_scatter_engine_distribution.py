@@ -1,9 +1,9 @@
-"""Tests for Forest Pack Pro equivalent functions in _scatter_engine.
+"""Tests for production scatter distribution helpers in _scatter_engine.
 
 Covers:
-  - cluster_density_map  (Cluster Mode)
-  - edge_scatter         (Edge Mode)
-  - apply_collision_exclusion (Collision system)
+  - cluster_density_map
+  - edge_scatter
+  - apply_collision_exclusion
 """
 
 from __future__ import annotations

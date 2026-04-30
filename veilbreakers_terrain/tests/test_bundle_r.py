@@ -593,8 +593,7 @@ def test_addon_version_mismatch_raises():
     )
 
     version = _read_bl_info_version()
-    if version is None:
-        pytest.skip("bl_info not present — version check is a no-op")
+    assert version is not None, "bl_info must be present for version mismatch coverage"
     with pytest.raises(AddonVersionMismatch):
         assert_addon_version_matches((999, 0, 0))
 

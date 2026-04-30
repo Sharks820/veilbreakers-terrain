@@ -284,8 +284,9 @@ def apply_differential_erosion(
        ``max_erosion_fraction * relief_span``.  Valley floors are not eroded
        further (relief_norm weight).
 
-    This function does NOT modify ``stack.height`` in place; the caller
-    applies the returned delta via ``stack.set``.
+    This function does NOT modify ``stack.height`` in place; callers must
+    apply the returned delta through ``TerrainMaskStack.set`` so height bounds,
+    provenance, and dirty-channel state stay coherent.
 
     Args:
         stack: Must have both ``height`` and ``rock_hardness`` populated.

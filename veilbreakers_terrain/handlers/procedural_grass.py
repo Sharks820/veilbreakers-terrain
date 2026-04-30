@@ -4,7 +4,7 @@ Drives placement decisions from the :class:`TerrainMaskStack` channels
 (slope, drainage, biome_id, road_sdf_dist, cliff_label, water_surface,
 hero_exclusion) and emits per-instance records that round-trip through the
 foliage placement manifest schema documented in
-``docs/FOLIAGE_WAVE5_RESEARCH.md``.
+``docs/FOLIAGE_MANIFEST_PIPELINE.md``.
 
 The placement is **vectorised numpy** end-to-end — no Python loops over
 individual cells. SDF erosion uses ``scipy.ndimage.distance_transform_edt``
@@ -112,7 +112,7 @@ class GrassSpecies:
         min_spacing_m: Poisson disk minimum spacing in metres.
         category: Manifest category — usually ``ground_cover`` for grass.
         unity_render_mode: ``detail_prototype`` for grass billboards or
-            ``gpu_instancer`` for full-mesh cards. Mirrors Wave 5 schema.
+            ``gpu_instancer`` for full-mesh cards.
     """
 
     name: str
@@ -126,7 +126,7 @@ class GrassSpecies:
     unity_render_mode: str = "detail_prototype"
     mesh_path: Optional[Path] = None
     billboard_texture_path: Optional[Path] = None
-    forestpack_reference_layer: Optional[str] = None
+    render_batch_key: Optional[str] = None
 
     def matches_biome(self, biome_name: str) -> bool:
         return ("*" in self.biomes) or (biome_name in self.biomes)
@@ -574,9 +574,9 @@ class ProceduralGrassSystem:
         ``Grass_<species>`` node group that scatters the species' mesh on
         any surface object via a Geometry Nodes modifier.
 
-        Used for cinematic / hero-shot Blender scenes, NOT in the runtime
-        path. Wave 5 research locked Forest Pack + Unity GPU Resident
-        Drawer as the production scatter renderers.
+        Used for cinematic / hero-shot Blender scenes, not in the runtime
+        path. Runtime scatter is the data-driven Unity Terrain / GPU
+        instancing manifest.
         """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -651,7 +651,7 @@ if __name__ == "__main__":
         existing_manifest_path: Optional[Path] = None,
         terrain_meta: Optional[dict[str, Any]] = None,
     ) -> Path:
-        """Write a manifest JSON compatible with FOLIAGE_WAVE5_RESEARCH.md.
+        """Write a manifest JSON compatible with FOLIAGE_MANIFEST_PIPELINE.md.
 
         When ``existing_manifest_path`` is given, the grass entries are
         merged into it (adding to ``mesh_library`` and ``instances``).
@@ -685,7 +685,7 @@ if __name__ == "__main__":
                         "lod_meshes": [],
                         "category": rec.category,
                         "unity_render_mode": "detail_prototype",
-                        "forestpack_reference_layer": f"FP_REF_{rec.species}",
+                        "render_batch_key": rec.species,
                         "wind_color_baked": False,
                         "physics_collider": "none",
                     }

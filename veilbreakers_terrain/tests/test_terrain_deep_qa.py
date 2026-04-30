@@ -337,6 +337,41 @@ def test_determinism_check_no_regression_on_equal_hashes():
     assert detect_determinism_regressions("abc123", "abc123") == []
 
 
+def test_hash_tile_output_hashes_nested_relative_paths(tmp_path):
+    from veilbreakers_terrain.handlers.terrain_determinism_ci import _hash_tile_output
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "tile.bin").write_bytes(b"same")
+    (tmp_path / "z.bin").write_bytes(b"root")
+    first = _hash_tile_output(str(tmp_path))
+
+    (tmp_path / "a" / "tile.bin").write_bytes(b"changed")
+    second = _hash_tile_output(str(tmp_path))
+
+    assert first != second
+
+
+def test_run_determinism_check_subprocess_uses_temp_dirs(monkeypatch):
+    import subprocess
+
+    from veilbreakers_terrain.handlers import terrain_determinism_ci as det
+
+    seen_dirs: list[str] = []
+
+    def _fake_run(cmd, capture_output, text, check):
+        out_dir = cmd[cmd.index("--output-dir") + 1]
+        seen_dirs.append(out_dir)
+        Path(out_dir, "tile.json").write_text('{"ok":true}', encoding="utf-8")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    report = det.run_determinism_check_subprocess(seed=9, runs=2, size=4)
+
+    assert report["deterministic"] is True
+    assert report["run_count"] == 2
+    assert len(seen_dirs) == 2
+
+
 def test_determinism_check_run_records_populated():
     from veilbreakers_terrain.handlers.terrain_determinism_ci import run_determinism_check
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController

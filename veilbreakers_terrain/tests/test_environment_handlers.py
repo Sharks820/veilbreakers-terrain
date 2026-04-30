@@ -964,7 +964,8 @@ class TestRoadHandlerTerrainAwareRouting:
         def _fake_run_height_solver(heightmap, solver, **kwargs):
             return fake_legacy_path, fake_legacy_graded, {}
 
-        with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
+        with pytest.warns(DeprecationWarning, match="VEILBREAKERS_ROAD_STRICT=0"), \
+             patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
              patch.object(env_mod.bmesh, "new", return_value=_BM()), \
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \

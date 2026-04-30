@@ -68,6 +68,9 @@ class MaterialChannel:
     wetness_max: float = 1.0
     # Base multiplier — higher = channel "wins" in overlap regions
     base_weight: float = 1.0
+    # Optional hard override order. Higher priority wins in cells where
+    # multiple priority channels contribute non-zero weight.
+    priority: int = 0
 
 
 @dataclass
@@ -97,6 +100,15 @@ class MaterialRuleSet:
             if c.channel_id == channel_id:
                 return i
         raise KeyError(channel_id)
+
+    def priority_order(self) -> Tuple[int, ...]:
+        """Return channel indices sorted by priority desc, stable by declaration."""
+        return tuple(
+            idx for idx, _ch in sorted(
+                enumerate(self.channels),
+                key=lambda item: (-int(item[1].priority), item[0]),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +619,21 @@ def compute_slope_material_weights(
         except KeyError:
             pass  # No snow channel in this rule set; skip silently.
 
+    priority_indices = [idx for idx, ch in enumerate(rules.channels) if int(ch.priority) > 0]
+    if priority_indices:
+        claimed = np.zeros((H, W), dtype=bool)
+        priority_weights = weights.copy()
+        weights[:, :, :] = 0.0
+        for idx in rules.priority_order():
+            if idx not in priority_indices:
+                continue
+            mask = (priority_weights[:, :, idx] > 1e-9) & (~claimed)
+            if mask.any():
+                weights[mask, idx] = priority_weights[mask, idx]
+                claimed |= mask
+        if (~claimed).any():
+            weights[~claimed, :] = priority_weights[~claimed, :]
+
     # Fix 10.6 (REQ-P10-003): Brucks height-blend at rock/dirt boundary.
     # Rock strata poke through dirt according to strata band height.
     try:
@@ -770,6 +797,27 @@ def _resolve_height_blend_gammas(
     return tuple(gammas)
 
 
+def _apply_region_mask(
+    base_weight_map: np.ndarray,
+    weight_map: np.ndarray,
+    region_mask: np.ndarray,
+) -> np.ndarray:
+    """Blend authored material weights through a region mask instead of multiplying.
+
+    ``region_mask`` is [0, 1]: 0 keeps the base map, 1 takes the new map. This
+    avoids zeroing or darkening weights at region boundaries.
+    """
+    base = np.asarray(base_weight_map, dtype=np.float32)
+    authored = np.asarray(weight_map, dtype=np.float32)
+    mask = np.asarray(region_mask, dtype=np.float32)
+    if base.shape != authored.shape:
+        raise ValueError("_apply_region_mask requires matching base and weight shapes")
+    if mask.shape != base.shape[:2]:
+        raise ValueError("_apply_region_mask mask shape must match weight map HxW")
+    mask3 = np.clip(mask, 0.0, 1.0)[:, :, np.newaxis]
+    return ((1.0 - mask3) * base + mask3 * authored).astype(np.float32)
+
+
 def _build_material_channel_exts(
     rules: MaterialRuleSet,
     hints: dict,
@@ -879,7 +927,7 @@ def pass_materials(
         for issue in validate_cliff_silhouette_area(secondary_cliff_coverage, tier="secondary"):
             (issues if issue.is_hard() else warnings).append(issue)
 
-    # Region scoping: preserve existing weights outside the region
+    # Region scoping: blend via a region mask so boundaries preserve base weights
     if region is not None:
         existing = stack.get("splatmap_weights_layer")
         r_slice, c_slice = region.to_cell_slice(
@@ -888,14 +936,13 @@ def pass_materials(
             cell_size=stack.cell_size,
             grid_shape=stack.height.shape,
         )
+        region_mask = np.zeros(new_weights.shape[:2], dtype=np.float32)
+        region_mask[r_slice, c_slice] = 1.0
         if existing is not None and np.asarray(existing).shape == new_weights.shape:
-            merged = np.asarray(existing, dtype=np.float32).copy()
-            merged[r_slice, c_slice, :] = new_weights[r_slice, c_slice, :]
-            new_weights = merged
+            new_weights = _apply_region_mask(existing, new_weights, region_mask)
         else:
             # No prior weights — zero outside region, new weights inside
-            merged = np.zeros_like(new_weights)
-            merged[r_slice, c_slice, :] = new_weights[r_slice, c_slice, :]
+            merged = _apply_region_mask(np.zeros_like(new_weights), new_weights, region_mask)
             # Leave outside cells as zero-sum (downstream code can treat
             # that as "not authored yet")
             new_weights = merged
@@ -1005,6 +1052,7 @@ __all__ = [
     "ROAD_EDGE_FADE_WIDTH",
     "apply_sdf_road_blend",
     "compute_slope_material_weights",
+    "_apply_region_mask",
     "pass_materials",
     "register_bundle_b_material_passes",
 ]

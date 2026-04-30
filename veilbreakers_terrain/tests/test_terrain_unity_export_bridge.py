@@ -81,6 +81,7 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     with tempfile.TemporaryDirectory() as td:
         manifest = export_unity_manifest(stack, Path(td))
         descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+        tangent_png_header = (Path(td) / "terrain_normals_tangent.png").read_bytes()[:4]
 
     assert descriptor["heightmap"]["file"] == "heightmap.raw"
     assert len(descriptor["terrain_layers"]) == 4
@@ -91,6 +92,19 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     assert manifest["height_max_m"] == 22.0
     assert descriptor["height_min_m"] == 10.0 * UNITY_SCALE_FACTOR
     assert descriptor["height_max_m"] == 22.0 * UNITY_SCALE_FACTOR
+    assert descriptor["terrain_normal_map_file"] == "terrain_normals_tangent.png"
+    assert manifest["files"]["terrain_normals_tangent.png"]["encoding"] == "png_rgba8_tangent_space_normal"
+    assert tangent_png_header == b"\x89PNG"
+
+
+def test_tangent_space_normal_map_packs_flat_heightfield():
+    from veilbreakers_terrain.handlers.terrain_unity_export import _pack_tangent_space_normal_rgba
+
+    packed = _pack_tangent_space_normal_rgba(np.zeros((3, 3), dtype=np.float32), 1.0)
+
+    assert packed.shape == (3, 3, 4)
+    assert packed.dtype == np.uint8
+    assert packed[1, 1].tolist() == [128, 128, 255, 255]
 
 
 def test_heightmap_raw_export_is_flipped_once(monkeypatch):
@@ -331,8 +345,14 @@ def test_unity_plugin_metadata_and_descriptor_cover_phase6_files():
         "ValidationStatus",
         "ValidationIssueCount",
         "SeamContractWorldId",
+        "TerrainNormalMapFile",
+        "TerrainNormalMapAssetPath",
     ):
         assert token in metadata_source
+
+    assert "ImportTerrainNormalMapAsset" in importer_source
+    assert "TextureImporterType.NormalMap" in importer_source
+    assert "terrain_normal_map_file" in importer_source
 
 
 def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():

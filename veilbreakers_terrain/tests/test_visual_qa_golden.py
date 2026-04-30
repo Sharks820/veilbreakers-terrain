@@ -60,7 +60,6 @@ class TestCompareRenderToGolden:
         assert result["ok"] is False
         assert result["reason"] == "render_absent"
 
-    @pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
     def test_identical_images_pass(self, tmp_path):
         img = np.random.default_rng(0).random((64, 64, 3)).astype(np.float32)
         render = tmp_path / "render.png"
@@ -72,7 +71,6 @@ class TestCompareRenderToGolden:
         assert result["ssim"] is not None
         assert result["ssim"] > 0.95
 
-    @pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
     def test_completely_different_images_fail(self, tmp_path):
         rng = np.random.default_rng(1)
         render = tmp_path / "render.png"
@@ -84,7 +82,6 @@ class TestCompareRenderToGolden:
         assert result["ssim"] is not None
         assert result["ssim"] < 0.95
 
-    @pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
     def test_slightly_noisy_image_passes_low_threshold(self, tmp_path):
         rng = np.random.default_rng(42)
         base = rng.random((64, 64, 3)).astype(np.float32)
@@ -117,7 +114,6 @@ class TestCompareRenderToGolden:
         assert isinstance(result, dict)
         assert "ok" in result
 
-    @pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
     def test_size_mismatch_handled(self, tmp_path):
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"

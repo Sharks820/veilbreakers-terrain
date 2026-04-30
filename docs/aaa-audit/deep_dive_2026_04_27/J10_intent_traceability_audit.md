@@ -363,7 +363,7 @@ visible output changes).
 | `TerrainQualityProfile.boneyard_density` / `corruption_spread_radius_m` / `shrine_placement_attempts` | Dark-fantasy specifics that have no implementation; should live on a `DarkFantasySpec`, not `QualityProfile` |
 | `CaveArchetypeSpec.sculpt_mode` / `ambient_light_factor` | I3 flagged unclear intent / lighting belongs in renderer |
 | `SpeciesSpec.{slope_max_deg, altitude_min_m, altitude_max_m, wetness_tolerance}` | Explicitly DEPRECATED in source comments |
-| `GrassSpecies.forestpack_reference_layer` | ForestPack interop never built |
+| `GrassSpecies.render_batch_key` | Replaces retired DCC interop hint; used as the runtime manifest batch key |
 | `TerrainBudget.chunk_grid` | Declared but never indexed |
 | `TerrainIntentState.morphology_templates` / `biome_rules` | Replaced by the live `_biome_grammar` system |
 

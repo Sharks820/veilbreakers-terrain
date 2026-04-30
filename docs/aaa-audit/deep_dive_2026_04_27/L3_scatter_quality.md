@@ -103,7 +103,7 @@ The handler does not receive a `biome_id` channel or a `biome_mask`. It scatters
 
 ## 5. Collision exclusion is dead
 
-`apply_collision_exclusion` is imported at `environment_scatter.py:57` and **never called** anywhere in `environment_scatter.py`. Only call sites are in `tests/test_scatter_engine_forest_pack.py` (lines 181, 184, 191, 199, 211, 226, 234, 240, 249, 259).
+`apply_collision_exclusion` is imported at `environment_scatter.py:57` and **never called** anywhere in `environment_scatter.py`. Direct behavior coverage now lives in `tests/test_scatter_engine_distribution.py`; the production scatter route still needs general prop-vs-prop collision wiring.
 
 J6 already classified this P2. I do **not** elevate without new evidence. The reason J6 is conservative: building exclusion zones (`_in_building`/`building_exclusion_zones_world`) and combat clearings (`_in_clearing`) DO run inside `handle_scatter_vegetation` (`environment_scatter.py:3158-3180`), and tree-shadow exclusion runs inside the ground-cover pass. So props vs. building geometry have a guard. What's missing is the *general* prop-vs-prop volumetric collision exclusion (e.g., torch inside boulder, log embedded in trunk). For the dark fantasy aesthetic where ruins and rocks intermix densely, the absence is noticeable but masked by the other guards. P2 stands.
 

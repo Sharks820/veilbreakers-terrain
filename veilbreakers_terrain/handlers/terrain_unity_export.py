@@ -286,6 +286,17 @@ def _zup_to_unity_vectors(arr: np.ndarray) -> np.ndarray:
     )
 
 
+def _pack_tangent_space_normal_rgba(heightmap: np.ndarray, cell_size: float) -> np.ndarray:
+    """Pack heightfield normals into an 8-bit tangent-space Unity normal map."""
+    normals = _compute_terrain_normals_zup(heightmap, cell_size)
+    packed = np.empty((*normals.shape[:2], 4), dtype=np.uint8)
+    packed[..., 0] = np.rint(np.clip(normals[..., 0] * 0.5 + 0.5, 0.0, 1.0) * 255.0).astype(np.uint8)
+    packed[..., 1] = np.rint(np.clip(normals[..., 1] * 0.5 + 0.5, 0.0, 1.0) * 255.0).astype(np.uint8)
+    packed[..., 2] = np.rint(np.clip(normals[..., 2] * 0.5 + 0.5, 0.0, 1.0) * 255.0).astype(np.uint8)
+    packed[..., 3] = 255
+    return packed
+
+
 def _export_heightmap(
     heightmap: np.ndarray,
     bit_depth: int = 16,
@@ -689,6 +700,52 @@ def _write_raw_array(
     }
     if export_arr.dtype.itemsize > 1:
         meta["endianness"] = "little"
+    if extra:
+        meta.update(extra)
+    files[target.name] = meta
+    return target.name
+
+
+def _write_rgba_png(
+    files: Dict[str, Dict[str, Any]],
+    output_dir: Path,
+    *,
+    filename: str,
+    channel: str,
+    arr: np.ndarray,
+    encoding: str,
+    extra: Optional[Dict[str, Any]] = None,
+    flip_vertical: bool = True,
+) -> str:
+    arr_np = np.asarray(arr, dtype=np.uint8)
+    if arr_np.ndim != 3 or arr_np.shape[2] != 4:
+        raise ValueError("RGBA PNG export requires an HxWx4 uint8 array")
+    export_arr = _flip_for_unity(arr_np) if flip_vertical else arr_np
+    target = output_dir / filename
+    try:
+        from PIL import Image as _PILImage  # type: ignore[import]
+
+        _PILImage.fromarray(np.ascontiguousarray(export_arr), mode="RGBA").save(target)
+    except ImportError:
+        try:
+            import imageio.v3 as _imageio  # type: ignore[import]
+
+            _imageio.imwrite(target, np.ascontiguousarray(export_arr))
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise RuntimeError(
+                "RGBA PNG export requires Pillow or imageio for Unity-normal-map output"
+            ) from exc
+    meta: Dict[str, Any] = {
+        "sha256": _sha256(target),
+        "size": int(target.stat().st_size),
+        "dtype": str(export_arr.dtype),
+        "shape": list(export_arr.shape),
+        "channel": channel,
+        "channels": 4,
+        "bit_depth": 8,
+        "encoding": encoding,
+        "flip_vertical": bool(flip_vertical),
+    }
     if extra:
         meta.update(extra)
     files[target.name] = meta
@@ -1285,6 +1342,7 @@ def _build_unity_import_descriptor(
             "endianness": str(height_meta.get("endianness", "little")),
         },
         "terrain_normals_file": "terrain_normals.bin",
+        "terrain_normal_map_file": "terrain_normals_tangent.png",
         "splatmaps": splatmaps,
         "terrain_layers": splatmap_layer_meta,
         "detail_layers": detail_layers,
@@ -1580,6 +1638,19 @@ def export_unity_manifest(
         arr=np.asarray(stack.terrain_normals, dtype=np.float32),
         encoding="raw_vec3_f32_le",
     )
+    _write_rgba_png(
+        files,
+        output_dir,
+        filename="terrain_normals_tangent.png",
+        channel="terrain_normals_tangent",
+        arr=_pack_tangent_space_normal_rgba(np.asarray(stack.height, dtype=np.float64), float(stack.cell_size)),
+        encoding="png_rgba8_tangent_space_normal",
+        extra={
+            "normal_space": "tangent",
+            "unity_usage": "TerrainLayer.normalMapTexture",
+        },
+        flip_vertical=True,
+    )
     splatmap_files = _write_splatmap_groups(files, output_dir, stack)
 
     for channel in (
@@ -1723,6 +1794,7 @@ def export_unity_manifest(
         "source_coordinate_system": stack.coordinate_system,
         "heightmap_descriptor": "heightmap.raw",
         "terrain_normals_descriptor": "terrain_normals.bin",
+        "terrain_normal_map_descriptor": "terrain_normals_tangent.png",
         "splatmap_descriptors": splatmap_files,
         "detail_density_descriptors": detail_files,
         "tree_instances_descriptor": "tree_instances.json" if tree_instances_json["trees"] else None,

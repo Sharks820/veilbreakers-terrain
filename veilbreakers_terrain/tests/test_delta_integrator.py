@@ -443,3 +443,8 @@ class TestDeltaIntegratorPipelineSequencing:
         ]
         assert state.mask_stack.strat_erosion_delta is not None
         assert float(np.min(state.mask_stack.strat_erosion_delta)) < 0.0
+        np.testing.assert_allclose(
+            state.mask_stack.height,
+            state.mask_stack.hmap_low_freq + state.mask_stack.strat_erosion_delta,
+            atol=1e-6,
+        )

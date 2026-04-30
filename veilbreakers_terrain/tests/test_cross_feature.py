@@ -118,8 +118,8 @@ class TestNoiseBiomeComposition:
         biomes = compute_biome_assignments(mountain_hmap, slope_map)
         low_mask = mountain_hmap < 0.3
         high_mask = mountain_hmap > 0.7
-        if low_mask.sum() == 0 or high_mask.sum() == 0:
-            pytest.skip("Not enough altitude variation")
+        assert low_mask.sum() > 0, "Fixture must expose low-altitude cells"
+        assert high_mask.sum() > 0, "Fixture must expose high-altitude cells"
         low_biomes = set(np.unique(biomes[low_mask]))
         high_biomes = set(np.unique(biomes[high_mask]))
         # At least some differentiation should exist
@@ -137,9 +137,9 @@ class TestNoiseFlowComposition:
         """High flow accumulation should tend to occur at lower elevations."""
         flow_acc = flow_result["flow_accumulation"]
         high_flow = flow_acc > np.percentile(flow_acc, 90)
-        low_flow = flow_acc < np.percentile(flow_acc, 10)
-        if high_flow.sum() == 0 or low_flow.sum() == 0:
-            pytest.skip("Not enough flow variation")
+        low_flow = flow_acc <= np.percentile(flow_acc, 10)
+        assert high_flow.sum() > 0, "Flow fixture must expose high-accumulation cells"
+        assert low_flow.sum() > 0, "Flow fixture must expose low-accumulation cells"
         mean_elev_high_flow = mountain_hmap[high_flow].mean()
         mean_elev_low_flow = mountain_hmap[low_flow].mean()
         assert mean_elev_high_flow < mean_elev_low_flow, (
@@ -151,8 +151,7 @@ class TestNoiseFlowComposition:
         """Channels (high flow) should exist at various slope values."""
         flow_acc = flow_result["flow_accumulation"]
         high_flow = flow_acc > np.percentile(flow_acc, 90)
-        if high_flow.sum() == 0:
-            pytest.skip("No high-flow cells")
+        assert high_flow.sum() > 0, "Flow fixture must expose high-flow cells"
         channel_slopes = slope_map[high_flow]
         assert channel_slopes.mean() >= 0.0  # basic validity
 

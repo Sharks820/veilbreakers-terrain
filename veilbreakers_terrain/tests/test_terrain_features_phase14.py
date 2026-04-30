@@ -188,13 +188,10 @@ class TestFix716:
         )
 
         hmap = np.zeros((8, 8), dtype=np.float64)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            placements = compute_atmospheric_placements(
-                "ashfall_plain", (0, 0, 80, 80), seed=42, heightmap=hmap
-            )
-        if not placements:
-            pytest.skip("No placements generated")
+        placements = compute_atmospheric_placements(
+            "ashfall_plain", (0, 0, 80, 80), seed=42, heightmap=hmap
+        )
+        assert placements, "Atmosphere fixture must generate placements for cost scaling"
         cost_64 = estimate_atmosphere_performance(placements, resolution=64)["estimated_cost"]
         cost_128 = estimate_atmosphere_performance(placements, resolution=128)["estimated_cost"]
         assert cost_128 > cost_64, (

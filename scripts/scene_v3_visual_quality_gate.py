@@ -88,7 +88,7 @@ def _load_image_sample(path: Path, sample_size: tuple[int, int] = (96, 54)) -> d
                     "decoder": "pillow",
                     "width": rgb.size[0],
                     "height": rgb.size[1],
-                    "pixels": list(sample.getdata()),
+                    "pixels": _pillow_pixels(sample),
                 }
         except Exception:
             pass
@@ -121,6 +121,18 @@ def _load_image_sample(path: Path, sample_size: tuple[int, int] = (96, 54)) -> d
         }
     finally:
         bpy.data.images.remove(image)
+
+
+def _pillow_pixels(image: Any) -> list[tuple[int, int, int]]:
+    """Return RGB tuples without Pillow's deprecated Image.getdata path."""
+    flattened = getattr(image, "get_flattened_data", None)
+    if callable(flattened):
+        return list(flattened())
+    raw = image.tobytes()
+    return [
+        (raw[i], raw[i + 1], raw[i + 2])
+        for i in range(0, len(raw), 3)
+    ]
 
 
 def analyze_image_file(path: Path) -> dict[str, Any]:

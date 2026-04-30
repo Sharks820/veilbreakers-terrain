@@ -368,7 +368,11 @@ def test_quality_profile_resolution_helpers():
 
 def test_load_quality_profile_all_four():
     for name in list_quality_profiles():
-        p = load_quality_profile(name)
+        if name in {"production", "hero_shot"}:
+            with pytest.warns(DeprecationWarning, match="production"):
+                p = load_quality_profile(name)
+        else:
+            p = load_quality_profile(name)
         assert isinstance(p, TerrainQualityProfile)
         assert p.name == name
 
@@ -380,15 +384,18 @@ def test_load_quality_profile_unknown_raises():
 
 def test_profile_inheritance_hero_floors_production():
     """hero_shot must have erosion_iterations >= production's value."""
-    production = load_quality_profile("production")
-    hero = load_quality_profile("hero_shot")
+    with pytest.warns(DeprecationWarning, match="production"):
+        production = load_quality_profile("production")
+    with pytest.warns(DeprecationWarning, match="production"):
+        hero = load_quality_profile("hero_shot")
     assert hero.erosion_iterations >= production.erosion_iterations
     assert hero.checkpoint_retention >= production.checkpoint_retention
     assert hero.splatmap_bit_depth >= production.splatmap_bit_depth
 
 
 def test_profile_inheritance_aaa_floors_hero():
-    hero = load_quality_profile("hero_shot")
+    with pytest.warns(DeprecationWarning, match="production"):
+        hero = load_quality_profile("hero_shot")
     aaa = load_quality_profile("aaa_open_world")
     assert aaa.erosion_iterations >= hero.erosion_iterations
     assert aaa.checkpoint_retention >= hero.checkpoint_retention

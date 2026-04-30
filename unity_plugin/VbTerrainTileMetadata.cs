@@ -21,6 +21,9 @@ namespace VeilBreakers.TerrainImport
         public string ValidationStatus = "unknown";
         public int ValidationIssueCount;
         public string SeamContractWorldId = "unknown";
+        public string TerrainNormalsFile = string.Empty;
+        public string TerrainNormalMapFile = string.Empty;
+        public string TerrainNormalMapAssetPath = string.Empty;
 
         // Extended fields (D-1)
         public int BiomeId;

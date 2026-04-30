@@ -381,7 +381,7 @@ Both provide albedo, normal, roughness, AO, displacement as separate PNG/EXR fil
 
 ---
 
-## 3ds Max / Maya Integration Notes
+## Foliage / DCC Integration Notes
 
 The 12-phase plan includes Maya/Bifrost and XGen research (added research delta at lines 181–196). Key translation:
 
@@ -394,9 +394,10 @@ The 12-phase plan includes Maya/Bifrost and XGen research (added research delta 
 - Species descriptions/collections by role → `SpeciesSpec` with biome constraints after C-2 fix
 - Surface-bound primitive generation → `_scatter_pass` per-biome placement chains
 
-**3ds Max Forest Pack:**
-- Forest Pack Lite: capped at 3 species/4 areas, no CSV import, Reference Mode is Pro-only. Not suitable for this Blender-primary pipeline.
-- The correct path for 3ds Max output is: generate `ScatterPointTable` → export as World Creator-style `InstanceInfo.json` → Forest Pack Pro reads CSV instance data (Pro license required) or use plain 3ds Max Scatter from the same CSV.
+**Retired DCC scatter handoff:**
+- 3ds Max / Forest Pack is no longer a VeilBreakers dependency.
+- The correct current path is: generate `ScatterPointTable` → resolve species through the mesh-library JSON → emit `foliage_placement_manifest.json` with Unity Terrain / GPU-instancing fields.
+- `scripts/export_foliage_manifest.py` replaces the old DCC-specific scatter exporter.
 
 **Maya MtoA / Arnold render path:**
 - Export from `terrain_unity_export.py` as USD → import into Maya with USD plugin → scatter instances render natively in Arnold via instance prototypes.

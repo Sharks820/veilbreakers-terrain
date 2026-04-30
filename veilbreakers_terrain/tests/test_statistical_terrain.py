@@ -316,8 +316,7 @@ class TestSpectralPower:
         """Log-log spectral slope should be negative (power law decay)."""
         freqs, power = _radial_spectral_power(mountain_hmap)
         mask = (freqs > 0) & (power > 0)
-        if mask.sum() < 2:
-            pytest.skip("Not enough spectral data")
+        assert mask.sum() >= 2, "Mountain fixture must expose enough spectral data"
         log_f = np.log(freqs[mask])
         log_p = np.log(power[mask])
         slope = np.polyfit(log_f, log_p, 1)[0]
@@ -329,8 +328,7 @@ class TestSpectralPower:
         noise = rng.rand(128, 128)
         freqs, power = _radial_spectral_power(noise)
         mask = (freqs > 0) & (power > 0)
-        if mask.sum() < 2:
-            pytest.skip("Not enough spectral data")
+        assert mask.sum() >= 2, "White-noise fixture must expose enough spectral data"
         log_f = np.log(freqs[mask])
         log_p = np.log(power[mask])
         slope = np.polyfit(log_f, log_p, 1)[0]

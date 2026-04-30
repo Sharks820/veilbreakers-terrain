@@ -5,24 +5,22 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Totals
 
-- Test files scanned: `89`
-- Collected tests mapped to files: `2721`
-- Files using legacy `blender_addon` alias: `67`
-- Files with source-introspection checks: `20`
-- Files with registry-surface checks: `5`
-- Files with skip/xfail gates: `5`
+- Test files scanned: `145`
+- Collected tests mapped to files: `3704`
+- Files using legacy `blender_addon` alias: `0`
+- Files with source-introspection checks: `40`
+- Files with registry-surface checks: `9`
+- Files with skip/xfail gates: `0`
 
 Label distribution:
 - `broad_fast_logic`: `1`
-- `live_guardrail`: `15`
+- `live_guardrail`: `20`
 - `live_guardrail_expensive`: `1`
-- `live_guardrail_stale_api`: `1`
-- `logic_guardrail`: `44`
-- `mixed_runtime_and_stale`: `1`
-- `mock_plumbing`: `4`
-- `registry_surface`: `1`
-- `soft_guardrail`: `5`
-- `structure_only`: `16`
+- `logic_guardrail`: `67`
+- `mock_plumbing`: `18`
+- `registry_surface`: `3`
+- `soft_guardrail`: `2`
+- `structure_only`: `33`
 
 ## Interpretation
 

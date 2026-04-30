@@ -73,7 +73,7 @@ Verified at `veilbreakers_terrain/handlers/terrain_unity_export.py:1261-1279`. T
 
 `generate_grass_placement` reads `stack.height`, `slope`, `cliff_label`, `hero_exclusion`, `poi_mask`, `water_surface_elevation_m` (or `water_surface_mask`), `road_sdf_dist`, `bathymetry`, `drainage`/`wetness`, `biome_id`. All of these channels exist in production. The module is *plumbed* to consume the stack but **no pass, no handler, no script, no MCP route ever calls it**. Confirmed via `grep "from veilbreakers_terrain.handlers.procedural_grass\|import procedural_grass"` returning only the test file.
 
-`write_grass_manifest` would emit a Wave 5-compatible JSON. **No production code writes such a manifest, and no Unity importer reads one.** Hooks in the manifest (`forestpack_reference_layer`, `unity_render_mode: detail_prototype | gpu_instancer`) are dead-end — the Unity side of the import pipe is not wired to anything that reads them.
+2026-04-29 refresh: the retired DCC hook was removed from grass manifests. `write_grass_manifest` now emits runtime-facing mesh entries with `render_batch_key` plus `unity_render_mode: detail_prototype | gpu_instancer`; full Unity foliage importer consumption still needs editor-side E2E proof.
 
 This is **I2-P0-1 / D1**, already counted.
 
@@ -134,7 +134,7 @@ This is correct AAA-grade gating logic. **No P0 in the formula itself.**
 
 ## 4. GPU instance generation
 
-`generate_grass_placement` produces world-space `(x, y, z)` triples, a per-instance Y-rotation, a uniform scale jitter, biome name, and moisture (lines 545-561). It also computes `position_terrain_norm` in `0..1` Unity convention. This is *enough* for GPU Resident Drawer / Forest Pack ingestion, but:
+`generate_grass_placement` produces world-space `(x, y, z)` triples, a per-instance Y-rotation, a uniform scale jitter, biome name, and moisture (lines 545-561). It also computes `position_terrain_norm` in `0..1` Unity convention. This is enough for Unity/GPU foliage manifest ingestion, but:
 
 - **No LOD-distance information** beyond a fixed `lod_level=2` (records-level field, line 218). No per-instance LOD tier or screen-size hint computed from camera-relative distance.
 - **No Y-up vs Z-up axis annotation.** The `position_world` tuple is `(wx, wy, wz)` where `wz = height[rows, cols]` — the height channel is the height (Z in world), but the Unity convention varies by import path. There is no explicit `axis_up: "Y" | "Z"` marker in the manifest. This is a contract gap with Unity but **not a P0** because the manifest is never read.
@@ -156,7 +156,7 @@ These are **P2 quality concerns** dependent on first wiring the module in. Not n
 
 ### 5.2 Weaknesses
 
-- **`_poisson_thin` is approximate.** Bucket-sort by spatial hash (lines 446-460) — keeps the *first* sample per bucket. This is not a true Poisson disk; two samples in adjacent buckets at distance < min_spacing both survive. Acceptable as a coarse thinning before Forest Pack does its own; sub-AAA if used as the final pass.
+- **`_poisson_thin` is approximate.** Bucket-sort by spatial hash (lines 446-460) — keeps the *first* sample per bucket. This is not a true Poisson disk; two samples in adjacent buckets at distance < min_spacing both survive. Acceptable only as a coarse prepass before downstream blue-noise validation/refinement; sub-AAA if used as the final pass.
 - **Per-instance Python loop at lines 545-561.** The records-list build is the only Python loop, after vectorisation. For 200,000 max instances per species × 6 species this could be 1.2M append calls. Should be replaced by a vectorised dataclass batch or numpy structured array. Not a P0.
 - **Inconsistent norm axes:** `norm_x = cols * cell_size / extent_x` (correct), `norm_z = rows * cell_size / extent_y`, `norm_y = (wz - height_min) / height_span`. The records' `position_terrain_norm = (norm_x, norm_y, norm_z)` mixes XZ-on-ground with Y-as-height. No axis convention is declared in the manifest schema. Sub-AAA but not regressive.
 - **Per-cell biome name lookup (line 547)** uses `_biome_id_to_name` which does a linear `dict.items()` scan per instance. For 1.2M instances this is O(N × |biomes|) = 1.2M × 14 = 16.8M ops. Should be vectorised via an inverse-map array indexed by biome_id. Not a P0.

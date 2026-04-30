@@ -1205,7 +1205,10 @@ def pass_coastline(
 
     Hint keys consumed
     ------------------
-    ``sea_level_m``            float  — sea level in metres (default 0.0)
+    ``sea_level_m``            float  — sea level in metres (default 0.0);
+                                        superseded by stack channel
+                                        ``water_surface_elevation_m`` when
+                                        populated.
     ``tidal_range_m``          float  — tidal range in metres (default 2.0)
     ``wave_dir``               float  — dominant wave direction, radians CW
                                         from north (default 0.0)
@@ -1222,6 +1225,12 @@ def pass_coastline(
     hints = dict(state.intent.composition_hints) if state.intent else {}
 
     sea_level = float(hints.get("sea_level_m", 0.0))
+    water_surface_elevation = stack.get("water_surface_elevation_m")
+    if water_surface_elevation is not None:
+        wse = np.asarray(water_surface_elevation, dtype=np.float64)
+        finite = wse[np.isfinite(wse)]
+        if finite.size:
+            sea_level = float(np.median(finite))
     tidal_range = float(hints.get("tidal_range_m", 2.0))
     # Accept either hint key; wave_dir takes precedence
     wave_dir = float(hints.get("wave_dir", hints.get("dominant_wave_dir_rad", 0.0)))
