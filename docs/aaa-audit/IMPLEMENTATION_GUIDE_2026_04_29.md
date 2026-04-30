@@ -15,7 +15,8 @@
 | Best-practice matrix | Closed: `1713` live callables, `1723` matrix rows, `0` missing, `blocking=False`. |
 | Test guardrail audit | Closed with `--strict-quality`; no stale/zero-collection blocker. |
 | 3ds Max / Forest Pack path | Retired. DCC exporter and guide removed; replacement is Unity/GPU foliage manifest pipeline. |
-| Full pytest | Passed: `3688 passed, 4 skipped, 41 warnings`. |
+| Unity runtime streaming | Closed: imported terrain now has camera-prioritized tile activation, LOD quality tiers, neighbor reconnection, and floating-origin support. |
+| Full pytest | Passed: `3707 passed` under `-W error`. |
 
 ---
 
@@ -38,6 +39,14 @@
   - manifest file metadata with encoding, shape, byte size, and hash
   - `unity_import_descriptor.json` normal-map file field
 - Unity importer now imports the normal map as a Unity `TextureImporterType.NormalMap` asset and stores the asset path on `VbTerrainTileMetadata`.
+- Added runtime-side large-world support:
+  - `VbTerrainRuntimeStreamer` uses `VbTerrainTileMetadata` to activate
+    imported tiles by camera frustum, distance, and frame budget.
+  - Active tiles reconnect neighbors through `Terrain.SetNeighbors`.
+  - Near/mid/far quality tiers adjust `heightmapPixelError`,
+    `detailObjectDistance`, and `treeDistance`.
+  - `VbFloatingOrigin` shifts terrain/scatter/water roots and world-space
+    particles before precision flicker appears.
 
 ### Erosion / Quality Profiles
 

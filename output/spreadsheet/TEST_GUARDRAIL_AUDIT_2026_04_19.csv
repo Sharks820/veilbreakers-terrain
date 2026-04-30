@@ -132,6 +132,7 @@ veilbreakers_terrain/tests/test_terrain_wind_field.py,5,logic_guardrail,P2,no,no
 veilbreakers_terrain/tests/test_terrain_wiring_integration.py,19,registry_surface,P2,no,yes,no,yes,no,no,no,no,
 veilbreakers_terrain/tests/test_terrain_world_orchestration.py,7,logic_guardrail,P2,no,no,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_texture_layer_stack.py,4,logic_guardrail,P2,no,no,no,no,no,no,no,no,
+veilbreakers_terrain/tests/test_unity_runtime_streaming_components.py,3,structure_only,P1,no,no,yes,no,no,no,no,no,
 veilbreakers_terrain/tests/test_validation_runtime_helpers.py,2,logic_guardrail,P2,no,no,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_vb_toolkit_primitives_available.py,4,structure_only,P1,no,no,yes,no,no,no,no,no,"Packaging smoke plus source-text grep. Useful for file presence, weak for callable behavior."
 veilbreakers_terrain/tests/test_vegetation_depth_runtime_helpers.py,2,logic_guardrail,P2,no,no,no,no,no,no,no,no,

@@ -11,6 +11,8 @@ data-driven:
 4. Unity importer consumes `mesh_library`, `instances`,
    `position_terrain_norm`, `rotation_y_rad`, `scale_xyz`, `lod_level`,
    biome/category metadata, moisture, tint, and color-variation seeds.
+5. Unity runtime keeps imported worlds playable through
+   `VbTerrainRuntimeStreamer` and `VbFloatingOrigin` instead of a DCC plugin.
 
 Example:
 
@@ -33,3 +35,6 @@ Rules:
   runtime references.
 - `position_terrain_norm` exists for `TerrainData.SetTreeInstances`;
   `position_world` and `scale_xyz` exist for GPU instanced renderers.
+- Runtime scenes should use `docs/UNITY_RUNTIME_TERRAIN_STREAMING.md` for
+  camera-aware terrain activation, near/mid/far quality, neighbor reconnection,
+  and floating-origin stability.

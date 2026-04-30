@@ -5,10 +5,10 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Totals
 
-- Test files scanned: `145`
-- Collected tests mapped to files: `3704`
+- Test files scanned: `146`
+- Collected tests mapped to files: `3707`
 - Files using legacy `blender_addon` alias: `0`
-- Files with source-introspection checks: `40`
+- Files with source-introspection checks: `41`
 - Files with registry-surface checks: `9`
 - Files with skip/xfail gates: `0`
 
@@ -20,7 +20,7 @@ Label distribution:
 - `mock_plumbing`: `18`
 - `registry_surface`: `3`
 - `soft_guardrail`: `2`
-- `structure_only`: `33`
+- `structure_only`: `34`
 
 ## Interpretation
 
