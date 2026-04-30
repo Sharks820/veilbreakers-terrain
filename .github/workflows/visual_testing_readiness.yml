@@ -20,17 +20,17 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender
+          sudo apt-get install -y blender python3-numpy python3-pil
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           BLENDER_PYDEPS="$RUNNER_TEMP/blender_pydeps"
           mkdir -p "$BLENDER_PYDEPS"
-          BLENDER_PYDEPS="$BLENDER_PYDEPS" blender --background --python-expr "import ensurepip, os; ensurepip.bootstrap(); import pip._internal; raise SystemExit(pip._internal.main(['install', '--upgrade', '--target', os.environ['BLENDER_PYDEPS'], 'numpy', 'opensimplex', 'pillow']))"
+          python -m pip install --upgrade --target "$BLENDER_PYDEPS" opensimplex
 
       - name: Run visual testing readiness gate
         id: visual_gate
         run: |
-          PYTHONPATH="$RUNNER_TEMP/blender_pydeps:$PWD:${PYTHONPATH:-}" blender --background --python scripts/visual_testing_readiness_gate.py
+          PYTHONPATH="$RUNNER_TEMP/blender_pydeps:/usr/lib/python3/dist-packages:$PWD:${PYTHONPATH:-}" blender --background --python scripts/visual_testing_readiness_gate.py
 
       - name: Upload readiness artifact
         if: always()
