@@ -16,10 +16,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Sequence, Set
 
-logger = logging.getLogger(__name__)
-
 from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import PassDefinition, PassResult
+
+logger = logging.getLogger(__name__)
 
 
 class PassDAGError(RuntimeError):
@@ -194,6 +194,7 @@ class PassDAG:
             )
 
         self._passes: Dict[str, PassDefinition] = {p.name: p for p in passes}
+        self._order: Dict[str, int] = {name: idx for idx, name in enumerate(self._passes)}
         self._producers: Dict[str, List[str]] = {}
         for p in passes:
             for ch in p.produces_channels:
@@ -233,6 +234,14 @@ class PassDAG:
     def names(self) -> List[str]:
         return list(self._passes.keys())
 
+    def _producer_precedes_consumer(self, producer: str, consumer: str) -> bool:
+        """Keep channel dependency edges in requested sequence order."""
+        return (
+            producer != consumer
+            and producer in self._passes
+            and self._order.get(producer, -1) < self._order.get(consumer, -1)
+        )
+
     def dependencies(self, pass_name: str) -> Set[str]:
         """Return the set of pass names that produce channels ``pass_name`` consumes.
 
@@ -247,23 +256,13 @@ class PassDAG:
         deps: Set[str] = set()
         for ch in pdef.requires_channels:
             for producer in self._producers.get(ch, []):
-                producer_def = self._passes.get(producer)
-                producer_inputs = set(getattr(producer_def, "requires_channels", ()) or ())
-                producer_inputs.update(getattr(producer_def, "optional_channels", ()) or ())
-                if ch in producer_inputs:
-                    continue
-                if producer != pass_name and producer in self._passes:
+                if self._producer_precedes_consumer(producer, pass_name):
                     deps.add(producer)
         # Optional edges: only add when the channel actually has a registered
         # producer. Absence is legal and does NOT become a dependency edge.
         for ch in getattr(pdef, "optional_channels", ()):
             for producer in self._producers.get(ch, []):
-                producer_def = self._passes.get(producer)
-                producer_inputs = set(getattr(producer_def, "requires_channels", ()) or ())
-                producer_inputs.update(getattr(producer_def, "optional_channels", ()) or ())
-                if ch in producer_inputs:
-                    continue
-                if producer != pass_name and producer in self._passes:
+                if self._producer_precedes_consumer(producer, pass_name):
                     deps.add(producer)
         return deps
 

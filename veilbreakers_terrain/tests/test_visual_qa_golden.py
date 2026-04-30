@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -20,12 +21,7 @@ from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 _GOLDEN_SCENARIOS_DIR = Path(__file__).parent / "golden_scenarios"
 _SCENARIO_FILES = list(_GOLDEN_SCENARIOS_DIR.glob("*.json"))
 
-_HAS_PILLOW = False
-try:
-    from PIL import Image as _Image  # noqa: F401
-    _HAS_PILLOW = True
-except ImportError:
-    pass
+_HAS_PILLOW = importlib.util.find_spec("PIL") is not None
 
 
 def _write_rgb_png(path: Path, arr: np.ndarray) -> None:

@@ -13,10 +13,15 @@ All pure-logic -- no Blender or live server required.
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import time
 
 import numpy as np
+import pytest
+
+_HAS_TOOLKIT = importlib.util.find_spec("veilbreakers_mcp") is not None
+_TOOLKIT_SKIP_REASON = "veilbreakers-mcp toolkit package is optional and unavailable in this Python lane"
 
 # ---------------------------------------------------------------------------
 # 1. Heightmap generation: performance benchmark
@@ -395,6 +400,7 @@ class TestTimerConfiguration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _HAS_TOOLKIT, reason=_TOOLKIT_SKIP_REASON)
 class TestBlenderClientPersistentConnection:
     """Verify BlenderConnection supports persistent connections."""
 

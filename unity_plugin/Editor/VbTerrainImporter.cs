@@ -469,8 +469,7 @@ namespace VeilBreakers.TerrainImport.Editor
 
                 var generated =
                     child.GetComponent<VbTerrainSidecarReference>() != null ||
-                    child.name.StartsWith("VB_", StringComparison.Ordinal) ||
-                    (child.GetComponent<MeshFilter>() != null && child.GetComponent<MeshRenderer>() != null);
+                    child.name.StartsWith("VB_", StringComparison.Ordinal);
                 if (generated)
                 {
                     UnityEngine.Object.DestroyImmediate(child.gameObject);

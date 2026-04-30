@@ -7,20 +7,20 @@
     "core": 8,
     "geometry_mesh": 1300,
     "materials_texturing": 704,
-    "pipeline_wiring": 1083,
+    "pipeline_wiring": 1084,
     "scatter_ecology": 657,
     "visual_qa": 368,
     "water": 745
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1726
+    "LOW": 1727
   },
   "tool_blocker_count": 0,
-  "total_callables": 1726,
+  "total_callables": 1727,
   "wiring_status_counts": {
     "direct_test_covered": 237,
-    "helper_reachable": 1282,
+    "helper_reachable": 1283,
     "runtime_primary": 207
   }
 }

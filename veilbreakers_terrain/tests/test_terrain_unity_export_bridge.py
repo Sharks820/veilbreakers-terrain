@@ -72,7 +72,7 @@ def _set_channel(stack: TerrainMaskStack, channel: str, value):
 
 
 def test_export_manifest_records_contract_failures(monkeypatch):
-    import veilbreakers_terrain.handlers.terrain_unity_export as mod
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
 
     stack = _make_stack()
 
@@ -103,7 +103,7 @@ def test_export_manifest_records_contract_failures(monkeypatch):
 
 
 def test_export_manifest_hard_validation_raises_by_default(monkeypatch):
-    import veilbreakers_terrain.handlers.terrain_unity_export as mod
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
 
     stack = _make_unity_valid_stack()
 
@@ -172,7 +172,7 @@ def test_tangent_space_normal_map_packs_flat_heightfield():
 
 
 def test_heightmap_raw_export_is_flipped_once(monkeypatch):
-    import veilbreakers_terrain.handlers.terrain_unity_export as mod
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
 
     stack = TerrainMaskStack(
         tile_size=1,

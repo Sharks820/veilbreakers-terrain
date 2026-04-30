@@ -1305,12 +1305,16 @@ def _unity_mesh_attribute_arrays(stack: TerrainMaskStack) -> Dict[str, np.ndarra
     if height.ndim != 2 or height.size == 0:
         return {}
 
+    def _height_slope_angle() -> np.ndarray:
+        gy, gx = np.gradient(height.astype(np.float64), float(max(stack.cell_size, 1e-9)))
+        return np.degrees(np.arctan(np.sqrt(gx * gx + gy * gy))).astype(np.float32)
+
     slope = stack.get("slope")
     if slope is None:
-        gy, gx = np.gradient(height.astype(np.float64), float(max(stack.cell_size, 1e-9)))
-        slope_arr = np.degrees(np.arctan(np.sqrt(gx * gx + gy * gy))).astype(np.float32)
+        slope_arr = _height_slope_angle()
     else:
-        slope_arr = np.asarray(slope, dtype=np.float32)
+        slope_raw = np.asarray(slope, dtype=np.float32)
+        slope_arr = slope_raw if slope_raw.shape == height.shape else _height_slope_angle()
 
     def _float_attr(name: str, fallback: float = 0.0) -> np.ndarray:
         value = stack.get(name)

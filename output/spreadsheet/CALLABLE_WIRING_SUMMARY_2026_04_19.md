@@ -7,13 +7,13 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 
 ## Totals
 
-- Live handler callables scanned: `1726`
-- Callables missing from the grade sheet: `0`
-- Callables without any R9 grade attached via matching CSV row: `547`
+- Live handler callables scanned: `1727`
+- Callables missing from the grade sheet: `1`
+- Callables without any R9 grade attached via matching CSV row: `548`
 
 Status distribution:
 - `direct_test_covered`: `237`
-- `helper_reachable`: `1282`
+- `helper_reachable`: `1283`
 - `runtime_primary`: `207`
 
 ## Highest-Risk Files

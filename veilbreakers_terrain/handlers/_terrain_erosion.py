@@ -605,7 +605,7 @@ def _brush_kernel(radius: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     weights: list[float] = []
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):
-            dist = math.sqrt(dx * dx + dy * dy)
+            dist = math.hypot(dx, dy)
             if dist <= radius:
                 weight = max(0.0, radius - dist)
                 if weight > 0.0:

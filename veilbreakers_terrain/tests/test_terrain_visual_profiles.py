@@ -4,6 +4,10 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw
 
+pytest.importorskip(
+    "veilbreakers_mcp",
+    reason="veilbreakers-mcp toolkit package is optional and unavailable in this Python lane",
+)
 from veilbreakers_mcp import blender_server
 from veilbreakers_mcp.shared.visual_validation import (
     aaa_verify_map,

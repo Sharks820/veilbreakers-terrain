@@ -6,11 +6,11 @@ Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spre
 ## Totals
 
 - Test files scanned: `147`
-- Collected tests mapped to files: `3753`
+- Collected tests mapped to files: `3754`
 - Files using legacy `blender_addon` alias: `0`
 - Files with source-introspection checks: `42`
 - Files with registry-surface checks: `9`
-- Files with skip/xfail gates: `0`
+- Files with skip/xfail gates: `2`
 
 Label distribution:
 - `broad_fast_logic`: `1`

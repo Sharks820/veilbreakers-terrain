@@ -197,6 +197,42 @@ def test_parallel_dag_merge_preserves_side_effects_and_recomputes_height_metadat
     assert "wetness_pass side effect" in controller.state.side_effects
 
 
+def test_dag_keeps_edges_from_channel_mutators_to_later_consumers():
+    from veilbreakers_terrain.handlers.terrain_pass_dag import PassDAG
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
+
+    def _noop(state, region):
+        del state, region
+        return PassResult(pass_name="noop", status="ok", duration_seconds=0.0)
+
+    dag = PassDAG([
+        PassDefinition(
+            name="base_height",
+            func=_noop,
+            produces_channels=("height",),
+        ),
+        PassDefinition(
+            name="erosion_mutator",
+            func=_noop,
+            requires_channels=("height",),
+            produces_channels=("height",),
+            overrides=("height",),
+        ),
+        PassDefinition(
+            name="downstream_material",
+            func=_noop,
+            requires_channels=("height",),
+            produces_channels=("splatmap_weights_layer",),
+        ),
+    ])
+
+    assert dag.dependencies("erosion_mutator") == {"base_height"}
+    assert dag.dependencies("downstream_material") == {"base_height", "erosion_mutator"}
+    order = dag.topological_order()
+    assert order.index("base_height") < order.index("erosion_mutator")
+    assert order.index("erosion_mutator") < order.index("downstream_material")
+
+
 def test_canonical_default_sequence_is_dag_addressable_without_duplicate_pass_names():
     from collections import Counter
 

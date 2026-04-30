@@ -1,18 +1,18 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-04-30T22:00:36.945022+00:00
+- Generated: 2026-04-30T22:29:11.452211+00:00
 - Grade source: `docs\aaa-audit\GRADES_VERIFIED.csv`
-- Total callables covered: **1728**
+- Total callables covered: **1729**
 - Output CSV: `output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_30.csv`
 
 ## Upgrade Tiers
 
-- P3: 1728
+- P3: 1729
 
 ## Grade Status
 
 - VERIFIED_LOW_RISK: 1726
-- LOCK_WITH_REGRESSION_GATES: 2
+- LOCK_WITH_REGRESSION_GATES: 3
 
 ## Domain Coverage
 
@@ -22,7 +22,7 @@
 - scatter_ecology: 164 callables; gates `point_schema|density_stats|blue_noise_or_distribution|collision_or_exclusion|asset_manifest|lod_budget`; phase Phase 4,9B
 - hydrology: 163 callables; gates `hydrology_contract|depth_tests|velocity_tests|flow_direction_tests|seam_continuity|swimmable_depth`; phase Phase 2-3
 - validation_qa: 145 callables; gates `issue_codes|golden_visual|performance_budget|determinism|low_spec|artifact_schema`; phase Phase 11-12
-- terrain_pipeline: 143 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
+- terrain_pipeline: 144 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
 - terrain_texturing: 125 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D
 - export_runtime: 112 callables; gates `manifest_schema|unity_contract|scale_factor|roundtrip_read|artifact_presence`; phase Phase 10
 - pathing_roads: 62 callables; gates `path_cost_tests|cell_size_tests|slope_budget|water_crossing|determinism`; phase Phase 8
