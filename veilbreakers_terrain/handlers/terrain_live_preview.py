@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from .terrain_dirty_tracking import DirtyTracker, attach_dirty_tracker
-from .terrain_mask_cache import MaskCache, pass_with_cache
+from .terrain_mask_cache import MaskCache, controller_pass_with_cache
 from .terrain_pipeline import TerrainPassController
 from .terrain_region_exec import execute_region
 from .terrain_semantics import BBox, PassResult, TerrainPipelineState
@@ -103,9 +103,7 @@ class LivePreviewSession:
         results: List[PassResult] = []
         if use_cache:
             for pname in passes:
-                pdef = TerrainPassController.get_pass(pname)
-                res = pass_with_cache(pdef, self.state, region, self.cache)
-                self.state.record_pass(res)
+                res = controller_pass_with_cache(self.controller, pname, region, self.cache)
                 results.append(res)
         else:
             results = execute_region(self.controller, passes, region or self.state.intent.region_bounds, pad=False)

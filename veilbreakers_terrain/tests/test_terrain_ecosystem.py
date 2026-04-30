@@ -19,7 +19,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size: int = 24, seed: int = 7):
+def _make_stack(tile_size: int = 32, seed: int = 7):
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -57,7 +57,7 @@ def _attach_structural_masks(stack) -> None:
     stack.set("basin", (lap > 0.5).astype(np.int32), "test_fixture")
 
 
-def _build_state(tile_size: int = 24, seed: int = 7, structural: bool = True):
+def _build_state(tile_size: int = 32, seed: int = 7, structural: bool = True):
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,

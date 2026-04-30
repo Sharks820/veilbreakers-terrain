@@ -437,10 +437,8 @@ def pass_karst(
     """Bundle I pass: detect + carve karst features.
 
     Consumes: height, rock_hardness
-    Produces: karst_delta (written to stack when features found)
-
-    produced_channels is set to ("karst_delta",) only when karst_delta is
-    actually written — it matches what stack.set() receives exactly.
+    Produces: karst_delta. No-feature tiles write a zero delta so downstream
+    integrators and DAG contracts do not silently skip a required output.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
@@ -450,17 +448,14 @@ def pass_karst(
 
     features: List[KarstFeature] = []
     delta_mean = 0.0
-    # produced_channels must match what is actually written to the stack.
-    # karst_delta is only written when features are detected and carved.
-    produced: tuple = ()
     if enabled and stack.rock_hardness is not None:
         features = detect_karst_candidates(stack, hardness_threshold)
         if features:
             delta = carve_karst_features(stack, features)
             stack.set("karst_delta", delta.astype(np.float32), "karst")
             delta_mean = float(np.abs(delta).mean())
-            # Verified: this exactly matches the channel written above.
-            produced = ("karst_delta",)
+    if stack.get("karst_delta") is None:
+        stack.set("karst_delta", np.zeros_like(stack.height, dtype=np.float32), "karst")
 
     _ = derive_pass_seed(
         state.intent.seed, "karst", state.tile_x, state.tile_y, region
@@ -471,7 +466,7 @@ def pass_karst(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height", "rock_hardness"),
-        produced_channels=produced,
+        produced_channels=("karst_delta",),
         metrics={
             "feature_count": len(features),
             "mean_delta_m": delta_mean,

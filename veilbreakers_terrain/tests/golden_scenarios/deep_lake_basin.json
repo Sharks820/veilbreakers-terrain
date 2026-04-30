@@ -27,10 +27,35 @@
     "wetness"
   ],
   "channel_assertions": {
-    "water_depth_m": {"min_nonzero_cells": 500, "max_value_m": 200.0},
-    "bathymetry": {"range": [0.0, 1.0]},
-    "shoreline_blend": {"range": [0.0, 1.0]},
+    "heightmap": {"min_relief_m": 40.0},
+    "water_depth_m": {"min_nonzero_cells": 500, "min_peak": 40.0, "max_value_m": 200.0},
+    "bathymetry": {"range": [0.0, 200.0], "min_peak": 40.0},
+    "shoreline_blend": {"range": [0.0, 1.0], "min_nonzero_cells": 80},
     "water_surface_mask": {"range": [0.0, 1.0]}
   },
+  "semantic_assertions": [
+    {
+      "type": "depth_requires_water_mask",
+      "depth_channel": "water_depth_m",
+      "mask_channel": "water_surface_mask",
+      "depth_threshold": 1.0,
+      "mask_threshold": 0.5,
+      "min_ratio": 0.98
+    },
+    {
+      "type": "water_surface_above_terrain",
+      "height_channel": "heightmap",
+      "surface_channel": "water_surface_elevation_m",
+      "mask_channel": "water_surface_mask",
+      "min_ratio": 0.98
+    },
+    {
+      "type": "shoreline_borders_water",
+      "water_channel": "water_surface_mask",
+      "shoreline_channel": "shoreline_blend",
+      "min_boundary_cells": 50,
+      "min_ratio": 0.75
+    }
+  ],
   "render_goldens": {}
 }

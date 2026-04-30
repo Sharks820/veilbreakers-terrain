@@ -5,7 +5,7 @@ depth coloring, foam geometry at lips, and a mist volume. Renders two cameras:
 side profile and front-facing waterfall view.
 
 Run:
-    blender --background --python scripts/test_water_visual.py
+    blender --background --python scripts/render_water_visual.py
 """
 
 import math

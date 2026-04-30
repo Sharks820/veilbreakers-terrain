@@ -274,6 +274,27 @@ def test_enforce_protocol_decorator_blocks_on_failure():
         my_handler(state, {})
 
 
+def test_enforce_protocol_requires_explicit_viewport_opt_out():
+    from veilbreakers_terrain.handlers.terrain_protocol import (
+        ProtocolViolation,
+        enforce_protocol,
+    )
+
+    @enforce_protocol(
+        require_rule_1=False,
+        require_rule_3=False,
+        require_rule_6=False,
+        require_rule_7=False,
+    )
+    def my_handler(state, params):
+        return {"ok": True}
+
+    state = _make_state(include_viewport=False)
+    with pytest.raises(ProtocolViolation, match="Rule 2"):
+        my_handler(state, {})
+    assert my_handler(state, {"out_of_view_ok": True}) == {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # terrain_viewport_sync.py
 # ---------------------------------------------------------------------------

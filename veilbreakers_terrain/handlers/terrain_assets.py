@@ -901,7 +901,7 @@ def pass_scatter_intelligent(
         placements, rules, area_m2=region_area,
     )
 
-    status = "warning" if any(i.is_hard() for i in issues) else "ok"
+    status = "failed" if any(i.is_hard() for i in issues) else "ok"
     return PassResult(
         pass_name="scatter_intelligent",
         status=status,
@@ -956,6 +956,11 @@ def register_bundle_e_passes() -> None:
             may_modify_geometry=False,
             may_add_geometry=True,
             supports_region_scope=True,
+            protocol_enforced=True,
+            protocol_require_rule_2=True,
+            protocol_require_rule_5=True,
+            protocol_out_of_view_ok=True,
+            protocol_bulk_edit=True,
             description="Context-aware asset scatter with cluster intelligence.",
         )
     )

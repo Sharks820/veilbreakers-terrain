@@ -372,6 +372,7 @@ def validate_stack_channels(
     missing: List[str] = []
     dtype_mismatch: List[str] = []
     range_violations: List[str] = []
+    invalid_channels: List[str] = []
     checked: int = 0
 
     for channel, (dtype_family, (lo, hi)) in required_channels.items():
@@ -387,6 +388,15 @@ def validate_stack_channels(
             continue
 
         if arr.size == 0:
+            invalid_channels.append(channel)
+            checked += 1
+            continue
+        try:
+            finite_ok = bool(np.isfinite(arr).all())
+        except TypeError:
+            finite_ok = False
+        if not finite_ok:
+            invalid_channels.append(channel)
             checked += 1
             continue
 
@@ -415,12 +425,13 @@ def validate_stack_channels(
 
         checked += 1
 
-    ok = not missing and not dtype_mismatch and not range_violations
+    ok = not missing and not dtype_mismatch and not range_violations and not invalid_channels
     return {
         "ok": ok,
         "missing": missing,
         "dtype_mismatch": dtype_mismatch,
         "range_violations": range_violations,
+        "invalid_channels": invalid_channels,
         "checked": checked,
     }
 
@@ -456,12 +467,15 @@ def validate_channel_manifest(
     raw = validate_stack_channels(stack, required_channels=required_channels)
 
     # Merge dtype_mismatch into out_of_range to match the simplified public contract
-    out_of_range: List[str] = raw["range_violations"] + raw["dtype_mismatch"]
+    out_of_range: List[str] = (
+        raw["range_violations"] + raw["dtype_mismatch"] + raw.get("invalid_channels", [])
+    )
 
     issues: List[str] = (
         [f"missing:{c}" for c in raw["missing"]]
         + [f"dtype_mismatch:{c}" for c in raw["dtype_mismatch"]]
         + [f"out_of_range:{c}" for c in raw["range_violations"]]
+        + [f"invalid:{c}" for c in raw.get("invalid_channels", [])]
     )
 
     return {
@@ -602,6 +616,7 @@ def handle_visual_qa_validate_channels(
             [f"missing:{c}" for c in result["missing"]]
             + [f"dtype_mismatch:{c}" for c in result["dtype_mismatch"]]
             + [f"out_of_range:{c}" for c in result["range_violations"]]
+            + [f"invalid:{c}" for c in result.get("invalid_channels", [])]
         )
         return {
             "status": "ok",
@@ -639,9 +654,12 @@ def handle_visual_qa_capture_screenshot(
         success = capture_viewport_screenshot(
             safe_path, clamped_width, clamped_height, mode=mode
         )
+        status = "ok" if success else "failed"
+        error = None if success else ("bpy_unavailable" if not _HAS_BPY else "capture_failed")
 
-        return {
-            "status": "ok",
+        result = {
+            "status": status,
+            "ok": bool(success),
             "filepath": safe_path,
             "width": clamped_width,
             "height": clamped_height,
@@ -650,8 +668,11 @@ def handle_visual_qa_capture_screenshot(
             "captured": success,
             "has_bpy": _HAS_BPY,
         }
+        if error is not None:
+            result["error"] = error
+        return result
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "ok": False, "message": str(e)}
 
 
 # NOTE: register handle_visual_qa_validate_channels in handlers/__init__.py COMMAND_HANDLERS
@@ -665,20 +686,25 @@ def compare_render_to_golden(
     render_path: str,
     golden_path: str,
     ssim_threshold: float = 0.95,
+    *,
+    allow_missing_golden: bool = False,
+    allow_resize: bool = False,
+    min_luma_std: float = 0.005,
+    min_unique_colors: int = 8,
 ) -> Dict[str, Any]:
     """Compare a rendered image against a stored golden using SSIM.
 
     Returns a dict with keys:
-      - ``ok`` (bool): True when SSIM >= ssim_threshold or golden is absent.
+      - ``ok`` (bool): True when SSIM >= ssim_threshold.
       - ``ssim`` (float | None): computed SSIM score; None when either image
         cannot be loaded.
       - ``threshold`` (float): the threshold used.
       - ``render_path`` (str), ``golden_path`` (str): paths as supplied.
       - ``reason`` (str): human-readable outcome.
 
-    When the golden file does not yet exist the comparison returns ``ok=True``
-    with ``reason="golden_absent"`` so a first run is never a hard failure —
-    callers are responsible for committing the golden image from the render.
+    Missing goldens fail by default so release gates cannot pass without a
+    committed baseline. Development seeding scripts can pass
+    ``allow_missing_golden=True`` explicitly.
 
     Requires ``Pillow`` (PIL) + ``scikit-image`` or ``scipy`` for SSIM.
     Falls back to pixel-MAE when scikit-image is unavailable, using
@@ -691,11 +717,17 @@ def compare_render_to_golden(
         "render_path": render_path,
         "golden_path": golden_path,
         "reason": "unknown",
+        "render_shape": None,
+        "golden_shape": None,
+        "render_luma_std": None,
+        "golden_luma_std": None,
+        "render_unique_colors": None,
+        "golden_unique_colors": None,
     }
 
     golden = Path(golden_path)
     if not golden.exists():
-        result["ok"] = True
+        result["ok"] = bool(allow_missing_golden)
         result["reason"] = "golden_absent"
         return result
 
@@ -710,9 +742,36 @@ def compare_render_to_golden(
 
         r_img = _np_local.asarray(_Image.open(render_path).convert("RGB"), dtype=_np_local.float32) / 255.0
         g_img = _np_local.asarray(_Image.open(golden_path).convert("RGB"), dtype=_np_local.float32) / 255.0
+        result["render_shape"] = list(r_img.shape)
+        result["golden_shape"] = list(g_img.shape)
+
+        def _information_floor(img: Any, prefix: str) -> Optional[str]:
+            luma = _np_local.asarray(img, dtype=_np_local.float32).mean(axis=2)
+            luma_std = float(_np_local.nanstd(luma))
+            quantized = _np_local.asarray((img * 255.0).clip(0, 255), dtype=_np_local.uint8)
+            unique = int(_np_local.unique(quantized.reshape(-1, 3), axis=0).shape[0])
+            result[f"{prefix}_luma_std"] = round(luma_std, 6)
+            result[f"{prefix}_unique_colors"] = unique
+            if luma_std < min_luma_std:
+                return f"low_information_{prefix}:luma_std={luma_std:.6f}"
+            if unique < min_unique_colors:
+                return f"low_information_{prefix}:unique_colors={unique}"
+            return None
+
+        render_info_error = _information_floor(r_img, "render")
+        if render_info_error is not None:
+            result["reason"] = render_info_error
+            return result
+        golden_info_error = _information_floor(g_img, "golden")
+        if golden_info_error is not None:
+            result["reason"] = golden_info_error
+            return result
 
         if r_img.shape != g_img.shape:
-            # Resize render to match golden dimensions
+            if not allow_resize:
+                result["reason"] = "shape_mismatch"
+                return result
+            # Resize render to match golden dimensions for explicit dev seeding.
             from PIL import Image as _PIL
             r_pil = _PIL.open(render_path).convert("RGB").resize(
                 (g_img.shape[1], g_img.shape[0]), _PIL.Resampling.LANCZOS
@@ -746,10 +805,19 @@ def handle_visual_qa_compare_render(
     render_path: str,
     golden_path: str,
     ssim_threshold: float = 0.95,
+    *,
+    allow_missing_golden: bool = False,
+    allow_resize: bool = False,
 ) -> Dict[str, Any]:
     """Pipeline handler wrapping compare_render_to_golden with error guard."""
     try:
-        return compare_render_to_golden(render_path, golden_path, ssim_threshold=ssim_threshold)
+        return compare_render_to_golden(
+            render_path,
+            golden_path,
+            ssim_threshold=ssim_threshold,
+            allow_missing_golden=allow_missing_golden,
+            allow_resize=allow_resize,
+        )
     except Exception as exc:
         return {
             "ok": False,

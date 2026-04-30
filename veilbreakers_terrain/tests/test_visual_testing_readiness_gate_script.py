@@ -13,15 +13,12 @@ without Blender, and so we can assert:
 from __future__ import annotations
 
 import importlib
-import io
 import json
 import struct
 import sys
 import types
 import zlib
 from pathlib import Path
-
-import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -341,6 +338,50 @@ def test_gate_honours_requested_screenshot_shape(monkeypatch, tmp_path):
     assert payload["screenshot_contract_ok"] is False
     assert "screenshot_contract" in payload["blockers"]
     assert payload["requested_screenshot_shape"] == [320, 180]
+
+
+def test_gate_rejects_failed_capture_even_with_stale_png(monkeypatch, tmp_path):
+    gate = _load_gate_module()
+    state = _stub_handlers(monkeypatch)
+    paths = _redirect_outputs(monkeypatch, gate, tmp_path)
+
+    png = _make_png(32, 32, (10, 20, 30))
+    _set_screenshot_result(
+        state,
+        paths["thumbnail"],
+        width=320,
+        height=180,
+        png_bytes=png,
+        captured=False,
+    )
+    _force_no_blender(monkeypatch)
+
+    payload, _ = gate.run_gate(allow_no_blender=True, screenshot_width=320, screenshot_height=180)
+    assert payload["screenshot_contract_ok"] is False
+    assert "screenshot_contract" in payload["blockers"]
+
+
+def test_gate_rejects_blender_runtime_without_reference(monkeypatch, tmp_path):
+    gate = _load_gate_module()
+    state = _stub_handlers(monkeypatch)
+    paths = _redirect_outputs(monkeypatch, gate, tmp_path)
+
+    png = _make_png(32, 32, (10, 20, 30))
+    _set_screenshot_result(
+        state,
+        paths["thumbnail"],
+        width=320,
+        height=180,
+        png_bytes=png,
+        captured=True,
+    )
+    monkeypatch.setattr(gate, "_running_in_blender_runtime", lambda: True)
+    monkeypatch.setattr(gate, "_ensure_blender_readiness_fixture", lambda: {"created": True})
+
+    payload, code = gate.run_gate(allow_no_blender=False, screenshot_width=320, screenshot_height=180)
+    assert code == 1
+    assert payload["reference_present"] is False
+    assert "missing_visual_reference" in payload["blockers"]
 
 
 def test_perceptual_hash_is_stable_and_decodable():

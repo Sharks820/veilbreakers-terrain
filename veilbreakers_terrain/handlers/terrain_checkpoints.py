@@ -19,7 +19,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 import time
 import uuid
 from pathlib import Path
@@ -428,7 +427,7 @@ def _intent_from_dict(data: Dict[str, Any]) -> TerrainIntentState:
         anchors=anchors,
         protected_zones=protected,
         hero_feature_specs=heroes,
-        quality_profile=data.get("quality_profile", "production"),
+        quality_profile=data.get("quality_profile", "aaa_open_world"),
         biome_rules=data.get("biome_rules"),
         morphology_templates=tuple(data.get("morphology_templates", [])),
         noise_profile=data.get("noise_profile", "dark_fantasy_default"),

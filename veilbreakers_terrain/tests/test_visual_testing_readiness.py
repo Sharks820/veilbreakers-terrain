@@ -139,7 +139,9 @@ def test_visual_qa_headless_handlers_report_not_applied(monkeypatch):
     screenshot = vqa.handle_visual_qa_capture_screenshot(
         str(_OUT_DIR / "headless.png"), 999, 16
     )
-    assert screenshot["status"] == "ok"
+    assert screenshot["status"] == "failed"
+    assert screenshot["ok"] is False
+    assert screenshot["error"] == "bpy_unavailable"
     assert screenshot["captured"] is False
     assert screenshot["width"] == 999
     assert screenshot["height"] == 64
@@ -147,7 +149,8 @@ def test_visual_qa_headless_handlers_report_not_applied(monkeypatch):
     thumb = vqa.handle_visual_qa_capture_screenshot(
         str(_OUT_DIR / "thumb.png"), 999, 16, thumbnail=True
     )
-    assert thumb["status"] == "ok"
+    assert thumb["status"] == "failed"
+    assert thumb["ok"] is False
     assert thumb["width"] == 507
     assert thumb["height"] == 64
 

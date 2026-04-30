@@ -9,6 +9,7 @@ on:
 jobs:
   pyright:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +21,7 @@ jobs:
 
       - name: Install veilbreakers-mcp from source
         run: |
-          pip install "git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git#subdirectory=Tools/mcp-toolkit"
+          pip install "git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@1516c802c487c74a0f4e4aec42d8e42930d75e24#subdirectory=Tools/mcp-toolkit"
 
       - name: Install project with dev extras
         run: pip install -e ".[dev]"
@@ -29,4 +30,4 @@ jobs:
         run: pip install pyright
 
       - name: Run pyright type check
-        run: pyright veilbreakers_terrain --pythonversion 3.11
+        run: pyright -p pyrightconfig.json

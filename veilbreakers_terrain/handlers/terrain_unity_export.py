@@ -18,7 +18,6 @@ import numpy as np
 from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainMaskStack, TerrainPipelineState
 from .terrain_chunking import build_tile_seam_contract
 from .terrain_unity_export_contracts import (
-    REQUIRED_MESH_ATTRIBUTES,
     UnityExportContract,
     validate_bit_depth_contract,
     validate_mesh_attributes_present,
@@ -530,6 +529,9 @@ def register_bundle_j_terrain_normals_pass() -> None:
             produces_channels=("terrain_normals",),
             seed_namespace="prepare_terrain_normals",
             requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Bundle J: compute Unity-space terrain normals from world heightmap",
         )
     )
@@ -546,6 +548,9 @@ def register_bundle_j_heightmap_u16_pass() -> None:
             produces_channels=("heightmap_raw_u16",),
             seed_namespace="prepare_heightmap_raw_u16",
             requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Bundle J: quantize world heightmap into Unity-ready uint16 channel",
         )
     )
@@ -567,6 +572,9 @@ def register_bundle_j_unity_auxiliary_pass() -> None:
             overrides=("ambient_occlusion_bake",),
             seed_namespace="prepare_unity_auxiliary_channels",
             requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Bundle J: derive Unity physics, lightmap, and AO channels from terrain height",
         )
     )
@@ -704,6 +712,30 @@ def _write_raw_array(
         meta.update(extra)
     files[target.name] = meta
     return target.name
+
+
+def _binary_export_payload(channel: str, value: Any) -> tuple[np.ndarray, str, Dict[str, Any]]:
+    """Return Unity-stable binary payload, encoding tag, and metadata extras."""
+    arr_np = np.asarray(value)
+    extra: Dict[str, Any] = {}
+    if channel == "shadow_clipmap":
+        return (
+            np.asarray(arr_np, dtype=np.float32),
+            "raw_f32_le",
+            {
+                "precision_contract": "shadow_clipmap_32f",
+                "unity_usage": "shadow_clipmap",
+            },
+        )
+    if arr_np.dtype == np.bool_:
+        return np.asarray(arr_np, dtype=np.uint8), "raw_u8_le", extra
+    if np.issubdtype(arr_np.dtype, np.floating):
+        return np.asarray(arr_np, dtype=np.float32), "raw_f32_le", extra
+    if np.issubdtype(arr_np.dtype, np.unsignedinteger):
+        return arr_np, f"raw_u{arr_np.dtype.itemsize * 8}_le", extra
+    if np.issubdtype(arr_np.dtype, np.signedinteger):
+        return arr_np, f"raw_i{arr_np.dtype.itemsize * 8}_le", extra
+    return arr_np, "raw_le", extra
 
 
 def _write_rgba_png(
@@ -1128,6 +1160,9 @@ def _default_splatmap_layer_meta(
                 "height_blend_factor": 0.25 if triplanar else 0.1,
                 "base_color_hex": base_color_hex,
                 "base_color_rgb": _hex_to_rgb01(base_color_hex),
+                "diffuse_texture_file": "",
+                "normal_texture_file": "",
+                "mask_texture_file": "",
                 "triplanar": triplanar,
             }
         )
@@ -1264,6 +1299,77 @@ def _biome_manifest_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     }
 
 
+def _unity_mesh_attribute_arrays(stack: TerrainMaskStack) -> Dict[str, np.ndarray]:
+    """Build concrete Unity mesh-attribute arrays instead of assuming presence."""
+    height = np.asarray(stack.height, dtype=np.float32)
+    if height.ndim != 2 or height.size == 0:
+        return {}
+
+    slope = stack.get("slope")
+    if slope is None:
+        gy, gx = np.gradient(height.astype(np.float64), float(max(stack.cell_size, 1e-9)))
+        slope_arr = np.degrees(np.arctan(np.sqrt(gx * gx + gy * gy))).astype(np.float32)
+    else:
+        slope_arr = np.asarray(slope, dtype=np.float32)
+
+    def _float_attr(name: str, fallback: float = 0.0) -> np.ndarray:
+        value = stack.get(name)
+        if value is None:
+            return np.full(height.shape, fallback, dtype=np.float32)
+        arr = np.asarray(value, dtype=np.float32)
+        return arr if arr.shape == height.shape else np.full(height.shape, fallback, dtype=np.float32)
+
+    biome = stack.get("biome_id")
+    if biome is None:
+        biome_arr = np.zeros(height.shape, dtype=np.int32)
+    else:
+        biome_raw = np.asarray(biome)
+        biome_arr = (
+            biome_raw.astype(np.int32)
+            if biome_raw.shape == height.shape
+            else np.zeros(height.shape, dtype=np.int32)
+        )
+
+    cliff = stack.get("cliff_mask")
+    if cliff is None:
+        cliff = stack.get("cliff_candidate")
+    cliff_arr = (
+        np.asarray(cliff, dtype=np.float32)
+        if cliff is not None and np.asarray(cliff).shape == height.shape
+        else np.zeros(height.shape, dtype=np.float32)
+    )
+
+    return {
+        "slope_angle": slope_arr,
+        "flow_accumulation": _float_attr("flow_accumulation"),
+        "wetness": _float_attr("wetness"),
+        "biome_id": biome_arr,
+        "cliff_mask": cliff_arr,
+        "protected_zone_id": np.zeros(height.shape, dtype=np.int32),
+    }
+
+
+def _write_unity_mesh_attributes(
+    files: Dict[str, Dict[str, Any]],
+    output_dir: Path,
+    stack: TerrainMaskStack,
+) -> List[str]:
+    attrs = _unity_mesh_attribute_arrays(stack)
+    if not attrs:
+        return []
+    path = output_dir / "mesh_attributes.npz"
+    np.savez_compressed(path, **attrs)
+    files["mesh_attributes.npz"] = {
+        "kind": "unity_mesh_attributes",
+        "encoding": "npz_named_arrays",
+        "attributes": sorted(attrs),
+        "shape": list(next(iter(attrs.values())).shape),
+        "byte_size": path.stat().st_size,
+        "sha256": _sha256(path),
+    }
+    return sorted(attrs)
+
+
 def _build_unity_import_descriptor(
     stack: TerrainMaskStack,
     manifest: Dict[str, Any],
@@ -1332,6 +1438,9 @@ def _build_unity_import_descriptor(
         "terrain_size_z_m": float(int(manifest["tile_size"]) * float(manifest["cell_size"])),
         "height_min_m": manifest.get("height_min_unity_units", manifest.get("height_min_m")),
         "height_max_m": manifest.get("height_max_unity_units", manifest.get("height_max_m")),
+        "height_scale_factor": manifest.get("height_scale_factor", UNITY_SCALE_FACTOR),
+        "coordinate_system": manifest.get("coordinate_system", _EXPORT_COORDINATE_SYSTEM),
+        "source_coordinate_system": manifest.get("source_coordinate_system", "z-up"),
         "heightmap": {
             "file": "heightmap.raw",
             "width": height_cols,
@@ -1343,6 +1452,9 @@ def _build_unity_import_descriptor(
         },
         "terrain_normals_file": "terrain_normals.bin",
         "terrain_normal_map_file": "terrain_normals_tangent.png",
+        "mesh_attributes_file": (
+            "mesh_attributes.npz" if "mesh_attributes.npz" in files else ""
+        ),
         "splatmaps": splatmaps,
         "terrain_layers": splatmap_layer_meta,
         "detail_layers": detail_layers,
@@ -1362,9 +1474,54 @@ def _build_unity_import_descriptor(
             if "water_shader_manifest.json" in files
             else ""
         ),
+        "water_surface_elevation_file": (
+            "water_surface_elevation_m.bin"
+            if "water_surface_elevation_m.bin" in files
+            else ""
+        ),
+        "water_depth_file": "water_depth_m.bin" if "water_depth_m.bin" in files else "",
+        "flow_direction_file": "flow_direction.bin" if "flow_direction.bin" in files else "",
+        "flow_accumulation_file": (
+            "flow_accumulation.bin" if "flow_accumulation.bin" in files else ""
+        ),
+        "tile_biome_id": manifest.get("tile_biome_id"),
+        "tile_biome_name": manifest.get("tile_biome_name") or "dark_fantasy_default",
+        "water_level_unity_units": manifest.get("water_level_unity_units"),
+        "has_water_surface": bool(manifest.get("has_water_surface", False)),
+        "scatter_count": int(manifest.get("scatter_count", 0) or 0),
+        "snow_line_factor": float(manifest.get("snow_line_factor", 0.0) or 0.0),
+        "light_placements_file": (
+            "light_placements.json"
+            if "light_placements.json" in files
+            else ""
+        ),
+        "probe_placements_file": (
+            "probe_placements.json"
+            if "probe_placements.json" in files
+            else ""
+        ),
+        "atmospheric_volumes_file": (
+            "atmospheric_volumes.json"
+            if "atmospheric_volumes.json" in files
+            else ""
+        ),
+        "wind_field_descriptor": "wind_field.bin" if "wind_field.bin" in files else "",
+        "cloud_shadow_descriptor": "cloud_shadow.bin" if "cloud_shadow.bin" in files else "",
+        "navmesh_area_id_file": "navmesh_area_id.bin" if "navmesh_area_id.bin" in files else "",
+        "navmesh_data_asset_path": (
+            f"Assets/VeilBreakersTerrain/Imported/{manifest.get('world_id', 'world')}"
+            f"/NavMeshData_{manifest['tile_x']}_{manifest['tile_y']}.asset"
+            if "navmesh_area_id.bin" in files
+            else ""
+        ),
         "supplemental_mesh_specs_file": (
             "supplemental_mesh_specs.json"
             if "supplemental_mesh_specs.json" in files
+            else ""
+        ),
+        "foliage_placement_manifest_file": (
+            "foliage_placement_manifest.json"
+            if "foliage_placement_manifest.json" in files
             else ""
         ),
         "seam_contract": manifest.get("seam_contract", {}),
@@ -1548,7 +1705,8 @@ def export_unity_manifest(
     output_dir: Path,
     profile: Optional[str] = None,
     *,
-    strict_unity_resolution: bool = False,
+    strict_unity_resolution: bool = True,
+    fail_on_validation_error: bool = True,
 ) -> Dict[str, Any]:
     """Write a Unity-consumable export bundle to ``output_dir``.
 
@@ -1663,7 +1821,8 @@ def export_unity_manifest(
         "erosion_amount", "deposition_amount", "wetness",
         "drainage", "bank_instability", "talus",
         "flow_direction", "flow_accumulation",
-        "water_surface", "foam", "mist", "wet_rock", "tidal", "waterfall_velocity",
+        "water_surface", "water_surface_elevation_m", "water_depth_m",
+        "foam", "mist", "wet_rock", "tidal", "waterfall_velocity",
         "biome_id", "corruption_map", "macro_color", "roughness_variation", "snow_line_factor",
         "grass_density_map", "terrain_displacement", "shadow_clipmap",
         "strata_orientation", "rock_hardness",
@@ -1676,13 +1835,15 @@ def export_unity_manifest(
         value = stack.get(channel)
         if value is None:
             continue
+        export_arr, encoding, extra = _binary_export_payload(channel, value)
         _write_raw_array(
             files,
             output_dir,
             filename=f"{channel}.bin",
             channel=channel,
-            arr=np.asarray(value),
-            encoding="raw_le",
+            arr=export_arr,
+            encoding=encoding,
+            extra=extra,
         )
 
     # ---------------------------------------------------------------------- #
@@ -1779,6 +1940,7 @@ def export_unity_manifest(
             )
 
     tree_instances_json = _tree_instances_json(stack)
+    foliage_placement_manifest_json = _foliage_placement_manifest_json(stack, tree_instances_json)
     audio_zones_json = _audio_zones_json(stack)
     gameplay_zones_json = _gameplay_zones_json(stack)
     wildlife_zones_json = _wildlife_zones_json(stack)
@@ -1798,8 +1960,13 @@ def export_unity_manifest(
         "splatmap_descriptors": splatmap_files,
         "detail_density_descriptors": detail_files,
         "tree_instances_descriptor": "tree_instances.json" if tree_instances_json["trees"] else None,
+        "foliage_placement_manifest_descriptor": (
+            "foliage_placement_manifest.json"
+            if foliage_placement_manifest_json["instances"]
+            else None
+        ),
         "has_terrain_normals": stack.terrain_normals is not None,
-        "has_audio_zones": stack.audio_reverb_class is not None,
+        "has_audio_zones": stack.audio_reverb_class is not None or bool(stack.audio_zone_list),
         "has_wildlife_zones": bool(stack.wildlife_affinity),
         "has_gameplay_zones": stack.gameplay_zone is not None,
         "has_wind_field": stack.wind_field is not None,
@@ -1827,6 +1994,7 @@ def export_unity_manifest(
 
     for name, payload in (
         ("tree_instances.json", tree_instances_json),
+        ("foliage_placement_manifest.json", foliage_placement_manifest_json),
         ("audio_zones.json", audio_zones_json),
         ("gameplay_zones.json", gameplay_zones_json),
         ("wildlife_zones.json", wildlife_zones_json),
@@ -1869,6 +2037,7 @@ def export_unity_manifest(
     if light_placements_json["lights"]:
         _write_json(files, output_dir, filename="light_placements.json", payload=light_placements_json)
     _write_json(files, output_dir, filename="probe_placements.json", payload=probe_placements_json)
+    present_mesh_attributes = _write_unity_mesh_attributes(files, output_dir, stack)
 
     # ---------------------------------------------------------------------- #
     # Tree prototype list — derived from tree_instance_points column 4.
@@ -1894,21 +2063,47 @@ def export_unity_manifest(
             ]
 
     # ---------------------------------------------------------------------- #
-    # Water level — derived from water_surface channel (if present).
+    # Water level — derived from real elevation first. If only a water mask is
+    # available, sample terrain height under wet cells instead of treating mask
+    # values like metres.
     # Unity's water system needs a world-space Y value for the base plane.
     # We emit the 75th-percentile water surface height as the canonical level
     # so brief splash-zones don't inflate the baseline.
     # ---------------------------------------------------------------------- #
-    water_level_unity: Optional[float] = None
-    ws = stack.get("water_surface_mask")
-    if ws is None:
-        ws = stack.get("water_surface")
-    if ws is not None:
-        ws_arr = np.asarray(ws, dtype=np.float64)
-        nonzero = ws_arr[ws_arr > 0.0]
-        if nonzero.size > 0:
-            raw_level = float(np.percentile(nonzero, 75))
-            water_level_unity = _apply_unity_scale(raw_level)
+    water_level_m: Optional[float] = None
+    water_elevation = stack.get("water_surface_elevation_m")
+    if water_elevation is None:
+        water_elevation = stack.get("water_surface_elevation")
+    water_mask = stack.get("water_surface_mask")
+    water_surface = stack.get("water_surface")
+    if water_mask is None and water_surface is not None:
+        water_surface_arr = np.asarray(water_surface, dtype=np.float64)
+        height_min = float(np.nanmin(np.asarray(stack.height, dtype=np.float64)))
+        height_max = float(np.nanmax(np.asarray(stack.height, dtype=np.float64)))
+        if height_max - height_min > 1.0 and np.nanmax(water_surface_arr) <= 1.0:
+            water_mask = water_surface_arr
+        else:
+            water_elevation = water_surface_arr
+    if water_elevation is not None:
+        elev_arr = np.asarray(water_elevation, dtype=np.float64)
+        finite = elev_arr[np.isfinite(elev_arr)]
+        if water_mask is not None and elev_arr.shape == np.asarray(water_mask).shape:
+            mask_arr = np.asarray(water_mask, dtype=np.float64) > 0.0
+            masked = elev_arr[mask_arr & np.isfinite(elev_arr)]
+            if masked.size > 0:
+                finite = masked
+        if finite.size > 0:
+            water_level_m = float(np.percentile(finite, 75))
+    elif water_mask is not None:
+        mask_arr = np.asarray(water_mask, dtype=np.float64) > 0.0
+        height_arr = np.asarray(stack.height, dtype=np.float64)
+        if mask_arr.shape == height_arr.shape:
+            wet_heights = height_arr[mask_arr & np.isfinite(height_arr)]
+            if wet_heights.size > 0:
+                water_level_m = float(np.percentile(wet_heights, 75))
+    water_level_unity: Optional[float] = (
+        _apply_unity_scale(water_level_m) if water_level_m is not None else None
+    )
 
     # ---------------------------------------------------------------------- #
     # Lightmap hints — baked AO + chart IDs for Unity Progressive lightmapper.
@@ -1998,6 +2193,7 @@ def export_unity_manifest(
         "biome_distribution": biome_manifest["distribution"],
         "snow_line_factor": float(np.asarray(stack.get("snow_line_factor")).mean()) if stack.get("snow_line_factor") is not None else 0.0,
         "has_water_surface": water_level_unity is not None,
+        "water_surface_elevation_m": water_level_m,
         "scatter_count": int(np.asarray(stack.tree_instance_points).shape[0]) if stack.tree_instance_points is not None and np.asarray(stack.tree_instance_points).ndim >= 1 else 0,
         "detail_density_max_per_cell": _DETAIL_DENSITY_MAX_PER_CELL,
         "tree_prototype_list": tree_prototype_list,
@@ -2031,8 +2227,10 @@ def export_unity_manifest(
     if light_placements_json["lights"]:
         manifest["light_placements_file"] = "light_placements.json"
     manifest["probe_placements_file"] = "probe_placements.json"
+    manifest["foliage_placement_manifest_file"] = "foliage_placement_manifest.json"
+    manifest["mesh_attributes_present"] = present_mesh_attributes
     validation_issues = validate_bit_depth_contract(UnityExportContract(), files)
-    validation_issues.extend(validate_mesh_attributes_present(REQUIRED_MESH_ATTRIBUTES))
+    validation_issues.extend(validate_mesh_attributes_present(present_mesh_attributes))
     manifest["validation_issue_count"] = len(validation_issues)
     manifest["validation_issues"] = [
         {
@@ -2048,6 +2246,13 @@ def export_unity_manifest(
         "failed" if any(issue.is_hard() for issue in validation_issues) else "passed"
     )
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    if fail_on_validation_error and any(issue.is_hard() for issue in validation_issues):
+        codes = ", ".join(issue.code for issue in validation_issues if issue.is_hard())
+        raise ValueError(
+            "Unity export contract validation failed; refusing to emit "
+            f"unity_import_descriptor.json. Hard issue codes: {codes or '(unknown)'}. "
+            f"See {(output_dir / 'manifest.json')} for details."
+        )
     import_descriptor = _build_unity_import_descriptor(
         stack,
         manifest,
@@ -2070,22 +2275,19 @@ def export_unity_manifest(
 
 def _light_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     """Build light placement descriptors from world props via light_integration."""
-    try:
-        from .light_integration import compute_light_placements
-        props: list = []
-        talus = stack.get("talus_boulder_placements")
-        if talus and isinstance(talus, (list, tuple)):
-            for p in talus:
-                if isinstance(p, dict) and "position" in p:
-                    props.append({"type": p.get("type", "boulder"), "position": p["position"]})
-        lights = compute_light_placements(props)
-        # Tuples → lists for JSON serialisation
-        for lt in lights:
-            for k in ("position", "color", "direction"):
-                if k in lt and isinstance(lt[k], tuple):
-                    lt[k] = list(lt[k])
-    except Exception:
-        lights = []
+    from .light_integration import compute_light_placements
+
+    props: list = []
+    talus = stack.get("talus_boulder_placements")
+    if talus and isinstance(talus, (list, tuple)):
+        for p in talus:
+            if isinstance(p, dict) and "position" in p:
+                props.append({"type": p.get("type", "boulder"), "position": p["position"]})
+    lights = compute_light_placements(props)
+    for lt in lights:
+        for k in ("position", "color", "direction"):
+            if k in lt and isinstance(lt[k], tuple):
+                lt[k] = list(lt[k])
     return {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -2095,28 +2297,26 @@ def _light_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _probe_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     """Compute UE5-style reflection/irradiance probe placements from the terrain."""
-    try:
-        from .light_integration import compute_probe_placements
-        height = stack.get("height")
-        if height is None:
-            return {
-                "schema_version": "1.0",
-                "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
-                "probes": [],
-            }
-        water = stack.get("water_surface_mask")
-        probes = compute_probe_placements(
-            height,
-            cell_size=float(stack.cell_size),
-            world_origin_x=float(stack.world_origin_x),
-            world_origin_y=float(stack.world_origin_y),
-            water_surface=water,
-        )
-        for p in probes:
-            if "position" in p and isinstance(p["position"], tuple):
-                p["position"] = list(p["position"])
-    except Exception:
-        probes = []
+    from .light_integration import compute_probe_placements
+
+    height = stack.get("height")
+    if height is None:
+        return {
+            "schema_version": "1.0",
+            "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+            "probes": [],
+        }
+    water = stack.get("water_surface_mask")
+    probes = compute_probe_placements(
+        height,
+        cell_size=float(stack.cell_size),
+        world_origin_x=float(stack.world_origin_x),
+        world_origin_y=float(stack.world_origin_y),
+        water_surface=water,
+    )
+    for p in probes:
+        if "position" in p and isinstance(p["position"], tuple):
+            p["position"] = list(p["position"])
     return {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -2128,34 +2328,24 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     zones: List[Dict[str, Any]] = []
     arr = stack.audio_reverb_class
     if arr is None:
+        explicit_zones = list(stack.audio_zone_list or [])
+        if explicit_zones:
+            return _audio_zone_list_json(stack, explicit_zones)
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
-    try:
-        from .terrain_audio_zones import AudioReverbClass, REVERB_PRESETS, compute_audio_zone_list
-        enriched_zones = list(stack.audio_zone_list or compute_audio_zone_list(stack))
-        class_name_fallback = {
-            int(AudioReverbClass.OPEN_FIELD): "open_field",
-            int(AudioReverbClass.FOREST_DENSE): "forest_dense",
-            int(AudioReverbClass.FOREST_SPARSE): "forest_sparse",
-            int(AudioReverbClass.CAVE): "cave",
-            int(AudioReverbClass.CANYON): "canyon",
-            int(AudioReverbClass.WATER_NEAR): "water_near",
-            int(AudioReverbClass.MOUNTAIN_HIGH): "mountain_high",
-            int(AudioReverbClass.INTERIOR): "interior",
-        }
-    except Exception:
-        REVERB_PRESETS = {}
-        enriched_zones = []
-        class_name_fallback = {
-            0: "open_field",
-            1: "forest_dense",
-            2: "forest_sparse",
-            3: "cave",
-            4: "canyon",
-            5: "water_near",
-            6: "mountain_high",
-            7: "interior",
-        }
+    from .terrain_audio_zones import AudioReverbClass, REVERB_PRESETS, compute_audio_zone_list
+
+    enriched_zones = list(stack.audio_zone_list or compute_audio_zone_list(stack))
+    class_name_fallback = {
+        int(AudioReverbClass.OPEN_FIELD): "open_field",
+        int(AudioReverbClass.FOREST_DENSE): "forest_dense",
+        int(AudioReverbClass.FOREST_SPARSE): "forest_sparse",
+        int(AudioReverbClass.CAVE): "cave",
+        int(AudioReverbClass.CANYON): "canyon",
+        int(AudioReverbClass.WATER_NEAR): "water_near",
+        int(AudioReverbClass.MOUNTAIN_HIGH): "mountain_high",
+        int(AudioReverbClass.INTERIOR): "interior",
+    }
 
     enriched_by_class: Dict[int, List[Dict[str, Any]]] = {}
     for zone in enriched_zones:
@@ -2205,6 +2395,62 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                     "cell_count": int(rr.size),
                 }
             )
+    return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
+
+
+def _audio_zone_list_json(
+    stack: TerrainMaskStack,
+    explicit_zones: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    zones: List[Dict[str, Any]] = []
+    world_tile_extent = float(stack.tile_size * stack.cell_size)
+    for i, zone in enumerate(explicit_zones):
+        boundary = zone.get("boundary_polygon") or []
+        rr: List[int] = []
+        cc: List[int] = []
+        for point in boundary:
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                continue
+            rr.append(int(point[0]))
+            cc.append(int(point[1]))
+        if rr and cc:
+            rr_np = np.asarray(rr, dtype=np.int32)
+            cc_np = np.asarray(cc, dtype=np.int32)
+            min_z, max_z = _component_vertical_extent(
+                stack,
+                rr_np,
+                cc_np,
+                floor_pad_m=1.0,
+                ceil_pad_m=8.0,
+                fallback_min_m=0.0,
+                fallback_max_m=world_tile_extent,
+            )
+            bounds = _component_bounds(stack, rr_np, cc_np, min_z, max_z)
+        else:
+            bounds = _bounds_to_unity(
+                [stack.world_origin_x, stack.world_origin_y, 0.0],
+                [
+                    stack.world_origin_x + world_tile_extent,
+                    stack.world_origin_y + world_tile_extent,
+                    world_tile_extent,
+                ],
+            )
+        name = str(zone.get("preset") or zone.get("reverb_preset") or "unknown")
+        tail = float(zone.get("rt60_seconds", zone.get("rt60", 0.5)))
+        zones.append(
+            {
+                "bounds": bounds,
+                "reverb_class": name,
+                "wet_mix": float(zone.get("wet_send_default", zone.get("dry_wet_ratio", 0.2))),
+                "early_reflections": float(zone.get("pre_delay", 0.2)),
+                "tail_length": tail,
+                "zone_id": str(zone.get("id", f"{name}_{i:03d}")),
+                "rt60_seconds": tail,
+                "echo_delay_ms": float(zone.get("echo_delay_ms", 0.0)),
+                "occlusion_weight": float(zone.get("occlusion_weight", 0.0)),
+                "cell_count": int(zone.get("cell_count", max(1, len(rr)))),
+            }
+        )
     return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
 
@@ -2522,6 +2768,63 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
         "trees": trees,
         "skipped_out_of_bounds": skipped_out_of_bounds,
+    }
+
+
+def _foliage_placement_manifest_json(
+    stack: TerrainMaskStack,
+    tree_instances_json: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the Unity GPU-foliage manifest consumed by VbFoliageManifestRenderer."""
+    trees = list(tree_instances_json.get("trees", []) or [])
+    mesh_ids = sorted({int(tree.get("prototype_id", 0)) for tree in trees})
+    mesh_library = [
+        {
+            "mesh_id": mesh_id,
+            "species_key": f"tree_prototype_{mesh_id:03d}",
+            "unity_render_mode": "gpu_instanced",
+            "render_batch_key": f"tree_prototype_{mesh_id:03d}",
+        }
+        for mesh_id in mesh_ids
+    ]
+    instances: List[Dict[str, Any]] = []
+    for index, tree in enumerate(trees):
+        position = tree.get("position", [0.0, 0.0, 0.0])
+        width_scale = float(tree.get("width_scale", 1.0) or 1.0)
+        height_scale = float(tree.get("height_scale", 1.0) or 1.0)
+        instances.append(
+            {
+                "i": index,
+                "mesh_id": int(tree.get("prototype_id", 0)),
+                "position_world": list(position),
+                "rotation_y_rad": float(np.radians(float(tree.get("yaw_degrees", 0.0) or 0.0))),
+                "scale": float(max(width_scale, height_scale)),
+                "scale_xyz": [width_scale, height_scale, width_scale],
+                "lod_level": 0,
+                "tint_rgb": [1.0, 1.0, 1.0],
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
+        "terrain": {
+            "tile_x": int(stack.tile_x),
+            "tile_y": int(stack.tile_y),
+            "tile_size": int(stack.tile_size),
+            "cell_size": _apply_unity_scale(float(stack.cell_size)),
+            "world_origin": [
+                _apply_unity_scale(float(stack.world_origin_x)),
+                _apply_unity_scale(float(stack.world_origin_y)),
+            ],
+        },
+        "lod_distances_m": [15.0, 35.0, 60.0, 200.0],
+        "mesh_library": mesh_library,
+        "instances": instances,
+        "instance_count": len(instances),
+        "species_density": {
+            f"tree_prototype_{mesh_id:03d}": sum(1 for item in instances if item["mesh_id"] == mesh_id)
+            for mesh_id in mesh_ids
+        },
     }
 
 

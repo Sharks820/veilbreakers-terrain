@@ -1,0 +1,9 @@
+name: veilbreakers-terrain-codeql
+queries:
+  - uses: security-and-quality
+paths:
+  - veilbreakers_terrain
+  - scripts
+paths-ignore:
+  - output
+  - graphify-out

@@ -1362,6 +1362,26 @@ class TestHandlerReturnDictKeys:
 
 
 class TestControllerTerrainPath:
+    def test_generate_terrain_requires_explicit_headless_and_bulk_protocol(self):
+        from veilbreakers_terrain.handlers import environment as env_mod
+        from veilbreakers_terrain.handlers.terrain_protocol import ProtocolViolation
+
+        base_params = {
+            "name": "ProtocolTerrain",
+            "resolution": 3,
+            "terrain_type": "hills",
+            "erosion": "none",
+            "seed": 7,
+            "scale": 32.0,
+            "height_scale": 4.0,
+        }
+
+        with pytest.raises(ProtocolViolation, match="out_of_view_ok=False"):
+            env_mod.handle_generate_terrain(base_params)
+
+        with pytest.raises(ProtocolViolation, match="mutation affects"):
+            env_mod.handle_generate_terrain({**base_params, "out_of_view_ok": True})
+
     def test_generate_terrain_uses_controller_heightmap_as_source_of_truth(self):
         from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
@@ -1427,7 +1447,8 @@ class TestControllerTerrainPath:
                     "seed": 7,
                     "scale": 32.0,
                     "height_scale": 4.0,
-                    "use_controller": True,
+                    "bulk_edit": True,
+                    "out_of_view_ok": True,
                     "cliff_overlays": True,
                 }
             )
@@ -1491,6 +1512,8 @@ class TestControllerTerrainPath:
                     "scale": 32.0,
                     "height_scale": 6.0,
                     "use_controller": True,
+                    "bulk_edit": True,
+                    "out_of_view_ok": True,
                     "object_location": (4.0, -2.0, 0.0),
                     "scene_read": {
                         "reviewer": "pytest",
@@ -1501,26 +1524,7 @@ class TestControllerTerrainPath:
 
         params = captured["params"]
         assert params["scene_read"]["cave_candidates"] == [(6.0, 3.0, 0.0)]
-        assert params["pipeline"] == [
-            "macro_world",
-            "structural_masks",
-            "cliffs",
-            "emit_overhang_meshes",
-            "water_variants",
-            "bathymetry",
-            "pass_water_depth",
-            "materials_v2",
-            "waterfalls",
-            "emit_particle_systems",
-            "scatter_intelligent",
-            "pass_procedural_grass",
-            "pass_horizon_lod",
-            "pass_navmesh_export",
-            "prepare_terrain_normals",
-            "prepare_heightmap_raw_u16",
-            "prepare_unity_auxiliary_channels",
-            "validation_full",
-        ]
+        assert "pipeline" not in params
         assert params["world_origin_x"] == pytest.approx(-12.0)
         assert params["world_origin_y"] == pytest.approx(-18.0)
         assert result["cave_candidates"] == [[6.0, 3.0, 0.0]]
@@ -1574,6 +1578,8 @@ class TestControllerTerrainPath:
                     "scale": 32.0,
                     "height_scale": 6.0,
                     "use_controller": True,
+                    "bulk_edit": True,
+                    "out_of_view_ok": True,
                     "controller_apply_caves": True,
                     "object_location": (4.0, -2.0, 0.0),
                     "scene_read": {
@@ -1584,28 +1590,8 @@ class TestControllerTerrainPath:
             )
 
         params = captured["params"]
-        assert params["pipeline"] == [
-            "macro_world",
-            "structural_masks",
-            "caves",
-            "integrate_deltas",
-            "cliffs",
-            "emit_overhang_meshes",
-            "water_variants",
-            "bathymetry",
-            "pass_water_depth",
-            "materials_v2",
-            "waterfalls",
-            "emit_particle_systems",
-            "scatter_intelligent",
-            "pass_procedural_grass",
-            "pass_horizon_lod",
-            "pass_navmesh_export",
-            "prepare_terrain_normals",
-            "prepare_heightmap_raw_u16",
-            "prepare_unity_auxiliary_channels",
-            "validation_full",
-        ]
+        assert "pipeline" not in params
+        assert params["composition_hints"]["controller_apply_caves"] is True
         assert result["cave_pipeline_deferred"] is False
 
     def test_controller_path_inserts_hydrology_before_erosion(self):
@@ -1655,6 +1641,8 @@ class TestControllerTerrainPath:
                     "scale": 32.0,
                     "height_scale": 6.0,
                     "use_controller": True,
+                    "bulk_edit": True,
+                    "out_of_view_ok": True,
                     "object_location": (4.0, -2.0, 0.0),
                     "scene_read": {
                         "reviewer": "pytest",
@@ -1662,30 +1650,8 @@ class TestControllerTerrainPath:
                 }
             )
 
-        assert captured["params"]["pipeline"] == [
-            "macro_world",
-            "structural_masks",
-            "pass_hydrology",
-            "erosion",
-            "structural_masks",
-            "pass_hydrology",
-            "cliffs",
-            "emit_overhang_meshes",
-            "water_variants",
-            "bathymetry",
-            "pass_water_depth",
-            "materials_v2",
-            "waterfalls",
-            "emit_particle_systems",
-            "scatter_intelligent",
-            "pass_procedural_grass",
-            "pass_horizon_lod",
-            "pass_navmesh_export",
-            "prepare_terrain_normals",
-            "prepare_heightmap_raw_u16",
-            "prepare_unity_auxiliary_channels",
-            "validation_full",
-        ]
+        assert "pipeline" not in captured["params"]
+        assert captured["params"]["erosion_profile"] == "temperate"
 
     def test_controller_path_forwards_quality_profile_hints_and_viewport_vantage(self):
         from veilbreakers_terrain.handlers import environment as env_mod
@@ -1734,6 +1700,8 @@ class TestControllerTerrainPath:
                     "scale": 32.0,
                     "height_scale": 6.0,
                     "use_controller": True,
+                    "bulk_edit": True,
+                    "out_of_view_ok": True,
                     "quality_profile": "aaa_open_world",
                     "composition_hints": {"bundle_n_runtime": {"determinism_runs": 2}},
                     "viewport_vantage": {"camera": "test"},
@@ -2072,6 +2040,33 @@ def test_execute_terrain_pipeline_wires_water_network_and_spec():
     assert state.intent.water_system_spec.lake_min_area == pytest.approx(12.0)
     assert state.intent.water_system_spec.braided_channels is True
     assert state.intent.water_system_spec.seasonal_state == "flood"
+
+
+def test_execute_terrain_pipeline_protocol_requires_explicit_rule2_and_rule5_opts():
+    from veilbreakers_terrain.handlers import environment as env_mod
+
+    base_params = {
+        "tile_size": 8,
+        "cell_size": 1.0,
+        "height": np.zeros((9, 9), dtype=np.float64),
+        "pipeline": ["macro_world"],
+        "scene_read": {"reviewer": "pytest"},
+        "enforce_protocol": True,
+    }
+
+    rule2 = env_mod._execute_terrain_pipeline(base_params)
+    assert rule2["ok"] is False
+    assert "out_of_view_ok=False" in rule2["message"]
+
+    rule5 = env_mod._execute_terrain_pipeline(
+        {
+            **base_params,
+            "out_of_view_ok": True,
+            "cells_affected": 81,
+        }
+    )
+    assert rule5["ok"] is False
+    assert "mutation affects" in rule5["message"]
 
 
 def test_execute_terrain_pipeline_rejects_invalid_region_bounds():

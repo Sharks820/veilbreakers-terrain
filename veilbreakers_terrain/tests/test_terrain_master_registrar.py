@@ -8,6 +8,27 @@ import pytest
 from unittest.mock import patch
 
 
+def _headless_protocol_fields(*, composition_hints=None):
+    hints = {
+        "bundle_n_runtime": {"visual_qa_blocking": False},
+    }
+    if composition_hints:
+        hints.update(composition_hints)
+    return {
+        "quality_profile": "standard",
+        "out_of_view_ok": True,
+        "bulk_edit": True,
+        "composition_hints": hints,
+        "scene_read": {
+            "major_landforms": ["ridge"],
+            "focal_point": [0.0, 0.0, 0.0],
+            "success_criteria": ["test"],
+            "reviewer": "pytest",
+            "viewport_vantage": {"camera": "headless"},
+        },
+    }
+
+
 def test_master_registrar_loads_all_bundles():
     from veilbreakers_terrain.handlers.terrain_master_registrar import (
         register_all_terrain_passes,
@@ -103,18 +124,13 @@ def test_handle_run_terrain_pass_registers_non_default_passes_for_direct_callers
                 "seed": 42,
                 "terrain_type": "hills",
                 "scale": 60.0,
+                **_headless_protocol_fields(),
                 "pipeline": [
                     "macro_world",
                     "structural_masks",
                     "erosion",
                     "validation_full",
                 ],
-                "scene_read": {
-                    "major_landforms": ["ridge"],
-                    "focal_point": [0.0, 0.0, 0.0],
-                    "success_criteria": ["test"],
-                    "reviewer": "pytest",
-                },
             }
         )
     finally:
@@ -163,13 +179,14 @@ def test_handle_run_terrain_pass_still_surfaces_truly_unknown_passes():
                     "cell_size": 2.0,
                     "seed": 42,
                     "pass_name": "not_a_real_pass",
+                    **_headless_protocol_fields(),
                 }
             )
     finally:
         TerrainPassController.clear_registry()
 
 
-def test_handle_run_terrain_pass_default_pipeline_runs_full_validation_without_scene_read():
+def test_handle_run_terrain_pass_default_pipeline_rejects_missing_scene_read():
     from veilbreakers_terrain.handlers.environment import handle_run_terrain_pass
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
@@ -187,45 +204,9 @@ def test_handle_run_terrain_pass_default_pipeline_runs_full_validation_without_s
     finally:
         TerrainPassController.clear_registry()
 
-    assert all(r["status"] in {"ok", "warning"} for r in result["results"])
-    assert not any(
-        issue["severity"] == "hard"
-        for r in result["results"]
-        for issue in r.get("issues", [])
-    )
-    assert [r["pass_name"] for r in result["results"]] == [
-        "pass_generate_low_freq_hmap",
-        "biome_channels",
-        "terrain_labels",
-        "structural_masks",
-        "pass_generate_high_freq_detail",
-        "pass_composite_hmap",
-        "pass_terrain_features",
-        "framing",
-        "materials_v2",
-        "audio_zones",
-        "wildlife_zones",
-        "gameplay_zones",
-        "wind_field",
-        "cloud_shadow",
-        "decals",
-        "ecotones",
-        "stochastic_shader",
-        "macro_color",
-        "multiscale_breakup",
-        "shadow_clipmap",
-        "roughness_driver",
-        "quixel_ingest",
-        "fog_masks",
-        "god_ray_hints",
-        "pass_atmospheric_volumes",
-        "saliency_refine",
-        "pass_navmesh_export",
-        "prepare_terrain_normals",
-        "prepare_heightmap_raw_u16",
-        "prepare_unity_auxiliary_channels",
-        "validation_full",
-    ]
+    assert result["ok"] is False
+    assert result["error"] == "protocol_violation"
+    assert "no TerrainSceneRead attached" in result["message"]
 
 
 def test_execute_terrain_pipeline_threads_quality_profile_hints_and_viewport():
@@ -282,13 +263,14 @@ def test_handle_run_terrain_pass_injects_overhang_emit_phase_for_cliff_pipeline(
                 {
                     "tile_size": 16,
                     "cell_size": 2.0,
-                    "seed": 42,
-                    "terrain_type": "hills",
-                    "scale": 60.0,
-                    "pipeline": [
-                        "macro_world",
-                        "structural_masks",
-                        "cliffs",
+                "seed": 42,
+                "terrain_type": "hills",
+                "scale": 60.0,
+                **_headless_protocol_fields(),
+                "pipeline": [
+                    "macro_world",
+                    "structural_masks",
+                    "cliffs",
                         "validation_minimal",
                     ],
                 }
@@ -319,18 +301,13 @@ def test_handle_run_terrain_pass_injects_heightmap_prepare_before_validation_ful
                 "seed": 42,
                 "terrain_type": "hills",
                 "scale": 60.0,
+                **_headless_protocol_fields(),
                 "pipeline": [
                     "macro_world",
                     "structural_masks",
                     "navmesh",
                     "validation_full",
                 ],
-                "scene_read": {
-                    "major_landforms": ["ridge"],
-                    "focal_point": [0.0, 0.0, 0.0],
-                    "success_criteria": ["test"],
-                    "reviewer": "pytest",
-                },
             }
         )
     finally:
@@ -527,20 +504,14 @@ def test_handle_run_terrain_pass_skips_heightmap_injection_when_unity_export_opt
                 "seed": 42,
                 "terrain_type": "hills",
                 "scale": 60.0,
+                **_headless_protocol_fields(
+                    composition_hints={"unity_export_opt_out": True},
+                ),
                 "pipeline": [
                     "macro_world",
                     "structural_masks",
                     "validation_full",
                 ],
-                "composition_hints": {
-                    "unity_export_opt_out": True,
-                },
-                "scene_read": {
-                    "major_landforms": ["ridge"],
-                    "focal_point": [0.0, 0.0, 0.0],
-                    "success_criteria": ["test"],
-                    "reviewer": "pytest",
-                },
             }
         )
     finally:

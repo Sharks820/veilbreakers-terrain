@@ -1233,7 +1233,9 @@ def scatter_biome_vegetation(
     # H-1: prefer per-cell ecotone_blend_weights channel produced by pass_ecotones.
     # ------------------------------------------------------------------
     adjacent_biome: str | None = params.get("adjacent_biome")
-    _ecotone_channel = stack.get("ecotone_blend_weights") if stack is not None else None
+    _ecotone_channel = (
+        _mask_stack.get("ecotone_blend_weights") if _mask_stack is not None else None
+    )
     _use_channel_blend: bool = _ecotone_channel is not None and np is not None
     ecotone_blend_width: float = float(params.get("ecotone_blend_width", 20.0))
     ecotone_axis: str = str(params.get("ecotone_axis", "x")).lower()
@@ -1260,8 +1262,8 @@ def scatter_biome_vegetation(
 
         def ecotone_alpha_fn(wx: float, wy: float) -> float:  # type: ignore[misc]
             """Return primary-biome weight [0,1] at world position."""
-            if _use_channel_blend and stack is not None and np is not None:
-                iy, ix = _world_to_cell(stack, float(wx), float(wy))
+            if _use_channel_blend and _mask_stack is not None and np is not None:
+                iy, ix = _world_to_cell(_mask_stack, float(wx), float(wy))
                 ch = np.asarray(_ecotone_channel)
                 if ch.ndim == 3 and ch.shape[2] > 0:
                     return float(np.clip(ch[iy, ix, 0], 0.0, 1.0))

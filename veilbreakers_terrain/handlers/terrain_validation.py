@@ -801,7 +801,7 @@ def _material_channel_exts_for_validation(
 
 
 def _default_texel_density_max_ratio(intent: TerrainIntentState) -> float:
-    profile_name = str(getattr(intent, "quality_profile", "production") or "production")
+    profile_name = str(getattr(intent, "quality_profile", "aaa_open_world") or "aaa_open_world")
     profile_ratios = {
         "preview": 4.0,
         "mobile": 4.0,

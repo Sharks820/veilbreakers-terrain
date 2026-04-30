@@ -1599,6 +1599,11 @@ class PassDefinition:
     supports_region_scope: bool = True
     seed_namespace: str = ""
     requires_scene_read: bool = False
+    protocol_enforced: bool = False
+    protocol_require_rule_2: bool = False
+    protocol_require_rule_5: bool = False
+    protocol_out_of_view_ok: bool = False
+    protocol_bulk_edit: bool = False
 
     # Quality enforcement
     quality_gate: Optional[QualityGate] = None

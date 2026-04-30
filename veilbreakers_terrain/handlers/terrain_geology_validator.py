@@ -577,10 +577,14 @@ def register_bundle_i_passes() -> None:
         PassDefinition(
             name="karst",
             func=_karst.pass_karst,
-            requires_channels=("height",),
+            requires_channels=("height", "rock_hardness"),
             produces_channels=("karst_delta",),
             seed_namespace="karst",
             requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_2=False,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Bundle I: karst feature detection + carving",
         )
     )

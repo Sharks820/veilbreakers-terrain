@@ -46,8 +46,8 @@ class TestUnityScaleFactorConstant:
         )
 
 
-def _make_minimal_stack(tile_size: int = 4):
-    """Build a minimal TerrainMaskStack for export tests."""
+def _make_minimal_stack(tile_size: int = 32):
+    """Build a Unity-valid TerrainMaskStack for export tests."""
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
     h = np.ones((tile_size + 1, tile_size + 1), dtype=np.float32) * 50.0
     stack = TerrainMaskStack(
@@ -124,7 +124,7 @@ class TestUnityScaleAppliedToManifest:
         seam = manifest["seam_contract"]
         assert seam["tile_coords"] == [0, 0]
         assert seam["world_bounds"]["min_x"] == 100.0
-        assert seam["edge_contracts"]["north"]["sample_count"] == 5
+        assert seam["edge_contracts"]["north"]["sample_count"] == 33
 
     def test_world_id_flows_into_manifest_and_seam_contract(self):
         stack = _make_minimal_stack()
@@ -138,11 +138,11 @@ class TestUnityScaleAppliedToManifest:
 
     def test_tile_size_not_scaled(self):
         """tile_size is a pixel count — must NOT be scaled."""
-        stack = _make_minimal_stack(tile_size=4)
+        stack = _make_minimal_stack(tile_size=32)
         with tempfile.TemporaryDirectory() as td:
             manifest = export_unity_manifest(stack, Path(td))
-        assert manifest["tile_size"] == 4, (
-            f"tile_size must remain 4 (not scaled), got {manifest['tile_size']}"
+        assert manifest["tile_size"] == 32, (
+            f"tile_size must remain 32 (not scaled), got {manifest['tile_size']}"
         )
 
 

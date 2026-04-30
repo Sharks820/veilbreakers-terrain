@@ -1,9 +1,9 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-04-30T01:05:01.528930+00:00
-- Matrix: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_26.csv`
-- Live callables: 1713
-- Matrix rows: 1723
+- Generated: 2026-04-30T22:00:45.224018+00:00
+- Matrix: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_30.csv`
+- Live callables: 1728
+- Matrix rows: 1728
 - Blocking: false
 - Missing rows: 0
 - Rows with required-field gaps: 0

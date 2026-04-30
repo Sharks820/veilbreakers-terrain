@@ -25,9 +25,32 @@
     "slope"
   ],
   "channel_assertions": {
+    "heightmap": {"min_relief_m": 30.0, "min_gradient_p95": 1.0},
     "cliff_mask": {"min_nonzero_cells": 80, "range": [0.0, 1.0]},
     "talus_mask": {"min_nonzero_cells": 50, "range": [0.0, 1.0]},
-    "strata_mask": {"min_nonzero_cells": 20, "range": [0.0, 1.0]}
+    "strata_mask": {"min_nonzero_cells": 20, "range": [0.0, 1.0], "min_band_count": 4},
+    "slope": {"range": [0.0, 90.0], "min_peak": 35.0}
   },
+  "semantic_assertions": [
+    {
+      "type": "cliff_slope_alignment",
+      "cliff_channel": "cliff_mask",
+      "slope_channel": "slope",
+      "min_slope": 35.0,
+      "min_ratio": 0.7
+    },
+    {
+      "type": "talus_near_cliff",
+      "source_channel": "talus_mask",
+      "target_channel": "cliff_mask",
+      "radius": 3,
+      "min_ratio": 0.85
+    },
+    {
+      "type": "strata_band_count",
+      "channel": "strata_mask",
+      "min_band_count": 4
+    }
+  ],
   "render_goldens": {}
 }

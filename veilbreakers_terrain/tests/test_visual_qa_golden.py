@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +14,7 @@ from veilbreakers_terrain.handlers.terrain_visual_qa import (
     validate_channel_manifest,
     REQUIRED_STACK_CHANNELS,
 )
+from veilbreakers_terrain.handlers.terrain_golden_snapshots import run_scenario_goldens
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
 _GOLDEN_SCENARIOS_DIR = Path(__file__).parent / "golden_scenarios"
@@ -23,7 +22,7 @@ _SCENARIO_FILES = list(_GOLDEN_SCENARIOS_DIR.glob("*.json"))
 
 _HAS_PILLOW = False
 try:
-    from PIL import Image
+    from PIL import Image as _Image  # noqa: F401
     _HAS_PILLOW = True
 except ImportError:
     pass
@@ -40,12 +39,25 @@ def _write_rgb_png(path: Path, arr: np.ndarray) -> None:
 # ---------------------------------------------------------------------------
 
 class TestCompareRenderToGolden:
-    def test_golden_absent_returns_ok_true(self, tmp_path):
+    def test_golden_absent_blocks_by_default(self, tmp_path):
         render = tmp_path / "render.png"
         golden = tmp_path / "golden_nonexistent.png"
         if _HAS_PILLOW:
             _write_rgb_png(render, np.ones((64, 64, 3), dtype=np.float32))
         result = compare_render_to_golden(str(render), str(golden))
+        assert result["ok"] is False
+        assert result["reason"] == "golden_absent"
+
+    def test_golden_absent_can_be_allowed_for_seed_runs(self, tmp_path):
+        render = tmp_path / "render.png"
+        golden = tmp_path / "golden_nonexistent.png"
+        if _HAS_PILLOW:
+            _write_rgb_png(render, np.ones((64, 64, 3), dtype=np.float32))
+        result = compare_render_to_golden(
+            str(render),
+            str(golden),
+            allow_missing_golden=True,
+        )
         assert result["ok"] is True
         assert result["reason"] == "golden_absent"
 
@@ -72,15 +84,28 @@ class TestCompareRenderToGolden:
         assert result["ssim"] > 0.95
 
     def test_completely_different_images_fail(self, tmp_path):
-        rng = np.random.default_rng(1)
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
-        _write_rgb_png(render, np.zeros((64, 64, 3), dtype=np.float32))
-        _write_rgb_png(golden, np.ones((64, 64, 3), dtype=np.float32))
+        ramp = np.linspace(0.0, 1.0, 64, dtype=np.float32)
+        img = np.repeat(ramp[None, :], 64, axis=0)
+        render_img = np.stack([img, np.roll(img, 7, axis=1), img.T], axis=2)
+        golden_img = 1.0 - render_img
+        _write_rgb_png(render, render_img)
+        _write_rgb_png(golden, golden_img)
         result = compare_render_to_golden(str(render), str(golden), ssim_threshold=0.95)
         assert result["ok"] is False
         assert result["ssim"] is not None
         assert result["ssim"] < 0.95
+
+    def test_identical_blank_images_fail_information_floor(self, tmp_path):
+        render = tmp_path / "render.png"
+        golden = tmp_path / "golden.png"
+        blank = np.zeros((64, 64, 3), dtype=np.float32)
+        _write_rgb_png(render, blank)
+        _write_rgb_png(golden, blank)
+        result = compare_render_to_golden(str(render), str(golden), ssim_threshold=0.95)
+        assert result["ok"] is False
+        assert result["reason"].startswith("low_information_")
 
     def test_slightly_noisy_image_passes_low_threshold(self, tmp_path):
         rng = np.random.default_rng(42)
@@ -117,11 +142,12 @@ class TestCompareRenderToGolden:
     def test_size_mismatch_handled(self, tmp_path):
         render = tmp_path / "render.png"
         golden = tmp_path / "golden.png"
-        _write_rgb_png(render, np.ones((32, 32, 3), dtype=np.float32))
-        _write_rgb_png(golden, np.ones((64, 64, 3), dtype=np.float32))
+        rng = np.random.default_rng(3)
+        _write_rgb_png(render, rng.random((32, 32, 3), dtype=np.float32))
+        _write_rgb_png(golden, rng.random((64, 64, 3), dtype=np.float32))
         result = compare_render_to_golden(str(render), str(golden), ssim_threshold=0.90)
-        # Should not crash; identical color → should pass
-        assert result["ok"] is True
+        assert result["ok"] is False
+        assert result["reason"] == "shape_mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +156,7 @@ class TestCompareRenderToGolden:
 
 REQUIRED_FIXTURE_KEYS = {
     "_scenario", "_description", "_version",
-    "intent", "required_channels", "channel_assertions",
+    "intent", "required_channels", "channel_assertions", "semantic_assertions",
 }
 
 REQUIRED_INTENT_KEYS = {"seed", "region_bounds", "tile_size", "cell_size"}
@@ -178,6 +204,13 @@ class TestGoldenScenarioFixtures:
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assert isinstance(data.get("channel_assertions"), dict)
 
+    def test_semantic_assertions_is_non_empty_list(self, scenario_file):
+        data = json.loads(scenario_file.read_text(encoding="utf-8"))
+        assertions = data.get("semantic_assertions")
+        assert isinstance(assertions, list) and assertions, (
+            f"{scenario_file.name} must execute semantic assertions, not just schema checks"
+        )
+
     def test_version_is_positive_int(self, scenario_file):
         data = json.loads(scenario_file.read_text(encoding="utf-8"))
         assert isinstance(data["_version"], int) and data["_version"] >= 1
@@ -187,6 +220,63 @@ class TestGoldenScenarioFixtures:
         assert data["_scenario"] == scenario_file.stem, (
             f"_scenario '{data['_scenario']}' does not match filename '{scenario_file.stem}'"
         )
+
+
+@pytest.mark.parametrize("scenario_file", _SCENARIO_FILES, ids=[f.stem for f in _SCENARIO_FILES])
+class TestGoldenScenarioSemantics:
+    def test_json_scenario_executes_against_rich_semantic_stack(self, scenario_file):
+        data = json.loads(scenario_file.read_text(encoding="utf-8"))
+        result = run_scenario_goldens(
+            _rich_semantic_golden_stack(),
+            scenarios={data["_scenario"]: data},
+        )
+        outcome = result["results"][data["_scenario"]]
+        assert outcome["ok"] is True, outcome
+
+    def test_json_scenario_fails_when_required_channel_missing(self, scenario_file):
+        data = json.loads(scenario_file.read_text(encoding="utf-8"))
+        stack = _rich_semantic_golden_stack()
+        required = data["required_channels"][0]
+        canonical = "height" if required == "heightmap" else required
+        object.__setattr__(stack, canonical, None)
+        result = run_scenario_goldens(stack, scenarios={data["_scenario"]: data})
+        outcome = result["results"][data["_scenario"]]
+        assert outcome["ok"] is False
+        assert any(str(required) in issue for issue in outcome["issues"])
+
+
+class TestGoldenScenarioCrossChannelSemantics:
+    def test_deep_lake_rejects_depth_outside_water_mask(self):
+        data = json.loads((_GOLDEN_SCENARIOS_DIR / "deep_lake_basin.json").read_text(encoding="utf-8"))
+        stack = _rich_semantic_golden_stack()
+        bad_depth = np.full_like(stack.water_depth_m, 50.0)
+        stack.set("water_depth_m", bad_depth, "bad_fixture")
+        result = run_scenario_goldens(stack, scenarios={data["_scenario"]: data})
+        outcome = result["results"][data["_scenario"]]
+        assert outcome["ok"] is False
+        assert any("depth_requires_water_mask" in issue for issue in outcome["issues"])
+
+    def test_cliff_talus_rejects_disconnected_talus(self):
+        data = json.loads((_GOLDEN_SCENARIOS_DIR / "cliff_talus_apron.json").read_text(encoding="utf-8"))
+        stack = _rich_semantic_golden_stack()
+        talus = np.zeros_like(stack.talus_mask)
+        talus[:, :4] = 1.0
+        stack.set("talus_mask", talus, "bad_fixture")
+        result = run_scenario_goldens(stack, scenarios={data["_scenario"]: data})
+        outcome = result["results"][data["_scenario"]]
+        assert outcome["ok"] is False
+        assert any("talus_near_cliff" in issue for issue in outcome["issues"])
+
+    def test_waterfall_rejects_foam_not_near_water(self):
+        data = json.loads((_GOLDEN_SCENARIOS_DIR / "waterfall_plunge_pool.json").read_text(encoding="utf-8"))
+        stack = _rich_semantic_golden_stack()
+        foam = np.zeros_like(stack.foam)
+        foam[:4, :4] = 1.0
+        stack.set("foam", foam, "bad_fixture")
+        result = run_scenario_goldens(stack, scenarios={data["_scenario"]: data})
+        outcome = result["results"][data["_scenario"]]
+        assert outcome["ok"] is False
+        assert any("foam_near_water" in issue for issue in outcome["issues"])
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +345,59 @@ def _full_valid_stack():
         gameplay_zone=np.array([[0, 2, 255]], dtype=np.uint8),
         traversability=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
         road_mask=np.array([[0.0, 0.5, 1.0]], dtype=np.float32),
+    )
+
+
+def _rich_semantic_golden_stack() -> TerrainMaskStack:
+    """Build one terrain tile rich enough to exercise all JSON golden semantics."""
+    size = 64
+    y, x = np.indices((size, size), dtype=np.float32)
+    height = 80.0 + x * 2.0 + y * 0.4
+    height[:, 30:] += 45.0
+
+    cliff = np.zeros((size, size), dtype=np.float32)
+    cliff[:, 28:31] = 1.0
+    slope = np.full((size, size), 12.0, dtype=np.float32)
+    slope[:, 28:31] = 48.0
+    talus = np.zeros((size, size), dtype=np.float32)
+    talus[:, 30:33] = 0.85
+    strata = (1.0 + ((y // 8) % 4).astype(np.float32)) / 4.0
+
+    cave = np.zeros((size, size), dtype=np.float32)
+    cave[26:34, 29:31] = 1.0
+
+    cy, cx = 38.0, 34.0
+    dist = np.sqrt((y - cy) ** 2 + (x - cx) ** 2)
+    water_mask = (dist <= 15.0).astype(np.float32)
+    surface = np.full((size, size), 330.0, dtype=np.float32)
+    water_depth = np.where(water_mask > 0.5, np.maximum(surface - height, 0.0), 0.0).astype(np.float32)
+    bathymetry = water_depth.copy()
+    shoreline = (np.abs(dist - 15.0) <= 2.5).astype(np.float32)
+    flow_acc = np.where(dist <= 18.0, 25.0, 0.0).astype(np.float32)
+    flow_dir = np.zeros((size, size), dtype=np.float32)
+    flow_dir[:, :] = 3.0
+    foam = ((dist <= 16.0) & (dist >= 12.0)).astype(np.float32)
+    lip = np.zeros((size, size), dtype=np.float32)
+    lip[32:38, 29:31] = 1.0
+
+    return _make_stack(
+        height=height.astype(np.float32),
+        slope=slope,
+        cliff_mask=cliff,
+        cliff_candidate=cliff,
+        talus_mask=talus,
+        strata_mask=strata,
+        cave_candidate=cave,
+        water_surface_mask=water_mask,
+        water_surface_elevation_m=surface,
+        water_depth_m=water_depth,
+        shoreline_blend=shoreline,
+        bathymetry=bathymetry,
+        wetness=np.where(dist <= 18.0, 0.9, 0.2).astype(np.float32),
+        flow_accumulation=flow_acc,
+        flow_direction=flow_dir,
+        foam=foam,
+        waterfall_lip_candidate=lip,
     )
 
 

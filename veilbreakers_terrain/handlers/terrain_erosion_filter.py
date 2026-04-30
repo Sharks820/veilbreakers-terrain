@@ -61,7 +61,6 @@ def _hash2(ix: np.ndarray, iz: np.ndarray, seed: int) -> tuple[np.ndarray, np.nd
     """
     P1 = np.uint32(2654435761)   # xxHash32 prime1 / Wang hash constant
     P2 = np.uint32(2246822519)   # xxHash32 prime2
-    P3 = np.uint32(3266489917)   # xxHash32 prime3
     P4 = np.uint32(668265263)    # xxHash32 prime4 (used for second lane)
 
     sx = np.uint32(seed & 0xFFFFFFFF)
@@ -199,7 +198,6 @@ def phacelle_noise(
         d_cos: cosine derivative contribution (scaled k=2)
         d_sin: sine derivative contribution (scaled k=2)
     """
-    shape = px.shape
     inv_cs = 1.0 / max(cell_scale, 1e-12)
 
     cx = px * inv_cs                         # (H, W) normalised coords
@@ -233,7 +231,10 @@ def phacelle_noise(
 
     # Project displacement onto slope direction: (16, H, W)
     proj = dx * slope_x[np.newaxis, :, :] + dz * slope_z[np.newaxis, :, :]
-    phase = proj * (2.0 * np.pi)
+    # Keep trig arguments bounded for far-world tiles.  The stripe phase is
+    # periodic over one projected cell, so wrapping before sin/cos preserves
+    # the value while avoiding precision loss at large world origins.
+    phase = np.remainder(proj, 1.0) * (2.0 * np.pi)
     cos_val = np.cos(phase)
     sin_val = np.sin(phase)
 
@@ -241,7 +242,6 @@ def phacelle_noise(
 
     # Weighted accumulations — reduce over the 16-cell axis (axis=0)
     total_cos    = np.sum(cos_val * weight, axis=0)                   # (H, W)
-    total_sin    = np.sum(sin_val * weight, axis=0)
     total_d_cos  = np.sum(-sin_val * TWO_PI * weight, axis=0)
     total_d_sin  = np.sum( cos_val * TWO_PI * weight, axis=0)
     total_weight = np.sum(weight, axis=0)

@@ -1,0 +1,48 @@
+{
+  "include": [
+    "scripts/check_protocol_adoption.py",
+    "scripts/visual_testing_readiness_gate.py",
+    "scripts/callable_census_gate.py",
+    "scripts/scan_callable_wiring.py",
+    "scripts/build_verification_matrix.py",
+    "scripts/build_industry_best_practice_callable_matrix.py",
+    "scripts/terrain_best_practice_guardrail.py",
+    "veilbreakers_terrain/__init__.py",
+    "veilbreakers_terrain/handlers",
+    "veilbreakers_terrain/providers"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "output",
+    "tests",
+    "veilbreakers_terrain/tests",
+    "scripts/deprecated"
+  ],
+  "ignore": [
+  ],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.11",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalSubscript": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownLambdaType": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportAssignmentType": "none",
+  "reportCallIssue": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportIndexIssue": "none",
+  "reportInvalidTypeForm": "none",
+  "reportOperatorIssue": "none",
+  "reportOptionalCall": "none",
+  "reportOptionalOperand": "none",
+  "reportRedeclaration": "none",
+  "reportReturnType": "none",
+  "reportUndefinedVariable": "error"
+}

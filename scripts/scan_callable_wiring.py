@@ -16,8 +16,10 @@ does answer the key structural questions for each callable:
 from __future__ import annotations
 
 import ast
+import argparse
 import csv
 import json
+import sys
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +34,7 @@ OUTPUT_DIR = REPO_ROOT / "output" / "spreadsheet"
 DATE_TAG = "2026_04_19"
 OUTPUT_CSV = OUTPUT_DIR / f"CALLABLE_WIRING_AUDIT_{DATE_TAG}.csv"
 OUTPUT_SUMMARY = OUTPUT_DIR / f"CALLABLE_WIRING_SUMMARY_{DATE_TAG}.md"
+TRUE_RISK_STATUSES = {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only"}
 
 
 @dataclass(frozen=True)
@@ -662,9 +665,8 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
     file_risk = Counter()
     uncovered = 0
     no_r9 = 0
-    true_risk_statuses = {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only"}
     for row in rows:
-        if row["status"] in true_risk_statuses:
+        if row["status"] in TRUE_RISK_STATUSES:
             file_risk[row["file"]] += 1
         if row["csv_rows"] == "0":
             uncovered += 1
@@ -719,7 +721,18 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Scan callable wiring and grade coverage")
+    parser.add_argument(
+        "--strict-no-risk",
+        action="store_true",
+        help="Exit non-zero if any callable is orphaned, registrar-only, or uninvoked.",
+    )
+    return parser
+
+
+def main(argv: List[str] | None = None) -> int:
+    args = _build_arg_parser().parse_args(argv)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     defs, defs_by_file = collect_defs()
     direct_calls, name_reads, attr_calls, attr_reads = collect_usages()
@@ -806,8 +819,28 @@ def main() -> None:
     ]
     write_csv(OUTPUT_CSV, fieldnames, rows)
     write_summary(OUTPUT_SUMMARY, rows, len(defs))
-    print(json.dumps({"rows": len(rows), "csv": str(OUTPUT_CSV), "summary": str(OUTPUT_SUMMARY)}, indent=2))
+    true_risks = [row for row in rows if row["status"] in TRUE_RISK_STATUSES]
+    print(
+        json.dumps(
+            {
+                "rows": len(rows),
+                "true_wiring_risks": len(true_risks),
+                "csv": str(OUTPUT_CSV),
+                "summary": str(OUTPUT_SUMMARY),
+            },
+            indent=2,
+        )
+    )
+    if args.strict_no_risk and true_risks:
+        for row in true_risks[:50]:
+            print(
+                "WIRING RISK: "
+                f"{row['file']}::{row['qualified_name']} status={row['status']}",
+                file=sys.stderr,
+            )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

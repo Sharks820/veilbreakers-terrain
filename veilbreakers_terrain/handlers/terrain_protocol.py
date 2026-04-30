@@ -116,36 +116,25 @@ class ProtocolGate:
         the vantage) so that Rule 2 is satisfied without raising.
 
         When ``viewport_vantage`` is ``None`` and ``out_of_view_ok`` is not set,
-        the gate logs a warning and skips rather than raising
-        :class:`ProtocolViolation`.  This preserves backward compatibility with
-        automated runs that predate the vantage field while still surfacing the
-        gap visibly in logs.  Future hardening: change the warning to a raise
-        once all automated callers are confirmed to set ``out_of_view_ok=True``.
+        the gate raises :class:`ProtocolViolation`. Automated/headless callers
+        must pass ``out_of_view_ok=True`` explicitly.
 
         Args:
             state: current pipeline state; ``state.viewport_vantage`` is read.
             out_of_view_ok: suppress the Rule 2 check entirely (e.g. headless CI).
         """
-        import logging as _logging
-        _rule2_log = _logging.getLogger(__name__)
-
         if out_of_view_ok:
             return
         vantage = state.viewport_vantage  # declared field — no getattr fallback needed
         if vantage is None:
-            if not out_of_view_ok:
-                raise ProtocolViolation(
-                    "Protocol Rule 2: viewport_vantage is None but out_of_view_ok=False. "
-                    "Cannot verify out-of-view readability. "
-                    "Call terrain_viewport_sync.read_user_vantage() and assign the result "
-                    "to state.viewport_vantage, or pass out_of_view_ok=True for headless runs.",
-                    rule_number=2,
-                    severity="hard",
-                )
-            _rule2_log.warning(
-                "Protocol Rule 2: no viewport_vantage, skipping readability check (out_of_view_ok=True)"
+            raise ProtocolViolation(
+                "Protocol Rule 2: viewport_vantage is None but out_of_view_ok=False. "
+                "Cannot verify out-of-view readability. "
+                "Call terrain_viewport_sync.read_user_vantage() and assign the result "
+                "to state.viewport_vantage, or pass out_of_view_ok=True for headless runs.",
+                rule_number=2,
+                severity="hard",
             )
-            return
 
     @staticmethod
     def rule_3_lock_reference_empties(
@@ -347,7 +336,46 @@ def enforce_protocol(
             *args: Any,
             **kwargs: Any,
         ) -> Any:
-            params = dict(params or {})
+            params_only_call = False
+            original_params_arg: Any = params
+            if isinstance(state, dict) and params is None:
+                raw_params = dict(state)
+                stack = raw_params.get("mask_stack")
+                if stack is None:
+                    raise TypeError(
+                        "@enforce_protocol params-only handlers require a 'mask_stack' entry"
+                    )
+                from .terrain_semantics import BBox, TerrainIntentState
+
+                region = BBox(
+                    float(getattr(stack, "world_origin_x", 0.0)),
+                    float(getattr(stack, "world_origin_y", 0.0)),
+                    float(getattr(stack, "world_origin_x", 0.0))
+                    + float(getattr(stack, "tile_size", 0)) * float(getattr(stack, "cell_size", 1.0)),
+                    float(getattr(stack, "world_origin_y", 0.0))
+                    + float(getattr(stack, "tile_size", 0)) * float(getattr(stack, "cell_size", 1.0)),
+                )
+                intent = TerrainIntentState(
+                    seed=int(raw_params.get("seed", 0)),
+                    region_bounds=region,
+                    tile_size=int(getattr(stack, "tile_size", 0)),
+                    cell_size=float(getattr(stack, "cell_size", 1.0)),
+                    quality_profile=str(
+                        raw_params.get("profile")
+                        or raw_params.get("quality_profile")
+                        or "aaa_open_world"
+                    ),
+                    scene_read=raw_params.get("scene_read"),
+                    composition_hints=dict(raw_params.get("composition_hints") or {}),
+                )
+                protocol_state = TerrainPipelineState(intent=intent, mask_stack=stack)
+                protocol_state.viewport_vantage = raw_params.get("viewport_vantage")
+                state = protocol_state
+                params = raw_params
+                params_only_call = True
+                original_params_arg = raw_params
+            else:
+                params = dict(params or {})
             if require_rule_1:
                 ProtocolGate.rule_1_observe_before_calculate(state)
             if require_rule_2:
@@ -370,6 +398,8 @@ def enforce_protocol(
                 ProtocolGate.rule_6_surface_vs_interior_classification(params)
             if require_rule_7:
                 ProtocolGate.rule_7_plugin_usage(params)
+            if params_only_call:
+                return fn(original_params_arg, *args, **kwargs)
             return fn(state, params, *args, **kwargs)
 
         return wrapper

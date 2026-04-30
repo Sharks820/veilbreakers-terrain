@@ -13,7 +13,7 @@ Outputs:
 
 Run with:
     "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe" \\
-        --background --python scripts/test_bridge_visual.py
+        --background --python scripts/render_bridge_visual.py
 """
 from __future__ import annotations
 
@@ -121,11 +121,14 @@ def meshspec_to_object(
     bm_edit = bmesh.new()
     bm_verts = [bm_edit.verts.new(v) for v in spec_verts]
     bm_edit.verts.ensure_lookup_table()
+    skipped_faces = 0
     for face_indices in spec_faces:
         try:
             bm_edit.faces.new([bm_verts[i] for i in face_indices])
-        except Exception:
-            pass   # skip degenerate / duplicate faces
+        except ValueError:
+            skipped_faces += 1
+    if skipped_faces:
+        raise RuntimeError(f"{name} skipped {skipped_faces} degenerate/duplicate faces")
     bm_edit.to_mesh(me)
     bm_edit.free()
     # calc_normals_split() removed in Blender 4.1; normals auto-computed now

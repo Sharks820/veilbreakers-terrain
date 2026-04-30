@@ -51,3 +51,26 @@
 - Never accept water without surface elevation, depth, flow, and metadata.
 - Never accept material export without normalized layer/weight evidence.
 - Do not commit or hardcode API keys, MCP tokens, or provider secrets.
+
+## Branch And Merge Protocol
+
+- Never edit, commit, or push directly on `main` for implementation work.
+- Before edits, run `git status --short` and `git branch --show-current`.
+- If current branch is `main`, create a focused branch before changing files:
+  `git switch -c fix/<short-scope>`.
+- If another agent is active, use a separate worktree and branch:
+  `git worktree add ..\veilbreakers-terrain-<scope> -b fix/<scope> origin/main`.
+- One agent owns one branch/worktree/scope. Do not edit files another active agent is likely changing.
+- Branch names: `fix/<scope>`, `feat/<scope>`, `audit/<scope>`, `docs/<scope>`, `ci/<scope>`.
+- Keep branches narrow. Split unrelated terrain, Unity, CI, and docs work into separate PRs.
+- Push branch and open PR into `main`; never direct-push `main`:
+  `gh pr create --base main --head <branch> --fill`.
+- Default merge method is squash:
+  `gh pr merge --squash --auto`.
+- Use rebase merge only when preserving a clean, meaningful commit sequence matters.
+- Never use merge commits. Repo linear history requires squash or rebase.
+- If required checks fail, fix on same branch and push again. Do not loosen branch protection to merge.
+- Required checks before merge: `ci (3.11)`, `ci (3.12)`, `pyright`, `callable-census`, `Analyze (python)`, `Analyze (actions)`.
+- For terrain protocol, callable, Unity export, Blender visual, or pipeline changes, run the matching focused local checks before PR when practical.
+- If a visual-quality claim depends on Blender output and no Blender runtime is available, mark the PR as blocked or caveated. Do not represent stub renders as proof.
+- After PR merge, update local main with `git switch main` then `git pull --ff-only origin main`.

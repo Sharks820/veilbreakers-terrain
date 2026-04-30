@@ -136,9 +136,9 @@ updates = {
     ('terrain_sculpt.py', 'compute_stamp_displacements'): 'B+|2026-04-19: upgraded C- -> blend modes add/replace/max/min feather inverted smoothstep bilinear sampling',
     ('terrain_sculpt.py', 'handle_sculpt_terrain'): 'B|2026-04-19: upgraded C -> world->local transform scale-adjusted radius SVD plane-fit blend_mode+feather',
     # terrain_twelve_step.py
-    ('terrain_twelve_step.py', '_apply_flatten_zones_stub'): 'B+|2026-04-19: upgraded F -> world-space cosine falloff feather param reads intent.flatten_zones direct',
-    ('terrain_twelve_step.py', '_apply_canyon_river_carves_stub'): 'A-|2026-04-19: upgraded F -> imports carve_u_valley from terrain_glacial returns (hmap,glacial_delta) tuple',
-    ('terrain_twelve_step.py', '_detect_cave_candidates_stub'): 'B|2026-04-19: upgraded D -> slope>60deg AND Laplacian concavity<mean-1.5sigma AND accessible face<35deg',
+    ('terrain_twelve_step.py', '_apply_flatten_zones'): 'B+|2026-04-19: upgraded F -> world-space cosine falloff feather param reads intent.flatten_zones direct',
+    ('terrain_twelve_step.py', '_apply_canyon_river_carves'): 'A-|2026-04-19: upgraded F -> imports carve_u_valley from terrain_glacial returns (hmap,glacial_delta) tuple',
+    ('terrain_twelve_step.py', '_detect_cave_candidates'): 'B|2026-04-19: upgraded D -> slope>60deg AND Laplacian concavity<mean-1.5sigma AND accessible face<35deg',
     ('terrain_twelve_step.py', 'run_twelve_step_world_terrain'): 'A-|2026-04-19: upgraded C+ -> full error accumulation dict 12 steps soft fails in errors key glacial_delta per-tile',
     # terrain_live_preview.py
     ('terrain_live_preview.py', 'edit_hero_feature'): 'A-|2026-04-19: upgraded F -> cosine-radial overlay float32 max-blend dirty_channels return',

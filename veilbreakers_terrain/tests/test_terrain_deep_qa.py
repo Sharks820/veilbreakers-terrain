@@ -168,6 +168,9 @@ def test_bundle_n_pipeline_hooks_attach_budget_issues_and_readability(monkeypatc
     )
 
     state = _build_state(tile_size=8, seed=2121)
+    state.intent.composition_hints["bundle_n_runtime"] = {
+        "visual_qa_blocking": False,
+    }
     controller = TerrainPassController(state)
     results = controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
 
@@ -659,6 +662,21 @@ def test_golden_compare_detects_new_channel_soft():
         issues = compare_against_golden(stack, snap)
         soft_codes = [i.code for i in issues if i.severity == "soft"]
         assert "GOLDEN_NEW_CHANNEL" in soft_codes
+
+
+def test_golden_compare_strict_makes_export_channel_drift_hard():
+    from veilbreakers_terrain.handlers.terrain_golden_snapshots import (
+        compare_against_golden,
+        save_golden_snapshot,
+    )
+
+    stack = _build_stack(seed=55, extras=False)
+    with tempfile.TemporaryDirectory() as td:
+        snap = save_golden_snapshot(stack, Path(td), "g1", seed=55)
+        stack.set("water_surface_elevation_m", np.full_like(stack.height, 10.0), "later_pass")
+        issues = compare_against_golden(stack, snap, strict_contract=True)
+        hard_codes = [i.code for i in issues if i.is_hard()]
+        assert "GOLDEN_NEW_CHANNEL" in hard_codes
 
 
 def test_golden_library_seeds_at_least_20_snapshots():
