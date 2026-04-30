@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender python3-numpy python3-pil
+          sudo apt-get install -y blender python3-numpy python3-pil libegl1
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           BLENDER_PYDEPS="$RUNNER_TEMP/blender_pydeps"
