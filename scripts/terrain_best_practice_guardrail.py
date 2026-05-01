@@ -42,6 +42,14 @@ REQUIRED_MATRIX_FIELDS = [
     "implementation_phase",
 ]
 
+
+def repo_relative_posix(path: Path | str) -> str:
+    path_obj = Path(path)
+    try:
+        return path_obj.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return path_obj.as_posix()
+
 AAA_GRADE_TOKENS = {"A+", "A", "A-"}
 BLOCKING_UPGRADE_TIERS = {"P0"}
 BLOCKING_GRADE_STATUSES = {
@@ -328,7 +336,7 @@ def build_usage_guide(
             "## Matrix",
             "",
             "Full callable-by-callable rules live in "
-            f"`{matrix_path or 'output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_YYYY_MM_DD.csv'}`.",
+            f"`{repo_relative_posix(matrix_path) if matrix_path else 'output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_YYYY_MM_DD.csv'}`.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -339,7 +347,7 @@ def build_report_markdown(report: GuardrailReport) -> str:
         "# Terrain Best-Practice Guardrail Report",
         "",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}",
-        f"- Matrix: `{report.matrix_path}`",
+        f"- Matrix: `{repo_relative_posix(report.matrix_path)}`",
         f"- Live callables: {report.live_count}",
         f"- Matrix rows: {report.matrix_count}",
         f"- Blocking: {str(report.is_blocking).lower()}",
@@ -430,7 +438,7 @@ def write_outputs(report: GuardrailReport, rows: list[dict[str, str]]) -> None:
     DEFAULT_REPORT_JSON.write_text(
         json.dumps(
             {
-                "matrix_path": str(report.matrix_path),
+                "matrix_path": repo_relative_posix(report.matrix_path),
                 "live_count": report.live_count,
                 "matrix_count": report.matrix_count,
                 "is_blocking": report.is_blocking,

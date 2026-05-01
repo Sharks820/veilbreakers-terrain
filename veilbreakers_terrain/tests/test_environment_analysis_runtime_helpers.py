@@ -520,6 +520,39 @@ def test_export_zones_to_wwise_csv_empty_input_emits_header_only():
     assert "zone_id" in lines[0]
 
 
+def test_compute_audio_zone_list_no_scipy_keeps_disconnected_regions(monkeypatch):
+    from veilbreakers_terrain.handlers.terrain_audio_zones import (
+        AudioReverbClass,
+        compute_audio_zone_list,
+    )
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ImportError("blocked scipy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    stack = _stack(np.zeros((8, 8), dtype=np.float32))
+    water = np.zeros((8, 8), dtype=np.float32)
+    water[1:3, 1:3] = 1.0
+    water[5:7, 5:7] = 1.0
+    stack.set("water_surface_mask", water, "test_fixture")
+
+    zones = compute_audio_zone_list(stack)
+    water_zones = [
+        zone for zone in zones
+        if zone["class_id"] == AudioReverbClass.WATER_NEAR.value
+    ]
+
+    assert len(water_zones) == 2
+    assert {zone["cell_count"] for zone in water_zones} == {4}
+
+
 # ---------------------------------------------------------------------------
 # Upgrade D — pipeline wiring publishes audio_zone_list opaque channel
 # ---------------------------------------------------------------------------

@@ -197,32 +197,39 @@ def _audio_cc_filter(mask: np.ndarray, min_cells: int) -> np.ndarray:
     """Return mask with small isolated components removed."""
     if not mask.any():
         return mask
+    labeled, n = _label_audio_components(mask)
+    if n == 0:
+        return mask
+    cleaned = np.zeros_like(np.asarray(mask, dtype=bool))
+    for cid in range(1, n + 1):
+        comp = labeled == cid
+        if int(comp.sum()) >= min_cells:
+            cleaned |= comp
+    return cleaned
+
+
+def _label_audio_components(mask: np.ndarray) -> Tuple[np.ndarray, int]:
+    """Return 8-neighbor component labels for SciPy and no-SciPy runtimes."""
     try:
         from scipy.ndimage import label as _sclabel
-        labeled, n = _sclabel(mask, structure=np.ones((3, 3), dtype=int))
-        if n == 0:
-            return mask
-        cleaned = np.zeros_like(mask)
-        for cid in range(1, n + 1):
-            comp = labeled == cid
-            if int(comp.sum()) >= min_cells:
-                cleaned |= comp
-        return cleaned
+        labeled, n = _sclabel(np.asarray(mask, dtype=bool), structure=np.ones((3, 3), dtype=int))
+        return labeled.astype(np.int32, copy=False), int(n)
     except ImportError:
         mask_bool = np.asarray(mask, dtype=bool)
-        cleaned = np.zeros_like(mask_bool)
+        labeled = np.zeros(mask_bool.shape, dtype=np.int32)
         visited = np.zeros_like(mask_bool)
         rows, cols = mask_bool.shape
+        label_id = 0
         for r in range(rows):
             for c in range(cols):
                 if visited[r, c] or not mask_bool[r, c]:
                     continue
+                label_id += 1
                 stack = [(r, c)]
-                component: list[tuple[int, int]] = []
                 visited[r, c] = True
                 while stack:
                     cr, cc = stack.pop()
-                    component.append((cr, cc))
+                    labeled[cr, cc] = label_id
                     for dr in (-1, 0, 1):
                         for dc in (-1, 0, 1):
                             if dr == 0 and dc == 0:
@@ -236,10 +243,7 @@ def _audio_cc_filter(mask: np.ndarray, min_cells: int) -> np.ndarray:
                             ):
                                 visited[nr, nc] = True
                                 stack.append((nr, nc))
-                if len(component) >= min_cells:
-                    for cr, cc in component:
-                        cleaned[cr, cc] = True
-        return cleaned
+        return labeled, label_id
 
 
 def _component_boundary_polygon(
@@ -747,12 +751,6 @@ def compute_audio_zone_list(
 
     zones: List[Dict[str, Any]] = []
 
-    try:
-        from scipy.ndimage import label as _sclabel  # noqa: F401
-        has_scipy = True
-    except ImportError:
-        has_scipy = False
-
     unique_classes = np.unique(reverb_class_raster)
     all_non_open = [
         cls for cls in unique_classes
@@ -767,14 +765,7 @@ def compute_audio_zone_list(
         if cls_val == AudioReverbClass.OPEN_FIELD.value and len(all_non_open) > 0:
             continue
 
-        if has_scipy:
-            from scipy.ndimage import label as _sclabel
-            labeled, n_comp = _sclabel(
-                cls_mask, structure=np.ones((3, 3), dtype=int)
-            )
-        else:
-            labeled = cls_mask.astype(np.int32)
-            n_comp = 1 if cls_mask.any() else 0
+        labeled, n_comp = _label_audio_components(cls_mask)
 
         preset_name = _CLASS_PRESET.get(int(cls_val), "open_field")
         preset = REVERB_PRESETS[preset_name]

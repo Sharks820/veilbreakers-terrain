@@ -1,26 +1,32 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-05-01T00:43:32.167386+00:00
-- Grade source: `docs\aaa-audit\GRADES_VERIFIED.csv`
-- Total callables covered: **1730**
-- Output CSV: `output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv`
+- Generated: 2026-05-01T01:54:15.663642+00:00
+- Tool: `scripts/build_industry_best_practice_callable_matrix.py`
+- Coverage scope: `industry_best_practice_matrix`
+- Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.
+- Grade source: `docs/aaa-audit/GRADES_VERIFIED.csv`
+- Source inventory artifact: `output/verification/TERRAIN_BEST_PRACTICE_GUARDRAIL_REPORT.json`
+- Source inventory fingerprint: `sha256:b2657c42e721cedbe3b0738f6fa7717b683bc87ee96054db43b9b4f904698407`
+- Total callables covered: **1732**
+- Output CSV: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv`
+- Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.
 
 ## Upgrade Tiers
 
-- P3: 1730
+- P3: 1732
 
 ## Grade Status
 
 - VERIFIED_LOW_RISK: 1728
-- LOCK_WITH_REGRESSION_GATES: 2
+- LOCK_WITH_REGRESSION_GATES: 4
 
 ## Domain Coverage
 
-- generic: 378 callables; gates `direct_tests|invalid_input|determinism_when_seeded|coverage|integration_if_exposed`; phase Phase 0
+- generic: 379 callables; gates `direct_tests|invalid_input|determinism_when_seeded|coverage|integration_if_exposed`; phase Phase 0
 - heightfield_geomorph: 201 callables; gates `unit_tests|mass_or_range_checks|tile_seam_tests|golden_heightfield`; phase Phase 1,7
 - mesh_blender: 171 callables; gates `dispatch_tests|blender_optional_tests|scene_read_contract|screenshot_qa|attribute_presence`; phase Phase 9
 - scatter_ecology: 164 callables; gates `point_schema|density_stats|blue_noise_or_distribution|collision_or_exclusion|asset_manifest|lod_budget`; phase Phase 4,9B
-- hydrology: 163 callables; gates `hydrology_contract|depth_tests|velocity_tests|flow_direction_tests|seam_continuity|swimmable_depth`; phase Phase 2-3
+- hydrology: 164 callables; gates `hydrology_contract|depth_tests|velocity_tests|flow_direction_tests|seam_continuity|swimmable_depth`; phase Phase 2-3
 - validation_qa: 145 callables; gates `issue_codes|golden_visual|performance_budget|determinism|low_spec|artifact_schema`; phase Phase 11-12
 - terrain_pipeline: 144 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
 - terrain_texturing: 125 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D

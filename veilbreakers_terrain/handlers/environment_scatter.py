@@ -2931,7 +2931,7 @@ def _scatter_pass(
         _water_max = float(np.nanmax(_water_arr_global)) if _water_arr_global.size else 0.0
     else:
         _water_min = 0.0
-        _water_max = 1.0 - _height_min ** 0.7
+        _water_max = float(np.clip(1.0 - max(_height_min, 0.0) ** 0.7, 0.0, 1.0))
 
     def _species_impossible_before_sampling(_spec_row: dict) -> bool:
         """Skip catalog species whose global bands cannot match this tile."""

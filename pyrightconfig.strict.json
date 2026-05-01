@@ -1,0 +1,30 @@
+{
+  "include": [
+    "scripts",
+    "veilbreakers_terrain"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "output",
+    "scripts/deprecated"
+  ],
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.11",
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "none",
+  "reportArgumentType": "error",
+  "reportReturnType": "error",
+  "reportOptionalCall": "error",
+  "reportOptionalMemberAccess": "error",
+  "reportOptionalSubscript": "error",
+  "reportAssignmentType": "error",
+  "reportCallIssue": "error",
+  "reportIndexIssue": "error",
+  "reportOperatorIssue": "error",
+  "reportUnknownArgumentType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownParameterType": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportPrivateUsage": "none"
+}
