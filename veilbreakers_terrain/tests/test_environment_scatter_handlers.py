@@ -1136,8 +1136,7 @@ class TestLocationLayer:
         rr = 5.0
         ll = LocationLayer(cell_size=2.0, density=0.5, repulsion_radius=rr, seed=3)
         result = ll.generate(20.0, 20.0)
-        if len(result) < 2:
-            return
+        assert len(result) >= 2
 
         xy = result[:, :2].astype(np.float64)
         for i in range(len(xy)):

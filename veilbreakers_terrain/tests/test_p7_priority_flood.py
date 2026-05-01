@@ -90,6 +90,42 @@ def test_pass_hydrology_writes_stack():
     assert stack.flow_accumulation.shape == (tile_size, tile_size)
 
 
+def test_pass_hydrology_post_erosion_records_matching_provenance():
+    from veilbreakers_terrain.handlers._water_network import pass_hydrology_post_erosion
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+    tile_size = 4
+    height = np.ones((tile_size, tile_size), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    region = BBox(0.0, 0.0, float(tile_size), float(tile_size))
+    intent = TerrainIntentState(
+        seed=0,
+        region_bounds=region,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    result = pass_hydrology_post_erosion(state, None)
+
+    assert result.pass_name == "pass_hydrology_post_erosion"
+    assert stack.populated_by_pass["flow_direction"] == "pass_hydrology_post_erosion"
+    assert stack.populated_by_pass["flow_accumulation"] == "pass_hydrology_post_erosion"
+
+
 def test_register_default_passes_includes_hydrology():
     """Bundle A default registration must expose pass_hydrology on the controller."""
     from veilbreakers_terrain.handlers.terrain_pipeline import (
