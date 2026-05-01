@@ -5,7 +5,7 @@ What changed from v1 (the broken one):
                 + mesh-emission area lights along lava (replaces point lights)
   - Materials: 3-layer slope/altitude/lava-proximity blend via vertex colors
                 + correct basalt albedo (0.07 not 0.018) + lava emission 50 W
-  - Compositor: bloom (Fog Glow), Optix denoiser, exposure +2.0 EV, 256 samples
+  - Compositor: bloom (Fog Glow), OIDN denoiser, exposure +2.0 EV, tiered samples
   - Assets: Hunyuan3D-2 generation with disk cache; procedural fallback per
             aaa_caldera_catalog.FallbackMat when the Space is unavailable
   - Heightmap: 1025×1025 (0.5 m/sample), 9 noise octaves
@@ -266,7 +266,7 @@ def _extract_masks_from_stack(mask_stack, hm) -> dict:
     """Build the masks dict (same keys as compute_masks) from a pipeline stack."""
     import numpy as np
 
-    slope_src = mask_stack.slope
+    slope_src = mask_stack.get("slope")
     if slope_src is not None:
         slope_norm = np.clip(np.degrees(np.asarray(slope_src, dtype=np.float64)) / 60.0, 0.0, 1.0)
     else:
@@ -275,7 +275,7 @@ def _extract_masks_from_stack(mask_stack, hm) -> dict:
 
     altitude = (hm - float(hm.min())) / max(float(hm.max() - hm.min()), 1e-6)
 
-    basin_src = mask_stack.basin
+    basin_src = mask_stack.get("basin")
     if basin_src is not None:
         basin = np.asarray(basin_src, dtype=np.float32)
     else:
@@ -807,10 +807,6 @@ def _sample_hm(hm, x, y):
 
 def build_lava_river(hm, lava_mat):
     import bpy
-    import numpy as _np
-
-    global np
-    np = _np
 
     channel_xy = [
         (0, 0), (15, -60), (-10, -130), (30, -200),
@@ -918,15 +914,29 @@ def setup_lighting():
 
     # Sun — rebalanced for dark basalt terrain
     sun = bpy.data.lights.new("CalderaSun", "SUN")
-    # 2.0 W is correct for basalt (albedo ~6%) under heavy volcanic aerosol
-    # (dust_density=8.0 + Nishita attenuation → ~145 W/m² surface irradiance).
-    # 4.5 W overexposes the terrain by >1 stop.
-    sun.energy = 2.0
+    # Load photometric reference so all energy values trace to calibrated data.
+    # Reference: USGS HVO + Pinatubo aerosol model (ashen_caldera.json).
+    # blender_strength_W_m2=4.5 already accounts for 6.5× volcanic aerosol
+    # attenuation — do NOT halve it again.
+    try:
+        from reference_library import load_scene_reference as _load_ref
+        _ref = _load_ref("ashen_caldera")
+        _sun_ref = _ref.lighting.get("sun", {})
+        _sun_energy = float(_sun_ref.get("blender_strength_W_m2", 4.5))
+        _sun_alt_deg = float(_sun_ref.get("altitude_deg", 28.0))
+        _sun_azi_deg = float(_sun_ref.get("azimuth_deg", 215.0))
+    except Exception:
+        _sun_energy, _sun_alt_deg, _sun_azi_deg = 4.5, 28.0, 215.0
+
+    sun.energy = _sun_energy
     sun.color  = (1.0, 0.62, 0.34)       # amber volcanic sunset
     sun.angle  = math.radians(1.5)        # tight disk for hard shadows on cliffs
     sun_obj = bpy.data.objects.new("VB_Sun", sun)
     bpy.context.scene.collection.objects.link(sun_obj)
-    sun_obj.rotation_euler = (math.radians(18), 0, math.radians(-145))
+    # Blender ZYX euler for a SUN lamp: rotation_euler[0]=elevation,
+    # rotation_euler[2]=-(azimuth_from_north_CW - 90°) converts geo→Blender yaw.
+    _blender_yaw = -(_sun_azi_deg - 90.0)
+    sun_obj.rotation_euler = (math.radians(_sun_alt_deg), 0, math.radians(_blender_yaw))
 
     # Desaturated blue fill (sky opposite side)
     fill = bpy.data.lights.new("CalderaFill", "SUN")
@@ -951,11 +961,11 @@ def setup_lighting():
     add_vol = wnt.nodes.new("ShaderNodeAddShader")
 
     sky.sky_type      = "NISHITA"
-    # sun_elevation must match VB_Sun rotation_euler[0]=18° so the sky disc
-    # and cast shadows point in the same direction. sun_rotation=-145°+180°=35°
-    # maps Blender's azimuth convention to the sun object's -145° yaw.
-    sky.sun_elevation = math.radians(18.0)
-    sky.sun_rotation  = math.radians(35.0)
+    # Nishita convention: sun_elevation = altitude; sun_rotation = CCW from +Y.
+    # For azimuth 215° CW-from-north → blender_yaw=-(215-90)=-125° →
+    # sky_rot = -(-125) - 90 = 35°. Matches the sun object's rotation_euler.
+    sky.sun_elevation = math.radians(_sun_alt_deg)
+    sky.sun_rotation  = math.radians(-(_blender_yaw) - 90.0)
     sky.sun_size      = math.radians(2.5)
     sky.dust_density  = 8.0               # heavy volcanic dust
     sky.ozone_density = 0.4
@@ -978,7 +988,7 @@ def setup_lighting():
     wnt.links.new(vol_abs.outputs["Volume"],  add_vol.inputs[1])
     wnt.links.new(add_vol.outputs["Shader"],  out_w.inputs["Volume"])
 
-    log("lighting: Nishita sky + volumetric ash scatter (density=0.0022)")
+    log(f"lighting: Nishita sky  sun={_sun_energy:.1f}W  elev={_sun_alt_deg:.0f}°  azi={_sun_azi_deg:.0f}°  vol_density=0.0014")
 
 
 # ---------------------------------------------------------------------------
@@ -1358,9 +1368,6 @@ def render_to(cam, path):
 
 def run_build() -> int:
     import bpy
-    import numpy as _np
-    global np
-    np = _np
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1496,7 +1503,7 @@ def run_build() -> int:
         "failure_stages":[f["stage"] for f in FAILURES],
         "lighting":      "Nishita sky + volumetric scatter + mesh emission lava lights",
         "materials":     "3-layer slope/altitude/lava_prox vertex-color blend",
-        "compositor":    "Fog Glow bloom + Optix denoiser + exposure +2 EV",
+        "compositor":    "Fog Glow bloom + OIDN denoiser + exposure +2 EV",
     }
     (OUT_DIR / "BUILD_SUMMARY.json").write_text(json.dumps(summary, indent=2))
     if FAILURES:
