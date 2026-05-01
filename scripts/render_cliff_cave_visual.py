@@ -1,5 +1,5 @@
 """
-test_cliff_cave_visual.py  —  VeilBreakers Cliff + Cave Visual Quality Test
+render_cliff_cave_visual.py  —  VeilBreakers cliff + cave render tool
 Blender 4.5 standalone script (--background --python)
 
 Source analysis findings
@@ -379,6 +379,7 @@ def build_cave_mouth(cave_mat):
     n = len(front_verts)
 
     # Tunnel walls: connect front ring to back ring
+    skipped_faces = 0
     for i in range(n - 1):
         try:
             bm.faces.new([
@@ -387,20 +388,23 @@ def build_cave_mouth(cave_mat):
                 back_verts[i + 1],
                 back_verts[i],
             ])
-        except Exception:
-            pass
+        except ValueError:
+            skipped_faces += 1
 
     # Back wall (end of cave — closed)
     try:
         bm.faces.new(list(reversed(back_verts)))
-    except Exception:
-        pass
+    except ValueError:
+        skipped_faces += 1
 
     # Floor slab inside cave
     try:
         bm.faces.new([v_fl, v_fr, v_br, v_bl])
-    except Exception:
-        pass
+    except ValueError:
+        skipped_faces += 1
+
+    if skipped_faces > 2:
+        raise RuntimeError(f"Cave mouth skipped too many degenerate faces: {skipped_faces}")
 
     bm.normal_update()
     mesh = bpy.data.meshes.new("CaveMouth")
@@ -468,6 +472,7 @@ def build_stalactites(stac_mat):
 
         tip_v = bm.verts.new((sx + lean_x, sy, tip_z))
 
+        skipped_faces = 0
         for ring in range(rings):
             for seg in range(segs):
                 v0 = ring_verts_all[ring][seg]
@@ -476,15 +481,18 @@ def build_stalactites(stac_mat):
                 v3 = ring_verts_all[ring + 1][seg]
                 try:
                     bm.faces.new([v0, v1, v2, v3])
-                except Exception:
-                    pass
+                except ValueError:
+                    skipped_faces += 1
 
         last_ring = ring_verts_all[rings]
         for seg in range(segs):
             try:
                 bm.faces.new([last_ring[seg], last_ring[(seg + 1) % segs], tip_v])
-            except Exception:
-                pass
+            except ValueError:
+                skipped_faces += 1
+
+        if skipped_faces > 0:
+            raise RuntimeError(f"Stalactite {i} skipped degenerate faces: {skipped_faces}")
 
         bm.normal_update()
         mesh = bpy.data.meshes.new(f"Stac_{i:02d}")

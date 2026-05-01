@@ -24,9 +24,24 @@
     "strata_mask"
   ],
   "channel_assertions": {
+    "heightmap": {"min_relief_m": 15.0},
     "cliff_mask": {"min_nonzero_cells": 30, "range": [0.0, 1.0]},
     "cave_candidate": {"min_nonzero_cells": 5, "range": [0.0, 1.0]},
-    "strata_mask": {"range": [0.0, 1.0]}
+    "strata_mask": {"range": [0.0, 1.0], "min_band_count": 3}
   },
+  "semantic_assertions": [
+    {
+      "type": "cave_framed_by_cliff",
+      "source_channel": "cave_candidate",
+      "target_channel": "cliff_mask",
+      "radius": 2,
+      "min_ratio": 0.8
+    },
+    {
+      "type": "strata_band_count",
+      "channel": "strata_mask",
+      "min_band_count": 3
+    }
+  ],
   "render_goldens": {}
 }

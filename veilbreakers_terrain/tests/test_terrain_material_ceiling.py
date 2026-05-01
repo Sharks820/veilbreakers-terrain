@@ -509,6 +509,47 @@ def test_apply_quixel_to_layer_blends_albedo_in_linear_space(stack):
     np.testing.assert_allclose(stack.macro_color[..., 0], expected_linear, atol=1e-6)
 
 
+def test_load_texture_as_float_normalizes_hdr_float_without_uint8_divide(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import _load_texture_as_float
+
+    texture_path = tmp_path / "hero_displacement.exr"
+    texture_path.write_bytes(b"fake")
+    raw = np.array([[0.0, 4.0], [8.0, 2.0]], dtype=np.float32)
+    fake_imageio = SimpleNamespace(
+        v3=SimpleNamespace(imread=lambda _path: raw)
+    )
+    monkeypatch.setitem(sys.modules, "imageio", fake_imageio)
+
+    loaded = _load_texture_as_float(texture_path, channels=1)
+
+    assert float(loaded.min()) == pytest.approx(0.0)
+    assert float(loaded.max()) == pytest.approx(1.0)
+    assert float(loaded[0, 1]) == pytest.approx(0.5)
+    assert float(loaded[0, 1]) > 0.01
+
+
+def test_apply_quixel_to_layer_decodes_packed_flat_normals(stack):
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        QuixelAsset,
+        apply_quixel_to_layer,
+    )
+
+    asset = QuixelAsset(asset_id="normal_01", textures={})
+    normal = np.zeros((*stack.height.shape, 3), dtype=np.float32)
+    normal[..., 0] = 0.5
+    normal[..., 1] = 0.5
+    normal[..., 2] = 1.0
+
+    apply_quixel_to_layer(stack, "normal_layer", asset, normal_array=normal)
+
+    np.testing.assert_allclose(stack.terrain_normals[..., 0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(stack.terrain_normals[..., 1], 0.0, atol=1e-6)
+    np.testing.assert_allclose(stack.terrain_normals[..., 2], 1.0, atol=1e-6)
+
+
 def test_pass_quixel_ingest_with_assets_param(state):
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
         QuixelAsset,

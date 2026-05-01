@@ -9,21 +9,19 @@ Covers:
 
 from __future__ import annotations
 
-import io
 import tempfile
 from pathlib import Path
 
 import numpy as np
 import pytest
+from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_minimal_stack(tile_size: int = 16) -> "TerrainMaskStack":
-    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
-
+def _make_minimal_stack(tile_size: int = 16) -> TerrainMaskStack:
     h = np.random.rand(tile_size, tile_size).astype(np.float32) * 100.0 + 1.0
     return TerrainMaskStack(
         tile_size=tile_size,
@@ -98,24 +96,20 @@ class TestTerrainMaskStackFreqChannels:
     """TerrainMaskStack must have hmap_low_freq and hmap_high_freq fields."""
 
     def test_hmap_low_freq_field_exists(self):
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert hasattr(stack, "hmap_low_freq")
         assert stack.hmap_low_freq is None
 
     def test_hmap_high_freq_field_exists(self):
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert hasattr(stack, "hmap_high_freq")
         assert stack.hmap_high_freq is None
 
     def test_hmap_low_freq_in_array_channels(self):
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert "hmap_low_freq" in stack._ARRAY_CHANNELS
 
     def test_hmap_high_freq_in_array_channels(self):
-        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
         stack = _make_minimal_stack()
         assert "hmap_high_freq" in stack._ARRAY_CHANNELS
 

@@ -8,56 +8,29 @@ Second-pass audit over every live callable in `veilbreakers_terrain/handlers`, m
 
 ## Totals
 
-- Live handler callables scanned: `1488`
-- Runtime-primary callables: `143`
-- Runtime-transitive callables: `514`
-- Hard wiring risks (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `255`
-- Callables with no exact or semantic CSV match: `226`
-- Callables with no matching R9 coverage: `615`
+- Live handler callables scanned: `1728`
+- Runtime-primary callables: `204`
+- Runtime-transitive callables: `600`
+- Hard wiring risks after first-pass corroboration (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `0`
+- Callables with no exact or semantic CSV match: `0`
+- Callables with no matching R9 coverage: `529`
 
 Status distribution:
-- `cross_module_helper`: `78`
-- `module_local_helper`: `346`
-- `orphan_candidate`: `252`
-- `registrar_declared_only`: `1`
-- `runtime_primary`: `143`
-- `runtime_transitive`: `514`
-- `test_only_or_unwired`: `152`
-- `uninvoked_registrar`: `2`
+- `cross_module_helper`: `238`
+- `module_local_helper`: `449`
+- `runtime_primary`: `204`
+- `runtime_transitive`: `600`
+- `test_only_or_unwired`: `237`
 
 ## What Changed From The First Pass
 
-- Reclassified callables after runtime-reachability propagation: `990`
+- Reclassified callables after runtime-reachability propagation: `1523`
 - This second pass follows command-handler wrappers, default-pass registration, master bundle registration, and transitive helper reachability.
 - It also normalizes qualified vs unqualified CSV function names so semantic matches are no longer silently missed.
 
 ## Strongest Verified Gaps
 
-- `_biome_grammar.py::apply_desert_pavement` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_biome_grammar.py::compute_spring_line_mask` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_biome_grammar.py::apply_reef_platform` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_biome_grammar.py::apply_geological_folds` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_bridge_mesh.py::generate_terrain_bridge_mesh` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_mesh_bridge.py::_lsystem_tree_generator` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_mesh_bridge.py::get_material_for_category` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_mesh_bridge.py::post_boolean_cleanup` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_mesh_bridge.py::generate_lod_specs` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_canyon` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_waterfall` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_cliff_face` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_swamp_terrain` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_sinkhole` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_floating_rocks` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_ice_formation` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_scatter_engine.py::generate_lava_flow` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::_OpenSimplexWrapper.noise2` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::_OpenSimplexWrapper.noise3` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::_OpenSimplexWrapper.noise2_array` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::_OpenSimplexWrapper.noise3_array` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::_OpenSimplexWrapper.noise4_array` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::hydraulic_erosion` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::ridged_multifractal` -> `orphan_candidate` (runtime=`none`, callers=`none`)
-- `_terrain_noise.py::domain_warp` -> `orphan_candidate` (runtime=`none`, callers=`none`)
+- None
 
 ## Runtime Surfaces Missing Adequate Grade Coverage
 
@@ -67,9 +40,7 @@ Status distribution:
 - `_biome_grammar.py::resolve_biome_name`
 - `_biome_grammar.py::generate_world_map_spec`
 - `_biome_grammar.py::_generate_corruption_map`
-- `_mesh_bridge.py::resolve_generator`
 - `_mesh_bridge.py::mesh_from_spec`
-- `_terrain_depth.py::_fbm_noise2`
 - `_terrain_erosion.py::apply_hydraulic_erosion`
 - `_terrain_erosion.py::_deposit`
 - `_terrain_erosion.py::_erode_brush`
@@ -78,17 +49,19 @@ Status distribution:
 - `_terrain_world.py::generate_world_heightmap`
 - `_terrain_world.py::_region_slice`
 - `_terrain_world.py::_protected_mask`
-- `_water_network.py::priority_flood_d8`
+- `_terrain_world.py::pass_structural_masks`
+- `_water_network.py::compute_river_width`
 - `_water_network_ext.py::compute_foam_mask`
 - `_water_network_ext.py::compute_mist_mask`
-- `animation_environment.py::_ease_in_cubic_tangent`
-- `animation_environment.py::_ease_out_cubic_tangent`
-- `animation_environment.py::_smooth_step_tangent`
-- `animation_environment.py::_make_kf`
-- `animation_environment.py::_fire_val_tang`
-- `animation_environment.py::_stokes_drag_amp`
-- `animation_environment.py::_candle_temp`
-- `environment.py::_vector_xyz`
+- `animation_environment.py::_pbd_cloth_rest_bias`
+- `atmospheric_volumes.py::_count_by_type`
+- `atmospheric_volumes.py::pass_atmospheric_volumes`
+- `atmospheric_volumes.py::register_atmospheric_volumes_pass`
+- `blender_capability_bridge.py::object_info`
+- `blender_capability_bridge.py::object_create_primitive`
+- `blender_capability_bridge.py::object_delete`
+- `blender_capability_bridge.py::object_transform`
+- `blender_capability_bridge.py::light_create_or_update`
 
 ## Master Audit Interpretation
 

@@ -12,11 +12,11 @@
 
 metadata:
   version: "1.0"
-  generated: "2026-04-09"
-  registrar: "blender_addon/handlers/terrain_master_registrar.py"
+  generated: "2026-04-30"
+  registrar: "veilbreakers_terrain/handlers/terrain_master_registrar.py"
   total_bundles: 18
   registered_bundles: 15
-  total_passes: 31
+  total_passes: 63
   total_stubs: 0
   dead_code_exporters: 6
 
@@ -303,7 +303,7 @@ bundle_k:
   dead_code_exporters:
     - { name: "export_unity_shader_template", file: "terrain_stochastic_shader.py:119", note: "Never called by pass" }
     - { name: "export_shadow_clipmap_exr", file: "terrain_shadow_clipmap_bake.py:122", note: "Writes .npy not EXR; never called" }
-    - { name: "export_god_ray_hints_json", file: "terrain_god_ray_hints.py:196", note: "Moved to Bundle L; never called" }
+    - { name: "export_god_ray_hints_json", file: "terrain_god_ray_hints.py:349", note: "Utility exporter; pass_god_ray_hints computes runtime hints and returns side-effect metrics" }
 
 # ===========================================================================
 # Bundle L — Atmosphere & Horizon (3 passes, all REAL)
@@ -314,9 +314,9 @@ bundle_l:
   registrar_entry: "terrain_bundle_l.register_bundle_l_passes"
   status: "partial"
   passes:
-    - { name: "pass_horizon_lod", file: "terrain_horizon_lod.py:170", reads: ["height"], mutates: ["lod_bias"], loc: 58, is_stub: false, note: "build_horizon_skybox_mask exists but never called" }
+    - { name: "pass_horizon_lod", file: "terrain_horizon_lod.py:240", reads: ["height"], mutates: ["lod_bias"], loc: 58, is_stub: false, note: "Calls build_horizon_skybox_mask for primary and vantage-position horizon samples" }
     - { name: "pass_fog_masks", file: "terrain_fog_masks.py:143", reads: ["height", "wetness"], mutates: ["mist"], loc: 42, is_stub: false }
-    - { name: "pass_god_ray_hints", file: "terrain_god_ray_hints.py:216", reads: ["height", "cloud_shadow", "cave_candidate", "waterfall_lip_candidate"], mutates: [], loc: 40, is_stub: false, note: "Produces hints as side-effect metadata only; export_god_ray_hints_json never called" }
+    - { name: "pass_god_ray_hints", file: "terrain_god_ray_hints.py:369", reads: ["height", "cloud_shadow", "cave_candidate", "waterfall_lip_candidate"], mutates: [], loc: 40, is_stub: false, note: "Produces hint count/intensity metrics and side-effect metadata for downstream export" }
 
 # ===========================================================================
 # Bundle M — Iteration Velocity (no registered passes, utility only)
@@ -438,8 +438,8 @@ cross_cutting_bugs:
 dead_code_exporters:
   - { func: "export_unity_shader_template", file: "terrain_stochastic_shader.py:119", owner: "bundle_k" }
   - { func: "export_shadow_clipmap_exr", file: "terrain_shadow_clipmap_bake.py:122", owner: "bundle_k" }
-  - { func: "export_god_ray_hints_json", file: "terrain_god_ray_hints.py:196", owner: "bundle_l" }
-  - { func: "build_horizon_skybox_mask", file: "terrain_horizon_lod.py:99", owner: "bundle_l" }
+  - { func: "export_god_ray_hints_json", file: "terrain_god_ray_hints.py:349", owner: "bundle_l" }
+  - { func: "build_horizon_skybox_mask", file: "terrain_horizon_lod.py:129", owner: "bundle_l" }
   - { func: "apply_differential_erosion", file: "terrain_stratigraphy.py:195", owner: "bundle_i" }
   - { func: "scatter_moraines", file: "terrain_glacial.py:122", owner: "bundle_i" }
   - { func: "export_navmesh_json", file: "terrain_navmesh_export.py", owner: "bundle_j" }

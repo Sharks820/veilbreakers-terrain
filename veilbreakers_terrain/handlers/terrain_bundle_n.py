@@ -278,6 +278,13 @@ def run_bundle_n_post_pipeline_hooks(
     options = _runtime_options(controller.state.intent)
     if options.get("skip_post_pipeline_hooks"):
         return {"skipped": True, "reason": "skip_post_pipeline_hooks"}
+    quality_profile = str(getattr(controller.state.intent, "quality_profile", "") or "")
+    visual_qa_blocking = bool(
+        options.get(
+            "visual_qa_blocking",
+            quality_profile in {"aaa_open_world", "production", "cinematic"},
+        )
+    )
 
     state = controller.state
     stack = state.mask_stack
@@ -326,7 +333,7 @@ def run_bundle_n_post_pipeline_hooks(
         visual_report = terrain_visual_qa.run_checks(stack)
         summary["visual_qa_report"] = visual_report
         summary["visual_qa_failed_names"] = list(visual_report.get("failed_names", []))
-        if options.get("visual_qa_blocking") and not visual_report.get("ok", False):
+        if visual_qa_blocking and not visual_report.get("ok", False):
             _attach_issues(
                 last,
                 [

@@ -209,18 +209,18 @@ def compute_cloud_shadow_mask(
             from scipy.ndimage import gaussian_filter as _gf
             shadow = _gf(shadow, sigma=blur_sigma, mode="reflect")
         except ImportError:
-            # Fallback: cumsum-based integral image box blur
+            # Fallback: separable reflect-padded box blur. Keep exact input
+            # shape even when kernel width exceeds a small tile dimension.
             k = max(1, int(blur_sigma * 2) | 1)  # odd kernel
             pad = k // 2
-            padded = np.pad(shadow, pad, mode="reflect")
-            cs_img = np.cumsum(np.cumsum(padded, axis=0), axis=1)
-            hh, ww = shadow.shape
-            shadow = (
-                cs_img[k:hh + k, k:ww + k]
-                - cs_img[0:hh, k:ww + k]
-                - cs_img[k:hh + k, 0:ww]
-                + cs_img[0:hh, 0:ww]
-            ) / float(k * k)
+            kernel = np.ones(k, dtype=np.float64) / float(k)
+
+            def _box_same(row: np.ndarray) -> np.ndarray:
+                padded = np.pad(row, pad, mode="reflect")
+                return np.convolve(padded, kernel, mode="valid")
+
+            shadow = np.apply_along_axis(_box_same, 1, shadow)
+            shadow = np.apply_along_axis(_box_same, 0, shadow)
 
     return np.clip(shadow, 0.0, 1.0).astype(np.float32)
 

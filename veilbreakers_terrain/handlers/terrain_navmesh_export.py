@@ -687,6 +687,9 @@ def register_bundle_j_navmesh_pass() -> None:
                 overrides=("navmesh_area_id", "traversability") if name == "pass_navmesh_export" else (),
                 seed_namespace=name,
                 requires_scene_read=False,
+                protocol_enforced=True,
+                protocol_require_rule_5=True,
+                protocol_bulk_edit=True,
                 description="Bundle J: navmesh area classification + traversability gradient",
             )
         )

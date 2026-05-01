@@ -6,11 +6,15 @@ that could cause a crash, incorrect result, or security bypass in production.
 
 from __future__ import annotations
 
+import importlib.util
 import io
 
 import numpy as np
 import pytest
 from PIL import Image as PILImage
+
+_HAS_TOOLKIT = importlib.util.find_spec("veilbreakers_mcp") is not None
+_TOOLKIT_SKIP_REASON = "veilbreakers-mcp toolkit package is optional and unavailable in this Python lane"
 
 
 # ===================================================================
@@ -192,6 +196,7 @@ class TestScatterEngineEdgeCases:
 # ===================================================================
 
 
+@pytest.mark.skipif(not _HAS_TOOLKIT, reason=_TOOLKIT_SKIP_REASON)
 class TestSecurityBypassAttempts:
     """Test security bypass vectors that existing tests miss."""
 
@@ -306,6 +311,7 @@ class TestSecurityBypassAttempts:
 # ===================================================================
 
 
+@pytest.mark.skipif(not _HAS_TOOLKIT, reason=_TOOLKIT_SKIP_REASON)
 class TestWcagEdgeCases:
     """Edge cases for WCAG contrast checker."""
 
@@ -371,6 +377,7 @@ def _img_from_bytes(data: bytes) -> PILImage.Image:
     return PILImage.open(io.BytesIO(data))
 
 
+@pytest.mark.skipif(not _HAS_TOOLKIT, reason=_TOOLKIT_SKIP_REASON)
 class TestTextureOpsEdgeCases:
     """Edge cases for texture operations."""
 

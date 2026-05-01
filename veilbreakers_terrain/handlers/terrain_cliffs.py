@@ -219,7 +219,7 @@ def _smooth_contour_gaussian(
 
     if closed:
         # Wrap-around padding for periodic contours
-        pad = np.concatenate([pts_f[-radius:], pts_f, pts_f[:radius]], axis=0)
+        pad = np.pad(pts_f, ((radius, radius), (0, 0)), mode="wrap")
     else:
         # Edge-reflect padding for open polylines
         pad = np.pad(pts_f, ((radius, radius), (0, 0)), mode="edge")
@@ -289,13 +289,14 @@ def _fit_bspline_contour(
         p = np.vstack([pts_f[:1], pts_f, pts_f[-1:]])  # clamp ends
 
     segs = n  # number of segments
-    t_per_seg = n_samples // max(segs, 1)
-    t_per_seg = max(t_per_seg, 2)
+    base_samples = max(1, n_samples // max(segs, 1))
+    extra_samples = max(0, n_samples - base_samples * segs)
     out_pts: List[np.ndarray] = []
 
     for i in range(1, segs + 1):
         p0, p1, p2, p3 = p[i - 1], p[i], p[i + 1], p[i + 2] if (i + 2) < len(p) else p[-1]
-        ts = np.linspace(0.0, 1.0, t_per_seg, endpoint=(i == segs))
+        sample_count = base_samples + (1 if (i - 1) < extra_samples else 0)
+        ts = np.linspace(0.0, 1.0, sample_count, endpoint=(i == segs))
         # Catmull-Rom formula
         seg = np.outer(
             (-ts**3 + 2*ts**2 - ts) * 0.5, p0
@@ -308,7 +309,15 @@ def _fit_bspline_contour(
         )
         out_pts.append(seg)
 
-    return np.vstack(out_pts) if out_pts else pts_f.copy()
+    if not out_pts:
+        return pts_f.copy()
+    result = np.vstack(out_pts)
+    if result.shape[0] > n_samples:
+        return result[:n_samples]
+    if result.shape[0] < n_samples:
+        pad = np.repeat(result[-1:, :], n_samples - result.shape[0], axis=0)
+        return np.vstack([result, pad])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +478,7 @@ def _trace_moore_boundary(mask: np.ndarray) -> np.ndarray:
         return (d + 6) % 8
 
     boundary: list[tuple[int, int]] = []
+    seen_states: set[tuple[int, int, int]] = set()
     max_steps = max(rows * cols, 1) * 4
 
     r, c = start_r, start_c
@@ -478,6 +488,10 @@ def _trace_moore_boundary(mask: np.ndarray) -> np.ndarray:
     step = 0
 
     while step < max_steps:
+        state = (r, c, back_dir)
+        if state in seen_states:
+            break
+        seen_states.add(state)
         boundary.append((r, c))
         step += 1
 
@@ -503,6 +517,16 @@ def _trace_moore_boundary(mask: np.ndarray) -> np.ndarray:
     if not boundary:
         return np.array([[start_r, start_c]], dtype=np.int32)
     return np.array(boundary, dtype=np.int32)
+
+
+def _dedupe_consecutive_points(pts: np.ndarray) -> np.ndarray:
+    """Drop consecutive duplicate 2D points without changing order."""
+    pts_arr = np.asarray(pts)
+    if pts_arr.shape[0] < 2:
+        return pts_arr
+    diffs = np.any(pts_arr[1:] != pts_arr[:-1], axis=1)
+    keep = np.concatenate([[True], diffs])
+    return pts_arr[keep]
 
 
 def _label_connected_components(
@@ -805,7 +829,6 @@ def carve_cliff_system(
 
     # Rock material hint (for angle of repose selection)
     rock_material = "default"
-    rock_hardness_arr = stack.get("rock_hardness")
 
     cliffs: List[CliffStructure] = []
     for idx, (lid, size) in enumerate(component_sizes):
@@ -1104,9 +1127,7 @@ def _postprocess_lip_polyline(pts: np.ndarray) -> np.ndarray:
         return pts
 
     # 1. Remove exact duplicate consecutive points
-    diffs = np.any(pts[1:] != pts[:-1], axis=1)
-    keep = np.concatenate([[True], diffs])
-    pts = pts[keep]
+    pts = _dedupe_consecutive_points(pts)
 
     if pts.shape[0] < 3:
         return pts
@@ -1117,7 +1138,11 @@ def _postprocess_lip_polyline(pts: np.ndarray) -> np.ndarray:
         sigma=2.0,
         closed=True,
     )
-    return np.round(smoothed_f).astype(np.int32)
+    smoothed = np.round(smoothed_f).astype(np.int32)
+    smoothed = _dedupe_consecutive_points(smoothed)
+    if smoothed.shape[0] > 1 and np.array_equal(smoothed[0], smoothed[-1]):
+        smoothed = smoothed[:-1]
+    return smoothed.astype(np.int32, copy=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1576,8 +1601,6 @@ def _generate_cliff_overhang(
     # from the face centroid outward, which we approximate as the direction
     # from the clip centre toward the tile edge.
     if cliff_profile.world_bounds is not None:
-        cx = (cliff_profile.world_bounds.min_x + cliff_profile.world_bounds.max_x) * 0.5
-        cy = (cliff_profile.world_bounds.min_y + cliff_profile.world_bounds.max_y) * 0.5
         # Simple heuristic: outward = away from centroid along longest axis
         wx = cliff_profile.world_bounds.max_x - cliff_profile.world_bounds.min_x
         wy = cliff_profile.world_bounds.max_y - cliff_profile.world_bounds.min_y
@@ -2074,6 +2097,8 @@ def _build_cliff_wall_mesh_spec(
                 groove = max(groove, cd * (0.5 + 0.5 * math.cos(math.pi * t)))
         return groove  # positive = recess inward (add to Y)
 
+    crack_groove_by_col = [_crack_groove_at(col_j) for col_j in range(n_lip)]
+
     # ------------------------------------------------------------------
     # AAA feature 3 — fBm surface normal perturbation.
     # 2 octaves, amplitude 0.08 m, scale 1.5 — applied perpendicular to
@@ -2153,7 +2178,7 @@ def _build_cliff_wall_mesh_spec(
             noise_y += strata_y
 
             # AAA 2: vertical crack groove (positive = into cliff = add Y)
-            noise_y += _crack_groove_at(col_j)
+            noise_y += crack_groove_by_col[col_j]
 
             # AAA 3: fBm normal perturbation
             arc_pos_j = col_arc[col_j] if col_j < len(col_arc) else 0.0
@@ -2225,17 +2250,15 @@ def _build_cliff_wall_mesh_spec(
     n_boulders = max(1, int(boulders_per_10m * arc_length / 10.0))
     cliff_boulder_placements: List[dict] = []
     base_z = lip_pts_perturbed[0][2] - wall_height if lip_pts_perturbed else 0.0
+    col_arc_arr = np.asarray(col_arc, dtype=np.float64)
 
     for bi in range(n_boulders):
         # Random arc position
         arc_t = boulder_rng.random()
         b_arc = arc_t * arc_length
         # Find lip column for this arc position
-        col_idx = 0
-        for j in range(n_lip - 1):
-            if col_arc[j] <= b_arc <= col_arc[j + 1]:
-                col_idx = j
-                break
+        col_idx = int(np.searchsorted(col_arc_arr, b_arc, side="right") - 1)
+        col_idx = max(0, min(col_idx, max(0, n_lip - 2)))
         bx, by, bz = lip_pts_perturbed[col_idx]
         # Place boulder 3-8 m outward from cliff face base
         outward_dist = boulder_rng.uniform(3.0, 8.0)

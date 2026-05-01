@@ -24,6 +24,8 @@ namespace VeilBreakers.TerrainImport
         public string TerrainNormalsFile = string.Empty;
         public string TerrainNormalMapFile = string.Empty;
         public string TerrainNormalMapAssetPath = string.Empty;
+        public string NavMeshAreaIdFile = string.Empty;
+        public string NavMeshDataAssetPath = string.Empty;
 
         // Extended fields (D-1)
         public int BiomeId;

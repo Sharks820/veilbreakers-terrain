@@ -18,6 +18,7 @@ Existing helpers (``sample_world_height``, ``generate_world_heightmap``,
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any, Optional
 
@@ -1133,23 +1134,33 @@ def pass_erosion(
 
         quality = load_quality_profile("aaa_open_world")
 
-    # AAA hydraulic erosion: minimum 50k particles (Olsen 2004 / Gaea reference).
-    # Prior values of 200–600 produced smooth but geologically implausible output
-    # (no coherent drainage networks, no alluvial fans, no ridge-to-valley transport).
-    # The quality-profile value is scaled so aaa_open_world(2000) preserves the
-    # established 50k temperate budget while lower tiers remain genuinely lower.
+    # AAA hydraulic erosion: 1024² production tiles keep the established 50k
+    # droplet budget (Olsen 2004 / Gaea reference). Smaller scoped/test tiles
+    # scale by cell count so per-cell droplet density remains sane instead of
+    # running 50k particles over a 32² fixture and timing out the suite.
     quality_hydraulic = max(1, int(quality.hydraulic_erosion_iterations) * 25)
     quality_thermal = max(0, int(quality.thermal_erosion_iterations))
+    cell_count = max(1, int(stack.height.size))
+    reference_cell_count = 1024 * 1024
+    tile_scale = min(1.0, math.sqrt(cell_count / reference_cell_count))
+    scaled_hydraulic = int(round(quality_hydraulic * tile_scale))
+    hydraulic_floor = min(quality_hydraulic, max(1, cell_count // 64))
+    hydraulic_iterations = max(
+        1,
+        min(quality_hydraulic, max(scaled_hydraulic, hydraulic_floor)),
+    )
     climate_params = {
         "temperate": dict(iteration_scale=1.0, talus_offset=7.0),
         "arid":      dict(iteration_scale=0.8, talus_offset=12.0),
         "alpine":    dict(iteration_scale=1.2, talus_offset=2.0),
     }.get(profile, dict(iteration_scale=1.0, talus_offset=7.0))
     profile_params = {
-        "iterations": max(1, int(round(quality_hydraulic * climate_params["iteration_scale"]))),
+        "iterations": max(1, int(round(hydraulic_iterations * climate_params["iteration_scale"]))),
         "thermal_iterations": quality_thermal,
         "talus_angle": float(quality.talus_angle_degrees) + float(climate_params["talus_offset"]),
         "quality_profile": quality.name,
+        "hydraulic_iteration_ceiling": quality_hydraulic,
+        "hydraulic_reference_cell_count": reference_cell_count,
     }
 
     # Fix 12.3: Variable erodibility from rock_hardness channel
@@ -1409,6 +1420,8 @@ def pass_erosion(
             "profile": profile,
             "quality_profile": profile_params["quality_profile"],
             "hydraulic_iterations": profile_params["iterations"],
+            "hydraulic_iteration_ceiling": profile_params["hydraulic_iteration_ceiling"],
+            "hydraulic_reference_cell_count": profile_params["hydraulic_reference_cell_count"],
             "thermal_iterations": profile_params["thermal_iterations"],
             "total_erosion": _total_erosion,
             "total_deposition": _total_deposition,

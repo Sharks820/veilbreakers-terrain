@@ -4,9 +4,9 @@ Bundle A supplement implementing Addendum 2.A.7 exactly. Every implementation
 of the world-terrain orchestrator MUST follow this sequence. This module is
 the reference implementation — pure numpy, headless-compatible, no bpy.
 
-Stubs are intentional where the non-mesh passes have not landed yet. Steps
-1-9 + 12 do real work; steps 10 and 11 are pass-through stubs that will be
-filled in when road/water-body mesh bundles land.
+All named steps emit either mutated terrain data, candidate records, masks, or
+structured specs. No step may silently advertise a pass-through placeholder as
+completed work.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _apply_flatten_zones_stub(world_hmap: np.ndarray, intent: TerrainIntentState) -> np.ndarray:
+def _apply_flatten_zones(world_hmap: np.ndarray, intent: TerrainIntentState) -> np.ndarray:
     """Step 4 — apply flatten zones declared in intent on the world heightmap.
 
     Reads ``intent.composition_hints['flatten_zones']`` (or the legacy
@@ -127,7 +127,7 @@ def _apply_flatten_zones_stub(world_hmap: np.ndarray, intent: TerrainIntentState
     return result
 
 
-def _apply_canyon_river_carves_stub(
+def _apply_canyon_river_carves(
     world_hmap: np.ndarray, intent: TerrainIntentState
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Step 5 — carve canyon and river channels into the world heightmap.
@@ -257,7 +257,7 @@ def _apply_canyon_river_carves_stub(
     return result, glacial_delta.astype(np.float32)
 
 
-def _detect_cliff_edges_stub(
+def _detect_cliff_edges(
     world_hmap: np.ndarray,
     slope_threshold_deg: float = 55.0,
     min_component_size: int = 20,
@@ -383,7 +383,7 @@ def _detect_cliff_edges_stub(
     return [(int(x), int(y)) for y, x in zip(ys.tolist(), xs.tolist())]
 
 
-def _detect_cave_candidates_stub(
+def _detect_cave_candidates(
     world_hmap: np.ndarray,
     *,
     min_cluster_size: int = 3,
@@ -568,7 +568,7 @@ def _detect_cave_candidates_stub(
     return [(int(x), int(y)) for y, x in zip(ys.tolist(), xs.tolist())]
 
 
-def _detect_waterfall_lips_stub(
+def _detect_waterfall_lips(
     world_hmap: np.ndarray,
     world_origin_x: float,
     world_origin_y: float,
@@ -1094,7 +1094,7 @@ def run_twelve_step_world_terrain(
     # Step 4 — apply flatten zones  (soft failure — skip zones on error)
     sequence.append("4_apply_flatten_zones")
     try:
-        world_hmap = _apply_flatten_zones_stub(world_hmap, intent)
+        world_hmap = _apply_flatten_zones(world_hmap, intent)
     except Exception as exc:
         errors["4_apply_flatten_zones"] = str(exc)
         _log.warning("Step 4 flatten zones failed, continuing: %s", exc)
@@ -1104,7 +1104,7 @@ def run_twelve_step_world_terrain(
     sequence.append("5_apply_canyon_river_carves")
     world_glacial_delta: np.ndarray = np.zeros(world_hmap.shape, dtype=np.float32)
     try:
-        world_hmap, world_glacial_delta = _apply_canyon_river_carves_stub(world_hmap, intent)
+        world_hmap, world_glacial_delta = _apply_canyon_river_carves(world_hmap, intent)
     except Exception as exc:
         errors["5_apply_canyon_river_carves"] = str(exc)
         _log.warning("Step 5 carve failed, continuing: %s", exc)
@@ -1148,12 +1148,12 @@ def run_twelve_step_world_terrain(
     cave_candidates: List = []
     waterfall_lip_candidates: List = []
     try:
-        cliff_candidates = _detect_cliff_edges_stub(world_eroded)
+        cliff_candidates = _detect_cliff_edges(world_eroded)
     except Exception as exc:
         errors["8a_cliff_candidates"] = str(exc)
         _log.warning("Step 8 cliff detection failed: %s", exc)
     try:
-        cave_candidates = _detect_cave_candidates_stub(world_eroded)
+        cave_candidates = _detect_cave_candidates(world_eroded)
     except Exception as exc:
         errors["8b_cave_candidates"] = str(exc)
         _log.warning("Step 8 cave detection failed: %s", exc)
@@ -1167,7 +1167,7 @@ def run_twelve_step_world_terrain(
             if _world_flow_acc.shape != world_eroded.shape:
                 _world_flow_acc = None
     try:
-        waterfall_lip_candidates = _detect_waterfall_lips_stub(
+        waterfall_lip_candidates = _detect_waterfall_lips(
             world_eroded, world_origin_x, world_origin_y, cell_size,
             flow_accumulation=_world_flow_acc,
         )

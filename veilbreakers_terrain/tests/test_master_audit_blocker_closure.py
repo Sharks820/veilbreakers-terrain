@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 
 def _stack(size: int = 8):
@@ -56,6 +55,37 @@ def test_light_and_probe_exports_use_live_stack_channels():
     assert isinstance(lights["lights"][0]["position"], list)
     assert probes["probes"]
     assert isinstance(probes["probes"][0]["position"], list)
+
+
+def test_probe_placements_no_scipy_blur_preserves_small_tile_shape(monkeypatch):
+    from veilbreakers_terrain.handlers.light_integration import compute_probe_placements
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ImportError("blocked scipy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    height = np.arange(25, dtype=np.float32).reshape(5, 5)
+    water = np.zeros_like(height)
+    water[1:3, 1:3] = 1.0
+
+    probes = compute_probe_placements(
+        height,
+        water_surface=water,
+        cell_size=1.0,
+        max_probes=4,
+        min_probe_spacing_m=1.0,
+    )
+
+    assert probes
+    assert all(0.0 <= p["position"][0] <= 5.0 for p in probes)
+    assert all(0.0 <= p["position"][1] <= 5.0 for p in probes)
 
 
 def test_lightweight_state_copy_isolates_array_buffers():

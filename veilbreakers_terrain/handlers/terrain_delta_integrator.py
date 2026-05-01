@@ -191,6 +191,9 @@ def register_integrator_pass() -> None:
             requires_scene_read=False,
             may_modify_geometry=True,
             respects_protected_zones=True,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Phase 51 — compose all terrain height deltas additively into height.",
         )
     )

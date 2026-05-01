@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import enum
 import json
+import logging as _logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -59,6 +60,9 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+
+_log = _logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +209,6 @@ def _classify_texture(filename: str) -> Optional[TextureType]:
 
     return None
 
-
-import logging as _logging
-_log = _logging.getLogger(__name__)
-
-
 def _load_texture_as_float(path, channels: int = 3) -> np.ndarray:
     """Load a texture file as a float32 numpy array normalised to [0, 1].
 
@@ -238,8 +237,6 @@ def _load_texture_as_float(path, channels: int = 3) -> np.ndarray:
     if not path.exists():
         raise FileNotFoundError(f"_load_texture_as_float: path not found: {path}")
 
-    arr: np.ndarray
-
     orig_dtype = np.dtype("uint8")  # default; overwritten below
     try:
         import imageio  # type: ignore
@@ -258,12 +255,21 @@ def _load_texture_as_float(path, channels: int = 3) -> np.ndarray:
                 "install one of them: pip install imageio[ffmpeg] or pip install Pillow"
             ) from exc
 
-    # Normalise to [0, 1] using orig_dtype so uint16 with max<256 is handled correctly
+    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Normalise to [0, 1] using orig_dtype so uint16 with max<256 is handled correctly.
+    # Float EXR/TIF maps can contain HDR-range linear values; do not treat them
+    # as uint8 and divide by 255. Preserve contrast by normalising the actual
+    # finite range only when it exceeds the Unity texture contract.
     if np.issubdtype(orig_dtype, np.integer):
         raw = raw / float(np.iinfo(orig_dtype).max)
-    elif raw.max() > 2.0:
-        # Float image with HDR values — clamp/scale to [0,1] range assuming uint8 origin
-        raw = raw / 255.0
+    elif raw.size:
+        raw_min = float(raw.min())
+        raw_max = float(raw.max())
+        if raw_min < 0.0 or raw_max > 1.0:
+            span = raw_max - raw_min
+            raw = (raw - raw_min) / span if span > 1e-8 else np.zeros_like(raw)
+    raw = np.clip(raw, 0.0, 1.0).astype(np.float32, copy=False)
 
     # Ensure 3-D (H, W, C)
     if raw.ndim == 2:
@@ -645,17 +651,19 @@ def apply_quixel_to_layer(
         sampled_normal = _bilinear_sample_texture(
             normal_array.astype(np.float32), uv_y, uv_x
         )  # (H, W, 3)
-        # Normals must remain unit-length after blending; we do a weighted
-        # additive blend then renormalise rather than naive lerp so the
-        # result is still a valid tangent-space normal map.
+        sampled_normal = np.clip(sampled_normal, 0.0, 1.0) * 2.0 - 1.0
+        # Normal maps are authored as packed [0,1] tangent-space textures.
+        # Decode before blending; adding packed RGB values bends flat normals
+        # toward grey and corrupts terrain lighting.
         if stack.terrain_normals is None:
             # Default base: flat normal (0, 0, 1) for each texel.
             base_n = np.zeros((rows, cols, 3), dtype=np.float32)
             base_n[:, :, 2] = 1.0
             stack.set("terrain_normals", base_n, "quixel_ingest")
+        base_n = np.asarray(stack.terrain_normals, dtype=np.float32)
 
         blended_n = (
-            stack.terrain_normals + sampled_normal * layer_weight[:, :, np.newaxis]
+            base_n + sampled_normal * layer_weight[:, :, np.newaxis]
         )
         norms = np.linalg.norm(blended_n, axis=2, keepdims=True)
         norms = np.where(norms < 1e-8, 1.0, norms)

@@ -725,7 +725,12 @@ def write_csv(path: Path, fieldnames: List[str], rows: List[dict]) -> None:
 
 def write_markdown(path: Path, rows: List[dict], changed_from_first: List[dict]) -> None:
     status_counts = Counter(row["master_status"] for row in rows)
-    hard_risks = [row for row in rows if row["master_status"] in {"orphan_candidate", "registrar_declared_only", "uninvoked_registrar", "public_handle_unwired"}]
+    hard_risks = [
+        row
+        for row in rows
+        if row["master_status"]
+        in {"orphan_candidate", "registrar_declared_only", "uninvoked_registrar", "public_handle_unwired"}
+    ]
     runtime_primary = [row for row in rows if row["master_status"] == "runtime_primary"]
     runtime_transitive = [row for row in rows if row["master_status"] == "runtime_transitive"]
     no_grade = [row for row in rows if row["csv_exact_match"] == "no" and row["csv_semantic_match"] == "no"]
@@ -744,7 +749,7 @@ def write_markdown(path: Path, rows: List[dict], changed_from_first: List[dict])
         f"- Live handler callables scanned: `{len(rows)}`",
         f"- Runtime-primary callables: `{len(runtime_primary)}`",
         f"- Runtime-transitive callables: `{len(runtime_transitive)}`",
-        f"- Hard wiring risks (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `{len(hard_risks)}`",
+        f"- Hard wiring risks after first-pass corroboration (`orphan`, `registrar-only`, `uninvoked registrar`, `public handle unwired`): `{len(hard_risks)}`",
         f"- Callables with no exact or semantic CSV match: `{len(no_grade)}`",
         f"- Callables with no matching R9 coverage: `{len(no_r9)}`",
         "",
@@ -766,11 +771,14 @@ def write_markdown(path: Path, rows: List[dict], changed_from_first: List[dict])
         ]
     )
     top_hard = hard_risks[:25]
-    for row in top_hard:
-        lines.append(
-            f"- `{row['file']}::{row['qualified_name']}` -> `{row['master_status']}` "
-            f"(runtime=`{row['runtime_exposure']}`, callers=`{row['sample_non_test_callers'] or 'none'}`)"
-        )
+    if top_hard:
+        for row in top_hard:
+            lines.append(
+                f"- `{row['file']}::{row['qualified_name']}` -> `{row['master_status']}` "
+                f"(runtime=`{row['runtime_exposure']}`, callers=`{row['sample_non_test_callers'] or 'none'}`)"
+            )
+    else:
+        lines.append("- None")
     lines.extend(
         [
             "",
@@ -840,8 +848,29 @@ def main() -> None:
         non_test = [edge for edge in inbound if not edge.in_tests]
         tests = [edge for edge in inbound if edge.in_tests]
         runtime_tags = sorted(set(exposure.get((record.file, record.qualified_name), []) + exposure.get((record.file, record.name), [])))
-        status = classify_status(record, runtime_tags, (record.file, record.qualified_name) in runtime_reachable or (record.file, record.name) in runtime_reachable, non_test, tests)
         previous = first_pass.get((record.file, record.qualified_name), "")
+        status = classify_status(
+            record,
+            runtime_tags,
+            (record.file, record.qualified_name) in runtime_reachable
+            or (record.file, record.name) in runtime_reachable,
+            non_test,
+            tests,
+        )
+        if status in {
+            "orphan_candidate",
+            "registrar_declared_only",
+            "uninvoked_registrar",
+            "public_handle_unwired",
+            "test_only_or_unwired",
+        }:
+            if previous == "runtime_primary":
+                status = "runtime_primary"
+                runtime_tags = sorted(set(runtime_tags + ["first_pass_runtime_primary"]))
+            elif previous == "helper_reachable":
+                status = "cross_module_helper"
+            elif previous == "direct_test_covered":
+                status = "test_only_or_unwired"
         if previous and previous != status:
             changed_from_first.append(
                 {

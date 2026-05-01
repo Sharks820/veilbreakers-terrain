@@ -142,7 +142,7 @@ def _write_lock(result: CensusResult) -> None:
 # ---------------------------------------------------------------------------
 
 def _print_report(result: CensusResult) -> None:
-    print(f"\nCallable Census Report")
+    print("\nCallable Census Report")
     print(f"  Total callables : {result.total_callables}")
     print(f"  Graded          : {result.graded_callables}")
     print(f"  Uncovered       : {result.uncovered_count}")

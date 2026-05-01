@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.AI;
 using VeilBreakers.TerrainImport;
 
 namespace VeilBreakers.TerrainImport.Editor
@@ -30,9 +31,13 @@ namespace VeilBreakers.TerrainImport.Editor
             public float terrain_size_z_m;
             public float height_min_m;
             public float height_max_m = 1.0f;
+            public float height_scale_factor = 0.85f;
+            public string coordinate_system = "y-up";
+            public string source_coordinate_system = "z-up";
             public HeightmapDescriptor heightmap = new HeightmapDescriptor();
             public string terrain_normals_file = string.Empty;
             public string terrain_normal_map_file = string.Empty;
+            public string mesh_attributes_file = string.Empty;
             public SplatmapDescriptor[] splatmaps = Array.Empty<SplatmapDescriptor>();
             public TerrainLayerDescriptor[] terrain_layers = Array.Empty<TerrainLayerDescriptor>();
             public DetailLayerDescriptor[] detail_layers = Array.Empty<DetailLayerDescriptor>();
@@ -44,7 +49,17 @@ namespace VeilBreakers.TerrainImport.Editor
             public string decals_file = "decals.json";
             public string particle_emitter_specs_file = string.Empty;
             public string water_shader_manifest_file = "water_shader_manifest.json";
+            public string water_surface_elevation_file = string.Empty;
+            public string water_depth_file = string.Empty;
+            public string flow_direction_file = string.Empty;
+            public string flow_accumulation_file = string.Empty;
+            public string atmospheric_volumes_file = string.Empty;
+            public string wind_field_descriptor = string.Empty;
+            public string cloud_shadow_descriptor = string.Empty;
+            public string navmesh_area_id_file = string.Empty;
+            public string navmesh_data_asset_path = string.Empty;
             public string supplemental_mesh_specs_file = string.Empty;
+            public string foliage_placement_manifest_file = string.Empty;
             public string light_placements_file = string.Empty;
             public string probe_placements_file = "probe_placements.json";
             public SeamContractPayload seam_contract = new SeamContractPayload();
@@ -107,6 +122,9 @@ namespace VeilBreakers.TerrainImport.Editor
             public float height_blend_factor = 0.1f;
             public string base_color_hex = "#808080";
             public float[] base_color_rgb = Array.Empty<float>();
+            public string diffuse_texture_file = string.Empty;
+            public string normal_texture_file = string.Empty;
+            public string mask_texture_file = string.Empty;
             public bool triplanar;
         }
 
@@ -207,6 +225,57 @@ namespace VeilBreakers.TerrainImport.Editor
             public int[] indices = Array.Empty<int>();
         }
 
+        [Serializable]
+        private sealed class WaterShaderManifest
+        {
+            public WaterMaterialDescriptor[] materials = Array.Empty<WaterMaterialDescriptor>();
+        }
+
+        [Serializable]
+        private sealed class WaterMaterialDescriptor
+        {
+            public string material_id = "water";
+            public float[] base_color = Array.Empty<float>();
+            public float[] deep_color = Array.Empty<float>();
+            public float fog_distance_m = 8.0f;
+            public float caustic_strength = 0.5f;
+            public float normal_scale = 1.0f;
+        }
+
+        [Serializable]
+        private sealed class LightPlacementCollection
+        {
+            public LightPlacement[] lights = Array.Empty<LightPlacement>();
+        }
+
+        [Serializable]
+        private sealed class LightPlacement
+        {
+            public string light_type = "point";
+            public string source_prop = string.Empty;
+            public float[] position = Array.Empty<float>();
+            public float[] color = Array.Empty<float>();
+            public float energy = 50.0f;
+            public float radius = 6.0f;
+            public bool shadow = true;
+            public float[] direction = Array.Empty<float>();
+            public float spot_angle = 0.7853982f;
+        }
+
+        [Serializable]
+        private sealed class ProbePlacementCollection
+        {
+            public ProbePlacement[] probes = Array.Empty<ProbePlacement>();
+        }
+
+        [Serializable]
+        private sealed class ProbePlacement
+        {
+            public int probe_index;
+            public float[] position = Array.Empty<float>();
+            public float score;
+        }
+
         [MenuItem("VeilBreakers/Terrain/Import Bundle Directory")]
         private static void ImportBundleDirectoryMenu()
         {
@@ -246,26 +315,31 @@ namespace VeilBreakers.TerrainImport.Editor
                 );
             }
 
-            var descriptor = JsonUtility.FromJson<TerrainBundleDescriptor>(
-                File.ReadAllText(descriptorPath)
-            );
+            var descriptorText = File.ReadAllText(descriptorPath);
+            WarnUnhandledDescriptorKeys(descriptorText);
+            var descriptor = JsonUtility.FromJson<TerrainBundleDescriptor>(descriptorText);
             if (descriptor == null)
             {
                 throw new InvalidOperationException("Failed to parse Unity import descriptor.");
             }
+            RejectFailedDescriptor(descriptor);
 
             var terrainData = CreateTerrainData(bundleDirectory, descriptor);
-            var terrainObject = Terrain.CreateTerrainGameObject(terrainData);
+            var terrain = FindExistingTerrain(descriptor);
+            var terrainObject = terrain != null
+                ? terrain.gameObject
+                : Terrain.CreateTerrainGameObject(terrainData);
             terrainObject.name = string.IsNullOrEmpty(descriptor.game_object_name)
                 ? $"VB_{descriptor.world_id}_{descriptor.tile_x}_{descriptor.tile_y}"
                 : descriptor.game_object_name;
             terrainObject.transform.position = ToVector3(descriptor.unity_world_origin);
 
-            var terrain = terrainObject.GetComponent<Terrain>();
+            terrain = terrainObject.GetComponent<Terrain>();
             if (terrain == null)
             {
                 throw new InvalidOperationException("Terrain.CreateTerrainGameObject returned no Terrain component.");
             }
+            terrain.terrainData = terrainData;
 
             terrain.drawInstanced = true;
             terrain.allowAutoConnect = false;
@@ -287,6 +361,9 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.CellSize = descriptor.cell_size;
             metadata.HeightMinMeters = descriptor.height_min_m;
             metadata.HeightMaxMeters = descriptor.height_max_m;
+            metadata.HeightScaleFactor = descriptor.height_scale_factor;
+            metadata.CoordinateSystem = descriptor.coordinate_system ?? "y-up";
+            metadata.SourceCoordinateSystem = descriptor.source_coordinate_system ?? "z-up";
             metadata.ValidationStatus = descriptor.validation_status;
             metadata.ValidationIssueCount = descriptor.validation_issue_count;
             metadata.SeamContractWorldId = descriptor.seam_contract != null
@@ -298,18 +375,27 @@ namespace VeilBreakers.TerrainImport.Editor
                 bundleDirectory,
                 descriptor
             );
+            metadata.NavMeshAreaIdFile = descriptor.navmesh_area_id_file ?? string.Empty;
+            metadata.NavMeshDataAssetPath = BuildNavMeshDataAsset(bundleDirectory, terrain, descriptor);
             metadata.BiomeId = descriptor.tile_biome_id;
             metadata.PrimaryBiomeName = descriptor.tile_biome_name ?? "dark_fantasy_default";
             metadata.ClimateZone = descriptor.climate_zone ?? "temperate";
             metadata.WaterPresent = descriptor.has_water_surface;
-            metadata.WaterSurfaceElevationM = descriptor.water_level_unity_units;
+            metadata.WaterSurfaceElevationM = descriptor.height_scale_factor > 1e-6f
+                ? descriptor.water_level_unity_units / descriptor.height_scale_factor
+                : descriptor.water_level_unity_units;
             metadata.ScatterCount = descriptor.scatter_count;
             metadata.Lod0DistanceM = descriptor.lod0_distance_m > 0f ? descriptor.lod0_distance_m : 50f;
             metadata.Lod1DistanceM = descriptor.lod1_distance_m > 0f ? descriptor.lod1_distance_m : 150f;
             metadata.Lod2DistanceM = descriptor.lod2_distance_m > 0f ? descriptor.lod2_distance_m : 400f;
             metadata.SnowLineFactor = descriptor.snow_line_factor;
 
+            ClearGeneratedChildren(terrainObject.transform);
             CreateSupplementalMeshes(bundleDirectory, descriptor, terrainObject.transform);
+            CreateWaterSurfaces(bundleDirectory, descriptor, terrainObject.transform);
+            CreateLightPlacements(bundleDirectory, descriptor, terrainObject.transform);
+            CreateProbePlacements(bundleDirectory, descriptor, terrainObject.transform);
+            AttachFoliageManifestRenderer(bundleDirectory, descriptor, terrainObject);
             CreateSidecarReferences(bundleDirectory, descriptor, terrainObject.transform);
 
             EditorUtility.SetDirty(terrainData);
@@ -322,6 +408,308 @@ namespace VeilBreakers.TerrainImport.Editor
                 $"with validation_status={descriptor.validation_status} issues={descriptor.validation_issue_count}."
             );
             return terrain;
+        }
+
+        private static void RejectFailedDescriptor(TerrainBundleDescriptor descriptor)
+        {
+            if (descriptor.validation_issue_count > 0 &&
+                string.Equals(descriptor.validation_status, "failed", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"VeilBreakers terrain descriptor failed export validation " +
+                    $"({descriptor.validation_issue_count} issues). Regenerate the bundle before import."
+                );
+            }
+        }
+
+        private static Terrain FindExistingTerrain(TerrainBundleDescriptor descriptor)
+        {
+            var metadataComponents = UnityEngine.Object.FindObjectsOfType<VbTerrainTileMetadata>();
+            foreach (var metadata in metadataComponents)
+            {
+                if (metadata == null)
+                {
+                    continue;
+                }
+                if (!string.Equals(metadata.WorldId, descriptor.world_id, StringComparison.Ordinal) ||
+                    metadata.TileX != descriptor.tile_x ||
+                    metadata.TileY != descriptor.tile_y)
+                {
+                    continue;
+                }
+
+                var terrain = metadata.GetComponent<Terrain>();
+                if (terrain != null)
+                {
+                    return terrain;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(descriptor.game_object_name))
+            {
+                var named = GameObject.Find(descriptor.game_object_name);
+                if (named != null)
+                {
+                    return named.GetComponent<Terrain>();
+                }
+            }
+
+            return null;
+        }
+
+        private static void ClearGeneratedChildren(Transform parent)
+        {
+            for (var index = parent.childCount - 1; index >= 0; index--)
+            {
+                var child = parent.GetChild(index);
+                if (child == null)
+                {
+                    continue;
+                }
+
+                var generated =
+                    child.GetComponent<VbTerrainSidecarReference>() != null ||
+                    child.name.StartsWith("VB_", StringComparison.Ordinal);
+                if (generated)
+                {
+                    UnityEngine.Object.DestroyImmediate(child.gameObject);
+                }
+            }
+        }
+
+        private static string BuildNavMeshDataAsset(
+            string bundleDirectory,
+            Terrain terrain,
+            TerrainBundleDescriptor descriptor
+        )
+        {
+            if (terrain == null || terrain.terrainData == null ||
+                string.IsNullOrEmpty(descriptor.navmesh_area_id_file))
+            {
+                return string.Empty;
+            }
+
+            var assetPath = descriptor.navmesh_data_asset_path;
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                assetPath = Path.ChangeExtension(descriptor.terrain_data_asset_path, ".navmesh.asset");
+            }
+
+            EnsureAssetFolder(Path.GetDirectoryName(assetPath)?.Replace("\\", "/"));
+
+            var areaGrid = ReadNavMeshAreaGrid(bundleDirectory, descriptor);
+            var dominantArea = DominantNavMeshArea(areaGrid);
+            var source = new NavMeshBuildSource
+            {
+                shape = NavMeshBuildSourceShape.Terrain,
+                sourceObject = terrain.terrainData,
+                transform = terrain.transform.localToWorldMatrix,
+                area = dominantArea
+            };
+            var sources = new List<NavMeshBuildSource> { source };
+            AddNavMeshAreaModifierSources(sources, terrain, areaGrid, dominantArea);
+
+            var terrainSize = terrain.terrainData.size;
+            var bounds = new Bounds(
+                terrainSize * 0.5f,
+                terrainSize
+            );
+            var settings = NavMesh.GetSettingsByID(0);
+            var navMeshData = NavMeshBuilder.BuildNavMeshData(
+                settings,
+                sources,
+                bounds,
+                terrain.transform.position,
+                terrain.transform.rotation
+            );
+            if (navMeshData == null)
+            {
+                throw new InvalidOperationException(
+                    "Unity NavMeshBuilder returned null for imported VeilBreakers terrain."
+                );
+            }
+            navMeshData.name = Path.GetFileNameWithoutExtension(assetPath);
+
+            var existing = AssetDatabase.LoadAssetAtPath<NavMeshData>(assetPath);
+            if (existing != null)
+            {
+                EditorUtility.CopySerialized(navMeshData, existing);
+                EditorUtility.SetDirty(existing);
+            }
+            else
+            {
+                AssetDatabase.CreateAsset(navMeshData, assetPath);
+            }
+
+            return assetPath;
+        }
+
+        private static ushort[,] ReadNavMeshAreaGrid(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor
+        )
+        {
+            if (string.IsNullOrEmpty(descriptor.navmesh_area_id_file))
+            {
+                return null;
+            }
+
+            var payloadPath = string.IsNullOrEmpty(bundleDirectory)
+                ? descriptor.navmesh_area_id_file
+                : Path.Combine(bundleDirectory, descriptor.navmesh_area_id_file);
+            if (!File.Exists(payloadPath))
+            {
+                return null;
+            }
+
+            var bytes = File.ReadAllBytes(payloadPath);
+            if (bytes.Length < 2 || bytes.Length % 2 != 0)
+            {
+                return null;
+            }
+
+            var cellCount = bytes.Length / 2;
+            var side = Mathf.RoundToInt(Mathf.Sqrt(cellCount));
+            var rows = side;
+            var cols = side;
+            if (rows * cols != cellCount)
+            {
+                rows = Mathf.Max(1, descriptor.tile_size + 1);
+                cols = rows > 0 ? cellCount / rows : 0;
+                if (rows * cols != cellCount)
+                {
+                    rows = Mathf.Max(1, descriptor.tile_size);
+                    cols = rows > 0 ? cellCount / rows : 0;
+                }
+            }
+            if (rows <= 0 || cols <= 0 || rows * cols != cellCount)
+            {
+                Debug.LogWarning($"VeilBreakers navmesh area map has unsupported cell count: {cellCount}");
+                return null;
+            }
+
+            var grid = new ushort[rows, cols];
+            for (var index = 0; index < cellCount; index++)
+            {
+                var offset = index * 2;
+                grid[index / cols, index % cols] = (ushort)(bytes[offset] | (bytes[offset + 1] << 8));
+            }
+            return grid;
+        }
+
+        private static int DominantNavMeshArea(ushort[,] areaGrid)
+        {
+            if (areaGrid == null)
+            {
+                return 0;
+            }
+
+            var counts = new Dictionary<int, int>();
+            foreach (var raw in areaGrid)
+            {
+                var area = Mathf.Clamp(raw, 0, 31);
+                counts[area] = counts.TryGetValue(area, out var count) ? count + 1 : 1;
+            }
+
+            var dominantArea = 0;
+            var dominantCount = -1;
+            foreach (var kvp in counts)
+            {
+                if (kvp.Value > dominantCount)
+                {
+                    dominantArea = kvp.Key;
+                    dominantCount = kvp.Value;
+                }
+            }
+            return dominantArea;
+        }
+
+        private static bool IsUnityHeightmapResolution(int resolution)
+        {
+            if (resolution < 33 || resolution > 4097)
+            {
+                return false;
+            }
+
+            var n = resolution - 1;
+            return n > 0 && (n & (n - 1)) == 0;
+        }
+
+        private static float UnityOriginY(TerrainBundleDescriptor descriptor)
+        {
+            return descriptor.unity_world_origin != null && descriptor.unity_world_origin.Length >= 2
+                ? descriptor.unity_world_origin[1]
+                : descriptor.height_min_m;
+        }
+
+        private static void AddNavMeshAreaModifierSources(
+            List<NavMeshBuildSource> sources,
+            Terrain terrain,
+            ushort[,] areaGrid,
+            int dominantArea
+        )
+        {
+            if (areaGrid == null || terrain == null || terrain.terrainData == null)
+            {
+                return;
+            }
+
+            var rows = areaGrid.GetLength(0);
+            var cols = areaGrid.GetLength(1);
+            if (rows <= 0 || cols <= 0)
+            {
+                return;
+            }
+
+            const int maxModifierSources = 16384;
+            var terrainSize = terrain.terrainData.size;
+            var cellX = terrainSize.x / cols;
+            var cellZ = terrainSize.z / rows;
+            var height = Mathf.Max(terrainSize.y + 20.0f, 20.0f);
+            var y = terrain.transform.position.y + height * 0.5f;
+            var modifierCount = 0;
+
+            for (var row = 0; row < rows; row++)
+            {
+                var col = 0;
+                while (col < cols)
+                {
+                    var area = Mathf.Clamp(areaGrid[row, col], 0, 31);
+                    var start = col;
+                    while (col < cols && Mathf.Clamp(areaGrid[row, col], 0, 31) == area)
+                    {
+                        col++;
+                    }
+
+                    if (area == dominantArea)
+                    {
+                        continue;
+                    }
+
+                    var widthCells = col - start;
+                    var center = terrain.transform.position + new Vector3(
+                        (start + widthCells * 0.5f) * cellX,
+                        y - terrain.transform.position.y,
+                        (row + 0.5f) * cellZ
+                    );
+                    sources.Add(new NavMeshBuildSource
+                    {
+                        shape = NavMeshBuildSourceShape.ModifierBox,
+                        transform = Matrix4x4.TRS(center, Quaternion.identity, Vector3.one),
+                        size = new Vector3(Mathf.Max(cellX * widthCells, 0.01f), height, Mathf.Max(cellZ, 0.01f)),
+                        area = area
+                    });
+                    modifierCount++;
+                    if (modifierCount >= maxModifierSources)
+                    {
+                        Debug.LogWarning(
+                            $"VeilBreakers navmesh area map generated {modifierCount} modifier sources; " +
+                            "remaining runs were skipped. Simplify or tile the area map for import-time baking."
+                        );
+                        return;
+                    }
+                }
+            }
         }
 
         private static TerrainData CreateTerrainData(
@@ -339,7 +727,15 @@ namespace VeilBreakers.TerrainImport.Editor
                 terrainData = new TerrainData();
             }
 
-            terrainData.heightmapResolution = Mathf.Max(33, descriptor.heightmap.width);
+            if (descriptor.heightmap.width != descriptor.heightmap.height ||
+                !IsUnityHeightmapResolution(descriptor.heightmap.width))
+            {
+                throw new InvalidDataException(
+                    "Unity Terrain heightmap resolution must be square 2^n+1; " +
+                    $"got {descriptor.heightmap.width}x{descriptor.heightmap.height}."
+                );
+            }
+            terrainData.heightmapResolution = descriptor.heightmap.width;
             terrainData.alphamapResolution = descriptor.splatmaps != null && descriptor.splatmaps.Length > 0
                 ? Mathf.Max(16, descriptor.splatmaps[0].width)
                 : 16;
@@ -670,6 +1066,264 @@ namespace VeilBreakers.TerrainImport.Editor
             }
         }
 
+        private static void CreateWaterSurfaces(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            Transform parent
+        )
+        {
+            if (!descriptor.has_water_surface || string.IsNullOrEmpty(descriptor.water_shader_manifest_file))
+            {
+                return;
+            }
+
+            var payloadPath = Path.Combine(bundleDirectory, descriptor.water_shader_manifest_file);
+            if (!File.Exists(payloadPath))
+            {
+                Debug.LogWarning($"VeilBreakers terrain import missing water shader manifest: {descriptor.water_shader_manifest_file}");
+                return;
+            }
+
+            var payload = JsonUtility.FromJson<WaterShaderManifest>(File.ReadAllText(payloadPath));
+            var materials = payload != null && payload.materials != null && payload.materials.Length > 0
+                ? payload.materials
+                : new[] { new WaterMaterialDescriptor() };
+
+            var parentGo = new GameObject("VB_WaterSurfaces");
+            parentGo.transform.SetParent(parent, false);
+            parentGo.transform.localPosition = Vector3.zero;
+            parentGo.transform.localRotation = Quaternion.identity;
+            parentGo.transform.localScale = Vector3.one;
+
+            foreach (var materialDescriptor in materials)
+            {
+                var id = string.IsNullOrEmpty(materialDescriptor.material_id)
+                    ? "water"
+                    : materialDescriptor.material_id;
+                var go = new GameObject("VB_Water_" + id);
+                go.transform.SetParent(parentGo.transform, false);
+                go.transform.localPosition = new Vector3(
+                    descriptor.terrain_size_x_m * 0.5f,
+                    descriptor.water_level_unity_units - UnityOriginY(descriptor),
+                    descriptor.terrain_size_z_m * 0.5f
+                );
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = Vector3.one;
+
+                var filter = go.AddComponent<MeshFilter>();
+                filter.sharedMesh = BuildWaterPlaneMesh(
+                    Mathf.Max(1.0f, descriptor.terrain_size_x_m),
+                    Mathf.Max(1.0f, descriptor.terrain_size_z_m),
+                    id
+                );
+
+                var renderer = go.AddComponent<MeshRenderer>();
+                renderer.sharedMaterial = GetOrCreateWaterMaterial(descriptor, materialDescriptor);
+            }
+        }
+
+        private static Mesh BuildWaterPlaneMesh(float width, float depth, string id)
+        {
+            var mesh = new Mesh { name = "VB_WaterPlane_" + id };
+            mesh.vertices = new[]
+            {
+                new Vector3(-width * 0.5f, 0.0f, -depth * 0.5f),
+                new Vector3(width * 0.5f, 0.0f, -depth * 0.5f),
+                new Vector3(-width * 0.5f, 0.0f, depth * 0.5f),
+                new Vector3(width * 0.5f, 0.0f, depth * 0.5f),
+            };
+            mesh.uv = new[]
+            {
+                new Vector2(0.0f, 0.0f),
+                new Vector2(1.0f, 0.0f),
+                new Vector2(0.0f, 1.0f),
+                new Vector2(1.0f, 1.0f),
+            };
+            mesh.triangles = new[] { 0, 2, 1, 2, 3, 1 };
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static Material GetOrCreateWaterMaterial(
+            TerrainBundleDescriptor descriptor,
+            WaterMaterialDescriptor materialDescriptor
+        )
+        {
+            var folder = Path.GetDirectoryName(descriptor.terrain_data_asset_path)?.Replace("\\", "/");
+            if (string.IsNullOrEmpty(folder))
+            {
+                folder = "Assets/VeilBreakersTerrain/Imported";
+            }
+            EnsureAssetFolder(folder);
+
+            var materialId = string.IsNullOrEmpty(materialDescriptor.material_id)
+                ? "water"
+                : materialDescriptor.material_id;
+            var assetPath = $"{folder}/Water_{materialId}.mat";
+            var material = AssetDatabase.LoadAssetAtPath<Material>(assetPath);
+            if (material == null)
+            {
+                material = new Material(ResolveLitShader()) { name = "Water_" + materialId };
+                AssetDatabase.CreateAsset(material, assetPath);
+            }
+
+            var baseColor = ToColor(materialDescriptor.base_color, "#1A4D66");
+            baseColor.a = Mathf.Clamp01(0.35f + 0.08f * Mathf.Max(0.0f, materialDescriptor.caustic_strength));
+            material.color = baseColor;
+            if (material.HasProperty("_BaseColor"))
+            {
+                material.SetColor("_BaseColor", baseColor);
+            }
+            if (material.HasProperty("_Smoothness"))
+            {
+                material.SetFloat("_Smoothness", 0.88f);
+            }
+            if (material.HasProperty("_Metallic"))
+            {
+                material.SetFloat("_Metallic", 0.0f);
+            }
+            EditorUtility.SetDirty(material);
+            return material;
+        }
+
+        private static void CreateLightPlacements(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            Transform parent
+        )
+        {
+            if (string.IsNullOrEmpty(descriptor.light_placements_file))
+            {
+                return;
+            }
+
+            var payloadPath = Path.Combine(bundleDirectory, descriptor.light_placements_file);
+            if (!File.Exists(payloadPath))
+            {
+                return;
+            }
+
+            var payload = JsonUtility.FromJson<LightPlacementCollection>(File.ReadAllText(payloadPath));
+            if (payload == null || payload.lights == null || payload.lights.Length == 0)
+            {
+                return;
+            }
+
+            var parentGo = new GameObject("VB_LightPlacements");
+            parentGo.transform.SetParent(parent, false);
+            parentGo.transform.localPosition = Vector3.zero;
+            parentGo.transform.localRotation = Quaternion.identity;
+            parentGo.transform.localScale = Vector3.one;
+
+            for (var index = 0; index < payload.lights.Length; index++)
+            {
+                var placement = payload.lights[index];
+                if (placement == null)
+                {
+                    continue;
+                }
+
+                var go = new GameObject($"VB_Light_{index:000}_{placement.source_prop}");
+                go.transform.SetParent(parentGo.transform, false);
+                go.transform.localPosition = ToVector3(placement.position);
+                var light = go.AddComponent<Light>();
+                light.type = ToLightType(placement.light_type);
+                light.color = ToColor(placement.color, "#FFD08A");
+                light.intensity = Mathf.Max(0.0f, placement.energy);
+                light.range = Mathf.Max(0.1f, placement.radius);
+                light.shadows = placement.shadow ? LightShadows.Soft : LightShadows.None;
+                if (light.type == LightType.Spot)
+                {
+                    light.spotAngle = Mathf.Clamp(placement.spot_angle * Mathf.Rad2Deg, 1.0f, 179.0f);
+                    var direction = ToVector3(placement.direction);
+                    if (direction.sqrMagnitude > 1e-6f)
+                    {
+                        go.transform.rotation = Quaternion.LookRotation(direction.normalized, Vector3.up);
+                    }
+                }
+            }
+        }
+
+        private static void CreateProbePlacements(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            Transform parent
+        )
+        {
+            if (string.IsNullOrEmpty(descriptor.probe_placements_file))
+            {
+                return;
+            }
+
+            var payloadPath = Path.Combine(bundleDirectory, descriptor.probe_placements_file);
+            if (!File.Exists(payloadPath))
+            {
+                return;
+            }
+
+            var payload = JsonUtility.FromJson<ProbePlacementCollection>(File.ReadAllText(payloadPath));
+            if (payload == null || payload.probes == null || payload.probes.Length == 0)
+            {
+                return;
+            }
+
+            var go = new GameObject("VB_LightProbeGroup");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale = Vector3.one;
+            var group = go.AddComponent<LightProbeGroup>();
+            var positions = new Vector3[payload.probes.Length];
+            for (var index = 0; index < payload.probes.Length; index++)
+            {
+                positions[index] = ToVector3(payload.probes[index].position);
+            }
+            group.probePositions = positions;
+        }
+
+        private static void AttachFoliageManifestRenderer(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            GameObject terrainObject
+        )
+        {
+            if (string.IsNullOrEmpty(descriptor.foliage_placement_manifest_file))
+            {
+                return;
+            }
+
+            var payloadPath = Path.Combine(bundleDirectory, descriptor.foliage_placement_manifest_file);
+            if (!File.Exists(payloadPath))
+            {
+                Debug.LogWarning($"VeilBreakers terrain import missing foliage placement manifest: {descriptor.foliage_placement_manifest_file}");
+                return;
+            }
+
+            var assetFolder = Path.GetDirectoryName(descriptor.terrain_data_asset_path)?.Replace("\\", "/");
+            if (string.IsNullOrEmpty(assetFolder))
+            {
+                assetFolder = "Assets/VeilBreakersTerrain/Imported";
+            }
+            EnsureAssetFolder(assetFolder);
+
+            var assetPath = $"{assetFolder}/{Path.GetFileName(descriptor.foliage_placement_manifest_file)}";
+            File.Copy(payloadPath, assetPath, true);
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+            var manifestAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(assetPath);
+
+            var renderer = terrainObject.GetComponent<VbFoliageManifestRenderer>();
+            if (renderer == null)
+            {
+                renderer = terrainObject.AddComponent<VbFoliageManifestRenderer>();
+            }
+            renderer.ManifestJson = manifestAsset;
+            renderer.ConvertTerrainXzyToUnityXyz = false;
+            renderer.PositionsAreWorldSpace = true;
+            renderer.CullDistanceM = Mathf.Max(150.0f, descriptor.lod2_distance_m);
+            EditorUtility.SetDirty(renderer);
+        }
+
         private static void CreateSidecarReferences(
             string bundleDirectory,
             TerrainBundleDescriptor descriptor,
@@ -682,6 +1336,16 @@ namespace VeilBreakers.TerrainImport.Editor
             CreateSidecarReference(bundleDirectory, parent, "Decals", descriptor.decals_file);
             CreateSidecarReference(bundleDirectory, parent, "ParticleEmitters", descriptor.particle_emitter_specs_file);
             CreateSidecarReference(bundleDirectory, parent, "WaterShaderManifest", descriptor.water_shader_manifest_file);
+            CreateSidecarReference(bundleDirectory, parent, "WaterSurfaceElevation", descriptor.water_surface_elevation_file);
+            CreateSidecarReference(bundleDirectory, parent, "WaterDepth", descriptor.water_depth_file);
+            CreateSidecarReference(bundleDirectory, parent, "FlowDirection", descriptor.flow_direction_file);
+            CreateSidecarReference(bundleDirectory, parent, "FlowAccumulation", descriptor.flow_accumulation_file);
+            CreateSidecarReference(bundleDirectory, parent, "MeshAttributes", descriptor.mesh_attributes_file);
+            CreateSidecarReference(bundleDirectory, parent, "AtmosphericVolumes", descriptor.atmospheric_volumes_file);
+            CreateSidecarReference(bundleDirectory, parent, "WindField", descriptor.wind_field_descriptor);
+            CreateSidecarReference(bundleDirectory, parent, "CloudShadow", descriptor.cloud_shadow_descriptor);
+            CreateSidecarReference(bundleDirectory, parent, "NavmeshAreaId", descriptor.navmesh_area_id_file);
+            CreateSidecarReference(bundleDirectory, parent, "FoliagePlacementManifest", descriptor.foliage_placement_manifest_file);
             CreateSidecarReference(bundleDirectory, parent, "LightPlacements", descriptor.light_placements_file);
             CreateSidecarReference(bundleDirectory, parent, "ProbePlacements", descriptor.probe_placements_file);
         }
@@ -714,8 +1378,155 @@ namespace VeilBreakers.TerrainImport.Editor
             var reference = go.AddComponent<VbTerrainSidecarReference>();
             reference.PayloadType = payloadType;
             reference.RelativeFile = relativeFile;
-            reference.JsonPayload = File.ReadAllText(payloadPath);
-            reference.ByteSize = reference.JsonPayload.Length;
+            var bytes = File.ReadAllBytes(payloadPath);
+            reference.ByteSize = bytes.Length;
+            if (string.Equals(Path.GetExtension(relativeFile), ".json", StringComparison.OrdinalIgnoreCase))
+            {
+                reference.JsonPayload = File.ReadAllText(payloadPath);
+            }
+        }
+
+        private static void WarnUnhandledDescriptorKeys(string descriptorText)
+        {
+            var handled = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "schema_version",
+                "world_id",
+                "tile_x",
+                "tile_y",
+                "tile_size",
+                "cell_size",
+                "unity_world_origin",
+                "terrain_size_x_m",
+                "terrain_size_z_m",
+                "height_min_m",
+                "height_max_m",
+                "height_scale_factor",
+                "coordinate_system",
+                "source_coordinate_system",
+                "heightmap",
+                "terrain_normals_file",
+                "terrain_normal_map_file",
+                "mesh_attributes_file",
+                "splatmaps",
+                "terrain_layers",
+                "detail_layers",
+                "tree_prototypes",
+                "tree_instances_file",
+                "audio_zones_file",
+                "gameplay_zones_file",
+                "wildlife_zones_file",
+                "decals_file",
+                "particle_emitter_specs_file",
+                "water_shader_manifest_file",
+                "water_surface_elevation_file",
+                "water_depth_file",
+                "flow_direction_file",
+                "flow_accumulation_file",
+                "atmospheric_volumes_file",
+                "wind_field_descriptor",
+                "cloud_shadow_descriptor",
+                "navmesh_area_id_file",
+                "navmesh_data_asset_path",
+                "supplemental_mesh_specs_file",
+                "foliage_placement_manifest_file",
+                "light_placements_file",
+                "probe_placements_file",
+                "seam_contract",
+                "validation_status",
+                "validation_issue_count",
+                "game_object_name",
+                "terrain_data_asset_path",
+                "tile_metadata_asset_path",
+                "tile_biome_id",
+                "tile_biome_name",
+                "climate_zone",
+                "water_level_unity_units",
+                "has_water_surface",
+                "scatter_count",
+                "lod0_distance_m",
+                "lod1_distance_m",
+                "lod2_distance_m",
+                "snow_line_factor",
+            };
+
+            foreach (var key in ExtractTopLevelJsonObjectKeys(descriptorText))
+            {
+                if (!handled.Contains(key))
+                {
+                    Debug.LogWarning($"VeilBreakers terrain import descriptor has unhandled key: {key}");
+                }
+            }
+        }
+
+        private static List<string> ExtractTopLevelJsonObjectKeys(string json)
+        {
+            var keys = new List<string>();
+            var depth = 0;
+            var inString = false;
+            var escape = false;
+            var expectingKey = false;
+            var keyStart = -1;
+            for (var i = 0; i < json.Length; i++)
+            {
+                var ch = json[i];
+                if (inString)
+                {
+                    if (escape)
+                    {
+                        escape = false;
+                        continue;
+                    }
+                    if (ch == '\\')
+                    {
+                        escape = true;
+                        continue;
+                    }
+                    if (ch == '"')
+                    {
+                        if (keyStart >= 0)
+                        {
+                            keys.Add(json.Substring(keyStart, i - keyStart));
+                            keyStart = -1;
+                        }
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    inString = true;
+                    keyStart = depth == 1 && expectingKey ? i + 1 : -1;
+                    continue;
+                }
+                if (ch == '{')
+                {
+                    depth += 1;
+                    if (depth == 1)
+                    {
+                        expectingKey = true;
+                    }
+                    continue;
+                }
+                if (ch == '}')
+                {
+                    depth = Math.Max(0, depth - 1);
+                    expectingKey = false;
+                    continue;
+                }
+                if (depth == 1 && ch == ',')
+                {
+                    expectingKey = true;
+                    continue;
+                }
+                if (depth == 1 && ch == ':')
+                {
+                    expectingKey = false;
+                }
+            }
+
+            return keys;
         }
 
         private static Mesh BuildSupplementalMesh(
@@ -1093,19 +1904,37 @@ namespace VeilBreakers.TerrainImport.Editor
             var normalPath = assetPath.Replace(".terrainlayer", "_Normal.asset");
             var maskPath = assetPath.Replace(".terrainlayer", "_Mask.asset");
 
-            layer.diffuseTexture = GetOrCreateSolidTexture(diffusePath, color);
-            layer.normalMapTexture = GetOrCreateSolidTexture(
-                normalPath,
-                new Color(0.5f, 0.5f, 1.0f, 1.0f)
+            layer.diffuseTexture = ResolveLayerTexture(
+                bundleDirectory,
+                descriptor.diffuse_texture_file,
+                diffusePath,
+                false,
+                color,
+                descriptor,
+                "diffuse"
             );
-            layer.maskMapTexture = GetOrCreateSolidTexture(
+            layer.normalMapTexture = ResolveLayerTexture(
+                bundleDirectory,
+                descriptor.normal_texture_file,
+                normalPath,
+                true,
+                new Color(0.5f, 0.5f, 1.0f, 1.0f),
+                descriptor,
+                "normal"
+            );
+            layer.maskMapTexture = ResolveLayerTexture(
+                bundleDirectory,
+                descriptor.mask_texture_file,
                 maskPath,
+                false,
                 new Color(
                     0.0f,
                     1.0f,
                     Mathf.Clamp01(descriptor.height_blend_factor),
                     smoothness
-                )
+                ),
+                descriptor,
+                "mask"
             );
             layer.tileSize = new Vector2(
                 Mathf.Max(1.0f, descriptor.uv_scale_meters),
@@ -1120,6 +1949,41 @@ namespace VeilBreakers.TerrainImport.Editor
             EditorUtility.SetDirty(layer);
             AssetDatabase.SaveAssets();
             return layer;
+        }
+
+        private static Texture2D ResolveLayerTexture(
+            string bundleDirectory,
+            string relativeTextureFile,
+            string generatedAssetPath,
+            bool normalMap,
+            Color fallbackColor,
+            TerrainLayerDescriptor descriptor,
+            string channel
+        )
+        {
+            if (!string.IsNullOrEmpty(relativeTextureFile))
+            {
+                var sourcePath = Path.Combine(bundleDirectory, relativeTextureFile);
+                if (!File.Exists(sourcePath))
+                {
+                    throw new FileNotFoundException(
+                        $"Terrain layer '{descriptor.layer_id}' declares {channel} texture " +
+                        $"'{relativeTextureFile}' but the file is missing from the export bundle."
+                    );
+                }
+
+                var extension = Path.GetExtension(relativeTextureFile);
+                var assetPath = generatedAssetPath.Replace(".asset", string.IsNullOrEmpty(extension) ? ".png" : extension);
+                return ImportTextureAsset(sourcePath, assetPath, normalMap);
+            }
+
+            return GetOrCreateProceduralLayerTexture(
+                generatedAssetPath,
+                fallbackColor,
+                descriptor,
+                channel,
+                normalMap
+            );
         }
 
         private static string ImportTerrainNormalMapAsset(
@@ -1183,6 +2047,79 @@ namespace VeilBreakers.TerrainImport.Editor
             return AssetDatabase.LoadAssetAtPath<Texture2D>(normalizedAssetPath);
         }
 
+        private static Texture2D GetOrCreateProceduralLayerTexture(
+            string assetPath,
+            Color baseColor,
+            TerrainLayerDescriptor descriptor,
+            string channel,
+            bool normalMap
+        )
+        {
+            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
+            if (texture != null)
+            {
+                return texture;
+            }
+
+            EnsureAssetFolder(Path.GetDirectoryName(assetPath)?.Replace("\\", "/"));
+            const int size = 256;
+            texture = new Texture2D(size, size, TextureFormat.RGBA32, true, !normalMap)
+            {
+                name = Path.GetFileNameWithoutExtension(assetPath),
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Trilinear
+            };
+
+            var pixels = new Color[size * size];
+            var seed = Mathf.Abs((descriptor.layer_id ?? "layer").GetHashCode());
+            var roughness = Mathf.Clamp01(descriptor.roughness);
+            var smoothness = Mathf.Clamp01(descriptor.smoothness);
+            for (var y = 0; y < size; y++)
+            {
+                for (var x = 0; x < size; x++)
+                {
+                    var nx = (x + (seed & 255)) / 37.0f;
+                    var ny = (y + ((seed >> 8) & 255)) / 41.0f;
+                    var macro = Mathf.PerlinNoise(nx, ny);
+                    var detail = Mathf.PerlinNoise(nx * 4.7f + 19.0f, ny * 4.7f + 11.0f);
+                    var grain = Mathf.PerlinNoise(nx * 15.0f + 3.0f, ny * 15.0f + 7.0f);
+                    var n = Mathf.Clamp01(0.55f * macro + 0.30f * detail + 0.15f * grain);
+
+                    if (normalMap)
+                    {
+                        var dx = Mathf.PerlinNoise(nx + 0.05f, ny) - Mathf.PerlinNoise(nx - 0.05f, ny);
+                        var dy = Mathf.PerlinNoise(nx, ny + 0.05f) - Mathf.PerlinNoise(nx, ny - 0.05f);
+                        var normal = new Vector3(-dx * descriptor.normal_map_intensity, -dy * descriptor.normal_map_intensity, 1.0f).normalized;
+                        pixels[y * size + x] = new Color(normal.x * 0.5f + 0.5f, normal.y * 0.5f + 0.5f, normal.z * 0.5f + 0.5f, 1.0f);
+                    }
+                    else if (string.Equals(channel, "mask", StringComparison.OrdinalIgnoreCase))
+                    {
+                        pixels[y * size + x] = new Color(
+                            0.0f,
+                            Mathf.Lerp(0.78f, 1.0f, n),
+                            Mathf.Clamp01(descriptor.height_blend_factor + (n - 0.5f) * 0.12f),
+                            Mathf.Clamp01(smoothness + (n - 0.5f) * Mathf.Lerp(0.03f, 0.12f, roughness))
+                        );
+                    }
+                    else
+                    {
+                        var shade = Mathf.Lerp(0.78f, 1.22f, n);
+                        pixels[y * size + x] = new Color(
+                            Mathf.Clamp01(baseColor.r * shade),
+                            Mathf.Clamp01(baseColor.g * shade),
+                            Mathf.Clamp01(baseColor.b * shade),
+                            1.0f
+                        );
+                    }
+                }
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply(true, true);
+            AssetDatabase.CreateAsset(texture, assetPath);
+            return texture;
+        }
+
         private static Texture2D GetOrCreateSolidTexture(string assetPath, Color color)
         {
             var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
@@ -1213,9 +2150,16 @@ namespace VeilBreakers.TerrainImport.Editor
 
         private static GameObject GetOrCreateTreePrefab(string prefabAssetPath)
         {
-            var assetPath = prefabAssetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)
-                ? prefabAssetPath
-                : prefabAssetPath + ".prefab";
+            var normalizedPath = string.IsNullOrEmpty(prefabAssetPath)
+                ? "Assets/VeilBreakersTerrain/GeneratedTrees/Prototype.prefab"
+                : prefabAssetPath.Replace("\\", "/");
+            if (!normalizedPath.StartsWith("Assets/", StringComparison.Ordinal))
+            {
+                normalizedPath = "Assets/VeilBreakersTerrain/GeneratedTrees/" + normalizedPath.TrimStart('/');
+            }
+            var assetPath = normalizedPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)
+                ? normalizedPath
+                : normalizedPath + ".prefab";
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
             if (prefab != null)
             {
@@ -1384,6 +2328,47 @@ namespace VeilBreakers.TerrainImport.Editor
         private static string TileKey(string worldId, int tileX, int tileY)
         {
             return worldId + "::" + tileX + "::" + tileY;
+        }
+
+        private static Shader ResolveLitShader()
+        {
+            var shader = Shader.Find("HDRP/TerrainLit");
+            if (shader == null)
+            {
+                shader = Shader.Find("HDRP/Lit");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Universal Render Pipeline/Lit");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Standard");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Diffuse");
+            }
+            return shader;
+        }
+
+        private static LightType ToLightType(string lightType)
+        {
+            switch ((lightType ?? "point").ToLowerInvariant())
+            {
+                case "spot":
+                case "god_ray":
+                    return LightType.Spot;
+                case "area":
+                case "portal":
+                case "sky_bounce":
+                    return LightType.Area;
+                case "directional":
+                case "sun":
+                    return LightType.Directional;
+                default:
+                    return LightType.Point;
+            }
         }
 
         private static void EnsureAssetFolder(string assetFolder)

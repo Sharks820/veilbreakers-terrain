@@ -385,8 +385,44 @@ def pass_with_cache(
     return result
 
 
+def controller_pass_with_cache(
+    controller: Any,
+    pass_name: str,
+    region: Optional[BBox],
+    cache: MaskCache,
+) -> PassResult:
+    """Cache-backed pass execution that still routes misses through controller.run_pass."""
+    pass_def = controller.get_pass(pass_name)
+    state = controller.state
+    input_hashes: Dict[str, str] = {}
+    for ch in pass_def.requires_channels:
+        input_hashes[ch] = _hash_channel(state.mask_stack.get(ch))
+
+    key = cache_key_for_pass(
+        pass_def.name,
+        state.intent,
+        region,
+        (state.tile_x, state.tile_y),
+        input_channel_hashes=input_hashes,
+    )
+    tags: Tuple[str, ...] = (pass_def.name,) + tuple(pass_def.requires_channels)
+
+    cached = cache.get(key)
+    if cached is not None:
+        _restore_produced_channels(state, cached["produced"], pass_def.name)
+        result = cached["result"]
+        state.record_pass(result)
+        return result
+
+    result = controller.run_pass(pass_name, region=region, checkpoint=False)
+    produced_snap = _snapshot_produced_channels(state, pass_def.produces_channels)
+    cache.put(key, {"result": result, "produced": produced_snap}, tags=tags)
+    return result
+
+
 __all__ = [
     "MaskCache",
     "cache_key_for_pass",
+    "controller_pass_with_cache",
     "pass_with_cache",
 ]

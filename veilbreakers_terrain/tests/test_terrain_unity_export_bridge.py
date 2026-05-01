@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack, ValidationIssue
 
@@ -42,13 +43,36 @@ def _make_stack() -> TerrainMaskStack:
     return stack
 
 
+def _make_unity_valid_stack() -> TerrainMaskStack:
+    height = np.linspace(10.0, 22.0, 33 * 33, dtype=np.float32).reshape(33, 33)
+    stack = TerrainMaskStack(
+        tile_size=32,
+        cell_size=2.0,
+        world_origin_x=100.0,
+        world_origin_y=200.0,
+        tile_x=3,
+        tile_y=7,
+        height=height,
+        height_min_m=10.0,
+        height_max_m=22.0,
+        coordinate_system="z-up",
+    )
+    splat = np.zeros((33, 33, 4), dtype=np.float32)
+    splat[..., 0] = 0.6
+    splat[..., 1] = 0.2
+    splat[..., 2] = 0.1
+    splat[..., 3] = 0.1
+    stack.set("splatmap_weights_layer", splat, "test")
+    return stack
+
+
 def _set_channel(stack: TerrainMaskStack, channel: str, value):
     stack.set(channel, value, "test_fixture")
     return value
 
 
 def test_export_manifest_records_contract_failures(monkeypatch):
-    import veilbreakers_terrain.handlers.terrain_unity_export as mod
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
 
     stack = _make_stack()
 
@@ -66,11 +90,41 @@ def test_export_manifest_records_contract_failures(monkeypatch):
     monkeypatch.setattr(mod, "validate_bit_depth_contract", _fake_validate)
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = mod.export_unity_manifest(stack, Path(td))
+        manifest = mod.export_unity_manifest(
+            stack,
+            Path(td),
+            strict_unity_resolution=False,
+            fail_on_validation_error=False,
+        )
 
     assert manifest["validation_status"] == "failed"
     assert manifest["validation_issue_count"] == 1
     assert manifest["validation_issues"][0]["code"] == "FAKE_VALIDATION_FAILURE"
+
+
+def test_export_manifest_hard_validation_raises_by_default(monkeypatch):
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
+
+    stack = _make_unity_valid_stack()
+
+    def _fake_validate(contract, files):
+        del contract, files
+        return [
+            ValidationIssue(
+                code="FAKE_VALIDATION_FAILURE",
+                severity="hard",
+                affected_feature="heightmap.raw",
+                message="forced failure",
+            )
+        ]
+
+    monkeypatch.setattr(mod, "validate_bit_depth_contract", _fake_validate)
+
+    with tempfile.TemporaryDirectory() as td:
+        with pytest.raises(ValueError, match="FAKE_VALIDATION_FAILURE"):
+            mod.export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        assert (Path(td) / "manifest.json").exists()
+        assert not (Path(td) / "unity_import_descriptor.json").exists()
 
 
 def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
@@ -79,7 +133,7 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     stack = _make_stack()
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = export_unity_manifest(stack, Path(td))
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
         descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
         tangent_png_header = (Path(td) / "terrain_normals_tangent.png").read_bytes()[:4]
 
@@ -93,6 +147,16 @@ def test_unity_import_descriptor_written_with_layer_assets_and_base_height():
     assert descriptor["height_min_m"] == 10.0 * UNITY_SCALE_FACTOR
     assert descriptor["height_max_m"] == 22.0 * UNITY_SCALE_FACTOR
     assert descriptor["terrain_normal_map_file"] == "terrain_normals_tangent.png"
+    assert descriptor["mesh_attributes_file"] == "mesh_attributes.npz"
+    assert set(manifest["mesh_attributes_present"]) == {
+        "slope_angle",
+        "flow_accumulation",
+        "wetness",
+        "biome_id",
+        "cliff_mask",
+        "protected_zone_id",
+    }
+    assert manifest["files"]["mesh_attributes.npz"]["encoding"] == "npz_named_arrays"
     assert manifest["files"]["terrain_normals_tangent.png"]["encoding"] == "png_rgba8_tangent_space_normal"
     assert tangent_png_header == b"\x89PNG"
 
@@ -108,7 +172,7 @@ def test_tangent_space_normal_map_packs_flat_heightfield():
 
 
 def test_heightmap_raw_export_is_flipped_once(monkeypatch):
-    import veilbreakers_terrain.handlers.terrain_unity_export as mod
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
 
     stack = TerrainMaskStack(
         tile_size=1,
@@ -209,7 +273,36 @@ def test_audio_zones_split_disconnected_components():
     assert first_bounds["max"][1] > first_bounds["min"][1]
 
 
-def test_export_manifest_flags_non_unity_heightmap_resolution():
+def test_audio_zones_export_explicit_zone_list_without_reverb_raster():
+    from veilbreakers_terrain.handlers.terrain_unity_export import _audio_zones_json
+
+    stack = _make_unity_valid_stack()
+    stack.set(
+        "audio_zone_list",
+        [
+            {
+                "id": "cave_000",
+                "preset": "cave",
+                "boundary_polygon": [(1, 1), (1, 3), (3, 3), (3, 1)],
+                "rt60_seconds": 1.4,
+                "echo_delay_ms": 28.0,
+                "occlusion_weight": 0.8,
+                "wet_send_default": 0.35,
+                "class_id": 3,
+                "cell_count": 9,
+            }
+        ],
+        "test",
+    )
+
+    payload = _audio_zones_json(stack)
+
+    assert payload["zones"][0]["zone_id"] == "cave_000"
+    assert payload["zones"][0]["reverb_class"] == "cave"
+    assert payload["zones"][0]["bounds"]["max"][1] > payload["zones"][0]["bounds"]["min"][1]
+
+
+def test_export_manifest_rejects_non_unity_heightmap_resolution_by_default():
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     stack = _make_stack()
@@ -217,10 +310,78 @@ def test_export_manifest_flags_non_unity_heightmap_resolution():
     stack.set("splatmap_weights_layer", np.ones((6, 6, 1), dtype=np.float32), "test")
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = export_unity_manifest(stack, Path(td))
+        with pytest.raises(ValueError, match="2\\^n\\+1"):
+            export_unity_manifest(stack, Path(td))
+
+
+def test_export_manifest_can_flag_non_unity_heightmap_resolution_for_diagnostics():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    _set_channel(stack, "height", np.ones((6, 6), dtype=np.float32))
+    stack.set("splatmap_weights_layer", np.ones((6, 6, 1), dtype=np.float32), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
 
     assert manifest["direct_unity_heightmap_import_supported"] is False
     assert "2^n+1" in manifest["unity_heightmap_resolution_warning"]
+
+
+def test_export_manifest_uses_water_elevation_depth_and_flow_contract_files():
+    from veilbreakers_terrain.handlers.terrain_unity_export import UNITY_SCALE_FACTOR, export_unity_manifest
+
+    stack = _make_stack()
+    water_mask = np.zeros((5, 5), dtype=np.float32)
+    water_mask[1:4, 1:4] = 1.0
+    stack.set("water_surface_mask", water_mask, "test")
+    stack.set("water_surface_elevation_m", np.full((5, 5), 123.0, dtype=np.float32), "test")
+    stack.set("water_depth_m", np.full((5, 5), 4.0, dtype=np.float32), "test")
+    stack.set("flow_direction", np.dstack([
+        np.ones((5, 5), dtype=np.float32),
+        np.zeros((5, 5), dtype=np.float32),
+    ]), "test")
+    stack.set("flow_accumulation", np.arange(25, dtype=np.float32).reshape(5, 5), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+
+    assert manifest["water_surface_elevation_m"] == pytest.approx(123.0)
+    assert descriptor["water_level_unity_units"] == pytest.approx(123.0 * UNITY_SCALE_FACTOR)
+    assert descriptor["water_surface_elevation_file"] == "water_surface_elevation_m.bin"
+    assert descriptor["water_depth_file"] == "water_depth_m.bin"
+    assert descriptor["flow_direction_file"] == "flow_direction.bin"
+    assert descriptor["flow_accumulation_file"] == "flow_accumulation.bin"
+    for name in (
+        "water_surface_elevation_m.bin",
+        "water_depth_m.bin",
+        "flow_direction.bin",
+        "flow_accumulation.bin",
+    ):
+        assert name in manifest["files"]
+
+
+def test_export_manifest_treats_binary_water_surface_as_mask_not_metres():
+    from veilbreakers_terrain.handlers.terrain_unity_export import UNITY_SCALE_FACTOR, export_unity_manifest
+
+    stack = _make_stack()
+    water_mask = np.zeros((5, 5), dtype=np.float32)
+    water_mask[1:4, 1:4] = 1.0
+    stack.set("water_surface", water_mask, "test")
+    expected_level = float(np.percentile(stack.height[water_mask > 0.0], 75.0))
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+
+    assert expected_level != pytest.approx(1.0)
+    assert manifest["has_water_surface"] is True
+    assert manifest["water_surface_elevation_m"] == pytest.approx(expected_level)
+    assert manifest["water_level_unity_units"] == pytest.approx(expected_level * UNITY_SCALE_FACTOR)
+    assert descriptor["water_level_unity_units"] == pytest.approx(expected_level * UNITY_SCALE_FACTOR)
+    assert descriptor["has_water_surface"] is True
+    assert descriptor["water_surface_elevation_file"] == ""
 
 
 def test_shadow_clipmap_contract_accepts_float32_npy():
@@ -242,6 +403,25 @@ def test_shadow_clipmap_contract_accepts_float32_npy():
     assert issues == []
 
 
+def test_shadow_clipmap_contract_accepts_unity_bundle_raw_f32():
+    from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
+        UnityExportContract,
+        validate_bit_depth_contract,
+    )
+
+    issues = validate_bit_depth_contract(
+        UnityExportContract(),
+        {
+            "shadow_clipmap.bin": {
+                "bit_depth": 32,
+                "encoding": "raw_f32_le",
+            }
+        },
+    )
+
+    assert issues == []
+
+
 def test_export_manifest_writes_phase6_array_channels():
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
@@ -252,7 +432,7 @@ def test_export_manifest_writes_phase6_array_channels():
     stack.set("corruption_map", np.full((5, 5), 0.5, dtype=np.float32), "test")
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = export_unity_manifest(stack, Path(td))
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
 
     for filename in (
         "grass_density_map.bin",
@@ -262,6 +442,61 @@ def test_export_manifest_writes_phase6_array_channels():
     ):
         assert filename in manifest["files"]
         assert manifest["files"][filename]["shape"] == [5, 5]
+
+    assert manifest["validation_status"] == "passed"
+    shadow_meta = manifest["files"]["shadow_clipmap.bin"]
+    assert shadow_meta["dtype"] == "float32"
+    assert shadow_meta["bit_depth"] == 32
+    assert shadow_meta["encoding"] == "raw_f32_le"
+    assert shadow_meta["precision_contract"] == "shadow_clipmap_32f"
+
+
+def test_export_manifest_writes_detail_layers_hdrp_mask_and_descriptor_contract():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.set("terrain_ao", np.full((5, 5), 0.25, dtype=np.float32), "test")
+    stack.set("roughness_variation", np.full((5, 5), 0.75, dtype=np.float32), "test")
+    stack.set("detail_density", {"grass": np.full((5, 5), 0.5, dtype=np.float32)}, "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+        hdrp_meta = manifest["files"]["hdrp_mask_map.raw"]
+        hdrp_raw = np.frombuffer((Path(td) / "hdrp_mask_map.raw").read_bytes(), dtype=np.uint8).reshape(
+            hdrp_meta["shape"]
+        )
+
+    assert hdrp_meta["encoding"] == "raw_rgba_u8_hdrp_mask"
+    assert hdrp_meta["channels"] == 4
+    assert hdrp_raw.shape == (5, 5, 4)
+    assert np.unique(hdrp_raw[..., 0]).tolist() == [0]
+    assert np.unique(hdrp_raw[..., 1]).tolist() == [64]
+    assert np.unique(hdrp_raw[..., 2]).tolist() == [0]
+    assert np.unique(hdrp_raw[..., 3]).tolist() == [64]
+
+    detail = descriptor["detail_layers"][0]
+    assert detail["kind"] == "grass"
+    assert detail["file"] == "detail_density__grass.raw"
+    assert detail["bit_depth"] == 16
+    assert detail["encoding"] == "raw_u16_le_detail_count"
+    assert detail["max_density_per_cell"] > 0
+    assert manifest["files"]["detail_density__grass.raw"]["shape"] == [5, 5]
+
+
+def test_export_manifest_coerces_float_channels_to_unity_float32():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.set("terrain_displacement", np.full((5, 5), 0.1, dtype=np.float64), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+
+    displacement_meta = manifest["files"]["terrain_displacement.bin"]
+    assert displacement_meta["dtype"] == "float32"
+    assert displacement_meta["bit_depth"] == 32
+    assert displacement_meta["encoding"] == "raw_f32_le"
 
 
 def test_export_manifest_records_tile_biome_distribution():
@@ -281,7 +516,7 @@ def test_export_manifest_records_tile_biome_distribution():
     ), "test")
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = export_unity_manifest(stack, Path(td))
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
 
     assert manifest["tile_biome_id"] == 1
     assert manifest["tile_biome_name"] == "swamp"
@@ -333,6 +568,17 @@ def test_unity_plugin_metadata_and_descriptor_cover_phase6_files():
         "decals_file",
         "particle_emitter_specs_file",
         "water_shader_manifest_file",
+        "water_surface_elevation_file",
+        "water_depth_file",
+        "flow_direction_file",
+        "flow_accumulation_file",
+        "atmospheric_volumes_file",
+        "wind_field_descriptor",
+        "cloud_shadow_descriptor",
+        "navmesh_area_id_file",
+        "navmesh_data_asset_path",
+        "WarnUnhandledDescriptorKeys",
+        "ExtractTopLevelJsonObjectKeys",
     ):
         assert token in importer_source
 
@@ -347,12 +593,16 @@ def test_unity_plugin_metadata_and_descriptor_cover_phase6_files():
         "SeamContractWorldId",
         "TerrainNormalMapFile",
         "TerrainNormalMapAssetPath",
+        "NavMeshAreaIdFile",
+        "NavMeshDataAssetPath",
     ):
         assert token in metadata_source
 
     assert "ImportTerrainNormalMapAsset" in importer_source
     assert "TextureImporterType.NormalMap" in importer_source
     assert "terrain_normal_map_file" in importer_source
+    assert "BuildNavMeshDataAsset" in importer_source
+    assert "NavMeshBuilder.BuildNavMeshData" in importer_source
 
 
 def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
@@ -367,6 +617,8 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
     for token in (
         "unity_import_descriptor.json",
         "Terrain.CreateTerrainGameObject",
+        "FindExistingTerrain",
+        "ClearGeneratedChildren",
         ".SetHeights(",
         ".SetAlphamaps(",
         ".SetDetailLayer(",
@@ -383,6 +635,19 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "TryAppendSupplementalFaceTriangles",
         "TryEarClipSupplementalPolygon",
         "mesh.SetUVs(1, dripMask)",
+        "RejectFailedDescriptor",
+        "validation_status, \"failed\", StringComparison.OrdinalIgnoreCase",
+        "NavMeshBuildSourceShape.Terrain",
+        "NavMeshBuildSourceShape.ModifierBox",
+        "IsUnityHeightmapResolution",
+        "UnityOriginY",
+        "water_level_unity_units - UnityOriginY",
+        "WaterSurfaceElevation",
+        "WaterDepth",
+        "FlowDirection",
+        "FlowAccumulation",
+        "GeneratedTrees",
+        "NavMeshDataAssetPath",
     ):
         assert token in source
     assert "new int[descriptor.height, descriptor.width]" in source
@@ -392,7 +657,7 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
 def test_public_unity_export_handler_writes_bundle():
     from veilbreakers_terrain.handlers.environment import handle_export_unity_bundle
 
-    stack = _make_stack()
+    stack = _make_unity_valid_stack()
 
     with tempfile.TemporaryDirectory() as td:
         result = handle_export_unity_bundle(
@@ -400,6 +665,7 @@ def test_public_unity_export_handler_writes_bundle():
                 "mask_stack": stack,
                 "output_dir": td,
                 "profile": "aaa_open_world",
+                "out_of_view_ok": True,
             }
         )
 
@@ -407,6 +673,26 @@ def test_public_unity_export_handler_writes_bundle():
     assert result["terrain_layer_asset_count"] == 4
     assert result["manifest"]["profile"] == "aaa_open_world"
     assert "unity_import_descriptor.json" in result["manifest"]["files"]
+
+
+def test_public_unity_export_handler_enforces_protocol_boundary():
+    from veilbreakers_terrain.handlers.environment import handle_export_unity_bundle
+    from veilbreakers_terrain.handlers.terrain_protocol import ProtocolViolation
+
+    stack = _make_stack()
+
+    with tempfile.TemporaryDirectory() as td:
+        with pytest.raises(ProtocolViolation, match="placement_class"):
+            handle_export_unity_bundle(
+                {
+                    "mask_stack": stack,
+                    "output_dir": td,
+                    "out_of_view_ok": True,
+                    "placements": [
+                        {"id": "bad_marker", "placement_class": "on_a_cliff"}
+                    ],
+                }
+            )
 
 
 def test_tree_instances_skip_out_of_bounds_points():
@@ -444,7 +730,7 @@ def test_tree_instances_sample_height_when_row_z_is_zero():
 def test_mcp_unity_export_location_dispatches_to_public_handler():
     from veilbreakers_terrain.src.veilbreakers_mcp.blender_server import dispatch
 
-    stack = _make_stack()
+    stack = _make_unity_valid_stack()
 
     with tempfile.TemporaryDirectory() as td:
         result = dispatch(
@@ -452,6 +738,7 @@ def test_mcp_unity_export_location_dispatches_to_public_handler():
             {
                 "mask_stack": stack,
                 "output_dir": td,
+                "out_of_view_ok": True,
             },
         )
 
@@ -467,10 +754,35 @@ def test_export_manifest_writes_waterfall_velocity_aux_channel():
     stack.set("waterfall_velocity", np.ones((5, 5, 2), dtype=np.float32), "test")
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = export_unity_manifest(stack, Path(td))
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
 
     assert "waterfall_velocity.bin" in manifest["files"]
     assert manifest["files"]["waterfall_velocity.bin"]["shape"] == [5, 5, 2]
+
+
+def test_unity_import_descriptor_references_atmosphere_wind_cloud_and_navmesh_sidecars():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.set("atmospheric_volumes", [{"volume_id": "mist_000"}], "test")
+    stack.set("wind_field", np.ones((5, 5, 2), dtype=np.float32), "test")
+    stack.set("cloud_shadow", np.full((5, 5), 0.5, dtype=np.float32), "test")
+    stack.set("navmesh_area_id", np.ones((5, 5), dtype=np.uint16), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+        ecosystem_meta = json.loads((Path(td) / "ecosystem_meta.json").read_text())
+
+    assert ecosystem_meta["has_wind_field"] is True
+    assert ecosystem_meta["has_cloud_shadow"] is True
+    assert ecosystem_meta["has_navmesh"] is True
+    assert manifest["atmospheric_volumes_file"] == "atmospheric_volumes.json"
+    assert descriptor["atmospheric_volumes_file"] == "atmospheric_volumes.json"
+    assert descriptor["wind_field_descriptor"] == "wind_field.bin"
+    assert descriptor["cloud_shadow_descriptor"] == "cloud_shadow.bin"
+    assert descriptor["navmesh_area_id_file"] == "navmesh_area_id.bin"
+    assert descriptor["navmesh_data_asset_path"].endswith("/NavMeshData_3_7.asset")
 
 
 def test_export_manifest_writes_supplemental_mesh_specs_for_unity_bridge():
@@ -512,7 +824,7 @@ def test_export_manifest_writes_supplemental_mesh_specs_for_unity_bridge():
     ], "test")
 
     with tempfile.TemporaryDirectory() as td:
-        manifest = export_unity_manifest(stack, Path(td))
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
         payload = json.loads((Path(td) / "supplemental_mesh_specs.json").read_text())
         descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
 

@@ -30,6 +30,36 @@ def test_unity_runtime_streamer_closes_camera_lod_and_neighbor_gap():
         assert retired_term not in source
 
 
+def test_unity_foliage_manifest_renderer_consumes_gpu_manifest_without_gameobject_spam():
+    repo_root = Path(__file__).resolve().parents[2]
+    source = (repo_root / "unity_plugin" / "VbFoliageManifestRenderer.cs").read_text(
+        encoding="utf-8"
+    )
+
+    for token in (
+        "foliage_placement_manifest.json",
+        "VbFoliageManifestRenderer",
+        "Graphics.DrawMeshInstanced",
+        "MaterialPropertyBlock",
+        "mesh_library",
+        "instances",
+        "position_world",
+        "ConvertTerrainXzyToUnityXyz",
+        "PositionsAreWorldSpace",
+        "PositionsAreWorldSpace ? position : transform.TransformPoint(position)",
+        "MaximumInstances",
+        "CullDistanceM",
+        "1023",
+        "SpeciesKey",
+        "MeshId",
+    ):
+        assert token in source
+
+    assert "new GameObject" not in source
+    for retired_term in ("3ds" + " Max", "Forest" + " Pack"):
+        assert retired_term not in source
+
+
 def test_unity_floating_origin_shifts_roots_particles_and_exposes_offset_event():
     repo_root = Path(__file__).resolve().parents[2]
     source = (repo_root / "unity_plugin" / "VbFloatingOrigin.cs").read_text(
@@ -62,5 +92,7 @@ def test_runtime_streaming_documentation_is_wired():
 
     assert "VbTerrainRuntimeStreamer" in doc
     assert "VbFloatingOrigin" in doc
+    assert "VbFoliageManifestRenderer" in doc
     assert "Terrain.SetNeighbors" in doc
     assert "VbTerrainRuntimeStreamer" in foliage_doc
+    assert "VbFoliageManifestRenderer" in foliage_doc

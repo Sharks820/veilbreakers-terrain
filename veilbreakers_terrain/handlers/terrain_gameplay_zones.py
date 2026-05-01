@@ -468,6 +468,9 @@ def register_bundle_j_gameplay_zones_pass() -> None:
             produces_channels=("gameplay_zone",),
             seed_namespace="gameplay_zones",
             requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Bundle J: classify gameplay zones from mask stack + intent",
         )
     )

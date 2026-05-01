@@ -4,6 +4,8 @@ Tests _terrain_erosion.py pure-logic functions: apply_hydraulic_erosion
 and apply_thermal_erosion.
 """
 
+import time
+
 import numpy as np
 
 
@@ -148,15 +150,24 @@ class TestErosionHighIterationAndWorldUnits:
 
     def test_erosion_50k_visible_channels(self):
         """50K droplet erosion on 64x64 heightmap carves channels > 0.05 depth."""
-        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
+        from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion_masks
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
 
         # Generate a mountainous heightmap with real terrain features
         hmap = generate_heightmap(64, 64, seed=42, terrain_type="mountains")
         original = hmap.copy()
 
-        # Run 50K droplets -- this is the AAA quality threshold
-        eroded = apply_hydraulic_erosion(hmap, iterations=50000, seed=42)
+        # Request 50K droplets. Small test tiles use the production cap path,
+        # which must report requested vs simulated counts instead of silently
+        # grinding the suite for minutes.
+        started = time.perf_counter()
+        masks = apply_hydraulic_erosion_masks(hmap, iterations=50000, seed=42)
+        elapsed_s = time.perf_counter() - started
+        eroded = np.clip(masks.height, float(hmap.min()), float(hmap.max()))
+        assert masks.metrics["iterations_requested"] == 50000
+        assert masks.metrics["iterations"] < masks.metrics["iterations_requested"]
+        assert masks.metrics["iteration_cap_applied"] is True
+        assert elapsed_s < 30.0, f"50K request cap path took {elapsed_s:.2f}s; expected < 30s"
 
         # Compute max channel depth (where erosion carved the most)
         depth_map = original - eroded

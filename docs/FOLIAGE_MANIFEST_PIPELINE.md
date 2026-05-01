@@ -12,7 +12,8 @@ data-driven:
    `position_terrain_norm`, `rotation_y_rad`, `scale_xyz`, `lod_level`,
    biome/category metadata, moisture, tint, and color-variation seeds.
 5. Unity runtime keeps imported worlds playable through
-   `VbTerrainRuntimeStreamer` and `VbFloatingOrigin` instead of a DCC plugin.
+   `VbTerrainRuntimeStreamer`, `VbFloatingOrigin`, and
+   `VbFoliageManifestRenderer` instead of a DCC plugin.
 
 Example:
 
@@ -38,3 +39,6 @@ Rules:
 - Runtime scenes should use `docs/UNITY_RUNTIME_TERRAIN_STREAMING.md` for
   camera-aware terrain activation, near/mid/far quality, neighbor reconnection,
   and floating-origin stability.
+- GPU foliage should use `VbFoliageManifestRenderer` with explicit mesh/material
+  prototypes keyed by `mesh_id` or `species_key`. Do not spawn one GameObject
+  per plant in production.

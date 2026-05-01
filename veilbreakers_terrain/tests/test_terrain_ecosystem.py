@@ -19,7 +19,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size: int = 24, seed: int = 7):
+def _make_stack(tile_size: int = 32, seed: int = 7):
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -57,7 +57,7 @@ def _attach_structural_masks(stack) -> None:
     stack.set("basin", (lap > 0.5).astype(np.int32), "test_fixture")
 
 
-def _build_state(tile_size: int = 24, seed: int = 7, structural: bool = True):
+def _build_state(tile_size: int = 32, seed: int = 7, structural: bool = True):
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -269,6 +269,28 @@ def test_cloud_shadow_range(stack):
     assert mask.dtype == np.float32
     assert (mask >= 0).all() and (mask <= 1.0001).all()
     assert mask.shape == stack.height.shape
+
+
+def test_cloud_shadow_no_scipy_blur_preserves_shape(monkeypatch):
+    from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ImportError("blocked scipy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    tiny = _make_stack(tile_size=4, seed=11)
+    mask = compute_cloud_shadow_mask(tiny, seed=42, cloud_density=0.5, cloud_blur_sigma=6.0)
+
+    assert mask.shape == tiny.height.shape
+    assert mask.dtype == np.float32
+    assert np.isfinite(mask).all()
 
 
 def test_cloud_shadow_determinism(stack):

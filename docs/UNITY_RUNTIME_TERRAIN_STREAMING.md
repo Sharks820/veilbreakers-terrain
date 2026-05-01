@@ -19,6 +19,12 @@ depending on a DCC handoff.
   - keeps imported terrain, water, scatter, sidecars, and particles stable in
     large worlds
   - publishes `OnOriginMoved` for gameplay systems that store world-space state
+- `VbFoliageManifestRenderer`
+  - consumes `foliage_placement_manifest.json`
+  - draws assigned foliage prototypes through `Graphics.DrawMeshInstanced`
+  - batches by mesh/material/LOD and keeps per-frame draws under Unity's 1023
+    instance call limit
+  - uses manifest LOD distances, cull distance, and per-instance tint
 
 ## Scene Setup
 
@@ -30,6 +36,9 @@ depending on a DCC handoff.
 6. Add `VbFloatingOrigin` to the same object.
 7. Put imported terrain roots, water roots, scatter roots, and world-effect
    roots in `ShiftRoots`.
+8. Add `VbFoliageManifestRenderer` for GPU foliage manifests.
+9. Assign the manifest `TextAsset` and prototype meshes/materials by `mesh_id`
+   or `species_key`.
 
 ## Rules
 
@@ -39,5 +48,7 @@ depending on a DCC handoff.
 - Keep `MaxTilesChangedPerFrame` low on content-heavy scenes.
 - Keep `MaximumDistance` well below the point where vegetation or water starts
   precision flicker.
+- Use `VbFoliageManifestRenderer` for dense foliage. Unity `TreeInstance`
+  remains acceptable for terrain-tree prototypes, not dense grass or debris.
 - Blender or Unity rendered proof is still required before making visual AAA
   claims.

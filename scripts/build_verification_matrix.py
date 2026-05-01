@@ -48,6 +48,8 @@ OUTPUT_DIR = REPO_ROOT / "output" / "verification"
 CSV_OUT = OUTPUT_DIR / "CALLABLE_VERIFICATION_MATRIX.csv"
 SUMMARY_OUT = OUTPUT_DIR / "CALLABLE_VERIFICATION_SUMMARY.md"
 JSON_OUT = OUTPUT_DIR / "CALLABLE_VERIFICATION_SUMMARY.json"
+WIRING_CSV = REPO_ROOT / "output" / "spreadsheet" / "CALLABLE_WIRING_AUDIT_2026_04_19.csv"
+TRUE_WIRING_RISK_STATUSES = {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only"}
 
 
 DOMAIN_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -153,6 +155,23 @@ def _cap(files: Iterable[str], limit: int = 8) -> str:
     return ";".join(unique[:limit]) + f";...(+{len(unique) - limit})"
 
 
+def _load_wiring_index(path: Path = WIRING_CSV) -> dict[tuple[str, str], dict[str, str]]:
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    index: dict[tuple[str, str], dict[str, str]] = {}
+    for row in rows:
+        file_name = (row.get("file") or "").strip()
+        qualified_name = (row.get("qualified_name") or "").strip()
+        simple_name = (row.get("function") or "").strip()
+        if file_name and qualified_name:
+            index[(file_name, qualified_name)] = row
+        if file_name and simple_name:
+            index.setdefault((file_name, simple_name), row)
+    return index
+
+
 def _evidence_for(
     file_name: str,
     simple_name: str,
@@ -186,10 +205,19 @@ def _evidence_for(
     return evidence, files, score
 
 
-def _risk_level(grade: str, evidence: list[str], evidence_score: int, tags: list[str], is_tool: bool) -> str:
+def _risk_level(
+    grade: str,
+    evidence: list[str],
+    evidence_score: int,
+    tags: list[str],
+    is_tool: bool,
+    wiring_status: str,
+) -> str:
     live_critical = bool(
         {"blender_tool", "visual_qa", "camera_readability", "materials_texturing", "pipeline_wiring"}.intersection(tags)
     )
+    if wiring_status in TRUE_WIRING_RISK_STATUSES:
+        return "BLOCKER"
     if not grade:
         return "BLOCKER"
     if evidence_score == 0:
@@ -211,6 +239,7 @@ def build_rows() -> list[dict[str, str]]:
     grade_rows = read_grade_rows(DEFAULT_GRADE_FILE)
     grade_index = build_grade_index(grade_rows)
     test_index = _build_test_index()
+    wiring_index = _load_wiring_index()
     source_cache: dict[str, str] = {}
     rows: list[dict[str, str]] = []
 
@@ -228,7 +257,9 @@ def build_rows() -> list[dict[str, str]]:
             score += EVIDENCE_WEIGHTS["grade_a_or_better"]
         tags = _domain_tags(callable_def.file, callable_def.qualified_name, source)
         is_tool = callable_def.simple_name.startswith(("handle_", "register_")) or "blender_tool" in tags
-        risk = _risk_level(grade, evidence, score, tags, is_tool)
+        wiring_row = wiring_index.get((callable_def.file, callable_def.qualified_name), {})
+        wiring_status = (wiring_row.get("status") or "unknown").strip()
+        risk = _risk_level(grade, evidence, score, tags, is_tool, wiring_status)
         false_grade_flag = bool(grade.startswith("A") and not evidence)
 
         rows.append(
@@ -243,22 +274,39 @@ def build_rows() -> list[dict[str, str]]:
                 "GradeMatchMode": match.match_mode,
                 "DomainTags": ";".join(tags),
                 "IsToolOrBlenderCallable": str(is_tool),
+                "WiringStatus": wiring_status,
+                "RuntimeExposure": (wiring_row.get("runtime_exposure") or "unknown").strip(),
+                "NonTestCallCount": str(
+                    int(wiring_row.get("non_test_direct_calls") or 0)
+                    + int(wiring_row.get("non_test_attr_calls") or 0)
+                    + int(wiring_row.get("non_test_attr_reads") or 0)
+                ) if wiring_row else "unknown",
                 "EvidenceTypes": ";".join(evidence),
                 "EvidenceScore": str(score),
                 "EvidenceFiles": _cap(evidence_files),
                 "RiskLevel": risk,
                 "FalseGradeFlag": str(false_grade_flag),
-                "RequiredNextEvidence": _required_next_evidence(tags, evidence, grade, is_tool),
+                "RequiredNextEvidence": _required_next_evidence(tags, evidence, grade, is_tool, wiring_status),
             }
         )
 
     return rows
 
 
-def _required_next_evidence(tags: list[str], evidence: list[str], grade: str, is_tool: bool) -> str:
+def _required_next_evidence(
+    tags: list[str],
+    evidence: list[str],
+    grade: str,
+    is_tool: bool,
+    wiring_status: str,
+) -> str:
     needed: list[str] = []
     if not grade:
         needed.append("grade_rubric_row")
+    if wiring_status in TRUE_WIRING_RISK_STATUSES:
+        needed.append("production_wiring_or_scope_removal")
+    if wiring_status == "direct_test_covered":
+        needed.append("production_caller_or_scope_exemption")
     if "direct_test" not in evidence:
         needed.append("direct_behavior_test")
     if is_tool and "live_probe" not in evidence:
@@ -282,7 +330,13 @@ def write_outputs(rows: list[dict[str, str]]) -> None:
 
     risk_counts = Counter(row["RiskLevel"] for row in rows)
     tag_counts = Counter(tag for row in rows for tag in row["DomainTags"].split(";"))
+    wiring_counts = Counter(row["WiringStatus"] for row in rows)
     false_grade_count = sum(1 for row in rows if row["FalseGradeFlag"] == "True")
+    direct_test_only_a = sum(
+        1
+        for row in rows
+        if row["WiringStatus"] == "direct_test_covered" and row["Grade"].startswith("A")
+    )
     tool_blockers = [
         row for row in rows
         if row["IsToolOrBlenderCallable"] == "True" and row["RiskLevel"] in {"BLOCKER", "HIGH"}
@@ -293,7 +347,9 @@ def write_outputs(rows: list[dict[str, str]]) -> None:
         "total_callables": len(rows),
         "risk_counts": dict(risk_counts),
         "domain_counts": dict(tag_counts),
+        "wiring_status_counts": dict(wiring_counts),
         "false_grade_count": false_grade_count,
+        "direct_test_only_a_grade_count": direct_test_only_a,
         "tool_blocker_count": len(tool_blockers),
         "csv": CSV_OUT.as_posix(),
     }
@@ -310,7 +366,9 @@ def write_outputs(rows: list[dict[str, str]]) -> None:
         f"- Medium risk: {risk_counts.get('MEDIUM', 0)}",
         f"- Low risk: {risk_counts.get('LOW', 0)}",
         f"- A-grade rows with no executable evidence: {false_grade_count}",
+        f"- A-grade rows with tests but no production caller/runtime exposure: {direct_test_only_a}",
         f"- Tool/Blender callables needing blocker/high evidence: {len(tool_blockers)}",
+        f"- Wiring status counts: {dict(sorted(wiring_counts.items()))}",
         "",
         "## Highest Risk Files",
         "",

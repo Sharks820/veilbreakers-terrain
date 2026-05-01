@@ -147,6 +147,81 @@ def test_scene_budget_validator_flags_over_and_under_budget():
         validator.validate([1], scope="bad_scope")
 
 
+def test_generate_lod_chain_enforces_region_floor_and_monotonic_faces(monkeypatch):
+    from veilbreakers_terrain.handlers import lod_pipeline
+
+    vertices, faces = _cube_mesh()
+    calls: list[tuple[float, list[float]]] = []
+
+    monkeypatch.setitem(
+        lod_pipeline.LOD_PRESETS,
+        "test_building",
+        {
+            "ratios": [1.0, 0.2, 0.2],
+            "screen_percentages": [1.0, 0.4, 0.1],
+            "preserve_regions": ["roofline", "silhouette"],
+            "min_tris": [0, 5, 0],
+        },
+    )
+    monkeypatch.setattr(
+        lod_pipeline,
+        "_auto_detect_regions",
+        lambda in_vertices, names: {"roofline": {0}, "silhouette": {1}},
+    )
+    monkeypatch.setattr(
+        lod_pipeline,
+        "compute_silhouette_importance",
+        lambda in_vertices, in_faces: [0.2] * len(in_vertices),
+    )
+    monkeypatch.setattr(
+        lod_pipeline,
+        "compute_region_importance",
+        lambda in_vertices, in_faces, regions: [0.1, 0.95, 0.4, 0.2, 0.2, 0.2, 0.2, 0.2],
+    )
+
+    def _fake_decimate(in_vertices, in_faces, ratio, weights):
+        calls.append((float(ratio), list(weights)))
+        if len(calls) == 1:
+            return list(in_vertices[:4]), list(in_faces[:2])
+        if len(calls) == 2:
+            return list(in_vertices[:6]), list(in_faces[:5])
+        return list(in_vertices), list(in_faces[:7])
+
+    monkeypatch.setattr(lod_pipeline, "decimate_preserving_silhouette", _fake_decimate)
+
+    chain = lod_pipeline.generate_lod_chain(
+        {"vertices": vertices, "faces": faces},
+        asset_type="test_building",
+    )
+
+    face_counts = [len(entry[1]) for entry in chain]
+    assert face_counts == [12, 5, 5]
+    assert calls[0][0] == pytest.approx(0.2)
+    assert calls[1][0] == pytest.approx(5 / 12)
+    assert calls[2][0] == pytest.approx(0.2)
+    assert calls[0][1][0] == pytest.approx(0.2)
+    assert calls[0][1][1] == pytest.approx(0.95)
+    assert chain[2][1] == chain[1][1]
+
+
+def test_scene_budget_validator_all_scopes_boundary_and_top_offenders():
+    from veilbreakers_terrain.handlers.lod_pipeline import SCENE_BUDGETS, SceneBudgetValidator
+
+    validator = SceneBudgetValidator()
+    exact = validator.validate([SCENE_BUDGETS["per_room"]["max_tris"]], scope="per_room")
+    over = validator.validate([SCENE_BUDGETS["per_room"]["max_tris"] + 1], scope="per_room")
+    offender = validator.validate([130_000, 20_001], scope="per_room")
+    all_scopes = validator.validate_all_scopes([SCENE_BUDGETS["per_frame"]["max_tris"]])
+
+    assert exact["over_budget"] is False
+    assert exact["utilization_pct"] == pytest.approx(100.0)
+    assert over["over_budget"] is True
+    assert over["total_tris"] == SCENE_BUDGETS["per_room"]["max_tris"] + 1
+    assert any("Object #0" in recommendation for recommendation in offender["recommendations"])
+    assert [report["scope"] for report in all_scopes] == ["per_room", "per_block", "per_frame"]
+    assert all(report["budget_min"] == SCENE_BUDGETS[report["scope"]]["min_tris"] for report in all_scopes)
+
+
 def test_handle_generate_lods_accepts_billboard_spec_tuple(monkeypatch):
     from veilbreakers_terrain.handlers import lod_pipeline
 

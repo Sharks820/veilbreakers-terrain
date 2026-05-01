@@ -13,11 +13,17 @@ import heapq
 import math
 from collections import deque
 from dataclasses import dataclass, asdict, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .terrain_advanced import compute_flow_map
+if TYPE_CHECKING:
+    from .terrain_semantics import (
+        BBox,
+        PassResult,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
 
 # ---------------------------------------------------------------------------
 # D8 direction offsets (same convention as terrain_advanced)
@@ -364,10 +370,6 @@ def _build_sine_generated_waypoints(
     # Small random phase offset so adjacent rivers don't mirror each other
     phase_offset = float(rng.uniform(0.0, math.pi))
 
-    # Build forward-direction angles using sine-generated formula
-    # θ(s) = θ_max * sin(2π s / λ + phase_offset)
-    theta = theta_max * np.sin(2.0 * math.pi * arc / wavelength + phase_offset)
-
     # Convert to Cartesian tangent direction by integrating theta increments
     # Base direction: overall chord direction from start to end
     chord_dx = raw_x[-1] - raw_x[0]
@@ -667,6 +669,21 @@ def register_pass_hydrology() -> None:
             description="Priority-Flood D8 flow routing (Barnes 2014) — Fix 7.3/7.17",
         )
     )
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_hydrology_post_erosion",
+            func=pass_hydrology,
+            requires_channels=("height",),
+            produces_channels=("flow_direction", "flow_accumulation"),
+            overrides=("flow_direction", "flow_accumulation"),
+            seed_namespace="pass_hydrology_post_erosion",
+            requires_scene_read=False,
+            description=(
+                "Recompute Priority-Flood D8 flow routing after erosion/composite "
+                "height updates so water/export passes consume current drainage."
+            ),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -754,7 +771,6 @@ def pass_water_flow_speed(
             issues=[],
         )
 
-    flow_dir_arr = np.asarray(flow_dir, dtype=np.int8)
     flow_acc_arr = np.asarray(flow_acc, dtype=np.float64)
 
     # Slope: always compute a dimensionless rise/run magnitude explicitly
@@ -2849,7 +2865,7 @@ class WaterNetwork:
                 setattr(seg, "strahler_order", int(strahler.get(seg_id, 1)))
                 setattr(seg, "shreve_order", int(shreve.get(seg_id, 1)))
             except Exception:
-                pass  # noqa: L2-04 best-effort non-critical attr write
+                pass  # best-effort non-critical attr write
         return strahler
 
     def get_trunk_segments(self, min_order: int = 2) -> list[int]:
@@ -2921,13 +2937,8 @@ class WaterNetwork:
             contracts_list.append(entry)
 
         # Pre-compute Strahler and Shreve orders so they are embedded in the snapshot
-        strahler = {}
-        shreve = {}
-        try:
-            strahler = {str(k): int(v) for k, v in self.compute_strahler_orders().items()}
-            shreve = {str(k): int(v) for k, v in self.compute_shreve_orders().items()}
-        except Exception:
-            pass
+        strahler = {str(k): int(v) for k, v in self.compute_strahler_orders().items()}
+        shreve = {str(k): int(v) for k, v in self.compute_shreve_orders().items()}
 
         # World AABB for the full heightmap extent
         rows, cols = self._heightmap_shape

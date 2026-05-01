@@ -760,6 +760,7 @@ def _build_command_handlers() -> Dict[str, Callable]:
                 render_path=str(payload.get("render_path", "")),
                 golden_path=str(payload.get("golden_path", "")),
                 ssim_threshold=float(payload.get("ssim_threshold", 0.95)),
+                allow_resize=bool(payload.get("allow_resize", False)),
             )
 
         handlers["visual_qa_setup_camera"] = _handle_visual_qa_setup_camera

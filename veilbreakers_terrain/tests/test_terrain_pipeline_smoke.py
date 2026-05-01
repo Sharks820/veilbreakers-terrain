@@ -45,7 +45,7 @@ def _build_state(
     seed: int = 1234,
     include_scene_read: bool = True,
     protected_zones=(),
-    quality_profile: str = "production",
+    quality_profile: str = "standard",
 ):
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     from veilbreakers_terrain.handlers.terrain_semantics import (
@@ -195,14 +195,14 @@ def test_pipeline_end_to_end_runs_all_four_passes():
         assert r.status in {"ok", "warning"}, f"pass {r.pass_name} failed: {r.issues}"
 
 
-def test_controller_default_pipeline_uses_validation_full_for_production():
+def test_controller_default_pipeline_uses_validation_full_for_standard():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
         state = _build_state(
             tile_size=24,
             include_scene_read=False,
-            quality_profile="production",
+            quality_profile="standard",
         )
         controller = TerrainPassController(state, checkpoint_dir=Path(td))
         results = controller.run_pipeline(checkpoint=False)
@@ -211,20 +211,21 @@ def test_controller_default_pipeline_uses_validation_full_for_production():
     assert all(r.status in {"ok", "warning"} for r in results)
 
 
-def test_default_production_scene_pipeline_closes_legacy_batch_1_order():
+def test_default_standard_scene_pipeline_closes_legacy_batch_1_order():
     from veilbreakers_terrain.handlers.terrain_pipeline import build_default_pass_sequence
 
     state = _build_state(
         tile_size=24,
         include_scene_read=True,
-        quality_profile="production",
+        quality_profile="standard",
     )
     seq = build_default_pass_sequence(state.intent)
 
     expected = (
         "pass_hydrology",
         "erosion",
-        "pass_hydrology",
+        "structural_masks_post_erosion",
+        "pass_hydrology_post_erosion",
         "water_variants",
         "bathymetry",
         "pass_water_depth",
@@ -242,7 +243,9 @@ def test_default_production_scene_pipeline_closes_legacy_batch_1_order():
     for pass_name in expected:
         assert pass_name in seq
     assert seq.index("pass_hydrology") < seq.index("erosion")
-    assert seq.index("erosion") < seq.index("pass_hydrology", seq.index("erosion") + 1)
+    assert seq.index("erosion") < seq.index("structural_masks_post_erosion")
+    assert seq.index("structural_masks_post_erosion") < seq.index("pass_hydrology_post_erosion")
+    assert seq.index("pass_hydrology_post_erosion") < seq.index("water_variants")
     assert seq.index("waterfalls") < seq.index("integrate_deltas")
     assert seq.index("pass_morphology") < seq.index("integrate_deltas")
     assert seq.index("integrate_deltas") < seq.index("materials_v2")

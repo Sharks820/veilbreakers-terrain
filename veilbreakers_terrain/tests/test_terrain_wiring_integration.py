@@ -94,6 +94,10 @@ def _fresh_controller():
         tile_size=tile_size,
         cell_size=cell_size,
         scene_read=scene_read,
+        quality_profile="standard",
+        composition_hints={
+            "bundle_n_runtime": {"visual_qa_blocking": False},
+        },
     )
     state = TerrainPipelineState(intent=intent, mask_stack=stack)
     return TerrainPassController(state)
@@ -175,6 +179,18 @@ def test_wiring_handle_run_terrain_pass_matches_direct_controller():
             "seed": 42,
             "terrain_type": "hills",
             "scale": 60.0,
+            "quality_profile": "standard",
+            "out_of_view_ok": True,
+            "bulk_edit": True,
+            "composition_hints": {
+                "bundle_n_runtime": {"visual_qa_blocking": False},
+            },
+            "scene_read": {
+                "major_landforms": ["ridge"],
+                "focal_point": [0.0, 0.0, 0.0],
+                "success_criteria": ["test"],
+                "reviewer": "pytest",
+            },
             "pipeline": ["macro_world", "structural_masks"],
         }
     )

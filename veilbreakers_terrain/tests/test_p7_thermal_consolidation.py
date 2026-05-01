@@ -47,10 +47,14 @@ def test_delegation_parity():
 
 
 def test_talus_conversion_no_error():
-    """Legacy raw talus_angle=0.5 must not raise."""
+    """Legacy raw talus_angle=0.5 must produce a finite, shape-preserving erosion delta."""
     dem = _make_test_dem(4)
-    result = advanced_thermal(dem, iterations=1, talus_angle=0.5)
-    assert result is not None
+    result = np.asarray(advanced_thermal(dem, iterations=1, talus_angle=0.5), dtype=np.float32)
+    assert result.shape == dem.shape
+    assert np.isfinite(result).all()
+    assert np.max(np.abs(result - dem)) > 0.01
+    assert float(result.min()) >= float(dem.min()) - 0.25
+    assert float(result.max()) <= float(dem.max()) + 0.25
 
 
 def test_canonical_speed():

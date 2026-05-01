@@ -6,22 +6,40 @@ requires-python = ">=3.11"
 authors = [{name = "VeilBreakers gamedev"}]
 readme = "README.md"
 dependencies = [
-    "veilbreakers-mcp",
     "numpy>=1.26.0",
     "opensimplex>=0.4.5",
+    "scipy>=1.14.1",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
+    "Pillow>=10.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0",
+    "pytest-timeout>=2.3",
+    "pre-commit>=4.0",
     "ruff>=0.8.0",
 ]
+mcp = [
+    "veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@35815ea7f1caf078de551378ab85e6c1f34b8750#subdirectory=Tools/mcp-toolkit ; python_version >= '3.12'",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["veilbreakers_terrain/tests"]
 asyncio_mode = "auto"
+addopts = "--strict-markers --durations=20 --maxfail=50 --tb=short"
+timeout = 120
+markers = [
+    "benchmark: performance and wall-clock regression checks",
+    "contract: exported data contract tests",
+    "integration: cross-module integration tests",
+    "slow: long-running tests",
+    "visual: render or image-diff quality gates",
+]
 
 [build-system]
 requires = ["hatchling"]

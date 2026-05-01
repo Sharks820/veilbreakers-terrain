@@ -6,8 +6,8 @@ regression to np.roll would re-introduce visible tile-seam artefacts and
 would be caught by these contract checks.
 
 Targets:
-  - ``terrain_twelve_step._detect_cliff_edges_stub`` (D8 label propagation)
-  - ``terrain_twelve_step._detect_cave_candidates_stub`` (Laplacian + slope-access)
+  - ``terrain_twelve_step._detect_cliff_edges`` (D8 label propagation)
+  - ``terrain_twelve_step._detect_cave_candidates`` (Laplacian + slope-access)
   - ``weathering.apply_structural_settling`` (subsidence neighbourhood mean)
   - ``terrain_vegetation_depth.detect_disturbance_patches`` (NDVI / roughness)
   - ``terrain_god_ray_hints`` shadow gradient (np.pad replacement)
@@ -19,7 +19,6 @@ Targets:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +88,7 @@ def test_pad_stencil_5cell_avoids_wrap():
 
 
 # ---------------------------------------------------------------------------
-# _detect_cliff_edges_stub: cliff touching the border still labels correctly
+# _detect_cliff_edges: cliff touching the border still labels correctly
 # ---------------------------------------------------------------------------
 
 
@@ -97,7 +96,7 @@ def test_cliff_at_border_labels_without_seam_wrap():
     """A cliff strip on the top edge must label as one component without
     falsely merging with anything on the bottom edge."""
     from veilbreakers_terrain.handlers.terrain_twelve_step import (
-        _detect_cliff_edges_stub,
+        _detect_cliff_edges,
     )
 
     rows, cols = 32, 32
@@ -108,7 +107,7 @@ def test_cliff_at_border_labels_without_seam_wrap():
     # Independent bottom-edge cliff: rows -3:-0 also high (separate component)
     h[-3:, :] = 50.0
 
-    coords = _detect_cliff_edges_stub(
+    coords = _detect_cliff_edges(
         h,
         slope_threshold_deg=20.0,
         min_component_size=3,
@@ -127,7 +126,7 @@ def test_cliff_at_border_labels_without_seam_wrap():
 
 
 # ---------------------------------------------------------------------------
-# _detect_cave_candidates_stub: cave touching the border (Laplacian = 0 there
+# _detect_cave_candidates: cave touching the border (Laplacian = 0 there
 # means border cells are NOT classified as caves — this is the desired
 # behaviour in tiled generation; assert the function still runs cleanly).
 # ---------------------------------------------------------------------------
@@ -137,7 +136,7 @@ def test_cave_detection_handles_border_without_wrap():
     """Cave detection must not crash and must not produce wrap artefacts when
     a concave hollow sits adjacent to the border."""
     from veilbreakers_terrain.handlers.terrain_twelve_step import (
-        _detect_cave_candidates_stub,
+        _detect_cave_candidates,
     )
 
     rows, cols = 32, 32
@@ -148,7 +147,7 @@ def test_cave_detection_handles_border_without_wrap():
     h[4:6, 10:18] = 20.0
 
     # Run the function — must not crash and must not raise on edge cells.
-    out = _detect_cave_candidates_stub(
+    out = _detect_cave_candidates(
         h,
         min_cluster_size=2,
         min_depth_m=1.0,

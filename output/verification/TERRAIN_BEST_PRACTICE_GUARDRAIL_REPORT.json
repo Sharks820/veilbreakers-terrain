@@ -1,7 +1,7 @@
 {
-  "matrix_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\spreadsheet\\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_26.csv",
-  "live_count": 1713,
-  "matrix_count": 1723,
+  "matrix_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\spreadsheet\\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv",
+  "live_count": 1730,
+  "matrix_count": 1730,
   "is_blocking": false,
   "missing_rows": [],
   "field_gaps": {},
@@ -14,8 +14,8 @@
     "duplicate_names_blocking": false,
     "p0_rows_blocking": false,
     "non_a_rows_blocking": false,
-    "grade_status_blocking": false,
-    "verification_blocking": false
+    "grade_status_blocking": true,
+    "verification_blocking": true
   },
   "duplicate_names": {},
   "reviewed_duplicate_names": {

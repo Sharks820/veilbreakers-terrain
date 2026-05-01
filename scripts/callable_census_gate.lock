@@ -1,6 +1,6 @@
 {
-  "baseline_uncovered": 153,
-  "total_callables": 1563,
-  "graded_callables": 1410,
-  "coverage_pct": 90.21
+  "baseline_uncovered": 0,
+  "total_callables": 1726,
+  "graded_callables": 1726,
+  "coverage_pct": 100.0
 }

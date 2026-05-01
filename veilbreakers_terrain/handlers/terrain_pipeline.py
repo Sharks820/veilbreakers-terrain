@@ -117,9 +117,11 @@ def _restore_pass_state(
 
 def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     """Return the canonical default terrain pipeline for an intent."""
-    quality_profile = str(getattr(intent, "quality_profile", "production"))
+    quality_profile = str(getattr(intent, "quality_profile", "aaa_open_world"))
     composition_hints = dict(getattr(intent, "composition_hints", {}) or {})
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
+    skip_scatter = bool(composition_hints.get("skip_scatter", False))
+    include_waterfalls = bool(composition_hints.get("waterfalls", True))
     has_scene_read = getattr(intent, "scene_read", None) is not None
     validation_pass = (
         "validation_minimal"
@@ -138,7 +140,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     if has_scene_read:
         pass_sequence[3:3] = ["pass_hydrology", "erosion"]
         composite_idx = pass_sequence.index("pass_composite_hmap") + 1
-        for post_erosion in ("structural_masks", "pass_hydrology"):
+        for post_erosion in ("structural_masks_post_erosion", "pass_hydrology_post_erosion"):
             pass_sequence.insert(composite_idx, post_erosion)
             composite_idx += 1
         if validation_pass == "validation_full":
@@ -155,7 +157,9 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # C-8: sightline framing before scatter
             "framing",
             *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
-            *(("waterfalls", "emit_particle_systems", "integrate_deltas", "materials_v2", "emit_overhang_meshes", "scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read else ("materials_v2",)),
+            *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
+            *(("integrate_deltas", "materials_v2", "emit_overhang_meshes") if has_scene_read else ("materials_v2",)),
+            *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),
             # C-2: Bundle J ecosystem passes
             "audio_zones",
             "wildlife_zones",
@@ -355,6 +359,11 @@ class TerrainPassController:
                         supports_region_scope=bool(getattr(definition, "supports_region_scope", True)),
                         seed_namespace=str(getattr(definition, "seed_namespace", "") or ""),
                         requires_scene_read=bool(getattr(definition, "requires_scene_read", False)),
+                        protocol_enforced=bool(getattr(definition, "protocol_enforced", False)),
+                        protocol_require_rule_2=bool(getattr(definition, "protocol_require_rule_2", False)),
+                        protocol_require_rule_5=bool(getattr(definition, "protocol_require_rule_5", False)),
+                        protocol_out_of_view_ok=bool(getattr(definition, "protocol_out_of_view_ok", False)),
+                        protocol_bulk_edit=bool(getattr(definition, "protocol_bulk_edit", False)),
                         quality_gate=getattr(definition, "quality_gate", None),
                         visual_validator=getattr(definition, "visual_validator", None),
                         description=str(getattr(definition, "description", "") or ""),
@@ -547,6 +556,35 @@ class TerrainPassController:
                 f"Pass '{pass_name}' requires channels {missing_inputs} "
                 "but they are not populated on the mask stack."
             )
+
+        if definition.protocol_enforced:
+            from .terrain_protocol import ProtocolGate
+
+            hints = dict(getattr(self.state.intent, "composition_hints", {}) or {})
+            if definition.protocol_require_rule_2:
+                ProtocolGate.rule_2_sync_to_user_viewport(
+                    self.state,
+                    out_of_view_ok=bool(
+                        definition.protocol_out_of_view_ok
+                        or hints.get("protocol_out_of_view_ok", False)
+                    ),
+                )
+            if definition.protocol_require_rule_5:
+                tile_cells = max(1, int(getattr(self.state.mask_stack.height, "size", 1)))
+                if region is None:
+                    cells_affected = tile_cells
+                else:
+                    cell = max(float(self.state.mask_stack.cell_size), 1e-9)
+                    cells_affected = int(max(1.0, (region.width * region.height) / (cell * cell)))
+                ProtocolGate.rule_5_smallest_diff_per_iteration(
+                    self.state,
+                    cells_affected=cells_affected,
+                    objects_affected=0,
+                    bulk_edit=bool(
+                        definition.protocol_bulk_edit
+                        or hints.get("protocol_bulk_edit", False)
+                    ),
+                )
 
         content_hash_before = self.state.mask_stack.compute_hash()
         seed_used = derive_pass_seed(
@@ -1470,6 +1508,39 @@ def register_default_passes(*, strict: bool = False) -> None:
             seed_namespace="structural_masks",
             requires_scene_read=False,
             supports_region_scope=False,
+        ),
+        PassDefinition(
+            name="structural_masks_post_erosion",
+            func=_tw.pass_structural_masks,
+            requires_channels=("height",),
+            produces_channels=(
+                "slope",
+                "curvature",
+                "concavity",
+                "convexity",
+                "ridge",
+                "basin",
+                "saliency_macro",
+                "hero_exclusion",
+            ),
+            overrides=(
+                "slope",
+                "curvature",
+                "concavity",
+                "convexity",
+                "ridge",
+                "basin",
+                "saliency_macro",
+                "hero_exclusion",
+            ),
+            seed_namespace="structural_masks_post_erosion",
+            requires_scene_read=False,
+            supports_region_scope=False,
+            description=(
+                "Recompute structural terrain masks after erosion/composite height "
+                "updates so downstream water, scatter, materials, and validation "
+                "consume current slope/curvature/ridge fields."
+            ),
         ),
         PassDefinition(
             name="erosion",

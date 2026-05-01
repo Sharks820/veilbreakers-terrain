@@ -30,6 +30,27 @@ from .terrain_semantics import (
 
 PIPELINE_VERSION = "bundle_n_1.0"
 
+_STRICT_GOLDEN_CHANNELS = frozenset(
+    {
+        "height",
+        "slope",
+        "flow_accumulation",
+        "wetness",
+        "water_surface_mask",
+        "water_surface_elevation_m",
+        "water_depth_m",
+        "cliff_mask",
+        "talus_mask",
+        "strata_mask",
+        "splatmap_weights_layer",
+        "heightmap_raw_u16",
+        "terrain_normals",
+        "navmesh_area_id",
+        "traversability",
+        "road_mask",
+    }
+)
+
 
 @dataclass
 class GoldenSnapshot:
@@ -133,6 +154,7 @@ def compare_against_golden(
     tolerance: float = 0.0,
     *,
     golden_dir: Optional[Path] = None,
+    strict_contract: bool = False,
 ) -> List[ValidationIssue]:
     """Compare a fresh stack against a stored golden.
 
@@ -217,13 +239,16 @@ def compare_against_golden(
             )
         )
 
-    # BUG-R8-A9-024: emit soft issue for channels in current but absent in golden
+    # BUG-R8-A9-024: emit drift issue for channels in current but absent in golden.
+    # In strict release gates, export/semantic channels are hard failures because
+    # a stale golden can otherwise bless a tile that lost water/material/nav data.
     for ch in current_channels:
         if ch not in golden.channel_hashes:
+            severity = "hard" if strict_contract and ch in _STRICT_GOLDEN_CHANNELS else "soft"
             issues.append(
                 ValidationIssue(
                     code="GOLDEN_NEW_CHANNEL",
-                    severity="soft",
+                    severity=severity,
                     message=(
                         f"channel '{ch}' present in current stack but absent in "
                         f"golden '{golden.snapshot_id}' — update the golden if intentional."
@@ -235,7 +260,7 @@ def compare_against_golden(
         issues.append(
             ValidationIssue(
                 code="GOLDEN_PIPELINE_VERSION_DRIFT",
-                severity="soft",
+                severity="hard" if strict_contract else "soft",
                 message=(
                     f"golden pipeline_version={golden.pipeline_version!r} "
                     f"does not match current {PIPELINE_VERSION!r}"
@@ -374,42 +399,409 @@ def seed_golden_library(
 # V-2: Scenario-based golden checks
 # ---------------------------------------------------------------------------
 
-# Each entry: channel → callable(array) → (ok: bool, reason: str)
-# Defined as a plain dict of scenario name → spec dict so callers can extend.
+# Each entry is a scenario spec.  Older specs may still use one channel plus a
+# named scenario; structured specs use required_channels, channel_assertions,
+# and semantic_assertions.  The structured path is the release-grade gate: it
+# catches pretty-but-wrong terrain where channels exist but do not agree.
+_CHANNEL_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "heightmap": ("height",),
+    "cliff_mask": ("cliff_candidate",),
+    "water_surface": ("water_surface_elevation_m", "water_surface_mask"),
+}
+
+
 SCENARIO_GOLDENS: Dict[str, Dict[str, Any]] = {
     "water_present": {
-        "channel": "water_surface_mask",
-        "description": "Some water exists (mean > 0.01)",
+        "description": "Water has presence, depth, elevation, and mask/depth agreement.",
+        "required_channels": [
+            "height",
+            "water_surface_mask",
+            "water_surface_elevation_m",
+            "water_depth_m",
+        ],
+        "channel_assertions": {
+            "water_surface_mask": {"range": [0.0, 1.0], "min_nonzero_cells": 1},
+            "water_depth_m": {"range": [0.0, 500.0], "min_peak": 0.01},
+            "water_surface_elevation_m": {"range": [0.0, 9000.0]},
+        },
+        "semantic_assertions": [
+            {
+                "type": "depth_requires_water_mask",
+                "depth_channel": "water_depth_m",
+                "mask_channel": "water_surface_mask",
+                "depth_threshold": 0.01,
+                "mask_threshold": 0.01,
+                "min_ratio": 0.98,
+            },
+            {
+                "type": "water_surface_above_terrain",
+                "height_channel": "height",
+                "surface_channel": "water_surface_elevation_m",
+                "mask_channel": "water_surface_mask",
+                "min_ratio": 0.98,
+            },
+        ],
     },
     "cliff_present": {
-        "channel": "cliff_mask",
-        "description": "At least one cliff pixel exists (max > 0.5)",
+        "description": "Cliffs have footprint and slope alignment.",
+        "required_channels": ["height", "cliff_mask", "slope"],
+        "channel_assertions": {
+            "height": {"min_relief_m": 1.0},
+            "cliff_mask": {"range": [0.0, 1.0], "min_nonzero_cells": 1},
+            "slope": {"range": [0.0, 90.0]},
+        },
+        "semantic_assertions": [
+            {
+                "type": "cliff_slope_alignment",
+                "cliff_channel": "cliff_mask",
+                "slope_channel": "slope",
+                "min_slope": 30.0,
+                "min_ratio": 0.5,
+            },
+        ],
     },
     "heightmap_range": {
-        "channel": "height",
-        "description": "Terrain has relief (max - min > 50.0)",
+        "description": "Terrain has non-flat world-unit relief and slope energy.",
+        "required_channels": ["height"],
+        "channel_assertions": {
+            "height": {"range": [0.0, 9000.0], "min_relief_m": 50.0, "min_gradient_p95": 0.25},
+        },
     },
     "no_water_seam": {
-        "channel": "water_depth_m",
-        "description": "No abrupt seam at tile edges (edge std < 0.2)",
+        "description": "Water depth edges are continuous enough for adjacent tiles.",
+        "required_channels": ["water_depth_m"],
+        "channel_assertions": {
+            "water_depth_m": {"range": [0.0, 500.0], "max_edge_std": 0.2},
+        },
     },
 }
 
 
+def _stack_channel(stack: Any, channel: str) -> tuple[Optional[np.ndarray], str, Optional[str]]:
+    """Resolve a named channel with canonical aliases and return array/error."""
+    candidates = (channel, *_CHANNEL_ALIASES.get(channel, ()))
+    for candidate in candidates:
+        value = None
+        if hasattr(stack, "get"):
+            try:
+                value = stack.get(candidate)
+            except Exception:
+                value = None
+        if value is None:
+            value = getattr(stack, candidate, None)
+        if value is None:
+            continue
+        try:
+            arr = np.asarray(value, dtype=np.float64)
+        except Exception as exc:
+            return None, candidate, f"channel '{candidate}' is not array-like: {exc}"
+        if arr.size == 0:
+            return None, candidate, f"channel '{candidate}' is empty"
+        if not np.isfinite(arr).all():
+            return None, candidate, f"channel '{candidate}' contains non-finite values"
+        return arr, candidate, None
+    return None, channel, f"channel '{channel}' missing from stack"
+
+
+def _edge_values(arr: np.ndarray) -> np.ndarray:
+    if arr.ndim < 2:
+        return arr.ravel()
+    return np.concatenate(
+        [arr[0, :].ravel(), arr[-1, :].ravel(), arr[:, 0].ravel(), arr[:, -1].ravel()]
+    )
+
+
+def _gradient_p95(arr: np.ndarray) -> float:
+    if arr.ndim != 2 or min(arr.shape) < 2:
+        return 0.0
+    gy, gx = np.gradient(arr)
+    mag = np.hypot(gx, gy)
+    return float(np.percentile(mag, 95))
+
+
+def _within_radius(source_mask: np.ndarray, target_mask: np.ndarray, radius: int) -> np.ndarray:
+    source = np.asarray(source_mask, dtype=bool)
+    target = np.asarray(target_mask, dtype=bool)
+    if source.shape != target.shape:
+        return np.zeros_like(source, dtype=bool)
+    radius = max(0, int(radius))
+    if radius == 0:
+        return source & target
+    padded = np.pad(target, radius, mode="constant", constant_values=False)
+    near = np.zeros_like(target, dtype=bool)
+    rows, cols = target.shape
+    for dr in range(2 * radius + 1):
+        for dc in range(2 * radius + 1):
+            near |= padded[dr : dr + rows, dc : dc + cols]
+    return source & near
+
+
+def _evaluate_channel_assertion(
+    stack: Any,
+    channel: str,
+    assertion: Dict[str, Any],
+) -> tuple[bool, List[str], Dict[str, Any]]:
+    arr, resolved, error = _stack_channel(stack, channel)
+    if error is not None or arr is None:
+        return False, [error or f"channel '{channel}' missing from stack"], {}
+
+    stats: Dict[str, Any] = {
+        "channel": resolved,
+        "min": float(np.nanmin(arr)),
+        "max": float(np.nanmax(arr)),
+        "mean": float(np.nanmean(arr)),
+        "nonzero_cells": int(np.count_nonzero(arr > float(assertion.get("nonzero_threshold", 0.0)))),
+        "relief": float(np.nanmax(arr) - np.nanmin(arr)),
+    }
+    issues: List[str] = []
+
+    if "range" in assertion:
+        lo, hi = assertion["range"]
+        if stats["min"] < float(lo) or stats["max"] > float(hi):
+            issues.append(
+                f"{channel}:range [{stats['min']:.4f},{stats['max']:.4f}] outside [{float(lo):.4f},{float(hi):.4f}]"
+            )
+    if "min_nonzero_cells" in assertion and stats["nonzero_cells"] < int(assertion["min_nonzero_cells"]):
+        issues.append(f"{channel}:nonzero_cells {stats['nonzero_cells']} < {int(assertion['min_nonzero_cells'])}")
+    if "min_nonzero_ratio" in assertion:
+        ratio = stats["nonzero_cells"] / float(arr.size)
+        stats["nonzero_ratio"] = ratio
+        if ratio < float(assertion["min_nonzero_ratio"]):
+            issues.append(f"{channel}:nonzero_ratio {ratio:.4f} < {float(assertion['min_nonzero_ratio']):.4f}")
+    if "max_value_m" in assertion and stats["max"] > float(assertion["max_value_m"]):
+        issues.append(f"{channel}:max {stats['max']:.4f} > {float(assertion['max_value_m']):.4f}")
+    if "min_value_m" in assertion and stats["min"] < float(assertion["min_value_m"]):
+        issues.append(f"{channel}:min {stats['min']:.4f} < {float(assertion['min_value_m']):.4f}")
+    if "min_peak" in assertion and stats["max"] < float(assertion["min_peak"]):
+        issues.append(f"{channel}:peak {stats['max']:.4f} < {float(assertion['min_peak']):.4f}")
+    if "min_mean" in assertion and stats["mean"] < float(assertion["min_mean"]):
+        issues.append(f"{channel}:mean {stats['mean']:.4f} < {float(assertion['min_mean']):.4f}")
+    if "max_mean" in assertion and stats["mean"] > float(assertion["max_mean"]):
+        issues.append(f"{channel}:mean {stats['mean']:.4f} > {float(assertion['max_mean']):.4f}")
+    if "min_relief_m" in assertion and stats["relief"] < float(assertion["min_relief_m"]):
+        issues.append(f"{channel}:relief {stats['relief']:.4f} < {float(assertion['min_relief_m']):.4f}")
+    if "max_edge_std" in assertion:
+        edge_std = float(np.nanstd(_edge_values(arr)))
+        stats["edge_std"] = edge_std
+        if edge_std > float(assertion["max_edge_std"]):
+            issues.append(f"{channel}:edge_std {edge_std:.4f} > {float(assertion['max_edge_std']):.4f}")
+    if "min_gradient_p95" in assertion:
+        grad = _gradient_p95(arr)
+        stats["gradient_p95"] = grad
+        if grad < float(assertion["min_gradient_p95"]):
+            issues.append(f"{channel}:gradient_p95 {grad:.4f} < {float(assertion['min_gradient_p95']):.4f}")
+    if "min_band_count" in assertion:
+        threshold = float(assertion.get("band_threshold", 0.01))
+        bins = int(assertion.get("band_bins", 16))
+        active = arr[arr > threshold]
+        band_count = int(np.unique(np.round(active * bins)).size) if active.size else 0
+        stats["band_count"] = band_count
+        if band_count < int(assertion["min_band_count"]):
+            issues.append(f"{channel}:band_count {band_count} < {int(assertion['min_band_count'])}")
+
+    return not issues, issues, stats
+
+
+def _evaluate_semantic_assertion(stack: Any, assertion: Dict[str, Any]) -> tuple[bool, str, Dict[str, Any]]:
+    kind = str(assertion.get("type", ""))
+
+    def channel(name: str) -> tuple[Optional[np.ndarray], Optional[str]]:
+        arr, _, err = _stack_channel(stack, name)
+        return arr, err
+
+    if kind == "depth_requires_water_mask":
+        depth, err = channel(str(assertion.get("depth_channel", "water_depth_m")))
+        if err or depth is None:
+            return False, err or "missing depth channel", {}
+        mask, err = channel(str(assertion.get("mask_channel", "water_surface_mask")))
+        if err or mask is None:
+            return False, err or "missing mask channel", {}
+        if depth.shape != mask.shape:
+            return False, f"depth/mask shape mismatch {depth.shape} != {mask.shape}", {}
+        wet_depth = depth > float(assertion.get("depth_threshold", 0.01))
+        if not wet_depth.any():
+            return False, "no depth cells above threshold", {"depth_cells": 0}
+        ratio = float((mask[wet_depth] > float(assertion.get("mask_threshold", 0.01))).mean())
+        ok = ratio >= float(assertion.get("min_ratio", 0.98))
+        return ok, f"depth_mask_ratio={ratio:.4f}", {"ratio": ratio, "depth_cells": int(wet_depth.sum())}
+
+    if kind == "water_surface_above_terrain":
+        height, err = channel(str(assertion.get("height_channel", "height")))
+        if err or height is None:
+            return False, err or "missing height channel", {}
+        surface, err = channel(str(assertion.get("surface_channel", "water_surface_elevation_m")))
+        if err or surface is None:
+            return False, err or "missing surface channel", {}
+        mask, err = channel(str(assertion.get("mask_channel", "water_surface_mask")))
+        if err or mask is None:
+            return False, err or "missing mask channel", {}
+        if height.shape != surface.shape or height.shape != mask.shape:
+            return False, "height/surface/mask shape mismatch", {}
+        wet = mask > float(assertion.get("mask_threshold", 0.01))
+        if not wet.any():
+            return False, "no wet cells for surface/terrain comparison", {"wet_cells": 0}
+        tolerance = float(assertion.get("tolerance_m", 0.05))
+        ratio = float((surface[wet] + tolerance >= height[wet]).mean())
+        ok = ratio >= float(assertion.get("min_ratio", 0.98))
+        return ok, f"surface_above_height_ratio={ratio:.4f}", {"ratio": ratio, "wet_cells": int(wet.sum())}
+
+    if kind == "shoreline_borders_water":
+        water, err = channel(str(assertion.get("water_channel", "water_surface_mask")))
+        if err or water is None:
+            return False, err or "missing water channel", {}
+        shore, err = channel(str(assertion.get("shoreline_channel", "shoreline_blend")))
+        if err or shore is None:
+            return False, err or "missing shoreline channel", {}
+        if water.shape != shore.shape or water.ndim != 2:
+            return False, "water/shoreline shape mismatch or non-2D", {}
+        wet = water > float(assertion.get("water_threshold", 0.01))
+        if not wet.any() or wet.all():
+            return False, "water mask has no shoreline boundary", {"wet_cells": int(wet.sum())}
+        padded = np.pad(wet, 1, mode="edge")
+        neighbor_wet = np.zeros_like(wet, dtype=bool)
+        neighbor_dry = np.zeros_like(wet, dtype=bool)
+        rows, cols = wet.shape
+        for dr in range(3):
+            for dc in range(3):
+                window = padded[dr : dr + rows, dc : dc + cols]
+                neighbor_wet |= window
+                neighbor_dry |= ~window
+        boundary = neighbor_wet & neighbor_dry
+        min_cells = int(assertion.get("min_boundary_cells", 1))
+        if int(boundary.sum()) < min_cells:
+            return False, f"shoreline boundary cells {int(boundary.sum())} < {min_cells}", {}
+        ratio = float((shore[boundary] > float(assertion.get("shoreline_threshold", 0.01))).mean())
+        ok = ratio >= float(assertion.get("min_ratio", 0.5))
+        return ok, f"shoreline_boundary_ratio={ratio:.4f}", {"ratio": ratio, "boundary_cells": int(boundary.sum())}
+
+    if kind == "cliff_slope_alignment":
+        cliff, err = channel(str(assertion.get("cliff_channel", "cliff_mask")))
+        if err or cliff is None:
+            return False, err or "missing cliff channel", {}
+        slope, err = channel(str(assertion.get("slope_channel", "slope")))
+        if err or slope is None:
+            return False, err or "missing slope channel", {}
+        if cliff.shape != slope.shape:
+            return False, f"cliff/slope shape mismatch {cliff.shape} != {slope.shape}", {}
+        cliff_cells = cliff > float(assertion.get("cliff_threshold", 0.5))
+        if not cliff_cells.any():
+            return False, "no cliff cells above threshold", {"cliff_cells": 0}
+        ratio = float((slope[cliff_cells] >= float(assertion.get("min_slope", 30.0))).mean())
+        ok = ratio >= float(assertion.get("min_ratio", 0.5))
+        return ok, f"cliff_slope_ratio={ratio:.4f}", {"ratio": ratio, "cliff_cells": int(cliff_cells.sum())}
+
+    if kind in {"talus_near_cliff", "cave_framed_by_cliff", "pool_near_cliff", "foam_near_water"}:
+        source_name = str(
+            assertion.get(
+                "source_channel",
+                {
+                    "talus_near_cliff": "talus_mask",
+                    "cave_framed_by_cliff": "cave_candidate",
+                    "pool_near_cliff": "water_depth_m",
+                    "foam_near_water": "foam",
+                }[kind],
+            )
+        )
+        target_name = str(
+            assertion.get(
+                "target_channel",
+                {
+                    "talus_near_cliff": "cliff_mask",
+                    "cave_framed_by_cliff": "cliff_mask",
+                    "pool_near_cliff": "cliff_mask",
+                    "foam_near_water": "water_surface_mask",
+                }[kind],
+            )
+        )
+        source, err = channel(source_name)
+        if err or source is None:
+            return False, err or f"missing {source_name}", {}
+        target, err = channel(target_name)
+        if err or target is None:
+            return False, err or f"missing {target_name}", {}
+        if source.shape != target.shape or source.ndim != 2:
+            return False, f"{source_name}/{target_name} shape mismatch or non-2D", {}
+        source_mask = source > float(assertion.get("source_threshold", 0.01))
+        if not source_mask.any():
+            return False, f"no {source_name} cells above threshold", {"source_cells": 0}
+        target_mask = target > float(assertion.get("target_threshold", 0.01))
+        near = _within_radius(source_mask, target_mask, int(assertion.get("radius", 2)))
+        ratio = float(near.sum()) / float(source_mask.sum())
+        ok = ratio >= float(assertion.get("min_ratio", 0.75))
+        return ok, f"{kind}_ratio={ratio:.4f}", {"ratio": ratio, "source_cells": int(source_mask.sum())}
+
+    if kind == "flow_reaches_pool":
+        flow, err = channel(str(assertion.get("flow_channel", "flow_accumulation")))
+        if err or flow is None:
+            return False, err or "missing flow channel", {}
+        pool, err = channel(str(assertion.get("pool_channel", "water_depth_m")))
+        if err or pool is None:
+            return False, err or "missing pool channel", {}
+        if flow.shape != pool.shape:
+            return False, "flow/pool shape mismatch", {}
+        pool_mask = pool > float(assertion.get("pool_depth_threshold", 0.01))
+        if not pool_mask.any():
+            return False, "no pool cells above threshold", {"pool_cells": 0}
+        flow_near_pool = _within_radius(pool_mask, flow > float(assertion.get("min_flow", 0.01)), int(assertion.get("radius", 2)))
+        ratio = float(flow_near_pool.sum()) / float(pool_mask.sum())
+        ok = ratio >= float(assertion.get("min_ratio", 0.5))
+        return ok, f"flow_pool_ratio={ratio:.4f}", {"ratio": ratio, "pool_cells": int(pool_mask.sum())}
+
+    if kind == "strata_band_count":
+        ch = str(assertion.get("channel", "strata_mask"))
+        ok, issues, stats = _evaluate_channel_assertion(
+            stack,
+            ch,
+            {
+                "range": assertion.get("range", [0.0, 1.0]),
+                "min_band_count": assertion.get("min_band_count", assertion.get("min_bands", 3)),
+                "band_threshold": assertion.get("band_threshold", 0.01),
+                "band_bins": assertion.get("band_bins", 16),
+            },
+        )
+        return ok, "; ".join(issues) if issues else f"band_count={stats.get('band_count', 0)}", stats
+
+    return False, f"unknown semantic assertion type '{kind}'", {}
+
+
 def _run_scenario(name: str, spec: Dict[str, Any], stack: Any) -> Dict[str, Any]:
     """Run a single named scenario check against *stack*; return {ok, reason}."""
+    if "required_channels" in spec or "channel_assertions" in spec or "semantic_assertions" in spec:
+        issues: List[str] = []
+        metrics: Dict[str, Any] = {}
+
+        for channel in spec.get("required_channels", []):
+            _, resolved, error = _stack_channel(stack, str(channel))
+            if error is not None:
+                issues.append(f"required:{channel}:{error}")
+            else:
+                metrics.setdefault("required_channels", {})[str(channel)] = resolved
+
+        for channel, assertion in dict(spec.get("channel_assertions", {})).items():
+            ok, channel_issues, stats = _evaluate_channel_assertion(stack, str(channel), dict(assertion or {}))
+            metrics.setdefault("channels", {})[str(channel)] = stats
+            if not ok:
+                issues.extend(channel_issues)
+
+        for assertion in list(spec.get("semantic_assertions", [])):
+            ok, reason, assertion_metrics = _evaluate_semantic_assertion(stack, dict(assertion or {}))
+            assertion_name = str((assertion or {}).get("type", "semantic"))
+            metrics.setdefault("semantic", {})[assertion_name] = assertion_metrics
+            if not ok:
+                issues.append(f"{assertion_name}:{reason}")
+
+        return {
+            "ok": not issues,
+            "reason": "pass" if not issues else "; ".join(issues[:8]),
+            "issues": issues,
+            "metrics": metrics,
+            "description": spec.get("description", ""),
+        }
+
     channel: str = spec["channel"]
-    arr = getattr(stack, channel, None)
-    if arr is None:
-        return {"ok": False, "reason": f"channel '{channel}' missing from stack"}
-
-    try:
-        arr = np.asarray(arr, dtype=float)
-    except Exception as exc:
-        return {"ok": False, "reason": f"could not convert '{channel}' to array: {exc}"}
-
-    if arr.size == 0:
-        return {"ok": False, "reason": f"channel '{channel}' is empty"}
+    arr, _, error = _stack_channel(stack, channel)
+    if error is not None or arr is None:
+        return {"ok": False, "reason": error or f"channel '{channel}' missing from stack"}
 
     if name == "water_present":
         mean_val = float(np.nanmean(arr))

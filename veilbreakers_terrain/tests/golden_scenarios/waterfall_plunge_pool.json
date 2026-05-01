@@ -25,12 +25,54 @@
     "water_depth_m",
     "shoreline_blend",
     "flow_accumulation",
-    "flow_direction"
+    "flow_direction",
+    "foam",
+    "waterfall_lip_candidate"
   ],
   "channel_assertions": {
-    "water_depth_m": {"min_nonzero_cells": 100, "max_value_m": 200.0},
+    "heightmap": {"min_relief_m": 20.0, "min_gradient_p95": 1.0},
+    "water_depth_m": {"min_nonzero_cells": 100, "min_peak": 8.0, "max_value_m": 200.0},
     "cliff_mask": {"min_nonzero_cells": 50},
-    "shoreline_blend": {"range": [0.0, 1.0]}
+    "shoreline_blend": {"range": [0.0, 1.0], "min_nonzero_cells": 40},
+    "foam": {"range": [0.0, 1.0], "min_nonzero_cells": 20},
+    "waterfall_lip_candidate": {"range": [0.0, 1.0], "min_nonzero_cells": 5}
   },
+  "semantic_assertions": [
+    {
+      "type": "depth_requires_water_mask",
+      "depth_channel": "water_depth_m",
+      "mask_channel": "water_surface_mask",
+      "depth_threshold": 0.5,
+      "mask_threshold": 0.5,
+      "min_ratio": 0.95
+    },
+    {
+      "type": "pool_near_cliff",
+      "source_channel": "water_depth_m",
+      "target_channel": "cliff_mask",
+      "source_threshold": 2.0,
+      "target_threshold": 0.5,
+      "radius": 12,
+      "min_ratio": 0.75
+    },
+    {
+      "type": "flow_reaches_pool",
+      "flow_channel": "flow_accumulation",
+      "pool_channel": "water_depth_m",
+      "pool_depth_threshold": 2.0,
+      "min_flow": 10.0,
+      "radius": 4,
+      "min_ratio": 0.65
+    },
+    {
+      "type": "foam_near_water",
+      "source_channel": "foam",
+      "target_channel": "water_surface_mask",
+      "source_threshold": 0.1,
+      "target_threshold": 0.5,
+      "radius": 2,
+      "min_ratio": 0.9
+    }
+  ],
   "render_goldens": {}
 }

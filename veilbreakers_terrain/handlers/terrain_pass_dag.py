@@ -16,10 +16,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Sequence, Set
 
-logger = logging.getLogger(__name__)
-
 from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import PassDefinition, PassResult
+
+logger = logging.getLogger(__name__)
 
 
 class PassDAGError(RuntimeError):
@@ -86,6 +86,7 @@ def _merge_pass_outputs(
     definition = target_controller.get_pass(source_result.pass_name)
     target_stack = target_controller.state.mask_stack
     source_stack = source_result.metrics.pop("_worker_mask_stack", None)
+    worker_side_effects = source_result.metrics.pop("_worker_side_effects", ())
 
     if source_stack is None:
         raise PassDAGError(
@@ -150,9 +151,22 @@ def _merge_pass_outputs(
 
         target_stack.set(channel, val, source_result.pass_name)
 
-    target_stack.height_min_m = source_stack.height_min_m
-    target_stack.height_max_m = source_stack.height_max_m
+    target_height = target_stack.get("height")
+    if target_height is not None:
+        try:
+            import numpy as _np
+            h = _np.asarray(target_height, dtype=_np.float64)
+            target_stack.height_min_m = float(h.min()) if h.size else 0.0
+            target_stack.height_max_m = float(h.max()) if h.size else 0.0
+        except Exception:  # noqa: BLE001
+            target_stack.height_min_m = source_stack.height_min_m
+            target_stack.height_max_m = source_stack.height_max_m
+    else:
+        target_stack.height_min_m = source_stack.height_min_m
+        target_stack.height_max_m = source_stack.height_max_m
     target_stack.content_hash = None
+    if worker_side_effects:
+        target_controller.state.side_effects.extend(list(worker_side_effects))
 
     source_result.content_hash_after = target_stack.compute_hash()
     target_controller.state.record_pass(source_result)
@@ -180,6 +194,7 @@ class PassDAG:
             )
 
         self._passes: Dict[str, PassDefinition] = {p.name: p for p in passes}
+        self._order: Dict[str, int] = {name: idx for idx, name in enumerate(self._passes)}
         self._producers: Dict[str, List[str]] = {}
         for p in passes:
             for ch in p.produces_channels:
@@ -219,6 +234,14 @@ class PassDAG:
     def names(self) -> List[str]:
         return list(self._passes.keys())
 
+    def _producer_precedes_consumer(self, producer: str, consumer: str) -> bool:
+        """Keep channel dependency edges in requested sequence order."""
+        return (
+            producer != consumer
+            and producer in self._passes
+            and self._order.get(producer, -1) < self._order.get(consumer, -1)
+        )
+
     def dependencies(self, pass_name: str) -> Set[str]:
         """Return the set of pass names that produce channels ``pass_name`` consumes.
 
@@ -233,13 +256,13 @@ class PassDAG:
         deps: Set[str] = set()
         for ch in pdef.requires_channels:
             for producer in self._producers.get(ch, []):
-                if producer != pass_name and producer in self._passes:
+                if self._producer_precedes_consumer(producer, pass_name):
                     deps.add(producer)
         # Optional edges: only add when the channel actually has a registered
         # producer. Absence is legal and does NOT become a dependency edge.
         for ch in getattr(pdef, "optional_channels", ()):
             for producer in self._producers.get(ch, []):
-                if producer != pass_name and producer in self._passes:
+                if self._producer_precedes_consumer(producer, pass_name):
                     deps.add(producer)
         return deps
 
@@ -389,12 +412,16 @@ class PassDAG:
 
             def _runner(pname: str) -> PassResult:
                 worker_state = _lightweight_state_copy(controller.state)
+                base_side_effect_count = len(worker_state.side_effects)
                 worker_controller = TerrainPassController(
                     worker_state,
                     checkpoint_dir=controller.checkpoint_dir,
                 )
                 result = worker_controller.run_pass(pname, checkpoint=False)
                 result.metrics["_worker_mask_stack"] = worker_controller.state.mask_stack
+                result.metrics["_worker_side_effects"] = list(
+                    worker_controller.state.side_effects[base_side_effect_count:]
+                )
                 return result
 
             with ThreadPoolExecutor(

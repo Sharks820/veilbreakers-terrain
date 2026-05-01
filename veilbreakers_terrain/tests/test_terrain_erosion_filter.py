@@ -7,6 +7,8 @@ assumed slope on flat terrain, directional gullies on gradient heightmaps.
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 
 
@@ -83,6 +85,22 @@ class TestApplyAnalyticalErosion:
 
         # At least some values must differ
         assert not np.array_equal(r1.height_delta, r2.height_delta)
+
+    def test_phacelle_phase_wraps_before_trig_for_far_world_tiles(self):
+        """Analytical erosion must bound trig phase before sin/cos for far-origin tiles."""
+        from veilbreakers_terrain.handlers.terrain_erosion_filter import phacelle_noise
+
+        px = np.full((4, 4), 50_000.25, dtype=np.float64)
+        pz = np.full((4, 4), 75_000.75, dtype=np.float64)
+        slope_x = np.ones((4, 4), dtype=np.float64)
+        slope_z = np.zeros((4, 4), dtype=np.float64)
+
+        gully, d_cos, d_sin = phacelle_noise(px, pz, slope_x, slope_z, 8.0, 123)
+
+        assert np.isfinite(gully).all()
+        assert np.isfinite(d_cos).all()
+        assert np.isfinite(d_sin).all()
+        assert "np.remainder(proj, 1.0)" in inspect.getsource(phacelle_noise)
 
     def test_chunk_parallelism(self):
         """Same world coordinates must produce identical results regardless of tile offset.

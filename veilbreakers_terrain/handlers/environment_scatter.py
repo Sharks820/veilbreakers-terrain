@@ -1264,12 +1264,12 @@ def _location_layer_rand2(i: int, j: int, seed: int, k: int) -> tuple:
 
 
 class LocationLayer:
-    """Jittered grid scatter with 3x3 neighbor repulsion (Rune's algorithm).
+    """Jittered grid scatter with radius-aware neighbor repulsion.
 
     Each grid cell generates N candidates. Each candidate is placed at
     ``cell_origin + cell_size * (rand2 + 0.5)`` — always within the cell.
-    A 3x3 neighborhood repulsion check rejects any candidate closer than
-    ``repulsion_radius`` to an already-accepted point in adjacent cells.
+    A radius-aware neighborhood check rejects any candidate closer than
+    ``repulsion_radius`` to an already-accepted point in nearby cells.
 
     Parameters
     ----------
@@ -1398,6 +1398,10 @@ class LocationLayer:
             # Fallback for minimal Python environments without SciPy. Candidate
             # positions are still precomputed; only accept/reject remains scalar.
             accepted_per_cell: dict = {}
+            neighbor_radius_cells = max(
+                1,
+                int(np.ceil(self.repulsion_radius / max(cs, 1e-9))),
+            )
 
             for flat_idx in range(total):
                 grid_i = flat_idx // (n_cols * n_candidates)
@@ -1411,10 +1415,10 @@ class LocationLayer:
                 accepted_per_cell.setdefault(key, [])
 
                 accepted = True
-                for di in (-1, 0, 1):
+                for di in range(-neighbor_radius_cells, neighbor_radius_cells + 1):
                     if not accepted:
                         break
-                    for dj in (-1, 0, 1):
+                    for dj in range(-neighbor_radius_cells, neighbor_radius_cells + 1):
                         ni, nj = grid_i + di, grid_j + dj
                         for px, py in accepted_per_cell.get((ni, nj), ()):
                             ddx = cx - px
@@ -2918,12 +2922,47 @@ def _scatter_pass(
 
     _catalog_species_specs = getattr(_CATALOG, "values", lambda: [])() if _CATALOG else []
     _target_categories = _PASS_CATEGORY_MAP.get(pass_type, set())
+    _height_min = float(np.nanmin(heightmap)) if heightmap.size else 0.0
+    _height_max = float(np.nanmax(heightmap)) if heightmap.size else 0.0
+    _slope_min = float(np.nanmin(slope_map)) if slope_map.size else 0.0
+    if water_proximity_map is not None:
+        _water_arr_global = np.asarray(water_proximity_map, dtype=np.float32)
+        _water_min = float(np.nanmin(_water_arr_global)) if _water_arr_global.size else 0.0
+        _water_max = float(np.nanmax(_water_arr_global)) if _water_arr_global.size else 0.0
+    else:
+        _water_min = 0.0
+        _water_max = 1.0 - _height_min ** 0.7
+
+    def _species_impossible_before_sampling(_spec_row: dict) -> bool:
+        """Skip catalog species whose global bands cannot match this tile."""
+        if not _spec_row:
+            return False
+        if _height_max < float(_spec_row.get("alt_min", 0.0)):
+            return True
+        if _height_min > float(_spec_row.get("alt_max", 1.0)):
+            return True
+        if _slope_min > float(_spec_row.get("max_slope", 90.0)):
+            return True
+        if _water_max < float(_spec_row.get("moisture_min", 0.0)):
+            return True
+        if _water_min > float(_spec_row.get("moisture_max", 1.0)):
+            return True
+        place = _spec_row.get("place_near", []) or []
+        if "water_edge" in place and water_proximity_map is None:
+            return True
+        if "water_edge" in place and _water_max < 0.55:
+            return True
+        return False
+
     for _idx, _spec in enumerate(_catalog_species_specs):
         if _spec.category not in _target_categories:
             continue
         if _spec.biome_mask and biome not in _spec.biome_mask:
             continue
         _sid = _spec.species_id
+        _spec_row = _SPECIES_CONSTRAINTS.get(_sid, {})
+        if _species_impossible_before_sampling(_spec_row):
+            continue
         _sep = float(_spec.poisson_min_distance_m) * max(float(separation_scale), 1e-3)
         # Per-species deterministic seed so different species don't share
         # point grids (otherwise reeds and algae would land on identical pts).
@@ -2932,7 +2971,6 @@ def _scatter_pass(
             terrain_width, terrain_height, _sep, seed=_species_seed,
             density_map=density_map,
         )
-        _spec_row = _SPECIES_CONSTRAINTS.get(_sid, {})
         _lod_hint_dist = float(_spec.lod_viewer_distance_m)
         for pos in _candidates:
             wx = pos[0] - terrain_half_x

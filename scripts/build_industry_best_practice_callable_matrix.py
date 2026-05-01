@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path

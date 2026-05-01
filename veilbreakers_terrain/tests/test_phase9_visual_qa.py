@@ -120,6 +120,31 @@ def test_bundle_n_records_visual_qa_report_and_can_block_failures():
     assert any(issue.code == "BUNDLE_N_VISUAL_QA_FOAM_ALPHA" for issue in result.issues)
 
 
+def test_bundle_n_blocks_visual_qa_by_default_for_aaa_profile():
+    from veilbreakers_terrain.handlers.terrain_bundle_n import run_bundle_n_post_pipeline_hooks
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        PassResult,
+        TerrainIntentState,
+        TerrainPipelineState,
+    )
+
+    stack = _phase9_stack()
+    stack.set("foam", np.full((8, 8), 2.0, dtype=np.float32), "phase9_fixture")
+    intent = TerrainIntentState(
+        seed=10,
+        region_bounds=BBox(0.0, 0.0, 8.0, 8.0),
+        tile_size=7,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+    result = PassResult("phase9_fixture", "ok", 0.0)
+    summary = run_bundle_n_post_pipeline_hooks(SimpleNamespace(state=state, checkpoint_dir=None), [result])
+
+    assert summary["visual_qa_failed_names"] == ["foam_alpha"]
+    assert result.status == "failed"
+
+
 def test_quality_profile_production_warns_and_intent_default_is_aaa():
     from veilbreakers_terrain.handlers.terrain_quality_profiles import load_quality_profile
     from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState

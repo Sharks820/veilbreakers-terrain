@@ -493,6 +493,9 @@ def register_bundle_j_wildlife_zones_pass() -> None:
             produces_channels=("wildlife_affinity",),
             seed_namespace="wildlife_zones",
             requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
             description="Bundle J: compute per-species wildlife affinity maps",
         )
     )

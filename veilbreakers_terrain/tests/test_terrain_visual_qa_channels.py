@@ -11,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from veilbreakers_terrain.handlers.terrain_visual_qa import (
     REQUIRED_STACK_CHANNELS,
@@ -232,13 +231,21 @@ def test_all_pass_custom_channels():
 
 
 def test_empty_array_does_not_crash():
-    """Empty (size-0) arrays skip range checks but count as checked."""
+    """Empty required arrays fail instead of passing as fake checked channels."""
     stack = _valid_stack()
     stack.set("cliff_mask", np.array([], dtype=np.float32).reshape(0, 4), "test_fixture")
     result = validate_stack_channels(stack)
-    # No crash; cliff_mask should be checked (skipped range check gracefully)
-    assert isinstance(result, dict)
-    assert "checked" in result
+    assert result["ok"] is False
+    assert "cliff_mask" in result["invalid_channels"]
+
+
+def test_nan_array_fails_required_channel():
+    """NaN payloads are invalid terrain data, not an acceptable in-range channel."""
+    stack = _valid_stack()
+    stack.set("wetness", np.full((8, 8), np.nan, dtype=np.float32), "test_fixture")
+    result = validate_stack_channels(stack)
+    assert result["ok"] is False
+    assert "wetness" in result["invalid_channels"]
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +272,11 @@ def test_handler_reports_missing_in_issues():
 
 
 def test_handler_survives_non_stack_object():
-    """Handler wraps exceptions and returns status='error' for garbage input."""
+    """Garbage input cannot silently pass as valid visual QA."""
     result = handle_visual_qa_validate_channels(None)
-    # Should not raise; status can be ok (all channels missing) or error
-    assert "status" in result
+    assert result["status"] == "ok"
+    assert result["ok"] is False
+    assert result["missing"]
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +288,18 @@ def _scenario_stack():
     """Stack with real values suitable for scenario golden testing."""
     h = np.linspace(0.0, 200.0, 64, dtype=np.float32).reshape(8, 8)
     w = np.full((8, 8), 0.05, dtype=np.float32)
+    surface = np.full((8, 8), 250.0, dtype=np.float32)
     wd = np.full((8, 8), 5.0, dtype=np.float32)
     c = np.full((8, 8), 0.8, dtype=np.float32)
-    return _make_stack(height=h, water_surface_mask=w, water_depth_m=wd, cliff_mask=c)
+    slope = np.full((8, 8), 45.0, dtype=np.float32)
+    return _make_stack(
+        height=h,
+        water_surface_mask=w,
+        water_surface_elevation_m=surface,
+        water_depth_m=wd,
+        cliff_mask=c,
+        slope=slope,
+    )
 
 
 def test_scenario_water_present_passes():

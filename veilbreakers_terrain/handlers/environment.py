@@ -28,6 +28,8 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
+from .terrain_protocol import enforce_protocol
+
 # Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
 # transitively import this file outside Blender (tests, CI) must not crash at
 # import time; guarded functions raise RuntimeError at call time instead.
@@ -355,6 +357,65 @@ def _resolve_noise_sampling_scale(
 
     factor = _DEFAULT_NOISE_SCALE_FACTORS.get(terrain_type, 0.25)
     return max(float(terrain_size) * factor, 24.0)
+
+
+def _enforce_generate_terrain_protocol(
+    params: dict,
+    *,
+    resolution: int,
+    scale: float,
+    seed: int,
+) -> None:
+    """Fail closed on public terrain generation unless opt-outs are explicit."""
+    if params.get("enforce_protocol", True) is False:
+        return
+
+    from .terrain_protocol import ProtocolGate
+    from .terrain_semantics import BBox, TerrainIntentState, TerrainMaskStack, TerrainPipelineState
+
+    tile_size = max(int(resolution) - 1, 1)
+    cell_size = float(scale) / float(tile_size)
+    object_location = tuple(params.get("object_location", (0.0, 0.0, 0.0)))
+    world_origin_x = float(object_location[0]) - float(scale) * 0.5
+    world_origin_y = float(object_location[1]) - float(scale) * 0.5
+    region = BBox(
+        min_x=world_origin_x,
+        min_y=world_origin_y,
+        max_x=world_origin_x + float(scale),
+        max_y=world_origin_y + float(scale),
+    )
+    mask_stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=cell_size,
+        world_origin_x=world_origin_x,
+        world_origin_y=world_origin_y,
+        tile_x=int(params.get("tile_x", 0)),
+        tile_y=int(params.get("tile_y", 0)),
+        height=np.zeros((int(resolution), int(resolution)), dtype=np.float64),
+    )
+    intent = TerrainIntentState(
+        seed=int(seed),
+        region_bounds=region,
+        tile_size=tile_size,
+        cell_size=cell_size,
+        quality_profile=str(params.get("quality_profile", "aaa_open_world")),
+        composition_hints=dict(params.get("composition_hints") or {}),
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=mask_stack)
+    state.viewport_vantage = params.get("viewport_vantage")
+
+    ProtocolGate.rule_2_sync_to_user_viewport(
+        state,
+        out_of_view_ok=bool(params.get("out_of_view_ok", False)),
+    )
+    ProtocolGate.rule_4_real_geometry_not_vertex_tricks(params)
+    ProtocolGate.rule_5_smallest_diff_per_iteration(
+        state,
+        cells_affected=int(params.get("cells_affected", mask_stack.height.size)),
+        objects_affected=int(params.get("objects_affected", 0)),
+        bulk_edit=bool(params.get("bulk_edit", False)),
+    )
+    ProtocolGate.rule_6_surface_vs_interior_classification(params)
 
 
 def _enhance_heightmap_relief(
@@ -1953,7 +2014,7 @@ def handle_generate_terrain(params: dict) -> dict:
         # resolved terrain_type from the biome preset
         params = effective
 
-    use_controller = bool(params.get("use_controller", False))
+    use_controller = bool(params.get("use_controller", True))
 
     logger.info("Generating terrain (type=%s, use_controller=%s)",
                 params.get("terrain_type", "mountains"), use_controller)
@@ -1973,6 +2034,13 @@ def handle_generate_terrain(params: dict) -> dict:
     erosion = validated["erosion"]
     erosion_iters = validated["erosion_iterations"]
 
+    _enforce_generate_terrain_protocol(
+        params,
+        resolution=resolution,
+        scale=scale,
+        seed=seed,
+    )
+
     # --- Controller path: controller state is the terrain source of truth ---
     if use_controller:
         object_location = tuple(params.get("object_location", (0.0, 0.0, 0.0)))
@@ -1990,6 +2058,17 @@ def handle_generate_terrain(params: dict) -> dict:
                             float(entry[2]) if len(entry) >= 3 else 0.0,
                         )
                     )
+        quality_profile_name = str(params.get("quality_profile", "aaa_open_world"))
+        is_preview = quality_profile_name in ("preview", "mobile", "low")
+        composition_hints = dict(params.get("composition_hints") or {})
+        controller_apply_caves = bool(params.get("controller_apply_caves", False))
+        if controller_apply_caves:
+            composition_hints["controller_apply_caves"] = True
+        if params.get("skip_scatter", False):
+            composition_hints["skip_scatter"] = True
+        if params.get("waterfalls", True) is False:
+            composition_hints["waterfalls"] = False
+
         controller_params = {
             "tile_size": max(resolution - 1, 1),
             "cell_size": float(scale) / max(resolution - 1, 1),
@@ -1998,104 +2077,49 @@ def handle_generate_terrain(params: dict) -> dict:
             "scale": noise_scale,
             "world_origin_x": float(object_location[0]) - float(scale) * 0.5,
             "world_origin_y": float(object_location[1]) - float(scale) * 0.5,
-            "composition_hints": dict(params.get("composition_hints") or {}),
-            "quality_profile": str(params.get("quality_profile", "production")),
+            "composition_hints": composition_hints,
+            "quality_profile": quality_profile_name,
+            "bulk_edit": True,
+            "cells_affected": resolution * resolution,
+            "enforce_protocol": params.get("enforce_protocol", True),
+            "out_of_view_ok": bool(params.get("out_of_view_ok", False)),
         }
         if params.get("viewport_vantage") is not None:
             controller_params["viewport_vantage"] = params.get("viewport_vantage")
-        pipeline = [
-            "macro_world",
-            "structural_masks",
-        ]
-        controller_apply_caves = bool(params.get("controller_apply_caves", False))
-        if erosion in ("hydraulic", "thermal", "both") or cave_candidates:
+
+        needs_scene_read = (
+            erosion in ("hydraulic", "thermal", "both")
+            or bool(cave_candidates)
+            or not is_preview
+        )
+        if needs_scene_read:
             controller_scene_read = dict(scene_read_payload or {})
             controller_scene_read.setdefault("timestamp", 0.0)
             controller_scene_read.setdefault("reviewer", "compose_map")
             if cave_candidates:
                 controller_scene_read["cave_candidates"] = cave_candidates
+            if not is_preview:
+                controller_scene_read.setdefault(
+                    "success_criteria",
+                    ("production_content_pipeline",),
+                )
             controller_params["scene_read"] = controller_scene_read
         if erosion in ("hydraulic", "thermal", "both"):
-            pipeline.append("pass_hydrology")
-            pipeline.append("erosion")
-            pipeline.append("structural_masks")
-            pipeline.append("pass_hydrology")
             controller_params["erosion_profile"] = (
                 "temperate" if erosion == "hydraulic"
                 else "arid" if erosion == "thermal"
                 else "temperate"
             )
-        if cave_candidates and controller_apply_caves:
-            pipeline.append("caves")
-            pipeline.append("integrate_deltas")
-        if params.get("cliff_overlays", True):
-            pipeline.append("cliffs")
-        if ("caves" in pipeline or "cliffs" in pipeline) and "emit_overhang_meshes" not in pipeline:
-            pipeline.append("emit_overhang_meshes")
-        quality_profile_name = str(params.get("quality_profile", "production"))
-        is_preview = quality_profile_name in ("preview", "mobile", "low")
-        if not is_preview:
-            for production_pass in (
-                "water_variants",
-                "bathymetry",
-                "pass_water_depth",
-                "materials_v2",
-            ):
-                if production_pass not in pipeline:
-                    pipeline.append(production_pass)
-            if params.get("waterfalls", True) and "waterfalls" not in pipeline:
-                pipeline.append("waterfalls")
-        if "waterfalls" in pipeline and "emit_particle_systems" not in pipeline:
-            pipeline.append("emit_particle_systems")
-        if (
-            not is_preview
-            and not params.get("skip_scatter", False)
-            and "scatter_intelligent" not in pipeline
-        ):
-            pipeline.append("scatter_intelligent")
-        if not is_preview:
-            for production_pass in (
-                "pass_procedural_grass",
-                "pass_horizon_lod",
-                "pass_navmesh_export",
-                "prepare_terrain_normals",
-                "prepare_heightmap_raw_u16",
-                "prepare_unity_auxiliary_channels",
-            ):
-                if production_pass not in pipeline:
-                    pipeline.append(production_pass)
-        if (
-            any(p in pipeline for p in ("waterfalls", "scatter_intelligent"))
-            and "scene_read" not in controller_params
-        ):
-            controller_params["scene_read"] = {
-                "timestamp": 0.0,
-                "reviewer": "compose_map",
-                "success_criteria": ("production_content_pipeline",),
-            }
-        pipeline.append("validation_minimal" if is_preview else "validation_full")
-        controller_params["pipeline"] = pipeline
+        if params.get("pipeline") is not None:
+            controller_params["pipeline"] = list(params.get("pipeline") or [])
 
-        controller_pipeline = list(pipeline)
-        skipped_controller_passes: list[str] = []
-        while True:
-            active_params = dict(controller_params)
-            active_params["pipeline"] = controller_pipeline
-            try:
-                controller_run = _execute_terrain_pipeline(active_params)
-                break
-            except Exception as exc:
-                exc_text = str(exc)
-                if "Pass not registered:" not in exc_text:
-                    raise
-                missing_pass = exc_text.split("Pass not registered:", 1)[1].strip().strip("'\"")
-                if missing_pass not in controller_pipeline:
-                    raise
-                controller_pipeline = [p for p in controller_pipeline if p != missing_pass]
-                skipped_controller_passes.append(missing_pass)
-                if not controller_pipeline:
-                    raise
-        cave_pipeline_fallback = bool(skipped_controller_passes)
+        controller_run = _execute_terrain_pipeline(controller_params)
+        if controller_run.get("ok") is False:
+            raise RuntimeError(
+                "TerrainPassController protocol gate rejected env_generate_terrain: "
+                + str(controller_run.get("message") or controller_run.get("error"))
+            )
+        cave_pipeline_fallback = False
         controller_state = controller_run["state"]
         controller_results = controller_run["results"]
         failed_passes = [
@@ -2182,9 +2206,6 @@ def handle_generate_terrain(params: dict) -> dict:
             )
             result["cave_pipeline_fallback"] = cave_pipeline_fallback
             result["cave_pipeline_deferred"] = not controller_apply_caves
-        if skipped_controller_passes:
-            result["controller_skipped_missing_passes"] = skipped_controller_passes
-            result["controller_passes"] = [r.pass_name for r in controller_results]
         if biome_preset is not None:
             result["biome_preset"] = biome_name
             result["scatter_rules"] = biome_preset.get("scatter_rules", [])
@@ -2798,6 +2819,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         TerrainMaskStack,
         TerrainPipelineState,
         TerrainSceneRead,
+        UnknownPassError,
         WaterSystemSpec,
     )
 
@@ -2808,7 +2830,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         if pass_name:
             requested_passes = [str(pass_name)]
         else:
-            _qp_name = str(params.get("quality_profile", "production"))
+            _qp_name = str(params.get("quality_profile", "aaa_open_world"))
             _is_preview_qp = _qp_name in ("preview", "mobile", "low")
             requested_passes = [
                 "pass_generate_low_freq_hmap",
@@ -2828,7 +2850,15 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
         if pass_name not in TerrainPassController.PASS_REGISTRY
     ]
     if missing_passes or not TerrainPassController.PASS_REGISTRY:
-        register_all_terrain_passes(strict=False)
+        register_all_terrain_passes(strict=not bool(TerrainPassController.PASS_REGISTRY))
+        still_missing = [
+            pass_name for pass_name in requested_passes
+            if pass_name not in TerrainPassController.PASS_REGISTRY
+        ]
+        if still_missing:
+            raise UnknownPassError(
+                f"Terrain pipeline requested unregistered passes after registrar load: {still_missing}"
+            )
 
     tile_size = int(params.get("tile_size", 64))
     cell_size = float(params.get("cell_size", 1.0))
@@ -3000,7 +3030,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     )
 
     composition_hints = dict(params.get("composition_hints") or {})
-    quality_profile = str(params.get("quality_profile", "production"))
+    quality_profile = str(params.get("quality_profile", "aaa_open_world"))
 
     intent = TerrainIntentState(
         seed=seed,
@@ -3048,9 +3078,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
             ProtocolGate.rule_1_observe_before_calculate(state)
             ProtocolGate.rule_2_sync_to_user_viewport(
                 state,
-                out_of_view_ok=bool(
-                    params.get("out_of_view_ok", state.viewport_vantage is None)
-                ),
+                out_of_view_ok=bool(params.get("out_of_view_ok", False)),
             )
             ProtocolGate.rule_3_lock_reference_empties(state)
             ProtocolGate.rule_4_real_geometry_not_vertex_tricks(params)
@@ -3058,7 +3086,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
                 state,
                 cells_affected=int(params.get("cells_affected", 0)),
                 objects_affected=int(params.get("objects_affected", 0)),
-                bulk_edit=bool(params.get("bulk_edit", True)),
+                bulk_edit=bool(params.get("bulk_edit", False)),
             )
             ProtocolGate.rule_6_surface_vs_interior_classification(params)
             ProtocolGate.rule_7_plugin_usage(params)
@@ -3153,6 +3181,16 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     ]
     if missing_after_injection:
         register_all_terrain_passes(strict=False)
+        still_missing_after_injection = [
+            pipeline_pass
+            for pipeline_pass in requested_after_injection
+            if pipeline_pass not in TerrainPassController.PASS_REGISTRY
+        ]
+        if still_missing_after_injection:
+            raise UnknownPassError(
+                "Terrain pipeline contains unregistered passes after canonical injection: "
+                f"{still_missing_after_injection}"
+            )
 
     try:
         if pipeline is not None:
@@ -3216,7 +3254,11 @@ def handle_run_terrain_pass(params: dict) -> dict:
         dict with ``ok``, ``results`` (list of PassResult dicts),
         ``content_hash``, ``populated_channels``.
     """
-    execution = _execute_terrain_pipeline(params)
+    execution_params = dict(params)
+    execution_params.setdefault("enforce_protocol", True)
+    execution = _execute_terrain_pipeline(execution_params)
+    if execution.get("ok") is False:
+        return execution
     mask_stack = execution["mask_stack"]
     results = execution["results"]
 
@@ -5189,7 +5231,6 @@ def _paint_road_mask_on_terrain(
         return
 
     total_radius = max(road_half_width + shoulder_width, 1e-6)
-    zero_color = np.asarray((0.0, 0.0, 0.0, 0.0), dtype=np.float32)
     surface = str(surface_key or "dirt").strip().lower()
     target_palette = {
         "trail": (0.90, 0.07, 0.02, 0.01),
@@ -7914,7 +7955,6 @@ def handle_carve_water_basin(params: dict) -> dict:
     cx = float(center[0])
     cy = float(center[1])
     protected_zones: list[dict] = list(params.get("protected_zones") or [])
-    seed_param = params.get("seed")
 
     # ------------------------------------------------------------------
     # World-space coordinate arrays — must be defined before any mask or
@@ -8180,6 +8220,7 @@ def handle_carve_water_basin(params: dict) -> dict:
 # Handler: export_unity_bundle
 # ---------------------------------------------------------------------------
 
+@enforce_protocol(require_rule_1=False, require_rule_3=False, require_rule_7=False)
 def handle_export_unity_bundle(params: dict) -> dict:
     """Export a Unity terrain bundle from a populated ``TerrainMaskStack``.
 
@@ -8212,7 +8253,8 @@ def handle_export_unity_bundle(params: dict) -> dict:
         stack,
         output_dir,
         profile=profile,
-        strict_unity_resolution=bool(params.get("strict_unity_resolution", False)),
+        strict_unity_resolution=bool(params.get("strict_unity_resolution", True)),
+        fail_on_validation_error=bool(params.get("fail_on_validation_error", True)),
     )
     return {
         "output_dir": str(output_dir),
@@ -8411,6 +8453,8 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
         "erosion_iterations": params.get("erosion_iterations", 5000),
         "flatten_zones": spec.flatten_zones,
         "use_controller": True,
+        "bulk_edit": True,
+        "out_of_view_ok": bool(params.get("out_of_view_ok", True)),
     }
     terrain_result = handle_generate_terrain(terrain_params)
 
@@ -8492,7 +8536,7 @@ def _compute_vertex_colors_for_biome_map(
 
     Returns list of (R, G, B, A) tuples, one per vertex.
     """
-    from .terrain_materials import apply_corruption_tint, BIOME_PALETTES, _get_material_def
+    from .terrain_materials import BIOME_PALETTES, _get_material_def
 
     mesh = obj.data
     rows, cols = spec.biome_ids.shape

@@ -85,14 +85,13 @@ Every terrain generation session MUST execute these steps in this exact order. T
 
 ### Step 4: Apply Flatten Zones
 
-**Function:** `_apply_flatten_zones_stub()` in `terrain_twelve_step.py`
-**Delegates to:** `flatten_multiple_zones()` in `terrain_advanced.py`
+**Function:** `_apply_flatten_zones()` in `terrain_twelve_step.py`
 **Input:** `world_hmap`, `intent.composition_hints["flatten_zones"]`
 **Output:** Modified `world_hmap` with settlement/dungeon-entrance zones flattened
 
 **Rule:** Flatten zones are applied to the raw low-frequency heightmap, before erosion. This ensures erosion integrates with the edited terrain — flattened zones develop natural drainage. Zones declared in `intent.composition_hints["flatten_zones"]` as a list of dicts with keys `center_x`, `center_y`, `radius`, optional `target_height` and `blend_width`.
 
-**World-unit preservation:** `_apply_flatten_zones_stub` normalizes to [0,1] before calling `flatten_multiple_zones`, then denormalizes back. This is the correct call pattern — do not call `flatten_multiple_zones` directly with world-unit values.
+**World-unit preservation:** `_apply_flatten_zones` operates directly in world-space metres with cosine falloff. Do not introduce per-tile `[0,1]` normalization in this step.
 
 **Sequence tag:** `"4_apply_flatten_zones"`
 
@@ -100,14 +99,14 @@ Every terrain generation session MUST execute these steps in this exact order. T
 
 ### Step 5: Apply Canyon/River Carves
 
-**Function:** `_apply_canyon_river_carves_stub()` in `terrain_twelve_step.py`
-**Delegates to:** `carve_river_path()` in `_terrain_noise.py`
+**Function:** `_apply_canyon_river_carves()` in `terrain_twelve_step.py`
+**Delegates to:** `carve_u_valley()` in `terrain_glacial.py` and `carve_river_path()` in `_terrain_noise.py`
 **Input:** `world_hmap`, `intent.composition_hints["river_carves"]`
 **Output:** Modified `world_hmap` with river/canyon channels cut
 
 **Rule:** River carves use A* pathfinding to find downhill routes between source and destination cells. The carve happens on the LOW-FREQUENCY terrain before erosion, so that hydraulic erosion then deepens the carved channels naturally. Carve depth is specified as a fraction of normalized height range (e.g., `depth=0.05`).
 
-**World-unit preservation:** Same normalize/denormalize wrapper as Step 4.
+**World-unit preservation:** Canyon paths operate in world-unit heights and return an accumulated `glacial_delta` for downstream tile stacks. River carving uses its own internal normalized path-carve contract.
 
 **Sequence tag:** `"5_apply_canyon_river_carves"`
 
@@ -149,9 +148,9 @@ Every terrain generation session MUST execute these steps in this exact order. T
 ### Step 8: Detect Hero Candidates
 
 **Functions:**
-- `_detect_cliff_edges_stub(world_eroded)` — slope-threshold + connected-component labeling, returns `List[Tuple[int, int]]`
-- `_detect_cave_candidates_stub(world_eroded)` — Laplacian curvature + local minima, returns `List[Tuple[int, int]]`
-- `_detect_waterfall_lips_stub(world_eroded, ..., flow_accumulation=_world_flow_acc)` — delegates to `detect_waterfall_lip_candidates()` in `terrain_waterfalls.py`
+- `_detect_cliff_edges(world_eroded)` — slope-threshold + connected-component labeling, returns `List[Tuple[int, int]]`
+- `_detect_cave_candidates(world_eroded)` — Laplacian curvature + local minima, returns `List[Tuple[int, int]]`
+- `_detect_waterfall_lips(world_eroded, ..., flow_accumulation=_world_flow_acc)` — delegates to `detect_waterfall_lip_candidates()` in `terrain_waterfalls.py`
 
 **Input:** `world_eroded`, `world_flow["flow_accumulation"]`
 **Output:** `cliff_candidates`, `cave_candidates`, `waterfall_lip_candidates`

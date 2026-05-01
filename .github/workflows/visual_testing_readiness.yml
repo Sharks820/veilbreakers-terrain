@@ -8,6 +8,7 @@ on:
 jobs:
   visual-testing-readiness:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
@@ -18,20 +19,22 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y blender python3-numpy python3-pil libegl1
           python -m pip install --upgrade pip
-          pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
-          pip install pillow
+          pip install -e ".[dev]"
+          BLENDER_PYDEPS="$RUNNER_TEMP/blender_pydeps"
+          mkdir -p "$BLENDER_PYDEPS"
+          python -m pip install --upgrade --target "$BLENDER_PYDEPS" --no-deps opensimplex
+          if find "$BLENDER_PYDEPS" -maxdepth 1 -name "numpy*" | grep -q .; then
+            echo "Unexpected CPython-host NumPy wheel in Blender PYTHONPATH"
+            exit 1
+          fi
 
-      # The standard GitHub runner does not have Blender, so we pass
-      # --allow-no-blender. The gate will still fail on placeholder PNGs or a
-      # pixel-diff exceedance, which is exactly the plumbing signal CI needs.
-      # A real Blender-in-CI gate is tracked as a separate future workflow.
       - name: Run visual testing readiness gate
         id: visual_gate
-        continue-on-error: true
         run: |
-          python scripts/visual_testing_readiness_gate.py --allow-no-blender
-          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          PYTHONPATH="$RUNNER_TEMP/blender_pydeps:/usr/lib/python3/dist-packages:$PWD:${PYTHONPATH:-}" blender --background --python scripts/visual_testing_readiness_gate.py
 
       - name: Upload readiness artifact
         if: always()
@@ -61,10 +64,15 @@ jobs:
               "blockers",
               "blender_runtime_detected",
               "placeholder_png",
+              "blank_png",
+              "image_stats",
+              "blender_fixture",
               "pixel_diff_exceeded",
               "perceptual_hash",
               "captured_byte_length",
               "requested_screenshot_shape",
+              "reference_present",
+              "pixel_diff",
           }
           missing = sorted(required_keys - data.keys())
           if missing:
@@ -73,8 +81,23 @@ jobs:
           if data.get("placeholder_png"):
               print("FAIL: placeholder_png=true")
               sys.exit(1)
+          if data.get("blank_png"):
+              print("FAIL: blank_png=true")
+              sys.exit(1)
+          if not data.get("blender_runtime_detected"):
+              print("FAIL: blender_runtime_detected=false")
+              sys.exit(1)
+          if not data.get("blender_fixture", {}).get("created"):
+              print("FAIL: blender fixture was not created")
+              sys.exit(1)
           if data.get("pixel_diff_exceeded"):
               print("FAIL: pixel_diff_exceeded=true")
+              sys.exit(1)
+          if not data.get("reference_present"):
+              print("FAIL: reference_present=false")
+              sys.exit(1)
+          if not data.get("pixel_diff", {}).get("compared"):
+              print("FAIL: pixel_diff.compared=false")
               sys.exit(1)
           print("artifact shape OK; blender_runtime_detected=",
                 data.get("blender_runtime_detected"))

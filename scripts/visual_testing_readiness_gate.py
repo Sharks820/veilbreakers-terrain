@@ -12,15 +12,14 @@ Hardening rules enforced here:
   local/dev preview (which still records ``ready_for_visual_testing=False``).
 * **Reject placeholder PNG bytes.** A captured thumbnail smaller than 500 bytes
   is always a fake. Real PNGs with a single IDAT chunk exceed that minimum.
-* **Real pixel-level assertion.** When a reference thumbnail exists at
-  ``output/visual_readiness/reference/test_live_preview_thumbnail.png`` the
-  captured thumbnail is compared channel-wise. Mean-absolute-diff above
-  ``10/255`` or a shape mismatch fails the gate.
+* **Real pixel-level assertion.** A reference thumbnail must exist at
+  ``output/visual_readiness/reference/test_live_preview_thumbnail.png`` for a
+  release-ready run. The captured thumbnail is compared channel-wise.
+  Mean-absolute-diff above ``10/255`` or a shape mismatch fails the gate.
 * **Perceptual hash.** A simple 8x8 brightness-grid hash (average hash) is
   recorded in the JSON artifact for change tracking over time.
-* **CI enforcement.** Run via ``--allow-no-blender`` in CI to get a successful
-  plumbing check while still failing on ``pixel_diff_exceeded`` or
-  ``placeholder_png``.
+* **CI enforcement.** CI runs this inside headless Blender; no-Blender runs are
+  developer preview only and are not accepted as visual proof.
 """
 
 from __future__ import annotations
@@ -29,7 +28,9 @@ import argparse
 import hashlib
 import io
 import json
+import struct
 import sys
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +72,7 @@ def _load_image_rgb(image_bytes: bytes):
     try:
         from PIL import Image  # type: ignore
     except Exception:  # pragma: no cover - pillow is in requirements
-        return None
+        return _load_png_rgb_stdlib(image_bytes)
 
     try:
         with Image.open(io.BytesIO(image_bytes)) as img:
@@ -90,6 +91,76 @@ def _load_image_rgb(image_bytes: bytes):
                     row.append((raw[off], raw[off + 1], raw[off + 2]))
                 rows.append(row)
             return {"width": width, "height": height, "pixels": rows}
+    except Exception:
+        return _load_png_rgb_stdlib(image_bytes)
+
+
+def _load_png_rgb_stdlib(image_bytes: bytes):
+    """Small PNG decoder fallback for Blender Python, where Pillow is absent."""
+
+    if not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    try:
+        pos = 8
+        width = height = 0
+        bit_depth = color_type = None
+        idat = bytearray()
+        while pos + 8 <= len(image_bytes):
+            length = struct.unpack(">I", image_bytes[pos:pos + 4])[0]
+            tag = image_bytes[pos + 4:pos + 8]
+            data_start = pos + 8
+            data_end = data_start + length
+            if data_end + 4 > len(image_bytes):
+                return None
+            data = image_bytes[data_start:data_end]
+            if tag == b"IHDR":
+                width, height, bit_depth, color_type, _, _, _ = struct.unpack(">IIBBBBB", data)
+            elif tag == b"IDAT":
+                idat.extend(data)
+            elif tag == b"IEND":
+                break
+            pos = data_end + 4
+        if width <= 0 or height <= 0 or bit_depth != 8 or color_type not in (2, 6):
+            return None
+        channels = 3 if color_type == 2 else 4
+        stride = width * channels
+        raw = zlib.decompress(bytes(idat))
+        rows = []
+        prev = [0] * stride
+        offset = 0
+        for _y in range(height):
+            filter_type = raw[offset]
+            offset += 1
+            scan = list(raw[offset:offset + stride])
+            offset += stride
+            recon = [0] * stride
+            for i, value in enumerate(scan):
+                left = recon[i - channels] if i >= channels else 0
+                up = prev[i]
+                up_left = prev[i - channels] if i >= channels else 0
+                if filter_type == 0:
+                    predictor = 0
+                elif filter_type == 1:
+                    predictor = left
+                elif filter_type == 2:
+                    predictor = up
+                elif filter_type == 3:
+                    predictor = (left + up) // 2
+                elif filter_type == 4:
+                    p = left + up - up_left
+                    pa = abs(p - left)
+                    pb = abs(p - up)
+                    pc = abs(p - up_left)
+                    predictor = left if pa <= pb and pa <= pc else up if pb <= pc else up_left
+                else:
+                    return None
+                recon[i] = (value + predictor) & 0xFF
+            rows.append([
+                (recon[x * channels], recon[x * channels + 1], recon[x * channels + 2])
+                for x in range(width)
+            ])
+            prev = recon
+        return {"width": width, "height": height, "pixels": rows}
     except Exception:
         return None
 
@@ -186,6 +257,116 @@ def _read_bytes_safely(path: Path) -> bytes | None:
         return None
 
 
+def _running_in_blender_runtime() -> bool:
+    try:
+        import bpy  # type: ignore
+
+        return not bpy.__class__.__module__.startswith("unittest")
+    except Exception:
+        return False
+
+
+def _ensure_blender_readiness_fixture() -> dict[str, Any]:
+    """Create a tiny inspectable terrain scene when running inside Blender."""
+
+    if not _running_in_blender_runtime():
+        return {"created": False, "reason": "no_blender_runtime"}
+
+    try:
+        import math
+        import bpy  # type: ignore
+        sample_warning: str | None = None
+
+        # Clear prior gate fixture only; never touch user-authored objects.
+        for obj in list(bpy.data.objects):
+            if obj.name.startswith("VB_VisualGate_"):
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+        size = 18.0
+        verts = []
+        faces = []
+        grid = 18
+        for y in range(grid + 1):
+            for x in range(grid + 1):
+                px = (x / grid - 0.5) * size
+                py = (y / grid - 0.5) * size
+                pz = (
+                    0.9 * math.sin(px * 0.35)
+                    + 0.45 * math.cos(py * 0.42)
+                    + 0.18 * math.sin((px + py) * 0.7)
+                )
+                verts.append((px, py, pz))
+        for y in range(grid):
+            for x in range(grid):
+                i = y * (grid + 1) + x
+                faces.append((i, i + 1, i + grid + 2, i + grid + 1))
+
+        mesh = bpy.data.meshes.new("VB_VisualGate_TerrainMesh")
+        mesh.from_pydata(verts, [], faces)
+        mesh.update()
+        terrain_obj = bpy.data.objects.new("VB_VisualGate_Terrain", mesh)
+        bpy.context.collection.objects.link(terrain_obj)
+
+        mat = bpy.data.materials.new("VB_VisualGate_TerrainMat")
+        mat.diffuse_color = (0.22, 0.33, 0.18, 1.0)
+        terrain_obj.data.materials.append(mat)
+
+        light_data = bpy.data.lights.new("VB_VisualGate_KeyLightData", type="SUN")
+        light_obj = bpy.data.objects.new("VB_VisualGate_KeyLight", light_data)
+        bpy.context.collection.objects.link(light_obj)
+        light_obj.rotation_euler = (math.radians(48.0), 0.0, math.radians(36.0))
+        light_data.energy = 2.2
+
+        camera_data = bpy.data.cameras.new("VB_VisualGate_CameraData")
+        camera_obj = bpy.data.objects.new("VB_VisualGate_Camera", camera_data)
+        bpy.context.collection.objects.link(camera_obj)
+        camera_obj.location = (15.0, -18.0, 12.0)
+        direction = terrain_obj.location - camera_obj.location
+        camera_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+        camera_data.lens = 32.0
+        camera_data.clip_end = 500.0
+        bpy.context.scene.camera = camera_obj
+
+        try:
+            bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"
+        except Exception:
+            bpy.context.scene.render.engine = "BLENDER_EEVEE"
+        if hasattr(bpy.context.scene, "eevee"):
+            try:
+                bpy.context.scene.eevee.taa_render_samples = 32
+            except (AttributeError, TypeError) as exc:
+                sample_warning = repr(exc)
+        bpy.context.scene.world.color = (0.035, 0.045, 0.055)
+        return {
+            "created": True,
+            "object_count": 3,
+            "mesh_vertices": len(verts),
+            "mesh_faces": len(faces),
+            "sample_warning": sample_warning,
+        }
+    except Exception as exc:  # noqa: BLE001 - readiness gate reports exact fixture failure
+        return {"created": False, "reason": repr(exc)}
+
+
+def _image_luma_stats(image_bytes: bytes) -> dict[str, Any]:
+    decoded = _load_image_rgb(image_bytes)
+    if decoded is None:
+        return {"decoded": False}
+    values = []
+    for row in decoded["pixels"]:
+        for r, g, b in row:
+            values.append(0.299 * r + 0.587 * g + 0.114 * b)
+    if not values:
+        return {"decoded": True, "mean": 0.0, "stddev": 0.0}
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return {
+        "decoded": True,
+        "mean": mean,
+        "stddev": variance ** 0.5,
+    }
+
+
 def run_gate(
     *,
     allow_no_blender: bool = False,
@@ -235,6 +416,8 @@ def run_gate(
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    blender_runtime = _running_in_blender_runtime()
+    fixture_report = _ensure_blender_readiness_fixture()
     probes: dict[str, Any] = {}
     probes["scene_read"] = dispatch("scene_read", {"reviewer": "visual_gate"})
     probes["viewport_read"] = dispatch("viewport_read", {})
@@ -265,6 +448,7 @@ def run_gate(
             "filepath": str(THUMBNAIL_PATH),
             "width": screenshot_width,
             "height": screenshot_height,
+            "mode": "render" if blender_runtime else "viewport",
         },
     )
     probes["material_list"] = dispatch("material_procedural", {"list_available": True})
@@ -282,17 +466,10 @@ def run_gate(
     screenshot_contract_ok = (
         screenshot_result.get("width") == screenshot_width
         and screenshot_result.get("height") == screenshot_height
-        and "captured" in screenshot_result
+        and screenshot_result.get("captured") is True
     )
     material_result = probes["material_list"].get("result", {})
     material_contract_ok = material_result.get("count", 0) >= 45
-
-    try:
-        import bpy  # type: ignore
-
-        blender_runtime = not bpy.__class__.__module__.startswith("unittest")
-    except Exception:
-        blender_runtime = False
 
     # --- Thumbnail byte/pixel analysis -----------------------------------------
     thumbnail_bytes = _read_bytes_safely(THUMBNAIL_PATH)
@@ -303,6 +480,12 @@ def run_gate(
     )
     perceptual_hash = (
         _compute_perceptual_hash(thumbnail_bytes) if thumbnail_bytes else "raw:missing"
+    )
+    image_stats = _image_luma_stats(thumbnail_bytes) if thumbnail_bytes else {"decoded": False}
+    blank_png = bool(
+        blender_runtime
+        and image_stats.get("decoded")
+        and float(image_stats.get("stddev", 0.0)) < 1.0
     )
 
     reference_bytes = _read_bytes_safely(REFERENCE_PATH)
@@ -336,10 +519,16 @@ def run_gate(
         blockers.append("material_library_contract")
     if placeholder_png:
         blockers.append("placeholder_png")
+    if blank_png:
+        blockers.append("blank_png")
     if pixel_diff_exceeded:
         blockers.append("pixel_diff_exceeded")
+    if blender_runtime and reference_bytes is None:
+        blockers.append("missing_visual_reference")
     if not blender_runtime:
         blockers.append("no_blender_runtime")
+    if blender_runtime and not fixture_report.get("created"):
+        blockers.append("fixture_creation_failed")
 
     ready = not blockers
     if not blender_runtime:
@@ -357,6 +546,9 @@ def run_gate(
         "blender_runtime_detected": blender_runtime,
         "captured_byte_length": captured_byte_length,
         "placeholder_png": placeholder_png,
+        "blank_png": blank_png,
+        "image_stats": image_stats,
+        "blender_fixture": fixture_report,
         "perceptual_hash": perceptual_hash,
         "reference_perceptual_hash": reference_hash,
         "reference_present": reference_bytes is not None,
@@ -379,7 +571,13 @@ def run_gate(
     exit_code = 0 if ready else 1
     if not blender_runtime:
         exit_code = 0 if allow_no_blender else 1
-    if placeholder_png or pixel_diff_exceeded:
+    if (
+        placeholder_png
+        or blank_png
+        or pixel_diff_exceeded
+        or "missing_visual_reference" in blockers
+        or "fixture_creation_failed" in blockers
+    ):
         exit_code = 1
 
     return payload, exit_code
@@ -398,6 +596,8 @@ def write_outputs(payload: dict[str, Any]) -> None:
         f"- Material library contract ok: {payload['material_contract_ok']}",
         f"- Captured thumbnail bytes: {payload['captured_byte_length']}",
         f"- Placeholder PNG detected: {payload['placeholder_png']}",
+        f"- Blank PNG detected: {payload['blank_png']}",
+        f"- Blender fixture created: {payload['blender_fixture'].get('created')}",
         f"- Perceptual hash: {payload['perceptual_hash']}",
         f"- Reference present: {payload['reference_present']}",
         f"- Pixel diff exceeded: {payload['pixel_diff_exceeded']}",
@@ -436,6 +636,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
+    if argv is None and _running_in_blender_runtime():
+        argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     args = parser.parse_args(argv)
     payload, code = run_gate(
         allow_no_blender=args.allow_no_blender,
@@ -448,6 +650,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"ready_for_visual_testing={payload['ready_for_visual_testing']}")
     print(f"blender_runtime_detected={payload['blender_runtime_detected']}")
     print(f"placeholder_png={payload['placeholder_png']}")
+    print(f"blank_png={payload['blank_png']}")
     print(f"pixel_diff_exceeded={payload['pixel_diff_exceeded']}")
     if payload["blockers"]:
         print(f"blockers={','.join(payload['blockers'])}")

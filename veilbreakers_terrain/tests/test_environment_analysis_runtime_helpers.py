@@ -158,6 +158,30 @@ def test_audio_zone_helpers_filter_boundaries_rt60_echo_classification_and_zone_
     assert zones[0]["reverb_preset"] == "water_near"
 
 
+def test_audio_cc_filter_no_scipy_removes_small_components(monkeypatch):
+    from veilbreakers_terrain.handlers.terrain_audio_zones import _audio_cc_filter
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "scipy" or name.startswith("scipy."):
+            raise ImportError("blocked scipy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[0, 0] = True
+    mask[2:4, 2:4] = True
+
+    cleaned = _audio_cc_filter(mask, min_cells=2)
+
+    assert not cleaned[0, 0]
+    assert cleaned[2:4, 2:4].all()
+
+
 # ---------------------------------------------------------------------------
 # Wave-10 audio-zone upgrades — vectorised EDT fallback, enriched zone payload,
 # multi-class classifier coverage, Wwise CSV exporter, pipeline wiring.

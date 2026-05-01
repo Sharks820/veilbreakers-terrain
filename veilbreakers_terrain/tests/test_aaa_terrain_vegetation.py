@@ -561,6 +561,11 @@ class TestMultipassScatterOrder(unittest.TestCase):
             hm, slope, terrain_size=100.0, pass_type="structure", biome="prairie", seed=1
         )
         self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 100)
+        sample = result[0]
+        self.assertIn("vegetation_type", sample)
+        self.assertIn("lod_cluster_counts", sample)
+        self.assertGreater(sum(sample["lod_cluster_counts"].values()), 0)
 
     def test_ground_cover_pass_returns_list(self):
         hm, slope = self._flat_heightmap()
@@ -568,6 +573,9 @@ class TestMultipassScatterOrder(unittest.TestCase):
             hm, slope, terrain_size=100.0, pass_type="ground_cover", biome="prairie", seed=2
         )
         self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 1000)
+        self.assertTrue(any(item.get("vegetation_type") == "grass_prairie" for item in result))
+        self.assertTrue(all("position" in item and len(item["position"]) == 2 for item in result[:50]))
 
     def test_debris_pass_returns_list(self):
         hm, slope = self._flat_heightmap()
@@ -575,12 +583,16 @@ class TestMultipassScatterOrder(unittest.TestCase):
             hm, slope, terrain_size=100.0, pass_type="debris", biome="prairie", seed=3
         )
         self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 100)
+        self.assertTrue(any(item.get("vegetation_type") == "rock" for item in result))
+        self.assertTrue(all(item.get("scale", 0.0) > 0.0 for item in result[:50]))
 
     def test_scatter_pass_items_have_position_key(self):
         hm, slope = self._flat_heightmap()
         result = scatter_mod._scatter_pass(
             hm, slope, terrain_size=100.0, pass_type="structure", biome="default", seed=7
         )
+        self.assertGreater(len(result), 0)
         for item in result:
             self.assertIn("position", item, f"Scatter item missing 'position': {item}")
 

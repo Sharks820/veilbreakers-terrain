@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 from typing import List, Tuple
@@ -362,7 +363,6 @@ def test_compute_foam_mask_peaks_at_pool():
     # position.  The exact peak cell depends on the cell-center convention
     # used by _world_to_grid (origin + (idx+0.5)*cs), so we test proximity
     # rather than an exact cell index.
-    peak = float(foam.max())
     peak_r, peak_c = divmod(int(foam.argmax()), foam.shape[1])
     assert abs(peak_r - 15) <= 2, f"foam peak row {peak_r} not near pool row 15"
     assert abs(peak_c - 15) <= 2, f"foam peak col {peak_c} not near pool col 15"
@@ -504,3 +504,186 @@ class TestManningSlopeConvention:
         assert "dimensionless" in doc.lower(), (
             "pass_water_flow_speed docstring must document unit convention"
         )
+
+
+def _contract_heightmap() -> np.ndarray:
+    rows = cols = 13
+    rr, cc = np.indices((rows, cols))
+    height = (100.0 - rr * 2.0 - cc).astype(np.float64)
+    height[6, :] -= np.linspace(0.0, 20.0, cols)
+    return height
+
+
+def test_detect_waterfalls_requires_drainage_and_reports_orientation():
+    from veilbreakers_terrain.handlers._water_network import detect_waterfalls
+
+    heightmap = np.array([[12.0, 11.5, 4.0, 3.5, 3.0]], dtype=np.float32)
+    path = [(0, col) for col in range(heightmap.shape[1])]
+    flow_acc = np.full_like(heightmap, 120.0, dtype=np.float32)
+
+    waterfalls = detect_waterfalls(
+        heightmap,
+        path,
+        cell_size=1.0,
+        min_drop=3.0,
+        max_horizontal=3.0,
+        flow_accumulation=flow_acc,
+        min_accumulation=50.0,
+    )
+
+    assert len(waterfalls) == 1
+    waterfall = waterfalls[0]
+    assert waterfall["top_idx"] == 0
+    assert waterfall["bottom_idx"] == 2
+    assert waterfall["top_row"] == 0
+    assert waterfall["bottom_col"] == 2
+    assert waterfall["drop"] == pytest.approx(8.0)
+    assert waterfall["horizontal_dist"] == pytest.approx(2.0)
+    assert waterfall["drop_rate"] == pytest.approx(4.0)
+    assert waterfall["drainage_area"] == pytest.approx(120.0)
+    assert waterfall["orientation_rad"] == pytest.approx(math.pi / 2.0)
+
+    low_flow = np.zeros_like(heightmap, dtype=np.float32)
+    assert (
+        detect_waterfalls(
+            heightmap,
+            path,
+            flow_accumulation=low_flow,
+            min_accumulation=50.0,
+        )
+        == []
+    )
+
+    gentle_height = np.linspace(12.0, 8.0, 21, dtype=np.float32).reshape(1, -1)
+    gentle_path = [(0, col) for col in range(gentle_height.shape[1])]
+    gentle_flow = np.full_like(gentle_height, 120.0, dtype=np.float32)
+    assert (
+        detect_waterfalls(
+            gentle_height,
+            gentle_path,
+            min_drop=3.0,
+            max_horizontal=5.0,
+            flow_accumulation=gentle_flow,
+            min_accumulation=50.0,
+        )
+        == []
+    )
+
+
+def test_from_heightmap_builds_velocity_and_valid_seam_contracts():
+    from veilbreakers_terrain.handlers._water_network import WaterNetwork
+
+    net = WaterNetwork.from_heightmap(
+        _contract_heightmap(),
+        cell_size=1.0,
+        tile_size=6,
+        min_drainage_area=4.0,
+        river_threshold=8.0,
+        lake_min_area=999.0,
+        seed=1,
+    )
+
+    assert len(net.nodes) > 0
+    assert len(net.segments) > 0
+    assert net._seam_validation_result["orphaned"] == 0
+    assert net._seam_validation_result["head_mismatch"] == 0
+
+    velocity = net.get_velocity_field()
+    assert velocity is not None
+    for key in ("vx", "vy", "speed", "foam_mask"):
+        assert velocity[key].shape == (13, 13)
+    assert np.max(velocity["speed"]) > 0.0
+
+    crossing_contracts = [
+        contract
+        for edges in net.tile_contracts.values()
+        for contracts in edges.values()
+        for contract in contracts
+    ]
+    assert crossing_contracts
+    assert all(0.0 <= contract.position <= 1.0 for contract in crossing_contracts)
+    assert all(contract.outflow_rate_m3s > 0.0 for contract in crossing_contracts)
+    assert all(contract.inflow_head_m == pytest.approx(contract.depth) for contract in crossing_contracts)
+    assert all(contract.seam_valid is True for contract in crossing_contracts)
+    for contract in crossing_contracts:
+        dx, dy = contract.flow_direction
+        assert math.hypot(dx, dy) == pytest.approx(1.0, rel=1e-6)
+        assert contract.target_tile in net.tile_contracts
+        row, col = contract.entry_cell
+        assert 0 <= row < 13
+        assert 0 <= col < 13
+
+
+def test_manning_discharge_zero_inputs_and_roughness_ordering():
+    from veilbreakers_terrain.handlers._water_network import WaterNetwork
+
+    assert WaterNetwork._manning_discharge(0.0, 0.1, 1.0, "river") == 0.0
+    assert WaterNetwork._manning_discharge(100.0, 0.1, 0.0, "river") == 0.0
+
+    river = WaterNetwork._manning_discharge(4000.0, 0.05, 1.0, "river")
+    stream = WaterNetwork._manning_discharge(4000.0, 0.05, 1.0, "stream")
+    steeper = WaterNetwork._manning_discharge(4000.0, 0.2, 1.0, "river")
+
+    assert river > stream
+    assert steeper > river
+
+
+def test_water_network_sidecar_round_trips_export_metadata():
+    from veilbreakers_terrain.handlers._water_network import WaterNetwork
+
+    net = WaterNetwork.from_heightmap(
+        _contract_heightmap(),
+        cell_size=1.0,
+        tile_size=6,
+        min_drainage_area=4.0,
+        river_threshold=8.0,
+        lake_min_area=999.0,
+        seed=2,
+    )
+
+    payload = net.to_dict()
+    json.dumps(payload)
+
+    assert payload["version"] == 2
+    assert payload["world_bounds"] == {
+        "x_min": 0.0,
+        "y_min": 0.0,
+        "x_max": 13.0,
+        "y_max": 13.0,
+    }
+    assert payload["strahler_orders"]
+    assert payload["shreve_orders"]
+    assert payload["tile_contracts"]
+
+    contract_payload = next(
+        contract
+        for tile in payload["tile_contracts"]
+        for edge in ("north", "south", "east", "west")
+        for contract in tile[edge]
+    )
+    assert contract_payload["outflow_rate_m3s"] > 0.0
+    assert isinstance(contract_payload["target_tile"], list)
+    assert isinstance(contract_payload["entry_cell"], list)
+    assert contract_payload["inflow_head_m"] == pytest.approx(contract_payload["depth"])
+    assert contract_payload["seam_valid"] is True
+
+    restored = WaterNetwork.from_dict(payload)
+    restored_contract = next(
+        contract
+        for edges in restored.tile_contracts.values()
+        for contracts in edges.values()
+        for contract in contracts
+    )
+    assert isinstance(restored_contract.flow_direction, tuple)
+    assert isinstance(restored_contract.target_tile, tuple)
+    assert isinstance(restored_contract.entry_cell, tuple)
+
+    edge_heads = restored.get_edge_head_levels(0, 0)
+    exported_head = next(head for heads in edge_heads.values() for head in heads)
+    assert set(exported_head) == {
+        "position",
+        "world_z",
+        "inflow_head_m",
+        "network_id",
+        "water_type",
+    }

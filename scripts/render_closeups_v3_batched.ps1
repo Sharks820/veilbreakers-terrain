@@ -5,7 +5,7 @@ param(
     [int]$BatchSize = 4,
     [int]$StartBatch = 1,
     [int]$Threads = 4,
-    [int]$Samples = 48,
+    [int]$Samples = 96,
     [int]$CooldownSeconds = 20,
     [string]$CyclesDeviceType = "OPTIX",
     [switch]$AllowCyclesCpuDevice

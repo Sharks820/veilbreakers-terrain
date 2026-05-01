@@ -22,10 +22,10 @@ Provides:
 
 from __future__ import annotations
 
-import heapq as _heapq
 import math
 import random as _random
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -271,6 +271,15 @@ def apply_hydraulic_erosion_masks(
     result = h_in.copy()
     rows, cols = result.shape
     rng = _random.Random(seed)
+    requested_iterations = max(0, int(iterations))
+    simulated_iterations = requested_iterations
+    small_tile_iteration_cap = requested_iterations
+    cell_count = max(1, rows * cols)
+    if requested_iterations > 0 and cell_count < 1024 * 1024:
+        tile_scale = math.sqrt(cell_count / float(1024 * 1024))
+        representative_budget = int(round(50000 * tile_scale))
+        small_tile_iteration_cap = max(2048, min(8192, representative_budget))
+        simulated_iterations = min(requested_iterations, small_tile_iteration_cap)
 
     source_min = float(h_in.min()) if h_in.size else 0.0
     source_max = float(h_in.max()) if h_in.size else 0.0
@@ -329,7 +338,7 @@ def apply_hydraulic_erosion_masks(
                 f"heightmap shape {result.shape}"
             )
 
-    for _ in range(iterations):
+    for _ in range(simulated_iterations):
         px = rng.random() * (cols - 2) + 0.5
         py = rng.random() * (rows - 2) + 0.5
         dx_dir = 0.0
@@ -517,7 +526,10 @@ def apply_hydraulic_erosion_masks(
         sediment_accumulation_at_base=sediment_accumulation_at_base,
         pool_deepening_delta=pool_deepening_delta,
         metrics={
-            "iterations": int(iterations),
+            "iterations": int(simulated_iterations),
+            "iterations_requested": int(requested_iterations),
+            "iteration_cap_applied": bool(simulated_iterations != requested_iterations),
+            "small_tile_iteration_cap": int(small_tile_iteration_cap),
             "source_min": source_min,
             "source_max": source_max,
             "input_range": input_range,
@@ -584,6 +596,63 @@ def _deposit(
     hmap[iy + 1, ix + 1] += amount * fx * fy
 
 
+@lru_cache(maxsize=32)
+def _brush_kernel(radius: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Cached circular erosion brush offsets and linear falloff weights."""
+    radius = max(0, int(radius))
+    dy_values: list[int] = []
+    dx_values: list[int] = []
+    weights: list[float] = []
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            dist = math.hypot(dx, dy)
+            if dist <= radius:
+                weight = max(0.0, radius - dist)
+                if weight > 0.0:
+                    dy_values.append(dy)
+                    dx_values.append(dx)
+                    weights.append(weight)
+    return (
+        np.asarray(dy_values, dtype=np.int32),
+        np.asarray(dx_values, dtype=np.int32),
+        np.asarray(weights, dtype=np.float64),
+    )
+
+
+def _talus_smooth_local(
+    hmap: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: int,
+    rows: int,
+    cols: int,
+    talus_thresh: float,
+    passes: int,
+) -> None:
+    """Vectorized local 4-neighbour talus relaxation over brush bounds."""
+    y0 = max(0, cy - radius)
+    y1 = min(rows, cy + radius + 1)
+    x0 = max(0, cx - radius)
+    x1 = min(cols, cx + radius + 1)
+    if y1 - y0 < 2 or x1 - x0 < 2:
+        return
+
+    sub = hmap[y0:y1, x0:x1]
+    for _ in range(passes):
+        delta = np.zeros_like(sub)
+        for src, dst in (
+            ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
+            ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+            ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
+            ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
+        ):
+            diff = sub[src] - sub[dst]
+            transfer = np.maximum(diff - talus_thresh, 0.0) * 0.25
+            delta[src] -= transfer
+            delta[dst] += transfer
+        sub += delta
+
+
 def _erode_brush(
     hmap: np.ndarray,
     cx: int,
@@ -642,27 +711,22 @@ def _erode_brush(
     # Clamp capacity
     cap = max(0.0, min(1.0, sediment_capacity))
     effective_amount = amount * cap
-
-    total_weight = 0.0
-    weights: list[tuple[int, int, float]] = []
-
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            ny = cy + dy
-            nx = cx + dx
-            if 0 <= ny < rows and 0 <= nx < cols:
-                dist = math.sqrt(dx * dx + dy * dy)
-                if dist <= radius:
-                    w = max(0.0, radius - dist)
-                    weights.append((ny, nx, w))
-                    total_weight += w
-
-    if total_weight <= 0 or effective_amount == 0.0:
+    dy_arr, dx_arr, weight_arr = _brush_kernel(radius)
+    if weight_arr.size == 0 or effective_amount == 0.0:
         return
 
-    norm = effective_amount / total_weight
-    for ny, nx, w in weights:
-        hmap[ny, nx] -= norm * w
+    ny = cy + dy_arr
+    nx = cx + dx_arr
+    valid = (ny >= 0) & (ny < rows) & (nx >= 0) & (nx < cols)
+    if not np.any(valid):
+        return
+
+    valid_weights = weight_arr[valid]
+    total_weight = float(valid_weights.sum())
+    if total_weight <= 0.0:
+        return
+
+    hmap[ny[valid], nx[valid]] -= (effective_amount / total_weight) * valid_weights
 
     # --- Talus smoothing passes within the brush footprint ---
     # Redistribute height differences that exceed a local talus threshold.
@@ -670,19 +734,7 @@ def _erode_brush(
     # produce smoother banks.
     if talus_smooth_passes > 0 and radius >= 1:
         talus_thresh = abs(amount) / max(total_weight, 1.0) * 0.5
-        _4DIRS = ((-1, 0), (1, 0), (0, -1), (0, 1))
-        for _ in range(talus_smooth_passes):
-            for ny, nx, _ in weights:
-                h_here = hmap[ny, nx]
-                for dr, dc in _4DIRS:
-                    nr2, nc2 = ny + dr, nx + dc
-                    if 0 <= nr2 < rows and 0 <= nc2 < cols:
-                        diff = h_here - hmap[nr2, nc2]
-                        if diff > talus_thresh:
-                            transfer = (diff - talus_thresh) * 0.25
-                            hmap[ny, nx] -= transfer
-                            hmap[nr2, nc2] += transfer
-                            h_here = hmap[ny, nx]
+        _talus_smooth_local(hmap, cx, cy, radius, rows, cols, talus_thresh, talus_smooth_passes)
 
 
 # ---------------------------------------------------------------------------

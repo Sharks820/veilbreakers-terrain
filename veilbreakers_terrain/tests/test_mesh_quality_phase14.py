@@ -1,9 +1,7 @@
 """Phase 14 Wave 3 mesh quality + BUG-87 + stratigraphy + water tests."""
 from __future__ import annotations
 
-import math
 import numpy as np
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +233,23 @@ class TestBug99ErosionKMap:
         state_soft, h_soft = _make_erosion_state(0.0)
         state_hard, h_hard = _make_erosion_state(1.0)
 
-        pass_erosion(state_soft, None)
-        pass_erosion(state_hard, None)
+        result_soft = pass_erosion(state_soft, None)
+        result_hard = pass_erosion(state_hard, None)
+
+        assert (
+            0
+            < result_soft.metrics["hydraulic_iterations"]
+            < result_soft.metrics["hydraulic_iteration_ceiling"]
+        )
+        assert (
+            0
+            < result_hard.metrics["hydraulic_iterations"]
+            < result_hard.metrics["hydraulic_iteration_ceiling"]
+        )
+        assert (
+            result_soft.metrics["hydraulic_iteration_ceiling"]
+            >= result_soft.metrics["hydraulic_iterations"]
+        )
 
         delta_soft = float(
             np.abs(np.asarray(state_soft.mask_stack.height) - h_soft).mean()

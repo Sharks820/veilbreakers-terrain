@@ -4,23 +4,16 @@ Audit date: 2026-04-19
 
 ## Totals
 
-- Test files scanned: `143`
-- Static test functions discovered: `3186`
-- Files with skip/xfail patterns: `7`
+- Test files scanned: `146`
+- Static test functions discovered: `3218`
+- Files with skip/xfail patterns: `0`
 - Files with timing thresholds: `7`
 - Files with sleep-based assertions: `1`
 - Files heavy on dispatch/registration mapping: `8`
-- Files with monkeypatch-driven smoke paths: `30`
+- Files with monkeypatch-driven smoke paths: `33`
 
 ## Highest Skip / Conditional Files
 
-- `veilbreakers_terrain/tests/test_physical_plausibility.py`: tests=`23`, skip=`5`, xfail=`0`
-- `veilbreakers_terrain/tests/test_cross_feature.py`: tests=`34`, skip=`3`, xfail=`0`
-- `veilbreakers_terrain/tests/test_statistical_terrain.py`: tests=`26`, skip=`2`, xfail=`0`
-- `veilbreakers_terrain/tests/test_terrain_features_phase14.py`: tests=`12`, skip=`1`, xfail=`0`
-- `veilbreakers_terrain/tests/test_environment_analysis_runtime_helpers.py`: tests=`22`, skip=`1`, xfail=`0`
-- `veilbreakers_terrain/tests/test_bundle_r.py`: tests=`66`, skip=`1`, xfail=`0`
-- `veilbreakers_terrain/tests/test_blender_capability_bridge.py`: tests=`8`, skip=`1`, xfail=`0`
 
 ## Highest Timing / Slow-Risk Files
 
@@ -35,12 +28,12 @@ Audit date: 2026-04-19
 ## Highest Dispatch / Mapping Files
 
 - `veilbreakers_terrain/tests/test_mcp_dispatch.py`: mapping_refs=`57`, tests=`43`, tags=`patched_smoke,dispatch_mapping_heavy`
-- `veilbreakers_terrain/tests/test_blender_capability_bridge.py`: mapping_refs=`31`, tests=`8`, tags=`conditional_or_skip_heavy,patched_smoke,dispatch_mapping_heavy`
+- `veilbreakers_terrain/tests/test_blender_capability_bridge.py`: mapping_refs=`31`, tests=`8`, tags=`patched_smoke,dispatch_mapping_heavy`
+- `veilbreakers_terrain/tests/test_world_map_light_atmosphere.py`: mapping_refs=`13`, tests=`117`, tags=`dispatch_mapping_heavy`
 - `veilbreakers_terrain/tests/test_road_coastline_terrain_features.py`: mapping_refs=`13`, tests=`117`, tags=`patched_smoke,dispatch_mapping_heavy`
-- `veilbreakers_terrain/tests/test_world_map_light_atmosphere.py`: mapping_refs=`12`, tests=`114`, tags=`dispatch_mapping_heavy`
 - `veilbreakers_terrain/tests/test_live_readiness_regressions.py`: mapping_refs=`4`, tests=`12`, tags=`patched_smoke,dispatch_mapping_heavy`
 - `veilbreakers_terrain/tests/test_terrain_cave_adapter.py`: mapping_refs=`2`, tests=`13`, tags=`dispatch_mapping_heavy`
-- `veilbreakers_terrain/tests/test_terrain_unity_export_bridge.py`: mapping_refs=`1`, tests=`19`, tags=`patched_smoke,dispatch_mapping_heavy`
+- `veilbreakers_terrain/tests/test_terrain_unity_export_bridge.py`: mapping_refs=`1`, tests=`24`, tags=`patched_smoke,dispatch_mapping_heavy`
 - `veilbreakers_terrain/tests/test_lod_material_live_readiness.py`: mapping_refs=`1`, tests=`6`, tags=`patched_smoke,dispatch_mapping_heavy`
 
 ## Interpretation

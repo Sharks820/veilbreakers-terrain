@@ -1,4 +1,4 @@
-"""test_road_visual.py — Road/path generation visual quality test.
+"""render_road_visual.py — Road/path generation visual render tool.
 
 Creates a 500x500m terrain with a sine-wave mountain ridge (peak ~60m at centre),
 routes a gravel road from (-200,-200) to (200,200) using the real 24-dir A* handler,
@@ -7,7 +7,7 @@ and renders three cameras to output/road_test/.
 
 Run:
     "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe" \\
-        --background --python scripts/test_road_visual.py
+        --background --python scripts/render_road_visual.py
 """
 
 from __future__ import annotations

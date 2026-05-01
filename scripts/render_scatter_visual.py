@@ -1,11 +1,11 @@
-"""test_scatter_visual.py — Standalone Blender 4.5 visual test for scatter/foliage system.
+"""render_scatter_visual.py — Standalone Blender 4.5 scatter/foliage render tool.
 
 Creates a flat 200x200m terrain, calls poisson_disk_sample and biome_filter_points
 to generate scatter points, places stand-in geometry for trees, rocks, and grass
 tufts, then renders 3 cameras showing distribution.
 
 Run:
-    "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe" --background --python scripts/test_scatter_visual.py
+    "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe" --background --python scripts/render_scatter_visual.py
 
 Outputs: output/scatter_test/
 """

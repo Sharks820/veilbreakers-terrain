@@ -311,14 +311,17 @@ class TestErosionVShapedValleys:
         height = eroded_masks.height
         rows, cols = height.shape
 
-        # Find the row with highest max drainage (likely a valley)
-        row_max_drain = drainage.max(axis=1)
-        best_row = int(row_max_drain.argmax())
-        if best_row < 2 or best_row >= rows - 2:
-            best_row = rows // 2
-
-        # Find the column of max drainage in that row
-        best_col = int(drainage[best_row].argmax())
+        # Pick the strongest interior channel. Edge cells can have high
+        # drainage but cannot provide a meaningful left/right cross-section.
+        margin = 3
+        interior = drainage[margin:rows - margin, margin:cols - margin]
+        assert interior.size > 0, "Erosion fixture must have an interior drainage field"
+        local_row, local_col = np.unravel_index(int(np.argmax(interior)), interior.shape)
+        best_row = int(local_row + margin)
+        best_col = int(local_col + margin)
+        assert float(interior.max()) > float(np.median(drainage)), (
+            "Erosion fixture must expose an interior channel stronger than median drainage"
+        )
 
         # Extract a cross-section centered on the channel
         half_width = min(10, best_col, cols - best_col - 1)

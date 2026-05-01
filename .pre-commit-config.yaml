@@ -1,0 +1,26 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-runtime-errors
+        name: Ruff runtime-error gate
+        entry: python -m ruff check --select F821 veilbreakers_terrain/handlers
+        language: system
+        pass_filenames: false
+
+      - id: callable-census-strict-zero
+        name: Callable census strict-zero
+        entry: python scripts/callable_census_gate.py --strict-zero
+        language: system
+        pass_filenames: false
+
+      - id: callable-wiring-strict
+        name: Callable wiring strict scan
+        entry: python scripts/scan_callable_wiring.py --strict-no-risk
+        language: system
+        pass_filenames: false
+
+      - id: test-guardrail-strict-quality
+        name: Test guardrail strict quality
+        entry: python scripts/build_test_guardrail_audit.py --strict-quality
+        language: system
+        pass_filenames: false
