@@ -12,7 +12,7 @@ from __future__ import annotations
 import heapq
 import math
 from collections import deque
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -653,6 +653,19 @@ def pass_hydrology(
     )
 
 
+def pass_hydrology_post_erosion(
+    state: "TerrainPipelineState",
+    region: "BBox | None",
+) -> "PassResult":
+    """Run hydrology after erosion while preserving post-erosion provenance."""
+    result = pass_hydrology(state, region)
+    stack = state.mask_stack
+    for channel in ("flow_direction", "flow_accumulation"):
+        if stack.get(channel) is not None:
+            stack.populated_by_pass[channel] = "pass_hydrology_post_erosion"
+    return replace(result, pass_name="pass_hydrology_post_erosion")
+
+
 def register_pass_hydrology() -> None:
     """Register pass_hydrology with TerrainPassController (Fix 7.3)."""
     from .terrain_pipeline import TerrainPassController
@@ -672,7 +685,7 @@ def register_pass_hydrology() -> None:
     TerrainPassController.register_pass(
         PassDefinition(
             name="pass_hydrology_post_erosion",
-            func=pass_hydrology,
+            func=pass_hydrology_post_erosion,
             requires_channels=("height",),
             produces_channels=("flow_direction", "flow_accumulation"),
             overrides=("flow_direction", "flow_accumulation"),

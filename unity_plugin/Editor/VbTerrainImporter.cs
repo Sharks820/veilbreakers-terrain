@@ -467,14 +467,27 @@ namespace VeilBreakers.TerrainImport.Editor
                     continue;
                 }
 
-                var generated =
-                    child.GetComponent<VbTerrainSidecarReference>() != null ||
-                    child.name.StartsWith("VB_", StringComparison.Ordinal);
-                if (generated)
+                if (child.GetComponent<VbTerrainSidecarReference>() != null)
                 {
                     UnityEngine.Object.DestroyImmediate(child.gameObject);
                 }
             }
+        }
+
+        private static VbTerrainSidecarReference MarkGenerated(
+            GameObject go,
+            string payloadType,
+            string relativeFile = ""
+        )
+        {
+            var reference = go.GetComponent<VbTerrainSidecarReference>();
+            if (reference == null)
+            {
+                reference = go.AddComponent<VbTerrainSidecarReference>();
+            }
+            reference.PayloadType = payloadType;
+            reference.RelativeFile = relativeFile ?? string.Empty;
+            return reference;
         }
 
         private static string BuildNavMeshDataAsset(
@@ -1050,6 +1063,7 @@ namespace VeilBreakers.TerrainImport.Editor
                 var go = new GameObject(
                     string.IsNullOrEmpty(spec.mesh_id) ? "VB_SupplementalMesh" : spec.mesh_id
                 );
+                MarkGenerated(go, "SupplementalMesh", descriptor.supplemental_mesh_specs_file);
                 go.transform.SetParent(parent, false);
                 go.transform.localPosition = Vector3.zero;
                 go.transform.localRotation = Quaternion.identity;
@@ -1077,6 +1091,15 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
+            if (!HasWaterRasterContract(bundleDirectory, descriptor))
+            {
+                Debug.LogWarning(
+                    "VeilBreakers terrain import skipped water mesh creation: " +
+                    "water_surface_elevation_file, water_depth_file, and flow_direction_file are required."
+                );
+                return;
+            }
+
             var payloadPath = Path.Combine(bundleDirectory, descriptor.water_shader_manifest_file);
             if (!File.Exists(payloadPath))
             {
@@ -1085,41 +1108,26 @@ namespace VeilBreakers.TerrainImport.Editor
             }
 
             var payload = JsonUtility.FromJson<WaterShaderManifest>(File.ReadAllText(payloadPath));
-            var materials = payload != null && payload.materials != null && payload.materials.Length > 0
-                ? payload.materials
-                : new[] { new WaterMaterialDescriptor() };
-
-            var parentGo = new GameObject("VB_WaterSurfaces");
-            parentGo.transform.SetParent(parent, false);
-            parentGo.transform.localPosition = Vector3.zero;
-            parentGo.transform.localRotation = Quaternion.identity;
-            parentGo.transform.localScale = Vector3.one;
-
-            foreach (var materialDescriptor in materials)
+            if (payload == null || payload.materials == null || payload.materials.Length == 0)
             {
-                var id = string.IsNullOrEmpty(materialDescriptor.material_id)
-                    ? "water"
-                    : materialDescriptor.material_id;
-                var go = new GameObject("VB_Water_" + id);
-                go.transform.SetParent(parentGo.transform, false);
-                go.transform.localPosition = new Vector3(
-                    descriptor.terrain_size_x_m * 0.5f,
-                    descriptor.water_level_unity_units - UnityOriginY(descriptor),
-                    descriptor.terrain_size_z_m * 0.5f
-                );
-                go.transform.localRotation = Quaternion.identity;
-                go.transform.localScale = Vector3.one;
-
-                var filter = go.AddComponent<MeshFilter>();
-                filter.sharedMesh = BuildWaterPlaneMesh(
-                    Mathf.Max(1.0f, descriptor.terrain_size_x_m),
-                    Mathf.Max(1.0f, descriptor.terrain_size_z_m),
-                    id
-                );
-
-                var renderer = go.AddComponent<MeshRenderer>();
-                renderer.sharedMaterial = GetOrCreateWaterMaterial(descriptor, materialDescriptor);
+                Debug.LogWarning($"VeilBreakers terrain import missing water material payload: {descriptor.water_shader_manifest_file}");
+                return;
             }
+
+            Debug.LogWarning(
+                "VeilBreakers terrain import skipped raster-backed water mesh creation: " +
+                "full-tile placeholder planes are disabled until water raster meshing is implemented."
+            );
+        }
+
+        private static bool HasWaterRasterContract(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor
+        )
+        {
+            return File.Exists(Path.Combine(bundleDirectory, descriptor.water_surface_elevation_file ?? string.Empty))
+                && File.Exists(Path.Combine(bundleDirectory, descriptor.water_depth_file ?? string.Empty))
+                && File.Exists(Path.Combine(bundleDirectory, descriptor.flow_direction_file ?? string.Empty));
         }
 
         private static Mesh BuildWaterPlaneMesh(float width, float depth, string id)
@@ -1211,6 +1219,7 @@ namespace VeilBreakers.TerrainImport.Editor
             }
 
             var parentGo = new GameObject("VB_LightPlacements");
+            MarkGenerated(parentGo, "LightPlacements", descriptor.light_placements_file);
             parentGo.transform.SetParent(parent, false);
             parentGo.transform.localPosition = Vector3.zero;
             parentGo.transform.localRotation = Quaternion.identity;
@@ -1269,6 +1278,7 @@ namespace VeilBreakers.TerrainImport.Editor
             }
 
             var go = new GameObject("VB_LightProbeGroup");
+            MarkGenerated(go, "ProbePlacements", descriptor.probe_placements_file);
             go.transform.SetParent(parent, false);
             go.transform.localPosition = Vector3.zero;
             go.transform.localRotation = Quaternion.identity;
@@ -1280,6 +1290,33 @@ namespace VeilBreakers.TerrainImport.Editor
                 positions[index] = ToVector3(payload.probes[index].position);
             }
             group.probePositions = positions;
+        }
+
+        private static bool HasRenderableFoliagePrototypes(VbFoliageManifestRenderer renderer)
+        {
+            if (renderer == null || renderer.Prototypes == null)
+            {
+                return false;
+            }
+
+            foreach (var prototype in renderer.Prototypes)
+            {
+                if (
+                    prototype != null
+                    && prototype.Material != null
+                    && prototype.LodMeshes != null
+                    && prototype.LodMeshes.Length > 0
+                    && (
+                        prototype.MeshId >= 0 ||
+                        !string.IsNullOrEmpty(prototype.SpeciesKey)
+                    )
+                )
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void AttachFoliageManifestRenderer(
@@ -1300,6 +1337,24 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
+            var renderer = terrainObject.GetComponent<VbFoliageManifestRenderer>();
+            if (renderer == null)
+            {
+                Debug.LogWarning(
+                    "VeilBreakers terrain import skipped foliage renderer attachment: " +
+                    "no VbFoliageManifestRenderer with populated Prototypes exists on the terrain object."
+                );
+                return;
+            }
+            if (!HasRenderableFoliagePrototypes(renderer))
+            {
+                Debug.LogWarning(
+                    "VeilBreakers terrain import skipped foliage renderer manifest assignment: " +
+                    "VbFoliageManifestRenderer.Prototypes must contain renderable mesh/material entries."
+                );
+                return;
+            }
+
             var assetFolder = Path.GetDirectoryName(descriptor.terrain_data_asset_path)?.Replace("\\", "/");
             if (string.IsNullOrEmpty(assetFolder))
             {
@@ -1312,11 +1367,6 @@ namespace VeilBreakers.TerrainImport.Editor
             AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
             var manifestAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(assetPath);
 
-            var renderer = terrainObject.GetComponent<VbFoliageManifestRenderer>();
-            if (renderer == null)
-            {
-                renderer = terrainObject.AddComponent<VbFoliageManifestRenderer>();
-            }
             renderer.ManifestJson = manifestAsset;
             renderer.ConvertTerrainXzyToUnityXyz = false;
             renderer.PositionsAreWorldSpace = true;
