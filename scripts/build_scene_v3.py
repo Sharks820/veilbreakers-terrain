@@ -467,7 +467,7 @@ def build_bridge_and_approach_paths(terrain_obj: bpy.types.Object, hm) -> dict:
     road_results: list[dict] = []
     route_grade_degrees = {
         "route_in": 13.0,
-        "route_out": 18.5,
+        "route_out": 32.0,  # mountain pass terrain requires steep switchback budget
     }
     for label, route_xy in (("route_in", route_in_xy), ("route_out", route_out_xy)):
         max_grade_degrees = route_grade_degrees[label]
