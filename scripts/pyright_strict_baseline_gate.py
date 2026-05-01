@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -73,13 +74,43 @@ def _error_counts(payload: dict[str, Any]) -> Counter[str]:
     return counts
 
 
+def _write_baseline(actual: Counter[str]) -> None:
+    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    baseline["allowed_error_counts"] = {
+        key: int(actual[key])
+        for key in sorted(actual)
+    }
+    BASELINE_PATH.write_text(
+        json.dumps(baseline, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Fail CI when strict Pyright errors grow beyond the checked-in baseline."
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Rewrite pyright-strict-baseline.json to the current strict error buckets.",
+    )
+    args = parser.parse_args()
+
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     allowed = Counter({
         str(key): int(value)
         for key, value in baseline.get("allowed_error_counts", {}).items()
     })
     actual = _error_counts(_run_pyright())
+
+    if args.update_baseline:
+        _write_baseline(actual)
+        print(
+            "updated pyright strict ratchet baseline: "
+            f"{sum(actual.values())} allowed errors across {len(actual)} buckets"
+        )
+        return 0
 
     regressions = {
         key: (allowed.get(key, 0), count)

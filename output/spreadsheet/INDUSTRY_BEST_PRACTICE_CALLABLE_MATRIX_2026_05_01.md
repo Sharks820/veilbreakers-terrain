@@ -1,12 +1,12 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-05-01T01:54:15.663642+00:00
+- Generated: 2026-05-01T23:53:55.809090+00:00
 - Tool: `scripts/build_industry_best_practice_callable_matrix.py`
 - Coverage scope: `industry_best_practice_matrix`
 - Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.
 - Grade source: `docs/aaa-audit/GRADES_VERIFIED.csv`
 - Source inventory artifact: `output/verification/TERRAIN_BEST_PRACTICE_GUARDRAIL_REPORT.json`
-- Source inventory fingerprint: `sha256:b2657c42e721cedbe3b0738f6fa7717b683bc87ee96054db43b9b4f904698407`
+- Source inventory fingerprint: `sha256:851a07a4d96ea591eaac3da53c5c6278266cde79afdc936727b86787958bb3df`
 - Total callables covered: **1732**
 - Output CSV: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv`
 - Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.
@@ -17,8 +17,8 @@
 
 ## Grade Status
 
-- VERIFIED_LOW_RISK: 1728
-- LOCK_WITH_REGRESSION_GATES: 4
+- VERIFIED_LOW_RISK: 1730
+- LOCK_WITH_REGRESSION_GATES: 2
 
 ## Domain Coverage
 
