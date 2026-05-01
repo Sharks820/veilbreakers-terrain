@@ -951,6 +951,9 @@ def register_bundle_e_passes() -> None:
                 "waterfall_lip_candidate",
             ),
             produces_channels=("tree_instance_points", "detail_density"),
+            # scatter_intelligent runs last and merges into existing detail_density;
+            # vegetation_depth and procedural_grass both claim it first.
+            overrides=("detail_density",),
             seed_namespace="scatter_intelligent",
             requires_scene_read=True,
             may_modify_geometry=False,
