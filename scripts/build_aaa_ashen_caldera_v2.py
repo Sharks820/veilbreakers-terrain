@@ -250,10 +250,23 @@ def run_pipeline_passes(hm):
     except Exception as exc:
         log(f"  waterfalls FAIL ({exc!r})")
 
-    log("  running materials_v2 pass...")
+    # Inject lava_prox so caldera_volcanic_rules() can gate the lava_hot channel.
+    # Prefer pipeline-produced SDF; fall back to radial proxy when unavailable.
+    if mask_stack.get("lava_prox") is None:
+        xs = np.linspace(-HALF, HALF, hm.shape[1])
+        ys = np.linspace(-HALF, HALF, hm.shape[0])
+        _X, _Y = np.meshgrid(xs, ys)
+        _R = np.sqrt(_X**2 + _Y**2)
+        mask_stack.set("lava_prox", np.clip(1.0 - _R / 280.0, 0.0, 1.0).astype(np.float32))
+        log("  lava_prox: radial fallback injected")
+
+    log("  running materials_v2 pass (caldera_volcanic_rules)...")
     try:
-        from veilbreakers_terrain.handlers.terrain_materials_v2 import pass_materials
-        r = pass_materials(state, region=None)
+        from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+            pass_materials,
+            caldera_volcanic_rules,
+        )
+        r = pass_materials(state, region=None, rules=caldera_volcanic_rules())
         splat = mask_stack.get("splatmap_weights_layer")
         log(f"  materials_v2: {r.status}  splatmap={splat.shape if splat is not None else None}")
     except Exception as exc:
@@ -1238,6 +1251,10 @@ def scatter_from_mask(hm, masks, entry, template_obj, rng_local):
             continue
         gz = float(hm[cj, ci])
         if gz < 4.0:
+            continue
+        # Exclude active lava zone (lava_prox > 0.5 ≈ within 140 m of center)
+        lava_prox_arr = masks.get("lava_prox")
+        if lava_prox_arr is not None and float(lava_prox_arr[cj, ci]) > 0.5:
             continue
         # Min spacing check
         too_close = any(math.sqrt((x - px)**2 + (y - py)**2) < rules.min_spacing_m

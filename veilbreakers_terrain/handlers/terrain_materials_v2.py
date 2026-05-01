@@ -66,6 +66,9 @@ class MaterialChannel:
     # Wetness envelope (0..1)
     wetness_min: float = 0.0
     wetness_max: float = 1.0
+    # Lava proximity envelope (0..1 scalar; 1.0 = caldera center)
+    lava_prox_min: float = 0.0
+    lava_prox_max: float = 1.0
     # Base multiplier — higher = channel "wins" in overlap regions
     base_weight: float = 1.0
     # Optional hard override order. Higher priority wins in cells where
@@ -184,6 +187,85 @@ def default_dark_fantasy_rules() -> MaterialRuleSet:
         ),
     )
     return MaterialRuleSet(channels=channels, default_channel_id="ground")
+
+
+def caldera_volcanic_rules() -> MaterialRuleSet:
+    """5-channel volcanic rule set for the ashen caldera scene.
+
+    Channel order MUST match _build_caldera_splatmap_material in
+    build_aaa_ashen_caldera_v2.py — the shader reads R/G/B/A directly:
+      0 ash_floor    → R: flat basins, powdery dark ash
+      1 basalt_rock  → G: primary volcanic surface (the fallback)
+      2 scree_rubble → B: steep talus / angular rubble
+      3 lava_hot     → A: lava_prox gate; priority=10 hard-stamps active lava
+      4 rim_summit   → 1-sum: high-altitude summit basalt (computed in shader)
+
+    The ``lava_hot`` channel uses lava_prox_min=0.35 so it only fires where
+    the lava proximity field exceeds 35% (inside ~182 m of caldera center for
+    the radial fallback, or the actual lava network SDF when available).
+    priority=10 ensures the priority-stamp loop in compute_slope_material_weights
+    zeros all lower-priority channels at those texels — no grass bleeds through.
+    """
+    channels = (
+        MaterialChannel(
+            channel_id="ash_floor",
+            base_color_hex="#2a2320",
+            roughness=0.93,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(22.0),
+            slope_falloff_rad=math.radians(6.0),
+            altitude_max_m=80.0,
+            altitude_falloff_m=15.0,
+            base_weight=1.1,
+        ),
+        MaterialChannel(
+            channel_id="basalt_rock",
+            base_color_hex="#1c1a18",
+            roughness=0.88,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(50.0),
+            slope_falloff_rad=math.radians(8.0),
+            base_weight=1.0,
+        ),
+        MaterialChannel(
+            channel_id="scree_rubble",
+            base_color_hex="#3d3428",
+            roughness=0.96,
+            triplanar=True,
+            slope_min_rad=math.radians(30.0),
+            slope_max_rad=math.pi / 2.0,
+            slope_falloff_rad=math.radians(8.0),
+            base_weight=0.9,
+        ),
+        MaterialChannel(
+            channel_id="lava_hot",
+            base_color_hex="#6e1500",
+            roughness=0.72,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(20.0),
+            slope_falloff_rad=math.radians(5.0),
+            lava_prox_min=0.35,
+            lava_prox_max=1.0,
+            base_weight=2.5,
+            priority=10,
+        ),
+        MaterialChannel(
+            channel_id="rim_summit",
+            base_color_hex="#141210",
+            roughness=0.90,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(40.0),
+            slope_falloff_rad=math.radians(8.0),
+            altitude_min_m=300.0,
+            altitude_falloff_m=25.0,
+            base_weight=1.4,
+        ),
+    )
+    return MaterialRuleSet(channels=channels, default_channel_id="basalt_rock")
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +620,12 @@ def compute_slope_material_weights(
     else:
         wetness = np.asarray(wetness, dtype=np.float64)
 
+    lava_prox = stack.get("lava_prox")
+    if lava_prox is None:
+        lava_prox = np.ones_like(slope)  # no lava_prox data → gate always passes
+    else:
+        lava_prox = np.asarray(lava_prox, dtype=np.float64)
+
     L = len(rules.channels)
     H, W = slope.shape
     weights = np.zeros((H, W, L), dtype=np.float32)
@@ -576,7 +664,10 @@ def compute_slope_material_weights(
             1.0,
             0.0,
         )
-        combined = ch.base_weight * slope_w * alt_w * curv_w * wet_w
+        lava_prox_w = _smoothstep_band(
+            lava_prox, ch.lava_prox_min, ch.lava_prox_max, falloff=0.05
+        )
+        combined = ch.base_weight * slope_w * alt_w * curv_w * wet_w * lava_prox_w
 
         # Triplanar blend perturbation for steep-surface materials (Fix 7.16)
         if ch.triplanar:

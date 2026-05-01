@@ -109,7 +109,7 @@ CALDERA_CATALOG: Tuple[CatalogEntry, ...] = (
         seed=0xDEAD_03,
         placement=PlacementRules(
             slope_deg_max=30, density_per_ha=4, min_spacing_m=8,
-            radius_min_m=50, radius_max_m=450,
+            radius_min_m=140, radius_max_m=450,
         ),
         fallback=FallbackMat(
             base_color=(0.038, 0.028, 0.022), roughness=0.78,
