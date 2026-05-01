@@ -800,8 +800,15 @@ def compute_slope_material_weights(
     # Bridge it to wet_rock so streams/rivers/caldera-rim pools hard-stamp
     # wet_rock=1.0 the same way water_label does — no more grass bleed-through.
     water_surface_mask  = stack.get("water_surface_mask")  # float32 binary [0/1]
+    # wet_rock_splash is produced by pass_waterfalls — it marks the spray/pool
+    # zones at waterfall bases and cascade pools. Without this bridge, grass
+    # normalization overwrites those cells because no label held them.
+    # Stack key is "wet_rock" (the pass name); the target channel_id is also
+    # "wet_rock" — different namespaces, no collision.
+    wet_rock_splash = stack.get("wet_rock")  # float32 mask from pass_waterfalls
     has_labels = any(lbl is not None for lbl in (
-        rock_label, gravel_label, water_label, cliff_label, water_surface_mask,
+        rock_label, gravel_label, water_label, cliff_label,
+        water_surface_mask, wet_rock_splash,
     ))
 
     if has_labels:
@@ -813,6 +820,7 @@ def compute_slope_material_weights(
             "water_label":        ("wet_rock",),  # water structural label → wet_rock material
             "cliff_label":        ("cliff",),     # cliff structural label → cliff material
             "water_surface_mask": ("wet_rock",),  # pass_water_variants binary → wet_rock
+            "wet_rock_splash":    ("wet_rock",),  # pass_waterfalls spray zones → wet_rock
         }
         label_arrays = {
             "rock_label":         rock_label,
@@ -820,6 +828,7 @@ def compute_slope_material_weights(
             "water_label":        water_label,
             "cliff_label":        cliff_label,
             "water_surface_mask": water_surface_mask,
+            "wet_rock_splash":    wet_rock_splash,
         }
         for label_key, target_ids in _label_channel_map.items():
             lbl = label_arrays[label_key]
