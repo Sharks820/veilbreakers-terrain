@@ -1,0 +1,10 @@
+{
+  "node_id": "VB_AAA_NODE_ASHEN_CALDERA_2026_05_01_A",
+  "scene": "ashen_caldera",
+  "tile_m": 1024.0,
+  "heightmap_min_m": -2.0,
+  "heightmap_max_m": 100.01998138427734,
+  "dead_trees_placed": 320,
+  "failures": 0,
+  "failure_stages": []
+}
