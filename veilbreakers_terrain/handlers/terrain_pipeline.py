@@ -30,8 +30,6 @@ import dataclasses
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-_log = logging.getLogger(__name__)
-
 from .terrain_semantics import (
     BBox,
     ChannelOwnershipError,
@@ -47,6 +45,8 @@ from .terrain_semantics import (
     UnknownPassError,
     ValidationIssue,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class PipelineSubsystemError(RuntimeError):
@@ -166,7 +166,6 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "gameplay_zones",
             "wind_field",
             "cloud_shadow",
-            "decals",
             "ecotones",
             # C-3: Bundle K material ceiling passes
             "stochastic_shader",
@@ -181,8 +180,13 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "pass_atmospheric_volumes",
             # C-9: post-scatter saliency refinement
             "saliency_refine",
-            # C-6: navmesh export runs regardless of unity_export_opt_out
+            # C-6: navmesh export runs regardless of unity_export_opt_out;
+            # must precede decals so traversability is populated before
+            # FOOTPRINT_TRAIL density is computed (BUG-3/BUG-4 fix).
             "pass_navmesh_export",
+            # decals runs last in the ecosystem block so all consumed channels
+            # (traversability, gameplay_zone, basin, ridge, …) are populated.
+            "decals",
         ):
             if prereq not in pass_sequence:
                 pass_sequence.insert(insert_at, prereq)
@@ -658,6 +662,7 @@ class TerrainPassController:
             ch for ch, pname in _provenance_after.items()
             if _provenance_before.get(ch) != pname
                and ch not in definition.produces_channels
+               and ch not in definition.overrides
         }
         if _undeclared:
             _log.warning(
@@ -1256,6 +1261,7 @@ def register_snow_line_pass() -> None:
             name="snow_line",
             func=pass_compute_snow_line,
             requires_channels=("height",),
+            optional_channels=("slope",),
             produces_channels=("snow_line_factor",),
             seed_namespace="snow_line",
             requires_scene_read=False,
@@ -1347,7 +1353,7 @@ def register_pass_water_depth() -> None:
         PassDefinition(
             name="pass_water_depth",
             func=pass_water_depth,
-            requires_channels=(),
+            requires_channels=("height",),
             optional_channels=("water_surface_elevation_m",),
             produces_channels=("water_depth_m", "shoreline_blend"),
             seed_namespace="",

@@ -1,0 +1,268 @@
+{
+  "schema_version": "1.0.0",
+  "scene_id": "ashen_caldera",
+  "display_name": "Ashen Caldera",
+  "biome": "volcanic_active",
+  "node_id": "VB_AAA_NODE_ASHEN_CALDERA_V2",
+  "last_calibrated": "2026-05-01",
+  "calibration_source": "USGS HVO measurements + LANDFIRE basalt spectra + ARRI ALEXA reference plates from Hawaii Volcanoes NP / Eyjafjallajökull / Mount St. Helens",
+  "aaa_targets": {
+    "comparable_studios": ["Naughty Dog (TLOU2 ash storm)", "Coalition (Gears 5 The Lift)", "FromSoftware (Elden Ring Mt. Gelmir)", "Quixel Megascans Volcanic kit"],
+    "tools_targeted": ["Gaea 2.x", "World Machine 4", "UE5 Lumen + Nanite", "Houdini Heightfield"],
+    "intent": "Late-stage active stratovolcano caldera, post-eruption ashfall still settling, sub-aerial lava lake at floor, dark fantasy mood (low key, high contrast, smoke-dimmed sun)."
+  },
+
+  "photometric_calibration": {
+    "color_space": "linear_sRGB_D65",
+    "albedo_units": "linear_reflectance_0_1",
+    "luminance_units": "cd_per_m2",
+    "irradiance_units": "W_per_m2",
+
+    "materials": {
+      "fresh_basalt_rock": {
+        "linear_albedo": [0.063, 0.060, 0.057],
+        "albedo_luminance": 0.060,
+        "roughness": 0.78,
+        "specular_f0": 0.04,
+        "notes": "Real basalt measures 5-7% reflectance (USGS spectral library, sample bas-1). Common AAA bug: artists set 0.018 (charcoal value) which crushes blacks under volumetric haze. Floor is 0.05; never go below."
+      },
+      "weathered_basalt": {
+        "linear_albedo": [0.082, 0.076, 0.070],
+        "albedo_luminance": 0.077,
+        "roughness": 0.92,
+        "specular_f0": 0.04,
+        "notes": "Sun/rain-weathered basalt picks up ~2% from oxidation patina. Slightly warmer due to iron oxide bloom."
+      },
+      "volcanic_ash_tephra_dry": {
+        "linear_albedo": [0.165, 0.158, 0.152],
+        "albedo_luminance": 0.158,
+        "roughness": 0.96,
+        "specular_f0": 0.035,
+        "notes": "Dry fresh tephra reads as medium-dark grey, NOT white. Mt. St. Helens 1980 deposits measured 14-18% reflectance. White ash is a film/TV cliché — real ash is dark grey unless it is hydrated rhyolitic pumice."
+      },
+      "volcanic_ash_wet": {
+        "linear_albedo": [0.088, 0.082, 0.078],
+        "albedo_luminance": 0.083,
+        "roughness": 0.88,
+        "notes": "Rain-soaked ash drops ~50% in luminance. Important for rain shaders / wetness masks."
+      },
+      "cooled_lava_crust_pahoehoe": {
+        "linear_albedo": [0.038, 0.034, 0.031],
+        "albedo_luminance": 0.034,
+        "roughness": 0.62,
+        "specular_f0": 0.045,
+        "notes": "Pahoehoe (smooth, ropy) crust is the darkest natural surface in the scene. Slightly glossy from glassy quench skin. Never raise above 0.05 — destroys the silhouette read against ash."
+      },
+      "cooled_lava_crust_aa": {
+        "linear_albedo": [0.045, 0.041, 0.038],
+        "albedo_luminance": 0.042,
+        "roughness": 0.94,
+        "notes": "A'a (rough clinker) is slightly more reflective than pahoehoe due to micro-faceting."
+      },
+      "obsidian": {
+        "linear_albedo": [0.020, 0.020, 0.024],
+        "albedo_luminance": 0.021,
+        "roughness": 0.06,
+        "specular_f0": 0.05,
+        "iridescence": 0.35,
+        "notes": "Volcanic glass. Critical: keep rough <0.10 or it loses the mirror quality. Iridescence layer (rainbow sheen) is what sells obsidian vs plain black rock."
+      },
+      "active_lava_surface": {
+        "linear_albedo": [0.040, 0.012, 0.005],
+        "emission_color": [1.000, 0.380, 0.090],
+        "emission_luminance_cd_m2": 12000.0,
+        "emission_blackbody_K": 1373,
+        "roughness": 0.85,
+        "notes": "Active lava lake surface (Halemaʻumaʻu, Kīlauea) measures ~1100°C = 1373K = blackbody peak in deep orange. Surface luminance 8000-15000 cd/m2 depending on crust coverage. Use 12000 for partial-crust default. Pure exposed magma at fountain spike: 80000 cd/m2."
+      },
+      "incandescent_lava_crack": {
+        "emission_color": [1.000, 0.520, 0.180],
+        "emission_luminance_cd_m2": 35000.0,
+        "emission_blackbody_K": 1473,
+        "notes": "Bright cracks between cooled crust plates. Higher temperature than bulk surface (insulating crust pushes exposed cracks hotter)."
+      },
+      "sulfur_deposit": {
+        "linear_albedo": [0.620, 0.520, 0.140],
+        "albedo_luminance": 0.498,
+        "roughness": 0.55,
+        "notes": "Native sulfur fumarole crystals — yellow-green, only material in the scene above 0.3 albedo. Use sparingly to give the eye a chromatic anchor."
+      },
+      "scoria_red": {
+        "linear_albedo": [0.115, 0.058, 0.038],
+        "albedo_luminance": 0.072,
+        "roughness": 0.97,
+        "notes": "Oxidized red cinder — appears in cinder cone flanks. Hematite-rich, warm tone."
+      },
+      "charred_wood": {
+        "linear_albedo": [0.028, 0.022, 0.018],
+        "albedo_luminance": 0.023,
+        "roughness": 0.96,
+        "notes": "Carbonized tree bark. Real char is darker than 'black' paint."
+      },
+      "ash_dusted_overlay": {
+        "linear_albedo": [0.140, 0.135, 0.130],
+        "blend_mode": "top_facing_normal",
+        "blend_threshold_normal_y": 0.55,
+        "notes": "Dust mask overlay — applied to upward-facing surfaces only. Drives the 'powdered with grey' AAA look. Thickness driven by displacement noise."
+      }
+    },
+
+    "lighting": {
+      "sun": {
+        "color_temperature_K": 4200,
+        "color_linear_rgb": [1.000, 0.840, 0.620],
+        "irradiance_top_of_atmosphere_W_m2": 1361.0,
+        "irradiance_at_ground_clear_W_m2": 950.0,
+        "irradiance_at_ground_volcanic_aerosol_W_m2": 145.0,
+        "extinction_factor_aerosol": 0.153,
+        "angular_diameter_deg": 0.53,
+        "shadow_softness_aerosol_deg": 4.5,
+        "blender_strength_W_m2": 4.5,
+        "altitude_deg": 28.0,
+        "azimuth_deg": 215.0,
+        "notes": "Heavy volcanic aerosol (PM2.5 > 200 ug/m3) attenuates direct sun by 6.5x. Color shifts orange-red as blue scatters out (Rayleigh + Mie). 4200K is post-eruption Pinatubo measured value. Soft shadows (4-5 deg apparent disc) because sun is diffused through ash, not a point source."
+      },
+      "sky_dome": {
+        "model": "nishita_with_aerosol_override",
+        "zenith_color_linear_rgb": [0.085, 0.072, 0.058],
+        "horizon_color_linear_rgb": [0.220, 0.155, 0.092],
+        "ambient_irradiance_W_m2": 38.0,
+        "notes": "Volcanic sky is BROWN-ORANGE near horizon, dim purple-grey at zenith. NOT blue. Ambient drops ~75% vs clear day. This is what kills naive Nishita setups — they render as bright daylight blue."
+      },
+      "lava_fill_lights": {
+        "type": "mesh_emission_area",
+        "primary_color_linear_rgb": [1.000, 0.380, 0.090],
+        "primary_strength_W_m2": 50.0,
+        "spill_radius_m": 65.0,
+        "spill_falloff": "inverse_square_clamped_0.1m",
+        "spill_color_at_5m": [0.95, 0.32, 0.06],
+        "spill_color_at_30m": [0.60, 0.18, 0.03],
+        "notes": "Lava is the ONLY warm chromatic source in the scene. Distance falloff matters more than peak intensity — aim for spill that reaches mid-rim. Use mesh-emission area lights (NOT point lights — point lights miss occlusion and create wrong silhouettes on rim rocks)."
+      },
+      "fumarole_rim_glow": {
+        "type": "volume_emission",
+        "color_linear_rgb": [0.85, 0.65, 0.30],
+        "strength_W_m3": 0.8,
+        "notes": "Sulfurous fumarole steam picks up nearby lava bounce. Subtle warm glow inside the steam volumes."
+      }
+    },
+
+    "atmosphere": {
+      "haze_color_linear_rgb": [0.115, 0.092, 0.070],
+      "haze_color_hex_srgb": "#5C4D3E",
+      "haze_color_description": "Warm brown-grey, NOT cool blue. Volcanic ash PM2.5 + SO2 absorbs blue, scatters red-orange.",
+      "regular_atmospheric_haze_for_contrast_linear_rgb": [0.55, 0.62, 0.78],
+      "regular_atmospheric_haze_hex_srgb": "#A6B7CC",
+      "extinction_per_km_horizontal": 1.85,
+      "scattering_per_km": 0.42,
+      "absorption_per_km": 1.43,
+      "phase_function": "henyey_greenstein",
+      "phase_g": 0.68,
+      "asymmetry_notes": "Strong forward-scattering — ash is large compared to wavelength. Halo around sun, dark backlit silhouettes.",
+      "volumetric_density_at_floor": 0.045,
+      "volumetric_density_at_rim": 0.012,
+      "volumetric_height_falloff_m": 180.0,
+      "fog_start_visibility_m": 540.0,
+      "fog_full_occlusion_m": 2200.0,
+      "notes": "Visibility 0.5-2 km horizontal. This is what makes the silhouette of the far rim read — it MUST fade into haze, not remain crisp."
+    },
+
+    "post_processing": {
+      "exposure_ev": 2.0,
+      "white_balance_K": 5200,
+      "tint": -4,
+      "tone_mapper": "AgX",
+      "tone_mapper_fallback": "ACES_filmic",
+      "bloom": {
+        "type": "fog_glow",
+        "threshold_cd_m2": 800.0,
+        "intensity": 0.18,
+        "radius_px": 85,
+        "size": 7,
+        "notes": "Bloom should ONLY trigger on lava/incandescent surfaces. If bloom hits the sky disc you have it set wrong."
+      },
+      "lens_dirt": {
+        "amount": 0.25,
+        "tint": [0.90, 0.78, 0.65]
+      },
+      "chromatic_aberration_px": 1.2,
+      "vignette": 0.32,
+      "denoiser": "optix",
+      "samples_min": 256,
+      "samples_max": 1024,
+      "notes": "Cycles + AgX is the current Blender-native AAA path. ACES is acceptable fallback. Never use Filmic Standard — it crushes the lava highlights."
+    }
+  },
+
+  "visual_benchmarks": {
+    "silhouette": {
+      "rim_against_sky_contrast_ratio": 8.5,
+      "rim_against_sky_min_luminance_delta_cd_m2": 220.0,
+      "comment": "The caldera rim must read as a clear dark band against the orange-grey sky at any time of day. If contrast < 6.0, the silhouette is mush — re-check sky brightness or rim albedo."
+    },
+    "depth_cues": {
+      "near_field_0_50m": "Crisp microdetail, full albedo readable, ash dust on top faces, lava cracks fully chromatic.",
+      "mid_field_50_300m": "Albedo desaturates ~30%, micro-detail blends, lava becomes the dominant chromatic anchor.",
+      "far_field_300_2000m": "Silhouette only, fully desaturated, haze tint dominates, lava reads as warm point or line.",
+      "atmospheric_perspective_strength": 0.85,
+      "comment": "Aerial perspective in volcanic conditions is 3-4x stronger than clear-day baseline. Distant rim should be ~80% haze color."
+    },
+    "color_palette_dominance": {
+      "primary_anchors_pct": {
+        "warm_brown_grey_haze": 35,
+        "deep_basalt_black": 28,
+        "ash_grey_midtone": 22,
+        "lava_orange": 8,
+        "sulfur_yellow_green": 2,
+        "obsidian_iridescence": 2,
+        "rim_sky_band": 3
+      },
+      "comment": "Histogram should be bimodal: one cluster in deep blacks (basalt+lava crust), one in warm midtones (ash+haze), with a tiny fire-orange spike. If the histogram is flat or has a blue peak, lighting is wrong."
+    },
+    "contrast_targets": {
+      "scene_dynamic_range_stops": 14.5,
+      "shadow_to_lava_stops": 11.0,
+      "rim_lighting_required": true,
+      "key_to_fill_ratio": 4.5,
+      "comment": "Lava-to-shadow is 11 stops — this is what mandates 14+ stop HDR pipeline. SDR clipping is unacceptable."
+    },
+    "geological_realism_checklist": [
+      "Caldera rim higher than caldera floor (always — never inverted).",
+      "Lava channels follow steepest descent — NEVER cross contour lines.",
+      "Cinder cones have slope angles 30-33 deg (angle of repose for scoria).",
+      "Pahoehoe near vent, transitions to a'a downstream as it cools.",
+      "Ash mantles top-facing surfaces only (Y+ normal threshold).",
+      "Tree skeletons concentrate downwind of vent (pyroclastic flow direction).",
+      "No vegetation in inner caldera (heat zone ~150m radius from vent).",
+      "Fumarole vents at fault lines / rim cracks, not random."
+    ]
+  },
+
+  "reference_image_queries": {
+    "primary": [
+      "Halemaʻumaʻu lava lake aerial photograph USGS HVO",
+      "Eyjafjallajökull 2010 caldera ash-dimmed daylight",
+      "Mount St Helens crater 1980 ash deposits",
+      "Stromboli active vent night lava fountain",
+      "Ambrym caldera Vanuatu lava lake"
+    ],
+    "secondary": [
+      "Quixel Megascans volcanic basalt scan",
+      "UE5 Lumen volcanic environment Gears 5",
+      "Elden Ring Mt Gelmir caldera reference",
+      "Gaea volcanic erosion preset reference",
+      "Houdini lava flow simulation reference"
+    ],
+    "negative_examples": [
+      "Cartoon volcano red rocks bright orange — TOO SATURATED, NOT REALISTIC",
+      "Hollywood 'snowy ash' white powder volcano — WRONG, ash is dark grey",
+      "Blue-sky daytime volcano — wrong mood for active eruption scene"
+    ]
+  },
+
+  "asset_overrides": {
+    "fallback_material_floor_albedo": 0.05,
+    "fallback_material_ceiling_albedo": 0.65,
+    "comment": "Catch-all guardrail: any procedural fallback material outside [0.05, 0.65] linear luminance is rejected as physically implausible for this scene."
+  }
+}
