@@ -37,19 +37,42 @@ class WaveExecutionError(RuntimeError):
 def _lightweight_state_copy(state):
     """Fast alternative to copy.deepcopy(state) for parallel worker threads.
 
-    Uses ndarray.copy() (buffer-level) for array channels instead of the full
-    Python object walk that deepcopy performs — 10-100x faster on 4096² tiles.
-    Non-array members use dataclasses.replace (shallow). Workers receive empty
-    checkpoint history since they never checkpoint.
+    Array channels use ndarray.copy() — buffer-level, 10-100x faster than
+    deepcopy on 4096² tiles.  Dict channels (detail_density, decal_density,
+    wildlife_affinity) are rebuilt with ndarray.copy() per value so parallel
+    workers cannot observe each other's in-place array mutations through a
+    shared dict reference.  Opaque channels (mesh_specs, placements) are
+    deepcopy'd — they are small, so the cost is bounded.
     """
     import numpy as _np
 
     old_stack = state.mask_stack
-    new_stack = copy.copy(old_stack)  # shallow; arrays fixed below
-    for ch in type(old_stack)._ARRAY_CHANNELS:
+    stack_type = type(old_stack)
+    new_stack = copy.copy(old_stack)  # shallow; channels fixed below
+
+    # Array channels — fast buffer copy
+    for ch in stack_type._ARRAY_CHANNELS:
         val = getattr(old_stack, ch, None)
         if isinstance(val, _np.ndarray):
             object.__setattr__(new_stack, ch, val.copy())
+
+    # Dict channels — rebuild dict, copy ndarray values
+    for ch in stack_type._DICT_CHANNELS:
+        d = getattr(old_stack, ch, None)
+        if d is not None:
+            object.__setattr__(
+                new_stack,
+                ch,
+                {k: v.copy() if isinstance(v, _np.ndarray) else copy.deepcopy(v)
+                 for k, v in d.items()},
+            )
+
+    # Opaque channels — small structures, deepcopy is bounded and safe
+    for ch in stack_type._OPAQUE_CHANNELS:
+        val = getattr(old_stack, ch, None)
+        if val is not None:
+            object.__setattr__(new_stack, ch, copy.deepcopy(val))
+
     object.__setattr__(new_stack, "populated_by_pass", dict(old_stack.populated_by_pass))
     object.__setattr__(new_stack, "dirty_channels", set(old_stack.dirty_channels))
     object.__setattr__(new_stack, "content_hash", None)

@@ -42,16 +42,43 @@ from .terrain_semantics import (
 def _snapshot_mask_stack(stack: "TerrainMaskStack") -> "TerrainMaskStack":
     """Lightweight stack snapshot for rollback — avoids deepcopy OOM on 4096² tiles.
 
-    Uses ndarray.copy() (buffer-level) for array channels instead of the full
-    Python object walk that deepcopy performs — 10-100x faster, no 4 GB peak.
-    Non-array, non-opaque attributes are shallow-copied (strings/ints are
-    immutable so shallow is safe).
+    Array channels (height, slope, etc.) use ndarray.copy() — buffer-level,
+    10-100x faster than deepcopy, no 4 GB peak allocation.
+
+    Dict channels (detail_density, decal_density, wildlife_affinity) hold
+    numpy arrays inside a dict; shallow-copying the stack would alias the
+    dict so in-place mutations bypass rollback. Each dict is rebuilt with
+    ndarray.copy() for its array values.
+
+    Opaque channels (mesh_specs, placement records, etc.) are small lists/
+    dicts of immutable-ish Python objects; deepcopy is safe and cheap here.
     """
-    snap = copy.copy(stack)  # shallow; array/opaque channels fixed below
-    for ch in type(stack)._ARRAY_CHANNELS:
+    snap = copy.copy(stack)  # shallow; channels fixed below
+
+    # Array channels — fast buffer copy
+    stack_type = type(stack)
+    for ch in stack_type._ARRAY_CHANNELS:
         val = getattr(stack, ch, None)
         if isinstance(val, _np.ndarray):
             object.__setattr__(snap, ch, val.copy())
+
+    # Dict channels — rebuild dict, copy ndarray values
+    for ch in stack_type._DICT_CHANNELS:
+        d = getattr(stack, ch, None)
+        if d is not None:
+            object.__setattr__(
+                snap,
+                ch,
+                {k: v.copy() if isinstance(v, _np.ndarray) else copy.deepcopy(v)
+                 for k, v in d.items()},
+            )
+
+    # Opaque channels — small structures, deepcopy is bounded and safe
+    for ch in stack_type._OPAQUE_CHANNELS:
+        val = getattr(stack, ch, None)
+        if val is not None:
+            object.__setattr__(snap, ch, copy.deepcopy(val))
+
     object.__setattr__(snap, "populated_by_pass", dict(stack.populated_by_pass))
     object.__setattr__(snap, "dirty_channels", set(stack.dirty_channels))
     object.__setattr__(snap, "content_hash", None)

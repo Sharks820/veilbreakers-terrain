@@ -949,10 +949,16 @@ def register_bundle_e_passes() -> None:
                 "cliff_candidate",
                 "cave_candidate",
                 "waterfall_lip_candidate",
+                # Soft ordering: run after vegetation_depth and pass_procedural_grass
+                # so detail_density already holds their layers before scatter merges
+                # its tree-crown contribution on top via dict.update().
+                "detail_density",
             ),
             produces_channels=("tree_instance_points", "detail_density"),
-            # scatter_intelligent runs last and merges into existing detail_density;
-            # vegetation_depth and procedural_grass both claim it first.
+            # scatter_intelligent merges into existing detail_density written by
+            # vegetation_depth and pass_procedural_grass (both registered before
+            # scatter in the default sequence). overrides= silences the ownership
+            # check; optional_channels="detail_density" enforces DAG ordering.
             overrides=("detail_density",),
             seed_namespace="scatter_intelligent",
             requires_scene_read=True,
