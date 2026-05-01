@@ -78,19 +78,38 @@ def build_heightmap():
 
     rng_state = np.random.RandomState(SEED & 0xFFFF)
 
-    def _nz(fx, fy, amp, px=0.0, py=0.0):
-        return amp * np.sin(X * fx + px) * np.cos(Y * fy + py)
+    def _vnoise(gc, amp):
+        """Value noise: bicubic-interpolated random grid — no axis-aligned artifacts."""
+        from scipy.ndimage import zoom
+        g = rng_state.uniform(-1.0, 1.0, (gc + 2, gc + 2)).astype(np.float64)
+        up = zoom(g, (SIZE / gc, SIZE / gc), order=3)
+        return (amp * up[:SIZE, :SIZE]).astype(np.float32)
 
-    phases = rng_state.uniform(0, 2 * math.pi, (9, 2))
-    hm += _nz(0.016, 0.019, 42.0, *phases[0])
-    hm += _nz(0.038, 0.034, 22.0, *phases[1])
-    hm += _nz(0.085, 0.079, 10.0, *phases[2])
-    hm += _nz(0.17,  0.16,   5.0, *phases[3])
-    hm += _nz(0.34,  0.32,   2.5, *phases[4])
-    hm += _nz(0.68,  0.64,   1.2, *phases[5])
-    hm += _nz(1.36,  1.28,   0.6, *phases[6])
-    hm += _nz(2.72,  2.56,   0.3, *phases[7])
-    hm += _nz(5.44,  5.12,   0.15, *phases[8])
+    # 9 octaves of value noise (gc = grid cells; doubling gc halves wavelength)
+    noise_acc  = _vnoise(16,   42.0)   # ~64m wavelength — large ridge variation
+    noise_acc += _vnoise(32,   22.0)   # ~32m — secondary terrain structure
+    noise_acc += _vnoise(64,   10.0)   # ~16m — geological layering
+    noise_acc += _vnoise(128,   5.0)   # ~8m  — rock-band detail
+    noise_acc += _vnoise(256,   2.5)   # ~4m  — boulder-scale roughness
+    noise_acc += _vnoise(400,   1.2)   # ~2.5m — surface texture
+    noise_acc += _vnoise(600,   0.6)   # ~1.7m — fine erosion
+    noise_acc += _vnoise(768,   0.3)   # ~1.3m — micro-detail
+    noise_acc += _vnoise(900,   0.15)  # ~1.1m — sub-metre pebble noise
+
+    # Domain warp: use two low-freq noise fields to offset noise_acc coordinates,
+    # breaking any residual grid alignment and producing organic flowing features.
+    wx = _vnoise(18, 1.0)  # warp x-field
+    wy = _vnoise(22, 1.0)  # warp y-field (different gc → different phase)
+    from scipy.ndimage import map_coordinates
+    rows = np.arange(SIZE, dtype=np.float32)
+    cols = np.arange(SIZE, dtype=np.float32)
+    gR, gC = np.meshgrid(rows, cols, indexing='ij')
+    warp_strength = 28.0  # pixels of displacement (≈28m)
+    rr = np.clip(gR + wx * warp_strength, 0, SIZE - 1)
+    cc = np.clip(gC + wy * warp_strength, 0, SIZE - 1)
+    noise_warped = map_coordinates(noise_acc, [rr.ravel(), cc.ravel()],
+                                   order=1, mode='nearest').reshape(SIZE, SIZE)
+    hm += noise_warped.astype(np.float32)
 
     for t_val in np.linspace(0, 1, 160):
         cx = 38.0 * math.sin(t_val * math.pi * 1.5)
