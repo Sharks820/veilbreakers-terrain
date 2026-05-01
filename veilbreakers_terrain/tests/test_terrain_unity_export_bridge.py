@@ -362,6 +362,28 @@ def test_export_manifest_uses_water_elevation_depth_and_flow_contract_files():
         assert name in manifest["files"]
 
 
+def test_export_manifest_treats_binary_water_surface_as_mask_not_metres():
+    from veilbreakers_terrain.handlers.terrain_unity_export import UNITY_SCALE_FACTOR, export_unity_manifest
+
+    stack = _make_stack()
+    water_mask = np.zeros((5, 5), dtype=np.float32)
+    water_mask[1:4, 1:4] = 1.0
+    stack.set("water_surface", water_mask, "test")
+    expected_level = float(np.percentile(stack.height[water_mask > 0.0], 75.0))
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+
+    assert expected_level != pytest.approx(1.0)
+    assert manifest["has_water_surface"] is True
+    assert manifest["water_surface_elevation_m"] == pytest.approx(expected_level)
+    assert manifest["water_level_unity_units"] == pytest.approx(expected_level * UNITY_SCALE_FACTOR)
+    assert descriptor["water_level_unity_units"] == pytest.approx(expected_level * UNITY_SCALE_FACTOR)
+    assert descriptor["has_water_surface"] is True
+    assert descriptor["water_surface_elevation_file"] == ""
+
+
 def test_shadow_clipmap_contract_accepts_float32_npy():
     from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
         UnityExportContract,
@@ -427,6 +449,39 @@ def test_export_manifest_writes_phase6_array_channels():
     assert shadow_meta["bit_depth"] == 32
     assert shadow_meta["encoding"] == "raw_f32_le"
     assert shadow_meta["precision_contract"] == "shadow_clipmap_32f"
+
+
+def test_export_manifest_writes_detail_layers_hdrp_mask_and_descriptor_contract():
+    from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
+
+    stack = _make_stack()
+    stack.set("terrain_ao", np.full((5, 5), 0.25, dtype=np.float32), "test")
+    stack.set("roughness_variation", np.full((5, 5), 0.75, dtype=np.float32), "test")
+    stack.set("detail_density", {"grass": np.full((5, 5), 0.5, dtype=np.float32)}, "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = export_unity_manifest(stack, Path(td), strict_unity_resolution=False)
+        descriptor = json.loads((Path(td) / "unity_import_descriptor.json").read_text())
+        hdrp_meta = manifest["files"]["hdrp_mask_map.raw"]
+        hdrp_raw = np.frombuffer((Path(td) / "hdrp_mask_map.raw").read_bytes(), dtype=np.uint8).reshape(
+            hdrp_meta["shape"]
+        )
+
+    assert hdrp_meta["encoding"] == "raw_rgba_u8_hdrp_mask"
+    assert hdrp_meta["channels"] == 4
+    assert hdrp_raw.shape == (5, 5, 4)
+    assert np.unique(hdrp_raw[..., 0]).tolist() == [0]
+    assert np.unique(hdrp_raw[..., 1]).tolist() == [64]
+    assert np.unique(hdrp_raw[..., 2]).tolist() == [0]
+    assert np.unique(hdrp_raw[..., 3]).tolist() == [64]
+
+    detail = descriptor["detail_layers"][0]
+    assert detail["kind"] == "grass"
+    assert detail["file"] == "detail_density__grass.raw"
+    assert detail["bit_depth"] == 16
+    assert detail["encoding"] == "raw_u16_le_detail_count"
+    assert detail["max_density_per_cell"] > 0
+    assert manifest["files"]["detail_density__grass.raw"]["shape"] == [5, 5]
 
 
 def test_export_manifest_coerces_float_channels_to_unity_float32():

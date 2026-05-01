@@ -78,7 +78,7 @@ jobs:
             --cov=veilbreakers_terrain \
             --cov-branch \
             --cov-report=term-missing \
-            --cov-fail-under=40 \
+            --cov-fail-under=72 \
             -q
 
       - name: Upload coverage report

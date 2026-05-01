@@ -194,6 +194,7 @@ def test_bspline_no_scipy_fallback_returns_exact_requested_sample_count(monkeypa
 
 def test_moore_contour_helpers_cover_components_and_empty_masks():
     from veilbreakers_terrain.handlers.terrain_cliffs import (
+        _dedupe_consecutive_points,
         _moore_contour_all_components,
         _trace_moore_boundary,
     )
@@ -211,6 +212,13 @@ def test_moore_contour_helpers_cover_components_and_empty_masks():
     assert boundary.shape[1] == 2
     assert all_components.shape[1] == 2
     assert {tuple(p) for p in all_components}.issuperset({(1, 1), (4, 4)})
+
+    repeated = np.array([[0, 0], [0, 0], [0, 1], [0, 1], [1, 1]], dtype=np.int32)
+    deduped = _dedupe_consecutive_points(repeated)
+    np.testing.assert_array_equal(
+        deduped,
+        np.array([[0, 0], [0, 1], [1, 1]], dtype=np.int32),
+    )
 
 
 def test_strata_layers_are_seeded_bounded_and_colored():

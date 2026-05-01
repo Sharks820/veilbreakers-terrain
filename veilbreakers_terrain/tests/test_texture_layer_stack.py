@@ -74,3 +74,39 @@ def test_validate_uses_stack_get_for_mask_sources():
     stack = TerrainTextureLayerStack(layers=[_layer("rock", np.ones((2, 2), dtype=np.float32))])
 
     assert stack.validate(GetOnlyStack()) == []
+
+
+def test_validate_reports_missing_pbr_maps_mask_sources_and_bad_weight_ranges():
+    class EmptyStack:
+        def get(self, name: str):
+            return None
+
+    stack = TerrainTextureLayerStack(
+        layers=[
+            TextureLayer(
+                layer_id="broken",
+                terrain_mask_source="missing_mask",
+                weight_map=None,
+            ),
+            TextureLayer(
+                layer_id="bad_weight",
+                terrain_mask_source="bad_weight_mask",
+                weight_map=np.array([[1.2, -0.1], [0.5, 0.0]], dtype=np.float32),
+                normal=np.zeros((2, 2, 3), dtype=np.float32),
+                roughness=np.full((2, 2), 0.5, dtype=np.float32),
+                ambient_occlusion=np.ones((2, 2), dtype=np.float32),
+                height_displacement=np.zeros((2, 2), dtype=np.float32),
+            ),
+        ]
+    )
+
+    issues = stack.validate(EmptyStack())
+
+    assert "broken: terrain_mask_source 'missing_mask' not found on stack" in issues
+    assert "broken: missing weight_map" in issues
+    assert "broken: missing normal map" in issues
+    assert "broken: missing roughness" in issues
+    assert "broken: missing AO (recommend adding)" in issues
+    assert "broken: missing displacement, set no_displacement_reason if intentional" in issues
+    assert "bad_weight: terrain_mask_source 'bad_weight_mask' not found on stack" in issues
+    assert "bad_weight: weight_map out of [0,1] range" in issues

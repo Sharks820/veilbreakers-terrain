@@ -13,7 +13,7 @@ Every callable used for terrain generation must satisfy its matrix row: best-pra
 - Use `external_ai_assets` callables for provider-neutral generated model assets, Rodin-style async asset packages, validation, ingestion, scale, UV, PBR, collision, LOD, and license checks. Matrix rows: 46. P0 blockers: 0.
 - Use `foliage_assets` callables for species catalogs, vegetation prototypes, LOD paths, impostors, billboards, wind profiles, and asset fallback metadata. Matrix rows: 19. P0 blockers: 0.
 - Use `generic` callables only for small shared helpers; connect them to a domain contract before they become production terrain behavior. Matrix rows: 378. P0 blockers: 0.
-- Use `heightfield_geomorph` callables for terrain shape, heightfields, cliffs, caves, erosion, talus, strata, geology, weathering, slope, curvature, and landform masks. Matrix rows: 200. P0 blockers: 0.
+- Use `heightfield_geomorph` callables for terrain shape, heightfields, cliffs, caves, erosion, talus, strata, geology, weathering, slope, curvature, and landform masks. Matrix rows: 201. P0 blockers: 0.
 - Use `hydrology` callables for water systems: rivers, lakes, waterfalls, wetlands, flow direction, velocity, depth, foam, mist, wet rock, caustics, and seam continuity. Matrix rows: 163. P0 blockers: 0.
 - Use `mesh_blender` callables for Blender/DCC bridge work: mesh creation, named attributes, GLB import safety, viewport/scene readback, Geometry Nodes-style recipes, and screenshot proof. Matrix rows: 171. P0 blockers: 0.
 - Use `pathing_roads` callables for roads, paths, navmesh, A*, bridges, fords, splines, cost fields, and traversal constraints. Matrix rows: 62. P0 blockers: 0.
@@ -37,4 +37,4 @@ No duplicate callable names detected.
 
 ## Matrix
 
-Full callable-by-callable rules live in `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_30.csv`.
+Full callable-by-callable rules live in `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv`.

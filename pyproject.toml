@@ -22,7 +22,7 @@ dev = [
     "ruff>=0.8.0",
 ]
 mcp = [
-    "veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@1516c802c487c74a0f4e4aec42d8e42930d75e24#subdirectory=Tools/mcp-toolkit ; python_version >= '3.12'",
+    "veilbreakers-mcp @ git+https://github.com/Sharks820/veilbreakers-gamedev-toolkit.git@35815ea7f1caf078de551378ab85e6c1f34b8750#subdirectory=Tools/mcp-toolkit ; python_version >= '3.12'",
 ]
 
 [tool.hatch.metadata]

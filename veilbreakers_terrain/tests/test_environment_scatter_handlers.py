@@ -1012,6 +1012,83 @@ class TestWriteTreeInstancePoints:
         np.testing.assert_array_equal(stack.tree_instance_points[:, 4], np.array([2.0, 0.0], dtype=np.float32))
 
 
+def test_scatter_point_table_catalog_fallback_and_bad_normal_gating(monkeypatch):
+    from veilbreakers_terrain.handlers import terrain_foliage_catalog
+    from veilbreakers_terrain.handlers.environment_scatter import (
+        _build_scatter_point_table_from_placements,
+        _resolve_prototype_id,
+    )
+    from veilbreakers_terrain.handlers.terrain_scatter_points import validate_scatter_point_table
+
+    assert _resolve_prototype_id(
+        {"prototype_id": "explicit_prefab"},
+        "tree_oak",
+        lambda species: {"unity_asset_path": f"Assets/{species}.prefab"},
+    ) == "explicit_prefab"
+    assert _resolve_prototype_id(
+        {},
+        "tree_oak",
+        lambda species: {"fallback": False, "unity_asset_path": f"Assets/{species}.prefab"},
+    ) == "Assets/tree_oak.prefab"
+    assert _resolve_prototype_id(
+        {},
+        "tree_oak",
+        lambda species: {"fallback": True, "unity_asset_path": f"Assets/{species}.prefab"},
+    ) == "tree_oak"
+    assert _resolve_prototype_id({}, "tree_oak", lambda species: (_ for _ in ()).throw(RuntimeError())) == "tree_oak"
+
+    def _catalog(species_id):
+        if species_id == "tree_oak":
+            return {"fallback": False, "unity_asset_path": "Assets/Foliage/Oak.prefab"}
+        return {"fallback": True, "unity_asset_path": "Assets/Fallback.prefab"}
+
+    monkeypatch.setattr(terrain_foliage_catalog, "resolve_model_asset", _catalog)
+
+    table = _build_scatter_point_table_from_placements(
+        [
+            {
+                "position": (6.0, 7.0),
+                "species_id": "tree_oak",
+                "base_type": "tree",
+                "scale": 1.2,
+                "altitude": 0.5,
+                "normal": "bad-normal",
+                "density": 0.8,
+                "lod": 1,
+                "slope": 8.0,
+            },
+            {
+                "position": (9.0, 3.0),
+                "species_id": "fern",
+                "base_type": "groundcover",
+                "scale": 0.7,
+                "altitude": 0.25,
+                "normal": (0.0, 0.0, 1.0),
+                "orient": (0.0, 0.0, 0.0, 1.0),
+                "density": 0.6,
+                "lod": 2,
+                "slope": 2.0,
+            },
+        ],
+        terrain_width=20.0,
+        terrain_height=20.0,
+        terrain_origin_x=100.0,
+        terrain_origin_y=200.0,
+        biome_id="dark_forest",
+        height_min=10.0,
+        height_range=20.0,
+        seed=42,
+    )
+
+    assert validate_scatter_point_table(table) == []
+    assert table.points[0].prototype_id == "Assets/Foliage/Oak.prefab"
+    assert table.points[0].normal == (0.0, 0.0, 1.0)
+    assert table.points[0].lod_bucket == "lod1"
+    assert table.points[0].position == pytest.approx((96.0, 197.0, 20.0))
+    assert table.points[1].prototype_id == "fern"
+    assert table.points[1].wind_profile == "groundcover"
+
+
 # ---------------------------------------------------------------------------
 # Fix 9.8 — LocationLayer (Wave 2)
 # ---------------------------------------------------------------------------

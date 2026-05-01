@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import inspect
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,15 @@ def visual_validation_modules():
         aaa_verify_map,
         analyze_render_image,
     )
+
+    if "validation_profile" not in inspect.signature(analyze_render_image).parameters:
+        pytest.skip("installed veilbreakers-mcp lacks visual validation_profile support")
+    if "validation_profile" not in inspect.signature(aaa_verify_map).parameters:
+        pytest.skip("installed veilbreakers-mcp lacks aaa_verify_map validation_profile support")
+    if not hasattr(blender_server, "_derive_terrain_validation_profiles"):
+        pytest.skip("installed veilbreakers-mcp lacks terrain validation profile derivation")
+    if "validation_profile" not in inspect.signature(blender_server.asset_pipeline).parameters:
+        pytest.skip("installed veilbreakers-mcp lacks asset_pipeline validation_profile support")
 
     return blender_server, aaa_verify_map, analyze_render_image
 
