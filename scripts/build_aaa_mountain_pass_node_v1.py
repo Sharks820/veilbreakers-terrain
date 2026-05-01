@@ -154,15 +154,14 @@ def _make_musgrave_bark_material(name: str, base_color: tuple, dark_color: tuple
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
     mix_rgb = nt.nodes.new("ShaderNodeMixRGB")
-    musgrave = nt.nodes.new("ShaderNodeTexMusgrave")
+    musgrave = nt.nodes.new("ShaderNodeTexNoise")
     tex_coord = nt.nodes.new("ShaderNodeTexCoord")
     mapping = nt.nodes.new("ShaderNodeMapping")
     bump = nt.nodes.new("ShaderNodeBump")
 
-    musgrave.musgrave_type = "FBM"
     musgrave.inputs["Scale"].default_value = 6.2
     musgrave.inputs["Detail"].default_value = 8.0
-    musgrave.inputs["Dimension"].default_value = 0.7
+    musgrave.inputs["Roughness"].default_value = 0.7
     musgrave.inputs["Lacunarity"].default_value = 2.1
 
     mix_rgb.blend_type = "MIX"

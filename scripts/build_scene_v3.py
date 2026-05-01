@@ -1782,10 +1782,10 @@ def make_pine_mesh() -> bpy.types.Mesh:
     _bout = nt_b.nodes.new("ShaderNodeOutputMaterial"); _bout.location = (700, 0)
     _bbsdf = nt_b.nodes.new("ShaderNodeBsdfPrincipled"); _bbsdf.location = (300, 0)
     _bbsdf.inputs["Roughness"].default_value = 0.93
-    _bmusg = nt_b.nodes.new("ShaderNodeTexMusgrave"); _bmusg.location = (-400, 0)
+    _bmusg = nt_b.nodes.new("ShaderNodeTexNoise"); _bmusg.location = (-400, 0)
     _bmusg.inputs["Scale"].default_value = 20.0
     _bmusg.inputs["Detail"].default_value = 5.0
-    _bmusg.inputs["Dimension"].default_value = 1.4
+    _bmusg.inputs["Roughness"].default_value = 1.4
     _bgeom = nt_b.nodes.new("ShaderNodeNewGeometry"); _bgeom.location = (-700, 0)
     nt_b.links.new(_bgeom.outputs["Position"], _bmusg.inputs["Vector"])
     _bmix = nt_b.nodes.new("ShaderNodeMixRGB"); _bmix.location = (-100, 0)
