@@ -37,6 +37,8 @@ tmp_review/
 tmp*/
 pytest-of-*/
 pytest-cache-files-*/
+pytest-pr8-temp*/
+pytest-*-temp*/
 
 # Generated repo-analysis outputs
 graphify-out/
@@ -61,6 +63,9 @@ output/test_artifacts/checkpoint_helpers/*/
 output/test_artifacts/terrain_validation/*/
 output/test_hunyuan3d2/
 output/test_rock_*.png
+# Blender scene files are too large for git (50MB+)
+output/**/*.blend
+output/**/*.blend1
 
 # Temporary audit reconstruction fragments
 docs/aaa-audit/.master_audit_section*_onward.md

@@ -1543,13 +1543,13 @@ def build_water_surfaces(hm):
                        width_scale=1.48, width_offset=0, material=damp_bank_mat)
     _build_bank_ribbon("VB_DampBank_Lower", hm, RIVER_POINTS[6:], water_lift=0.105,
                        width_scale=1.62, width_offset=6, material=damp_bank_mat)
-    upper_river = sampled_path(RIVER_POINTS[:5], "VB_River_Upper", water_lift=0.25, width_scale=0.70, width_offset=0)
-    lower_river = sampled_path(RIVER_POINTS[6:], "VB_River_Lower", water_lift=0.30, width_scale=0.78, width_offset=6)
+    upper_river = sampled_path(RIVER_POINTS[:5], "VB_River_Upper", water_lift=0.55, width_scale=0.70, width_offset=0)
+    lower_river = sampled_path(RIVER_POINTS[6:], "VB_River_Lower", water_lift=0.65, width_scale=0.78, width_offset=6)
     upper_river.data.materials.append(river_mat)
     lower_river.data.materials.append(river_mat)
 
-    wf_mat = _simple_principled_material("WaterFall", (0.035, 0.125, 0.135, 0.38),
-                                         roughness=0.78, alpha=0.38)
+    wf_mat = _simple_principled_material("WaterFall", (0.035, 0.125, 0.135, 0.58),
+                                         roughness=0.78, alpha=0.58)
     _build_bank_ribbon("VB_WaterfallChuteBed", hm, RIVER_POINTS[4:7], water_lift=0.08,
                        width_scale=0.94, width_offset=4, material=stream_bed_mat)
     _build_waterfall_volume(hm, wf_mat, foam_mat)
@@ -1599,8 +1599,8 @@ def build_beach_ring(hm):
         outer_y = LAKE_XY[1] + outer_r * s
         out_z = sample_h(hm, outer_x, outer_y) + 0.08
         inner_verts.append(bm.verts.new((
-            LAKE_XY[0] + inner_r * c, LAKE_XY[1] + inner_r * s, LAKE_WATER_LEVEL - 0.05
-        )))
+            LAKE_XY[0] + inner_r * c, LAKE_XY[1] + inner_r * s, LAKE_WATER_LEVEL + 0.04
+        )))  # +0.04 sits above water plane — eliminates Z-fight with lake surface
         outer_verts.append(bm.verts.new((outer_x, outer_y, out_z)))
 
     for k in range(segs):
@@ -1623,7 +1623,7 @@ def build_beach_ring(hm):
     beach_mat.use_nodes = True
     nt = beach_mat.node_tree
     bsdf = nt.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (0.075, 0.095, 0.070, 1)   # muted wet gravel/mud
+    bsdf.inputs["Base Color"].default_value = (0.165, 0.142, 0.092, 1)   # warm sandy gravel (readable shore transition)
     bsdf.inputs["Roughness"].default_value = 0.91
     geom = nt.nodes.new("ShaderNodeNewGeometry")
     noise = nt.nodes.new("ShaderNodeTexNoise")
@@ -1773,17 +1773,41 @@ def make_pine_mesh() -> bpy.types.Mesh:
     for p in mesh.polygons:
         p.use_smooth = True
 
+    # Bark: Musgrave procedural texture overlaid on dark-brown base for visible wood grain
     bark = bpy.data.materials.new("PineBark")
     bark.use_nodes = True
-    bark.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.11, 0.07, 0.04, 1)
-    bark.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.93
+    nt_b = bark.node_tree
+    for _n in list(nt_b.nodes):
+        nt_b.nodes.remove(_n)
+    _bout = nt_b.nodes.new("ShaderNodeOutputMaterial"); _bout.location = (700, 0)
+    _bbsdf = nt_b.nodes.new("ShaderNodeBsdfPrincipled"); _bbsdf.location = (300, 0)
+    _bbsdf.inputs["Roughness"].default_value = 0.93
+    _bmusg = nt_b.nodes.new("ShaderNodeTexMusgrave"); _bmusg.location = (-400, 0)
+    _bmusg.inputs["Scale"].default_value = 20.0
+    _bmusg.inputs["Detail"].default_value = 5.0
+    _bmusg.inputs["Dimension"].default_value = 1.4
+    _bgeom = nt_b.nodes.new("ShaderNodeNewGeometry"); _bgeom.location = (-700, 0)
+    nt_b.links.new(_bgeom.outputs["Position"], _bmusg.inputs["Vector"])
+    _bmix = nt_b.nodes.new("ShaderNodeMixRGB"); _bmix.location = (-100, 0)
+    _bmix.inputs["Color1"].default_value = (0.082, 0.050, 0.026, 1)   # dark furrow
+    _bmix.inputs["Color2"].default_value = (0.148, 0.092, 0.052, 1)   # ridge highlight
+    nt_b.links.new(_bmusg.outputs["Fac"], _bmix.inputs["Fac"])
+    nt_b.links.new(_bmix.outputs["Color"], _bbsdf.inputs["Base Color"])
+    nt_b.links.new(_bbsdf.outputs["BSDF"], _bout.inputs["Surface"])
+
+    # Foliage: deep conifer green with SSS for translucent needle look
     foliage = bpy.data.materials.new("PineFoliage")
     foliage.use_nodes = True
-    foliage.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.04, 0.11, 0.04, 1)
-    foliage.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.82
+    _fbsdf = foliage.node_tree.nodes["Principled BSDF"]
+    _fbsdf.inputs["Base Color"].default_value = (0.022, 0.085, 0.030, 1)  # deep dark green
+    _fbsdf.inputs["Roughness"].default_value = 0.80
     try:
-        foliage.node_tree.nodes["Principled BSDF"].inputs["Subsurface Weight"].default_value = 0.10
+        _fbsdf.inputs["Subsurface Weight"].default_value = 0.22
     except KeyError:
+        pass
+    try:
+        _fbsdf.inputs["Subsurface Radius"].default_value = (0.5, 1.0, 0.5)
+    except (KeyError, TypeError):
         pass
     mesh.materials.append(bark)    # slot 0
     mesh.materials.append(foliage)  # slot 1
@@ -2442,7 +2466,7 @@ def add_grass(terrain_obj, hm):
     psys = terrain_obj.particle_systems[-1]
     settings = psys.settings
     settings.type = "HAIR"
-    settings.count = 18000
+    settings.count = 3500  # 18 000 caused CPU lockup during render; 3 500 is visually equivalent at tile scale
     settings.render_type = "OBJECT"
     settings.instance_object = grass_obj
     settings.particle_size = 0.65
@@ -2690,32 +2714,88 @@ def setup_cave_pov_camera() -> bpy.types.Object:
 # ---------------------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------------------
-def configure_render(samples: int = 64, res_x: int = 1920, res_y: int = 1080):
+def _gpu_cycles_available() -> bool:
+    """Return True only if Cycles finds a usable GPU. Tries OPTIX→CUDA→HIP→METAL."""
+    try:
+        prefs = bpy.context.preferences
+        cp = prefs.addons.get("cycles")
+        if not cp:
+            return False
+        for dtype in ("OPTIX", "CUDA", "HIP", "METAL"):
+            try:
+                cp.preferences.compute_device_type = dtype
+                cp.preferences.get_devices()
+                if any(d.use for d in cp.preferences.devices):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def configure_render(samples: int = 64, res_x: int = 1920, res_y: int = 1080,
+                     force_engine: str | None = None):
+    """Configure rendering.  Cycles GPU when available; EEVEE NEXT otherwise (no CPU lockup)."""
     scn = bpy.context.scene
-    scn.render.engine = "CYCLES"
-    scn.cycles.samples = samples
-    scn.cycles.use_denoising = True
     scn.render.resolution_x = res_x
     scn.render.resolution_y = res_y
     scn.render.resolution_percentage = 100
     scn.render.image_settings.file_format = "PNG"
-    scn.view_settings.view_transform = "AgX"
-    scn.view_settings.exposure = 0.0
+    try:
+        scn.view_settings.view_transform = "AgX"
+        scn.view_settings.exposure = 0.0
+    except Exception:
+        pass
     try:
         scn.view_settings.look = "AgX - Medium High Contrast"
     except Exception:
         pass
-    try:
-        prefs = bpy.context.preferences
-        cp = prefs.addons.get('cycles')
-        if cp:
-            cp.preferences.compute_device_type = 'OPTIX'
-            cp.preferences.get_devices()
-            for d in cp.preferences.devices:
-                d.use = True
+
+    has_gpu = _gpu_cycles_available()
+    engine = force_engine or ("CYCLES" if has_gpu else "BLENDER_EEVEE_NEXT")
+
+    if engine == "CYCLES":
+        scn.render.engine = "CYCLES"
+        scn.cycles.samples = samples
+        scn.cycles.use_denoising = True
         scn.cycles.device = "GPU"
-    except Exception:
-        pass
+        log(f"render: Cycles GPU  {res_x}×{res_y}  {samples}spp")
+    else:
+        # EEVEE NEXT — GPU-accelerated, no CPU lockup risk
+        try:
+            scn.render.engine = "BLENDER_EEVEE_NEXT"
+        except Exception:
+            try:
+                scn.render.engine = "BLENDER_EEVEE"
+            except Exception:
+                # Hard fallback: Cycles with very low sample count
+                scn.render.engine = "CYCLES"
+                scn.cycles.samples = max(8, samples // 6)
+                scn.cycles.device = "CPU"
+                log(f"render: Cycles CPU fallback  {res_x}×{res_y}  {max(8, samples // 6)}spp (EEVEE unavailable)")
+                return
+        try:
+            scn.eevee.taa_render_samples = 16
+        except Exception:
+            pass
+        try:
+            scn.eevee.use_bloom = True
+            scn.eevee.bloom_intensity = 0.06
+        except Exception:
+            pass
+        try:
+            scn.eevee.use_gtao = True
+            scn.eevee.gtao_distance = 8.0
+            scn.eevee.gtao_factor = 0.8
+        except Exception:
+            pass
+        try:
+            scn.eevee.shadow_cube_size = "1024"
+            scn.eevee.shadow_cascade_size = "2048"
+        except Exception:
+            pass
+        log(f"render: EEVEE NEXT  {res_x}×{res_y}  (GPU-accelerated, CPU-safe)")
 
 
 def render_to(filepath: Path):
@@ -2724,11 +2804,12 @@ def render_to(filepath: Path):
     log(f"rendered -> {filepath.name}")
 
 
-def render_orbit(out_dir: Path, frames: int = 8,
+def render_orbit(out_dir: Path, frames: int = 4,
                  radius: float = 480.0, height: float = 420.0):
     orbit_dir = out_dir / "orbit"
     orbit_dir.mkdir(exist_ok=True)
-    configure_render(samples=96, res_x=1280, res_y=720)
+    # Always EEVEE for orbit — no crash risk, fast enough for quality review
+    configure_render(samples=32, res_x=1280, res_y=720, force_engine="BLENDER_EEVEE_NEXT")
     cam_data = bpy.data.cameras.new("CAM_Orbit")
     cam_data.lens = 35.0
     cam_data.clip_end = 4000.0

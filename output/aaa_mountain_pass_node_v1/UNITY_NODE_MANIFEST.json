@@ -1,0 +1,173 @@
+{
+  "node_id": "VB_AAA_NODE_MOUNTAIN_PASS_WATER_CAVE_FOREST_2026_05_01_A",
+  "fresh_generation": true,
+  "source_script": "scripts/build_aaa_mountain_pass_node_v1.py",
+  "reused_old_blend_or_render": false,
+  "seed": "0xaaba2026",
+  "tile": {
+    "size_m": 1024.0,
+    "x_min": -512.0,
+    "x_max": 512.0,
+    "y_min": -512.0,
+    "y_max": 512.0,
+    "height_min_m": -1.0,
+    "height_max_m": 221.63802037452763
+  },
+  "hero_features": {
+    "mountain_pass": {
+      "peak_z_m": 340.0
+    },
+    "body_of_water": {
+      "type": "lake_to_south_edge_large_water_transition",
+      "center_xy": [
+        142.0,
+        -338.0
+      ],
+      "radius_m": 232.0,
+      "surface_z_m": 8.4
+    },
+    "river": {
+      "points_xyz": [
+        [
+          -390.0,
+          340.0,
+          126.0
+        ],
+        [
+          -350.0,
+          304.0,
+          86.0
+        ],
+        [
+          -306.0,
+          266.0,
+          68.0
+        ],
+        [
+          -248.0,
+          228.0,
+          58.0
+        ],
+        [
+          -180.0,
+          190.0,
+          48.0
+        ],
+        [
+          -156.0,
+          154.0,
+          24.0
+        ],
+        [
+          -132.0,
+          112.0,
+          17.5
+        ],
+        [
+          -92.0,
+          54.0,
+          15.0
+        ],
+        [
+          -34.0,
+          -24.0,
+          13.2
+        ],
+        [
+          34.0,
+          -106.0,
+          10.8
+        ],
+        [
+          82.0,
+          -206.0,
+          9.05
+        ],
+        [
+          150.0,
+          -340.0,
+          8.82
+        ],
+        [
+          248.0,
+          -456.0,
+          8.620000000000001
+        ],
+        [
+          332.0,
+          -530.0,
+          8.47
+        ]
+      ],
+      "widths_m": [
+        5.0,
+        5.8,
+        6.4,
+        7.6,
+        8.4,
+        9.4,
+        10.2,
+        12.0,
+        13.8,
+        12.5,
+        10.2,
+        16.0,
+        28.0,
+        38.0
+      ],
+      "feeds_body_of_water": true
+    },
+    "cave": {
+      "entry_xyz": [
+        246.0,
+        116.0,
+        94.0
+      ],
+      "exit_xyz": [
+        452.0,
+        170.0,
+        132.0
+      ],
+      "radius_m": 7.2,
+      "traversable_target": true
+    },
+    "forest_start": {
+      "minimum_tree_target": 520,
+      "trees_placed": 520,
+      "tree_template": "fresh_alpha_card_conifer_and_broadleaf"
+    }
+  },
+  "unity_import_contract": {
+    "height_units": "meters",
+    "water_metadata": {
+      "lake_water_level_m": 8.4,
+      "waterfall_top_z_m": 48.0,
+      "river_outflow_edge": "south"
+    },
+    "seam_contracts": {
+      "north": {
+        "continues_mountain_pass": true
+      },
+      "south": {
+        "continues_large_water_body": true,
+        "outflow_xyz": [
+          332.0,
+          -530.0,
+          8.47
+        ]
+      },
+      "east": {
+        "cave_exit_near_edge": true
+      },
+      "west": {
+        "forest_can_continue": true
+      }
+    }
+  },
+  "render_outputs": {
+    "hero": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\render_hero.png",
+    "orbit_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\orbit",
+    "blend": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\VeilBreakers_Scene_v3.blend"
+  },
+  "build_return_code": 1
+}
