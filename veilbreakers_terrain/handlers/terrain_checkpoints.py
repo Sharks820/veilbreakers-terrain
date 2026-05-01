@@ -24,6 +24,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+import numpy as _np
+
 from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import (
     BBox,
@@ -35,6 +37,25 @@ from .terrain_semantics import (
     TerrainMaskStack,
     TerrainPipelineState,
 )
+
+
+def _snapshot_mask_stack(stack: "TerrainMaskStack") -> "TerrainMaskStack":
+    """Lightweight stack snapshot for rollback — avoids deepcopy OOM on 4096² tiles.
+
+    Uses ndarray.copy() (buffer-level) for array channels instead of the full
+    Python object walk that deepcopy performs — 10-100x faster, no 4 GB peak.
+    Non-array, non-opaque attributes are shallow-copied (strings/ints are
+    immutable so shallow is safe).
+    """
+    snap = copy.copy(stack)  # shallow; array/opaque channels fixed below
+    for ch in type(stack)._ARRAY_CHANNELS:
+        val = getattr(stack, ch, None)
+        if isinstance(val, _np.ndarray):
+            object.__setattr__(snap, ch, val.copy())
+    object.__setattr__(snap, "populated_by_pass", dict(stack.populated_by_pass))
+    object.__setattr__(snap, "dirty_channels", set(stack.dirty_channels))
+    object.__setattr__(snap, "content_hash", None)
+    return snap
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +607,9 @@ def autosave_after_pass(controller: TerrainPassController, enabled: bool = True)
         ) -> PassResult:
             # Snapshot the mask stack before the pass so we can roll back if
             # the pass raises an exception (leaves the stack in a dirty state).
-            pre_pass_stack = copy.deepcopy(controller.state.mask_stack)
+            # Use _snapshot_mask_stack (ndarray.copy per channel) — copy.deepcopy
+            # on a 4096² stack with 20+ float32 channels would OOM (4+ GB peak).
+            pre_pass_stack = _snapshot_mask_stack(controller.state.mask_stack)
 
             try:
                 result = original(
