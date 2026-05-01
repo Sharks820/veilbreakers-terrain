@@ -250,6 +250,26 @@ def run_pipeline_passes(hm):
     except Exception as exc:
         log(f"  waterfalls FAIL ({exc!r})")
 
+    # water_variants produces water_surface_mask + wetness — needed by two things:
+    #   (a) procedural_grass._eligibility_mask already excludes water_surface_mask cells
+    #   (b) the water_surface_mask → wet_rock label bridge in terrain_materials_v2
+    log("  running water_variants pass...")
+    try:
+        from veilbreakers_terrain.handlers.terrain_water_variants import pass_water_variants
+        r = pass_water_variants(state, region=None)
+        wm = mask_stack.get("water_surface_mask")
+        log(f"  water_variants: {r.status}  water_surface_mask={wm is not None}")
+    except Exception as exc:
+        log(f"  water_variants FAIL ({exc!r})")
+
+    log("  running bathymetry pass...")
+    try:
+        from veilbreakers_terrain.handlers.terrain_water_variants import pass_bathymetry
+        r = pass_bathymetry(state, region=None)
+        log(f"  bathymetry: {r.status}")
+    except Exception as exc:
+        log(f"  bathymetry FAIL ({exc!r})")
+
     # Inject lava_prox so caldera_volcanic_rules() can gate the lava_hot channel.
     # Prefer pipeline-produced SDF; fall back to radial proxy when unavailable.
     if mask_stack.get("lava_prox") is None:

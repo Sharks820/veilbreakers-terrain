@@ -172,6 +172,7 @@ def default_dark_fantasy_rules() -> MaterialRuleSet:
             wetness_min=0.3,
             wetness_max=1.0,
             base_weight=1.5,
+            priority=5,
         ),
         MaterialChannel(
             channel_id="snow",
@@ -791,26 +792,34 @@ def compute_slope_material_weights(
     # --- Structural label overrides (Fix 10.10 / REQ-P10-001) ---
     # Feature generators stamp labels during generation; labels take priority over
     # analytical slope classification. Labeled cells skip the analytical path.
-    rock_label   = stack.get("rock_label")    # float32 mask [0..1]
-    gravel_label = stack.get("gravel_label")  # float32 mask [0..1]
-    water_label  = stack.get("water_label")   # float32 mask [0..1]
-    cliff_label  = stack.get("cliff_label")   # float32 mask [0..1]
-    has_labels = any(lbl is not None for lbl in (rock_label, gravel_label, water_label, cliff_label))
+    rock_label          = stack.get("rock_label")          # float32 mask [0..1]
+    gravel_label        = stack.get("gravel_label")        # float32 mask [0..1]
+    water_label         = stack.get("water_label")         # float32 mask [0..1]
+    cliff_label         = stack.get("cliff_label")         # float32 mask [0..1]
+    # water_surface_mask is produced by pass_water_variants (binary 0/1).
+    # Bridge it to wet_rock so streams/rivers/caldera-rim pools hard-stamp
+    # wet_rock=1.0 the same way water_label does — no more grass bleed-through.
+    water_surface_mask  = stack.get("water_surface_mask")  # float32 binary [0/1]
+    has_labels = any(lbl is not None for lbl in (
+        rock_label, gravel_label, water_label, cliff_label, water_surface_mask,
+    ))
 
     if has_labels:
         # Map label channel → splatmap layer index.
         # Only assign if the target channel_id exists in the rule set.
         _label_channel_map = {
-            "rock_label":   ("cliff",),     # rock structural label → cliff material
-            "gravel_label": ("scree",),     # gravel structural label → scree material
-            "water_label":  ("wet_rock",),  # water structural label → wet_rock material
-            "cliff_label":  ("cliff",),     # cliff structural label → cliff material
+            "rock_label":         ("cliff",),     # rock structural label → cliff material
+            "gravel_label":       ("scree",),     # gravel structural label → scree material
+            "water_label":        ("wet_rock",),  # water structural label → wet_rock material
+            "cliff_label":        ("cliff",),     # cliff structural label → cliff material
+            "water_surface_mask": ("wet_rock",),  # pass_water_variants binary → wet_rock
         }
         label_arrays = {
-            "rock_label":   rock_label,
-            "gravel_label": gravel_label,
-            "water_label":  water_label,
-            "cliff_label":  cliff_label,
+            "rock_label":         rock_label,
+            "gravel_label":       gravel_label,
+            "water_label":        water_label,
+            "cliff_label":        cliff_label,
+            "water_surface_mask": water_surface_mask,
         }
         for label_key, target_ids in _label_channel_map.items():
             lbl = label_arrays[label_key]
