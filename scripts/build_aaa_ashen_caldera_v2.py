@@ -286,11 +286,17 @@ def _extract_masks_from_stack(mask_stack, hm) -> dict:
         curv_scale = max(float(np.percentile(np.abs(lap), 95)), 1e-6)
         basin = np.clip(-lap / curv_scale, 0.0, 1.0).astype(np.float32)
 
-    xs = np.linspace(-HALF, HALF, SIZE)
-    ys = np.linspace(-HALF, HALF, SIZE)
-    X, Y = np.meshgrid(xs, ys)
-    R = np.sqrt(X**2 + Y**2)
-    lava_prox = np.clip(1.0 - R / 280.0, 0.0, 1.0)
+    # L-4 fix: prefer pipeline-produced lava_prox (richer SDF following lava channel).
+    # Radial fallback over-paints cold rim rocks within 280 m of origin.
+    lava_prox_src = mask_stack.get("lava_prox")
+    if lava_prox_src is not None:
+        lava_prox = np.asarray(lava_prox_src, dtype=np.float32)
+    else:
+        xs = np.linspace(-HALF, HALF, SIZE)
+        ys = np.linspace(-HALF, HALF, SIZE)
+        X, Y = np.meshgrid(xs, ys)
+        R = np.sqrt(X**2 + Y**2)
+        lava_prox = np.clip(1.0 - R / 280.0, 0.0, 1.0)
 
     return {
         "slope_norm": slope_norm.astype(np.float32),
@@ -318,14 +324,25 @@ def _bake_splatmap_to_image(mask_stack):
         # low-frequency signals that lose nothing meaningful at 1024 px.
         MAX_SPLAT = 1024
         if splat_h > MAX_SPLAT or splat_w > MAX_SPLAT:
-            from PIL import Image as _PIL
-            import io
-            arr8 = (np.clip(splat_weights, 0.0, 1.0) * 255).astype(np.uint8)
-            pil  = _PIL.fromarray(arr8[:, :, :3])
-            pil  = pil.resize((MAX_SPLAT, MAX_SPLAT), _PIL.LANCZOS)
-            splat_weights = np.array(pil).astype(np.float32) / 255.0
+            # Downsample per-channel to preserve all 4 weights (H-2 fix:
+            # PIL RGBA mode required — dropping to 3ch loses the 4th layer
+            # which the shader reads from alpha, painting the whole terrain orange).
+            from scipy.ndimage import zoom as _zoom
+            n_ch = splat_weights.shape[2]
+            zy = MAX_SPLAT / splat_h; zx = MAX_SPLAT / splat_w
+            splat_weights = np.stack(
+                [_zoom(np.clip(splat_weights[:, :, c], 0, 1), (zy, zx), order=1)
+                 for c in range(n_ch)],
+                axis=2,
+            ).astype(np.float32)
             splat_h = splat_w = MAX_SPLAT
-            log(f"  splatmap downsampled to {MAX_SPLAT}² (8 GB VRAM cap)")
+            log(f"  splatmap downsampled {n_ch}ch -> {MAX_SPLAT}² (8 GB VRAM cap)")
+
+        # H-1: verify partition-of-unity; renormalize if pipeline wrote non-PoU weights.
+        ch_sum = splat_weights.sum(axis=2, keepdims=True)
+        if not np.allclose(ch_sum, 1.0, atol=0.05):
+            splat_weights = splat_weights / np.maximum(ch_sum, 1e-6)
+            log("  splatmap renormalized to partition-of-unity")
 
         img = bpy.data.images.new(
             "CalderaSplatmap", width=splat_w, height=splat_h,
@@ -930,7 +947,9 @@ def setup_lighting():
 
     sun.energy = _sun_energy
     sun.color  = (1.0, 0.62, 0.34)       # amber volcanic sunset
-    sun.angle  = math.radians(1.5)        # tight disk for hard shadows on cliffs
+    # L-1 fix: reference says 4.5° apparent disk (ash aerosol diffuses sun).
+    # 1.5° was wrong and produced unnaturally sharp shadows.
+    sun.angle  = math.radians(float(_sun_ref.get("shadow_softness_aerosol_deg", 4.5)))
     sun_obj = bpy.data.objects.new("VB_Sun", sun)
     bpy.context.scene.collection.objects.link(sun_obj)
     # Blender ZYX euler for a SUN lamp: rotation_euler[0]=elevation,
@@ -1195,7 +1214,9 @@ def scatter_from_mask(hm, masks, entry, template_obj, rng_local):
     count  = entry.count if entry.count > 0 else 50
     placed = 0
     rules  = entry.placement
-    slope_arr = np.degrees(np.arctan(masks["slope_norm"].astype(np.float64) * 60.0 / 90.0 * math.pi / 2))
+    # H-4 fix: slope_norm is already linear in degrees (0=flat, 1=60°).
+    # The previous arctan expression returned wrong angles (46° at slope_norm=1.0).
+    slope_arr = masks["slope_norm"].astype(np.float64) * 60.0
 
     attempts = count * 8
     positions = []

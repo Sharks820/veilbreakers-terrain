@@ -224,23 +224,48 @@ def run_terrain_pipeline(hm):
 # EXR export helpers (OpenEXR via imageio or numpy fallback to .npy)
 # ---------------------------------------------------------------------------
 
-def _save_exr(path: Path, data, channel_names: list[str]) -> bool:
-    """Try to write a multi-channel EXR. Falls back to .npy if imageio missing."""
+def _save_exr(path: Path, data, channel_names: list[str]) -> Path:
+    """Write float data as EXR → 16-bit PNG → .npy in order of preference.
+
+    EXR is ideal for Unity/Blender import.  16-bit PNG is a portable fallback
+    Unity can ingest directly.  .npy is a last resort for Python-only pipelines
+    and is NOT importable by game engines — callers should warn the user.
+    Returns the path actually written.
+    """
     import numpy as np
 
     arr = np.asarray(data, dtype=np.float32)
+    # --- EXR via imageio openexr plugin ---
     try:
         import imageio
-        if arr.ndim == 2:
-            arr = arr[:, :, np.newaxis]
-        imageio.v3.imwrite(str(path), arr, plugin="openexr")
-        return True
+        arr3 = arr if arr.ndim == 3 else arr[:, :, np.newaxis]
+        imageio.v3.imwrite(str(path), arr3, plugin="openexr")
+        return path
     except Exception:
         pass
+    # --- 16-bit PNG fallback (Unity-importable) ---
+    try:
+        from PIL import Image as _PIL
+        png_path = path.with_suffix(".png")
+        u16 = (np.clip(arr, 0, 1) * 65535).astype(np.uint16)
+        if u16.ndim == 3 and u16.shape[2] == 1:
+            u16 = u16[:, :, 0]
+        mode = {1: "I;16", 3: "RGB", 4: "RGBA"}.get(
+            u16.shape[2] if u16.ndim == 3 else 1, "I;16"
+        )
+        if mode == "I;16":
+            _PIL.fromarray(u16, mode="I;16").save(str(png_path))
+        else:
+            _PIL.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8)).save(str(png_path))
+        log(f"  EXR unavailable — saved {png_path.name} (16-bit PNG, Unity-importable)")
+        return png_path
+    except Exception:
+        pass
+    # --- .npy last resort ---
     npy_path = path.with_suffix(".npy")
     np.save(str(npy_path), arr)
-    log(f"  EXR unavailable — saved {npy_path.name} instead")
-    return False
+    log(f"  EXR+PNG unavailable — saved {npy_path.name} (NOT engine-importable)")
+    return npy_path
 
 
 def export_heightmap(hm, out_dir: Path) -> Path:
@@ -324,24 +349,48 @@ def validate_photometric(mask_stack, hm) -> dict:
         ref = load_scene_reference("ashen_caldera")
         result["reference_loaded"] = True
 
-        # Check that high-lava-proximity pixels carry lava emission
-        xs = np.linspace(-HALF, HALF, SIZE)
-        ys = np.linspace(-HALF, HALF, SIZE)
+        # C-1 fix: replaced argmax tautology with real caldera geological checks.
+        # argmax(core_means) always finds a dominant layer → always PASS → no-op.
+        # Real invariants instead:
+        #   1. Floor depression: caldera centre must be ≥100 m below the rim ring.
+        #   2. Floor flatness: mean slope in caldera floor < 15°.
+        #   3. lava_prox from pipeline (if produced) must average > 0.5 in core.
+        xs = np.linspace(-HALF, HALF, hm.shape[1])
+        ys = np.linspace(-HALF, HALF, hm.shape[0])
         X, Y = np.meshgrid(xs, ys)
         R = np.sqrt(X**2 + Y**2)
-        lava_core = (R < 130.0)  # caldera floor
+        # The lava floor at 1m/sample is a small flat disc (R<~12m).
+        # Beyond R=12m the inner caldera walls are steep (45-60°) — including
+        # them in a "floor flat" check would always fail.  Rim-peak ring = R=120-180m.
+        floor_mask = R < 12.0   # tiny flat lava lake centre
+        rim_mask   = (R > 120.0) & (R < 180.0)
 
-        splat = mask_stack.get("splatmap_weights_layer")
-        if splat is not None and splat.ndim == 3 and lava_core.any():
-            # Find the dominant layer in the caldera core — that's the lava/hot layer
-            core_means = splat[lava_core].mean(axis=0)
-            hot_idx = int(np.argmax(core_means))
-            hot_in_core = float(core_means[hot_idx])
-            result["hot_layer_idx"] = hot_idx
-            result["hot_layer_mean_in_caldera_core"] = hot_in_core
-            result["photometric_ok"] = hot_in_core > 0.05
+        # 1. Depression check: rim-peak mean minus global floor min
+        floor_min   = float(hm.min())
+        rim_elev    = float(hm[rim_mask].mean()) if rim_mask.any() else 0.0
+        depression_m = rim_elev - floor_min
+        depression_ok = depression_m > 200.0  # caldera must have ≥200m relief
+
+        # 2. Floor flatness check — only within the tiny flat-floor disc
+        gy, gx = np.gradient(hm.astype(np.float64), 1.0)
+        slope_deg_map = np.degrees(np.arctan(np.sqrt(gx**2 + gy**2)))
+        floor_slope_mean = float(slope_deg_map[floor_mask].mean()) if floor_mask.any() else 90.0
+        floor_flat_ok = floor_slope_mean < 8.0  # flat lava lake: <8° at centre
+
+        # 3. lava_prox coverage (optional pipeline channel)
+        lava_prox_src = mask_stack.get("lava_prox")
+        if lava_prox_src is not None and floor_mask.any():
+            lp = np.asarray(lava_prox_src, dtype=np.float32)
+            lava_prox_core_mean = float(lp[floor_mask].mean())
+            lava_prox_ok = lava_prox_core_mean > 0.5
         else:
-            result["photometric_ok"] = False
+            lava_prox_core_mean = None
+            lava_prox_ok = None  # not validated — channel not produced
+
+        result["floor_vs_rim_depression_m"] = depression_m
+        result["floor_slope_mean_deg"] = floor_slope_mean
+        result["lava_prox_core_mean"] = lava_prox_core_mean
+        result["photometric_ok"] = depression_ok and floor_flat_ok and (lava_prox_ok is not False)
 
         result["ref_basalt_albedo"] = ref.material("fresh_basalt_rock").get("linear_albedo")
         result["ref_lava_emission_W_m2"] = ref.lighting.get("lava_fill_lights", {}).get("primary_strength_W_m2")
