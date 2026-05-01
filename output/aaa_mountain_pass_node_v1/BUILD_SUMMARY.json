@@ -1,4 +1,6 @@
 {
+  "node_id": "VB_AAA_NODE_MOUNTAIN_PASS_WATER_CAVE_FOREST_2026_05_01_A",
+  "fresh_generation": true,
   "tile_m": 1024.0,
   "heightmap_min_m": -1.0,
   "heightmap_max_m": 221.63802037452763,
@@ -16,14 +18,20 @@
     170.0,
     132.0
   ],
-  "trees_placed": 520,
-  "rocks_placed": 85,
+  "trees_placed": 0,
+  "rocks_placed": 110,
   "model_asset_rocks_placed": 165,
   "grass_clumps_placed": 0,
   "water_surface_foliage_placed": 0,
-  "procedural_grass_clumps_placed": 2400,
-  "model_asset_props_placed": 685,
-  "bridge_paths": {},
+  "procedural_grass_clumps_placed": 2600,
+  "model_asset_props_placed": 165,
+  "bridge_paths": {
+    "fresh_node_note": "optional bridge/path route omitted for requested terrain-first node",
+    "path_network_contract_issues": [],
+    "callables_used": [
+      "validate_node_generation_contracts"
+    ]
+  },
   "node_contracts": {
     "node_id": "VB_AAA_NODE_MOUNTAIN_PASS_WATER_CAVE_FOREST_2026_05_01_A",
     "off_node_water_contract": {
@@ -220,11 +228,17 @@
       ]
     },
     "scatter_point_contract_issues": [],
-    "issues": []
+    "issues": [
+      {
+        "code": "no_tree_scatter"
+      }
+    ]
   },
-  "failures": 1,
+  "failures": 2,
   "failure_stages": [
-    "bridge_paths"
+    "fresh_trees",
+    "node_contracts"
   ],
-  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\VeilBreakers_Scene_v3.blend"
+  "blend_path": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\VeilBreakers_AAA_MountainPass_Node_v1.blend",
+  "fresh_tree_template": "alpha_card_conifer_and_broadleaf"
 }

@@ -133,7 +133,7 @@
     },
     "forest_start": {
       "minimum_tree_target": 520,
-      "trees_placed": 520,
+      "trees_placed": 0,
       "tree_template": "fresh_alpha_card_conifer_and_broadleaf"
     }
   },
