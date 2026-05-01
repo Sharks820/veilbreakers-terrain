@@ -133,7 +133,7 @@
     },
     "forest_start": {
       "minimum_tree_target": 520,
-      "trees_placed": 0,
+      "trees_placed": 520,
       "tree_template": "fresh_alpha_card_conifer_and_broadleaf"
     }
   },
@@ -169,5 +169,5 @@
     "orbit_dir": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\orbit",
     "blend": "C:\\Users\\Conner\\OneDrive\\Documents\\veilbreakers-terrain\\output\\aaa_mountain_pass_node_v1\\VeilBreakers_Scene_v3.blend"
   },
-  "build_return_code": 1
+  "build_return_code": 0
 }
