@@ -313,17 +313,19 @@ def validate_photometric(mask_stack, hm) -> dict:
         lava_core = (R < 130.0)  # caldera floor
 
         splat = mask_stack.get("splatmap_weights_layer")
-        if splat is not None and splat.ndim == 3:
-            # Layer 2 (index 2) is typically scree/lava-hot in our caldera palette
-            hot_layer = splat[:, :, min(2, splat.shape[2] - 1)]
-            hot_in_core = float(hot_layer[lava_core].mean()) if lava_core.any() else 0.0
+        if splat is not None and splat.ndim == 3 and lava_core.any():
+            # Find the dominant layer in the caldera core — that's the lava/hot layer
+            core_means = splat[lava_core].mean(axis=0)
+            hot_idx = int(np.argmax(core_means))
+            hot_in_core = float(core_means[hot_idx])
+            result["hot_layer_idx"] = hot_idx
             result["hot_layer_mean_in_caldera_core"] = hot_in_core
             result["photometric_ok"] = hot_in_core > 0.05
         else:
             result["photometric_ok"] = False
 
-        result["ref_basalt_albedo"] = ref.material("fresh_basalt_rock").get("albedo_linear")
-        result["ref_lava_emission_cd_m2"] = ref.lighting.get("lava_emission_cd_m2")
+        result["ref_basalt_albedo"] = ref.material("fresh_basalt_rock").get("linear_albedo")
+        result["ref_lava_emission_W_m2"] = ref.lighting.get("lava_fill_lights", {}).get("primary_strength_W_m2")
     except Exception as exc:
         result["reference_loaded"] = False
         result["error"] = str(exc)
