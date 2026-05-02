@@ -1,23 +1,23 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-05-01T23:53:55.809090+00:00
+- Generated: 2026-05-02T00:00:01.485371+00:00
 - Tool: `scripts/build_industry_best_practice_callable_matrix.py`
 - Coverage scope: `industry_best_practice_matrix`
 - Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.
 - Grade source: `docs/aaa-audit/GRADES_VERIFIED.csv`
 - Source inventory artifact: `output/verification/TERRAIN_BEST_PRACTICE_GUARDRAIL_REPORT.json`
-- Source inventory fingerprint: `sha256:851a07a4d96ea591eaac3da53c5c6278266cde79afdc936727b86787958bb3df`
-- Total callables covered: **1732**
+- Source inventory fingerprint: `sha256:45d55078e18feeb05d8a7638f212b2b4c5159f30c10160fc9baa5439575830f5`
+- Total callables covered: **1733**
 - Output CSV: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv`
 - Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.
 
 ## Upgrade Tiers
 
-- P3: 1732
+- P3: 1733
 
 ## Grade Status
 
-- VERIFIED_LOW_RISK: 1730
+- VERIFIED_LOW_RISK: 1731
 - LOCK_WITH_REGRESSION_GATES: 2
 
 ## Domain Coverage
@@ -28,7 +28,7 @@
 - scatter_ecology: 164 callables; gates `point_schema|density_stats|blue_noise_or_distribution|collision_or_exclusion|asset_manifest|lod_budget`; phase Phase 4,9B
 - hydrology: 164 callables; gates `hydrology_contract|depth_tests|velocity_tests|flow_direction_tests|seam_continuity|swimmable_depth`; phase Phase 2-3
 - validation_qa: 145 callables; gates `issue_codes|golden_visual|performance_budget|determinism|low_spec|artifact_schema`; phase Phase 11-12
-- terrain_pipeline: 144 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
+- terrain_pipeline: 145 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
 - terrain_texturing: 125 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D
 - export_runtime: 112 callables; gates `manifest_schema|unity_contract|scale_factor|roundtrip_read|artifact_presence`; phase Phase 10
 - pathing_roads: 62 callables; gates `path_cost_tests|cell_size_tests|slope_budget|water_crossing|determinism`; phase Phase 8

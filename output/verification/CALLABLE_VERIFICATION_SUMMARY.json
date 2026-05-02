@@ -2,25 +2,26 @@
   "csv": "C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain-pr-cleanup/output/verification/CALLABLE_VERIFICATION_MATRIX.csv",
   "direct_test_only_a_grade_count": 146,
   "domain_counts": {
-    "blender_tool": 1469,
+    "blender_tool": 1470,
     "camera_readability": 357,
     "core": 8,
-    "geometry_mesh": 1302,
-    "materials_texturing": 705,
-    "pipeline_wiring": 1087,
-    "scatter_ecology": 657,
+    "geometry_mesh": 1325,
+    "materials_texturing": 728,
+    "pipeline_wiring": 1088,
+    "scatter_ecology": 680,
     "visual_qa": 369,
     "water": 748
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1730
+    "LOW": 1731
   },
   "tool_blocker_count": 0,
-  "total_callables": 1730,
+  "total_callables": 1731,
   "wiring_status_counts": {
     "direct_test_covered": 237,
-    "helper_reachable": 1285,
-    "runtime_primary": 208
+    "helper_reachable": 1284,
+    "runtime_primary": 207,
+    "unknown": 3
   }
 }
