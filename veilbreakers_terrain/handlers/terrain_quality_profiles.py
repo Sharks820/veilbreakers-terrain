@@ -15,6 +15,7 @@ Canonical quality tiers (quality-ascending):
 
 Legacy aliases (kept for backward-compat with tests and configs):
     preview    → mobile
+    low        → mobile
     production → standard
     hero_shot  → high_fidelity
 """
@@ -541,6 +542,7 @@ AAA_OPEN_WORLD_PROFILE = TerrainQualityProfile(
 # ---------------------------------------------------------------------------
 
 PREVIEW_PROFILE = replace(MOBILE_PROFILE, name="preview", extends=None)
+LOW_PROFILE = replace(MOBILE_PROFILE, name="low", extends=None)
 PRODUCTION_PROFILE = replace(STANDARD_PROFILE, name="production", extends="preview")
 HERO_SHOT_PROFILE = replace(HIGH_FIDELITY_PROFILE, name="hero_shot", extends="production")
 
@@ -557,6 +559,7 @@ _BUILTIN_PROFILES: Dict[str, TerrainQualityProfile] = {
     "aaa_open_world": AAA_OPEN_WORLD_PROFILE,
     # Legacy aliases — share the same profile data via replace()
     "preview": PREVIEW_PROFILE,
+    "low": LOW_PROFILE,
     "production": PRODUCTION_PROFILE,
     "hero_shot": HERO_SHOT_PROFILE,
 }
@@ -1007,6 +1010,7 @@ __all__ = [
     "AAA_OPEN_WORLD_PROFILE",
     # Legacy aliases
     "PREVIEW_PROFILE",
+    "LOW_PROFILE",
     "PRODUCTION_PROFILE",
     "HERO_SHOT_PROFILE",
     # Functions
