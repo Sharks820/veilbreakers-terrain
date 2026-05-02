@@ -2289,9 +2289,14 @@ def _light_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                 props.append({"type": p.get("type", "boulder"), "position": p["position"]})
     lights = compute_light_placements(props)
     for lt in lights:
-        for k in ("position", "color", "direction"):
-            if k in lt and isinstance(lt[k], tuple):
-                lt[k] = list(lt[k])
+        if "position" in lt and isinstance(lt["position"], (list, tuple)):
+            lt["position"] = _zup_to_unity_vector(
+                _apply_unity_scale(list(lt["position"]))  # type: ignore[arg-type]
+            )
+        if "direction" in lt and isinstance(lt["direction"], (list, tuple)):
+            lt["direction"] = _zup_to_unity_vector(list(lt["direction"]))
+        if "color" in lt and isinstance(lt["color"], tuple):
+            lt["color"] = list(lt["color"])
     return {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -2319,8 +2324,10 @@ def _probe_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         water_surface=water,
     )
     for p in probes:
-        if "position" in p and isinstance(p["position"], tuple):
-            p["position"] = list(p["position"])
+        if "position" in p and isinstance(p["position"], (list, tuple)):
+            p["position"] = _zup_to_unity_vector(
+                _apply_unity_scale(list(p["position"]))  # type: ignore[arg-type]
+            )
     return {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,

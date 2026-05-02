@@ -659,6 +659,9 @@ def pass_hydrology_post_erosion(
 ) -> "PassResult":
     """Run hydrology after erosion while preserving post-erosion provenance."""
     result = pass_hydrology(state, region)
+    if result.status != "ok":
+        return replace(result, pass_name="pass_hydrology_post_erosion")
+
     stack = state.mask_stack
     for channel in ("flow_direction", "flow_accumulation"):
         if stack.get(channel) is not None:

@@ -16,6 +16,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "pyrightconfig.strict.json"
 BASELINE_PATH = REPO_ROOT / "pyright-strict-baseline.json"
+PYRIGHT_TIMEOUT_SECONDS = 600
 
 
 def _rel(path: str) -> str:
@@ -47,12 +48,23 @@ def _run_pyright() -> dict[str, Any]:
         elif resolved:
             pyright_cmd = [resolved, *pyright_args]
 
-    proc = subprocess.run(
-        pyright_cmd,
-        cwd=REPO_ROOT,
-        text=True,
-        capture_output=True,
-    )
+    try:
+        proc = subprocess.run(
+            pyright_cmd,
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=PYRIGHT_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError:
+        sys.stderr.write("pyright executable was not found in PATH.\n")
+        raise SystemExit(1) from None
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(
+            "pyright timed out after "
+            f"{PYRIGHT_TIMEOUT_SECONDS} seconds: {' '.join(pyright_cmd)}\n"
+        )
+        raise SystemExit(1) from None
     if not proc.stdout.strip():
         sys.stderr.write(proc.stderr)
         raise SystemExit(proc.returncode or 1)
@@ -75,7 +87,7 @@ def _error_counts(payload: dict[str, Any]) -> Counter[str]:
 
 
 def _write_baseline(actual: Counter[str]) -> None:
-    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    baseline = _load_baseline()
     baseline["allowed_error_counts"] = {
         key: int(actual[key])
         for key in sorted(actual)
@@ -84,6 +96,33 @@ def _write_baseline(actual: Counter[str]) -> None:
         json.dumps(baseline, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+def _load_baseline() -> dict[str, Any]:
+    if not BASELINE_PATH.exists():
+        sys.stderr.write(
+            "missing pyright strict baseline: "
+            f"{BASELINE_PATH.relative_to(REPO_ROOT).as_posix()}\n"
+            "Run `python scripts/pyright_strict_baseline_gate.py --update-baseline` "
+            "after installing the pinned pyright version.\n"
+        )
+        raise SystemExit(1)
+    try:
+        payload = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(
+            "invalid pyright strict baseline JSON: "
+            f"{BASELINE_PATH.relative_to(REPO_ROOT).as_posix()} "
+            f"({exc.msg} at line {exc.lineno}, column {exc.colno})\n"
+            "Regenerate with `python scripts/pyright_strict_baseline_gate.py --update-baseline`.\n"
+        )
+        raise SystemExit(1) from None
+    if not isinstance(payload.get("allowed_error_counts"), dict):
+        sys.stderr.write(
+            "invalid pyright strict baseline: expected `allowed_error_counts` object.\n"
+        )
+        raise SystemExit(1)
+    return payload
 
 
 def main() -> int:
@@ -97,7 +136,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    baseline = _load_baseline()
     allowed = Counter({
         str(key): int(value)
         for key, value in baseline.get("allowed_error_counts", {}).items()

@@ -381,9 +381,10 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.PrimaryBiomeName = descriptor.tile_biome_name ?? "dark_fantasy_default";
             metadata.ClimateZone = descriptor.climate_zone ?? "temperate";
             metadata.WaterPresent = descriptor.has_water_surface;
+            var waterSurfaceLocalUnityUnits = WaterLevelLocalUnityUnits(descriptor);
             metadata.WaterSurfaceElevationM = descriptor.height_scale_factor > 1e-6f
-                ? descriptor.water_level_unity_units / descriptor.height_scale_factor
-                : descriptor.water_level_unity_units;
+                ? waterSurfaceLocalUnityUnits / descriptor.height_scale_factor
+                : waterSurfaceLocalUnityUnits;
             metadata.ScatterCount = descriptor.scatter_count;
             metadata.Lod0DistanceM = descriptor.lod0_distance_m > 0f ? descriptor.lod0_distance_m : 50f;
             metadata.Lod1DistanceM = descriptor.lod1_distance_m > 0f ? descriptor.lod1_distance_m : 150f;
@@ -467,11 +468,33 @@ namespace VeilBreakers.TerrainImport.Editor
                     continue;
                 }
 
-                if (child.GetComponent<VbTerrainSidecarReference>() != null)
+                if (IsGeneratedChild(child))
                 {
                     UnityEngine.Object.DestroyImmediate(child.gameObject);
                 }
             }
+        }
+
+        private static bool IsGeneratedChild(Transform child)
+        {
+            if (child.GetComponent<VbTerrainSidecarReference>() != null)
+            {
+                return true;
+            }
+
+            if (child.GetComponent("MarkGenerated") != null)
+            {
+                return true;
+            }
+
+            var name = child.name ?? string.Empty;
+            if (name.StartsWith("VB_", StringComparison.Ordinal) ||
+                name.IndexOf("vb_generated", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return string.Equals(child.gameObject.tag, "VbGenerated", StringComparison.Ordinal);
         }
 
         private static VbTerrainSidecarReference MarkGenerated(
@@ -653,6 +676,16 @@ namespace VeilBreakers.TerrainImport.Editor
             return descriptor.unity_world_origin != null && descriptor.unity_world_origin.Length >= 2
                 ? descriptor.unity_world_origin[1]
                 : descriptor.height_min_m;
+        }
+
+        private static float WaterLevelLocalUnityUnits(TerrainBundleDescriptor descriptor)
+        {
+            return descriptor.water_level_unity_units - UnityOriginY(descriptor);
+        }
+
+        private static Vector3 ToUnityLocalPosition(float[] unityWorldPosition, TerrainBundleDescriptor descriptor)
+        {
+            return ToVector3(unityWorldPosition) - ToVector3(descriptor.unity_world_origin);
         }
 
         private static void AddNavMeshAreaModifierSources(
@@ -1235,7 +1268,7 @@ namespace VeilBreakers.TerrainImport.Editor
 
                 var go = new GameObject($"VB_Light_{index:000}_{placement.source_prop}");
                 go.transform.SetParent(parentGo.transform, false);
-                go.transform.localPosition = ToVector3(placement.position);
+                go.transform.localPosition = ToUnityLocalPosition(placement.position, descriptor);
                 var light = go.AddComponent<Light>();
                 light.type = ToLightType(placement.light_type);
                 light.color = ToColor(placement.color, "#FFD08A");
@@ -1287,7 +1320,7 @@ namespace VeilBreakers.TerrainImport.Editor
             var positions = new Vector3[payload.probes.Length];
             for (var index = 0; index < payload.probes.Length; index++)
             {
-                positions[index] = ToVector3(payload.probes[index].position);
+                positions[index] = ToUnityLocalPosition(payload.probes[index].position, descriptor);
             }
             group.probePositions = positions;
         }
@@ -1340,19 +1373,7 @@ namespace VeilBreakers.TerrainImport.Editor
             var renderer = terrainObject.GetComponent<VbFoliageManifestRenderer>();
             if (renderer == null)
             {
-                Debug.LogWarning(
-                    "VeilBreakers terrain import skipped foliage renderer attachment: " +
-                    "no VbFoliageManifestRenderer with populated Prototypes exists on the terrain object."
-                );
-                return;
-            }
-            if (!HasRenderableFoliagePrototypes(renderer))
-            {
-                Debug.LogWarning(
-                    "VeilBreakers terrain import skipped foliage renderer manifest assignment: " +
-                    "VbFoliageManifestRenderer.Prototypes must contain renderable mesh/material entries."
-                );
-                return;
+                renderer = terrainObject.AddComponent<VbFoliageManifestRenderer>();
             }
 
             var assetFolder = Path.GetDirectoryName(descriptor.terrain_data_asset_path)?.Replace("\\", "/");
@@ -1371,6 +1392,13 @@ namespace VeilBreakers.TerrainImport.Editor
             renderer.ConvertTerrainXzyToUnityXyz = false;
             renderer.PositionsAreWorldSpace = true;
             renderer.CullDistanceM = Mathf.Max(150.0f, descriptor.lod2_distance_m);
+            if (!HasRenderableFoliagePrototypes(renderer))
+            {
+                Debug.LogWarning(
+                    "VeilBreakers terrain import attached foliage manifest, but " +
+                    "VbFoliageManifestRenderer.Prototypes has no renderable mesh/material entries yet."
+                );
+            }
             EditorUtility.SetDirty(renderer);
         }
 

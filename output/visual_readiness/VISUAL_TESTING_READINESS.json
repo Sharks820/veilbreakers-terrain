@@ -20,7 +20,7 @@
   "material_contract_ok": true,
   "missing_commands": [],
   "noncallable_commands": [],
-  "note": "Headless dispatch wiring checked. blender_runtime_detected=false means the next gate must be run inside Blender/headless Blender for real renders; the captured PNG, PHash, and pixel-diff fields only carry meaning when a real Blender runtime is present.",
+  "note": "Headless dispatch wiring checked. When blender_runtime_detected=true, captured PNG, PHash, and pixel-diff fields come from a real Blender runtime; when false, run the gate inside Blender/headless Blender before using render evidence.",
   "perceptual_hash": "0000001000000000",
   "pixel_diff": {
     "channel_means": [

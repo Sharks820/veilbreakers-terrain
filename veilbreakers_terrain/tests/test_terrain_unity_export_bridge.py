@@ -384,6 +384,46 @@ def test_export_manifest_treats_binary_water_surface_as_mask_not_metres():
     assert descriptor["water_surface_elevation_file"] == ""
 
 
+def test_light_and_probe_exports_use_unity_world_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from veilbreakers_terrain.handlers import light_integration
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
+    from veilbreakers_terrain.handlers.terrain_unity_export import UNITY_SCALE_FACTOR
+
+    stack = _make_stack()
+
+    def _fake_lights(_props: object) -> list[dict[str, object]]:
+        return [
+            {
+                "light_type": "point",
+                "source_prop": "test",
+                "position": (10.0, 20.0, 30.0),
+                "direction": (0.0, 1.0, 0.0),
+                "color": (1.0, 0.5, 0.25),
+            }
+        ]
+
+    def _fake_probes(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        return [{"probe_index": 0, "position": (100.0, 200.0, 12.0), "score": 1.0}]
+
+    monkeypatch.setattr(light_integration, "compute_light_placements", _fake_lights)
+    monkeypatch.setattr(light_integration, "compute_probe_placements", _fake_probes)
+
+    lights = mod._light_placements_json(stack)
+    probes = mod._probe_placements_json(stack)
+
+    assert lights["coordinate_system"] == "y-up"
+    assert lights["lights"][0]["position"] == pytest.approx(
+        [10.0 * UNITY_SCALE_FACTOR, 30.0 * UNITY_SCALE_FACTOR, 20.0 * UNITY_SCALE_FACTOR]
+    )
+    assert lights["lights"][0]["direction"] == [0.0, 0.0, 1.0]
+    assert probes["coordinate_system"] == "y-up"
+    assert probes["probes"][0]["position"] == pytest.approx(
+        [100.0 * UNITY_SCALE_FACTOR, 12.0 * UNITY_SCALE_FACTOR, 200.0 * UNITY_SCALE_FACTOR]
+    )
+
+
 def test_shadow_clipmap_contract_accepts_float32_npy():
     from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
         UnityExportContract,
@@ -619,6 +659,8 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "Terrain.CreateTerrainGameObject",
         "FindExistingTerrain",
         "ClearGeneratedChildren",
+        "IsGeneratedChild",
+        "GetComponent(\"MarkGenerated\")",
         ".SetHeights(",
         ".SetAlphamaps(",
         ".SetDetailLayer(",
@@ -642,6 +684,9 @@ def test_unity_importer_bridge_files_exist_and_use_native_unity_terrain_api():
         "IsUnityHeightmapResolution",
         "UnityOriginY",
         "water_level_unity_units - UnityOriginY",
+        "ToUnityLocalPosition(placement.position, descriptor)",
+        "ToUnityLocalPosition(payload.probes[index].position, descriptor)",
+        "AddComponent<VbFoliageManifestRenderer>",
         "WaterSurfaceElevation",
         "WaterDepth",
         "FlowDirection",

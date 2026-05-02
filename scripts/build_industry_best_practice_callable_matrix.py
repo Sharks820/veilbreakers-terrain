@@ -407,6 +407,11 @@ def main() -> int:
         writer.writerows(rows)
 
     csv_fingerprint = _sha256_file(OUT_CSV)
+    inventory_fingerprint = (
+        _sha256_file(GUARDRAIL_REPORT)
+        if GUARDRAIL_REPORT.exists()
+        else "missing"
+    )
     lines = [
         "# Industry Best-Practice Callable Matrix",
         "",
@@ -416,9 +421,10 @@ def main() -> int:
         "- Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.",
         f"- Grade source: `{_repo_relative_posix(grade_file)}`",
         f"- Source inventory artifact: `{_repo_relative_posix(GUARDRAIL_REPORT)}`",
-        f"- Source inventory fingerprint: `sha256:{csv_fingerprint}`",
+        f"- Source inventory fingerprint: `sha256:{inventory_fingerprint}`",
         f"- Total callables covered: **{len(rows)}**",
         f"- Output CSV: `{_repo_relative_posix(OUT_CSV)}`",
+        f"- Output CSV fingerprint: `sha256:{csv_fingerprint}`",
         "- Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.",
         "",
         "## Upgrade Tiers",

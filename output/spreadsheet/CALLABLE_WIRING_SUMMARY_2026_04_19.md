@@ -1,20 +1,20 @@
 # Callable Wiring Summary
 
 Audit date: 2026-04-19
-Input handlers directory: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\veilbreakers_terrain\handlers`
-Input grade sheet: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\docs\aaa-audit\GRADES_VERIFIED.csv`
-Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\CALLABLE_WIRING_AUDIT_2026_04_19.csv`
+Input handlers directory: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain-pr-cleanup\veilbreakers_terrain\handlers`
+Input grade sheet: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain-pr-cleanup\docs\aaa-audit\GRADES_VERIFIED.csv`
+Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain-pr-cleanup\output\spreadsheet\CALLABLE_WIRING_AUDIT_2026_04_19.csv`
 
 ## Totals
 
-- Live handler callables scanned: `1728`
+- Live handler callables scanned: `1732`
 - Callables missing from the grade sheet: `0`
 - Callables without any R9 grade attached via matching CSV row: `548`
 
 Status distribution:
-- `direct_test_covered`: `237`
-- `helper_reachable`: `1284`
-- `runtime_primary`: `207`
+- `direct_test_covered`: `238`
+- `helper_reachable`: `1286`
+- `runtime_primary`: `208`
 
 ## Highest-Risk Files
 
