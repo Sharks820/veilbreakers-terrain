@@ -1119,7 +1119,8 @@ def register_bundle_b_material_passes() -> None:
             # NOTE: produces_channels overlaps with quixel_ingest — that
             # overlap is intentional (quixel_ingest overrides materials_v2
             # for photoscanned biomes, see terrain_quixel_ingest.py).
-            requires_channels=("slope", "height", "curvature"),
+            requires_channels=("slope", "height"),
+            optional_channels=("curvature", "wetness"),
             produces_channels=("splatmap_weights_layer", "material_weights", "ambient_occlusion_bake", "terrain_displacement"),
             seed_namespace="materials_v2",
             requires_scene_read=False,

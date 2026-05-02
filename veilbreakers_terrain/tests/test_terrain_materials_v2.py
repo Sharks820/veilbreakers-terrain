@@ -458,6 +458,19 @@ def test_pass_materials_metrics_report_coverage():
         assert f"coverage_{cid}" in result.metrics
 
 
+def test_materials_registration_keeps_soft_inputs_optional():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        register_bundle_b_material_passes,
+    )
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    register_bundle_b_material_passes()
+    definition = TerrainPassController.get_pass("materials_v2")
+    assert definition.requires_channels == ("slope", "height")
+    assert "curvature" in definition.optional_channels
+    assert "wetness" in definition.optional_channels
+
+
 def test_pass_materials_is_deterministic():
     from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         register_bundle_b_material_passes,
