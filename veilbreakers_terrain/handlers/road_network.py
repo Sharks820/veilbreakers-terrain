@@ -30,8 +30,9 @@ from .terrain_path_contracts import (
     validate_path_network_contract,
 )
 
+import numpy as np
+
 try:
-    import numpy as np
     from scipy.spatial import Delaunay
     _SCIPY_AVAILABLE = True
 except ImportError:  # pragma: no cover

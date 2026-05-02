@@ -1492,6 +1492,11 @@ def _build_unity_import_descriptor(
         "flow_accumulation_file": (
             "flow_accumulation.bin" if "flow_accumulation.bin" in files else ""
         ),
+        # Coastal / tidal channels (FIX-10-22)
+        "tidal_zone_label_file": (
+            "tidal_zone_label.bin" if "tidal_zone_label.bin" in files else ""
+        ),
+        "wave_energy_file": "wave_energy.bin" if "wave_energy.bin" in files else "",
         "tile_biome_id": manifest.get("tile_biome_id"),
         "tile_biome_name": manifest.get("tile_biome_name") or "dark_fantasy_default",
         "water_level_unity_units": manifest.get("water_level_unity_units"),
@@ -1839,6 +1844,8 @@ def export_unity_manifest(
         "sediment_accumulation_at_base", "pool_deepening_delta",
         "physics_collider_mask", "lightmap_uv_chart_id", "lod_bias",
         "ambient_occlusion_bake",
+        # Coastal / tidal channels (FIX-10-22)
+        "tidal_zone_label", "wave_energy",
     ):
         value = stack.get(channel)
         if value is None:

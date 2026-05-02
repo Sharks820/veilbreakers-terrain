@@ -60,8 +60,26 @@ def _snapshot_channel_hashes(stack: TerrainMaskStack) -> Dict[str, str]:
 
 
 def _clone_state(state: TerrainPipelineState) -> TerrainPipelineState:
-    """Deep-copy a pipeline state so a replay starts from a fresh mask stack."""
-    return copy.deepcopy(state)
+    """Clone a pipeline state so a replay starts from an independent mask stack.
+
+    FIX-9-32: uses _shallow_stack_clone instead of copy.deepcopy to avoid the
+    4–8 GB allocation at 4k tile. intent is immutable and safe to share.
+    pass_history, checkpoints, side_effects, and particle_layer_specs are reset
+    to empty lists so each CI run starts from a clean slate.
+    """
+    import dataclasses as _dc
+    from .terrain_pipeline import _shallow_stack_clone
+    return _dc.replace(
+        state,
+        mask_stack=_shallow_stack_clone(state.mask_stack),
+        pass_history=[],
+        checkpoints=[],
+        side_effects=[],
+        particle_layer_specs=[],
+        water_network=None,
+        viewport_vantage=None,
+        texture_layer_stack=None,
+    )
 
 
 def _hash_full_state(state: TerrainPipelineState) -> str:

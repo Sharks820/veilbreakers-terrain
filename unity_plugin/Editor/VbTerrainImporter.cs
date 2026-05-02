@@ -53,6 +53,8 @@ namespace VeilBreakers.TerrainImport.Editor
             public string water_depth_file = string.Empty;
             public string flow_direction_file = string.Empty;
             public string flow_accumulation_file = string.Empty;
+            public string tidal_zone_label_file = string.Empty;
+            public string wave_energy_file = string.Empty;
             public string atmospheric_volumes_file = string.Empty;
             public string wind_field_descriptor = string.Empty;
             public string cloud_shadow_descriptor = string.Empty;

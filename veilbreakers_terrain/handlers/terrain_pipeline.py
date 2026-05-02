@@ -78,7 +78,12 @@ def _shallow_stack_clone(stack: TerrainMaskStack) -> TerrainMaskStack:
     Copies every populated ndarray field and lightweight metadata without
     recursively walking Python object graphs. Avoids the 4–8 GB deepcopy
     allocation at 4k tile sizes.
+
+    Opaque channels (lists/dicts) and dict channels get a shallow copy so that
+    downstream mutations by later passes do not corrupt the Bundle N pre-pipeline
+    snapshot used for determinism checking.
     """
+    import copy as _copy
     import numpy as _np
 
     field_names = {f.name for f in dataclasses.fields(TerrainMaskStack)}
@@ -89,6 +94,20 @@ def _shallow_stack_clone(stack: TerrainMaskStack) -> TerrainMaskStack:
         arr = getattr(stack, ch, None)
         if arr is not None:
             overrides[ch] = _np.asarray(arr).copy()
+    # Shallow-copy mutable opaque channels (lists/dicts of dicts) so downstream
+    # mutations do not corrupt the Bundle N pre-pipeline snapshot.
+    for ch in stack._OPAQUE_CHANNELS:
+        val = getattr(stack, ch, None)
+        if val is not None:
+            overrides[ch] = _copy.copy(val)
+    # Shallow-copy dict channels: new dict with numpy-copied value arrays.
+    for ch in stack._DICT_CHANNELS:
+        val = getattr(stack, ch, None)
+        if val is not None:
+            overrides[ch] = {
+                k: _np.asarray(v).copy() if hasattr(v, "__array__") else v
+                for k, v in val.items()
+            }
     overrides["dirty_channels"] = set(stack.dirty_channels)
     overrides["populated_by_pass"] = dict(stack.populated_by_pass)
     return dataclasses.replace(stack, **overrides)
