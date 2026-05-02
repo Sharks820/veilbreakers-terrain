@@ -307,6 +307,40 @@ def test_preset_json_is_valid():
 # ---------------------------------------------------------------------------
 
 
+def test_snapshot_mask_stack_isolates_arrays_dicts_and_opaque_channels():
+    from veilbreakers_terrain.handlers.terrain_checkpoints import _snapshot_mask_stack
+
+    controller, _ = _make_controller(tile_size=4)
+    stack = controller.state.mask_stack
+    stack.set("slope", np.ones((4, 4), dtype=np.float32), "test_fixture")
+    stack.set(
+        "detail_density",
+        {"grass": np.full((4, 4), 2.0, dtype=np.float32)},
+        "test_fixture",
+    )
+    stack.set(
+        "talus_boulder_placements",
+        [{"radius_m": 1.25, "metadata": {"source": "talus"}}],
+        "test_fixture",
+    )
+
+    snap = _snapshot_mask_stack(stack)
+    assert stack.slope is not None
+    assert stack.detail_density is not None
+    assert stack.talus_boulder_placements is not None
+    stack.slope[0, 0] = 9.0
+    stack.detail_density["grass"][0, 0] = 11.0
+    stack.talus_boulder_placements[0]["metadata"]["source"] = "mutated"
+
+    assert snap.slope is not None
+    assert snap.detail_density is not None
+    assert snap.talus_boulder_placements is not None
+    assert snap.slope[0, 0] == pytest.approx(1.0)
+    assert snap.detail_density["grass"][0, 0] == pytest.approx(2.0)
+    assert snap.talus_boulder_placements[0]["metadata"]["source"] == "talus"
+    assert snap.content_hash is None
+
+
 def test_autosave_adds_checkpoint_after_successful_pass():
     from veilbreakers_terrain.handlers.terrain_checkpoints import autosave_after_pass
     from veilbreakers_terrain.handlers.terrain_pipeline import (

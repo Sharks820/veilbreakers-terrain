@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -273,7 +275,57 @@ def test_canonical_default_sequence_is_dag_addressable_without_duplicate_pass_na
     assert duplicates == []
     assert "structural_masks_post_erosion" in sequence
     assert "pass_hydrology_post_erosion" in sequence
+    assert sequence.index("pass_navmesh_export") < sequence.index("decals")
     assert set(PassDAG.from_registry(sequence).topological_order()) == set(sequence)
+
+
+def test_pipeline_registrations_keep_soft_inputs_optional():
+    from veilbreakers_terrain.handlers.terrain_master_registrar import register_all_terrain_passes
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    TerrainPassController.clear_registry()
+    register_all_terrain_passes(strict=True)
+
+    snow_line = TerrainPassController.get_pass("snow_line")
+    water_depth = TerrainPassController.get_pass("pass_water_depth")
+    assert snow_line.requires_channels == ("height",)
+    assert "slope" in snow_line.optional_channels
+    assert water_depth.requires_channels == ("height",)
+    assert "water_surface_elevation_m" in water_depth.optional_channels
+
+
+def test_override_writes_do_not_emit_undeclared_channel_warning(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+):
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
+
+    def _pass(state: Any, region: object | None):
+        del region
+        state.mask_stack.set("height", np.ones_like(state.mask_stack.height), "override_height")
+        return PassResult(
+            pass_name="override_height",
+            status="ok",
+            duration_seconds=0.0,
+            produced_channels=(),
+        )
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="override_height",
+            func=_pass,
+            produces_channels=(),
+            overrides=("height",),
+        )
+    )
+    caplog.set_level(logging.WARNING)
+    TerrainPassController(_state(), checkpoint_dir=tmp_path).run_pass(
+        "override_height",
+        checkpoint=False,
+    )
+
+    assert "wrote undeclared channels" not in caplog.text
 
 
 def test_scatter_hard_validation_issue_fails(monkeypatch):

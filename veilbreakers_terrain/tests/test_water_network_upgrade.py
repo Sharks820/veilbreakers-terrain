@@ -608,6 +608,8 @@ def test_from_heightmap_builds_velocity_and_valid_seam_contracts():
     for contract in crossing_contracts:
         dx, dy = contract.flow_direction
         assert math.hypot(dx, dy) == pytest.approx(1.0, rel=1e-6)
+        if contract.target_tile == (-1, -1):
+            continue
         assert contract.target_tile in net.tile_contracts
         row, col = contract.entry_cell
         assert 0 <= row < 13

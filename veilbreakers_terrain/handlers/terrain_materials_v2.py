@@ -66,6 +66,9 @@ class MaterialChannel:
     # Wetness envelope (0..1)
     wetness_min: float = 0.0
     wetness_max: float = 1.0
+    # Lava proximity envelope (0..1 scalar; 1.0 = active lava core)
+    lava_prox_min: float = 0.0
+    lava_prox_max: float = 1.0
     # Base multiplier — higher = channel "wins" in overlap regions
     base_weight: float = 1.0
     # Optional hard override order. Higher priority wins in cells where
@@ -169,6 +172,7 @@ def default_dark_fantasy_rules() -> MaterialRuleSet:
             wetness_min=0.3,
             wetness_max=1.0,
             base_weight=1.5,
+            priority=5,
         ),
         MaterialChannel(
             channel_id="snow",
@@ -184,6 +188,70 @@ def default_dark_fantasy_rules() -> MaterialRuleSet:
         ),
     )
     return MaterialRuleSet(channels=channels, default_channel_id="ground")
+
+
+def caldera_volcanic_rules() -> MaterialRuleSet:
+    """Return a 5-channel volcanic rule set with hard-stamped lava cells."""
+    channels = (
+        MaterialChannel(
+            channel_id="ash_floor",
+            base_color_hex="#2a2320",
+            roughness=0.93,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(22.0),
+            slope_falloff_rad=math.radians(6.0),
+            altitude_max_m=80.0,
+            altitude_falloff_m=15.0,
+            base_weight=1.1,
+        ),
+        MaterialChannel(
+            channel_id="basalt_rock",
+            base_color_hex="#1c1a18",
+            roughness=0.88,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(50.0),
+            slope_falloff_rad=math.radians(8.0),
+            base_weight=1.0,
+        ),
+        MaterialChannel(
+            channel_id="scree_rubble",
+            base_color_hex="#3d3428",
+            roughness=0.96,
+            triplanar=True,
+            slope_min_rad=math.radians(30.0),
+            slope_max_rad=math.pi / 2.0,
+            slope_falloff_rad=math.radians(8.0),
+            base_weight=0.9,
+        ),
+        MaterialChannel(
+            channel_id="lava_hot",
+            base_color_hex="#6e1500",
+            roughness=0.72,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(20.0),
+            slope_falloff_rad=math.radians(5.0),
+            lava_prox_min=0.35,
+            lava_prox_max=1.0,
+            base_weight=2.5,
+            priority=10,
+        ),
+        MaterialChannel(
+            channel_id="rim_summit",
+            base_color_hex="#141210",
+            roughness=0.90,
+            triplanar=False,
+            slope_min_rad=0.0,
+            slope_max_rad=math.radians(40.0),
+            slope_falloff_rad=math.radians(8.0),
+            altitude_min_m=300.0,
+            altitude_falloff_m=25.0,
+            base_weight=1.4,
+        ),
+    )
+    return MaterialRuleSet(channels=channels, default_channel_id="basalt_rock")
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +606,12 @@ def compute_slope_material_weights(
     else:
         wetness = np.asarray(wetness, dtype=np.float64)
 
+    lava_prox = stack.get("lava_prox")
+    if lava_prox is None:
+        lava_prox = np.zeros_like(slope)
+    else:
+        lava_prox = np.asarray(lava_prox, dtype=np.float64)
+
     L = len(rules.channels)
     H, W = slope.shape
     weights = np.zeros((H, W, L), dtype=np.float32)
@@ -576,7 +650,10 @@ def compute_slope_material_weights(
             1.0,
             0.0,
         )
-        combined = ch.base_weight * slope_w * alt_w * curv_w * wet_w
+        lava_prox_w = _smoothstep_band(
+            lava_prox, ch.lava_prox_min, ch.lava_prox_max, falloff=0.05
+        )
+        combined = ch.base_weight * slope_w * alt_w * curv_w * wet_w * lava_prox_w
 
         # Triplanar blend perturbation for steep-surface materials (Fix 7.16)
         if ch.triplanar:
@@ -700,26 +777,39 @@ def compute_slope_material_weights(
     # --- Structural label overrides (Fix 10.10 / REQ-P10-001) ---
     # Feature generators stamp labels during generation; labels take priority over
     # analytical slope classification. Labeled cells skip the analytical path.
-    rock_label   = stack.get("rock_label")    # float32 mask [0..1]
-    gravel_label = stack.get("gravel_label")  # float32 mask [0..1]
-    water_label  = stack.get("water_label")   # float32 mask [0..1]
-    cliff_label  = stack.get("cliff_label")   # float32 mask [0..1]
-    has_labels = any(lbl is not None for lbl in (rock_label, gravel_label, water_label, cliff_label))
+    rock_label         = stack.get("rock_label")          # float32 mask [0..1]
+    gravel_label       = stack.get("gravel_label")        # float32 mask [0..1]
+    water_label        = stack.get("water_label")         # float32 mask [0..1]
+    cliff_label        = stack.get("cliff_label")         # float32 mask [0..1]
+    water_surface_mask = stack.get("water_surface_mask")  # float32 binary [0,1]
+    wet_rock_splash    = stack.get("wet_rock")            # pass_waterfalls spray mask
+    has_labels = any(lbl is not None for lbl in (
+        rock_label,
+        gravel_label,
+        water_label,
+        cliff_label,
+        water_surface_mask,
+        wet_rock_splash,
+    ))
 
     if has_labels:
         # Map label channel → splatmap layer index.
         # Only assign if the target channel_id exists in the rule set.
         _label_channel_map = {
-            "rock_label":   ("cliff",),     # rock structural label → cliff material
-            "gravel_label": ("scree",),     # gravel structural label → scree material
-            "water_label":  ("wet_rock",),  # water structural label → wet_rock material
-            "cliff_label":  ("cliff",),     # cliff structural label → cliff material
+            "rock_label":         ("cliff",),     # rock structural label -> cliff material
+            "gravel_label":       ("scree",),     # gravel structural label -> scree material
+            "water_label":        ("wet_rock",),  # water structural label -> wet_rock material
+            "cliff_label":        ("cliff",),     # cliff structural label -> cliff material
+            "water_surface_mask": ("wet_rock",),  # binary water mask -> wet_rock material
+            "wet_rock_splash":    ("wet_rock",),  # waterfall spray mask -> wet_rock material
         }
         label_arrays = {
-            "rock_label":   rock_label,
-            "gravel_label": gravel_label,
-            "water_label":  water_label,
-            "cliff_label":  cliff_label,
+            "rock_label":         rock_label,
+            "gravel_label":       gravel_label,
+            "water_label":        water_label,
+            "cliff_label":        cliff_label,
+            "water_surface_mask": water_surface_mask,
+            "wet_rock_splash":    wet_rock_splash,
         }
         for label_key, target_ids in _label_channel_map.items():
             lbl = label_arrays[label_key]
@@ -1029,7 +1119,8 @@ def register_bundle_b_material_passes() -> None:
             # NOTE: produces_channels overlaps with quixel_ingest — that
             # overlap is intentional (quixel_ingest overrides materials_v2
             # for photoscanned biomes, see terrain_quixel_ingest.py).
-            requires_channels=("slope", "height", "curvature"),
+            requires_channels=("slope", "height"),
+            optional_channels=("curvature", "wetness"),
             produces_channels=("splatmap_weights_layer", "material_weights", "ambient_occlusion_bake", "terrain_displacement"),
             seed_namespace="materials_v2",
             requires_scene_read=False,
@@ -1043,6 +1134,7 @@ __all__ = [
     "MaterialChannel",
     "MaterialRuleSet",
     "default_dark_fantasy_rules",
+    "caldera_volcanic_rules",
     "ROCK_NORMAL_THRESHOLD",
     "compute_normal_z",
     "apply_brucks_blend",

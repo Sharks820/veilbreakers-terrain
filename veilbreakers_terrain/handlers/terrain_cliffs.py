@@ -179,6 +179,10 @@ class CliffStructure:
     # _generate_cliff_overhang; consumed by the hero mesh insertion pass to
     # extrude overhang quads and mark drip edges for wet/foam material.
     overhang_spec: Optional[Dict] = None
+    # Talus field geometry — populated by build_talus_field; exposes cone_profile
+    # (H,W float 0..1 NaN outside apron), cone_radius_m, cone_height_m for
+    # scatter-system consumers to scale debris density across the apron.
+    talus_field: Optional["TalusField"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -2634,7 +2638,7 @@ def pass_cliffs(
     all_boulder_placements: List[Dict] = []
     for cliff_idx, cliff in enumerate(cliffs):
         add_cliff_ledges(cliff, height=stack.height)
-        build_talus_field(cliff, stack)
+        cliff.talus_field = build_talus_field(cliff, stack)
 
         # Phase G: power-law boulder scatter at cliff base (gated by the
         # steep/gentle slope transition trigger). Species tag aligns with

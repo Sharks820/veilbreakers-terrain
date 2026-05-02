@@ -317,6 +317,57 @@ def test_wet_rock_channel_triggers_on_wetness():
     assert weights[:, :, wet_idx].mean() > 0.2
 
 
+def test_water_masks_force_wet_rock_without_grass_bleed():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        compute_slope_material_weights,
+        default_dark_fantasy_rules,
+    )
+
+    state = _build_state()
+    rules = default_dark_fantasy_rules()
+    shape = state.mask_stack.height.shape
+    state.mask_stack.set("slope", np.zeros(shape, dtype=np.float32), "test")
+    water = np.zeros(shape, dtype=np.float32)
+    splash = np.zeros(shape, dtype=np.float32)
+    water[2, 2] = 1.0
+    splash[3, 3] = 1.0
+    state.mask_stack.set("water_surface_mask", water, "test")
+    state.mask_stack.set("wet_rock", splash, "test")
+
+    weights = compute_slope_material_weights(state.mask_stack, rules)
+    wet_idx = rules.index_of("wet_rock")
+    ground_idx = rules.index_of("ground")
+    assert weights[2, 2, wet_idx] == pytest.approx(1.0)
+    assert weights[2, 2, ground_idx] == pytest.approx(0.0)
+    assert weights[3, 3, wet_idx] == pytest.approx(1.0)
+    assert weights[3, 3, ground_idx] == pytest.approx(0.0)
+
+
+def test_caldera_lava_prox_hard_stamps_lava_and_fails_closed_when_missing():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        caldera_volcanic_rules,
+        compute_slope_material_weights,
+    )
+
+    state = _build_state()
+    rules = caldera_volcanic_rules()
+    shape = state.mask_stack.height.shape
+    state.mask_stack.set("slope", np.zeros(shape, dtype=np.float32), "test")
+    state.mask_stack.set("height", np.full(shape, 40.0, dtype=np.float32), "test")
+    state.mask_stack.set("curvature", np.zeros(shape, dtype=np.float32), "test")
+
+    no_lava_weights = compute_slope_material_weights(state.mask_stack, rules)
+    lava_idx = rules.index_of("lava_hot")
+    assert float(no_lava_weights[:, :, lava_idx].max()) == pytest.approx(0.0)
+
+    lava = np.zeros(shape, dtype=np.float32)
+    lava[2, 2] = 1.0
+    state.mask_stack.set("lava_prox", lava, "test")
+    weights = compute_slope_material_weights(state.mask_stack, rules)
+    assert weights[2, 2, lava_idx] == pytest.approx(1.0)
+    assert weights[0, 0, lava_idx] == pytest.approx(0.0)
+
+
 def test_snow_channel_triggers_above_altitude():
     from veilbreakers_terrain.handlers.terrain_materials_v2 import (
         compute_slope_material_weights,
@@ -405,6 +456,19 @@ def test_pass_materials_metrics_report_coverage():
     assert result.metrics["layer_count"] == 5
     for cid in ("ground", "cliff", "scree", "wet_rock", "snow"):
         assert f"coverage_{cid}" in result.metrics
+
+
+def test_materials_registration_keeps_soft_inputs_optional():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import (
+        register_bundle_b_material_passes,
+    )
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    register_bundle_b_material_passes()
+    definition = TerrainPassController.get_pass("materials_v2")
+    assert definition.requires_channels == ("slope", "height")
+    assert "curvature" in definition.optional_channels
+    assert "wetness" in definition.optional_channels
 
 
 def test_pass_materials_is_deterministic():

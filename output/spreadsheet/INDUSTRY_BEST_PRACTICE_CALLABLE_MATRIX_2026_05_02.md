@@ -1,35 +1,36 @@
 # Industry Best-Practice Callable Matrix
 
-- Generated: 2026-04-30T23:37:48.285757+00:00
+- Generated: 2026-05-02T00:39:42.043395+00:00
 - Tool: `scripts/build_industry_best_practice_callable_matrix.py`
 - Coverage scope: `industry_best_practice_matrix`
 - Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.
 - Grade source: `docs/aaa-audit/GRADES_VERIFIED.csv`
 - Source inventory artifact: `output/verification/TERRAIN_BEST_PRACTICE_GUARDRAIL_REPORT.json`
-- Source inventory fingerprint: `sha256:6f2d23c25b41a352939383637a24ecb5291c1ca5f47d57b4b922ca06c7bf93a2`
-- Total callables covered: **1729**
-- Output CSV: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_30.csv`
+- Source inventory fingerprint: `sha256:dea610a2d3ba342697889b7969c14d87836949276e4512f50f0a53c60249dfef`
+- Total callables covered: **1734**
+- Output CSV: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_02.csv`
+- Output CSV fingerprint: `sha256:cd499c6ed0834dace64e42e10a480de443ad49a236098dbc28a6bf0720f8a326`
 - Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.
 
 ## Upgrade Tiers
 
-- P3: 1729
+- P3: 1734
 
 ## Grade Status
 
-- VERIFIED_LOW_RISK: 1727
+- VERIFIED_LOW_RISK: 1732
 - LOCK_WITH_REGRESSION_GATES: 2
 
 ## Domain Coverage
 
-- generic: 378 callables; gates `direct_tests|invalid_input|determinism_when_seeded|coverage|integration_if_exposed`; phase Phase 0
-- heightfield_geomorph: 200 callables; gates `unit_tests|mass_or_range_checks|tile_seam_tests|golden_heightfield`; phase Phase 1,7
+- generic: 379 callables; gates `direct_tests|invalid_input|determinism_when_seeded|coverage|integration_if_exposed`; phase Phase 0
+- heightfield_geomorph: 201 callables; gates `unit_tests|mass_or_range_checks|tile_seam_tests|golden_heightfield`; phase Phase 1,7
 - mesh_blender: 171 callables; gates `dispatch_tests|blender_optional_tests|scene_read_contract|screenshot_qa|attribute_presence`; phase Phase 9
 - scatter_ecology: 164 callables; gates `point_schema|density_stats|blue_noise_or_distribution|collision_or_exclusion|asset_manifest|lod_budget`; phase Phase 4,9B
-- hydrology: 163 callables; gates `hydrology_contract|depth_tests|velocity_tests|flow_direction_tests|seam_continuity|swimmable_depth`; phase Phase 2-3
+- hydrology: 164 callables; gates `hydrology_contract|depth_tests|velocity_tests|flow_direction_tests|seam_continuity|swimmable_depth`; phase Phase 2-3
 - validation_qa: 145 callables; gates `issue_codes|golden_visual|performance_budget|determinism|low_spec|artifact_schema`; phase Phase 11-12
-- terrain_pipeline: 144 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
-- terrain_texturing: 125 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D
+- terrain_pipeline: 145 callables; gates `contract_tests|dispatch_tests|callable_census|determinism|manifest_schema`; phase Phase 0-1
+- terrain_texturing: 126 callables; gates `pbr_channel_presence|weight_sum|texel_density|color_space|normal_map|height_blend|visual_debug_maps`; phase Phase 6,9C,9D
 - export_runtime: 112 callables; gates `manifest_schema|unity_contract|scale_factor|roundtrip_read|artifact_presence`; phase Phase 10
 - pathing_roads: 62 callables; gates `path_cost_tests|cell_size_tests|slope_budget|water_crossing|determinism`; phase Phase 8
 - external_ai_assets: 46 callables; gates `async_state_tests|download_schema|mesh_validation|pbr_validation|scale_axis|license_metadata`; phase Phase 9E

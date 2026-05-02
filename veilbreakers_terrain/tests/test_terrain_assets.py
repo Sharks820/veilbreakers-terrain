@@ -653,6 +653,8 @@ def test_scatter_registration_declares_detail_density_output():
 
     definition = TerrainPassController.get_pass("scatter_intelligent")
     assert "detail_density" in definition.produces_channels
+    assert "detail_density" in definition.optional_channels
+    assert "detail_density" in definition.overrides
 
 
 def test_pass_unity_ready_shape(stack, intent):

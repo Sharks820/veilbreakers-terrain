@@ -1,26 +1,26 @@
 {
-  "csv": "C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain/output/verification/CALLABLE_VERIFICATION_MATRIX.csv",
-  "direct_test_only_a_grade_count": 146,
+  "csv": "C:/Users/Conner/OneDrive/Documents/veilbreakers-terrain-pr-cleanup/output/verification/CALLABLE_VERIFICATION_MATRIX.csv",
+  "direct_test_only_a_grade_count": 147,
   "domain_counts": {
-    "blender_tool": 1467,
+    "blender_tool": 1470,
     "camera_readability": 357,
     "core": 8,
-    "geometry_mesh": 1301,
-    "materials_texturing": 705,
-    "pipeline_wiring": 1085,
-    "scatter_ecology": 657,
-    "visual_qa": 368,
-    "water": 746
+    "geometry_mesh": 1326,
+    "materials_texturing": 729,
+    "pipeline_wiring": 1089,
+    "scatter_ecology": 681,
+    "visual_qa": 369,
+    "water": 748
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1728
+    "LOW": 1732
   },
   "tool_blocker_count": 0,
-  "total_callables": 1728,
+  "total_callables": 1732,
   "wiring_status_counts": {
-    "direct_test_covered": 237,
-    "helper_reachable": 1284,
-    "runtime_primary": 207
+    "direct_test_covered": 238,
+    "helper_reachable": 1286,
+    "runtime_primary": 208
   }
 }

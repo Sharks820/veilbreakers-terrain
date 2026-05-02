@@ -90,6 +90,95 @@ def test_pass_hydrology_writes_stack():
     assert stack.flow_accumulation.shape == (tile_size, tile_size)
 
 
+def test_pass_hydrology_post_erosion_records_matching_provenance():
+    from veilbreakers_terrain.handlers._water_network import pass_hydrology_post_erosion
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+    tile_size = 4
+    height = np.ones((tile_size, tile_size), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    region = BBox(0.0, 0.0, float(tile_size), float(tile_size))
+    intent = TerrainIntentState(
+        seed=0,
+        region_bounds=region,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    result = pass_hydrology_post_erosion(state, None)
+
+    assert result.pass_name == "pass_hydrology_post_erosion"
+    assert stack.populated_by_pass["flow_direction"] == "pass_hydrology_post_erosion"
+    assert stack.populated_by_pass["flow_accumulation"] == "pass_hydrology_post_erosion"
+
+
+def test_pass_hydrology_post_erosion_preserves_provenance_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from veilbreakers_terrain.handlers import _water_network as mod
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        BBox,
+        PassResult,
+        TerrainIntentState,
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+    tile_size = 4
+    height = np.ones((tile_size, tile_size), dtype=np.float64)
+    stack = TerrainMaskStack(
+        tile_size=tile_size,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=height,
+    )
+    stack.set("flow_direction", np.zeros((tile_size, tile_size), dtype=np.int8), "previous_hydrology")
+    stack.set("flow_accumulation", np.ones((tile_size, tile_size), dtype=np.float32), "previous_hydrology")
+    region = BBox(0.0, 0.0, float(tile_size), float(tile_size))
+    intent = TerrainIntentState(
+        seed=0,
+        region_bounds=region,
+        tile_size=tile_size,
+        cell_size=1.0,
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    def _failed_hydrology(_state: object, _region: object) -> PassResult:
+        return PassResult(
+            pass_name="pass_hydrology",
+            status="failed",
+            duration_seconds=0.0,
+            produced_channels=(),
+            consumed_channels=("height",),
+        )
+
+    monkeypatch.setattr(mod, "pass_hydrology", _failed_hydrology)
+
+    result = mod.pass_hydrology_post_erosion(state, None)
+
+    assert result.pass_name == "pass_hydrology_post_erosion"
+    assert result.status == "failed"
+    assert stack.populated_by_pass["flow_direction"] == "previous_hydrology"
+    assert stack.populated_by_pass["flow_accumulation"] == "previous_hydrology"
+
+
 def test_register_default_passes_includes_hydrology():
     """Bundle A default registration must expose pass_hydrology on the controller."""
     from veilbreakers_terrain.handlers.terrain_pipeline import (

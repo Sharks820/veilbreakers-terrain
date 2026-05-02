@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,7 @@ OUT_DIR = REPO_ROOT / "output" / "spreadsheet"
 OUT_CSV = OUT_DIR / f"INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_{DATE_TAG}.csv"
 OUT_MD = OUT_DIR / f"INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_{DATE_TAG}.md"
 VERIFICATION_MATRIX = REPO_ROOT / "output" / "verification" / "CALLABLE_VERIFICATION_MATRIX.csv"
+GUARDRAIL_REPORT = REPO_ROOT / "output" / "verification" / "TERRAIN_BEST_PRACTICE_GUARDRAIL_REPORT.json"
 
 FIELDNAMES = [
     "file",
@@ -69,6 +71,21 @@ FIELDNAMES = [
     "required_output_artifacts",
     "implementation_phase",
 ]
+
+
+def _repo_relative_posix(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 A_GRADES = {"A+", "A", "A-"}
 B_GRADES = {"B+", "B", "B-"}
@@ -389,13 +406,26 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(rows)
 
+    csv_fingerprint = _sha256_file(OUT_CSV)
+    inventory_fingerprint = (
+        _sha256_file(GUARDRAIL_REPORT)
+        if GUARDRAIL_REPORT.exists()
+        else "missing"
+    )
     lines = [
         "# Industry Best-Practice Callable Matrix",
         "",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}",
-        f"- Grade source: `{grade_file.relative_to(REPO_ROOT) if grade_file.is_relative_to(REPO_ROOT) else grade_file}`",
+        "- Tool: `scripts/build_industry_best_practice_callable_matrix.py`",
+        "- Coverage scope: `industry_best_practice_matrix`",
+        "- Inclusion rules: one row per live callable discovered by `collect_callables()` and joined to grade/verification evidence; generated output folders are excluded.",
+        f"- Grade source: `{_repo_relative_posix(grade_file)}`",
+        f"- Source inventory artifact: `{_repo_relative_posix(GUARDRAIL_REPORT)}`",
+        f"- Source inventory fingerprint: `sha256:{inventory_fingerprint}`",
         f"- Total callables covered: **{len(rows)}**",
-        f"- Output CSV: `{OUT_CSV.relative_to(REPO_ROOT)}`",
+        f"- Output CSV: `{_repo_relative_posix(OUT_CSV)}`",
+        f"- Output CSV fingerprint: `sha256:{csv_fingerprint}`",
+        "- Reconciliation note: callable-census and guardrail totals can differ when non-matrix or generated callables are excluded by their own scopes.",
         "",
         "## Upgrade Tiers",
         "",

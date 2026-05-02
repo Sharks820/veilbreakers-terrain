@@ -119,6 +119,8 @@ namespace VeilBreakers.TerrainImport
 
         private void OnValidate()
         {
+            _manifest = null;
+            LoadedInstanceCount = 0;
             BuildPrototypeLookup();
         }
 
