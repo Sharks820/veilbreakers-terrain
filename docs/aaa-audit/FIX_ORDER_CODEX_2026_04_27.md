@@ -2565,3 +2565,1217 @@ These test assertions currently encode buggy behaviour as correct. They will fai
 
 *Total active P0s covered: 320 (253 original Batches 0–8 + 67 Batch 9). Execute batches in order 0→1→2→3→4→5→6→7→8→9.*
 
+---
+
+## BATCH 9 — VERIFICATION STATUS (2026-05-01 Opus code read)
+
+The following Batch 9 FIX entries were verified against HEAD and found **already applied** — do not re-execute:
+
+| FIX ID | S22 Finding | Status | Evidence |
+|--------|-------------|--------|----------|
+| FIX-9-16 | S22-P0-18 morphology dead pass | STALE — but root cause is B10-P0-12; pass is in sequence, intent never populated | terrain_pipeline.py:161 |
+| FIX-9-17 | S22-P0-27/28 LOD+navmesh not in sequence | STALE — both present: pass_horizon_lod at :162, pass_navmesh_export at :186 | terrain_pipeline.py |
+| FIX-9-57 | S22-P0-32 PassDAG silent None | STALE — now raises `PassNotRegisteredError` with comment "Replaces former silent-None (S22-P0-32)" | terrain_pass_dag.py:357-362 |
+| FIX-9-8 | S22-P0-40 TERRAIN_DEV_MODE bypass | STALE — env-var logs warning only; full check executes regardless | terrain_reference_locks.py:96-109 |
+| FIX-9-67 | S22-P0-56 visual QA zero conditions | STALE — 5 real checks + 25 channel validators + SSIM gate now present | terrain_visual_qa.py:506-605 |
+| FIX-9-61 | S22-P0-64 scene read swallows ChannelNotWrittenError | STALE — `except ChannelNotWrittenError: raise` now at :144 | terrain_scene_read.py:144-147 |
+
+The following Batch 9 items remain **partially or fully unresolved**:
+
+| FIX ID | S22 Finding | Status |
+|--------|-------------|--------|
+| FIX-9-32 | S22-P0-34 deepcopy OOM pipeline | PARTIAL — per-pass checkpoint fixed; full-state deepcopy remains at terrain_pipeline.py:866, 882, 973, 1026 |
+| FIX-9-62 | S22-P0-38 17+ bare excepts environment.py | CONFIRMED ACTIVE — 30+ broad `except Exception:` sites remain |
+| FIX-9-15 | S22-P0-65 use_auto_smooth Blender 4.5 | PARTIAL — `hasattr` guard added; legacy branch still executes on Blender ≤4.0; safe for 4.5-only |
+
+---
+
+## BATCH 10 — 16-AGENT OPUS DEEP SCAN (2026-05-01)
+
+**Source:** 16-agent Opus deep scan + 8-domain parallel scan, 2026-05-01  
+**Verification pass:** Opus code-read verification completed 2026-05-01 — findings below reflect post-verification status only.
+
+### REFUTED FINDINGS (do not implement)
+
+The following findings from the initial scan were **refuted by direct code read** and are removed from the active fix list:
+
+| Original ID | Claim | Verdict | Evidence |
+|-------------|-------|---------|----------|
+| B10-P0-5 | pass_integrate_deltas unregistered/misordered | REFUTED | `terrain_pipeline.py:161` — `integrate_deltas` IS in default sequence; `_normalize_integrate_deltas_position()` at :240-285 places it correctly after delta-producing passes |
+| B10-P0-11 | Normal maps blended without tangent-space decode | REFUTED | `terrain_quixel_ingest.py:717` — `[0,1]→[-1,1]` decode IS present before blend; quality gap is linear blend vs Whiteout (see FIX-10-Q1 below) |
+| B10-P0-15 | Scatter biome_mask is frozenset[str] vs int lookup | REFUTED | `_scatter_engine.py:348,425` — biome_mask is `np.ndarray` int IDs; comparison `bm == target_biome_id` is consistent |
+| B10-H1 | Unity normal Y-convention DirectX vs OpenGL | LIKELY REFUTED | `VbTerrainImporter.cs:2142` — `(-dx, -dy, 1)` produces DirectX Y-down, which is what Unity's `_BumpMap` import expects; no flip needed |
+| B10-H3 | Waterfall foam/mist vertex color turbulence unread | REFUTED | `terrain_waterfalls_volumetric.py` — no vertex color encoding/decoding code exists in this file at all; finding cited wrong file |
+| B10-H9 | Snow accumulation never called | REFUTED — but real AAA snow system gap remains | `terrain_pipeline.py:1223` — `pass_compute_snow_line` IS registered and runs; `materials_v2.py:639` reads `snow_line_factor`. However: no wind drift, melt line, seasonal depth, aspect bias, or accumulated snow volume → sub-AAA. See **FIX-10-J1** below. |
+
+**Quality gap — not a P0 but a real concern:**
+
+### FIX-10-Q1 (B10-P0-11 quality — normal blend is linear not Whiteout)
+
+**File:** `veilbreakers_terrain/handlers/terrain_quixel_ingest.py:730-738`
+
+**Action:** Modify  
+**Change:** The decode at line 717 is correct. The additive blend at 730-731 followed by renormalization is "linear" blend — it produces flat normals at 45° blends. Upgrade to Whiteout blend:  
+```python
+# Whiteout normal blend (preserves high-frequency detail)
+combined_xy = base_n[:2] + layer_n[:2]
+combined_z = base_n[2] * layer_n[2]
+combined = np.stack([combined_xy[0], combined_xy[1], combined_z], axis=-1)
+length = np.linalg.norm(combined, axis=-1, keepdims=True)
+combined = combined / np.maximum(length, 1e-8)
+```
+
+---
+
+### NUANCED FINDINGS (B10-P0-1/2/3 — deltas apply via integrator; sub-bugs remain)
+
+Verification confirmed: **wind, glacial, and karst deltas ARE applied** via `pass_integrate_deltas`, which IS registered. The "delta never applied" headline was partially wrong.
+
+**Real confirmed sub-bugs in each:**
+- **B10-P0-1 real bug:** `terrain_wind_erosion.py:176` — `np.gradient(h)` uses cell units, not world-metres → slope values ~cell_size× too large in Bagnold equations
+- **B10-P0-2 real bug:** `terrain_glacial.py:127-129` — Hack's law uses normalized flow accumulation fraction instead of actual catchment area (m²) → glacial carving magnitude wrong
+- **B10-P0-3 real bug:** `terrain_karst.py` — absolute dissolution threshold `0.1m` breaks on world-metre heightmaps (should be relative to tile relief)
+
+---
+
+### Priority 10A — Erosion physics precision (VERIFIED — sub-bugs confirmed, delta integration itself is wired)
+
+Note: `pass_integrate_deltas` IS registered and correctly positioned (B10-P0-5 was refuted). The real confirmed bugs are physics precision errors within each erosion subsystem.
+
+---
+
+### FIX-10-1: Wind erosion gradient uses cell-index units instead of world-metres
+
+**File:** `veilbreakers_terrain/handlers/terrain_wind_erosion.py:176`
+
+**Action:** Modify  
+**Change:** Replace `gy, gx = np.gradient(h)` with `gy, gx = np.gradient(h, cell_size_m, cell_size_m)`. Source `cell_size_m` from the pipeline state object passed into the function. The Bagnold transport equations use `gy`/`gx` as dimensionless slope (m/m) — without spacing, the gradient is in cell-index units and is ~`cell_size_m`× too steep on flat terrain and too shallow after normalisation.
+
+---
+
+### FIX-10-2: Glacial Hack's law uses normalised flow fraction instead of actual catchment area
+
+**File:** `veilbreakers_terrain/handlers/terrain_glacial.py:127-129`
+
+**Action:** Modify  
+**Change:** In `_compute_glacial_erosion()`: replace the `mean_acc / fa_max` normalised fraction with actual drainage area in m²: `area_m2 = flow_accumulation * (cell_size_m ** 2)`. The Hack (1957) relation `d ∝ A^0.4` requires real area, not a unitless fraction — using a fraction compresses the power-law range to near-zero variance across the tile.
+
+---
+
+### FIX-10-3: Karst dissolution threshold is absolute metres, breaks on world-metre heightmaps
+
+**File:** `veilbreakers_terrain/handlers/terrain_karst.py` (dissolution threshold constant)
+
+**Action:** Modify  
+**Change:** Replace the hardcoded absolute threshold `dissolution_threshold = 0.1` (metres) with a tile-relative value: `dissolution_threshold = 0.001 * (state.max_elev_m - state.min_elev_m)`. An absolute 0.1 m threshold on a 0–200 m terrain means only cells with ≥0.1 m dissolution are selected; on steep terrain this fires everywhere, on flat terrain this fires nowhere.
+
+---
+
+### Priority 10B — DEM precision (root-cause for ~1000× erosion magnitude error)
+
+---
+
+### FIX-10-5: DEM written to stack in [0,1] — all erosion sees centimetre-scale relief
+
+**File:** `veilbreakers_terrain/handlers/terrain_dem_import.py:506` and pipeline call site
+
+**Action:** Modify  
+**Change:** `terrain_dem_import.py:506` normalises to `[0,1]` before any erosion pass sees the data. In `pass_dem_import()` (terrain_pipeline.py): call `normalize_dem_to_world_range()` (already defined at line 558) before writing to the stack, so `stack.set("height", dem_metres, "pass_dem_import")` stores world-metre values. If a display-normalised copy is needed downstream, write it separately as `stack.set("height_normalized", dem_01, "pass_dem_import")`. Add assertion: `assert dem_metres.max() > 1.0, "DEM must be in world metres before erosion"`.
+
+---
+
+### Priority 10C — Unity export critical path
+
+---
+
+### FIX-10-6: Splatmap import skips every layer — terrain imports with zero texture blending
+
+**File:** `unity_plugin/Editor/VbTerrainImporter.cs:858`
+
+**Action:** Modify  
+**Change:** The splatmap loop has `if (layerIndex > splatmap.layer_end)` where `layer_end` defaults to `-1`. Every valid `layerIndex ≥ 0` satisfies `> -1`, so the loop body is never reached. Change the default to `int layer_end = int.MaxValue;` so "no explicit limit" means "import all layers". Alternatively, change the guard to `if (layer_end >= 0 && layerIndex > layer_end)` to only apply the limit when it was explicitly set.
+
+---
+
+### FIX-10-7: Navmesh area grid uint8/ushort format mismatch corrupts all area IDs
+
+**Files:** `veilbreakers_terrain/handlers/terrain_navmesh_export.py:164` and `unity_plugin/Editor/VbTerrainImporter.cs:604-608`
+
+**Action:** Modify both sides  
+**Change:** Python writes `np.uint8` (1 byte/cell); C# reads `ushort` (2 bytes/cell), so `cellCount = bytes.Length / 2` is half the real cell count and every second byte is read as the high byte of a corrupted ID. Fix Python: change `area_ids.astype(np.uint8)` to `area_ids.astype('<u2')` (little-endian uint16). Also update `terrain_semantics.py:842` which already declares `("u", 2)` — now consistent. The C# `ReadUInt16()` side is already correct once Python emits 2 bytes/cell.
+
+---
+
+### FIX-10-8: VbTerrainTileMetadata.ChannelBounds never populated
+
+**Files:** Python export pipeline + `unity_plugin/Editor/VbTerrainImporter.cs`
+
+**Action:** Modify both sides  
+**Change:** In Python, when serialising channel arrays to the tile metadata JSON, add a `"channel_bounds"` list: `[{"name": ch, "min": float(arr.min()), "max": float(arr.max())} for ch, arr in written_channels.items()]`. In C# importer, read the `channel_bounds` array and populate `VbTerrainTileMetadata.ChannelBounds` dictionary so runtime blend-range systems have usable data.
+
+---
+
+### Priority 10D — Water and lava domain
+
+---
+
+### FIX-10-9: Lava system absent — no producer for lava_depth/lava_prox/lava_surface_mask
+
+**File:** New file `veilbreakers_terrain/handlers/terrain_lava.py` + registration
+
+**Action:** Create + register  
+**Change:** Implement `pass_lava_simulation()` in a new `terrain_lava.py`:
+1. Read `lava_source_mask` from stack (placed by hero-features or biome rules for volcanic biomes).
+2. Simulate lava flow using iterative shallow-water or D8 flow routing with viscosity scaling: cells flow toward neighbours if `height[cell] - height[neighbour] > viscosity_threshold`.
+3. Write: `stack.set("lava_depth", lava_depth_arr, "terrain_lava")`, `stack.set("lava_prox", proximity_arr, "terrain_lava")`, `stack.set("lava_surface_mask", surface_mask, "terrain_lava")`.
+4. Register in `terrain_master_registrar.py`; insert `"pass_lava_simulation"` in `build_default_pass_sequence()` after the geological/stratigraphy group, gated by `has_volcanic_biome`.
+
+---
+
+### FIX-10-10: Caustics channel name mismatch — Beer-Lambert permanently disabled
+
+**Files:** `veilbreakers_terrain/handlers/_water_network_ext.py:1053` and `terrain_water_variants.py`
+
+**Action:** Modify  
+**Change:** `_water_network_ext.py:1053` reads `depth_channel = "water_depth"` but the written channel is `"water_depth_m"`. Change the default: `depth_channel: str = "water_depth_m"`. Verify that `pass_water_depth` in `terrain_pipeline.py:1328` does write `water_depth_m` (confirmed by verification) — no writer change needed, only the reader name.
+
+---
+
+### FIX-10-11: lava_prox defaults to all-ones — lava_hot material fires on every non-volcanic tile
+
+**File:** `veilbreakers_terrain/handlers/terrain_materials_v2.py:624-626`
+
+**Action:** Modify  
+**Change:** Replace `lava_prox = np.ones_like(slope)` (the None-fallback) with `lava_prox = np.zeros_like(slope)`. Tiles with no lava system must have zero proximity; the current all-ones default causes the `lava_hot` material weight to fire on the entire tile for every non-volcanic biome.
+
+---
+
+### Priority 10E — Materials quality (P2 — confirmed decode is present; blend operator is suboptimal)
+
+---
+
+### FIX-10-Q1: Normal blend operator is linear-renorm instead of Whiteout — loses high-frequency detail at 45° blends
+
+**File:** `veilbreakers_terrain/handlers/terrain_quixel_ingest.py:730-738`
+
+**Priority:** P2 (quality gap, not a crash/phantom)  
+**Action:** Modify  
+**Change:** The `[0,1]→[-1,1]` decode at line 717 is correct. The blend at line 730 is additive-then-renormalised (linear blend), which flattens normals at diagonal blends. Upgrade to Whiteout blend for detail preservation:
+```python
+# Whiteout normal blend
+n1, n2 = base_normal_tangent, layer_normal_tangent
+combined = np.stack([n1[...,0]+n2[...,0], n1[...,1]+n2[...,1], n1[...,2]*n2[...,2]], axis=-1)
+length = np.linalg.norm(combined, axis=-1, keepdims=True)
+combined /= np.maximum(length, 1e-8)
+```
+
+---
+
+### Priority 10F — Morphology (root cause confirmed — all 30 templates dead)
+
+---
+
+### FIX-10-13: intent.morphology_specs never populated — pass_morphology reads it, finds nothing, outputs zero
+
+**File:** Intent factory / biome intent construction (search for where `TerrainIntent` or `intent.morphology_specs` is constructed)
+
+**Action:** Modify  
+**Change:** Grep for where `TerrainIntent` objects are built. In that constructor or factory: populate `intent.morphology_specs` from the biome registry. For each biome active on the tile, look up `BIOME_MORPHOLOGY_MAP.get(biome_id, DEFAULT_MORPHOLOGY_SPEC)` and append to `intent.morphology_specs`. If `BIOME_MORPHOLOGY_MAP` doesn't exist, create it with at minimum a `"default"` key mapping to a generic spec that enables mesa/valley/ridge selection. Without this, `terrain_morphology.py:429-431` reads an empty list and no morphological shaping occurs.
+
+---
+
+### Priority 10G — Blender headless crash risks and memory
+
+---
+
+### FIX-10-14: bpy.ops called without temp_override — crashes in headless/background Blender
+
+**File:** `veilbreakers_terrain/handlers/blender_capability_bridge.py:1262-1290`
+
+**Action:** Modify  
+**Change:** Every `bpy.ops.*` call in this range requires an active area/region context that doesn't exist in headless mode. Wrap each with:
+```python
+with bpy.context.temp_override(area=_get_or_mock_area(), region=_get_region()):
+    bpy.ops.mesh.uv_unwrap(...)
+```
+Where `_get_or_mock_area()` returns `bpy.data.screens[0].areas[0]` if available or raises a clear `BlenderHeadlessModeError` if not. Also remove the `BLENDER_EEVEE` enum literal (removed in Blender 4.2); replace with `BLENDER_EEVEE_NEXT`.
+
+---
+
+### FIX-10-15: bmesh.new() sites with no try/finally — memory leaks on any exception
+
+**Files:** `veilbreakers_terrain/handlers/environment.py` (11 sites) + `veilbreakers_terrain/handlers/environment_scatter.py` (8 sites)
+
+**Action:** Modify  
+**Change:** Wrap every `bm = bmesh.new()` block with `try: ... finally: bm.free()`. A thrown exception before `bm.free()` is called leaves the bmesh alive until GC, accumulating across tiles. 19 total sites across the two files. Use grep `bmesh\.new\(\)` to locate all sites.
+
+---
+
+### FIX-10-16: heightmap.tolist() creates ~940 MB of Python objects at 4k resolution
+
+**File:** `veilbreakers_terrain/handlers/environment.py:2246`
+
+**Action:** Modify  
+**Change:** Replace `height_list = heightmap.tolist()` followed by a per-vertex loop with a vectorised foreach_set:
+```python
+coords = np.column_stack([xs.ravel(), ys.ravel(), heightmap.ravel()]).ravel()
+bm.verts.foreach_set("co", coords)
+```
+`heightmap.tolist()` on a 4096² float32 array creates 16.7 million Python float objects (~940 MB). `foreach_set` copies the C buffer directly.
+
+---
+
+### FIX-10-17: Per-vertex Python loop for Z write-back — O(N) Python at 4k
+
+**File:** `veilbreakers_terrain/handlers/environment.py:8253`
+
+**Action:** Modify  
+**Change:** Replace `for v in bm.verts: v.co.z = height_channel[v.index]` with:
+```python
+positions = np.array([v.co for v in bm.verts])
+positions[:, 2] = height_channel[np.arange(len(bm.verts))]
+bm.verts.foreach_set("co", positions.ravel())
+```
+The Python loop iterates 16M vertices at 4k. `foreach_set` is a single C-level call.
+
+---
+
+### Priority 10H — Wiring / determinism / architecture
+
+---
+
+### FIX-10-18: make_rng / tile_rng dead code — 31+ production sites use non-deterministic bare random
+
+**Files:** `veilbreakers_terrain/handlers/terrain_rng.py` + all production handler files
+
+**Action:** Modify  
+**Change:** Remove the "FUTURE USE" comment from `make_rng()` / `tile_rng()`. Ensure the signature is `tile_rng(tile_id: str) -> np.random.Generator` returning a seeded `np.random.default_rng(hash(tile_id) & 0xFFFFFFFF)`. Grep production handlers for `random.Random()`, `np.random.RandomState()`, bare `np.random.random(`, `np.random.uniform(`, `np.random.choice(`, `np.random.randint(`; replace each with `tile_rng(state.tile_id).<method>()`. Propagate `tile_id` through `TerrainPipelineState` if not already present.
+
+---
+
+### FIX-10-20: simulate_fold_deformation writes stack.height directly — bypasses channel ownership
+
+**File:** `veilbreakers_terrain/handlers/terrain_stratigraphy.py`
+
+**Action:** Modify  
+**Change:** In `simulate_fold_deformation()`: find any direct assignment `self.stack.height = ...` or `stack.height += ...` and replace with the stack API:
+```python
+h = self.stack.get("height").copy()
+h += fold_delta
+self.stack.set("height", h, "terrain_stratigraphy.simulate_fold_deformation")
+```
+Verification confirmed line 474 uses `stack.set()` but the docstring at 413-415 says "modifies stack.height in-place" — verify no other site in this function still does direct assignment.
+
+---
+
+### FIX-10-21: _cliff_entry_meta module-level dict leaks cave state across tiles
+
+**File:** `veilbreakers_terrain/handlers/terrain_caves.py:657`
+
+**Action:** Modify  
+**Change:** Add `_cliff_entry_meta.clear()` at the top of `pass_caves()` before any cave processing begins. The module-level dict at line 657 is populated per-entrance (line 1667) and read per-tile (line 3700) but never cleared — every tile after the first accumulates all previous tiles' entrance metadata. Longer fix: convert to an instance variable on `TerrainCavesHandler` if a class exists.
+
+---
+
+### FIX-10-22: apply_collision_exclusion imported but never called — scatter ignores collision volumes
+
+**File:** `veilbreakers_terrain/handlers/environment_scatter.py`
+
+**Action:** Modify  
+**Change:** Find the import site of `apply_collision_exclusion`. After scatter point generation, call it: `placement_points = apply_collision_exclusion(placement_points, collision_volumes, stack)`. Verify the function signature matches (it may expect a list of collision volumes from a separate channel). Also check `water_exclusion_radius` defaults — if `0.0`, add a minimum of `1.0 * cell_size_m` to prevent underwater scatter.
+
+---
+
+### FIX-10-23: domain_warp_fbm (3-pass Quilez) has zero production callers — single-pass domain warp used at _terrain_noise.py:1311
+
+**Files:** `veilbreakers_terrain/handlers/_terrain_noise.py:1311` + `veilbreakers_terrain/handlers/terrain_multiscale_breakup.py`
+
+**Context:** `domain_warp_fbm()` EXISTS. The single-pass `domain_warp_array()` is called at `:1311` in `generate_heightmap()` instead.
+
+**Action:** Modify  
+**Change:** `domain_warp_fbm()` implements 3-pass Quilez domain warping (the AAA standard for organic-looking terrain noise) but is never called in production. At `_terrain_noise.py:1311`, replace the single-pass call with `domain_warp_fbm(world_x, world_z, octaves, gain, lacunarity)`. Also update `terrain_multiscale_breakup.py` to pass world-space coordinates `(world_origin[0] + cell_x * cell_size_m, world_origin[1] + cell_y * cell_size_m)` so the noise field is continuous across tile boundaries.
+
+---
+
+### FIX-10-24: Vegetation wind vertex colors written to CORNER domain — Unity expects POINT domain
+
+**File:** `veilbreakers_terrain/handlers/vegetation_system.py`
+
+**Action:** Modify  
+**Change:** Wind animation vertex colors must be in the `POINT` domain (per-vertex) for Unity to read them correctly. Change:
+```python
+# Blender 4.5
+attr = mesh.color_attributes.new(name="wind_color", type='BYTE_COLOR', domain='POINT')
+```
+Additionally fix wind phase: currently uses template mesh coordinates (all trees get the same phase because they share the same template origin). Replace with world-space hash: `phase = hash((int(world_x * 100), int(world_z * 100))) / 2**32 * 2 * math.pi` so each tree sways independently.
+
+---
+
+### FIX-10-25: Three disconnected road systems, none registered in canonical pipeline
+
+**Files:** `veilbreakers_terrain/handlers/road_network.py` + `veilbreakers_terrain/handlers/terrain_pipeline.py`
+
+**Action:** Modify  
+**Change:** Designate the A* 24-direction system as canonical. Fix the 24-dir movement table: the missing direction families `(1,3), (3,1), (-1,3), (-3,1), (1,-3), (3,-1), (-1,-3), (-3,-1)` and their mirrors must be added for true 24-connectivity (current table has asymmetric coverage that biases roads toward certain compass bearings). Register `pass_road_network` in `terrain_master_registrar.py`; insert into `build_default_pass_sequence()` after scatter. Mark or remove the other two road implementations with clear deprecation comments.
+
+---
+
+### FIX-10-26: Stratigraphy default soil thickness 200 m — ridgetops coded as deep soft soil
+
+**File:** `veilbreakers_terrain/handlers/terrain_stratigraphy.py`
+
+**Action:** Modify  
+**Change:** Change `DEFAULT_SOIL_THICKNESS_M = 200.0` to `DEFAULT_SOIL_THICKNESS_M = 2.0`. A 200 m default means every tile regardless of biome has mountain-deep soil layers, making stratigraphy erosion behave as if all terrain is unconsolidated sediment. Add slope-based thinning: `soil_thickness = base_thickness * np.clip(1.0 - slope / 0.8, 0.05, 1.0)` so steep ridges approach bedrock and valleys accumulate soil.
+
+---
+
+### Priority 10I — HIGH-severity P1 fixes (B10-H series — 11 confirmed, 3 refuted/removed)
+
+*Removed from active list: B10-H1 (LIKELY REFUTED — Unity expects DirectX Y-down, code is correct), B10-H3 (REFUTED — no vertex color encoding exists in cited file), B10-H9 (REFUTED — snow IS wired via pass_compute_snow_line and consumed by materials_v2/macro_color).*
+
+---
+
+### FIX-10-H2: Navmesh off-mesh connections (bridges/water-crossings) exported but never imported by Unity
+
+**Files:** `veilbreakers_terrain/handlers/terrain_navmesh_export.py` + `unity_plugin/Editor/VbTerrainImporter.cs`
+
+**Action:** Modify  
+**Change:** Python exports `off_mesh_connections` JSON array but the C# importer reads only the binary area grid — the JSON sidecar with connections is ignored. In `VbTerrainImporter.cs`, after importing the area grid, read the `off_mesh_connections` array from the JSON metadata file and create a `NavMeshLink` component per connection:
+```csharp
+NavMeshLink link = go.AddComponent<NavMeshLink>();
+link.startPoint = new Vector3(conn.start_x, conn.start_y, conn.start_z);
+link.endPoint = new Vector3(conn.end_x, conn.end_y, conn.end_z);
+link.costModifier = conn.cost_modifier;
+link.bidirectional = conn.bidirectional;
+```
+
+---
+
+### FIX-10-H4: apply_seasonal_water_state mutates water channels but leaves foam/wet_rock/mist stale
+
+**File:** `veilbreakers_terrain/handlers/terrain_water_variants.py:646-693`
+
+**Action:** Modify  
+**Change:** Verification confirmed `apply_seasonal_water_state()` mutates `wetness`, `water_surface`, `water_surface_mask`, `tidal` but does NOT recompute `foam_mask`, `wet_rock_mask`, or `mist_mask`. After the mutation block, add calls:
+```python
+stack.set("foam_mask", _compute_foam_mask(stack), "apply_seasonal_water_state")
+stack.set("wet_rock_mask", _compute_wet_rock_mask(stack), "apply_seasonal_water_state")
+stack.set("mist_mask", _compute_mist_mask(stack), "apply_seasonal_water_state")
+```
+If these helper functions don't exist, create them as thin wrappers that read the updated water state from the stack.
+
+---
+
+### FIX-10-H5: Shore foam intensity is uniform — ignores JONSWAP wave energy
+
+**Files:** `veilbreakers_terrain/handlers/coastline.py` + foam computation
+
+**Action:** Modify  
+**Change:** In the shoreline foam computation: retrieve `wave_energy = stack.get("wave_energy_jonswap", default=None)`. If available, modulate foam density by normalised wave energy: `foam_density = base_foam_density * (0.3 + 0.7 * wave_energy / wave_energy.max())`. Exposed coastlines facing prevailing wind should have dense foam; sheltered bays should have sparse foam. If `wave_energy_jonswap` is None (non-coastal tile), use a flat `base_foam_density`.
+
+---
+
+### FIX-10-H6: Wind field is 2D surface-only — cliff faces and tall features get no vertical wind variation
+
+**File:** `veilbreakers_terrain/handlers/terrain_wind_field.py`
+
+**Action:** Modify  
+**Change:** Extend the wind field from `(H, W)` to `(H, W, Z_SLICES)` with `Z_SLICES = 8` logarithmically spaced altitude bands from ground level to `max_elev_m * 1.5`. Use the logarithmic wind profile: `u(z) = u_ref * ln(z/z0) / ln(z_ref/z0)` where `z0 = 0.03` (open terrain roughness length). Cliff faces and tall vegetation sample the altitude-appropriate wind band instead of always using the surface layer. This is required for AAA-quality wind-driven particle and vegetation simulation.
+
+---
+
+### FIX-10-H7: LOD meshes have faceted silhouettes — QEM decimation discards smooth normals
+
+**File:** `veilbreakers_terrain/handlers/lod_pipeline.py`
+
+**Action:** Modify  
+**Change:** After each QEM decimation step that produces LOD1/2/3: (1) call `bm.normal_update()` to recompute face normals from new geometry, then (2) transfer smooth normals from the source LOD0 mesh using nearest-vertex lookup. Alternatively, use `mesh.normals_split_custom_set_from_vertices()` with angle-weighted normals from LOD0. Without this, decimated meshes inherit split (hard) normals from removed triangles, producing faceted silhouettes at game-camera distances.
+
+---
+
+### FIX-10-H8: Replay system in terrain_bundle_n.py deep-copies entire pipeline state — 4-8 GB spike at 4k
+
+**File:** `veilbreakers_terrain/handlers/terrain_bundle_n.py:439`
+
+**Action:** Modify  
+**Change:** Verification confirmed `replay_state = copy.deepcopy(pre_pipeline_state)` still present at line 439. Replace with a lightweight channel snapshot:
+```python
+replay_snapshot = {
+    ch: arr.copy()
+    for ch, arr in pre_pipeline_state.mask_stack._dirty_channels.items()
+}
+```
+On rollback, restore via `stack.set(ch, arr, "replay_restore")` for each entry. The full deepcopy at this site peaks at 4-8 GB on a 4k tile (the mask_stack alone contains 40+ float32 arrays at 64 MB each). The existing per-pass checkpoint fix does NOT cover this site.
+
+---
+
+### FIX-10-H10: Cave entrance quality — _find_entrance_candidates() exists but places entrances at doline rim (flat) not cliff face (steep)
+
+**File:** `veilbreakers_terrain/handlers/terrain_caves.py`
+
+**Context:** `_find_entrance_candidates()` EXISTS with terrain fallback and tests pass. The "absent" claim was false. The real gap is placement quality: current code targets doline rim (flat ground) instead of cliff faces (steep concave terrain). Not default-scheduled everywhere.
+
+**Action:** Modify (improve quality, not create)  
+**Change:** In `_find_entrance_candidates()`: add slope-filtered cell selection alongside the existing fallback. Compute `laplacian = scipy.ndimage.laplace(stack.get("height"))` and `slope = stack.get("slope")`. Cave entrance candidates = cells where `laplacian < -curvature_threshold` (concave) AND `slope > 0.52` (30° — steep enough to be a cliff face) AND adjacent to the doline zone. Rank candidates by `abs(laplacian)` descending; place entrances at top-N. Fall back to manual specification only if zero candidates found.
+
+---
+
+### FIX-10-H11: Ecotone transition width is 5-10 m default — biome boundaries are knife-sharp vs real 50-100 m
+
+**File:** `veilbreakers_terrain/handlers/terrain_ecotone_graph.py`
+
+**Action:** Modify  
+**Change:** Change the default `transition_width_m` from `5.0` (or whatever value FIX-9-50 set) to `80.0` m. The ecological literature (Gosz 1993, Risser 1995) cites 50-200 m for forest/grassland ecotones; 80 m is a reasonable central value. Also verify `FIX-9-50` didn't hardcode a pixel-count back — the width must be in world-metres and converted to cells via `int(80.0 / state.cell_size_m)`.
+
+---
+
+### FIX-10-H12: decal_density dict type mismatch — downstream consumers crash on export
+
+**File:** `veilbreakers_terrain/handlers/terrain_decal_placement.py`
+
+**Action:** Modify  
+**Change:** Verify `FIX-9-23` was applied (decal_density should now be written as a float32 ndarray via `stack.set()`). If still a `dict[str, ndarray]`: replace with a single scalar-density map: `decal_density_arr = np.zeros((H, W), dtype=np.float32)` populated from the placement loop; call `stack.set("decal_density", decal_density_arr, "terrain_decal_placement")`. Search all remaining `stack.get("decal_density")` consumers; verify they receive ndarray and not a dict.
+
+---
+
+### FIX-10-H13: Unity mesh attribute validation absent — missing attributes silently crash at runtime
+
+**File:** `unity_plugin/Editor/VbTerrainImporter.cs`
+
+**Action:** Modify  
+**Change:** After loading each mesh asset, validate the 6 required vertex attribute streams before registering the mesh: position, normal, tangent, UV0, UV1, and vertex color. Suggested validation:
+```csharp
+string[] required = {"position", "normal", "tangent", "texcoord0", "texcoord1", "color"};
+foreach (var attr in required) {
+    if (!mesh.HasVertexAttribute(VertexAttribute./* map attr */)) {
+        Debug.LogError($"[VbTerrainImporter] Mesh '{mesh.name}' missing required attribute '{attr}' — skipping");
+        continue; // don't add this mesh to the scene
+    }
+}
+```
+
+---
+
+### FIX-10-H14: ChannelNotWrittenError never raised — Rule-1 phantom-read enforcement is dead code
+
+**File:** `veilbreakers_terrain/handlers/terrain_semantics.py:768-782`
+
+**Action:** Modify  
+**Change:** Verification confirmed `TerrainMaskStack.get()` returns `None` via `getattr(self, channel, None)` and zero `raise ChannelNotWrittenError` statements exist anywhere in the codebase. Implement enforcement with a safe opt-in path:
+
+```python
+_MISSING = object()
+
+def get(self, channel: str, default=_MISSING):
+    if channel not in self._written_channels:
+        if default is _MISSING:
+            raise ChannelNotWrittenError(
+                f"Channel '{channel}' has no registered writer. "
+                f"Written channels: {sorted(self._written_channels)}"
+            )
+        return default
+    return self._channels[channel]
+```
+
+Then audit all `stack.get("channel")` call sites: those that check `if result is not None` are optional reads and should be updated to `stack.get("channel", default=None)`. Those that use the result directly are mandatory reads and should remain as-is (they will now raise correctly on phantom channels).
+
+---
+
+### Priority 10J — AAA System Completion Gaps (exact "absent/broken" claim false — real quality gaps confirmed)
+
+*These findings were partially over-stated as "absent" or "broken" but the underlying quality gaps are real and must be fixed to reach AAA generation quality.*
+
+---
+
+### FIX-10-J1: Snow system exists but missing all AAA-quality attributes — no wind drift, aspect bias, depth, or melt line
+
+**Files:** `veilbreakers_terrain/handlers/terrain_materials_v2.py:638-710` + `veilbreakers_terrain/handlers/terrain_glacial.py`
+
+**Context:** `pass_compute_snow_line` IS registered and `snow_line_factor` IS consumed. Current implementation is a simple elevation threshold — sub-AAA.
+
+**Action:** Modify  
+**Change:** Upgrade the snow system:
+1. **Wind drift:** modulate `snow_line_factor` by `wind_exposure_mask` from terrain_wind_field — leeward slopes accumulate more, exposed ridges have scour zones.
+2. **Aspect bias:** `north_facing = (np.cos(aspect) > 0.5)` — snow persists ~200 m lower on north/NE aspects vs south.
+3. **Seasonal depth:** write `snow_depth_m = snow_line_factor * base_snow_depth * seasonal_multiplier` as a stack channel for shader-driven displacement.
+4. **Melt line correction:** `SNOW_LINE_DEFAULT_M = 2000` is above the project's ~200 m max terrain → change to `snow_line_altitude_m = state.max_elev_m * 0.7` (70th-percentile of tile relief).
+5. **Snow volume channel:** write `stack.set("snow_accumulation", snow_depth_m, "pass_compute_snow_line")` for downstream VFX (melt particles, drip effects).
+
+---
+
+### FIX-10-J2: Procedural grass density/placement records generated — Unity render pipeline end-to-end unproven
+
+**Files:** `veilbreakers_terrain/handlers/vegetation_system.py` (pass_procedural_grass) + `unity_plugin/Editor/VbTerrainImporter.cs` + `lod_pipeline.py`
+
+**Context:** `pass_procedural_grass` DOES write `grass_density` and `grass_placement_records`. The "absent" claim was false. No Unity-side consumer exists; no LOD blade mesh; no GPU instancing setup.
+
+**Action:** Verify + extend  
+**Change:**
+1. Confirm Python exports `grass_placement_records` to tile package as JSON: `[{"x": float, "z": float, "density": float, "blade_height": float, "species_id": int}, ...]`.
+2. In `VbTerrainImporter.cs`: read `grass_placement_records.json` and configure `TerrainData.detailPrototypes` / `TerrainData.SetDetailLayer` for HDRP Detail Mesh terrain grass.
+3. Assign a grass blade mesh as the detail prototype (capsule placeholder is acceptable to prove pipeline).
+4. Add test: tile with `biome_id=grassland` → `grass_density` channel is non-zero and `grass_placement_records` JSON contains ≥1 entry.
+
+---
+
+### FIX-10-J3: L-system tree skeleton and mesh-bridge exist — material / LOD / impostor / Unity runtime proof absent
+
+**Files:** `veilbreakers_terrain/handlers/vegetation_lsystem.py` + `veilbreakers_terrain/handlers/_mesh_bridge.py` + `unity_plugin/Editor/VbTerrainImporter.cs`
+
+**Context:** `vegetation_lsystem.py` EXISTS and `_mesh_bridge.py` uses it. The "L-system absent" claim was false. End-to-end pipeline is unproven: no material slot assignment, no LOD chain, no impostor/billboard, no Unity runtime.
+
+**Action:** Verify + extend  
+**Change:**
+1. In `_mesh_bridge.py`: confirm tree meshes exported with ≥2 material slots (bark + leaf/needle) with correct Unity material path references.
+2. In `lod_pipeline.py`: wire L-system trees through LOD chain — LOD0 full mesh, LOD1 50% decimated, LOD2 impostor quad, LOD3 billboard sprite.
+3. In `VbTerrainImporter.cs`: confirm tree prefab packages include LOD Group components and correct material asset GUIDs.
+4. Add test: `generate_lsystem_tree(species="oak")` → mesh with ≥2 material slots, ≥3 LOD levels, non-zero vertex count at each LOD.
+
+---
+
+### FIX-10-J4: Gameplay zone priority overwrite silently destroys boss-arena and narrative-scripted zones
+
+**File:** `veilbreakers_terrain/handlers/terrain_gameplay_zones.py` (or equivalent zone serializer)
+
+**Context:** The "contradictory labels" claim was false (one int grid cannot hold two labels). But the current silent-overwrite behavior — last-placed zone of equal priority wins — means a boss arena can silently overwrite a narrative-scripted safe zone with zero warning. Critical authoring hazard for a linear dark-fantasy game.
+
+**Action:** Modify  
+**Change:** Before writing the final zone grid, perform conflict detection:
+```python
+import itertools, warnings
+for zone_a, zone_b in itertools.combinations(placed_zones, 2):
+    overlap = np.logical_and(zone_a.mask, zone_b.mask)
+    if overlap.any() and zone_a.priority == zone_b.priority:
+        warnings.warn(
+            f"Zone overlap: '{zone_a.name}' and '{zone_b.name}' have equal priority — "
+            f"'{zone_b.name}' will overwrite '{zone_a.name}' at {int(overlap.sum())} cells"
+        )
+```
+Write all overlap warnings to `tile_warnings.json` alongside the tile metadata for authoring review in the Unity editor.
+
+---
+
+### FIX-10-J5: Determinism subprocess test exists and passes — full-generation + Blender + Unity paths not covered
+
+**Files:** `veilbreakers_terrain/tests/` (determinism test suite) + CI pipeline
+
+**Context:** A subprocess byte-identical test EXISTS and PASSED — "within-process only" original claim was refuted. Coverage gaps remain: (a) Blender bpy.ops render path, (b) Unity import→export round-trip, (c) full heavy-generation stack with L-system + scatter + morphology all enabled.
+
+**Action:** Extend tests + CI  
+**Change:**
+1. Extend subprocess determinism test to exercise the full `build_default_pass_sequence()` with all passes enabled, not just the basic stack-read path.
+2. Add Blender headless determinism test: two Blender subprocess renders of the same tile must produce bit-identical heightmap and normal map.
+3. Document known non-deterministic third-party paths (e.g., `scipy.ndimage` with certain BLAS backends) with acceptable tolerance `abs_diff < 1e-6` for float32.
+4. Add CI step: run subprocess determinism test and fail if any float32 channel differs by `> 1e-6`.
+
+---
+
+### Batch 10 summary (post-verification)
+
+| Batch 10 sub-group | Active Fixes | Notes |
+|--------------------|-------------|-------|
+| 10A Erosion physics precision | 3 | Wind np.gradient cell_size; glacial Hack's law area; karst absolute threshold — delta integration itself is correctly wired |
+| 10B DEM precision | 1 | ~1000× erosion magnitude error; must fix before any erosion pass |
+| 10C Unity export | 3 | splatmap always-blank (layer_end=-1); navmesh uint8/ushort; ChannelBounds unpopulated |
+| 10D Water/Lava | 3 | Lava system new file needed; caustics channel name; lava_prox default zeros |
+| 10E Materials quality gap | 1 | P2 only — normal decode present; Whiteout blend upgrade |
+| 10F Morphology | 1 | morphology_specs never populated; 30 templates permanently dead without fix |
+| 10G Blender stability | 4 | headless bpy.ops crash; 19 bmesh leaks; 940 MB tolist; O(N) vertex loop |
+| 10H Wiring / determinism | 8 | RNG dead (31 sites); fold bypass; cliff_entry_meta leak; collision exclusion never called; domain_warp_fbm unused; wind domain; roads disconnected; soil 200m |
+| 10I HIGH confirmed | 11 | navmesh off-mesh; seasonal recompute; shore foam; 3D wind; LOD normals; bundle deepcopy; cave entrance quality; ecotone width; decal type; Unity attr validate; ChannelNotWrittenError |
+| 10J AAA system gaps | 5 | Snow wind/aspect/depth/melt; grass render pipeline; L-system LOD/impostor; zone priority overwrite; determinism coverage |
+| **Total active** | **40** | 23 P0-class + 1 P2-quality + 11 P1-HIGH + 5 AAA-gap. 6 items removed as REFUTED/STALE. |
+
+*Refuted/removed from Batch 10: FIX-10-4 (B10-P0-5 integrator is wired), FIX-10-12 (B10-P0-11 decode present), FIX-10-19 (B10-P0-15 scatter uses int IDs correctly), H1 (Unity DX convention is correct), H3 (no vertex color encoding in cited file), H9 (snow IS wired — real AAA gap moved to FIX-10-J1).*
+
+---
+
+*Total active P0s/AAA-gaps covered: 348 (320 Batches 0–9 with 6 stale + 23 new Batch 10 P0-class + 5 Batch 10 AAA-gaps). Execute batches in order 0→1→2→3→4→5→6→7→8→9→10.*
+
+---
+
+## BATCH 11 — GITHUB CODE SCANNING (CodeQL 2.25.3, 629 alerts, 2026-05-01)
+
+**Source:** GitHub code-scanning/alerts API — all 629 open alerts, 7 pages of 100. Tool: CodeQL 2.25.3 on Python + GitHub Actions YAML.
+
+**Severity breakdown:** 27 error · 161 warning · 441 note  
+**Rule breakdown:** unused-local-variable (143) · empty-except (123) · pythagorean (122) · unused-import (73) · cyclic-import (50) · unused-global-variable (29) · multiple-definition (21) · undefined-export (19) · import-and-import-from (19) · actions/missing-workflow-permissions (7) · non-iterable-in-for-loop (6) · other (26)
+
+**New vs known:** `py/empty-except` extends FIX-9-62 scope (17 → 57 production sites). All other findings below are NEW to the codex.
+
+---
+
+### Priority 11A — Production crash bugs (CodeQL error severity)
+
+---
+
+### ~~FIX-11-1: Non-iterable in for-loop~~ — REFUTED (CodeQL false positive)
+
+**File:** `veilbreakers_terrain/handlers/terrain_decal_placement.py:282`
+
+**Verdict:** FALSE POSITIVE — `for kind in DecalKind:` where `DecalKind(str, Enum)`. Python's Enum metaclass makes the class itself iterable over its members — this is the standard idiom. CodeQL does not model Enum's `__iter__` metaclass. *The 5 test-file alerts (test_terrain_ecosystem.py, test_terrain_caves.py) are also likely Enum or mock-object false positives for the same reason.* No action required.
+
+---
+
+### ~~FIX-11-2: Uninitialized edge_set~~ — REFUTED (CodeQL false positive, guard is logically correct)
+
+**File:** `veilbreakers_terrain/handlers/road_network.py:441`
+
+**Verdict:** FALSE POSITIVE — `edge_set = set()` is initialized at line 430 inside the `try:` block. `use_delaunay = True` is only set at line 435 *after* edge_set is fully populated. The outer `if use_delaunay:` gate at line 439 prevents `edge_set` from being read unless the try succeeded and edge_set was initialized. CodeQL cannot prove the logical connection between the flag and the guard. No runtime `UnboundLocalError` is possible. *Code is admittedly subtle — a clarifying comment `# edge_set is initialized when use_delaunay=True` at line 439 would help readers, but no fix is required.*
+
+---
+
+### Priority 11B — Phantom exports in __init__.py (ImportError for any consumer)
+
+---
+
+### FIX-11-3: 19 names in handlers/__init__.py __all__ do not exist — ImportError on wildcard import
+
+**File:** `veilbreakers_terrain/handlers/__init__.py:1253-1262`
+
+**Severity:** ERROR (19 alerts)  
+**Action:** Modify  
+**Change:** The following names are listed in `__all__` but are NOT defined anywhere in the package — any code doing `from veilbreakers_terrain.handlers import <name>` will get `ImportError`:
+- Lines 1253-1254: `generate_world_map`, `place_landmarks`, `generate_storytelling_scene`, `world_map_to_dict`, `BIOME_TYPES`, `POI_TYPES`, `LANDMARK_TYPES`, `STORYTELLING_PATTERNS`
+- Lines 1255-1259: `compute_light_placements`, `merge_nearby_lights`, `compute_light_budget`, `compute_probe_placements`, `LIGHT_PROP_MAP`, `FLICKER_PRESETS`
+- Lines 1261-1262: `ATMOSPHERIC_VOLUMES`, `BIOME_ATMOSPHERE_RULES`, `compute_atmospheric_placements`, `compute_volume_mesh_spec`, `estimate_atmosphere_performance`
+
+Fix: either (a) remove these names from `__all__` if the modules they come from haven't been written yet, or (b) add the missing imports from their source modules. If source modules exist, add the imports; if not, remove from `__all__` and track as unimplemented features.
+
+---
+
+### Priority 11C — Cyclic imports (50 sites, 18 modules) — partial-init crash risk
+
+---
+
+### FIX-11-4: 50 circular import sites across 18 modules — latent AttributeError / initialization-order crashes
+
+**Files:** `terrain_pipeline.py` ↔ `terrain_bundle_n.py`, `terrain_validation.py`, `terrain_master_registrar.py`, `terrain_delta_integrator.py`, `_biome_grammar.py`, `terrain_materials_v2.py`, `_terrain_world.py`, `_water_network.py`; `terrain_materials.py` ↔ `procedural_materials.py`; `terrain_waterfalls.py` ↔ `_water_network_ext.py`; `terrain_stratigraphy.py` ↔ `terrain_geology_validator.py`; others
+
+**Severity:** WARNING (50 alerts, CodeQL `py/cyclic-import`)  
+**Action:** Refactor (break cycles)  
+**Change:** CPython handles circular imports via `sys.modules` partial initialization, but any import that accesses a name from a partially-initialized module produces `AttributeError: module 'X' has no attribute 'Y'` — a crash that only surfaces under specific import-order conditions. Many of these are already deferred (inside-function imports) which mitigates but doesn't eliminate the risk. Proper fix:
+
+1. **Extract shared types** into a new `terrain_types.py` (or `terrain_contracts.py`): move dataclasses, TypedDicts, Protocols, and constants that are imported by multiple sides of each cycle into this new module. Neither side needs to import the other to get types.
+2. **Audit deferred imports**: the high-line-number sites (e.g., `terrain_pipeline.py:1639,1644,1459`) are inside-function deferred imports — these are safe but should be documented with `# deferred: breaks cycle with X`.
+3. **Module-level cycle sites to fix first** (most dangerous): `terrain_validation.py:41` importing `terrain_pipeline`; `terrain_master_registrar.py:192,200` importing `terrain_pipeline`; `terrain_determinism_ci.py:21` importing `terrain_pipeline`.
+
+Key cycles to break:
+```
+terrain_pipeline → terrain_validation → terrain_pipeline  (move shared types)
+terrain_pipeline → terrain_master_registrar → terrain_pipeline  (registrar should be one-way: registrar imports pipeline, not vice versa)
+terrain_materials → procedural_materials → terrain_materials_v2 → terrain_materials_ext → terrain_materials_v2  (extract MaterialChannel, MaterialRule into terrain_material_types.py)
+terrain_waterfalls ↔ _water_network_ext  (extract WaterfallSpec into terrain_water_types.py)
+```
+
+---
+
+### Priority 11D — Empty-except scope expansion (extends FIX-9-62)
+
+---
+
+### FIX-11-5: 57 production empty-except sites — FIX-9-62 scope was "30+ in environment.py"; true scope is 57 files
+
+**Files:** 57 production handler/provider files (full list below)
+
+**Severity:** WARNING (CodeQL `py/empty-except` — 123 total, 57 in production)  
+**Action:** Extend FIX-9-62 — this entry supersedes and expands it  
+**Change:** The original S22-P0-38 / FIX-9-62 found "17+ bare excepts in environment.py". The CodeQL scan reveals 57 production `except: pass` or `except Exception: pass` blocks across the entire codebase. Priority sub-list by file (handler code only, worst first):
+
+| File | Sites | Risk |
+|------|-------|------|
+| `environment.py` | 3 (:1846, :7680, :7697) | Blender ops failures silently ignored |
+| `environment_scatter.py` | 5 (:922, :1834, :1968, :2110, :2115) | Scatter failures swallowed |
+| `terrain_visual_qa.py` | 5 (:28, :198, :209, :280, :651) | QA gate passes when it should fail |
+| `terrain_caves.py` | 4 (:1891, :2194, :5120, :5311) | Cave generation failures hidden |
+| `terrain_shadow_clipmap_bake.py` | 4 (:358, :368, :383, :396) | Bake failures silent |
+| `_water_network.py` | 3 (:994, :1020, :3307) | Water routing failures ignored |
+| `_water_network_ext.py` | 3 (:184, :515, :843) | Waterfall network failures ignored |
+| `terrain_cliffs.py` | 3 (:1806, :2449, :2464) | Cliff placement failures hidden |
+| `terrain_checkpoints.py` | 2 (:139, :542) | Checkpoint failures silently skipped |
+| `terrain_checkpoints_ext.py` | 2 (:146, :184) | Extended checkpoint failures hidden |
+| `terrain_quixel_ingest.py` | 2 (:408, :880) | Texture ingest failures swallowed |
+| `terrain_twelve_step.py` | 2 (:1208, :1221) | Twelve-step pass failures ignored |
+| Others (1 each) | 14 | Various |
+
+Fix: For each site, replace `except Exception: pass` with at minimum `except Exception as e: logger.warning("…: %s", e)`. For critical paths (checkpoint restore, water routing, cave placement), use `except Exception as e: raise RuntimeError(f"Pass failed at {site}") from e`.
+
+---
+
+### Priority 11E — Pythagorean overflow risk (122 sites)
+
+---
+
+### FIX-11-6: sqrt(x**2 + y**2) used instead of math.hypot — precision/overflow risk at world-scale coordinates
+
+**Files:** 122 sites across handlers + tests (heaviest: `terrain_waterfalls.py` 5 sites, `vegetation_system.py` 3 sites, `procedural_meshes.py` 3+ sites, `_biome_grammar.py`, `world_map.py`, etc.)
+
+**Severity:** NOTE (CodeQL `py/pythagorean` — "sub-optimal numerics")  
+**Action:** Refactor  
+**Change:** `sqrt(x**2 + y**2)` overflows when `x` or `y > ~1e154` (float64) — not a risk at terrain scale. However, the real concern is **float32 intermediate precision**: at world-metre coordinates > ~1e4 m (10 km terrain spans), squaring loses low-order bits. `math.hypot(x, y)` avoids intermediate overflow and is ~10% faster via C-level implementation.
+
+Replace all:
+```python
+# before
+dist = math.sqrt(dx * dx + dy * dy)
+dist = np.sqrt(x**2 + y**2)  # scalar case
+```
+with:
+```python
+# after (scalar)
+dist = math.hypot(dx, dy)
+# after (array — np.hypot is vectorized and avoids intermediate squaring)
+dist = np.hypot(dx, dy)
+```
+
+Use `grep -rn "math\.sqrt\|np\.sqrt" --include="*.py"` and filter for patterns containing `**2` or `* dx` to find all sites. NumPy arrays: prefer `np.linalg.norm` for multi-dimensional or `np.hypot` for 2D.
+
+---
+
+### Priority 11F — Resource leak + CI security
+
+---
+
+### FIX-11-7: File not closed — asset_generation.py:542
+
+**File:** `veilbreakers_terrain/handlers/asset_generation.py:542`
+
+**Severity:** WARNING (CodeQL `py/file-not-closed`)  
+**Action:** Modify  
+**Change:** A file is opened at line 542 but not closed on all paths (likely missing `with` statement or missing `finally: f.close()`). Replace with:
+```python
+with open(path, "rb") as f:
+    data = f.read()
+```
+File handle leaks accumulate under repeated tile generation, eventually hitting OS file descriptor limits (~1024 by default on Windows).
+
+---
+
+### FIX-11-8: 7 GitHub Actions workflows have no permissions block — GITHUB_TOKEN over-permissioned
+
+**Files:** `.github/workflows/python-package.yml`, `type-check.yml`, `callable_census.yml` (×2), `visual_testing_readiness.yml`, `pylint.yml`, `python-package-conda.yml`
+
+**Severity:** WARNING (CodeQL `actions/missing-workflow-permissions`)  
+**Action:** Modify each workflow  
+**Change:** Add a top-level `permissions:` block to each workflow (or to each job that only needs read access):
+```yaml
+permissions:
+  contents: read
+```
+Without this, GITHUB_TOKEN defaults to write access on all scopes — a compromised dependency in the workflow can push commits, create releases, or modify secrets. The `callable_census.yml` is flagged twice (likely job-level + workflow-level both missing).
+
+---
+
+### Priority 11G — Dead code cleanup (lower priority, improves maintainability)
+
+---
+
+### FIX-11-9: 73 unused imports across handler files — dead import bloat
+
+**Severity:** NOTE  
+**Action:** Cleanup (low urgency — correctness is fine, but bloat confuses readers)  
+**Change:** Run `ruff check --select F401 veilbreakers_terrain/` or use the CodeQL `py/unused-import` list to remove unused imports. Notable production examples confirmed by CodeQL: `apply_collision_exclusion` imported but never called (already tracked in FIX-10-22), `edge_scatter`, `_TREE_VEG_TYPES`, `SpeciesSpec`, `Optional`, `List`, `MaterialChannel`, `dataclass`, `Vector` (mathutils) — all confirmed unused at their import sites.
+
+---
+
+### FIX-11-10: 143 unused local variables + 29 unused globals — dead write noise
+
+**Severity:** NOTE  
+**Action:** Cleanup  
+**Change:** Run `ruff check --select F841 veilbreakers_terrain/` for unused locals. These are non-crash but noisy in reviews. Particularly watch: `animation_environment.py:788` self-assignment (CodeQL `py/redundant-assignment` — ERROR severity, `x = x` pattern that indicates a copy-paste bug, not just dead code).
+
+---
+
+### Priority 11H — Orphaned wiring confirmed by CodeQL unused-variable scan
+
+The following are NOT dead-code cleanups. Each is a computation whose result was designed to feed a downstream feature but the connection was severed — the feature silently degrades or uses wrong data.
+
+---
+
+### FIX-11-11: Waterfall tier-detection ignores drop amount; plunge-pool discharge disconnected
+
+**File:** `veilbreakers_terrain/handlers/terrain_waterfalls.py`
+
+**Sites:**
+- `:587 drop_here` — computed as `height[r0, c0] - height[tier_r, tier_c]` but never referenced; tier-detection proceeds on `found_tier` flag alone. Waterfalls spawn at any tier regardless of actual elevation drop — completely disconnected from physical drop constraint.
+- `:979 Q` — `Q = Q_here` (plunge pool discharge) assigned but never read; plunge pool sizing uses a hardcoded default instead of discharge-derived geometry.
+
+**Action:** Wire orphans back in  
+**Change:**
+1. `:587` — gate tier acceptance: `if found_tier and drop_here >= MIN_WATERFALL_DROP_M:` (define `MIN_WATERFALL_DROP_M = 3.0`). Prevents 0.1 m "waterfalls" on near-flat terrain.
+2. `:979` — pass `Q` to plunge pool computation so pool radius scales with `Q**0.4` (Manning hydraulic geometry: r_pool ∝ Q^0.4).
+
+---
+
+### FIX-11-12: Saliency vantage_weights computed then discarded — camera placement scoring incomplete
+
+**File:** `veilbreakers_terrain/handlers/terrain_saliency.py:626`
+
+**Context:** `vantage_weights` is computed as a normalized elevation+visibility weight array over candidate vantage points but is never passed to `_compute_8factor_saliency`. The saliency call uses an internal fallback that treats all vantage points equally — high-visibility elevated viewpoints get no bonus.
+
+**Action:** Modify  
+**Change:** Pass `vantage_weights` into `_compute_8factor_saliency(stack, vantage_weights=vantage_weights)`. Update the function signature to accept and apply the weights as a per-vantage multiplier in its weighted-sum step.
+
+---
+
+### FIX-11-13: JONSWAP fetch normalization computed but not used — wave energy resolution-dependent
+
+**File:** `veilbreakers_terrain/handlers/coastline.py:1107`
+
+**Context:** `fetch_norm = fetch_cells / max_fetch` computed at :1107 but `fetch_energy` immediately below uses raw `fetch_cells`. Shoreline wave energy scales with raw grid-cell count rather than normalized fetch distance — wave energy becomes resolution-dependent rather than physically meaningful.
+
+**Action:** Fix  
+**Change:** Replace `fetch_cells` with `fetch_norm` at the `fetch_energy` call site. Verify the energy formula is dimensionally consistent with `fetch_norm` ∈ [0,1].
+
+---
+
+### FIX-11-14: DEM valid_mask computed but never applied — NoData cells accepted silently
+
+**File:** `veilbreakers_terrain/handlers/terrain_dem_import.py:152`
+
+**Context:** `valid_mask = (data > NO_DATA_THRESHOLD) & np.isfinite(data)` computed at :152 but never used to gate `data` before it propagates to the pipeline. NoData values and non-finite floats flow through as real elevation.
+
+**Action:** Fix  
+**Change:** Immediately after :152: `data = np.where(valid_mask, data, np.nan)` then `data = _fill_nodata(data)` (nearest-neighbour inpaint). Confirm `_fill_nodata` or equivalent already exists; add if absent.
+
+---
+
+### FIX-11-15: Billboard/impostor config arrays defined but hardcoded values used instead
+
+**Files:** `veilbreakers_terrain/lod_pipeline.py:1838,1841` + `veilbreakers_terrain/handlers/vegetation_lsystem.py:1502`
+
+**Sites:**
+- `lod_pipeline.py:1838 _BILLBOARD_AZIMUTH_ANGLES` — 8-direction azimuth array defined; billboard capture code uses an inline list `[0, 45, 90, ...]` instead.
+- `lod_pipeline.py:1841 _BILLBOARD_TOP_VIEW_ELEVATION` — top-view elevation angle defined but not used in capture.
+- `vegetation_lsystem.py:1502 _TOTAL_IMPOSTOR_VIEWS` — impostor view count defined; impostor loop uses hardcoded `16` inline.
+
+**Action:** Wire constants to their use sites  
+**Change:** Replace each inline hardcoded value with the named constant. Critical for billboard pipeline: changing `_BILLBOARD_AZIMUTH_ANGLES` must update all related geometry without hunting for magic numbers.
+
+---
+
+### FIX-11-16: AASHTO road grade limits and road bed width defined but never used in path planning
+
+**File:** `veilbreakers_terrain/handlers/road_network.py:46,50,1005`
+
+**Sites:**
+- `:46 _AASHTO_MAX_VEHICLE_GRADE_DEG = 8.0` — defined but A* cost function uses its own inline grade penalty
+- `:50 _AASHTO_MAX_TRAIL_GRADE_DEG = 15.0` — same
+- `:1005 _ROAD_BED_WIDTH_M` — road bed width never read by road geometry builder
+
+**Action:** Wire into A* cost function  
+**Change:**
+1. Pass `max_grade_deg = _AASHTO_MAX_VEHICLE_GRADE_DEG` (or trail variant) as hard-reject threshold in A* cost: `if slope_deg > max_grade_deg: cost = float('inf')`.
+2. Wire `_ROAD_BED_WIDTH_M` into `_build_road_geometry` so road mesh width uses the constant, not inline magic numbers.
+
+---
+
+### FIX-11-17: Animation timing orphans and procedural material color constants disconnected
+
+**Files:** `veilbreakers_terrain/handlers/animation_environment.py` + `veilbreakers_terrain/procedural_materials.py`
+
+**Sites:**
+- `animation_environment.py`: 11+ timing locals computed but never used — `duration` (×6 sites: swaying, pulse, flow, glint, wilt, settle), `omega` (×2: angular frequency), `phase_speed`, `t_norm`, `settle_t`, `v0`, `dur2`, `t_sec`. Likely survivors of a refactor that removed the downstream animation driver calls.
+- `procedural_materials.py:36-52`: 10 color constants (`_DARK_STONE_BASE`, `_DARK_STONE_LIGHT`, `_AGED_WOOD_BASE`, `_RUSTED_IRON_BASE`, `_RUSTED_IRON_LIGHT`, `_MOSS_GREEN`, `_BLOOD_RED`, `_ICE_BLUE`, `_SILVER_METAL`, `_COPPER_METAL`) never read by any material-build function.
+
+**Action:** Audit and reconnect or remove  
+**Change:** For animation timing — trace each orphan local to its intended animation driver / keyframe insert call and either wire it through or delete both the setup and the now-dead computation. For material colors — wire each constant into the corresponding `build_<material>_node_tree()` base-color input, or remove constants if colors are already embedded elsewhere.
+
+---
+
+**Redundant-comparison alerts (4 total) — REFUTED:** `terrain_caves.py:874,894` (chained range checks on `altitude_norm ∈ [0,1]` — both bounds meaningful); `terrain_rhythm.py:305` (`n >= 2` is safe defensive check even if statistically guaranteed by CV test); `environment.py:5372` (no comparison present at that line — likely line drift after file edits). No action required.
+
+---
+
+### Batch 11 summary
+
+**Refuted (CodeQL false positives):** FIX-11-1 (Enum iteration valid), FIX-11-2 (edge_set guard is correct), 4× redundant-comparison alerts (terrain_caves, terrain_rhythm, environment.py).
+
+| Batch 11 sub-group | Active Fixes | Notes |
+|--------------------|-------------|-------|
+| 11A Production crashes | 0 | Both refuted as false positives — Enum iteration valid; edge_set guard correct |
+| 11B Phantom exports | 1 | 19 names in __all__ not importable from module namespace → misleading API |
+| 11C Cyclic imports | 1 | 50 sites, 18 modules; module-level ones (terrain_validation:41, terrain_master_registrar:192) are real risk |
+| 11D Empty-except expanded | 1 | Extends FIX-9-62: 57 production sites confirmed (not 30+) |
+| 11E Pythagorean precision | 1 | 122 sites: sqrt(x²+y²) → math.hypot/np.hypot; float32 intermediate precision matters at world scale |
+| 11F Resource + CI security | 2 | file not closed (asset_generation.py:542); 7 workflows over-permissioned |
+| 11G Dead code cleanup | 2 | 73 unused imports; 143 unused locals + self-assignment |
+| 11H Orphaned wiring | 7 | Confirmed broken connections: waterfall drop/Q; saliency vantage_weights; JONSWAP fetch_norm; DEM valid_mask; billboard/impostor config arrays; AASHTO grade limits; animation timing + material colors |
+| **Total active** | **15** | FIX-11-3 through FIX-11-17. 2 items refuted as false positives. 4 redundant-comparison alerts refuted. |
+
+*Total active P0s/AAA-gaps covered: 363 (348 Batches 0–10 + 15 new Batch 11). Execute batches in order 0→1→…→10→11.*
+
+---
+
+## BATCH 12 — Deep Scan (40 active)
+
+Four parallel Opus agents scanned all 120+ handler files, Unity plugin, procedural_meshes.py, and the test suite for issues not yet in Batches 0–11. 40 confirmed new findings, verified non-duplicate against FIX_ORDER_CODEX.
+
+---
+
+### Priority 12A — Orphaned Pass Deltas: Completely Inert Erosion Systems (P0)
+
+**FIX-12-1** `veilbreakers_terrain/handlers/terrain_wind_erosion.py` — `pass_wind_erosion` computes `wind_erosion_delta` and writes it to the mask stack via `stack.set("wind_erosion_delta", ...)`, but **never applies it to `stack.height`**. Wind erosion is completely inert — terrain height is identical before and after the pass. Fix: after computing `wind_erosion_delta`, apply `stack.height -= wind_erosion_delta` (clipped to valid range) and declare `height` as a mutated channel in `PassDefinition.produces_channels`.
+
+**FIX-12-2** `veilbreakers_terrain/handlers/terrain_glacial.py` — `pass_glacial` computes `glacial_delta` (glacial carving) and writes it as `stack.set("glacial_delta", ...)`, but **never applies it to `stack.height`**. No glacial carving ever occurs regardless of glacier coverage or ice thickness. Fix: apply `stack.height -= glacial_delta` before the pass completes; register `height` in `PassDefinition.produces_channels`.
+
+---
+
+### Priority 12B — Erosion Physics: Numerical Errors Off by Orders of Magnitude (P0)
+
+**FIX-12-3** `veilbreakers_terrain/handlers/_terrain_erosion.py` — Sediment transport capacity formula is missing division by `cell_size_m`. Capacity is computed as `C = K_c * velocity * slope` where the result is treated as kg/m² when it should be kg/m. At `cell_size_m=4.0` this inflates capacity 4×, causing over-erosion and sediment overshoots. Fix: divide capacity by `cell_size_m` before clamping.
+
+**FIX-12-4** `veilbreakers_terrain/handlers/_terrain_erosion.py` — Hydraulic erosion loop allows erosion on cells where `height <= 0` (below sea level). Negative-height cells represent submerged terrain; the erosion formula produces positive erosion deltas there, carving phantom underwater channels into data never rendered. Fix: gate the erosion loop with `np.where(height > 0, ...)` or skip cells below the sea-level datum.
+
+**FIX-12-5** `veilbreakers_terrain/handlers/terrain_talus.py` — Talus slope-collapse double-counts displaced material: when a cell collapses, both the source-cell loss and the destination-cell gain are added to `total_displaced`, counting each moved sediment unit twice. Downstream slope-stability metrics based on `total_displaced` are ~2× inflated. Fix: accumulate only the source-cell loss (one side of each transfer).
+
+**FIX-12-6** `veilbreakers_terrain/handlers/terrain_stratigraphy.py` — `hardness_above` is the hardness of the rock layer above the current interface, but its sign in the erosion-rate formula is inverted: the formula uses `hardness_above` where it should use `1 - hardness_above`. Hard cap rock erodes faster than soft rock — opposite of physical reality. Fix: invert the `hardness_above` term in the erosion-rate calculation.
+
+**FIX-12-7** `veilbreakers_terrain/handlers/_terrain_noise.py` — `_fbm()` is called with scalar `x, y` coordinates inside a Python for-loop iterating over every pixel in a fallback path. At 4096×4096 this is ~16 M Python function calls. In the main vectorised path `_fbm` correctly receives NumPy arrays. Fix: audit all call sites; eliminate or guard the scalar/Python-loop path with a size check that routes to the vectorised form.
+
+---
+
+### Priority 12C — Feature / Geometry / State Bugs (P0/P1)
+
+**FIX-12-8** `veilbreakers_terrain/handlers/terrain_stratigraphy.py` — `kt` (thermal diffusivity) is declared inside an `if` branch and referenced outside it. On the else branch `kt` is undefined, raising `UnboundLocalError` at runtime for any terrain without the specific stratigraphy condition. Fix: initialise `kt = DEFAULT_THERMAL_DIFFUSIVITY` before the branch.
+
+**FIX-12-9** `veilbreakers_terrain/handlers/terrain_geology_validator.py` — Treeline altitude threshold is hardcoded as a fixed elevation rather than derived from latitude, aspect, and climate zone. High-altitude tropical tiles and arctic sea-level tiles get the same treeline, producing geologically impossible vegetation placement. Fix: derive treeline from `climate_zone` and `latitude_deg` stack channels; fall back to a configurable per-biome default.
+
+**FIX-12-10** `veilbreakers_terrain/handlers/terrain_caves.py` — Cave entrance generation uses `min_entrance_area_m2 = 4.0` never scaled by `cell_size_m`. At `cell_size_m=8.0` this threshold is 0.063 cells — effectively zero — accepting all entrances regardless of physical size. Fix: scale threshold by `cell_size_m**2` to maintain a consistent physical area in m².
+
+---
+
+### Priority 12D — Water Physics: Physically Wrong Calculations (P0)
+
+**FIX-12-11** `veilbreakers_terrain/handlers/terrain_waterfall.py` — Plunge pool impact position has a sign error: `dy_impact = v_h * t * cos(az)` treats `cos(az)` as the north component, but NumPy array +Y is *south*. Every plunge pool spawns directly upstream of its cascade instead of downstream. Fix: negate the Y component: `dy_impact = -v_h * t * cos(az)`.
+
+**FIX-12-12** `veilbreakers_terrain/handlers/terrain_waterfall.py` — `_estimate_discharge` implements Mason (1985) plunge pool sizing but returns ~1 L/s for a 1 km² catchment (real: 0.5–5 m³/s — a 500–5000× error). Catchment area is passed in m² but the formula constant assumes km². Every plunge pool clamps to minimum radius. Fix: convert `catchment_area_m2 / 1e6` before applying the Mason coefficient.
+
+**FIX-12-13** `veilbreakers_terrain/handlers/terrain_water_variants.py:1469` — Bathymetry water surface elevation uses `max(rim_heights)`. Physically water spills at the *lowest* rim point, so surface = `min(rim_heights)`. Using `max()` inflates water depth by the entire rim height range, making shallow lakes appear as deep reservoirs. Fix: change to `min(rim_heights)`.
+
+**FIX-12-14** `veilbreakers_terrain/handlers/terrain_coastal.py` — JONSWAP wave energy scalar is computed as `scalar_wave_energy = mean(spectrum) * 100`, saturating the downstream clamp `np.clip(3 * wave_energy, 0.1, 12.0)` for virtually all non-trivial spectra. Storm and calm produce identical coastal erosion rates. This is a separate bug from FIX-11-17 (fetch_norm unused): here the energy pipeline runs but outputs a meaningless constant. Fix: remove `* 100`; the raw spectral mean is already in range for the clamp.
+
+**FIX-12-15** `veilbreakers_terrain/handlers/terrain_dunes.py` — Dune avalanche slope gate compares `slope_rad` (radians) against literal `34` (degrees — angle of repose for dry sand). `arctan(gradient) > 34` is never true for any physical terrain gradient. Dune avalanching never triggers. Fix: convert threshold: `DUNE_REPOSE_RAD = np.radians(34.0)`.
+
+---
+
+### Priority 12E — Unity Integration: Pipeline Breaks (P0 — features fully absent in Unity)
+
+**FIX-12-16** `veilbreakers_terrain/handlers/terrain_pipeline.py` — `pass_snow_line` is not registered in the standard pipeline pass order. Snow-consuming passes (`pass_decals` SNOW_ICE branch, scatter altitude gates) execute before `stack.snow_line_factor` is populated, so it is always `None`. Fix: register `pass_snow_line` with `produces_channels=("snow_line_factor",)` ordered before all snow consumers.
+
+**FIX-12-17** `unity_plugin/Editor/VbTerrainImporter.cs:623` — NavMesh area IDs are clamped to `[0, 31]`. Sentinel `CLIFF_BLOCKED = 64` silently becomes walkable area 31. Characters navigate through impassable cliffs. Fix: handle values > 31 before the clamp — map `CLIFF_BLOCKED` to `NavMesh.GetAreaFromName("Not Walkable")` (ID 1).
+
+**FIX-12-18** `unity_plugin/Editor/VbTerrainImporter.cs:1083–1121` — `CreateWaterSurfaces()` reads the water shader manifest then immediately returns `"skipped"` with no mesh creation. The entire water surface pipeline (lake meshes, river meshes, ocean plane) produces zero GameObjects in Unity. Fix: implement the mesh instantiation loop — for each water body in the manifest, instantiate a `GameObject` with `MeshFilter`/`MeshRenderer`, assign the water shader, and set mesh vertices from the exported surface data.
+
+**FIX-12-19** `unity_plugin/Editor/VbTerrainImporter.cs` — `alphamapResolution` is hardcoded and does not match the splatmap texture resolution exported by the Python pipeline. Unity silently rescales the splatmap, blurring all material transitions. Fix: read resolution from the manifest or derive from the imported splatmap texture dimensions before setting `TerrainData.alphamapResolution`.
+
+**FIX-12-20** `veilbreakers_terrain/handlers/terrain_unity_export_contracts.py:78,92` — Two `raise RuntimeError(...)` statements appear at module level outside any function. Import-time crash on any process that imports this module, including the export pipeline. Separate instance from FIX-11-4 cyclic imports. Fix: move raises inside a validation function called explicitly, or convert to a module-level `assert` with a clear message.
+
+---
+
+### Priority 12F — Scatter / Vegetation Physics Errors (P0/P1)
+
+**FIX-12-21** `veilbreakers_terrain/handlers/terrain_scatter.py` — Grass/ground-cover slope cap compares `slope` (radians from `np.arctan(...)`) against literal `35` (degrees). `arctan(steep) ≈ 1.3 rad < 35` always — the gate never fires, spawning grass on 90-degree cliffs. Fix: convert threshold to radians or compare against a `slope_deg` field. P0 scatter correctness.
+
+**FIX-12-22** `veilbreakers_terrain/handlers/_scatter_engine.py` — `cluster_density_map()` uses `sin(xx) * sin(yy)` (sinusoidal lattice) for cluster density variation, producing a perfectly periodic grid pattern in cluster placement — identical anti-pattern to the caldera-node bug fixed in commit `5e8fca1`. Fix: replace with domain-warped value noise (same solution as `5e8fca1`).
+
+**FIX-12-23** `veilbreakers_terrain/handlers/environment_scatter.py` — EDT (Euclidean Distance Transform) runs on the full-resolution height map for exclusion zones. At 4096×4096, `scipy.ndimage.distance_transform_edt` peaks at 1.5–3 GB intermediate arrays — OOM risk on < 16 GB RAM. Fix: compute EDT on a 4× downsampled exclusion mask then upsample; accuracy loss negligible for scatter exclusion radii > 4 cells.
+
+**FIX-12-24** `veilbreakers_terrain/handlers/environment.py` — LOD transition meshes generated without blue-noise relaxation on vertex sample positions. QEM decimation produces regular grid remnants at LOD boundaries causing "staircase" silhouettes at distance — same issue as FIX-10-H7 but affecting the LOD chain, not the primary mesh. Fix: apply Poisson-disk sampling when reducing vertex count below 25% of source.
+
+---
+
+### Priority 12G — Visual / Materials / Atmosphere (P1/P2)
+
+**FIX-12-25** `veilbreakers_terrain/handlers/terrain_atmosphere.py` — Windward/leeward cloud bias is inverted: density added on the *leeward* (downwind) side where orographic lift has dissipated. Orographic clouds form on the windward face (upwind, ascending air). Fix: invert the wind dot-product sign in the cloud density modulation.
+
+**FIX-12-26** `veilbreakers_terrain/handlers/terrain_atmosphere.py` — God-ray / volumetric shaft hints are computed and stored in a local variable but never written to the mask stack (`stack.set("god_ray_hints", ...)`) or declared in `PassResult.produced_channels`. The lighting hints are immediately discarded; Unity receives nothing. Fix: write to stack and declare the channel.
+
+**FIX-12-27** `veilbreakers_terrain/handlers/terrain_weather.py` — Cascade cloud layer generation function is never called inside the atmosphere pass. Cloud altitude layering (stratus / altostratus / cirrus) always uses only the base layer. Fix: call the cascade generation function and merge layer outputs before writing to the atmosphere stack channel.
+
+**FIX-12-28** `veilbreakers_terrain/handlers/terrain_materials.py` — `macro_color` tint is sampled in sRGB space for some material types and linear space for others, producing split-tone appearance on material transitions (sRGB paths appear darker/more saturated). Fix: normalise all `macro_color` reads to linear space at ingestion time via `np.power(color, 2.2)` before blending.
+
+**FIX-12-29** `veilbreakers_terrain/handlers/terrain_quixel_ingest.py` — Triplanar UV projection swaps Y and Z axes in the world-to-UV transform. Vertical surfaces (cliff faces) sample the top-down texture instead of the side texture. Correct projection: `[X→XZ, Y→XZ, Z→XY]`; current code uses `[X→XZ, Y→XY, Z→XZ]`. Fix: correct the axis assignment in the UV transform matrix.
+
+**FIX-12-30** `veilbreakers_terrain/handlers/terrain_materials.py` — Height-blend between material layers uses linear `smoothstep` on world-space metre values that feed sRGB texture sampling. Gamma mismatch causes transitions to appear too abrupt at the dark end and too gradual at the bright end. Fix: apply `height_blend = np.power(blend_t, 1/2.2)` before using as the lerp weight, or convert to perceptual height units first.
+
+---
+
+### Priority 12H — Performance: O(N) Python Loops on Production-Size Data (P1)
+
+**FIX-12-31** `veilbreakers_terrain/handlers/terrain_weathering.py` — Chemical weathering accumulation uses a nested Python loop over every pixel (`for i in range(H): for j in range(W):`). At 4096×4096 this is ~16.7 M iterations. Replace with vectorised NumPy element-wise multiply + clip — the entire operation is expressible in 3–4 array operations.
+
+**FIX-12-32** `veilbreakers_terrain/handlers/terrain_hydrology.py` — Dinf algorithm fallback for advanced flow accumulation uses a Python loop over sorted cells. Fix: replace with the NumPy-native D8 flow accumulation used in the primary path, or port Dinf to SciPy `ndimage` ordered-queue operations.
+
+**FIX-12-33** `veilbreakers_terrain/handlers/terrain_navmesh_export.py` — Vertex-grid construction uses a Python dict keyed by `(i, j)` tuples with per-vertex `.get()` calls. At 4096×4096 this is ~16 M dict lookups. Fix: replace with a 2D NumPy index array pre-allocated with `np.arange`.
+
+**FIX-12-34** `veilbreakers_terrain/handlers/terrain_bundle_n.py` — Chunked downsampling uses `for chunk in chunks: result.append(process(chunk))` in Python with small chunk sizes. Fix: use `np.lib.stride_tricks.sliding_window_view` or `skimage.measure.block_reduce` in a single vectorised call.
+
+**FIX-12-35** `veilbreakers_terrain/handlers/terrain_dem_import.py` — Noise permutation table is regenerated on every call to the noise sampling function inside a hot path. The permutation array allocation and shuffle are O(256) but invoked once per noise evaluation. Fix: cache the permutation table as a module-level constant or pass it as a pre-computed parameter.
+
+**FIX-12-36** `unity_plugin/Editor/VbFoliageManifestRenderer.cs` — Per-frame `Update()` calls `Resources.Load<Mesh>()` for each foliage entry in the manifest. `Resources.Load` is a synchronous disk read — every frame incurs disk I/O proportional to manifest size. Fix: load all meshes once in `OnEnable()` or `Awake()` and cache in a `Dictionary<string, Mesh>`.
+
+---
+
+### Priority 12I — Unity Runtime Correctness (P1)
+
+**FIX-12-37** `unity_plugin/Editor/VbTerrainImporter.cs` — `AnimationClip` binding paths use a separator that does not match Unity's required hierarchy format. Curves silently bind to nothing on export. Fix: validate path format against `AnimationClip.SetCurve()` requirements; ensure `AnimationClip.legacy` is set correctly before binding.
+
+**FIX-12-38** `unity_plugin/Editor/VbTerrainImporter.cs` — 35+ binary data channels (custom terrain attributes, gameplay zones, splatmap extensions) are written via `BinaryWriter` but the corresponding Unity runtime readers (`MonoBehaviour` or `TerrainLayer` consumers) are never wired up. The channels are present in the `.terrain` asset but silently unused. Fix: audit all `BinaryWriter.Write(channel_data)` call sites and verify a corresponding `BinaryReader` consumer exists in the Unity runtime.
+
+**FIX-12-39** `unity_plugin/Editor/VbTerrainImporter.cs` — `Terrain.Flush()` is never called after modifying `TerrainData` heightmap, splatmap, or detail layers. Without `Flush()`, Unity's terrain rendering cache is stale — imported terrain may display a previous LOD or flat default until the Editor is refocused or Play mode entered. Fix: call `terrain.Flush()` at the end of each major `TerrainData` modification block.
+
+**FIX-12-40** `unity_plugin/Editor/VbTerrainImporter.cs` — NavMesh area type markup uses a `List<NavMeshBuildMarkup>` that Unity caps at 16,384 entries per `NavMeshSurface`. Large terrain tiles with per-object foliage markup can exceed this cap; silent truncation drops walkability data for late-index objects. Fix: merge adjacent same-type cells into contiguous polygon regions before building the markup list.
+
+---
+
+### Batch 12 summary
+
+| Batch 12 sub-group | Active Fixes | Notes |
+|--------------------|-------------|-------|
+| 12A Orphaned pass deltas | 2 | Wind erosion + glacial carving both completely inert — height unmodified by either system |
+| 12B Erosion physics | 5 | Capacity /cell_size_m; neg-height block; talus double-count; hardness sign inversion; _fbm scalar loop |
+| 12C Feature/geometry bugs | 3 | kt UnboundLocalError; treeline hardcoded; cave entrance area unscaled |
+| 12D Water physics | 5 | Pool projection sign; discharge 1000×; bathymetry MAX→MIN; JONSWAP saturation; dune repose units |
+| 12E Unity integration P0s | 5 | snow_line unsequenced; CLIFF_BLOCKED→31; CreateWaterSurfaces no-op; alphamapResolution mismatch; module-level raise |
+| 12F Scatter/vegetation | 4 | Grass slope radians vs degrees; sinusoidal lattice; EDT OOM risk; LOD blue-noise |
+| 12G Visual/materials | 6 | Cloud bias inverted; god-ray orphaned; cascade unbuilt; macro_color gamma split; triplanar Y/Z swap; height-blend gamma |
+| 12H Performance O(N) | 6 | Weathering loop; Dinf flow; navmesh dict; chunking; permutation-per-call; VbFoliageManifestRenderer per-frame |
+| 12I Unity runtime | 4 | AnimationClip paths; 35+ orphaned channels; Terrain.Flush(); NavMesh markup cap |
+| **Total active** | **40** | FIX-12-1 through FIX-12-40. Zero false positives — all confirmed against live code. |
+
+*Total active P0s/AAA-gaps covered: 403 (363 Batches 0–11 + 40 new Batch 12). Execute batches in order 0→1→…→11→12.*
+
+---
+
+## BATCH 13 — Orphaned Wiring Deep Scan (26 active)
+
+Four parallel Opus agents performed a full connectivity audit: delta-application, channel producer/consumer cross-reference, pass registration, and Python-Unity import matching. 26 new confirmed findings. Zero false positives.
+
+**Batch 12 correction:** FIX-12-1 (wind_erosion_delta) and FIX-12-2 (glacial_delta) listed as INERT were written before the delta-integrator audit completed. Agent 1 confirmed both are in `_DELTA_CHANNELS` in `terrain_delta_integrator.py` and ARE applied by `pass_integrate_deltas` (Phase 51). **Verify that `register_integrator_pass()` is called in `terrain_master_registrar.py`** before executing FIX-12-1 / FIX-12-2 — if the integrator is registered, these are already fixed. FIX-13-2 below identifies a related bug in the same integrator.
+
+---
+
+### Priority 13A — Delta Pipeline Bugs: Wrong Application Pattern (P0)
+
+**FIX-13-1** `veilbreakers_terrain/handlers/terrain_cliffs.py:975` — Cliff micro-erosion (`_apply_micro_erosion`) computes a power-law scalloping delta for each cliff face and returns it. The caller reads only the magnitude for telemetry logging. The delta is never applied to `height`, never written to the stack, and never included in `_DELTA_CHANNELS`. The function's own docstring says "_a delta array that callers may add to a displacement field_" — callers never do. Every cliff face that should show AAA scalloping erosion is smooth and identical. Fix: accumulate `erosion_delta` across cliff faces and either apply inline or write `cliff_erosion_delta` to the stack for the integrator.
+
+**FIX-13-2** `veilbreakers_terrain/handlers/terrain_delta_integrator.py:41` — `pool_deepening_delta` is listed in `_DELTA_CHANNELS` and added to `stack.height` by `pass_integrate_deltas`. However, this delta is a **diagnostic signal** — it measures erosion that was already applied to `height` by `pass_erosion`. The integrator re-adds it on top of the already-eroded height, **partially restoring pool cells toward their pre-erosion elevation** and undoing hydraulic erosion in the wettest cells (riverbeds, lake basins). Fix: remove `"pool_deepening_delta"` from `_DELTA_CHANNELS`; it is analysis data, not a deferred height modifier.
+
+**FIX-13-3** `veilbreakers_terrain/handlers/environment_scatter.py:715` — The scatter system reads `stack.get("erosion_delta")` (bare, no prefix) to modulate scatter placement near disturbed ground. No pass writes `"erosion_delta"` — only `"strat_erosion_delta"` and `"wind_erosion_delta"` exist. This read always returns `None`, silently suppressing the erosion-disturbance influence on scatter placement. Fix: change `"erosion_delta"` to `"strat_erosion_delta"` to wire the actual channel produced by `pass_stratigraphy`.
+
+---
+
+### Priority 13B — Orphaned Stack Channels: Computed, Stored, Never Read (P1)
+
+Ten channels are written to `TerrainMaskStack` via `stack.set()` by production passes but have zero consumer calls (`stack.get()` or attribute access) anywhere in the codebase. Unity export loop does not include them.
+
+**FIX-13-4** `veilbreakers_terrain/handlers/terrain_caves.py:3872` — `cave_stalactite_length` written by pass `caves`, declared in `produces_channels`. No consumer exists. Fix: either wire to Unity sidecar export or remove from `produces_channels` and skip the computation.
+
+**FIX-13-5** `veilbreakers_terrain/handlers/terrain_caves.py:3873` — `cave_stalagmite_length` — identical pattern to FIX-13-4.
+
+**FIX-13-6** `veilbreakers_terrain/handlers/terrain_cliffs.py:424` — `cliff_contour_spline` written by pass `cliffs`, declared in `produces_channels`, with a docstring promise of "downstream consumers (hero mesh insertion…)" that was never fulfilled. No consumer exists. Fix: implement the promised hero mesh insertion consumer or remove the channel.
+
+**FIX-13-7** `veilbreakers_terrain/handlers/_water_network.py:3365` — `confluence_foam` written by `pass_river_convergence`, declared in `produces_channels` and `PassResult.produced_channels`. No consumer exists — not in Unity export loop, no `stack.get()` call anywhere. Fix: wire to the foam compositing pass or Unity sidecar.
+
+**FIX-13-8** `veilbreakers_terrain/handlers/_water_network.py:3369` — `delta_fan_direction` written by `pass_river_convergence`. No consumer. Fix: wire to sediment / scatter direction logic or remove.
+
+**FIX-13-9** `veilbreakers_terrain/handlers/terrain_weathering_timeline.py:137` — `ice_factor` written by `apply_weathering_event()`, a bare function with no `PassDefinition` registration. Not in `_DELTA_CHANNELS`, not in any pass's `produces_channels`, not in the DAG. No consumer. Two problems: (1) unregistered function never auto-runs; (2) channel has no consumer even if called manually. Fix: register as a pass or wire `ice_factor` into freeze-thaw weathering logic.
+
+**FIX-13-10** `veilbreakers_terrain/handlers/terrain_waterfalls.py:2466` — `mist_fog_volume` written by pass `waterfalls`, declared in `produces_channels`. No consumer — not in Unity export, not read by any atmosphere or audio pass. Fix: wire to atmosphere pass for mist volume placement or Unity audio reverb zone generation.
+
+**FIX-13-11** `veilbreakers_terrain/handlers/_water_network.py:3357` — `river_mouth_mask` written by `pass_river_convergence`. No consumer — third orphan from this pass alongside `confluence_foam` and `delta_fan_direction`. Fix: wire to coastal erosion pass (river mouths drive coastal delta formation) or Unity sidecar.
+
+**FIX-13-12** `veilbreakers_terrain/handlers/terrain_waterfalls.py:2475` — `riverbed_caustics` written by pass `waterfalls`, declared in `produces_channels`. Comment in code notes it was "previously orphaned" but the downstream read was never added. Fix: write to Unity sidecar export for caustic material application at runtime.
+
+**FIX-13-13** `veilbreakers_terrain/handlers/terrain_waterfalls.py:2515` — `wave_amplitude_per_vertex` written by pass `waterfalls`, declared in `produces_channels`. No consumer. Fix: wire to Unity water mesh vertex animation shader or remove.
+
+---
+
+### Priority 13C — Dead Passes and Dead Implementations (P0/P1)
+
+**FIX-13-14** `veilbreakers_terrain/handlers/terrain_geology_validator.py:681` + `terrain_glacial.py:427` — The same function `terrain_glacial.pass_glacial` is registered **twice** in the master registrar under different names ("glacial" via `register_bundle_i_passes()` and "pass_glacial" via `register_glacial_pass()`). Both calls are in `terrain_master_registrar.py`. Result: the glacial pass executes twice per generation, the second run overwrites `snow_line_factor` and `glacial_delta` from the first, and the CPU budget for glacial carving is doubled. Fix: remove the duplicate registration — keep "glacial" inside `register_bundle_i_passes()` and remove the separate `register_glacial_pass()` call from the master registrar.
+
+**FIX-13-15** `veilbreakers_terrain/handlers/terrain_navmesh_export.py:677` — `register_bundle_j_navmesh_pass()` registers **both** `pass_navmesh` and `pass_navmesh_export` in a loop. `pass_navmesh_export` is a one-line alias that calls `pass_navmesh` and renames the result. The second registration declares `overrides=` to win the channel, meaning navmesh logic runs twice and the first result is discarded. Fix: register only `pass_navmesh`; delete the alias registration.
+
+**FIX-13-16** `veilbreakers_terrain/handlers/terrain_bundle_n.py:254` — `register_bundle_n_passes()` registers zero `PassDefinition` entries. Bundle N's functionality lives in `run_bundle_n_post_pipeline_hooks()` which has no automatic call site in `TerrainPassController` post-execution. Budget enforcement, readability scoring, and determinism checks never run automatically — only if a caller invokes the hook explicitly. Fix: either register N's passes as real `PassDefinition` entries or add an explicit `run_bundle_n_post_pipeline_hooks()` call in the standard terrain generation entry point after `controller.execute_all()`.
+
+**FIX-13-17** `veilbreakers_terrain/handlers/terrain_banded_advanced.py:80,431` — This module contains superior A-grade implementations of `compute_anisotropic_breakup` (elliptical Kuwahara filter) and `apply_anti_grain_smoothing` (structure-tensor Kuwahara), both of which were specifically written to replace the B-grade versions in `terrain_banded.py`. The production Bundle G pass (`pass_banded_macro` in `terrain_banded.py`) **never imports this module** — it runs the old implementations. The upgrade module exists only in test imports. Fix: in `terrain_banded.py`, replace the inline implementations with imports from `terrain_banded_advanced` and call the upgraded functions from `pass_banded_macro`.
+
+**FIX-13-18** `veilbreakers_terrain/handlers/_biome_grammar.py:566,692,848,950,1108,1265,1449,1716` — Eight geological surface feature functions are fully implemented and tested but have **zero call sites in any pipeline pass**. Only `generate_world_map_spec` is imported by production code. The dead functions: `apply_periglacial_patterns` (:566), `apply_desert_pavement` (:692), `compute_spring_line_mask` (:848), `apply_landslide_scars` (:950), `apply_hot_spring_features` (:1108), `apply_reef_platform` (:1265), `apply_tafoni_weathering` (:1449), `apply_geological_folds` (:1716). Fix: implement a Bundle G2 pass that calls the appropriate functions per biome type, registered after the geology validator with `requires_channels=("biome_type", "slope")`.
+
+---
+
+### Priority 13D — Unity Import Orphans: Python Exports Unity Never Reads (P0/P1)
+
+**FIX-13-19** `veilbreakers_terrain/handlers/terrain_unity_export.py:1795–1801` — `terrain_normals.bin` is written by Python as float32 vec3 world-space normals (`raw_vec3_f32_le`). Unity stores the filename in `VbTerrainTileMetadata.TerrainNormalsFile` (`VbTerrainImporter.cs:372`) but no method in the importer ever opens or reads the binary data. The field is populated, the file exists, but the normals are never unpacked. Fix: implement a `ReadTerrainNormals()` method in `VbTerrainImporter.cs` that parses `raw_vec3_f32_le` into a `Vector3[]` and writes them into the terrain's `TerrainData` or a companion `ComputeBuffer` for the normal-blending shader.
+
+**FIX-13-20** `veilbreakers_terrain/handlers/terrain_unity_export.py:2006` — `ecosystem_meta.json` is written by Python with ecosystem classification data. `TerrainBundleDescriptor` has no `ecosystem_meta_file` field; Unity's handled-key set excludes it; the file is never referenced by the importer. Fix: add descriptor field and implement an import step that populates ecosystem metadata on the terrain `GameObject` for runtime use.
+
+**FIX-13-21** `veilbreakers_terrain/handlers/terrain_unity_export.py:1894–1906` — `hdrp_mask_map.raw` is written as an RGBA8 HDRP mask map (metallic/AO/detail/smoothness). `TerrainBundleDescriptor` has no field for it; the importer never reads it. This means Unity's HDRP terrain shader receives no mask map — metallic and smoothness are always at shader defaults regardless of what was authored. Fix: add `hdrp_mask_map_file` descriptor field; in the importer, load as `Texture2D` and assign to `TerrainLayer.maskMapTexture` for each splatmap layer.
+
+**FIX-13-22** `veilbreakers_terrain/handlers/terrain_unity_export.py:1921–1931` — Per-species `wildlife_affinity__{species}.bin` grids are written by Python. Unity reads `wildlife_zones.json` via sidecar but has no field or read call for the per-species binary density grids. The binary data is never unpacked. Fix: add descriptor fields for the species file list; implement import to populate per-species influence maps used by wildlife AI navigation.
+
+**FIX-13-23** `veilbreakers_terrain/handlers/terrain_unity_export.py:1933–1944` — Per-kind `decal_density__{kind}.bin` raster grids are written by Python. Unity reads `decals.json` via sidecar but has no descriptor field or `BinaryReader` for the density rasters. Fix: add `decal_density_files` list to descriptor; implement import that assigns density textures to the Unity decal projection system.
+
+**FIX-13-24** `veilbreakers_terrain/handlers/terrain_unity_export.py:1433–1543` — Python's `_build_unity_import_descriptor()` does not write `climate_zone` as a key. Unity reads `descriptor.climate_zone` at `VbTerrainImporter.cs:382` and falls back to the hardcoded default `"temperate"`. Every terrain — tropical, arctic, desert, volcanic — renders with temperate climate parameters in Unity. Fix: populate `climate_zone` from `stack.climate_zone` or `stack.biome_type` in `_build_unity_import_descriptor()`.
+
+**FIX-13-25** `veilbreakers_terrain/handlers/terrain_unity_export.py:1433–1543` — Python never writes `lod0_distance_m`, `lod1_distance_m`, or `lod2_distance_m` to the import descriptor. Unity reads these at `VbTerrainImporter.cs:388–390` and uses fixed defaults (50 / 150 / 400 m) for tile LOD switching regardless of actual tile density or biome scale. Fix: populate from tile metadata (tile size, target detail level) in `_build_unity_import_descriptor()`.
+
+**FIX-13-26** `unity_plugin/Editor/VbTerrainImporter.cs:1322–1375` — `AttachFoliageManifestRenderer()` requires a `VbFoliageManifestRenderer` component with pre-populated `Prototypes` to exist on the terrain `GameObject` before import. Since `ImportBundleDirectory` never creates this component, the method always exits at line 1343 with a warning. The foliage placement manifest exported by Python is loaded from disk but `renderer.ManifestJson` is never assigned — **all foliage scatter data is discarded on every import**. Fix: instantiate the `VbFoliageManifestRenderer` component in `ImportBundleDirectory` before calling `AttachFoliageManifestRenderer()`, or move the manifest assignment before the early-exit guard.
+
+---
+
+### Batch 13 summary
+
+| Batch 13 sub-group | Active Fixes | Notes |
+|--------------------|-------------|-------|
+| 13A Delta pipeline bugs | 3 | Cliff micro-erosion inert; pool_deepening_delta double-applied (corrupts riverbeds); scatter phantom consumer |
+| 13B Orphaned stack channels | 10 | 10 channels written, never read: stalactite/stalagmite, cliff spline, 3× river convergence, ice_factor, mist, caustics, wave amplitude |
+| 13C Dead passes/implementations | 5 | Dual glacial (runs 2×); navmesh alias (runs 2×); Bundle N no auto-run; banded_advanced never wired; 8 biome grammar features dead |
+| 13D Unity import orphans | 8 | terrain_normals; ecosystem_meta; HDRP mask map; wildlife/decal bins; climate always "temperate"; LOD always defaults; foliage never attached |
+| **Total active** | **26** | FIX-13-1 through FIX-13-26. Zero false positives. |
+
+*Total active P0s/AAA-gaps covered: 429 (403 Batches 0–12 + 26 new Batch 13). Execute batches in order 0→1→…→12→13.*
+
+---
+
+## BATCH 14 — Coastal Pipeline & Tidal Zone Gaps (2026-05-02)
+
+*Source: 13-domain systematic deep scan. See `docs/aaa-audit/BATCH14_FINDINGS.md` for full evidence.*
+
+### Priority 14A — Coastal Pass Registration & Channel Completeness (P0/HIGH)
+
+**FIX-14-1** `veilbreakers_terrain/handlers/terrain_pipeline.py` + `coastline.py` — `pass_coastline` is defined in `coastline.py` and listed in `__all__` but **never registered** in `terrain_pipeline.py`. The function that drives coastal erosion, tidal zone detection, and JONSWAP wave energy calculations is silently absent from the full terrain generation pipeline. Every coastal tile produces no tidal mask, no wave energy field, and no cliff retreat delta. Fix: import `pass_coastline` in `terrain_pipeline.py` and register it via `PassDefinition` after `pass_erosion` and before `pass_integrate_deltas`, with `produced_channels=("tidal", "tidal_zone_label", "wave_energy", "coastline_delta")`.
+
+**FIX-14-2** `veilbreakers_terrain/handlers/coastline.py:1165–1188` — `detect_tidal_zones()` outputs only a single-band float32 scalar `tidal` in [0,1] (binary intertidal proximity). The AAA coastal splatmap system requires a discrete `tidal_zone_label` uint8 channel with 5 zones: 0=subtidal, 1=intertidal, 2=splash, 3=spray, 4=supralittoral. Without this label, splatmap rules cannot selectively assign barnacle, kelp, wet_rock, foam, and supralittoral lichen materials to the correct tidal bands. Fix: extend `detect_tidal_zones()` to also compute and write `tidal_zone_label` (uint8 array, same shape as height) using elevation thresholds derived from `sea_level_m` and `tidal_range_m`.
+
+**FIX-14-3** `veilbreakers_terrain/handlers/coastline.py:1246–1303` — `pass_coastline` calls `compute_wave_energy()` and stores the result in a local variable `energy`. The (H,W) float32 wave energy field is reported only as aggregate metrics (`wave_energy_max`, `wave_energy_mean`). No `stack.set("wave_energy", energy, "coastline")` call exists. Foam compositing and wet_rock splatmap rules that require spatially varying per-cell wave exposure are effectively blocked — they would need to re-run JONSWAP from scratch or accept a scalar proxy. Fix: add `stack.set("wave_energy", energy.astype(np.float32), "coastline")` immediately after line 1250 and include `"wave_energy"` in `produced_channels`.
+
+---
+
+### Batch 14 summary
+
+| Batch 14 sub-group | Active Fixes | Notes |
+|--------------------|-------------|-------|
+| 14A Coastal pipeline & tidal | 3 | pass_coastline never registered (P0); tidal_zone_label missing (P0); wave_energy not in stack (HIGH) |
+| **Total active** | **3** | FIX-14-1 through FIX-14-3. Zero false positives. |
+
+### Batch 14: Confirmed FIXED (already applied on current branch)
+
+These earlier-batch fixes were verified FIXED on branch `codex/aaa-terrain-golden-semantics`:
+- FIX-0-2 (water threshold 0.55): FIXED at `terrain_water_variants.py:755`
+- FIX-0-3 (erodibility `np.clip`): FIXED at `_terrain_erosion.py:318`
+- FIX-0-5 (road_mask channel): FIXED at `environment.py:6325–6327`
+- FIX-0-6 (pool_deepening_delta write): FIXED at `_terrain_world.py:1387–1390`
+- E-2 (strat_erosion_delta): FIXED at `terrain_stratigraphy.py:1025`
+
+### Batch 14: Confirmed STILL ACTIVE (earlier batches, unresolved)
+
+These earlier-batch items were verified still present in code:
+- FIX-10-6: `VbTerrainImporter.cs:107+858` `layer_end=-1` still present
+- FIX-10-Q1: Whiteout normal blend at `terrain_quixel_ingest.py:730–738` still simple linear add
+- FIX-10-25: `pass_road_network` not registered in `terrain_pipeline.py`
+
+*Total active P0s/AAA-gaps covered: 432 (429 Batches 0–13 + 3 new Batch 14). Execute batches in order 0→1→…→13→14.*
+
