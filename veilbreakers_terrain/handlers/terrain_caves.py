@@ -32,6 +32,7 @@ Agent protocol compliance:
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass, field
@@ -39,6 +40,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from .terrain_semantics import (
     BBox,
@@ -1875,7 +1878,7 @@ def generate_cave_path(
                 _ch_arr[0] = float(len(chambers))
                 stack.set("cave_chambers", _ch_arr, "caves")
         except Exception:
-            pass  # stack may not accept this channel — non-fatal
+            logger.debug("cave_chambers stack.set failed (non-fatal)", exc_info=True)
 
     # Normalize chamber metadata so the pass always exposes a deterministic
     # chamber-count channel even when a given cave instance has no chambers.
@@ -1889,7 +1892,7 @@ def generate_cave_path(
         ch_arr = np.array([existing_count + float(len(chambers))], dtype=np.float32)
         stack.set("cave_chambers", ch_arr, "caves")
     except Exception:
-        pass
+        logger.debug("cave_chambers normalize stack.set failed", exc_info=True)
 
     # Concatenate spine + all branches into final flat point list
     all_points = points + branch_points
@@ -2192,7 +2195,7 @@ def carve_cave_volume(
             _existing = getattr(stack, "_cave_nav_issues", [])
             setattr(stack, "_cave_nav_issues", _existing + nav_issues)
         except Exception:
-            pass
+            logger.debug("_cave_nav_issues setattr failed (best-effort)", exc_info=True)
 
     # Compute wall texture (Worley + Perlin) and store on the stack so
     # the material pass can use it for procedural surface detail.

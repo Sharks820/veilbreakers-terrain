@@ -10,12 +10,15 @@ Pure Python + numpy -- no bpy imports, fully testable without Blender.
 from __future__ import annotations
 
 import heapq
+import logging
 import math
 from collections import deque
 from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .terrain_semantics import (
@@ -989,7 +992,7 @@ def bake_flow_direction_vertex_color(
         try:
             rgba_view.setflags(write=False)  # pragma: no cover — defensive
         except Exception:
-            pass
+            logger.debug("setflags write=False failed (defensive guard)", exc_info=True)
         return rgba
 
     field4 = compute_flow_direction_field(fd, fs, foam)
@@ -1015,7 +1018,7 @@ def bake_flow_direction_vertex_color(
     try:
         rgba.attr_name = str(color_attribute)  # type: ignore[attr-defined]
     except Exception:
-        pass
+        logger.debug("rgba.attr_name assignment failed (non-standard numpy attr)", exc_info=True)
     return rgba
 
 
@@ -2878,7 +2881,7 @@ class WaterNetwork:
                 setattr(seg, "strahler_order", int(strahler.get(seg_id, 1)))
                 setattr(seg, "shreve_order", int(shreve.get(seg_id, 1)))
             except Exception:
-                pass  # best-effort non-critical attr write
+                logger.debug("banded noise attr write failed (_water_network, best-effort)", exc_info=True)
         return strahler
 
     def get_trunk_segments(self, min_order: int = 2) -> list[int]:

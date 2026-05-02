@@ -1357,6 +1357,57 @@ def _export_heightmap_raw(
     return np.ascontiguousarray(hmap_u16).tobytes()
 
 
+def _read_exported_heightmap(
+    tile_result: dict[str, Any],
+    *,
+    flip_vertical: bool = True,
+) -> np.ndarray:
+    """Read a previous tile height export back into world-height metres.
+
+    ``handle_generate_terrain_tile`` writes Unity-style ``.raw`` files, not
+    ``.npy`` arrays.  Adjacent-tile seam locks need the original heightfield
+    scale, so this reverses RAW normalization using the tile's ``height_range``.
+    ``.npy`` remains accepted for older tests/tools that provide direct arrays.
+    """
+    path_raw = tile_result.get("heightmap_path")
+    if not path_raw:
+        raise ValueError("tile_result missing heightmap_path")
+    path = Path(str(path_raw))
+    if path.suffix.lower() == ".npy":
+        return np.asarray(np.load(str(path)), dtype=np.float32)
+
+    resolution = int(tile_result.get("resolution") or tile_result.get("tile_size", 0) + 1)
+    if resolution <= 0:
+        manifest_path = tile_result.get("tile_manifest_path")
+        if manifest_path:
+            manifest = json.loads(Path(str(manifest_path)).read_text(encoding="utf-8"))
+            resolution = int(manifest.get("resolution", 0))
+            tile_result.setdefault("height_range", manifest.get("height_range"))
+    if resolution <= 0:
+        raise ValueError("tile_result missing positive resolution for RAW heightmap")
+
+    data = np.fromfile(path, dtype="<u2")
+    expected = resolution * resolution
+    if data.size != expected:
+        raise ValueError(
+            f"RAW heightmap sample count mismatch for {path}: expected {expected}, got {data.size}"
+        )
+    normalized = data.astype(np.float32).reshape((resolution, resolution)) / np.float32(65535.0)
+    if flip_vertical:
+        normalized = np.flipud(normalized)
+
+    height_range = tile_result.get("height_range")
+    if not isinstance(height_range, (list, tuple)) or len(height_range) < 2:
+        raise ValueError("tile_result missing height_range for RAW heightmap")
+    hmin = float(height_range[0])
+    hmax = float(height_range[1])
+    if not np.isfinite((hmin, hmax)).all():
+        raise ValueError("tile_result height_range must be finite")
+    if hmax - hmin <= 1e-10:
+        return np.full_like(normalized, hmin, dtype=np.float32)
+    return (normalized * np.float32(hmax - hmin) + np.float32(hmin)).astype(np.float32)
+
+
 def _export_splatmap_raw(
     splatmap: np.ndarray,
     flip_vertical: bool = True,
@@ -2655,10 +2706,10 @@ def handle_generate_world_terrain(params: dict) -> dict:
             )
             try:
                 if west_tile is not None and "west" not in neighbor_edges:
-                    west_h = np.load(west_tile["heightmap_path"])
+                    west_h = _read_exported_heightmap(west_tile)
                     neighbor_edges["west"] = np.asarray(west_h)[:, -1].tolist()
                 if north_tile is not None and "north" not in neighbor_edges:
-                    north_h = np.load(north_tile["heightmap_path"])
+                    north_h = _read_exported_heightmap(north_tile)
                     neighbor_edges["north"] = np.asarray(north_h)[-1, :].tolist()
             except Exception as exc:
                 logger.warning(
@@ -3741,6 +3792,40 @@ def handle_stitch_terrain_edges(params: dict) -> dict:
     }
 
 
+def _select_biome_material_indices(
+    match_matrix: np.ndarray,
+    *,
+    strict: bool = True,
+) -> tuple[np.ndarray, int]:
+    """Convert face/rule match matrix to material indices without phantom slot 0.
+
+    ``np.argmax`` returns 0 for an all-False row.  For terrain painting that
+    silently assigns unmatched faces to the first material, hiding bad biome
+    rule coverage.  Strict mode fails closed so material gaps do not enter
+    production exports.
+    """
+    matches = np.asarray(match_matrix, dtype=bool)
+    if matches.ndim != 2:
+        raise ValueError(f"match_matrix must be 2-D, got shape {matches.shape}")
+    face_count, rule_count = matches.shape
+    if rule_count <= 0:
+        raise ValueError("At least one biome material rule is required")
+    if face_count <= 0:
+        return np.empty(0, dtype=np.int32), 0
+
+    has_match = matches.any(axis=1)
+    unmatched_count = int((~has_match).sum())
+    if unmatched_count and strict:
+        raise ValueError(
+            f"{unmatched_count} terrain faces did not match any biome material rule"
+        )
+
+    material_idx_arr = np.argmax(matches, axis=1).astype(np.int32)
+    if unmatched_count:
+        material_idx_arr[~has_match] = -1
+    return material_idx_arr, unmatched_count
+
+
 # ---------------------------------------------------------------------------
 # Handler: paint_terrain
 # ---------------------------------------------------------------------------
@@ -3797,6 +3882,7 @@ def handle_paint_terrain(params: dict) -> dict:
     brush_falloff_alt = float(params.get("brush_falloff_alt", 0.05))
     write_vertex_colors = bool(params.get("write_vertex_colors", True))
     undo_push = bool(params.get("undo_push", False))
+    strict_material_coverage = bool(params.get("strict_material_coverage", True))
 
     obj = bpy.data.objects.get(name)
     if obj is None:
@@ -3868,7 +3954,10 @@ def handle_paint_terrain(params: dict) -> dict:
         & (slope_arr[:, None] >= min_slopes[None, :])
         & (slope_arr[:, None] <= max_slopes[None, :])
     )
-    material_idx_arr = np.argmax(both_pass, axis=1).astype(np.int32)
+    material_idx_arr, unmatched_face_count = _select_biome_material_indices(
+        both_pass,
+        strict=strict_material_coverage,
+    )
 
     # ------------------------------------------------------------------
     # Pressure-falloff brush: compute per-face per-rule blend weights
@@ -3952,6 +4041,7 @@ def handle_paint_terrain(params: dict) -> dict:
         "biome_rules_applied": n_rules,
         "vertex_color_layer": vc_layer_name,
         "faces_painted": int(n_faces),
+        "unmatched_face_count": unmatched_face_count,
         # AAA metrics
         "affected_cells": int(n_faces),
         "duration_seconds": round(_duration, 4),

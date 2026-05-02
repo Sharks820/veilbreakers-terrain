@@ -858,6 +858,44 @@ def test_handle_capture_scene_read_wrapper():
     assert result["focal_point"] == [1.0, 2.0, 3.0]
 
 
+def test_capture_scene_read_rejects_malformed_vectors_and_coerces_refs():
+    from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        HeroFeatureRef,
+        WaterfallChainRef,
+    )
+
+    with pytest.raises(ValueError, match="focal_point_hint"):
+        capture_scene_read(reviewer="p", focal_point_hint=(1.0, 2.0))
+
+    sr = capture_scene_read(
+        reviewer="p",
+        focal_point_hint=(1.0, 2.0, 3.0),
+        hero_features_present=[
+            {
+                "id": "hero_01",
+                "type": "castle",
+                "location": [4.0, 5.0, 6.0],
+                "name": "Castle",
+            }
+        ],
+        waterfall_chains=[
+            {
+                "name": "falls_01",
+                "lip_position": [7.0, 8.0, 9.0],
+                "pool_position": [7.0, 8.0, 2.0],
+                "drop_height": 7.0,
+            }
+        ],
+        cave_candidates=[[1.0, 2.0, 0.0]],
+    )
+
+    assert isinstance(sr.hero_features_present[0], HeroFeatureRef)
+    assert isinstance(sr.waterfall_chains[0], WaterfallChainRef)
+    assert sr.hero_features_present[0].world_position == (4.0, 5.0, 6.0)
+    assert sr.waterfall_chains[0].drop_height == pytest.approx(7.0)
+
+
 def test_scene_read_default_scope_centered_on_focal():
     from veilbreakers_terrain.handlers.terrain_scene_read import capture_scene_read
 

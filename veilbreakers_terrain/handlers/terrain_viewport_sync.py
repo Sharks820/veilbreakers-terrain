@@ -10,10 +10,13 @@ See Addendum 1.A.3 of the implementation plan for the authoritative contract.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import time
 from dataclasses import dataclass
 from typing import Tuple
+
+logger = logging.getLogger(__name__)
 
 from .terrain_semantics import BBox
 
@@ -68,7 +71,7 @@ def _read_from_blender_context() -> "dict | None":
                     "distance": r3d.view_distance,
                 }
     except Exception:
-        pass
+        logger.debug("Blender viewport state capture failed (bpy optional)", exc_info=True)
     return None
 
 

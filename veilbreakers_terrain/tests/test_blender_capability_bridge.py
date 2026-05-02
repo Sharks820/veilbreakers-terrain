@@ -22,10 +22,10 @@ from types import SimpleNamespace, ModuleType
 from typing import Any, Dict, List
 
 import pytest
+from PIL import Image as PILImage
 
 from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 from veilbreakers_terrain.src.veilbreakers_mcp.blender_server import (
-    _LOC_HANDLERS,
     dispatch,
     resolve_command,
 )
@@ -131,6 +131,22 @@ def test_dispatch_returns_error_when_bpy_missing(monkeypatch) -> None:
     r = dispatch("modifier_list", {"object_name": "foo"})
     assert r["status"] == "error"
     assert r["error"] == "bpy_unavailable"
+
+
+def test_render_output_check_rejects_png_header_without_decodable_image(tmp_path: Path) -> None:
+    invalid = tmp_path / "fake.png"
+    invalid.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 700)
+
+    r = dispatch("render_output_check", {
+        "path": str(invalid),
+        "min_bytes": 512,
+        "require_png": True,
+    })
+
+    assert r["status"] == "error"
+    assert r["error"] == "render_validation_failed"
+    assert r["ready"] is False
+    assert "decode_failed" in r["blockers"]
 
 
 # ---------------------------------------------------------------------------
@@ -716,15 +732,16 @@ def test_camera_quality_texture_and_editability_pipeline(
     assert fake_bpy.context.scene.camera.name == "VB_hero_camera"
 
     render_path = tmp_path / "hero.png"
-    render_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 700)
+    PILImage.new("RGBA", (4, 4), (24, 48, 96, 255)).save(render_path)
     r = dispatch("render_output_check", {
         "path": str(render_path),
-        "min_bytes": 512,
+        "min_bytes": 64,
         "require_png": True,
     })
     assert r["status"] == "ok", r
     assert r["result"]["ready"] is True
     assert r["result"]["is_png"] is True
+    assert r["result"]["dimensions"] == [4, 4]
 
     heights = [
         [0.0, 1.0, 0.0],

@@ -38,12 +38,15 @@ AAA upgrade log (2026-04-19):
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from .terrain_semantics import (
     BBox,
@@ -1804,7 +1807,7 @@ def pass_emit_overhang_meshes(
         cache[layer_token] = all_specs
         state.mesh_layer_specs = cache  # type: ignore[attr-defined]
     except Exception:
-        pass
+        logger.debug("mesh_layer_specs attr write failed (best-effort)", exc_info=True)
 
     return PassResult(
         pass_name="emit_overhang_meshes",

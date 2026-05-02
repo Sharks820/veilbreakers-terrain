@@ -206,7 +206,7 @@ class ExternalAssetProvider(abc.ABC):
             try:
                 catalog = json.loads(catalog_path.read_text())
             except Exception:
-                pass
+                logger.debug("Catalog JSON parse failed at %s — starting empty", catalog_path, exc_info=True)
 
         entry = {
             "species_id": result.species_id,

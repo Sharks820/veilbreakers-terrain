@@ -1328,6 +1328,23 @@ except ImportError:
     pass
 
 
+def _remap_edge_pair(
+    edge_pair: Any,
+    remap: list[int],
+) -> tuple[int, int] | None:
+    """Map original MeshSpec edge endpoints onto welded bmesh vertex indices."""
+    if not isinstance(edge_pair, (list, tuple)) or len(edge_pair) < 2:
+        return None
+    try:
+        a = remap[int(edge_pair[0])]
+        b = remap[int(edge_pair[1])]
+    except (IndexError, TypeError, ValueError):
+        return None
+    if a == b:
+        return None
+    return (min(a, b), max(a, b))
+
+
 def mesh_from_spec(
     spec: MeshSpec,
     name: str | None = None,
@@ -1464,11 +1481,12 @@ def mesh_from_spec(
 
         # Mark sharp edges
         for se in sharp_edges:
-            if len(se) >= 2:
-                key = (min(se[0], se[1]), max(se[0], se[1]))
-                edge = edge_lookup.get(key)
-                if edge:
-                    edge.smooth = False
+            key = _remap_edge_pair(se, _remap)
+            if key is None:
+                continue
+            edge = edge_lookup.get(key)
+            if edge:
+                edge.smooth = False
 
         # Set edge creases
         if crease_edges:
@@ -1477,12 +1495,12 @@ def mesh_from_spec(
                 crease_layer = bm.edges.layers.float.new("crease_edge")
             for ce in crease_edges:
                 edge_pair = ce.get("edge", [])
-                if len(edge_pair) >= 2:
-                    key = (min(edge_pair[0], edge_pair[1]),
-                           max(edge_pair[0], edge_pair[1]))
-                    edge = edge_lookup.get(key)
-                    if edge:
-                        edge[crease_layer] = ce.get("value", 1.0)
+                key = _remap_edge_pair(edge_pair, _remap)
+                if key is None:
+                    continue
+                edge = edge_lookup.get(key)
+                if edge:
+                    edge[crease_layer] = ce.get("value", 1.0)
 
     # Assign UVs if present
     if uvs:
@@ -1509,14 +1527,14 @@ def mesh_from_spec(
             poly.use_smooth = True
         mesh_data.update()
         if hasattr(mesh_data, "normals_split_custom_set_from_vertices"):
+            # Blender 4.1+ / 4.5 path: custom normals replaces use_auto_smooth
             custom_normals = [tuple(vertex.normal) for vertex in mesh_data.vertices]
             mesh_data.normals_split_custom_set_from_vertices(custom_normals)
-        if hasattr(mesh_data, "use_auto_smooth"):
-            # Blender < 4.1 path
+        elif hasattr(mesh_data, "use_auto_smooth"):
+            # Blender < 4.1 legacy path
             mesh_data.use_auto_smooth = True
             mesh_data.auto_smooth_angle = math.radians(auto_smooth_angle)
         elif hasattr(mesh_data, "calc_normals_split"):
-            # FIX-9-15: Blender 4.1+ path — initialize split normals without use_auto_smooth
             mesh_data.calc_normals_split()
 
     obj = bpy.data.objects.new(obj_name, mesh_data)

@@ -13,6 +13,7 @@ terrains aren't clipped.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 _HAS_BPY = False
 try:
@@ -196,7 +199,7 @@ def _setup_camera_in_blender(
                 try:
                     camera_obj.data.sensor_width = float(camera_setup.sensor_width_mm)
                 except Exception:
-                    pass
+                    logger.debug("camera sensor_width set failed", exc_info=True)
             if hasattr(camera_obj.data, "clip_end") and camera_setup.max_extent > 0.0:
                 try:
                     current = float(getattr(camera_obj.data, "clip_end", 0.0) or 0.0)
@@ -207,7 +210,7 @@ def _setup_camera_in_blender(
                     try:
                         camera_obj.data.clip_end = required
                     except Exception:
-                        pass
+                        logger.debug("camera clip_end set failed", exc_info=True)
 
         bpy.context.scene.camera = camera_obj
         return camera_obj
@@ -278,7 +281,7 @@ def handle_visual_qa_setup_camera(
                     try:
                         applied_rotation = (float(rot.x), float(rot.y), float(rot.z))
                     except Exception:
-                        pass
+                        logger.debug("camera rotation_euler read failed (index and attr both failed)", exc_info=True)
 
         clip_end: Optional[float] = None
         if camera_obj is not None and getattr(camera_obj, "data", None) is not None:
@@ -649,7 +652,7 @@ def handle_visual_qa_capture_screenshot(
         try:
             sanitized.parent.mkdir(parents=True, exist_ok=True)
         except Exception:
-            pass
+            logger.debug("mkdir failed for screenshot path %s", sanitized.parent, exc_info=True)
 
         success = capture_viewport_screenshot(
             safe_path, clamped_width, clamped_height, mode=mode

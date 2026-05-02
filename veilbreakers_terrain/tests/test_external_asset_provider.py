@@ -254,6 +254,65 @@ def test_hunyuan3d2_exported_from_providers_package():
     assert Hunyuan3D2Provider.provider_id == "hunyuan3d2"
 
 
+def test_hunyuan3d2_download_prunes_success_job_and_tempdir(monkeypatch, tmp_path: Path):
+    """Successful downloads must not leave stale job records or hy3d temp dirs."""
+    import time
+
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    def _fake_generate(self, request, dest_dir):
+        out = Path(dest_dir) / f"{request.species_id}.glb"
+        out.write_bytes(b"glb")
+        return out
+
+    monkeypatch.setattr(Hunyuan3D2Provider, "_hf_generate_blocking", _fake_generate)
+    provider = Hunyuan3D2Provider(timeout_s=1.0)
+    job_id = provider.submit(AssetGenerationRequest(species_id="oak", prompt="oak"))
+
+    deadline = time.monotonic() + 1.0
+    while provider.poll(job_id) != JobStatus.COMPLETED:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    with provider._jobs_lock:
+        tmp_dir = provider._jobs[job_id][1]["tmp_dir"]
+    downloaded = provider.download(job_id, tmp_path, species_id="oak")
+
+    assert downloaded == tmp_path / "oak.glb"
+    assert downloaded.exists()
+    assert not tmp_dir.exists()
+    with provider._jobs_lock:
+        assert job_id not in provider._jobs
+
+
+def test_hunyuan3d2_failed_job_cleans_tempdir_and_download_prunes(monkeypatch, tmp_path: Path):
+    """Failed jobs must clean provider temp dirs and drop job-table entries on download."""
+    import time
+
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    def _fake_generate(self, request, dest_dir):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(Hunyuan3D2Provider, "_hf_generate_blocking", _fake_generate)
+    provider = Hunyuan3D2Provider(timeout_s=1.0)
+    job_id = provider.submit(AssetGenerationRequest(species_id="oak", prompt="oak"))
+
+    deadline = time.monotonic() + 1.0
+    while provider.poll(job_id) != JobStatus.FAILED:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    with provider._jobs_lock:
+        tmp_dir = provider._jobs[job_id][1]["tmp_dir"]
+    assert not tmp_dir.exists()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        provider.download(job_id, tmp_path, species_id="oak")
+    with provider._jobs_lock:
+        assert job_id not in provider._jobs
+
+
 # ---------------------------------------------------------------------------
 # MeshyProvider — ABC conformance + key validation (no network required)
 # ---------------------------------------------------------------------------

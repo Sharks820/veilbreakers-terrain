@@ -27,11 +27,14 @@ re-composable bands + a domain-warp field:
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Wrap (never mutate) the existing noise backend.
 from ._terrain_noise import (
@@ -1003,11 +1006,11 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
         try:
             state.banded_cache = {}  # type: ignore[attr-defined]
         except Exception:
-            pass  # best-effort non-critical attr write
+            logger.debug("banded noise attr write failed (best-effort)", exc_info=True)
     try:
         state.banded_cache[side_effect_token] = bands  # type: ignore[attr-defined]
     except Exception:
-        pass  # best-effort non-critical attr write
+        logger.debug("banded noise attr write failed (best-effort)", exc_info=True)
 
     return PassResult(
         pass_name="banded_macro",

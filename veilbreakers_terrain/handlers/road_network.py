@@ -1773,3 +1773,117 @@ insert_switchbacks_on_steep_grades = _generate_switchback_points
 compute_path_erosion_spec = _compute_worn_path_spec
 generate_road_mesh_cross_section = _road_segment_mesh_spec
 # enforce_turn_radius is already public (no underscore)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline pass — FIX-10-25
+# ---------------------------------------------------------------------------
+
+def pass_road_network(
+    state: "Any",
+    region: "Any",
+) -> "Any":
+    """Bundle pass: build road network from intent anchors + write road_mask / road_sdf_dist.
+
+    Consumes: height
+    Produces: road_mask, road_sdf_dist
+    """
+    import time
+    from .terrain_semantics import PassResult  # type: ignore[attr-defined]
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    intent = state.intent
+
+    h = np.asarray(stack.height, dtype=np.float32)
+    H, W = h.shape
+    cell_size = float(stack.cell_size) if stack.cell_size else 1.0
+    terrain_width = W * cell_size
+    terrain_height_m = H * cell_size
+    terrain_bounds = (0.0, 0.0, terrain_width, terrain_height_m)
+
+    # Extract waypoints from anchors; skip if none provided
+    waypoints: list[tuple[float, float, float]] = []
+    if intent is not None and hasattr(intent, "anchors"):
+        for anchor in intent.anchors:
+            if hasattr(anchor, "world_x") and hasattr(anchor, "world_y"):
+                wx = float(anchor.world_x) - float(stack.world_origin_x)
+                wy = float(anchor.world_y) - float(stack.world_origin_y)
+                # Sample height at this local position
+                ci = int(np.clip(wy / cell_size, 0, H - 1))
+                cj = int(np.clip(wx / cell_size, 0, W - 1))
+                wz = float(h[ci, cj])
+                waypoints.append((wx, wy, wz))
+
+    # Build network (falls back to straight-line when no heightmap or < 2 points)
+    network = compute_road_network(
+        waypoints,
+        heightmap=h.tolist() if waypoints else None,
+        terrain_bounds=terrain_bounds,
+        seed=intent.seed if intent is not None else 0,
+    )
+
+    # Rasterise road segments into road_mask (uint8) and road_sdf_dist (float32)
+    road_mask = np.zeros((H, W), dtype=np.uint8)
+    road_sdf = np.full((H, W), float(min(terrain_width, terrain_height_m)), dtype=np.float32)
+
+    for seg in network.get("segments", []):
+        sx, sy, _ = seg[0]
+        ex, ey, _ = seg[1]
+        width = float(seg[2])
+        hw = width * 0.5 + 1.0  # half-width + 1 m margin
+        # Walk along segment and paint cells
+        dx, dy = ex - sx, ey - sy
+        seg_len = math.sqrt(dx * dx + dy * dy)
+        if seg_len < 1e-6:
+            continue
+        steps = max(1, int(seg_len / (cell_size * 0.5)))
+        for i in range(steps + 1):
+            t = i / steps
+            px = sx + dx * t
+            py = sy + dy * t
+            r = int(np.clip(py / cell_size, 0, H - 1))
+            c = int(np.clip(px / cell_size, 0, W - 1))
+            road_mask[r, c] = 1
+            road_sdf[r, c] = 0.0
+
+    # Dilate road_mask by hw using distance transform for SDF
+    if road_mask.any():
+        from scipy.ndimage import distance_transform_edt  # type: ignore[import-untyped]
+        inv_mask = (road_mask == 0).astype(np.float32)
+        dist = distance_transform_edt(inv_mask) * cell_size
+        road_sdf = dist.astype(np.float32)
+        road_mask = (dist < 4.0).astype(np.uint8)  # ~4 m road half-width
+
+    stack.set("road_mask", road_mask, "road_network")
+    stack.set("road_sdf_dist", road_sdf, "road_network")
+
+    return PassResult(
+        pass_name="road_network",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=("road_mask", "road_sdf_dist"),
+        metrics={
+            "waypoint_count": len(waypoints),
+            "segment_count": len(network.get("segments", [])),
+        },
+        issues=[],
+    )
+
+
+def register_road_network_pass() -> None:
+    """Register pass_road_network into the pass DAG."""
+    from .terrain_pipeline import TerrainPassController, PassDefinition  # type: ignore[attr-defined]
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="road_network",
+            func=pass_road_network,
+            requires_channels=("height",),
+            produces_channels=("road_mask", "road_sdf_dist"),
+            seed_namespace="road_network",
+            requires_scene_read=False,
+            description="Bundle: 24-dir A* road routing + road_mask / road_sdf_dist rasterisation",
+        )
+    )

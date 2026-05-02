@@ -8,10 +8,13 @@ otherwise ``numpy.random.default_rng``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import List
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from .terrain_semantics import TerrainMaskStack
 
@@ -136,7 +139,7 @@ def apply_weathering_event(
             try:
                 stack.set("ice_factor", ice, "weathering_freeze")
             except Exception:
-                pass
+                logger.debug("ice_factor stack.set failed (weathering_freeze)", exc_info=True)
         return  # wetness unchanged by freeze
 
     else:

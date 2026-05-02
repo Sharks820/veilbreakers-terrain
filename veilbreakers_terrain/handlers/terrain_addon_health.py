@@ -10,9 +10,12 @@ See Addendum 1.A.5.
 from __future__ import annotations
 
 import ast
+import logging
 import re
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 TERRAIN_ADDON_MIN_VERSION: Tuple[int, int, int] = (1, 0, 0)
 
@@ -254,7 +257,7 @@ def force_addon_reload() -> bool:
             try:
                 importlib.reload(mod)
             except Exception:
-                pass
+                logger.debug("importlib.reload failed for module %s", getattr(mod, '__name__', mod), exc_info=True)
 
         importlib.reload(_live)
 

@@ -69,6 +69,41 @@ def test_terrain_math_slope_helpers_are_unit_consistent():
     assert cell_to_world(2, 3, 2.0, origin_x=10.0, origin_y=20.0, convention="center") == pytest.approx((16.0, 24.0))
 
 
+def test_terrain_math_distance_field_chamfer_fallback_matches_expected_rings(monkeypatch):
+    from veilbreakers_terrain.handlers.terrain_math import distance_field_edt, stack_world_to_cell
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _block_scipy(name, *args, **kwargs):
+        if name.startswith("scipy"):
+            raise ImportError("forced no-scipy path")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_scipy)
+    mask = np.zeros((5, 5), dtype=bool)
+    mask[2, 2] = True
+
+    dist = distance_field_edt(mask, cell_size=3.0)
+
+    assert dist[2, 2] == pytest.approx(0.0)
+    assert dist[2, 3] == pytest.approx(3.0)
+    assert dist[1, 1] == pytest.approx(3.0 * np.sqrt(2.0))
+    assert dist[0, 2] == pytest.approx(6.0)
+    assert np.isfinite(dist).all()
+
+    class _NoHeightStack:
+        cell_size = 2.0
+        world_origin_x = 10.0
+        world_origin_y = 20.0
+        height = None
+
+    assert stack_world_to_cell(_NoHeightStack(), 12.0, 22.0, clamp=True) == (0, 0)
+    assert stack_world_to_cell(_NoHeightStack(), 13.9, 24.1, rounding="floor", clamp=False) == (2, 1)
+    assert stack_world_to_cell(_NoHeightStack(), 13.1, 24.1, rounding="ceil", clamp=False) == (3, 2)
+
+
 def test_terrain_rng_helpers_are_deterministic_and_tile_scoped():
     from veilbreakers_terrain.handlers.terrain_rng import make_rng, tile_rng
 

@@ -32,7 +32,7 @@ import logging
 import hashlib
 import math
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -662,14 +662,22 @@ def render_output_check(
         blockers.append("not_png")
 
     dimensions = None
+    decode_error = None
     try:
         from PIL import Image  # type: ignore
         with Image.open(render_path) as image:
             dimensions = [int(image.width), int(image.height)]
             if image.width <= 1 or image.height <= 1:
                 blockers.append("invalid_dimensions")
-    except Exception:
+    except ImportError as exc:
+        decode_error = str(exc)
+        if require_png or is_png:
+            blockers.append("pillow_unavailable")
+    except Exception as exc:
         dimensions = None
+        decode_error = str(exc)
+        if require_png or is_png:
+            blockers.append("decode_failed")
 
     ready = not blockers
     return {
@@ -681,6 +689,7 @@ def render_output_check(
         "sha1": hashlib.sha1(data).hexdigest(),
         "is_png": is_png,
         "dimensions": dimensions,
+        "decode_error": decode_error,
         "blockers": blockers,
     }
 

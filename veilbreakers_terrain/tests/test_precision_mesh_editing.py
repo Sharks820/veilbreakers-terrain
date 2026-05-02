@@ -7,6 +7,8 @@ Tests pure-logic helpers that do NOT require bpy/Blender:
 """
 
 
+import sys
+
 import pytest
 
 
@@ -410,6 +412,22 @@ class TestComputeBrushWeights:
         result = compute_brush_weights(verts, (0, 0), 1.0, "constant")
         assert len(result) == 1
 
+    def test_pressure_scales_brush_strength(self):
+        from veilbreakers_terrain.handlers.terrain_sculpt import compute_brush_weights
+
+        verts = [(0, 0), (3, 0)]
+        result = compute_brush_weights(
+            verts,
+            (0, 0),
+            6.0,
+            "linear",
+            pressure=0.25,
+        )
+
+        assert result[0] == (0, pytest.approx(0.25))
+        assert result[1][0] == 1
+        assert result[1][1] == pytest.approx(0.125)
+
 
 class TestRaiseDisplacements:
     """Test the raise operation displacement calculation."""
@@ -438,6 +456,28 @@ class TestRaiseDisplacements:
         result = compute_raise_displacements([0.0], [], 1.0)
         assert result == {}
 
+    def test_raise_respects_protected_slope_curvature_and_target_ceiling(self):
+        from veilbreakers_terrain.handlers.terrain_sculpt import compute_raise_displacements
+
+        heights = [10.0, 10.0, 10.0, 10.0]
+        weights = [(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)]
+        result = compute_raise_displacements(
+            heights,
+            weights,
+            10.0,
+            target_surface_z=12.0,
+            slope_mask=[0.0, 0.5, 0.0, 0.0],
+            curvature_mask=[0.0, 0.0, 0.75, 0.0],
+            protected_zone_mask=[False, False, False, True],
+            slope_threshold=1.0,
+            curvature_threshold=1.0,
+        )
+
+        assert result[0] == pytest.approx(12.0)
+        assert result[1] == pytest.approx(12.0)
+        assert result[2] == pytest.approx(12.0)
+        assert 3 not in result
+
 
 class TestLowerDisplacements:
     """Test the lower operation displacement calculation."""
@@ -458,6 +498,42 @@ class TestLowerDisplacements:
         weights = [(0, 1.0)]
         result = compute_lower_displacements(heights, weights, 5.0)
         assert result[0] == pytest.approx(-4.0)
+
+    def test_lower_respects_floor_and_protected_mask(self):
+        from veilbreakers_terrain.handlers.terrain_sculpt import compute_lower_displacements
+
+        heights = [10.0, 10.0]
+        weights = [(0, 1.0), (1, 1.0)]
+        result = compute_lower_displacements(
+            heights,
+            weights,
+            20.0,
+            floor_clamp=4.0,
+            protected_zone_mask=[False, True],
+        )
+
+        assert result[0] == pytest.approx(4.0)
+        assert 1 not in result
+
+
+class TestSculptHandlerRuntimeGuard:
+    """Handler must fail closed outside Blender, not crash later on bpy access."""
+
+    def test_handle_sculpt_terrain_requires_blender_runtime(self, monkeypatch):
+        import veilbreakers_terrain.handlers.terrain_sculpt as sculpt
+
+        monkeypatch.setitem(sys.modules, "bpy", None)
+        monkeypatch.setitem(sys.modules, "bmesh", None)
+        monkeypatch.setattr(sculpt, "_HAS_BPY", False)
+        monkeypatch.setattr(sculpt, "bpy", None)
+        monkeypatch.setattr(sculpt, "bmesh", None)
+
+        with pytest.raises(RuntimeError, match="requires Blender"):
+            sculpt.handle_sculpt_terrain({
+                "terrain_name": "Terrain",
+                "operation": "raise",
+                "world_position": [0.0, 0.0, 0.0],
+            })
 
 
 class TestSmoothDisplacements:

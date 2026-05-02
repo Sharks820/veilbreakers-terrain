@@ -685,6 +685,67 @@ def test_validate_strahler_ordering_none_safe():
     assert validate_strahler_ordering(None) == []
 
 
+def test_validate_strahler_ordering_consumes_live_water_network_segments():
+    from veilbreakers_terrain.handlers._water_network import (
+        WaterNetwork,
+        WaterNode,
+        WaterSegment,
+    )
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
+        validate_strahler_ordering,
+    )
+
+    net = WaterNetwork()
+    net.nodes = {
+        1: WaterNode(1, 0.0, 0.0, 10.0, "source", 1.0, 0.2),
+        2: WaterNode(2, 1.0, 0.0, 10.0, "source", 1.0, 0.2),
+        3: WaterNode(3, 0.5, 1.0, 8.0, "confluence", 2.0, 0.4),
+        4: WaterNode(4, 0.5, 2.0, 5.0, "drain", 2.5, 0.5),
+    }
+    net.segments = {
+        10: WaterSegment(10, 1, 3, 1, [], 1.0, 0.2, "stream"),
+        11: WaterSegment(11, 2, 3, 1, [], 1.0, 0.2, "stream"),
+        12: WaterSegment(12, 3, 4, 1, [], 2.0, 0.4, "river"),
+    }
+
+    assert validate_strahler_ordering(net) == []
+
+
+def test_validate_strahler_ordering_rejects_cycles_and_node_order_mismatch():
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
+        validate_strahler_ordering,
+    )
+
+    cyclic = {"edges": [{"from": 1, "to": 2}, {"from": 2, "to": 1}]}
+    cycle_issues = validate_strahler_ordering(cyclic)
+    assert any(i.code == "STRAHLER_NO_OUTLET" for i in cycle_issues)
+    assert any(i.is_hard() for i in cycle_issues)
+
+    outlet_cycle = {
+        "edges": [
+            {"from": 1, "to": 2},
+            {"from": 2, "to": 1},
+            {"from": 2, "to": 3},
+        ]
+    }
+    outlet_cycle_issues = validate_strahler_ordering(outlet_cycle)
+    assert any(
+        i.code == "STRAHLER_CYCLE_OR_DISCONNECTED"
+        for i in outlet_cycle_issues
+    )
+    assert any(i.is_hard() for i in outlet_cycle_issues)
+
+    mismatched = {
+        "nodes": [
+            {"id": 1, "strahler_order": 3},
+            {"id": 2, "strahler_order": 1},
+        ],
+        "edges": [{"from": 1, "to": 2}],
+    }
+    mismatch_issues = validate_strahler_ordering(mismatched)
+    assert any(i.code == "STRAHLER_JUMP" for i in mismatch_issues)
+
+
 def test_validate_glacial_plausibility_below_treeline_fails():
     from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_glacial_plausibility,

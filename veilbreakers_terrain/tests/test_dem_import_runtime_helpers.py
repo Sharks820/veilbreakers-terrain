@@ -36,3 +36,35 @@ def test_dem_load_hgt_rejects_invalid_size_and_egm96_clamps_latitude():
 
     assert _egm96_undulation_m(95.0) == pytest.approx(_egm96_undulation_m(90.0))
     assert _egm96_undulation_m(-95.0) == pytest.approx(_egm96_undulation_m(-90.0))
+
+
+def test_import_dem_tile_fails_closed_for_missing_nonfinite_and_all_nodata(tmp_path):
+    from veilbreakers_terrain.handlers.terrain_dem_import import DEMSource, import_dem_tile
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+
+    bounds = BBox(0.0, 0.0, 4.0, 4.0)
+    missing = DEMSource(
+        source_type="local",
+        url_or_path=str(tmp_path / "missing.npy"),
+        resolution_m=1.0,
+    )
+    with pytest.raises(FileNotFoundError):
+        import_dem_tile(missing, bounds, target_shape=(4, 4))
+
+    nonfinite_path = tmp_path / "nonfinite.npy"
+    np.save(nonfinite_path, np.array([[0.0, np.nan], [1.0, 2.0]], dtype=np.float32))
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        import_dem_tile(
+            DEMSource("local", str(nonfinite_path), 1.0),
+            bounds,
+            target_shape=(2, 2),
+        )
+
+    all_nodata_path = tmp_path / "all_nodata.npy"
+    np.save(all_nodata_path, np.full((2, 2), -32768.0, dtype=np.float32))
+    with pytest.raises(ValueError, match="all cells are NoData"):
+        import_dem_tile(
+            DEMSource("local", str(all_nodata_path), 1.0),
+            bounds,
+            target_shape=(2, 2),
+        )

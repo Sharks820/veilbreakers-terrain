@@ -3381,6 +3381,17 @@ def handle_scatter_vegetation(params: dict) -> dict:
             _filtered.append(p)
     placements = _filtered
 
+    # FIX-10-22: apply inter-species bounding-sphere collision exclusion.
+    # Build collision_radii from species catalog (half of poisson_min_distance_m).
+    _collision_radii: dict[str, float] = {}
+    try:
+        from .terrain_foliage_catalog import FOLIAGE_SPECIES_CATALOG as _FC
+        for _sid, _spec in _FC.items():
+            _collision_radii[_sid] = max(0.5, _spec.poisson_min_distance_m * 0.5)
+    except Exception:  # pragma: no cover
+        pass
+    placements = apply_collision_exclusion(placements, _collision_radii)
+
     # Cap instances
     if len(placements) > max_instances:
         placements = placements[:max_instances]

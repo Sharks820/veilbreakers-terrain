@@ -11,9 +11,9 @@ Tests/Guardrails, CodeQL 629-alert Audit, Hunyuan3D-2 Provider, Visual Pipeline/
 
 | ID | Domain | Severity | File:Line | Description |
 |----|--------|----------|-----------|-------------|
-| B14-C-1 | Water/Coastline | P0 | `handlers/coastline.py` — `terrain_pipeline.py` (no ref) | `pass_coastline` is defined and in `__all__` but **never registered** in `terrain_pipeline.py`. Coastal erosion, tidal zones, and JONSWAP wave energy calculations never execute during full terrain generation. |
-| B14-C-2 | Tidal Zones | P0 | `handlers/coastline.py:1165–1188` | `detect_tidal_zones()` emits only a scalar float32 `tidal` channel in [0,1] (binary intertidal mask). No `tidal_zone_label` uint8 channel (0=subtidal, 1=intertidal, 2=splash, 3=spray, 4=supralittoral). Splatmap rules cannot distinguish zone categories for wet_rock / barnacle / kelp / foam material assignment. |
-| B14-C-3 | Water/Coastline | HIGH | `handlers/coastline.py:1246–1250` | `compute_wave_energy()` returns a (H,W) float32 ndarray but `pass_coastline` does **not** call `stack.set("wave_energy", ...)`. Per-cell wave energy is discarded into metrics only (`wave_energy_max`, `wave_energy_mean`). Foam and wet_rock splatmap rules that need spatially varying energy are blocked. |
+| ~~B14-C-1~~ | Water/Coastline | **REFUTED** | `handlers/terrain_geology_validator.py:709–718` | `pass_coastline` IS registered in `register_bundle_i_passes()` under Bundle I. Refuted — previous grep checked only terrain_pipeline.py. |
+| B14-C-2 | Tidal Zones | P0 | `handlers/coastline.py:1165–1188` + `terrain_geology_validator.py:714` | `detect_tidal_zones()` emits only a scalar float32 `tidal` channel in [0,1] (binary intertidal mask). No `tidal_zone_label` uint8 channel (0=subtidal, 1=intertidal, 2=splash, 3=spray, 4=supralittoral). Bundle I registration's `produced_channels` at line 714 also missing it. Splatmap rules cannot distinguish zone categories for wet_rock / barnacle / kelp / foam material assignment. |
+| B14-C-3 | Water/Coastline | HIGH | `handlers/coastline.py:1246–1250` + `terrain_geology_validator.py:714` | `compute_wave_energy()` returns a (H,W) float32 ndarray but `pass_coastline` does **not** call `stack.set("wave_energy", ...)`. Per-cell wave energy discarded into metrics only (`wave_energy_max`, `wave_energy_mean`). Bundle I registration's `produced_channels` also missing "wave_energy". Foam and wet_rock splatmap rules blocked. |
 
 ---
 

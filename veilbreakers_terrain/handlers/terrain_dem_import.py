@@ -1,8 +1,8 @@
 """Bundle P — DEM (Digital Elevation Model) import.
 
 Supports GeoTIFF (``.tif``/``.tiff``), SRTM HGT (``.hgt``), and raw
-``.npy`` files.  Falls back to a deterministic synthetic DEM when no real
-file is present so unit tests remain reproducible without real-world data.
+``.npy`` files.  Deterministic synthetic DEMs are available only when the
+caller explicitly requests ``source_type="synthetic"``.
 
 Format notes
 ------------
@@ -55,7 +55,6 @@ from .terrain_semantics import BBox
 # ---------------------------------------------------------------------------
 try:
     import rasterio  # type: ignore[import]
-    from rasterio.enums import Resampling as _Resampling  # type: ignore[import]
     _HAS_RASTERIO = True
 except ImportError:
     _HAS_RASTERIO = False
@@ -143,13 +142,14 @@ def _fill_nodata(arr: np.ndarray, nodata_mask: np.ndarray) -> np.ndarray:
     """
     if not nodata_mask.any():
         return arr
+    if bool(np.all(nodata_mask)):
+        raise ValueError("DEM contains no valid elevation samples; all cells are NoData")
 
     out = arr.copy()
 
     if _HAS_SCIPY:
         # EDT-based nearest-valid fill: find the index of the nearest valid
         # pixel for each invalid pixel and copy its value.
-        valid_mask = ~nodata_mask
         _, nearest_idx = _dt_edt(nodata_mask, return_indices=True)
         # nearest_idx shape: (2, H, W) — (row_indices, col_indices)
         out[nodata_mask] = arr[nearest_idx[0][nodata_mask], nearest_idx[1][nodata_mask]]
@@ -463,14 +463,20 @@ def import_dem_tile(
                     "Supported: .npy, .tif/.tiff, .hgt"
                 ) from exc
     else:
-        # Synthetic fallback — reproducible from BBox
-        raw = _synthetic_dem(world_bounds, shape=target_shape)
-        crs_hint = "synthetic"
+        raise FileNotFoundError(f"DEM source path does not exist: {path}")
 
     # ------------------------------------------------------------------ #
     # 2. Bilinear resample to target_shape
     # ------------------------------------------------------------------ #
+    raw = np.asarray(raw, dtype=np.float32)
+    if raw.ndim != 2:
+        raise ValueError(f"DEM {path} must be 2D, got shape {raw.shape}")
+    if not np.isfinite(raw).all():
+        raise ValueError(f"DEM {path} contains NaN or infinite elevation samples")
+
     dst_h, dst_w = target_shape
+    if dst_h <= 0 or dst_w <= 0:
+        raise ValueError(f"target_shape must be positive, got {target_shape}")
     if raw.shape != (dst_h, dst_w):
         raw = _bilinear_resample_2d(raw, dst_h, dst_w)
 

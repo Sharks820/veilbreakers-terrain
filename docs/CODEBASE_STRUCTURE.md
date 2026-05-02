@@ -1,6 +1,6 @@
 # VeilBreakers Terrain — Codebase Structure
 
-Last updated: 2026-04-27
+Last updated: 2026-05-01
 
 ---
 
@@ -52,7 +52,7 @@ enforced by `register_all_terrain_passes()` in `terrain_master_registrar.py`:
 | `terrain_pipeline.py` | `TerrainPassController` + `register_default_passes`; DAG execution, checkpointing, protected-zone enforcement (1,335 lines) |
 | `terrain_semantics.py` | All shared dataclasses: `TerrainMaskStack`, `TerrainPipelineState`, `PassResult`, `ValidationIssue`, `BBox`, `TerrainIntentState` (1,638 lines) |
 | `terrain_master_registrar.py` | `register_all_terrain_passes()` — single-call entrypoint, registration-order enforcer, duplicate-pass detector |
-| `__init__.py` | `COMMAND_HANDLERS` dispatch table (77 MCP commands); `register_all()` shim |
+| `__init__.py` | `COMMAND_HANDLERS` dispatch table (154 MCP commands); `register_all()` shim |
 | `terrain_pass_dag.py` | DAG dependency resolution helpers |
 | `terrain_protocol.py` | Cross-handler contracts and shared type stubs |
 
@@ -111,7 +111,6 @@ enforced by `register_all_terrain_passes()` in `terrain_master_registrar.py`:
 | `terrain_assets.py` | Bundle E: scatter-intelligent asset placement |
 | `terrain_scatter_points.py` | `ScatterPoint` + `ScatterPointTable` dataclasses; scatter point contracts |
 | `terrain_scatter_altitude_audit_linter.py` | Linter: world-height transform audit for altitude safety |
-| `terrain_scatter_altitude_safety.py` | Compat alias for audit linter (DEAD CODE: no production callers — removal candidate) |
 | `vegetation_lsystem.py` | L-system-based procedural vegetation generation |
 | `procedural_grass.py` | GPU grass mesh generation |
 | `_scatter_engine.py` | Scatter engine internals |

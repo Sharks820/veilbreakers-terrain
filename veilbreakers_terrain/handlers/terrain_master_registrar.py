@@ -222,6 +222,8 @@ def _register_all_terrain_passes_impl(
         ("I", f"{package_root}.terrain_geology_validator", "register_bundle_i_passes"),
         ("I-glacial", f"{package_root}.terrain_glacial", "register_glacial_pass"),
         ("C", f"{package_root}.terrain_waterfalls", "register_bundle_c_passes"),
+        # FIX-10-25: road network must run before scatter so road_mask is available
+        ("road-network", f"{package_root}.road_network", "register_road_network_pass"),
         # Material + scatter (consume final height + all candidate masks)
         ("B-materials", f"{package_root}.terrain_materials_v2", "register_bundle_b_material_passes"),
         ("E", f"{package_root}.terrain_assets", "register_bundle_e_passes"),

@@ -8,6 +8,7 @@ import json
 import struct
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -1791,6 +1792,70 @@ class TestWorldTerrainGeneration:
             (0, 0), (1, 0), (0, 1), (1, 1),
         }
 
+    def test_world_terrain_imports_neighbor_edges_from_raw_exports(self, tmp_path):
+        from veilbreakers_terrain.handlers import environment as env_mod
+
+        captured: dict[str, Any] = {}
+        west_height = np.array(
+            [
+                [0.0, 10.0, 20.0],
+                [30.0, 40.0, 50.0],
+                [60.0, 70.0, 80.0],
+            ],
+            dtype=np.float32,
+        )
+
+        def _fake_tile(params):
+            tile_x = params["tile_x"]
+            if tile_x == 0:
+                artifacts = env_mod._export_world_tile_artifacts(
+                    export_dir=tmp_path,
+                    tile_name=params["name"],
+                    heightmap=west_height,
+                    height_range=(0.0, 80.0),
+                )
+                return {
+                    "name": params["name"],
+                    "tile_x": 0,
+                    "tile_y": 0,
+                    "terrain_size": 64.0,
+                    "world_origin_x": 0.0,
+                    "world_origin_y": 0.0,
+                    "vertex_count": 9,
+                    "resolution": 3,
+                    "height_range": [0.0, 80.0],
+                    **artifacts,
+                }
+            captured["neighbor_edges"] = dict(params.get("neighbor_edges") or {})
+            return {
+                "name": params["name"],
+                "tile_x": 1,
+                "tile_y": 0,
+                "terrain_size": 64.0,
+                "world_origin_x": 64.0,
+                "world_origin_y": 0.0,
+                "vertex_count": 9,
+            }
+
+        with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=_fake_tile):
+            result = env_mod.handle_generate_world_terrain(
+                {
+                    "name": "World",
+                    "tiles_x": 2,
+                    "tiles_y": 1,
+                    "tile_size": 64,
+                    "cell_size": 1.0,
+                    "export_dir": str(tmp_path),
+                }
+            )
+
+        assert result["tile_count"] == 2
+        np.testing.assert_allclose(
+            captured["neighbor_edges"]["west"],
+            west_height[:, -1],
+            atol=1.0 / 65535.0 * 80.0,
+        )
+
     def test_world_terrain_writes_batch_manifest_and_frontier(self, tmp_path):
         from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
@@ -3033,3 +3098,35 @@ class TestVBBiomePresets:
         result = _validate_terrain_params(effective)
         assert result["resolution"] == 1024
         assert result["height_scale"] == 50.0
+
+
+class TestPaintTerrainMaterialCoverage:
+    def test_select_biome_material_indices_fails_closed_for_unmatched_faces(self):
+        from veilbreakers_terrain.handlers.environment import _select_biome_material_indices
+
+        matches = np.array(
+            [
+                [True, False],
+                [False, False],
+            ],
+            dtype=bool,
+        )
+
+        with pytest.raises(ValueError, match="did not match any biome material rule"):
+            _select_biome_material_indices(matches)
+
+    def test_select_biome_material_indices_supports_explicit_non_strict_audit(self):
+        from veilbreakers_terrain.handlers.environment import _select_biome_material_indices
+
+        matches = np.array(
+            [
+                [False, True],
+                [False, False],
+            ],
+            dtype=bool,
+        )
+
+        indices, unmatched = _select_biome_material_indices(matches, strict=False)
+
+        assert indices.tolist() == [1, -1]
+        assert unmatched == 1

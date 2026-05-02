@@ -16,10 +16,13 @@ Pure Python + numpy. No bpy/bmesh imports.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING, Any, List, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from .terrain_semantics import TerrainMaskStack
 
@@ -182,7 +185,7 @@ def add_meander(
             setattr(seg, "_meander_discharge_m3s", q)
             setattr(seg, "_meander_wavelength_m", wavelength)
         except Exception:
-            pass
+            logger.debug("meander metadata setattr failed (best-effort)", exc_info=True)
 
 
 def apply_bank_asymmetry(water_network: Any, bias: float) -> None:
@@ -513,7 +516,7 @@ def solve_outflow(
             outflow_map[(pr, pc)] = discharge[idx] if idx < len(discharge) else discharge[-1]
         setattr(water_network, "_outflow_discharge", outflow_map)
     except Exception:
-        pass
+        logger.debug("_outflow_discharge setattr failed (best-effort)", exc_info=True)
 
     return path
 

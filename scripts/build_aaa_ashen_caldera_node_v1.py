@@ -23,7 +23,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 OUT_DIR = REPO_ROOT / "output" / "aaa_ashen_caldera_node_v1"
-SEED = 0xCALD_2026
+SEED = 0xCA1D_2026
 NODE_ID = "VB_AAA_NODE_ASHEN_CALDERA_2026_05_01_A"
 
 TILE_M = 1024.0
@@ -59,41 +59,60 @@ def _compose_caldera_heightmap():
     xs = np.linspace(-HALF, HALF, SIZE)
     ys = np.linspace(-HALF, HALF, SIZE)
     X, Y = np.meshgrid(xs, ys)
+    R = np.sqrt(X**2 + Y**2)
 
-    # Outer volcano edifice — broad gaussian mound
-    volcano_r = 460.0
-    volcano_h = 260.0
-    edifice = volcano_h * np.exp(-((X**2 + Y**2) / (2 * (volcano_r * 0.42)**2)))
+    # ── Stratovolcano cone — steep power-law profile (not gaussian, so rim stays tall)
+    volcano_r = 490.0
+    volcano_h = 720.0
+    cone = volcano_h * np.maximum(0.0, 1.0 - R / volcano_r) ** 1.65
 
-    # Caldera bowl — subtract deep gaussian from center
-    bowl_r = 310.0
-    bowl_depth = 210.0
-    bowl = bowl_depth * np.exp(-((X**2 + Y**2) / (2 * (bowl_r * 0.38)**2)))
-    hm = edifice - bowl
+    # ── Caldera bowl — tight sigma so it only crushes the center, not the whole rim
+    bowl_sigma = 82.0
+    bowl_depth = 380.0
+    bowl = bowl_depth * np.exp(-(R**2) / (2.0 * bowl_sigma**2))
+    hm = cone - bowl
 
-    # Lava floor — flatten the caldera bottom to a hot floor
-    floor_z = 8.0
-    caldera_mask = np.exp(-((X**2 + Y**2) / (2 * (200.0)**2)))
-    hm = hm * (1.0 - caldera_mask * 0.85) + floor_z * caldera_mask * 0.85
+    # ── Caldera rim ridge — ring of raised terrain just outside the bowl
+    rim_r = 130.0
+    rim_sigma = 48.0
+    rim_h = 75.0
+    rim = rim_h * np.exp(-((R - rim_r)**2) / (2.0 * rim_sigma**2))
+    hm += rim
 
-    # Rugged rim ridges — noise layers
+    # ── Flatten caldera floor with a tight mask (sigma=55m — only the very center)
+    floor_z = 14.0
+    floor_mask = np.exp(-(R**2) / (2.0 * 55.0**2))
+    hm = hm * (1.0 - floor_mask) + floor_z * floor_mask
+
+    # ── Secondary cinder cone on the NW rim for visual interest
+    sc_x, sc_y = -190.0, 255.0
+    sc_r = 60.0
+    sc_h = 110.0
+    sc_dist = np.sqrt((X - sc_x)**2 + (Y - sc_y)**2)
+    hm += sc_h * np.maximum(0.0, 1.0 - sc_dist / sc_r) ** 2.0
+
+    # ── Rugged surface noise — larger amplitude for a real volcanic texture
     np.random.seed(SEED & 0xFFFF)
-    freq1 = np.sin(X * 0.018 + 1.2) * np.cos(Y * 0.021 - 0.8) * 28.0
-    freq2 = np.sin(X * 0.042 - 2.1) * np.cos(Y * 0.038 + 1.7) * 14.0
-    freq3 = np.sin(X * 0.091 + 0.4) * np.cos(Y * 0.086 - 2.3) * 6.0
-    hm += freq1 + freq2 + freq3
+    freq1 = np.sin(X * 0.016 + 1.2) * np.cos(Y * 0.019 - 0.8) * 42.0
+    freq2 = np.sin(X * 0.038 - 2.1) * np.cos(Y * 0.034 + 1.7) * 22.0
+    freq3 = np.sin(X * 0.085 + 0.4) * np.cos(Y * 0.079 - 2.3) * 10.0
+    freq4 = np.sin(X * 0.17  - 0.9) * np.cos(Y * 0.16  + 0.5) * 5.0
+    hm += freq1 + freq2 + freq3 + freq4
 
-    # Lava channel — a carved groove through caldera floor toward south edge
-    # River-like path from center to south
-    for t in np.linspace(0, 1, 80):
-        cx = 40.0 * math.sin(t * math.pi * 1.4)
-        cy = -HALF * t * 0.82
+    # ── Lava channel — carved groove from caldera south exit down outer slope
+    channel_xs = []
+    channel_ys = []
+    for t_val in np.linspace(0, 1, 110):
+        cx = 38.0 * math.sin(t_val * math.pi * 1.5)
+        cy = -HALF * t_val * 0.88
+        channel_xs.append(cx)
+        channel_ys.append(cy)
         dist = np.sqrt((X - cx)**2 + (Y - cy)**2)
-        channel_w = 18.0 + 12.0 * t
-        channel_d = 4.5 * np.exp(-(dist**2) / (2 * channel_w**2))
+        channel_w = 20.0 + 18.0 * t_val
+        channel_d = 7.0 * np.exp(-(dist**2) / (2.0 * (channel_w * 0.45)**2))
         hm -= channel_d
 
-    hm = np.clip(hm, -2.0, 320.0)
+    hm = np.clip(hm, -5.0, 780.0)
     log(f"caldera heightmap: shape={hm.shape} min={hm.min():.1f} max={hm.max():.1f}")
     return hm.astype(np.float32)
 
@@ -205,6 +224,15 @@ def _terrain_material():
 
 
 def _lava_material():
+    """Dark cooled crust with bright emission visible through crack network.
+
+    Architecture:
+      Two Noise nodes (coarse + fine) add together → ColorRamp with sharp step
+      → crack mask (white=crack, black=crust).
+      MixShader: crust side = dark Principled BSDF, crack side = pure Emission.
+      This produces the correct AAA lava look: black/dark-brown crust broken by
+      bright orange glowing fissures, not a flat uniformly glowing surface.
+    """
     import bpy
 
     mat = bpy.data.materials.new("CalderaLava")
@@ -212,31 +240,60 @@ def _lava_material():
     nt = mat.node_tree
     nt.nodes.clear()
 
-    out = nt.nodes.new("ShaderNodeOutputMaterial")
-    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    mix = nt.nodes.new("ShaderNodeMixRGB")
-    noise = nt.nodes.new("ShaderNodeTexNoise")
-    coord = nt.nodes.new("ShaderNodeTexCoord")
+    out     = nt.nodes.new("ShaderNodeOutputMaterial")
+    mix_sh  = nt.nodes.new("ShaderNodeMixShader")   # input 1=crust, input 2=emission
+    crust   = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    emit    = nt.nodes.new("ShaderNodeEmission")
+    coord   = nt.nodes.new("ShaderNodeTexCoord")
+    mapping = nt.nodes.new("ShaderNodeMapping")
+    noise_c = nt.nodes.new("ShaderNodeTexNoise")    # coarse crack network
+    noise_f = nt.nodes.new("ShaderNodeTexNoise")    # fine detail
+    add_n   = nt.nodes.new("ShaderNodeMath")
+    ramp    = nt.nodes.new("ShaderNodeValToRGB")
 
-    # Hot lava core → cooling dark crust
-    mix.inputs["Color1"].default_value = (1.0, 0.28, 0.02, 1.0)   # hot orange-white lava
-    mix.inputs["Color2"].default_value = (0.12, 0.04, 0.01, 1.0)  # cooled dark crust
+    # Cooled basalt crust — nearly black with slight specular
+    crust.inputs["Base Color"].default_value = (0.028, 0.016, 0.009, 1.0)
+    crust.inputs["Roughness"].default_value  = 0.94
+    crust.inputs["Metallic"].default_value   = 0.02
 
-    noise.inputs["Scale"].default_value = 8.0
-    noise.inputs["Detail"].default_value = 6.0
-    noise.inputs["Roughness"].default_value = 0.6
+    # Molten lava emission — bright orange-white core
+    emit.inputs["Color"].default_value    = (1.0, 0.40, 0.05, 1.0)
+    emit.inputs["Strength"].default_value = 14.0
 
-    bsdf.inputs["Roughness"].default_value = 0.5
-    # Emission: glowing lava
-    if "Emission Color" in bsdf.inputs:
-        bsdf.inputs["Emission Color"].default_value = (1.0, 0.22, 0.02, 1.0)
-        if "Emission Strength" in bsdf.inputs:
-            bsdf.inputs["Emission Strength"].default_value = 4.5
+    # Mapping scale so cracks look world-sized
+    mapping.inputs["Scale"].default_value = (5.5, 5.5, 5.5)
 
-    nt.links.new(coord.outputs["Object"], noise.inputs["Vector"])
-    nt.links.new(noise.outputs["Fac"], mix.inputs["Fac"])
-    nt.links.new(mix.outputs["Color"], bsdf.inputs["Base Color"])
-    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    # Coarse noise — defines the broad crack network
+    noise_c.inputs["Scale"].default_value     = 3.2
+    noise_c.inputs["Detail"].default_value    = 9.0
+    noise_c.inputs["Roughness"].default_value = 0.68
+    noise_c.inputs["Lacunarity"].default_value = 2.4
+
+    # Fine noise — adds micro-cracks and hot-spots
+    noise_f.inputs["Scale"].default_value     = 11.0
+    noise_f.inputs["Detail"].default_value    = 5.0
+    noise_f.inputs["Roughness"].default_value = 0.5
+
+    # Combine: coarse drives shape, fine adds detail
+    add_n.operation = "ADD"
+
+    # Sharp color ramp: values > 0.60 = crack (white/emission), rest = crust (black)
+    ramp.color_ramp.interpolation = "CONSTANT"
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color    = (0.0, 0.0, 0.0, 1.0)
+    ramp.color_ramp.elements[1].position = 0.60
+    ramp.color_ramp.elements[1].color    = (1.0, 1.0, 1.0, 1.0)
+
+    nt.links.new(coord.outputs["Object"],    mapping.inputs["Vector"])
+    nt.links.new(mapping.outputs["Vector"],  noise_c.inputs["Vector"])
+    nt.links.new(mapping.outputs["Vector"],  noise_f.inputs["Vector"])
+    nt.links.new(noise_c.outputs["Fac"],     add_n.inputs[0])
+    nt.links.new(noise_f.outputs["Fac"],     add_n.inputs[1])
+    nt.links.new(add_n.outputs["Value"],     ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"],      mix_sh.inputs["Fac"])
+    nt.links.new(crust.outputs["BSDF"],      mix_sh.inputs[1])
+    nt.links.new(emit.outputs["Emission"],   mix_sh.inputs[2])
+    nt.links.new(mix_sh.outputs["Shader"],   out.inputs["Surface"])
     return mat
 
 
@@ -257,46 +314,66 @@ def _sample_hm(hm, x, y):
 def _build_lava_river(hm, lava_mat):
     import bpy
 
-    # Lava channel from caldera center southward
-    channel_pts = [
-        (0.0,   0.0,   10.5),
-        (15.0,  -60.0,  9.8),
-        (-10.0, -130.0, 9.2),
-        (30.0,  -200.0, 8.6),
-        (5.0,   -280.0, 8.1),
-        (-20.0, -360.0, 7.8),
-        (10.0,  -440.0, 7.4),
-        (0.0,   -510.0, 7.1),
+    # XY waypoints only — Z is sampled from the carved heightmap so lava
+    # never floats above or clips below the terrain channel.
+    channel_xy = [
+        (0.0,    0.0),
+        (15.0,  -60.0),
+        (-10.0, -130.0),
+        (30.0,  -200.0),
+        (5.0,   -280.0),
+        (-20.0, -360.0),
+        (10.0,  -440.0),
+        (0.0,   -510.0),
     ]
-    widths = [28.0, 24.0, 20.0, 18.0, 16.0, 14.0, 12.0, 10.0]
+    # River narrows as it flows away from the caldera
+    widths = [30.0, 25.0, 21.0, 18.0, 15.0, 13.0, 11.0, 9.0]
 
     all_verts = []
     all_faces = []
+    prev_left  = None
+    prev_right = None
 
-    for seg in range(len(channel_pts) - 1):
-        p0 = channel_pts[seg]
-        p1 = channel_pts[seg + 1]
+    steps_per_seg = 10
+    for seg in range(len(channel_xy) - 1):
+        x0, y0 = channel_xy[seg]
+        x1, y1 = channel_xy[seg + 1]
         w0 = widths[seg]
         w1 = widths[seg + 1]
-        steps = 8
-        for s in range(steps):
-            t0 = s / steps
-            t1 = (s + 1) / steps
-            for t, w in ((t0, w0 * (1 - t0) + w1 * t0), (t1, w0 * (1 - t1) + w1 * t1)):
-                cx = p0[0] * (1 - t) + p1[0] * t
-                cy = p0[1] * (1 - t) + p1[1] * t
-                gz = _sample_hm(hm, cx, cy)
-                lz = max(p0[2] * (1 - t) + p1[2] * t, gz + 0.35)
-                dx = -(p1[1] - p0[1])
-                dy = p1[0] - p0[0]
-                length = math.sqrt(dx * dx + dy * dy) or 1.0
-                dx /= length; dy /= length
-                base_idx = len(all_verts)
-                all_verts.append((cx - dx * w * 0.5, cy - dy * w * 0.5, lz))
-                all_verts.append((cx + dx * w * 0.5, cy + dy * w * 0.5, lz))
-                if s > 0 or seg > 0:
-                    n = len(all_verts)
-                    all_faces.append((n - 4, n - 3, n - 1, n - 2))
+        dx_seg = x1 - x0
+        dy_seg = y1 - y0
+        seg_len = math.sqrt(dx_seg**2 + dy_seg**2) or 1.0
+        # Perpendicular direction (left/right of flow)
+        px = -dy_seg / seg_len
+        py =  dx_seg / seg_len
+
+        for s in range(steps_per_seg + 1):
+            t  = s / steps_per_seg
+            cx = x0 + (x1 - x0) * t
+            cy = y0 + (y1 - y0) * t
+            w  = w0 + (w1 - w0) * t
+            # Z directly from heightmap + tiny offset so lava sits in carved groove
+            gz = _sample_hm(hm, cx, cy)
+            lz = gz + 0.12
+
+            lx = cx - px * w * 0.5
+            ly = cy - py * w * 0.5
+            rx = cx + px * w * 0.5
+            ry = cy + py * w * 0.5
+
+            li = len(all_verts)
+            all_verts.append((lx, ly, lz))
+            all_verts.append((rx, ry, lz))
+
+            if prev_left is not None:
+                all_faces.append((prev_left, prev_right, li + 1, li))
+
+            prev_left  = li
+            prev_right = li + 1
+
+        # Reset so next seg starts fresh (avoids duplicate vert at junction)
+        prev_left  = None
+        prev_right = None
 
     if not all_faces:
         return
@@ -309,15 +386,17 @@ def _build_lava_river(hm, lava_mat):
     obj = bpy.data.objects.new("VB_LavaRiver", mesh)
     bpy.context.scene.collection.objects.link(obj)
 
-    # Lava floor disk in caldera center
+    # Lava floor disk in caldera center — Z sampled from heightmap so no floating/clipping
+    center_gz = _sample_hm(hm, 0.0, 0.0)
     bm_floor_verts = []
     bm_floor_faces = []
-    segs = 48
-    floor_r = 120.0
-    bm_floor_verts.append((0.0, 0.0, 9.2))
+    segs = 64
+    floor_r = 125.0
+    bm_floor_verts.append((0.0, 0.0, center_gz + 0.25))
     for i in range(segs):
         a = 2 * math.pi * i / segs
-        bm_floor_verts.append((math.cos(a) * floor_r, math.sin(a) * floor_r, 8.8))
+        rim_gz = _sample_hm(hm, math.cos(a) * floor_r, math.sin(a) * floor_r)
+        bm_floor_verts.append((math.cos(a) * floor_r, math.sin(a) * floor_r, rim_gz + 0.12))
     for i in range(segs):
         j = (i + 1) % segs
         bm_floor_faces.append((0, i + 1, j + 1))
@@ -339,7 +418,7 @@ def _build_obsidian_shards(hm):
     import bpy
 
     cliff_mat = _mat("ObsidianCliff", (0.022, 0.020, 0.025), roughness=0.30, metallic=0.25)
-    rng = random.Random(SEED ^ 0xCL1F)
+    rng = random.Random(SEED ^ 0xC11F)
     n_placed = 0
 
     shard_positions = []
@@ -519,7 +598,7 @@ def _build_magma_vents(hm):
 
     vent_mat = _mat("MagmaVent", (0.9, 0.18, 0.01), roughness=0.4,
                     emission=(1.0, 0.3, 0.02, 6.0))
-    rng_v = random.Random(SEED ^ 0xV3NT)
+    rng_v = random.Random(SEED ^ 0xA3E7)
     n_placed = 0
     for _ in range(18):
         angle = rng_v.uniform(0, 2 * math.pi)
@@ -559,7 +638,7 @@ def _build_lava_bombs(hm):
     hot_mat = _mat("LavaBombHot", (0.55, 0.12, 0.01), roughness=0.55,
                    emission=(1.0, 0.25, 0.01, 2.0))
 
-    rng_b = random.Random(SEED ^ 0xB0MB)
+    rng_b = random.Random(SEED ^ 0xB04B)
     n_placed = 0
     for _ in range(120):
         x = rng_b.uniform(-HALF + 30, HALF - 30)
@@ -617,14 +696,24 @@ def _setup_lighting():
     bpy.context.scene.collection.objects.link(fill_obj)
     fill_obj.rotation_euler = (math.radians(75), 0, math.radians(60))
 
-    # Red-orange point light inside caldera (lava glow)
+    # Red-orange point light at the caldera floor — elevated enough to cast
+    # rim shadows upward onto the volcano walls
     lava_light = bpy.data.lights.new("LavaGlow", "POINT")
-    lava_light.energy = 12000.0
-    lava_light.color = (1.0, 0.28, 0.04)
-    lava_light.shadow_soft_size = 60.0
+    lava_light.energy = 55000.0   # needs to be strong to light 350m+ walls
+    lava_light.color = (1.0, 0.30, 0.04)
+    lava_light.shadow_soft_size = 80.0
     lava_obj = bpy.data.objects.new("VB_LavaGlow", lava_light)
-    lava_obj.location = (0.0, 0.0, 15.0)
+    lava_obj.location = (0.0, 0.0, 20.0)
     bpy.context.scene.collection.objects.link(lava_obj)
+
+    # Second fill point — along lava river to light the channel
+    river_light = bpy.data.lights.new("RiverGlow", "POINT")
+    river_light.energy = 18000.0
+    river_light.color = (1.0, 0.35, 0.05)
+    river_light.shadow_soft_size = 40.0
+    river_obj = bpy.data.objects.new("VB_RiverGlow", river_light)
+    river_obj.location = (10.0, -180.0, 12.0)
+    bpy.context.scene.collection.objects.link(river_obj)
 
     # World: dark ash sky
     world = bpy.data.worlds["World"]
@@ -643,17 +732,22 @@ def _setup_lighting():
 # ---------------------------------------------------------------------------
 
 def _setup_hero_camera():
+    """Cinematic hero — positioned above the north slope looking across the caldera.
+
+    Volcano rim sits at ~300–400 m. Camera is placed at ~550 m elevation on the
+    outer north slope so the full cone profile and glowing caldera are both visible.
+    """
     import bpy
     import mathutils
 
     cam_data = bpy.data.cameras.new("HeroCam")
-    cam_data.lens = 35.0
-    cam_data.clip_end = 5000.0
+    cam_data.lens = 28.0          # slightly wide to capture full volcano
+    cam_data.clip_end = 8000.0
     cam_obj = bpy.data.objects.new("VB_HeroCam", cam_data)
     bpy.context.scene.collection.objects.link(cam_obj)
-    # On the north rim looking south-down into the caldera
-    cam_obj.location = mathutils.Vector((-80.0, 420.0, 280.0))
-    target = mathutils.Vector((20.0, -60.0, 12.0))
+    # North of volcano, high enough to see the peak and the glowing caldera bowl
+    cam_obj.location = mathutils.Vector((-120.0, 580.0, 520.0))
+    target = mathutils.Vector((15.0, -30.0, 18.0))   # caldera center
     direction = target - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = cam_obj
@@ -661,40 +755,46 @@ def _setup_hero_camera():
 
 
 def _setup_lava_river_camera():
+    """Ground-level shot up the lava channel — shows the river flowing from caldera."""
     import bpy
     import mathutils
 
     cam_data = bpy.data.cameras.new("LavaRiverCam")
-    cam_data.lens = 28.0
-    cam_data.clip_end = 3000.0
+    cam_data.lens = 24.0          # wide for dramatic perspective
+    cam_data.clip_end = 5000.0
     cam_obj = bpy.data.objects.new("VB_LavaRiverCam", cam_data)
     bpy.context.scene.collection.objects.link(cam_obj)
-    # Low angle looking up the lava river toward the caldera center
-    cam_obj.location = mathutils.Vector((55.0, -380.0, 45.0))
-    target = mathutils.Vector((10.0, -60.0, 12.0))
+    # Low on the south slope looking back up the lava channel toward the caldera
+    cam_obj.location = mathutils.Vector((20.0, -430.0, 55.0))
+    target = mathutils.Vector((5.0, -50.0, 16.0))
     direction = target - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     return cam_obj
 
 
 def _setup_orbit_cameras():
+    """Four cardinal orbit cameras sized for a 350 m+ volcano cone."""
     import bpy
     import mathutils
 
     cams = []
-    for i in range(4):
-        angle = 2 * math.pi * i / 4 + math.pi * 0.12
-        r = 680.0
-        z = 340.0
-        cx = math.cos(angle) * r
-        cy = math.sin(angle) * r
+    orbit_configs = [
+        # (angle_offset, radius, z, target_z) — varied heights for cinematic variety
+        (math.pi * 0.12,  820.0, 480.0, 80.0),   # NE — shows full north face + peak
+        (math.pi * 0.62,  760.0, 320.0, 40.0),   # SE — shows lava river exit
+        (math.pi * 1.12,  820.0, 420.0, 60.0),   # SW — opposite rim + cinder cone
+        (math.pi * 1.62,  780.0, 350.0, 30.0),   # NW — outer slope + obsidian shards
+    ]
+    for i, (angle_off, r, z, tz) in enumerate(orbit_configs):
+        cx = math.cos(angle_off) * r
+        cy = math.sin(angle_off) * r
         cam_data = bpy.data.cameras.new(f"OrbitCam_{i}")
-        cam_data.lens = 40.0
-        cam_data.clip_end = 5000.0
+        cam_data.lens = 35.0
+        cam_data.clip_end = 8000.0
         cam_obj = bpy.data.objects.new(f"VB_OrbitCam_{i}", cam_data)
         bpy.context.scene.collection.objects.link(cam_obj)
         cam_obj.location = mathutils.Vector((cx, cy, z))
-        target = mathutils.Vector((0.0, 0.0, 30.0))
+        target = mathutils.Vector((0.0, 0.0, float(tz)))
         direction = target - cam_obj.location
         cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
         cams.append(cam_obj)

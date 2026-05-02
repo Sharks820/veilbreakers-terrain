@@ -1404,7 +1404,11 @@ def _build_unity_import_descriptor(
                 "encoding": str(meta.get("encoding", "raw_rgba_u8")),
                 "flip_vertical": bool(meta.get("flip_vertical", True)),
                 "layer_start": int(layer_range[0]) if len(layer_range) >= 1 else 0,
-                "layer_end": int(layer_range[1]) if len(layer_range) >= 2 else -1,
+                "layer_end": int(layer_range[1]) if len(layer_range) >= 2 else (
+                    int(layer_range[0]) + int(meta.get("channels", 4)) - 1
+                    if len(layer_range) >= 1
+                    else int(meta.get("channels", 4)) - 1
+                ),
                 "terrain_layer_assets": [
                     str(terrain_layer_assets.get(channel, ""))
                     for channel in ("R", "G", "B", "A")

@@ -382,7 +382,7 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.ClimateZone = descriptor.climate_zone ?? "temperate";
             metadata.WaterPresent = descriptor.has_water_surface;
             metadata.WaterSurfaceElevationM = descriptor.height_scale_factor > 1e-6f
-                ? descriptor.water_level_unity_units / descriptor.height_scale_factor
+                ? (descriptor.water_level_unity_units - UnityOriginY(descriptor)) / descriptor.height_scale_factor
                 : descriptor.water_level_unity_units;
             metadata.ScatterCount = descriptor.scatter_count;
             metadata.Lod0DistanceM = descriptor.lod0_distance_m > 0f ? descriptor.lod0_distance_m : 50f;
@@ -855,7 +855,7 @@ namespace VeilBreakers.TerrainImport.Editor
                         for (var channel = 0; channel < splatmap.channels; channel++)
                         {
                             var layerIndex = splatmap.layer_start + channel;
-                            if (layerIndex < 0 || layerIndex > splatmap.layer_end || layerIndex >= layerCount)
+                            if (layerIndex < 0 || (splatmap.layer_end >= 0 && layerIndex > splatmap.layer_end) || layerIndex >= layerCount)
                             {
                                 continue;
                             }

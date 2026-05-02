@@ -19,12 +19,15 @@ dependency-free. For production bakes use a Houdini/Bake shader.
 from __future__ import annotations
 
 import json
+import logging
 import struct
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from .terrain_semantics import (
     BBox,
@@ -356,7 +359,7 @@ def export_shadow_clipmap_exr(mask: np.ndarray, output_path: Path) -> None:
             written_format = "exr_float32_mini"
             _exr_ok = True
         except Exception:
-            pass
+            logger.debug("EXR mini write failed, trying next format", exc_info=True)
 
     # --- Fallback 1: imageio EXR (half-float) ---------------------------
     if not _exr_ok and output_path.suffix.lower() == ".exr":
@@ -366,7 +369,7 @@ def export_shadow_clipmap_exr(mask: np.ndarray, output_path: Path) -> None:
             written_format = "exr_float16_imageio"
             _exr_ok = True
         except Exception:
-            pass
+            logger.debug("imageio EXR write failed, trying OpenEXR", exc_info=True)
 
     # --- Fallback 2: OpenEXR + Imath -----------------------------------
     if not _exr_ok and output_path.suffix.lower() == ".exr":
@@ -381,7 +384,7 @@ def export_shadow_clipmap_exr(mask: np.ndarray, output_path: Path) -> None:
             written_format = "exr_float16_openexr"
             _exr_ok = True
         except Exception:
-            pass
+            logger.debug("OpenEXR write failed, falling back to PNG", exc_info=True)
 
     # --- Fallback 3: 16-bit PNG via imageio ----------------------------
     if not _exr_ok:
@@ -394,7 +397,7 @@ def export_shadow_clipmap_exr(mask: np.ndarray, output_path: Path) -> None:
             written_format = "png_uint16_imageio"
             _exr_ok = True
         except Exception:
-            pass
+            logger.debug("imageio PNG write failed, using npy fallback", exc_info=True)
 
     # --- Fallback 4: float32 .npy with honest labelling ----------------
     if not _exr_ok:

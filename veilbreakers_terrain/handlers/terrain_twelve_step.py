@@ -19,6 +19,8 @@ import numpy as np
 
 import logging
 
+logger = logging.getLogger(__name__)
+
 try:
     from scipy.ndimage import label as _scipy_label
     _SCIPY_TWELVE_STEP_AVAILABLE = True
@@ -1206,7 +1208,7 @@ def run_twelve_step_world_terrain(
                     1.0 - (_delta - _delta_min) / _delta_range, 0.0, 1.0
                 ).astype(np.float32)
         except Exception:
-            pass
+            logger.debug("rock_hardness derivation from erosion_delta failed", exc_info=True)
 
         # water_surface: positive flow_accumulation (normalised) marks water cells.
         _world_water_surface: "np.ndarray | None" = None
@@ -1219,7 +1221,7 @@ def run_twelve_step_world_terrain(
                     if _acc_max > 0.0:
                         _world_water_surface = np.clip(_flow_acc / _acc_max, 0.0, 1.0)
         except Exception:
-            pass
+            logger.debug("water_surface derivation from flow_accumulation failed", exc_info=True)
 
         try:
             road_specs, world_eroded, world_road_mask, world_road_sdf = _generate_road_mesh_specs(

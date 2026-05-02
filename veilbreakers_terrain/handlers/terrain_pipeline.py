@@ -72,6 +72,28 @@ def _copy_checkpoint_value(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
+def _shallow_stack_clone(stack: TerrainMaskStack) -> TerrainMaskStack:
+    """FIX-9-32: O(N×H×W) numpy-copy clone instead of deepcopy.
+
+    Copies every populated ndarray field and lightweight metadata without
+    recursively walking Python object graphs. Avoids the 4–8 GB deepcopy
+    allocation at 4k tile sizes.
+    """
+    import numpy as _np
+
+    field_names = {f.name for f in dataclasses.fields(TerrainMaskStack)}
+    overrides: Dict[str, Any] = {}
+    for ch in stack._ARRAY_CHANNELS:
+        if ch not in field_names:
+            continue
+        arr = getattr(stack, ch, None)
+        if arr is not None:
+            overrides[ch] = _np.asarray(arr).copy()
+    overrides["dirty_channels"] = set(stack.dirty_channels)
+    overrides["populated_by_pass"] = dict(stack.populated_by_pass)
+    return dataclasses.replace(stack, **overrides)
+
+
 def _checkpoint_pass_state(
     stack: TerrainMaskStack,
     channels: Iterable[str],
@@ -863,7 +885,7 @@ class TerrainPassController:
         # ------------------------------------------------------------------
         # Normal execution
         # ------------------------------------------------------------------
-        pre_pipeline_mask_stack = copy.deepcopy(self.state.mask_stack)
+        pre_pipeline_mask_stack = _shallow_stack_clone(self.state.mask_stack)
         setattr(self, "_pre_pipeline_baseline_stack", pre_pipeline_mask_stack)
         validation_bound = False
         try:
@@ -879,7 +901,12 @@ class TerrainPassController:
             from .terrain_bundle_n import bundle_n_runtime_requests_determinism
 
             if bundle_n_runtime_requests_determinism(self.state.intent):
-                bundle_n_pre_pipeline_state = copy.deepcopy(self.state)
+                # FIX-9-32: shallow-clone the mask_stack (O(N×H×W) numpy copy)
+                # instead of deepcopy-ing the full state (4–8 GB at 4k).
+                bundle_n_pre_pipeline_state = dataclasses.replace(
+                    self.state,
+                    mask_stack=_shallow_stack_clone(self.state.mask_stack),
+                )
         except Exception:  # noqa: BLE001
             bundle_n_pre_pipeline_state = None
 

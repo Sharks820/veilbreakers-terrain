@@ -316,6 +316,22 @@ def register_bundle_j_decals_pass() -> None:
             name="decals",
             func=pass_decals,
             requires_channels=("height",),
+            # Soft ordering: consume these channels after their producers so
+            # traversability/slope/gameplay_zone are populated before decal
+            # density is computed. Without these edges, traversability (produced
+            # by ecotones and pass_navmesh_export) is None at decal time and
+            # FOOTPRINT_TRAIL falls back to a uniform 0.5 placeholder.
+            optional_channels=(
+                "slope",
+                "curvature",
+                "wetness",
+                "erosion_amount",
+                "flow_accumulation",
+                "basin",
+                "ridge",
+                "gameplay_zone",
+                "traversability",
+            ),
             produces_channels=("decal_density",),
             seed_namespace="decals",
             requires_scene_read=False,

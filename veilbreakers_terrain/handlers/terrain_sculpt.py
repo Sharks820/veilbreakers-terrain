@@ -42,11 +42,29 @@ except ModuleNotFoundError:
 
 def _require_bpy() -> None:
     """Raise RuntimeError if bpy/bmesh are not available (outside Blender)."""
-    if not _HAS_BPY:
+    global bpy, bmesh, _HAS_BPY
+    if _HAS_BPY and bpy is not None and bmesh is not None:
+        return
+    try:
+        import bmesh as _bmesh  # type: ignore
+        import bpy as _bpy  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "This function requires Blender (bpy + bmesh). "
+            "It cannot run outside the Blender Python runtime."
+        ) from exc
+    if (
+        not hasattr(_bpy, "data")
+        or not hasattr(_bpy.data, "objects")
+        or not hasattr(_bmesh, "new")
+    ):
         raise RuntimeError(
             "This function requires Blender (bpy + bmesh). "
             "It cannot run outside the Blender Python runtime."
         )
+    bpy = _bpy  # type: ignore[assignment]
+    bmesh = _bmesh  # type: ignore[assignment]
+    _HAS_BPY = True
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +375,8 @@ def compute_raise_displacements(
     # ------------------------------------------------------------------
     if target_surface_z is not None:
         # Signed distance from current Z to target plane.
-        sdf = float(target_surface_z) - current_z
+        target_z = float(target_surface_z)
+        sdf = target_z - current_z
         # Hermite cubic: smoothly damp large distances so the brush doesn't
         # hyperextend.  sdf_norm = sdf / (sdf_max + ε); apply 3t²-2t³.
         sdf_max = np.max(np.abs(sdf)) + 1e-8
@@ -393,6 +412,13 @@ def compute_raise_displacements(
     # Compute new Z and clamp to max_height ceiling.
     # ------------------------------------------------------------------
     new_z = current_z + delta
+    if target_surface_z is not None:
+        target_z = float(target_surface_z)
+        new_z = np.where(
+            target_z >= current_z,
+            np.minimum(new_z, target_z),
+            np.maximum(new_z, target_z),
+        )
     if max_height < float("inf"):
         new_z = np.minimum(new_z, float(max_height))
 
@@ -488,7 +514,8 @@ def compute_lower_displacements(
     # ------------------------------------------------------------------
     if target_surface_z is not None:
         # Signed distance from current Z down to target plane.
-        sdf = current_z - float(target_surface_z)
+        target_z = float(target_surface_z)
+        sdf = current_z - target_z
         sdf_max = np.max(np.abs(sdf)) + 1e-8
         t = np.clip(np.abs(sdf) / sdf_max, 0.0, 1.0)
         hermite = 3.0 * t * t - 2.0 * t * t * t
@@ -513,6 +540,13 @@ def compute_lower_displacements(
     # Compute new Z: subtract delta, clamp to floor.
     # ------------------------------------------------------------------
     new_z = current_z - delta
+    if target_surface_z is not None:
+        target_z = float(target_surface_z)
+        new_z = np.where(
+            target_z <= current_z,
+            np.maximum(new_z, target_z),
+            np.minimum(new_z, target_z),
+        )
     if effective_floor > float("-inf"):
         new_z = np.maximum(new_z, effective_floor)
 
@@ -1054,6 +1088,8 @@ def handle_sculpt_terrain(params: dict) -> dict:
     Returns:
         dict with operation details and affected vertex count.
     """
+    _require_bpy()
+
     terrain_name = params.get("terrain_name")
     obj = bpy.data.objects.get(terrain_name)
     if not obj or obj.type != "MESH":
@@ -1070,6 +1106,19 @@ def handle_sculpt_terrain(params: dict) -> dict:
     height_max = float(params.get("height_max", float("inf")))
     blend_mode = str(params.get("blend_mode", "add"))
     feather = float(params.get("feather", 0.0))
+    pressure = float(np.clip(float(params.get("pressure", 1.0)), 0.0, 1.0))
+    target_surface_z = (
+        float(params["target_surface_z"])
+        if params.get("target_surface_z") is not None
+        else None
+    )
+    floor_clamp = (
+        float(params["floor_clamp"])
+        if params.get("floor_clamp") is not None
+        else None
+    )
+    slope_threshold = float(params.get("slope_threshold", 1.0))
+    curvature_threshold = float(params.get("curvature_threshold", 1.0))
 
     valid_ops = ("raise", "lower", "smooth", "flatten", "stamp")
     if operation not in valid_ops:
@@ -1101,7 +1150,6 @@ def handle_sculpt_terrain(params: dict) -> dict:
     # Approximate local-space radius: divide by the average absolute scale.
     scale_x = abs(mw[0][0])
     scale_y = abs(mw[1][1])
-    scale_z = abs(mw[2][2])
     # Use the XY mean for the horizontal radius conversion.
     avg_scale_xy = (scale_x + scale_y) / 2.0 if (scale_x + scale_y) > 0 else 1.0
     local_radius = radius / avg_scale_xy if avg_scale_xy > 1e-8 else radius
@@ -1118,11 +1166,40 @@ def handle_sculpt_terrain(params: dict) -> dict:
         positions_2d = [(v.co.x, v.co.y) for v in bm.verts]
         positions_3d = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
         heights = [v.co.z for v in bm.verts]
+        vertex_count = len(heights)
+
+        def _optional_vertex_mask(name: str, *, dtype):
+            raw = params.get(name)
+            if raw is None:
+                return None
+            arr = np.asarray(raw, dtype=dtype).reshape(-1)
+            if arr.shape[0] != vertex_count:
+                raise ValueError(
+                    f"{name} must have {vertex_count} values, got {arr.shape[0]}"
+                )
+            return arr
+
+        protected_zone_mask = _optional_vertex_mask(
+            "protected_zone_mask",
+            dtype=bool,
+        )
+        slope_mask = _optional_vertex_mask("slope_mask", dtype=np.float32)
+        curvature_mask = _optional_vertex_mask("curvature_mask", dtype=np.float32)
 
         # Compute brush weights using bilinear LUT kernel.
         weights = compute_brush_weights(
-            positions_2d, brush_center, local_radius, falloff
+            positions_2d,
+            brush_center,
+            local_radius,
+            falloff,
+            pressure=pressure,
         )
+        if protected_zone_mask is not None:
+            weights = [
+                (idx, weight)
+                for idx, weight in weights
+                if not bool(protected_zone_mask[idx])
+            ]
 
         if not weights:
             return {
@@ -1139,11 +1216,24 @@ def handle_sculpt_terrain(params: dict) -> dict:
             new_heights = compute_raise_displacements(
                 heights, weights, strength,
                 brush_size=1.0, max_height=height_max,
+                target_surface_z=target_surface_z,
+                slope_mask=slope_mask,
+                curvature_mask=curvature_mask,
+                protected_zone_mask=protected_zone_mask,
+                slope_threshold=slope_threshold,
+                curvature_threshold=curvature_threshold,
             )
         elif operation == "lower":
             new_heights = compute_lower_displacements(
                 heights, weights, strength,
                 brush_size=1.0, min_height=height_min,
+                floor_clamp=floor_clamp,
+                target_surface_z=target_surface_z,
+                slope_mask=slope_mask,
+                curvature_mask=curvature_mask,
+                protected_zone_mask=protected_zone_mask,
+                slope_threshold=slope_threshold,
+                curvature_threshold=curvature_threshold,
             )
         elif operation == "smooth":
             adjacency = _build_adjacency(bm)
@@ -1202,6 +1292,7 @@ def handle_sculpt_terrain(params: dict) -> dict:
         "brush_radius": radius,
         "local_radius": local_radius,
         "strength": strength,
+        "pressure": pressure,
         "falloff": falloff,
         "height_min": height_min,
         "height_max": height_max,

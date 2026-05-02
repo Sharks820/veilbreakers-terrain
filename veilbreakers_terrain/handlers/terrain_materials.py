@@ -1830,11 +1830,11 @@ def compute_biome_transition(
         if boundary_axis == "x":
             pos = vx
             noise_x = vy * noise_scale
-            noise_y = vz * noise_scale
+            noise_y = (vx - boundary_position) * noise_scale * 0.25
         else:
             pos = vy
             noise_x = vx * noise_scale
-            noise_y = vz * noise_scale
+            noise_y = (vy - boundary_position) * noise_scale * 0.25
 
         # Noise-displaced boundary for organic edge
         noise_val = _simple_noise_2d(noise_x, noise_y, seed=noise_seed)

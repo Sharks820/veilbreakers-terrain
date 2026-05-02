@@ -434,6 +434,14 @@ _UNITY_MAX_SPLATMAP_LAYERS: int = 4
 # across all layers after the new one is appended so the sum stays ≈ 1.
 _DEFAULT_NEW_LAYER_WEIGHT: float = 0.25
 
+_OPTIONAL_PBR_OUTPUT_CHANNELS: tuple[str, ...] = (
+    "macro_color",
+    "roughness_variation",
+    "terrain_normals",
+    "terrain_ao",
+    "terrain_displacement",
+)
+
 
 def _srgb_to_linear(values: np.ndarray) -> np.ndarray:
     v = np.clip(np.asarray(values, dtype=np.float32), 0.0, 1.0)
@@ -491,6 +499,29 @@ def _bilinear_sample_texture(
             bot = bl * (1.0 - fx) + br * fx
             out[:, :, ci] = top * (1.0 - fy) + bot * fy
         return out
+
+
+def _load_asset_texture_channel(
+    asset: QuixelAsset,
+    *channel_names: str,
+    channels: int,
+) -> Optional[np.ndarray]:
+    """Load the first available texture channel for a Quixel asset."""
+    for channel_name in channel_names:
+        path = asset.textures.get(channel_name)
+        if path is None:
+            continue
+        try:
+            return _load_texture_as_float(path, channels=channels)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug(
+                "Quixel texture load failed for asset=%s channel=%s path=%s: %r",
+                asset.asset_id,
+                channel_name,
+                path,
+                exc,
+            )
+    return None
 
 
 def apply_quixel_to_layer(
@@ -551,6 +582,7 @@ def apply_quixel_to_layer(
     # ------------------------------------------------------------------ #
     # 1. Splatmap weight management
     # ------------------------------------------------------------------ #
+    old_layer_scale: Optional[np.ndarray] = None
     if stack.splatmap_weights_layer is None:
         # First layer: initialise with uniform weight 1.0 (single channel).
         new_weights = np.ones((rows, cols, 1), dtype=np.float32)
@@ -598,6 +630,7 @@ def apply_quixel_to_layer(
         # Re-normalise: divide by channel-wise sum, guard against zero rows.
         total = expanded.sum(axis=2, keepdims=True)
         total = np.where(total < 1e-8, 1.0, total)
+        old_layer_scale = (1.0 / total[:, :, 0]).astype(np.float32)
         stack.set(
             "splatmap_weights_layer",
             (expanded / total).astype(np.float32),
@@ -615,6 +648,16 @@ def apply_quixel_to_layer(
     layer_idx = stack.splatmap_weights_layer.shape[2] - 1
     layer_weight = stack.splatmap_weights_layer[:, :, layer_idx]  # (H, W)
 
+    if albedo_array is None:
+        albedo_array = _load_asset_texture_channel(
+            asset,
+            "albedo",
+            "basecolor",
+            "base_color",
+            "diffuse",
+            channels=3,
+        )
+
     if albedo_array is not None:
         sampled_albedo = _srgb_to_linear(_bilinear_sample_texture(
             albedo_array.astype(np.float32), uv_y, uv_x
@@ -626,8 +669,18 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended = stack.macro_color + sampled_albedo * layer_weight[:, :, np.newaxis]
+            existing_macro = np.asarray(stack.macro_color, dtype=np.float32)
+            if old_layer_scale is not None:
+                existing_macro = existing_macro * old_layer_scale[:, :, np.newaxis]
+            blended = existing_macro + sampled_albedo * layer_weight[:, :, np.newaxis]
             stack.set("macro_color", blended.astype(np.float32), "quixel_ingest")
+
+    if roughness_array is None:
+        roughness_array = _load_asset_texture_channel(
+            asset,
+            "roughness",
+            channels=1,
+        )
 
     if roughness_array is not None:
         sampled_rough = _bilinear_sample_texture(
@@ -640,12 +693,22 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended_r = stack.roughness_variation + sampled_rough * layer_weight
+            existing_rough = np.asarray(stack.roughness_variation, dtype=np.float32)
+            if old_layer_scale is not None:
+                existing_rough = existing_rough * old_layer_scale
+            blended_r = existing_rough + sampled_rough * layer_weight
             stack.set(
                 "roughness_variation",
                 blended_r.astype(np.float32),
                 "quixel_ingest",
             )
+
+    if normal_array is None:
+        normal_array = _load_asset_texture_channel(
+            asset,
+            "normal",
+            channels=3,
+        )
 
     if normal_array is not None:
         sampled_normal = _bilinear_sample_texture(
@@ -661,10 +724,19 @@ def apply_quixel_to_layer(
             base_n[:, :, 2] = 1.0
             stack.set("terrain_normals", base_n, "quixel_ingest")
         base_n = np.asarray(stack.terrain_normals, dtype=np.float32)
+        if old_layer_scale is not None:
+            base_n = base_n * old_layer_scale[:, :, np.newaxis]
 
-        blended_n = (
-            base_n + sampled_normal * layer_weight[:, :, np.newaxis]
-        )
+        # Whiteout blend: preserves correct normal perturbation vs simple linear add.
+        # Scale n2 toward flat (0,0,1) by (1-weight), then combine:
+        #   result.xy = n1.xy + n2_scaled.xy
+        #   result.z  = n1.z  * n2_scaled.z
+        w = layer_weight[:, :, np.newaxis]
+        n2_xy = sampled_normal[..., :2] * w
+        n2_z = 1.0 - w + sampled_normal[..., 2:3] * w  # lerp(1.0, n2.z, w)
+        blended_xy = base_n[..., :2] + n2_xy
+        blended_z = base_n[..., 2:3] * n2_z
+        blended_n = np.concatenate([blended_xy, blended_z], axis=-1)
         norms = np.linalg.norm(blended_n, axis=2, keepdims=True)
         norms = np.where(norms < 1e-8, 1.0, norms)
         stack.set(
@@ -675,12 +747,12 @@ def apply_quixel_to_layer(
 
     # Load AO if present in asset and not pre-supplied
     if ao_array is None:
-        ao_path = asset.textures.get("ao") or asset.textures.get("ambient_occlusion")
-        if ao_path is not None:
-            try:
-                ao_array = _load_texture_as_float(ao_path, channels=1)
-            except Exception as exc:
-                _log.debug("AO load failed for %s: %r", layer_id, exc)
+        ao_array = _load_asset_texture_channel(
+            asset,
+            "ao",
+            "ambient_occlusion",
+            channels=1,
+        )
 
     if ao_array is not None:
         sampled_ao = _bilinear_sample_texture(
@@ -696,20 +768,20 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended_ao = np.asarray(terrain_ao, dtype=np.float32) + sampled_ao * layer_weight
+            existing_ao = np.asarray(terrain_ao, dtype=np.float32)
+            if old_layer_scale is not None:
+                existing_ao = existing_ao * old_layer_scale
+            blended_ao = existing_ao + sampled_ao * layer_weight
             stack.set("terrain_ao", blended_ao.astype(np.float32), "quixel_ingest")
 
     # Load displacement if present in asset and not pre-supplied
     if displacement_array is None:
-        disp_path = (
-            asset.textures.get("displacement")
-            or asset.textures.get("height")
+        displacement_array = _load_asset_texture_channel(
+            asset,
+            "displacement",
+            "height",
+            channels=1,
         )
-        if disp_path is not None:
-            try:
-                displacement_array = _load_texture_as_float(disp_path, channels=1)
-            except Exception as exc:
-                _log.debug("Displacement load failed for %s: %r", layer_id, exc)
 
     if displacement_array is not None:
         sampled_disp = _bilinear_sample_texture(
@@ -725,7 +797,10 @@ def apply_quixel_to_layer(
                 "quixel_ingest",
             )
         else:
-            blended_disp = np.asarray(terrain_disp, dtype=np.float32) + sampled_disp * layer_weight
+            existing_disp = np.asarray(terrain_disp, dtype=np.float32)
+            if old_layer_scale is not None:
+                existing_disp = existing_disp * old_layer_scale
+            blended_disp = existing_disp + sampled_disp * layer_weight
             stack.set("terrain_displacement", blended_disp.astype(np.float32), "quixel_ingest")
 
     # ------------------------------------------------------------------ #
@@ -954,12 +1029,44 @@ def pass_quixel_ingest(
             "quixel_ingest",
         )
 
+    rows, cols = np.asarray(stack.height).shape
+    if stack.get("macro_color") is None:
+        stack.set(
+            "macro_color",
+            np.zeros((rows, cols, 3), dtype=np.float32),
+            "quixel_ingest",
+        )
+    if stack.get("roughness_variation") is None:
+        stack.set(
+            "roughness_variation",
+            np.full((rows, cols), 0.5, dtype=np.float32),
+            "quixel_ingest",
+        )
+    if stack.get("terrain_normals") is None:
+        neutral_normals = np.zeros((rows, cols, 3), dtype=np.float32)
+        neutral_normals[:, :, 2] = 1.0
+        stack.set("terrain_normals", neutral_normals, "quixel_ingest")
+    if stack.get("terrain_ao") is None:
+        stack.set("terrain_ao", np.ones((rows, cols), dtype=np.float32), "quixel_ingest")
+    if stack.get("terrain_displacement") is None:
+        stack.set(
+            "terrain_displacement",
+            np.zeros((rows, cols), dtype=np.float32),
+            "quixel_ingest",
+        )
+
+    produced_channels = ("splatmap_weights_layer",) + tuple(
+        channel
+        for channel in _OPTIONAL_PBR_OUTPUT_CHANNELS
+        if stack.get(channel) is not None
+    )
+
     return PassResult(
         pass_name="quixel_ingest",
         status="ok" if not any(i.is_hard() for i in issues) else "failed",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("splatmap_weights_layer",),
+        produced_channels=produced_channels,
         metrics={
             "asset_count": len(resolved),
             "asset_ids": [a.asset_id for a in resolved],
@@ -988,13 +1095,13 @@ def register_bundle_k_quixel_ingest_pass() -> None:
             name="quixel_ingest",
             func=pass_quixel_ingest_bundle_k,
             requires_channels=("height",),
-            produces_channels=("splatmap_weights_layer",),
+            produces_channels=("splatmap_weights_layer", *_OPTIONAL_PBR_OUTPUT_CHANNELS),
             # OVERRIDE: materials_v2 (Bundle B) writes the slope/altitude-derived
             # splatmap first; quixel_ingest (Bundle K) runs after and rewrites
             # the splatmap with photoscanned Megascans material weights for
             # biomes that ship Quixel assets. The DAG orders this correctly
             # because Bundle K registers after Bundle B.
-            overrides=("splatmap_weights_layer",),
+            overrides=("splatmap_weights_layer", *_OPTIONAL_PBR_OUTPUT_CHANNELS),
             seed_namespace="quixel_ingest",
             requires_scene_read=False,
             description="Bundle K: ingest Quixel Megascans assets into splatmap layers",

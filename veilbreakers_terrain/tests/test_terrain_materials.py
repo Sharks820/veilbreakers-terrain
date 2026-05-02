@@ -620,6 +620,38 @@ class TestBiomeTransition:
             f"Noise should vary across positions, got {noise_values}"
         )
 
+    def test_transition_noise_domain_ignores_vertical_height(self):
+        """Boundary displacement must be horizontal-domain, not altitude-striped."""
+        verts_low = [(-1.0, 2.0, 0.0), (0.0, 2.0, 0.0), (1.0, 2.0, 0.0)]
+        verts_high = [(-1.0, 2.0, 100.0), (0.0, 2.0, 100.0), (1.0, 2.0, 100.0)]
+        normals = [(0.0, 0.0, 1.0)]
+        faces = [(0, 1, 2)]
+
+        low = compute_biome_transition(
+            verts_low,
+            normals,
+            faces,
+            "desert",
+            "coastal",
+            transition_width=8.0,
+            boundary_position=0.0,
+            noise_amplitude=3.0,
+            noise_scale=0.2,
+        )
+        high = compute_biome_transition(
+            verts_high,
+            normals,
+            faces,
+            "desert",
+            "coastal",
+            transition_width=8.0,
+            boundary_position=0.0,
+            noise_amplitude=3.0,
+            noise_scale=0.2,
+        )
+
+        assert low == pytest.approx(high, abs=1e-6)
+
     def test_invalid_biome_a_raises(self):
         with pytest.raises(ValueError, match="Unknown biome_a"):
             compute_biome_transition(

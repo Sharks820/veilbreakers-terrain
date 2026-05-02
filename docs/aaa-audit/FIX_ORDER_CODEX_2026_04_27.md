@@ -3746,11 +3746,11 @@ Ten channels are written to `TerrainMaskStack` via `stack.set()` by production p
 
 ### Priority 14A — Coastal Pass Registration & Channel Completeness (P0/HIGH)
 
-**FIX-14-1** `veilbreakers_terrain/handlers/terrain_pipeline.py` + `coastline.py` — `pass_coastline` is defined in `coastline.py` and listed in `__all__` but **never registered** in `terrain_pipeline.py`. The function that drives coastal erosion, tidal zone detection, and JONSWAP wave energy calculations is silently absent from the full terrain generation pipeline. Every coastal tile produces no tidal mask, no wave energy field, and no cliff retreat delta. Fix: import `pass_coastline` in `terrain_pipeline.py` and register it via `PassDefinition` after `pass_erosion` and before `pass_integrate_deltas`, with `produced_channels=("tidal", "tidal_zone_label", "wave_energy", "coastline_delta")`.
+~~**FIX-14-1**~~ **REFUTED** — `pass_coastline` IS registered in `register_bundle_i_passes()` at `veilbreakers_terrain/handlers/terrain_geology_validator.py:709–718`. The earlier finding was based on a grep that only searched `terrain_pipeline.py`; the registrar lives in the geology validator. No fix needed.
 
-**FIX-14-2** `veilbreakers_terrain/handlers/coastline.py:1165–1188` — `detect_tidal_zones()` outputs only a single-band float32 scalar `tidal` in [0,1] (binary intertidal proximity). The AAA coastal splatmap system requires a discrete `tidal_zone_label` uint8 channel with 5 zones: 0=subtidal, 1=intertidal, 2=splash, 3=spray, 4=supralittoral. Without this label, splatmap rules cannot selectively assign barnacle, kelp, wet_rock, foam, and supralittoral lichen materials to the correct tidal bands. Fix: extend `detect_tidal_zones()` to also compute and write `tidal_zone_label` (uint8 array, same shape as height) using elevation thresholds derived from `sea_level_m` and `tidal_range_m`.
+**FIX-14-2** `veilbreakers_terrain/handlers/coastline.py:1165–1188` + `terrain_geology_validator.py:714` — `detect_tidal_zones()` outputs only a single-band float32 scalar `tidal` in [0,1] (binary intertidal proximity). The AAA coastal splatmap system requires a discrete `tidal_zone_label` uint8 channel with 5 zones: 0=subtidal, 1=intertidal, 2=splash, 3=spray, 4=supralittoral. Bundle I registration's `produced_channels` at line 714 also omits this channel. Without the label, splatmap rules cannot selectively assign barnacle, kelp, wet_rock, foam, and supralittoral lichen materials to the correct tidal bands. Fix: extend `detect_tidal_zones()` to compute and write `tidal_zone_label` uint8 using elevation bands from `sea_level_m` and `tidal_range_m`; update `produced_channels` in both `pass_coastline` and `register_bundle_i_passes()`.
 
-**FIX-14-3** `veilbreakers_terrain/handlers/coastline.py:1246–1303` — `pass_coastline` calls `compute_wave_energy()` and stores the result in a local variable `energy`. The (H,W) float32 wave energy field is reported only as aggregate metrics (`wave_energy_max`, `wave_energy_mean`). No `stack.set("wave_energy", energy, "coastline")` call exists. Foam compositing and wet_rock splatmap rules that require spatially varying per-cell wave exposure are effectively blocked — they would need to re-run JONSWAP from scratch or accept a scalar proxy. Fix: add `stack.set("wave_energy", energy.astype(np.float32), "coastline")` immediately after line 1250 and include `"wave_energy"` in `produced_channels`.
+**FIX-14-3** `veilbreakers_terrain/handlers/coastline.py:1246–1303` + `terrain_geology_validator.py:714` — `pass_coastline` calls `compute_wave_energy()` and stores the result in a local variable `energy`. The (H,W) float32 wave energy field is reported only as aggregate metrics (`wave_energy_max`, `wave_energy_mean`). No `stack.set("wave_energy", energy, "coastline")` call exists. Bundle I registration's `produced_channels` also omits "wave_energy". Foam compositing and wet_rock splatmap rules that require spatially varying per-cell wave exposure are blocked. Fix: add `stack.set("wave_energy", energy.astype(np.float32), "coastline")` immediately after the `compute_wave_energy()` call and update `produced_channels` in both `pass_coastline` and `register_bundle_i_passes()`.
 
 ---
 
@@ -3758,8 +3758,9 @@ Ten channels are written to `TerrainMaskStack` via `stack.set()` by production p
 
 | Batch 14 sub-group | Active Fixes | Notes |
 |--------------------|-------------|-------|
-| 14A Coastal pipeline & tidal | 3 | pass_coastline never registered (P0); tidal_zone_label missing (P0); wave_energy not in stack (HIGH) |
-| **Total active** | **3** | FIX-14-1 through FIX-14-3. Zero false positives. |
+| 14A Coastal tidal channels | 2 | tidal_zone_label missing from detect_tidal_zones() (P0, FIX-14-2); wave_energy not written to stack (HIGH, FIX-14-3) |
+| 14A Refuted | 1 | FIX-14-1 refuted — pass_coastline IS registered in terrain_geology_validator.py |
+| **Total active** | **2** | FIX-14-2 through FIX-14-3. |
 
 ### Batch 14: Confirmed FIXED (already applied on current branch)
 

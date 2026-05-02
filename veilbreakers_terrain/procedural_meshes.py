@@ -230,6 +230,41 @@ def _auto_generate_box_projection_uvs(
     return uvs
 
 
+def _face_area_vector_len_sq(
+    vertices: list[tuple[float, float, float]],
+    face: tuple[int, ...],
+) -> float:
+    """Return squared Newell normal length for a polygon face."""
+    if len(face) < 3 or len(set(face)) != len(face):
+        return 0.0
+    nx, ny, nz = 0.0, 0.0, 0.0
+    n = len(face)
+    for i in range(n):
+        v0 = vertices[face[i]]
+        v1 = vertices[face[(i + 1) % n]]
+        nx += (v0[1] - v1[1]) * (v0[2] + v1[2])
+        ny += (v0[2] - v1[2]) * (v0[0] + v1[0])
+        nz += (v0[0] - v1[0]) * (v0[1] + v1[1])
+    return nx * nx + ny * ny + nz * nz
+
+
+def _filter_degenerate_faces(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, ...]],
+    *,
+    epsilon_sq: float = 1.0e-16,
+) -> tuple[list[tuple[int, ...]], int]:
+    """Drop zero-area faces before specs reach Blender/Unity exporters."""
+    filtered: list[tuple[int, ...]] = []
+    removed = 0
+    for face in faces:
+        if _face_area_vector_len_sq(vertices, face) > epsilon_sq:
+            filtered.append(face)
+        else:
+            removed += 1
+    return filtered, removed
+
+
 def _make_result(
     name: str,
     vertices: list[tuple[float, float, float]],
@@ -254,22 +289,30 @@ def _make_result(
         auto_uv: When True (default), auto-generate box-projection UVs
             if no explicit UVs are provided.
     """
+    degenerate_faces_removed = 0
+    if vertices and faces:
+        faces, degenerate_faces_removed = _filter_degenerate_faces(vertices, faces)
+
     # Auto-generate UVs if none provided
     if not uvs and auto_uv and vertices:
         uvs = _auto_generate_box_projection_uvs(vertices)
 
     dims = _compute_dimensions(vertices)
+    metadata: dict[str, Any] = {
+        "name": name,
+        "poly_count": len(faces),
+        "vertex_count": len(vertices),
+        "dimensions": dims,
+        **extra_meta,
+    }
+    if degenerate_faces_removed:
+        metadata["degenerate_faces_removed"] = degenerate_faces_removed
+
     result: MeshSpec = {
         "vertices": vertices,
         "faces": faces,
         "uvs": uvs or [],
-        "metadata": {
-            "name": name,
-            "poly_count": len(faces),
-            "vertex_count": len(vertices),
-            "dimensions": dims,
-            **extra_meta,
-        },
+        "metadata": metadata,
     }
     # Auto-detect sharp edges for smooth shading support
     if sharp_angle > 0 and vertices and faces:
@@ -15202,6 +15245,10 @@ def generate_curtain_mesh(
                    v[2]) for v in rv]
     verts.extend(rv_rotated)
     faces.extend(rf)
+    for vx, vy, vz in rv_rotated:
+        u = (vx + rod_len / 2) / rod_len if rod_len else 0.0
+        v = 0.95 + min(0.05, abs(vy - (height + rod_r)) + abs(vz))
+        uvs.append((max(0.0, min(1.0, u)), max(0.0, min(1.0, v))))
 
     return _make_result(f"Curtain_{style}", verts, faces, uvs=uvs,
                         style=style, folds=folds, category="furniture")
@@ -22452,6 +22499,8 @@ GENERATORS = {
         "rock": generate_rock_mesh,
         "mushroom": generate_mushroom_mesh,
         "root": generate_root_mesh,
+        "grass_clump": generate_grass_clump_mesh,
+        "shrub": generate_shrub_mesh,
         "ivy": generate_ivy_mesh,
     },
     "dungeon_prop": {

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from PIL import Image as PILImage
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +437,35 @@ def _make_fake_quixel_asset(root: Path, asset_id: str = "rock_mossy_01") -> Path
     return asset_dir
 
 
+def _write_rgb_texture(path: Path, color: tuple[int, int, int]) -> None:
+    PILImage.fromarray(
+        np.full((4, 4, 3), color, dtype=np.uint8),
+        mode="RGB",
+    ).save(path)
+
+
+def _write_l_texture(path: Path, value: int) -> None:
+    PILImage.fromarray(
+        np.full((4, 4), value, dtype=np.uint8),
+        mode="L",
+    ).save(path)
+
+
+def _make_valid_pbr_quixel_asset(root: Path, asset_id: str = "rock_pbr_01") -> Path:
+    asset_dir = root / asset_id
+    asset_dir.mkdir(parents=True)
+    _write_rgb_texture(asset_dir / f"{asset_id}_Albedo.png", (128, 96, 64))
+    _write_rgb_texture(asset_dir / f"{asset_id}_Normal.png", (128, 128, 255))
+    _write_l_texture(asset_dir / f"{asset_id}_Roughness.png", 192)
+    _write_l_texture(asset_dir / f"{asset_id}_AO.png", 160)
+    _write_l_texture(asset_dir / f"{asset_id}_Displacement.png", 64)
+    (asset_dir / f"{asset_id}.json").write_text(
+        json.dumps({"displayName": asset_id, "tags": ["rock", "moss"]}),
+        encoding="utf-8",
+    )
+    return asset_dir
+
+
 def test_ingest_quixel_asset_parses_channels():
     from veilbreakers_terrain.handlers.terrain_quixel_ingest import ingest_quixel_asset
 
@@ -509,6 +539,37 @@ def test_apply_quixel_to_layer_blends_albedo_in_linear_space(stack):
     np.testing.assert_allclose(stack.macro_color[..., 0], expected_linear, atol=1e-6)
 
 
+def test_apply_quixel_to_layer_rebalances_existing_pbr_when_layer_added(stack):
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        QuixelAsset,
+        apply_quixel_to_layer,
+    )
+
+    red = np.zeros((*stack.height.shape, 3), dtype=np.float32)
+    red[..., 0] = 1.0
+    green = np.zeros((*stack.height.shape, 3), dtype=np.float32)
+    green[..., 1] = 1.0
+
+    apply_quixel_to_layer(
+        stack,
+        "red_layer",
+        QuixelAsset(asset_id="red_01", textures={}),
+        albedo_array=red,
+    )
+    apply_quixel_to_layer(
+        stack,
+        "green_layer",
+        QuixelAsset(asset_id="green_01", textures={}),
+        albedo_array=green,
+    )
+
+    weights = stack.splatmap_weights_layer
+    np.testing.assert_allclose(weights[..., 0], 2.0 / 3.0, atol=1e-6)
+    np.testing.assert_allclose(weights[..., 1], 1.0 / 3.0, atol=1e-6)
+    np.testing.assert_allclose(stack.macro_color[..., 0], 2.0 / 3.0, atol=1e-6)
+    np.testing.assert_allclose(stack.macro_color[..., 1], 1.0 / 3.0, atol=1e-6)
+
+
 def test_load_texture_as_float_normalizes_hdr_float_without_uint8_divide(tmp_path, monkeypatch):
     import sys
     from types import SimpleNamespace
@@ -560,6 +621,83 @@ def test_pass_quixel_ingest_with_assets_param(state):
     result = pass_quixel_ingest(state, None, assets=[asset])
     assert result.status == "ok"
     assert result.metrics["asset_count"] == 1
+
+
+def test_pass_quixel_ingest_loads_asset_pbr_maps_and_declares_outputs(state, tmp_path):
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        ingest_quixel_asset,
+        pass_quixel_ingest,
+    )
+
+    asset = ingest_quixel_asset(_make_valid_pbr_quixel_asset(tmp_path))
+
+    result = pass_quixel_ingest(state, None, assets=[asset])
+
+    assert result.status == "ok"
+    assert {
+        "splatmap_weights_layer",
+        "macro_color",
+        "roughness_variation",
+        "terrain_normals",
+        "terrain_ao",
+        "terrain_displacement",
+    } <= set(result.produced_channels)
+    stack = state.mask_stack
+    assert stack.macro_color.shape == (*stack.height.shape, 3)
+    assert stack.roughness_variation.shape == stack.height.shape
+    assert stack.terrain_normals.shape == (*stack.height.shape, 3)
+    assert stack.get("terrain_ao").shape == stack.height.shape
+    assert stack.get("terrain_displacement").shape == stack.height.shape
+    assert float(stack.roughness_variation.mean()) > 0.5
+    assert float(stack.get("terrain_ao").mean()) > 0.5
+    assert 0.2 < float(stack.get("terrain_displacement").mean()) < 0.3
+    assert float(stack.terrain_normals[..., 2].mean()) > 0.99
+
+
+def test_register_quixel_ingest_declares_optional_pbr_outputs():
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import (
+        register_bundle_k_quixel_ingest_pass,
+    )
+
+    original = dict(TerrainPassController.PASS_REGISTRY)
+    try:
+        TerrainPassController.clear_registry()
+        register_bundle_k_quixel_ingest_pass()
+        definition = TerrainPassController.PASS_REGISTRY["quixel_ingest"]
+        assert {
+            "splatmap_weights_layer",
+            "macro_color",
+            "roughness_variation",
+            "terrain_normals",
+            "terrain_ao",
+            "terrain_displacement",
+        } <= set(definition.produces_channels)
+    finally:
+        TerrainPassController.clear_registry()
+        for k, v in original.items():
+            TerrainPassController.PASS_REGISTRY[k] = v
+
+
+def test_pass_quixel_ingest_populates_neutral_pbr_outputs_when_no_assets(state):
+    from veilbreakers_terrain.handlers.terrain_quixel_ingest import pass_quixel_ingest
+
+    result = pass_quixel_ingest(state, None, assets=[])
+
+    stack = state.mask_stack
+    assert result.status == "ok"
+    assert {
+        "macro_color",
+        "roughness_variation",
+        "terrain_normals",
+        "terrain_ao",
+        "terrain_displacement",
+    } <= set(result.produced_channels)
+    np.testing.assert_allclose(stack.macro_color, 0.0)
+    np.testing.assert_allclose(stack.roughness_variation, 0.5)
+    np.testing.assert_allclose(stack.terrain_normals[..., 2], 1.0)
+    np.testing.assert_allclose(stack.get("terrain_ao"), 1.0)
+    np.testing.assert_allclose(stack.get("terrain_displacement"), 0.0)
 
 
 def test_pass_quixel_ingest_handles_missing_paths(state):

@@ -17,6 +17,10 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from .terrain_pipeline import derive_pass_seed
 from .terrain_semantics import (
     BBox,
@@ -538,7 +542,7 @@ def get_sinkhole_specs(
                 seed=int(rng.integers(0, 2**31)),
             )
         except Exception:
-            pass
+            logger.debug("generate_sinkhole_mesh_spec failed for feature %s", getattr(f, 'world_pos', '?'), exc_info=True)
 
         results.append({
             "sinkhole_spec": sinkhole_spec,

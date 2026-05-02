@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 import weakref as _weakref
-from typing import Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 from .terrain_semantics import (
     BBox,
@@ -20,6 +20,59 @@ from .terrain_semantics import (
     TerrainSceneRead,
     WaterfallChainRef,
 )
+
+HeroFeatureInput = HeroFeatureRef | Mapping[str, object]
+WaterfallChainInput = WaterfallChainRef | Mapping[str, object]
+
+
+def _coerce_tuple3(raw, *, name: str) -> Tuple[float, float, float]:
+    try:
+        values = tuple(float(v) for v in raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain exactly 3 numeric values") from exc
+    if len(values) != 3:
+        raise ValueError(f"{name} must contain exactly 3 numeric values")
+    return values
+
+
+def _coerce_hero_feature(raw) -> HeroFeatureRef:
+    if isinstance(raw, HeroFeatureRef):
+        return raw
+    if isinstance(raw, dict):
+        feature_id = raw.get("feature_id", raw.get("id", raw.get("name")))
+        feature_kind = raw.get("feature_kind", raw.get("type", "unknown"))
+        position = raw.get("world_position", raw.get("location"))
+        if feature_id is None or position is None:
+            raise ValueError("hero feature dict requires feature_id/id and world_position/location")
+        return HeroFeatureRef(
+            feature_id=str(feature_id),
+            feature_kind=str(feature_kind),
+            world_position=_coerce_tuple3(position, name="hero_feature.world_position"),
+            blender_object_name=(
+                str(raw["blender_object_name"])
+                if raw.get("blender_object_name") is not None
+                else (str(raw["name"]) if raw.get("name") is not None else None)
+            ),
+        )
+    raise ValueError(f"hero_features_present item must be HeroFeatureRef or dict, got {type(raw).__name__}")
+
+
+def _coerce_waterfall_chain(raw) -> WaterfallChainRef:
+    if isinstance(raw, WaterfallChainRef):
+        return raw
+    if isinstance(raw, dict):
+        chain_id = raw.get("chain_id", raw.get("id", raw.get("name")))
+        lip = raw.get("lip_position", raw.get("location"))
+        pool = raw.get("pool_position", lip)
+        if chain_id is None or lip is None:
+            raise ValueError("waterfall chain dict requires chain_id/id and lip_position/location")
+        return WaterfallChainRef(
+            chain_id=str(chain_id),
+            lip_position=_coerce_tuple3(lip, name="waterfall_chain.lip_position"),
+            pool_position=_coerce_tuple3(pool, name="waterfall_chain.pool_position"),
+            drop_height=float(raw.get("drop_height", 0.0)),
+        )
+    raise ValueError(f"waterfall_chains item must be WaterfallChainRef or dict, got {type(raw).__name__}")
 
 
 def _walk_scene() -> dict:
@@ -100,9 +153,9 @@ def capture_scene_read(
     reviewer: str,
     focal_point_hint: Optional[Tuple[float, float, float]] = None,
     major_landforms: Sequence[str] = (),
-    hero_features_present: Sequence[HeroFeatureRef] = (),
+    hero_features_present: Sequence[HeroFeatureInput] = (),
     hero_features_missing: Sequence[str] = (),
-    waterfall_chains: Sequence[WaterfallChainRef] = (),
+    waterfall_chains: Sequence[WaterfallChainInput] = (),
     cave_candidates: Sequence[Tuple[float, float, float]] = (),
     protected_zones_in_region: Sequence[str] = (),
     edit_scope: Optional[BBox] = None,
@@ -169,10 +222,13 @@ def capture_scene_read(
             ]
 
     focal = (
-        tuple(float(x) for x in focal_point_hint)
+        _coerce_tuple3(focal_point_hint, name="focal_point_hint")
         if focal_point_hint is not None
         else (0.0, 0.0, 0.0)
     )
+    hero_refs = tuple(_coerce_hero_feature(h) for h in hero_features_present)
+    waterfall_refs = tuple(_coerce_waterfall_chain(w) for w in waterfall_chains)
+    cave_refs = tuple(_coerce_tuple3(c, name="cave_candidate") for c in cave_candidates)
     scope = edit_scope if edit_scope is not None else BBox(
         min_x=focal[0] - 25.0,
         min_y=focal[1] - 25.0,
@@ -185,10 +241,10 @@ def capture_scene_read(
         timestamp=time.time(),
         major_landforms=tuple(major_landforms),
         focal_point=focal,
-        hero_features_present=tuple(hero_features_present),
+        hero_features_present=hero_refs,
         hero_features_missing=tuple(hero_features_missing),
-        waterfall_chains=tuple(waterfall_chains),
-        cave_candidates=tuple(tuple(c) for c in cave_candidates),
+        waterfall_chains=waterfall_refs,
+        cave_candidates=cave_refs,
         protected_zones_in_region=tuple(protected_zones_in_region),
         edit_scope=scope,
         success_criteria=tuple(success_criteria),
@@ -198,7 +254,7 @@ def capture_scene_read(
         extended_at=time.time(),
         terrain_content_hash=terrain_content_hash,
         focal_direction=(
-            tuple(float(x) for x in _live.get("focal_direction", ()))
+            _coerce_tuple3(_live.get("focal_direction", ()), name="focal_direction")
             if _live.get("focal_direction")
             else None
         ),
