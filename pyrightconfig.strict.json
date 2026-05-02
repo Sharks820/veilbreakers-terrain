@@ -3,6 +3,7 @@
     "scripts",
     "veilbreakers_terrain"
   ],
+  "stubPath": "typings",
   "exclude": [
     "**/__pycache__",
     ".venv",
