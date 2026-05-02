@@ -3,12 +3,10 @@
   "scene": "sunken_coastal_ruins",
   "tile_m": 1024.0,
   "sea_level_m": 0.0,
-  "heightmap_min_m": -27.63789176940918,
-  "heightmap_max_m": 142.5133819580078,
+  "heightmap_min_m": -26.584850311279297,
+  "heightmap_max_m": 140.48712158203125,
   "coastal_pines": 50,
-  "sea_grass_tufts": 125,
-  "failures": 1,
-  "failure_stages": [
-    "sea_plane"
-  ]
+  "sea_grass_tufts": 92,
+  "failures": 0,
+  "failure_stages": []
 }
