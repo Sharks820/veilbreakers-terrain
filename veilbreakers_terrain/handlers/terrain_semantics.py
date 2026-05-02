@@ -1444,7 +1444,7 @@ class ValidationIssue:
 @dataclass
 class PassResult:
     pass_name: str
-    status: str  # "ok" | "warning" | "failed" | "skipped"
+    status: str  # "ok" | "warning" | "failed" | "skipped" | "dry_run"
     duration_seconds: float
     produced_channels: Tuple[str, ...] = ()
     consumed_channels: Tuple[str, ...] = ()
@@ -1459,7 +1459,7 @@ class PassResult:
 
     _VALID_STATUSES: "Tuple[str, ...]" = field(
         init=False, repr=False, compare=False,
-        default=("ok", "warning", "failed", "skipped"),
+        default=("ok", "warning", "failed", "skipped", "dry_run"),
     )
 
     def __post_init__(self) -> None:
