@@ -1102,9 +1102,8 @@ def apply_coastal_erosion(
             dist = new_dist
         fetch_cells = dist
 
-    # Normalise fetch to [0, 1] — longer unobstructed fetch → higher energy
+    # Longer unobstructed fetch expands the active wave-base erosion band.
     max_fetch = float(fetch_cells.max()) if fetch_cells.max() > 0 else 1.0
-    fetch_norm = fetch_cells / max_fetch  # 0 at ocean edge, 1 at inland extremity
 
     # Wave energy peaks at shoreline (small fetch) and decays inland
     # A Gaussian centred on ~0 fetch with sigma of 15% of map size models
@@ -1185,6 +1184,19 @@ def detect_tidal_zones(
     tidal_f32 = tidal.astype(np.float32)
 
     stack.set("tidal", tidal_f32, "coastline")
+
+    # 5-zone tidal label: subtidal=0, intertidal=1, splash=2, spray=3, supralittoral=4
+    low = sea_level_m - half
+    high_z = sea_level_m + half
+    splash_top = high_z + tidal_range_m
+    spray_top = high_z + 3.0 * tidal_range_m
+    label = np.zeros_like(h, dtype=np.uint8)
+    label[h >= low] = 1
+    label[h >= high_z] = 2
+    label[h >= splash_top] = 3
+    label[h >= spray_top] = 4
+    stack.set("tidal_zone_label", label, "coastline")
+
     return tidal_f32
 
 
@@ -1195,7 +1207,7 @@ def pass_coastline(
     """Bundle I pass: compute coastal wave energy, tidal zone, and cliff retreat.
 
     Consumes: height
-    Produces: tidal, coastline_delta
+    Produces: tidal, tidal_zone_label, wave_energy, coastline_delta
 
     Mutation behaviour
     ------------------
@@ -1242,12 +1254,13 @@ def pass_coastline(
     # Tidal zone
     tidal = detect_tidal_zones(stack, sea_level, tidal_range)
 
-    # Wave energy — uses JONSWAP fetch/wind model; reported in metrics
+    # Wave energy — uses JONSWAP fetch/wind model; written to stack for splatmap rules
     energy = compute_wave_energy(
         stack, sea_level, wave_dir,
         fetch_m=fetch_m,
         wind_speed_ms=wind_speed_ms,
     )
+    stack.set("wave_energy", energy.astype(np.float32), "coastline")
 
     retreat_mean = 0.0
     if apply_retreat:
@@ -1281,7 +1294,7 @@ def pass_coastline(
 
     stack.set("coastline_delta", final_delta, "coastline")
 
-    produced = ("tidal", "coastline_delta")
+    produced = ("tidal", "tidal_zone_label", "wave_energy", "coastline_delta")
 
     return _PR(
         pass_name="coastline",

@@ -685,6 +685,63 @@ def test_validate_strahler_ordering_none_safe():
     assert validate_strahler_ordering(None) == []
 
 
+def test_validate_strahler_ordering_consumes_segment_network():
+    from types import SimpleNamespace
+
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
+        validate_strahler_ordering,
+    )
+
+    net = SimpleNamespace(
+        segments={
+            10: SimpleNamespace(segment_id=10, source_node_id=1, target_node_id=2),
+            11: SimpleNamespace(segment_id=11, source_node_id=2, target_node_id=3),
+        },
+        strahler_orders={10: 4, 11: 1},
+    )
+
+    issues = validate_strahler_ordering(net)
+    assert any(i.code == "STRAHLER_JUMP" for i in issues)
+
+
+def test_validate_strahler_ordering_accepts_valid_confluence_segments():
+    from types import SimpleNamespace
+
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
+        validate_strahler_ordering,
+    )
+
+    net = SimpleNamespace(
+        segments={
+            10: SimpleNamespace(segment_id=10, source_node_id=1, target_node_id=3),
+            11: SimpleNamespace(segment_id=11, source_node_id=2, target_node_id=3),
+            12: SimpleNamespace(segment_id=12, source_node_id=3, target_node_id=4),
+        },
+        strahler_orders={10: 1, 11: 1, 12: 2},
+    )
+
+    assert validate_strahler_ordering(net) == []
+
+
+def test_validate_strahler_ordering_flags_downstream_topology_fork():
+    from types import SimpleNamespace
+
+    from veilbreakers_terrain.handlers.terrain_geology_validator import (
+        validate_strahler_ordering,
+    )
+
+    net = SimpleNamespace(
+        segments={
+            10: SimpleNamespace(segment_id=10, source_node_id=1, target_node_id=2),
+            11: SimpleNamespace(segment_id=11, source_node_id=1, target_node_id=3),
+        },
+        strahler_orders={10: 1, 11: 1},
+    )
+
+    issues = validate_strahler_ordering(net)
+    assert any(i.code == "STRAHLER_BRANCHING_DOWNSTREAM" for i in issues)
+
+
 def test_validate_glacial_plausibility_below_treeline_fails():
     from veilbreakers_terrain.handlers.terrain_geology_validator import (
         validate_glacial_plausibility,

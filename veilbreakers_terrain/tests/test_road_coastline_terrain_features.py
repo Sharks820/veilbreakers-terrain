@@ -5,7 +5,15 @@ determinism, edge cases, and feature correctness.
 """
 
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
 
 
 # ===================================================================
@@ -1157,3 +1165,212 @@ class TestHandlerInvocation:
         assert 0.0 <= result["water_coverage"] <= 1.0
         assert result["vertex_count"] > 0
         assert result["face_count"] > 0
+
+
+# ===================================================================
+# Tidal Zone Label Tests (FIX-14-2)
+# ===================================================================
+
+
+def _make_tidal_stack(height_values: list[float]) -> "TerrainMaskStack":
+    import numpy as np
+    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+
+    n = len(height_values)
+    h = np.array(height_values, dtype=np.float32).reshape(n, 1)
+    return TerrainMaskStack(
+        tile_size=0,
+        cell_size=1.0,
+        world_origin_x=0.0,
+        world_origin_y=0.0,
+        tile_x=0,
+        tile_y=0,
+        height=h,
+    )
+
+
+class TestTidalZoneLabel:
+    """detect_tidal_zones must emit tidal_zone_label uint8 with 5-zone classification."""
+
+    def test_subtidal_below_low(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        # sea_level=0, tidal_range=4 → half=2, low=-2
+        stack = _make_tidal_stack([-5.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label"))
+        assert label[0, 0] == 0  # subtidal
+
+    def test_intertidal_in_band(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        stack = _make_tidal_stack([0.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label"))
+        assert label[0, 0] == 1  # intertidal
+
+    def test_splash_above_high(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        # high = 2.0, splash_top = 6.0
+        stack = _make_tidal_stack([3.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label"))
+        assert label[0, 0] == 2  # splash
+
+    def test_spray_above_splash_top(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        # splash_top = 6.0, spray_top = 14.0
+        stack = _make_tidal_stack([7.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label"))
+        assert label[0, 0] == 3  # spray
+
+    def test_supralittoral_above_spray_top(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        # spray_top = 14.0
+        stack = _make_tidal_stack([15.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label"))
+        assert label[0, 0] == 4  # supralittoral
+
+    def test_all_five_zones_in_one_column(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        # sea_level=0, tidal_range=4: low=-2, high=2, splash_top=6, spray_top=14
+        heights = [-5.0, 0.0, 3.0, 7.0, 15.0]
+        stack = _make_tidal_stack(heights)
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label")).ravel()
+        assert list(label) == [0, 1, 2, 3, 4]
+
+    def test_label_dtype_is_uint8(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        stack = _make_tidal_stack([0.0, 5.0, 20.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        label = np.asarray(stack.get("tidal_zone_label"))
+        assert label.dtype == np.uint8
+
+    def test_tidal_float32_still_written(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        stack = _make_tidal_stack([0.0, 5.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        tidal = stack.get("tidal")
+        assert tidal is not None
+        assert np.asarray(tidal).dtype == np.float32
+
+    def test_zone_label_source_attribution(self):
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        stack = _make_tidal_stack([0.0])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=4.0)
+        # Confirm channel was registered under coastline ownership
+        assert stack.get("tidal_zone_label") is not None
+
+
+# ===================================================================
+# Wave Energy Stack Channel Tests (FIX-14-3)
+# ===================================================================
+
+
+class TestWaveEnergyStackChannel:
+    """pass_coastline must write wave_energy float32 to the stack."""
+
+    def _make_flat_stack(
+        self,
+        size: int = 16,
+        elevation: float = 5.0,
+    ) -> "TerrainMaskStack":
+        import numpy as np
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+
+        h = np.full((size, size), elevation, dtype=np.float32)
+        return TerrainMaskStack(
+            tile_size=0,
+            cell_size=10.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+            height=h,
+        )
+
+    def _make_state(self, stack: "TerrainMaskStack") -> "TerrainPipelineState":
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            BBox,
+            TerrainIntentState,
+            TerrainPipelineState,
+        )
+
+        bounds = BBox(0.0, 0.0, 16.0, 16.0)
+        intent = TerrainIntentState(
+            seed=42,
+            region_bounds=bounds,
+            tile_size=0,
+            cell_size=10.0,
+            composition_hints={},
+        )
+        return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    def test_wave_energy_channel_written_after_pass(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import pass_coastline
+
+        stack = self._make_flat_stack()
+        state = self._make_state(stack)
+        pass_coastline(state, region=None)
+        energy = stack.get("wave_energy")
+        assert energy is not None
+        assert np.asarray(energy).dtype == np.float32
+
+    def test_wave_energy_shape_matches_heightmap(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import pass_coastline
+
+        stack = self._make_flat_stack(size=12)
+        state = self._make_state(stack)
+        pass_coastline(state, region=None)
+        energy = np.asarray(stack.get("wave_energy"))
+        assert energy.shape == (12, 12)
+
+    def test_wave_energy_non_negative(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import pass_coastline
+
+        stack = self._make_flat_stack()
+        state = self._make_state(stack)
+        pass_coastline(state, region=None)
+        energy = np.asarray(stack.get("wave_energy"))
+        assert float(energy.min()) >= 0.0
+
+    def test_pass_produced_channels_includes_wave_energy_and_label(self):
+        from veilbreakers_terrain.handlers.coastline import pass_coastline
+
+        stack = self._make_flat_stack()
+        state = self._make_state(stack)
+        result = pass_coastline(state, region=None)
+        assert "wave_energy" in result.produced_channels
+        assert "tidal_zone_label" in result.produced_channels
+
+    def test_tidal_zone_label_written_by_pass(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import pass_coastline
+
+        stack = self._make_flat_stack(elevation=5.0)
+        state = self._make_state(stack)
+        pass_coastline(state, region=None)
+        label = stack.get("tidal_zone_label")
+        assert label is not None
+        assert np.asarray(label).dtype == np.uint8
