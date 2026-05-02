@@ -39,6 +39,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -93,6 +94,7 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         hf_endpoint: Optional[str] = None,
         hf_token: Optional[str] = None,
         timeout_s: float = 1800.0,
+        job_retention_s: float = 900.0,
     ) -> None:
         """Initialise the provider.
 
@@ -110,6 +112,8 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
             Override via HUGGINGFACE_TOKEN or HF_TOKEN env vars.
         timeout_s:
             Hard timeout for a single generate_blocking() call in seconds.
+        job_retention_s:
+            Seconds to retain completed job metadata before pruning temp files.
         """
         env_mode = os.environ.get("HUNYUAN3D2_MODE", "").lower()
         if env_mode == "local":
@@ -135,6 +139,7 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         )
         self._mode = _MODE_HF_ENDPOINT if self._hf_endpoint else _MODE_HF_SPACE
         self._timeout_s = timeout_s
+        self._job_retention_s = job_retention_s
 
         self._jobs: Dict[str, Tuple[threading.Thread, dict]] = {}
         self._jobs_lock = threading.Lock()
@@ -144,6 +149,22 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
             self._mode,
             self._hf_endpoint if self._mode == _MODE_HF_ENDPOINT else self._hf_space,
         )
+
+    def is_available(self, *, timeout_s: float = 10.0) -> bool:
+        """Return whether the configured Hunyuan backend can be reached."""
+        holder: dict[str, bool] = {"ok": False}
+
+        def _probe() -> None:
+            try:
+                self._get_gradio_client()
+                holder["ok"] = True
+            except Exception:
+                logger.debug("[hunyuan3d2] availability probe failed", exc_info=True)
+
+        thread = threading.Thread(target=_probe, daemon=True, name="hy3d-probe")
+        thread.start()
+        thread.join(timeout=max(float(timeout_s), 0.0))
+        return bool(holder["ok"])
 
     # ------------------------------------------------------------------
     # gradio_client helpers
@@ -255,14 +276,48 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         logger.info("[hunyuan3d2] downloaded %s -> %s", request.species_id, dest_file)
         return dest_file
 
+    def _cleanup_tmp_dir(self, tmp_dir: Path | None) -> None:
+        """Best-effort cleanup for provider-owned temp dirs."""
+        if tmp_dir is None:
+            return
+        try:
+            shutil.rmtree(str(tmp_dir), ignore_errors=True)
+        except Exception:
+            logger.debug("[hunyuan3d2] temp cleanup failed for %s", tmp_dir, exc_info=True)
+
+    def _prune_finished_jobs_locked(self) -> None:
+        """Drop stale completed/failed jobs. Caller must hold ``_jobs_lock``."""
+        if self._job_retention_s < 0:
+            return
+        now = time.monotonic()
+        expired: list[str] = []
+        for job_id, (_thread, holder) in self._jobs.items():
+            status = holder.get("status")
+            finished_at = holder.get("finished_at")
+            if status not in (JobStatus.COMPLETED, JobStatus.FAILED):
+                continue
+            if finished_at is None:
+                continue
+            if now - float(finished_at) >= self._job_retention_s:
+                expired.append(job_id)
+        for job_id in expired:
+            _thread, holder = self._jobs.pop(job_id)
+            self._cleanup_tmp_dir(holder.get("tmp_dir"))
+
     # ------------------------------------------------------------------
     # ExternalAssetProvider ABC — submit / poll / download
     # ------------------------------------------------------------------
 
     def submit(self, request: AssetGenerationRequest) -> str:
         job_id = str(uuid.uuid4())
-        holder: dict[str, Any] = {"status": JobStatus.PENDING, "glb_path": None, "error": None}
         tmp_dir = Path(tempfile.mkdtemp(prefix=f"hy3d_{job_id[:8]}_"))
+        holder: dict[str, Any] = {
+            "status": JobStatus.PENDING,
+            "glb_path": None,
+            "error": None,
+            "tmp_dir": tmp_dir,
+            "finished_at": None,
+        }
 
         def _run():
             with self._jobs_lock:
@@ -272,14 +327,18 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
                 with self._jobs_lock:
                     holder["glb_path"] = glb
                     holder["status"] = JobStatus.COMPLETED
+                    holder["finished_at"] = time.monotonic()
             except Exception as exc:
                 logger.error("[hunyuan3d2] job %s failed: %s", job_id, exc)
+                self._cleanup_tmp_dir(tmp_dir)
                 with self._jobs_lock:
                     holder["error"] = exc
                     holder["status"] = JobStatus.FAILED
+                    holder["finished_at"] = time.monotonic()
 
         t = threading.Thread(target=_run, daemon=True, name=f"hy3d-{job_id[:8]}")
         with self._jobs_lock:
+            self._prune_finished_jobs_locked()
             self._jobs[job_id] = (t, holder)
         t.start()
         logger.info("[hunyuan3d2] queued job %s for species %s", job_id, request.species_id)
@@ -287,6 +346,7 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
 
     def poll(self, job_id: str) -> JobStatus:
         with self._jobs_lock:
+            self._prune_finished_jobs_locked()
             entry = self._jobs.get(job_id)
             if entry is None:
                 raise KeyError(f"[hunyuan3d2] unknown job_id {job_id!r}")
@@ -310,9 +370,16 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
             status = holder["status"]
             error = holder.get("error")
             glb_tmp = holder.get("glb_path")
+            tmp_dir = holder.get("tmp_dir")
         if status == JobStatus.FAILED:
+            with self._jobs_lock:
+                self._jobs.pop(job_id, None)
+            self._cleanup_tmp_dir(tmp_dir)
             raise RuntimeError(f"[hunyuan3d2] job {job_id} failed: {error}")
         if glb_tmp is None:
+            with self._jobs_lock:
+                self._jobs.pop(job_id, None)
+            self._cleanup_tmp_dir(tmp_dir)
             raise RuntimeError(
                 f"[hunyuan3d2] job {job_id} completed without a glb_path (status={status})"
             )
@@ -320,10 +387,9 @@ class Hunyuan3D2Provider(ExternalAssetProvider):
         dest_file = dest_dir / glb_tmp.name
         if glb_tmp != dest_file:
             shutil.copy2(str(glb_tmp), str(dest_file))
-        try:
-            shutil.rmtree(str(glb_tmp.parent), ignore_errors=True)
-        except Exception:
-            pass
+        with self._jobs_lock:
+            self._jobs.pop(job_id, None)
+        self._cleanup_tmp_dir(tmp_dir)
         logger.info("[hunyuan3d2] moved %s -> %s", glb_tmp.name, dest_file)
         return dest_file
 

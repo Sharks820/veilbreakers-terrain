@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -245,6 +246,52 @@ def test_hunyuan3d2_has_abc_methods():
     assert callable(getattr(Hunyuan3D2Provider, "submit", None))
     assert callable(getattr(Hunyuan3D2Provider, "poll", None))
     assert callable(getattr(Hunyuan3D2Provider, "download", None))
+
+
+def test_hunyuan3d2_availability_probe_is_fail_closed(monkeypatch: pytest.MonkeyPatch):
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    provider = Hunyuan3D2Provider()
+
+    def _client_ok(_self: Any) -> object:
+        return object()
+
+    monkeypatch.setattr(type(provider), "_get_gradio_client", _client_ok)
+    assert provider.is_available(timeout_s=0.1) is True
+
+    def _raise(_self: Any) -> None:
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(type(provider), "_get_gradio_client", _raise)
+    assert provider.is_available(timeout_s=0.1) is False
+
+
+def test_hunyuan3d2_prunes_finished_jobs_and_temp_dirs(tmp_path: Path):
+    import threading
+
+    from veilbreakers_terrain.providers.hunyuan3d2_provider import Hunyuan3D2Provider
+
+    provider = Hunyuan3D2Provider(job_retention_s=0.0)
+    tmp_dir = tmp_path / "hy3d_tmp"
+    tmp_dir.mkdir()
+    (tmp_dir / "stale.glb").write_bytes(b"glb")
+    thread = threading.Thread(target=lambda: None)
+    jobs = getattr(provider, "_jobs")
+    lock = getattr(provider, "_jobs_lock")
+
+    with lock:
+        jobs["done"] = (
+            thread,
+            {
+                "status": JobStatus.COMPLETED,
+                "finished_at": 0.0,
+                "tmp_dir": tmp_dir,
+            },
+        )
+        getattr(provider, "_prune_finished_jobs_locked")()
+
+    assert "done" not in jobs
+    assert not tmp_dir.exists()
 
 
 def test_hunyuan3d2_exported_from_providers_package():

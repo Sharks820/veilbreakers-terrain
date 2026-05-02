@@ -5,23 +5,23 @@
     "blender_tool": 1470,
     "camera_readability": 357,
     "core": 8,
-    "geometry_mesh": 1325,
-    "materials_texturing": 728,
-    "pipeline_wiring": 1088,
-    "scatter_ecology": 680,
+    "geometry_mesh": 1326,
+    "materials_texturing": 729,
+    "pipeline_wiring": 1089,
+    "scatter_ecology": 681,
     "visual_qa": 369,
     "water": 748
   },
   "false_grade_count": 0,
   "risk_counts": {
-    "LOW": 1731
+    "LOW": 1732
   },
   "tool_blocker_count": 0,
-  "total_callables": 1731,
+  "total_callables": 1732,
   "wiring_status_counts": {
     "direct_test_covered": 237,
     "helper_reachable": 1284,
     "runtime_primary": 207,
-    "unknown": 3
+    "unknown": 4
   }
 }

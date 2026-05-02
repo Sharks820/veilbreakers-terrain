@@ -357,6 +357,8 @@ class TerrainMaskStack:
     roughness_breakup: Optional[np.ndarray] = None
     roughness_variation: Optional[np.ndarray] = None
     macro_color: Optional[np.ndarray] = None
+    # Scalar proximity to active lava / hot flow cells, 0=dry/cold and 1=active core.
+    lava_prox: Optional[np.ndarray] = None
 
     # Ecosystem masks (Pass 9)
     audio_reverb_class: Optional[np.ndarray] = None
@@ -600,6 +602,7 @@ class TerrainMaskStack:
             "roughness_breakup",
             "roughness_variation",
             "macro_color",
+            "lava_prox",
             "audio_reverb_class",
             "gameplay_zone",
             "wind_field",
