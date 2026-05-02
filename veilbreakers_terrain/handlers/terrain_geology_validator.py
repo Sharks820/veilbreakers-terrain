@@ -158,22 +158,101 @@ def validate_strahler_ordering(
             return obj.get(name, default)
         return getattr(obj, name, default)
 
+    def _first_present(obj: Any, *names: str) -> Any:
+        for name in names:
+            value = _get(obj, name)
+            if value is not None:
+                return value
+        return None
+
+    def _segment_edges_from_network(obj: Any) -> Optional[Dict[str, Any]]:
+        segments_obj = _get(obj, "segments")
+        if segments_obj is None:
+            return None
+        segment_values = (
+            list(segments_obj.values())
+            if isinstance(segments_obj, dict)
+            else list(segments_obj)
+        )
+        asserted_by_segment = _get(obj, "strahler_orders", {}) or {}
+        edges: list[dict[str, Any]] = []
+        for segment in segment_values:
+            src = _get(segment, "source_node_id")
+            dst = _get(segment, "target_node_id")
+            if src is None or dst is None:
+                continue
+            segment_id = _get(segment, "segment_id")
+            asserted = _get(segment, "strahler_order")
+            if asserted is None and segment_id is not None:
+                asserted = asserted_by_segment.get(segment_id)
+                if asserted is None:
+                    asserted = asserted_by_segment.get(str(segment_id))
+            edge = {"from": src, "to": dst}
+            if asserted is not None:
+                edge["strahler_order"] = int(asserted)
+            edges.append(edge)
+        if not edges:
+            return None
+        nodes_obj = _get(obj, "nodes", {}) or {}
+        node_values = (
+            list(nodes_obj.values())
+            if isinstance(nodes_obj, dict)
+            else list(nodes_obj)
+        )
+        nodes = []
+        for node in node_values:
+            node_id = _get(node, "node_id", _get(node, "id"))
+            if node_id is None:
+                continue
+            node_row = {"id": node_id}
+            node_order = _get(node, "strahler_order")
+            if node_order is not None:
+                node_row["strahler_order"] = int(node_order)
+            nodes.append(node_row)
+        return {"nodes": nodes, "edges": edges}
+
+    segment_network = _segment_edges_from_network(water_network)
+    if segment_network is not None:
+        water_network = segment_network
+
     # ------------------------------------------------------------------
     # Path A: dict with "nodes"/"edges" — full BFS topology validation
     # ------------------------------------------------------------------
     if isinstance(water_network, dict) and "edges" in water_network:
+        nodes_raw: List[Any] = list(water_network.get("nodes", []) or [])
         edges_raw: List[Any] = list(water_network.get("edges", []))
         # Build adjacency: downstream_of[node] = list of upstream nodes
         # Edges are directed FROM upstream TO downstream.
         downstream: Dict[Any, Any] = {}   # node -> downstream node
         upstream_of: Dict[Any, List[Any]] = {}  # node -> [upstream nodes]
         asserted_order: Dict[tuple, int] = {}  # (from, to) -> strahler_order
+        asserted_node_order: Dict[Any, int] = {}
+
+        for node in nodes_raw:
+            node_id = _get(node, "id", _get(node, "node_id"))
+            node_order = _get(node, "strahler_order", _get(node, "order"))
+            if node_id is not None and node_order is not None:
+                asserted_node_order[node_id] = int(node_order)
 
         for e in edges_raw:
-            src = _get(e, "from") or _get(e, "source")
-            dst = _get(e, "to") or _get(e, "target")
+            src = _first_present(e, "from", "source")
+            dst = _first_present(e, "to", "target")
             if src is None or dst is None:
                 continue
+            if src in downstream and downstream[src] != dst:
+                issues.append(
+                    ValidationIssue(
+                        code="STRAHLER_BRANCHING_DOWNSTREAM",
+                        severity="hard",
+                        affected_feature=f"node_{src}",
+                        message=(
+                            f"stream node {src!r} has multiple downstream "
+                            "targets; river graph must split braided flow into "
+                            "separate segment geometry, not topology forks"
+                        ),
+                        remediation="repair segment directions or merge forked downstream links",
+                    )
+                )
             downstream[src] = dst
             upstream_of.setdefault(dst, []).append(src)
             so = _get(e, "strahler_order")
@@ -181,20 +260,36 @@ def validate_strahler_ordering(
                 asserted_order[(src, dst)] = int(so)
 
         # Identify headwaters (nodes with no upstream neighbors)
-        all_nodes: set = set(downstream.keys()) | set(upstream_of.keys())
+        all_nodes: set = (
+            set(downstream.keys())
+            | set(upstream_of.keys())
+            | set(asserted_node_order.keys())
+        )
         headwaters = [n for n in all_nodes if n not in upstream_of]
+        if edges_raw and not headwaters:
+            issues.append(
+                ValidationIssue(
+                    code="STRAHLER_NO_HEADWATER",
+                    severity="hard",
+                    message="water network has edges but no headwater/source nodes",
+                    remediation="break graph cycles or fix upstream/downstream directions",
+                )
+            )
 
         # BFS/post-order from headwaters to outlets to compute Strahler order.
         # We use iterative post-order DFS so deep networks don't hit Python's
         # recursion limit.
         computed: Dict[Any, int] = {}
+        cycle_nodes: set[Any] = set()
 
         def _compute_order(start_node: Any) -> int:
             """Iterative post-order DFS to compute Strahler order."""
             stack = [(start_node, False)]
+            visiting: set[Any] = set()
             while stack:
                 node, visited = stack.pop()
                 if visited:
+                    visiting.discard(node)
                     ups = upstream_of.get(node, [])
                     if not ups:
                         computed[node] = 1
@@ -207,28 +302,77 @@ def validate_strahler_ordering(
                         else:
                             computed[node] = child_orders[0]
                 else:
+                    if node in computed:
+                        continue
+                    if node in visiting:
+                        cycle_nodes.add(node)
+                        continue
+                    visiting.add(node)
                     stack.append((node, True))
                     for up in upstream_of.get(node, []):
+                        if up in visiting:
+                            cycle_nodes.update((node, up))
+                            continue
                         if up not in computed:
                             stack.append((up, False))
             return computed.get(start_node, 1)
 
         # Seed computation from every outlet (nodes with no downstream)
         outlets = [n for n in all_nodes if n not in downstream]
+        if edges_raw and not outlets:
+            issues.append(
+                ValidationIssue(
+                    code="STRAHLER_NO_OUTLET",
+                    severity="hard",
+                    message="water network has edges but no outlet/drain node; cycle likely",
+                    remediation="break graph cycles or add an outlet/drain node",
+                )
+            )
         for outlet in outlets:
             _compute_order(outlet)
+
+        if cycle_nodes:
+            ordered_cycle_nodes = sorted(cycle_nodes, key=str)
+            issues.append(
+                ValidationIssue(
+                    code="STRAHLER_CYCLE_OR_DISCONNECTED",
+                    severity="hard",
+                    message=(
+                        "water network contains a cycle connected to an outlet: "
+                        f"{ordered_cycle_nodes[:8]}"
+                    ),
+                    remediation="break graph cycles before computing Strahler ordering",
+                )
+            )
+
+        unresolved = sorted((all_nodes - set(computed.keys())), key=str)
+        if edges_raw and unresolved:
+            issues.append(
+                ValidationIssue(
+                    code="STRAHLER_CYCLE_OR_DISCONNECTED",
+                    severity="hard",
+                    message=(
+                        "water network contains nodes unreachable from outlets: "
+                        f"{unresolved[:8]}"
+                    ),
+                    remediation="repair cycles, disconnected islands, or edge directions",
+                )
+            )
 
         # Validate each edge: upstream node order must be <= downstream order.
         # A violation occurs when a higher-order stream feeds into a lower-order
         # node — impossible under Strahler rules.
         for e_idx, e in enumerate(edges_raw):
-            src = _get(e, "from") or _get(e, "source")
-            dst = _get(e, "to") or _get(e, "target")
+            src = _first_present(e, "from", "source")
+            dst = _first_present(e, "to", "target")
             if src is None or dst is None:
                 continue
 
-            src_order = asserted_order.get((src, dst), computed.get(src, 1))
-            dst_order = computed.get(dst, 1)
+            src_order = asserted_order.get(
+                (src, dst),
+                asserted_node_order.get(src, computed.get(src, 1)),
+            )
+            dst_order = asserted_node_order.get(dst, computed.get(dst, 1))
 
             if src_order > dst_order:
                 code = (
@@ -567,7 +711,7 @@ def register_bundle_i_passes() -> None:
             name="coastline",
             func=_coastline.pass_coastline,
             requires_channels=("height",),
-            produces_channels=("tidal", "coastline_delta"),
+            produces_channels=("tidal", "tidal_zone_label", "wave_energy", "coastline_delta"),
             seed_namespace="coastline",
             requires_scene_read=False,
             description="Bundle I: wave energy + tidal zones + cliff retreat",

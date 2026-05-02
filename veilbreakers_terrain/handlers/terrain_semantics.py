@@ -315,6 +315,10 @@ class TerrainMaskStack:
     wet_rock: Optional[np.ndarray] = None
     riverbed_caustics: Optional[np.ndarray] = None
     tidal: Optional[np.ndarray] = None
+    # uint8 (H, W): 5-zone tidal classification (subtidal=0, intertidal=1, splash=2, spray=3, supralittoral=4)
+    tidal_zone_label: Optional[np.ndarray] = None
+    # float32 (H, W): per-cell JONSWAP wave energy in J/m², used by splatmap foam/wet_rock rules
+    wave_energy: Optional[np.ndarray] = None
     waterfall_velocity: Optional[np.ndarray] = None
     # Float32 (H, W): per-cell wave displacement amplitude in metres.
     # Derived from waterfall_velocity magnitude * 0.05 (5 cm per m/s).
@@ -689,6 +693,9 @@ class TerrainMaskStack:
             "terrain_ao",
             "terrain_displacement",
             "ridge_eroded",
+            # Bundle I coastline channels (FIX-14-2, FIX-14-3)
+            "tidal_zone_label",
+            "wave_energy",
         ),
     )
 
