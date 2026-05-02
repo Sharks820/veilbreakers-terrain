@@ -254,6 +254,24 @@ def test_default_standard_scene_pipeline_closes_legacy_batch_1_order():
     assert seq[-1] == "validation_full"
 
 
+def test_pipeline_dry_run_returns_valid_pass_results_for_default_sequence():
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+
+    state = _build_state(
+        tile_size=24,
+        include_scene_read=True,
+        quality_profile="standard",
+    )
+    controller = TerrainPassController(state)
+
+    results = controller.run_pipeline(dry_run=True)
+
+    assert results
+    assert all(r.status == "dry_run" for r in results)
+    assert all(r.metrics.get("dry_run") is True for r in results)
+    assert "pass_water_depth" in [r.pass_name for r in results]
+
+
 def test_controller_default_pipeline_uses_validation_minimal_for_preview():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
