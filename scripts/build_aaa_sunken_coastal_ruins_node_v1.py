@@ -110,12 +110,33 @@ def _compose_coastal_heightmap():
         ridge_dist = np.sqrt((dx / rl) ** 2 + (dy / rw) ** 2)
         hm += rh * np.maximum(0.0, 1.0 - ridge_dist) ** 1.2
 
-    # ── Multi-octave noise — coastal rock texture
-    freq1 = np.sin(X * 0.013 + 0.7) * np.cos(Y * 0.015 - 1.1) * 6.5
-    freq2 = np.sin(X * 0.031 - 1.8) * np.cos(Y * 0.028 + 0.4) * 3.2
-    freq3 = np.sin(X * 0.072 + 2.4) * np.cos(Y * 0.068 - 0.9) * 1.4
-    freq4 = np.sin(X * 0.160 - 0.5) * np.cos(Y * 0.148 + 1.8) * 0.6
-    hm += freq1 + freq2 + freq3 + freq4
+    # ── Domain-warped value noise — replaces sinusoidal lattice (no axis-aligned banding)
+    def _vnoise(coarse, seed_off):
+        """Smoothstep-interpolated value noise on a coarse random grid."""
+        rng_vn = np.random.RandomState((SEED + seed_off) & 0xFFFFFFFF)
+        gh = gw = coarse + 1
+        g = rng_vn.uniform(-1.0, 1.0, (gh, gw)).astype(np.float32)
+        ys = np.linspace(0, gh - 1, SIZE)
+        xs = np.linspace(0, gw - 1, SIZE)
+        y0 = np.floor(ys).astype(int);  y1 = np.minimum(y0 + 1, gh - 1)
+        x0 = np.floor(xs).astype(int);  x1 = np.minimum(x0 + 1, gw - 1)
+        ty = (ys - y0)[:, None];  ty = ty * ty * (3.0 - 2.0 * ty)
+        tx = (xs - x0)[None, :];  tx = tx * tx * (3.0 - 2.0 * tx)
+        return (g[y0[:, None], x0[None, :]] * (1 - ty) * (1 - tx)
+              + g[y0[:, None], x1[None, :]] * (1 - ty) * tx
+              + g[y1[:, None], x0[None, :]] * ty          * (1 - tx)
+              + g[y1[:, None], x1[None, :]] * ty          * tx)
+
+    # Low-frequency domain warp fields (pixel-space offsets)
+    _wx = _vnoise(6, 997) * 48.0
+    _wy = _vnoise(6, 998) * 48.0
+    _ri = np.clip(np.arange(SIZE)[:, None] + _wy.astype(int), 0, SIZE - 1)
+    _ci = np.clip(np.arange(SIZE)[None, :] + _wx.astype(int), 0, SIZE - 1)
+
+    def _wv(coarse, seed_off, amp):
+        return _vnoise(coarse, seed_off)[_ri, _ci] * amp
+
+    hm += _wv(12, 1001, 6.5) + _wv(28, 1002, 3.2) + _wv(56, 1003, 1.4) + _wv(88, 1004, 0.6)
 
     # ── Clamp: sea floor no lower than -28m, inland no higher than 145m
     hm = np.clip(hm, -28.0, 145.0)
@@ -221,21 +242,24 @@ def _mat_coastal_terrain():
     ramp.color_ramp.elements[1].position = 1.0
     ramp.color_ramp.elements[1].color    = (0.70, 0.62, 0.48, 1.0)
 
-    # Height-driven wet mask: fully wet below z=2m, dry above z=5m
+    # Height-driven wet mask — fed through MapRange([-10,10]→[0,1]).
+    # z=0m→0.50, z=2m→0.60 in normalised space.
     ramp_h.color_ramp.interpolation = "LINEAR"
-    ramp_h.color_ramp.elements[0].position = 0.35   # maps to z≈0 after normalise
-    ramp_h.color_ramp.elements[0].color    = (1.0, 1.0, 1.0, 1.0)  # wet
-    ramp_h.color_ramp.elements[1].position = 0.45
-    ramp_h.color_ramp.elements[1].color    = (0.0, 0.0, 0.0, 1.0)  # dry
+    ramp_h.color_ramp.elements[0].position = 0.50   # z=0m  → fully wet
+    ramp_h.color_ramp.elements[0].color    = (1.0, 1.0, 1.0, 1.0)
+    ramp_h.color_ramp.elements[1].position = 0.60   # z=2m  → fully dry
+    ramp_h.color_ramp.elements[1].color    = (0.0, 0.0, 0.0, 1.0)
 
-    # Height-driven algae mask: algae from z=-2m to z=1.5m (intertidal)
+    # Algae mask: intertidal z=−2m (0.40) to z=1.5m (0.575), peak inside.
     ramp_al.color_ramp.interpolation = "LINEAR"
-    ramp_al.color_ramp.elements[0].position = 0.30
+    ramp_al.color_ramp.elements[0].position = 0.40   # z=−2m → no algae
     ramp_al.color_ramp.elements[0].color    = (0.0, 0.0, 0.0, 1.0)
-    ramp_al.color_ramp.elements[1].position = 0.38
-    ramp_al.color_ramp.elements[1].color    = (1.0, 1.0, 1.0, 1.0)  # algae peak
-    ramp_al.color_ramp.elements.new(0.44)
-    ramp_al.color_ramp.elements[2].color    = (0.0, 0.0, 0.0, 1.0)
+    ramp_al.color_ramp.elements[1].position = 0.47   # z=−0.6m → algae peak
+    ramp_al.color_ramp.elements[1].color    = (1.0, 1.0, 1.0, 1.0)
+    ramp_al.color_ramp.elements.new(0.575)           # z=1.5m → algae end
+    ramp_al.color_ramp.elements[2].color    = (1.0, 1.0, 1.0, 1.0)
+    ramp_al.color_ramp.elements.new(0.65)            # z=3m   → no algae
+    ramp_al.color_ramp.elements[3].color    = (0.0, 0.0, 0.0, 1.0)
 
     bump.inputs["Strength"].default_value  = 0.40
     bump.inputs["Distance"].default_value  = 0.06
@@ -249,10 +273,19 @@ def _mat_coastal_terrain():
     nt.links.new(bump.outputs["Normal"],    bsdf.inputs["Normal"])
     nt.links.new(bump.outputs["Normal"],    bsdf_wt.inputs["Normal"])
 
-    # Height to wet/algae masks via world position Z
-    nt.links.new(geom.outputs["Position"],  sep_z.inputs["Vector"])
-    nt.links.new(sep_z.outputs["Z"],        ramp_h.inputs["Fac"])
-    nt.links.new(sep_z.outputs["Z"],        ramp_al.inputs["Fac"])
+    # Normalise world-Z into [0,1] before feeding ColorRamps (FIX: without this
+    # the Fac input clamps to binary 0/1 since world Z is in metres not 0..1).
+    map_rng_h  = nt.nodes.new("ShaderNodeMapRange")
+    map_rng_al = nt.nodes.new("ShaderNodeMapRange")
+    map_rng_h.inputs["From Min"].default_value  = -10.0
+    map_rng_h.inputs["From Max"].default_value  =  10.0
+    map_rng_al.inputs["From Min"].default_value = -10.0
+    map_rng_al.inputs["From Max"].default_value =  10.0
+    nt.links.new(geom.outputs["Position"],      sep_z.inputs["Vector"])
+    nt.links.new(sep_z.outputs["Z"],            map_rng_h.inputs["Value"])
+    nt.links.new(sep_z.outputs["Z"],            map_rng_al.inputs["Value"])
+    nt.links.new(map_rng_h.outputs["Result"],   ramp_h.inputs["Fac"])
+    nt.links.new(map_rng_al.outputs["Result"],  ramp_al.inputs["Fac"])
     nt.links.new(ramp_h.outputs["Color"],   mix_wt.inputs["Fac"])
     nt.links.new(bsdf.outputs["BSDF"],      mix_wt.inputs[1])
     nt.links.new(bsdf_wt.outputs["BSDF"],   mix_wt.inputs[2])
@@ -304,17 +337,17 @@ def _mat_seawater():
     map2.inputs["Scale"].default_value   = (0.018, 0.009, 1.0)
     map2.inputs["Rotation"].default_value = (0.0, 0.0, math.radians(35.0))
 
-    wave1.wave_type = "RINGS"
-    wave1.inputs["Scale"].default_value      = 1.8
-    wave1.inputs["Distortion"].default_value = 3.5
-    wave1.inputs["Detail"].default_value     = 8.0
-    wave1.inputs["Roughness"].default_value  = 0.6
+    wave1.wave_type = "BANDS"      # RINGS = pond ripples; BANDS = directional ocean chop
+    wave1.inputs["Scale"].default_value             = 1.8
+    wave1.inputs["Distortion"].default_value        = 3.5
+    wave1.inputs["Detail"].default_value            = 8.0
+    wave1.inputs["Detail Roughness"].default_value  = 0.6   # renamed in Blender 4.x
 
-    wave2.wave_type = "RINGS"
-    wave2.inputs["Scale"].default_value      = 2.6
-    wave2.inputs["Distortion"].default_value = 2.8
-    wave2.inputs["Detail"].default_value     = 6.0
-    wave2.inputs["Roughness"].default_value  = 0.5
+    wave2.wave_type = "BANDS"
+    wave2.inputs["Scale"].default_value             = 2.6
+    wave2.inputs["Distortion"].default_value        = 2.8
+    wave2.inputs["Detail"].default_value            = 6.0
+    wave2.inputs["Detail Roughness"].default_value  = 0.5
 
     add_n.operation = "ADD"
     bump.inputs["Strength"].default_value  = 0.55
@@ -997,7 +1030,7 @@ def _setup_lighting():
     sun_data.color     = (0.88, 0.90, 0.96)
     sun_data.angle     = math.radians(5.0)   # soft sun disk
     sun_obj = bpy.data.objects.new("VB_CoastalSun", sun_data)
-    sun_obj.rotation_euler = (math.radians(62.0), 0.0, math.radians(145.0))
+    sun_obj.rotation_euler = (math.radians(30.0), 0.0, math.radians(145.0))  # low-angle overcast
     bpy.context.scene.collection.objects.link(sun_obj)
 
     # ── Caustic fill: warm point above water surface to simulate light scattering
@@ -1017,7 +1050,7 @@ def _setup_lighting():
     rim_obj.rotation_euler = (math.radians(88.0), 0.0, math.radians(270.0))
     bpy.context.scene.collection.objects.link(rim_obj)
 
-    # ── World: overcast sky
+    # ── World: overcast sky + atmospheric haze volume
     world = bpy.data.worlds["World"]
     world.use_nodes = True
     wnt = world.node_tree
@@ -1025,8 +1058,14 @@ def _setup_lighting():
     if bg:
         bg.inputs["Color"].default_value   = (0.62, 0.70, 0.78, 1.0)   # grey-blue overcast
         bg.inputs["Strength"].default_value = 1.8
+    world_out = wnt.nodes.get("World Output")
+    if world_out:
+        vol = wnt.nodes.new("ShaderNodeVolumeScatter")
+        vol.inputs["Density"].default_value = 0.0012
+        vol.inputs["Color"].default_value   = (0.78, 0.85, 0.92, 1.0)  # cool coastal haze
+        wnt.links.new(vol.outputs["Volume"], world_out.inputs["Volume"])
 
-    log("lighting: coastal sun + caustic fill + sea rim + overcast world")
+    log("lighting: coastal sun + caustic fill + sea rim + overcast world + haze")
 
 
 # ---------------------------------------------------------------------------
@@ -1063,7 +1102,7 @@ def _setup_waterline_camera():
     cam_obj = bpy.data.objects.new("VB_WaterlineCam", cam_data)
     bpy.context.scene.collection.objects.link(cam_obj)
 
-    cam_obj.location = mathutils.Vector((60.0, -200.0, 4.5))
+    cam_obj.location = mathutils.Vector((60.0, -200.0, 0.6))  # true waterline height
     target           = mathutils.Vector((-55.0, 20.0, 6.0))
     direction        = target - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
@@ -1146,9 +1185,11 @@ def _configure_render(samples=64, res_x=1920, res_y=1080):
     has_gpu = _gpu_cycles_available()
     if has_gpu:
         scn.render.engine   = "CYCLES"
-        scn.cycles.samples  = samples
-        scn.cycles.device   = "GPU"
-        log(f"render: Cycles GPU {res_x}×{res_y} {samples}spp")
+        scn.cycles.samples        = samples
+        scn.cycles.device         = "GPU"
+        scn.cycles.use_denoising  = True
+        scn.cycles.denoiser       = "OPENIMAGEDENOISE"  # mandatory for water+SSS at 64spp
+        log(f"render: Cycles GPU {res_x}×{res_y} {samples}spp + OIDN denoiser")
     else:
         scn.render.engine = "BLENDER_EEVEE_NEXT"
         scn.eevee.taa_render_samples = 64
