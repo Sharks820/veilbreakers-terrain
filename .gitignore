@@ -49,6 +49,7 @@ repomix-output.*
 
 # Local tool state
 .serena/
+.compound-engineering/*.local.yaml
 
 # Generated terrain/runtime outputs
 export/

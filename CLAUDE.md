@@ -1,6 +1,8 @@
 # Claude Repo Rules
 
-Follow `AGENTS.md`. These merge rules are mandatory:
+Follow `AGENTS.md`. Compound Engineering is the primary workflow source of truth for planning, implementation, debugging, review, commits, PRs, and cleanup. VeilBreakers domain rules remain mandatory evidence/safety overlays.
+
+These merge rules are mandatory:
 
 - Never edit, commit, or push directly on `main`.
 - Start implementation from a focused branch: `fix/<scope>`, `feat/<scope>`, `audit/<scope>`, `docs/<scope>`, or `ci/<scope>`.
