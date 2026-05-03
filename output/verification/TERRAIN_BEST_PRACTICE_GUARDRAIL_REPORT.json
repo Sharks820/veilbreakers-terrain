@@ -1,7 +1,7 @@
 {
   "matrix_path": "output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_03.csv",
-  "live_count": 1742,
-  "matrix_count": 1742,
+  "live_count": 1752,
+  "matrix_count": 1752,
   "is_blocking": false,
   "missing_rows": [],
   "field_gaps": {},
@@ -90,6 +90,8 @@
       "terrain_path_contracts.py::PathSegmentContract.to_dict",
       "terrain_quixel_ingest.py::QuixelAsset.to_dict",
       "terrain_review_ingest.py::ReviewFinding.to_dict",
+      "terrain_scatter_points.py::ScatterCandidate.to_dict",
+      "terrain_scatter_points.py::ScatterCandidateTable.to_dict",
       "terrain_scatter_points.py::ScatterPoint.to_dict",
       "terrain_scatter_points.py::ScatterPointTable.to_dict",
       "terrain_stochastic_shader.py::StochasticShaderTemplate.to_dict",

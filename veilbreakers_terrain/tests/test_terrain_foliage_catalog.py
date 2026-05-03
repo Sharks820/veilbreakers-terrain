@@ -25,8 +25,6 @@ from veilbreakers_terrain.handlers.terrain_foliage_catalog import (
     AssetManifest,
     EXPECTED_CATEGORIES,
     FOLIAGE_SPECIES_CATALOG,
-    SPECIES_CONSTRAINTS_FROM_CATALOG,
-    SpeciesSpec,
     categories_covered,
     external_model_assets_required,
     default_asset_catalog_path,
@@ -36,6 +34,8 @@ from veilbreakers_terrain.handlers.terrain_foliage_catalog import (
     set_default_asset_manifest,
     species_for_biome,
     species_ids_by_category,
+    validate_asset_manifest_entry,
+    validate_asset_manifest_entries,
     _derive_species_constraints,
     _slope,
 )
@@ -150,6 +150,106 @@ class TestFoliageCatalogCoverage:
             math.degrees(FOLIAGE_SPECIES_CATALOG["tree_pine"].max_slope_rad)
         )
         assert pine["moisture_min"] <= pine["moisture_max"]
+
+    def test_asset_manifest_entry_requires_source_license_lod_and_qa_fields(self):
+        issues = validate_asset_manifest_entry(
+            "plantcatalog_oak_01",
+            {
+                "asset_id": "plantcatalog_oak_01",
+                "category": "tree",
+                "lods": [{"path": "assets/foliage/oak_lod0.glb"}],
+                "bbox": {"min": [-1, -1, 0], "max": [1, 1, 6]},
+                "pivot": [0, 0, 0],
+                "source_tool": "PlantCatalog",
+                "source_version": "2023",
+                "source_url": "https://example.invalid/oak",
+                "source_file": "oak.fbx",
+                "license_origin": "PlantCatalog",
+                "license_allows_commercial": True,
+                "resale_allowed": True,
+                "plantcatalog_derivative": True,
+                "triangle_budget_lod0": 45000,
+                "collider_policy": "capsule",
+                "wind_profile": "tree",
+                "impostor_policy": "required",
+                "blender_qa_render": "qa/oak.png",
+                "unity_import_status": "pending",
+            },
+        )
+
+        codes = {issue["code"] for issue in issues}
+
+        assert "plantcatalog_resale_policy_invalid" in codes
+
+    def test_asset_manifest_entry_blocks_placeholder_asset_without_lods(self):
+        issues = validate_asset_manifest_entry(
+            "bad_tree",
+            {
+                "category": "tree",
+                "bbox": {"min": [-1, -1, 0], "max": [1, 1, 6]},
+                "pivot": [0, 0, 0],
+            },
+        )
+
+        codes = {issue["code"] for issue in issues}
+
+        assert "missing_asset_id" in codes
+        assert "missing_lods" in codes
+        assert "missing_source_tool" in codes
+        assert "commercial_license_not_confirmed" in codes
+
+    def test_asset_manifest_entry_rejects_asset_id_key_mismatch(self):
+        issues = validate_asset_manifest_entry(
+            "oak_key",
+            {
+                "asset_id": "oak_payload",
+                "category": "tree",
+                "fallback": True,
+                "bbox": {"min": [-1, -1, 0], "max": [1, 1, 6]},
+                "pivot": [0, 0, 0],
+            },
+        )
+
+        codes = {issue["code"] for issue in issues}
+
+        assert "asset_id_mismatch" in codes
+
+    def test_asset_manifest_entries_batches_all_asset_contract_issues(self):
+        report = validate_asset_manifest_entries(
+            {
+                "bad_tree": {
+                    "asset_id": "bad_tree",
+                    "category": "tree",
+                    "bbox": {"min": [-1, -1, 0], "max": [1, 1, 6]},
+                    "pivot": [0, 0, 0],
+                },
+                "bad_rock": {
+                    "asset_id": "bad_rock",
+                    "category": "boulder",
+                    "source_tool": "mesh_authoring",
+                    "license_allows_commercial": True,
+                    "resale_allowed": False,
+                },
+            }
+        )
+
+        bad_tree_codes = {
+            issue["code"] for issue in report if "asset[bad_tree]" in issue["message"]
+        }
+        bad_rock_codes = {
+            issue["code"] for issue in report if "asset[bad_rock]" in issue["message"]
+        }
+
+        assert bad_tree_codes >= {
+            "missing_lods",
+            "missing_source_tool",
+            "commercial_license_not_confirmed",
+        }
+        assert bad_rock_codes >= {
+            "missing_lods",
+            "missing_bounds",
+            "missing_pivot_policy",
+        }
 
 
 # ---------------------------------------------------------------------------

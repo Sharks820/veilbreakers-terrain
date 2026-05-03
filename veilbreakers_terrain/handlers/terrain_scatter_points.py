@@ -9,7 +9,7 @@ transform, density, seed, prototype, species, mask provenance, and LOD data.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Sequence, Tuple
 
 
@@ -74,6 +74,152 @@ class ScatterPointTable:
             "point_count": len(self.points),
             "points": [point.to_dict() for point in self.points],
         }
+
+
+@dataclass(frozen=True)
+class ScatterCandidate:
+    """Candidate row retained before final accept/reject.
+
+    This is the auditable bridge between artist-friendly scatter rules and
+    baked `ScatterPointTable` output. Rejected rows matter: they prove rocks,
+    trees, vines, and props were filtered by terrain facts instead of silently
+    disappearing or floating.
+    """
+
+    candidate_id: str
+    source_rule_id: str
+    source_layer_id: str
+    species_or_prop_id: str
+    sampled_position: Vec3
+    sampled_slope_deg: float
+    sampled_material_layer_id: str
+    sampled_wetness: float
+    sampled_deposition: float
+    sampled_talus: float
+    nearest_water_distance_m: float
+    support_score: float
+    embed_depth_m: float
+    collision_reason: str = ""
+    budget_reason: str = ""
+    rejected_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "source_rule_id": self.source_rule_id,
+            "source_layer_id": self.source_layer_id,
+            "species_or_prop_id": self.species_or_prop_id,
+            "sampled_position": list(self.sampled_position),
+            "sampled_slope_deg": float(self.sampled_slope_deg),
+            "sampled_material_layer_id": self.sampled_material_layer_id,
+            "sampled_wetness": float(self.sampled_wetness),
+            "sampled_deposition": float(self.sampled_deposition),
+            "sampled_talus": float(self.sampled_talus),
+            "nearest_water_distance_m": float(self.nearest_water_distance_m),
+            "support_score": float(self.support_score),
+            "embed_depth_m": float(self.embed_depth_m),
+            "collision_reason": self.collision_reason,
+            "budget_reason": self.budget_reason,
+            "rejected_reason": self.rejected_reason,
+        }
+
+
+@dataclass(frozen=True)
+class ScatterCandidateTable:
+    """Accepted and rejected scatter candidates with reason-code provenance."""
+
+    accepted: Tuple[ScatterCandidate, ...] | list[ScatterCandidate] = ()
+    rejected: Tuple[ScatterCandidate, ...] | list[ScatterCandidate] = ()
+    format: str = "ScatterCandidateTable"
+    coordinate_space: str = "world_m"
+    source: str = "canonical"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "format": self.format,
+            "coordinate_space": self.coordinate_space,
+            "source": self.source,
+            "accepted_count": len(self.accepted),
+            "rejected_count": len(self.rejected),
+            "accepted": [candidate.to_dict() for candidate in self.accepted],
+            "rejected": [candidate.to_dict() for candidate in self.rejected],
+        }
+
+
+@dataclass(frozen=True)
+class SurfaceSupportGate:
+    """Terrain support thresholds for vegetation, rocks, and environmental props."""
+
+    max_slope_deg: float = 45.0
+    min_support_score: float = 0.55
+    min_embed_depth_m: float = 0.02
+    allowed_material_layer_ids: Tuple[str, ...] = ()
+    allow_waterlogged: bool = True
+    max_wetness: float = 1.0
+
+
+def evaluate_surface_support(
+    candidate: ScatterCandidate,
+    gate: SurfaceSupportGate,
+) -> ScatterCandidate:
+    """Return candidate with `rejected_reason` populated when support fails."""
+    reasons: list[str] = []
+    if not all(math.isfinite(v) for v in candidate.sampled_position):
+        reasons.append("non_finite_position")
+    if not math.isfinite(float(candidate.sampled_slope_deg)):
+        reasons.append("non_finite_slope")
+    elif float(candidate.sampled_slope_deg) > float(gate.max_slope_deg):
+        reasons.append("slope_exceeds_gate")
+    if not math.isfinite(float(candidate.support_score)):
+        reasons.append("non_finite_support_score")
+    elif float(candidate.support_score) < float(gate.min_support_score):
+        reasons.append("support_score_below_gate")
+    if not math.isfinite(float(candidate.embed_depth_m)):
+        reasons.append("non_finite_embed_depth")
+    elif float(candidate.embed_depth_m) < float(gate.min_embed_depth_m):
+        reasons.append("embed_depth_below_gate")
+    if (
+        gate.allowed_material_layer_ids
+        and candidate.sampled_material_layer_id not in gate.allowed_material_layer_ids
+    ):
+        reasons.append("material_incompatible")
+    sampled_wetness = float(candidate.sampled_wetness)
+    max_wetness = float(gate.max_wetness)
+    if not math.isfinite(sampled_wetness):
+        reasons.append("non_finite_wetness")
+    else:
+        if not gate.allow_waterlogged and sampled_wetness > 1.0e-6:
+            reasons.append("waterlogged_disallowed")
+        if sampled_wetness > max_wetness:
+            reasons.append("wetness_exceeds_gate")
+    if candidate.collision_reason:
+        reasons.append(f"collision:{candidate.collision_reason}")
+    if candidate.budget_reason:
+        reasons.append(f"budget:{candidate.budget_reason}")
+
+    return replace(candidate, rejected_reason=";".join(reasons))
+
+
+def build_scatter_candidate_table(
+    candidates: Iterable[ScatterCandidate],
+    gate: SurfaceSupportGate,
+    *,
+    source: str = "canonical",
+) -> ScatterCandidateTable:
+    """Evaluate candidates and split them into accepted/rejected rows."""
+    accepted: list[ScatterCandidate] = []
+    rejected: list[ScatterCandidate] = []
+    for candidate in candidates:
+        evaluated = evaluate_surface_support(candidate, gate)
+        if evaluated.rejected_reason:
+            rejected.append(evaluated)
+        else:
+            accepted.append(evaluated)
+    return ScatterCandidateTable(
+        accepted=tuple(accepted),
+        rejected=tuple(rejected),
+        source=source,
+    )
 
 
 def _float(row: Mapping[str, Any], key: str, default: float = 0.0) -> float:
@@ -270,8 +416,13 @@ def validate_scatter_point_table(table: ScatterPointTable) -> list[dict[str, str
 
 
 __all__ = [
+    "ScatterCandidate",
+    "ScatterCandidateTable",
     "ScatterPoint",
     "ScatterPointTable",
+    "SurfaceSupportGate",
+    "build_scatter_candidate_table",
+    "evaluate_surface_support",
     "load_world_creator_instance_pointcloud",
     "validate_scatter_point_table",
 ]

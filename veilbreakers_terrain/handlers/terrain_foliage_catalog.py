@@ -76,9 +76,9 @@ import math
 import random
 import threading
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 _LOG = logging.getLogger(__name__)
 
@@ -1194,6 +1194,93 @@ def resolve_model_asset(
     return mf.choose_for_species(species_id, rng=rng)
 
 
+def validate_asset_manifest_entry(
+    asset_id: str,
+    entry: Mapping[str, Any],
+) -> List[Dict[str, str]]:
+    """Validate one foliage asset manifest row for production intake.
+
+    The existing fallback entries are intentionally light. Real imported
+    PlantFactory, PlantCatalog, The Plant Library, Hunyuan/Meshy, or hand-authored
+    assets must carry source, license, LOD, pivot, bounds, triangle, collider,
+    wind, impostor, and QA evidence before they can replace placeholders.
+    """
+    issues: List[Dict[str, str]] = []
+    prefix = f"asset[{asset_id}]"
+    if not asset_id:
+        issues.append({"code": "missing_asset_id", "message": "asset key is empty"})
+    entry_asset_id = str(entry.get("asset_id") or "")
+    if not entry_asset_id:
+        issues.append({"code": "missing_asset_id", "message": f"{prefix} has no asset_id"})
+    elif entry_asset_id != asset_id:
+        issues.append({
+            "code": "asset_id_mismatch",
+            "message": f"{prefix} asset_id={entry_asset_id!r} does not match manifest key {asset_id!r}",
+        })
+    if not str(entry.get("category") or ""):
+        issues.append({"code": "missing_category", "message": f"{prefix} has no category"})
+
+    lods = entry.get("mesh_lod_paths") or entry.get("lods") or []
+    if not entry.get("fallback") and not lods:
+        issues.append({"code": "missing_lods", "message": f"{prefix} has no LOD mesh paths"})
+    if isinstance(lods, list):
+        for idx, lod in enumerate(lods):
+            path = lod.get("path") if isinstance(lod, dict) else lod
+            if not path:
+                issues.append({"code": "missing_lod_path", "message": f"{prefix} lod[{idx}] has no path"})
+    else:
+        issues.append({"code": "invalid_lods", "message": f"{prefix} lods must be a list"})
+
+    if not entry.get("bbox") and not entry.get("bounds_m"):
+        issues.append({"code": "missing_bounds", "message": f"{prefix} has no bounds_m/bbox"})
+    pivot = entry.get("pivot") or entry.get("pivot_policy")
+    if not pivot:
+        issues.append({"code": "missing_pivot_policy", "message": f"{prefix} has no pivot policy"})
+
+    if entry.get("fallback"):
+        return issues
+
+    required = (
+        "source_tool",
+        "source_version",
+        "source_url",
+        "source_file",
+        "license_origin",
+        "license_allows_commercial",
+        "resale_allowed",
+        "triangle_budget_lod0",
+        "collider_policy",
+        "wind_profile",
+        "impostor_policy",
+        "blender_qa_render",
+        "unity_import_status",
+    )
+    for key in required:
+        if key not in entry or entry.get(key) in (None, ""):
+            issues.append({"code": f"missing_{key}", "message": f"{prefix} missing {key}"})
+    if entry.get("license_allows_commercial") is not True:
+        issues.append({
+            "code": "commercial_license_not_confirmed",
+            "message": f"{prefix} license_allows_commercial must be true",
+        })
+    if entry.get("plantcatalog_derivative") is True and entry.get("resale_allowed") is not False:
+        issues.append({
+            "code": "plantcatalog_resale_policy_invalid",
+            "message": f"{prefix} PlantCatalog derivatives must record resale_allowed=false",
+        })
+    return issues
+
+
+def validate_asset_manifest_entries(
+    entries: Mapping[str, Mapping[str, Any]],
+) -> List[Dict[str, str]]:
+    """Validate a foliage asset manifest mapping."""
+    issues: List[Dict[str, str]] = []
+    for asset_id, entry in entries.items():
+        issues.extend(validate_asset_manifest_entry(str(asset_id), entry))
+    return issues
+
+
 __all__ = [
     "SpeciesSpec",
     "FOLIAGE_SPECIES_CATALOG",
@@ -1210,4 +1297,6 @@ __all__ = [
     "get_default_asset_manifest",
     "set_default_asset_manifest",
     "resolve_model_asset",
+    "validate_asset_manifest_entries",
+    "validate_asset_manifest_entry",
 ]

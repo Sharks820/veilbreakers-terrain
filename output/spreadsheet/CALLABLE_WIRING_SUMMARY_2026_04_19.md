@@ -4,16 +4,17 @@ Audit date: 2026-05-03
 Input handlers directory: `veilbreakers_terrain/handlers`
 Input grade sheet: `docs/aaa-audit/GRADES_VERIFIED.csv`
 Output CSV: `output/spreadsheet/CALLABLE_WIRING_AUDIT_2026_04_19.csv`
+Artifact filename note: `2026_04_19` is the stable first-pass artifact ID retained for downstream scripts and historical audit links; `Audit date` above records the latest regeneration date.
 
 ## Totals
 
-- Live handler callables scanned: `1740`
+- Live handler callables scanned: `1750`
 - Callables missing from the grade sheet: `0`
 - Callables without any R9 grade attached via matching CSV row: `548`
 
 Status distribution:
-- `direct_test_covered`: `238`
-- `helper_reachable`: `1290`
+- `direct_test_covered`: `240`
+- `helper_reachable`: `1298`
 - `runtime_primary`: `212`
 
 ## Highest-Risk Files

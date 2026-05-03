@@ -690,6 +690,7 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
         f"Input handlers directory: `{_repo_relative(HANDLERS_DIR)}`",
         f"Input grade sheet: `{_repo_relative(CSV_PATH)}`",
         f"Output CSV: `{_repo_relative(OUTPUT_CSV)}`",
+        "Artifact filename note: `2026_04_19` is the stable first-pass artifact ID retained for downstream scripts and historical audit links; `Audit date` above records the latest regeneration date.",
         "",
         "## Totals",
         "",
