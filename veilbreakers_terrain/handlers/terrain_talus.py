@@ -99,7 +99,7 @@ def apply_talus_collapse(
         for dc in (-1, 0, 1):
             if dr == 0 and dc == 0:
                 continue
-            dist = math.sqrt(dr * dr + dc * dc)
+            dist = math.hypot(dr, dc)
             offsets.append((dr, dc, dist))
 
     # FIX-12-5: accumulate displaced material from source cells only.
