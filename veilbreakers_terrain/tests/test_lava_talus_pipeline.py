@@ -66,6 +66,17 @@ def test_default_sequence_wires_lava_only_for_volcanic_intents():
     assert "pass_lava_simulation" not in forest
 
 
+def test_default_sequence_wires_lava_for_authored_source_hint():
+    from veilbreakers_terrain.handlers.terrain_pipeline import build_default_pass_sequence
+
+    sequence = build_default_pass_sequence(
+        _state(biome="forest", hints={"lava_source_mask": True}).intent
+    )
+
+    assert "pass_lava_simulation" in sequence
+    assert sequence.index("pass_lava_simulation") < sequence.index("materials_v2")
+
+
 def test_default_sequence_wires_talus_only_when_requested():
     from veilbreakers_terrain.handlers.terrain_pipeline import build_default_pass_sequence
 
@@ -75,8 +86,11 @@ def test_default_sequence_wires_talus_only_when_requested():
     disabled = build_default_pass_sequence(_state(biome="mountain").intent)
 
     assert "talus" in enabled
-    assert enabled.index("talus") < enabled.index("materials_v2")
+    assert "structural_masks_post_talus" in enabled
+    assert enabled.index("talus") < enabled.index("structural_masks_post_talus")
+    assert enabled.index("structural_masks_post_talus") < enabled.index("materials_v2")
     assert "talus" not in disabled
+    assert "structural_masks_post_talus" not in disabled
 
 
 def test_lava_pass_writes_zero_channels_for_non_volcanic_tile():
@@ -130,6 +144,39 @@ def test_lava_pass_consumes_source_mask_and_persists_channels():
     np.testing.assert_array_equal(loaded.lava_surface_mask, state.mask_stack.lava_surface_mask)
     np.testing.assert_allclose(loaded.lava_depth, state.mask_stack.lava_depth)
     np.testing.assert_allclose(loaded.lava_prox, state.mask_stack.lava_prox)
+
+
+def test_lava_pass_skips_empty_explicit_source_mask_without_simulation():
+    from veilbreakers_terrain.handlers.terrain_lava import pass_lava_simulation
+
+    state = _state(biome="volcanic_caldera")
+    source = np.zeros_like(state.mask_stack.height, dtype=np.float32)
+    state.mask_stack.set("lava_source_mask", source, "test")
+
+    result = pass_lava_simulation(state, None)
+
+    assert result.status == "skipped"
+    assert result.metrics["reason"] == "empty_lava_source_mask"
+    assert state.mask_stack.lava_depth is not None
+    assert float(state.mask_stack.lava_depth.max()) == pytest.approx(0.0)
+
+
+def test_lava_pass_rejects_region_scope_without_writing_outputs():
+    from veilbreakers_terrain.handlers.terrain_lava import pass_lava_simulation
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+
+    state = _state(biome="volcanic_caldera")
+    source = np.zeros_like(state.mask_stack.height, dtype=np.float32)
+    source[2, 2] = 1.0
+    state.mask_stack.set("lava_source_mask", source, "test")
+
+    result = pass_lava_simulation(state, BBox(1.0, 1.0, 2.0, 2.0))
+
+    assert result.status == "skipped"
+    assert result.metrics["reason"] == "region_scope_unsupported"
+    assert state.mask_stack.lava_depth is None
+    assert state.mask_stack.lava_prox is None
+    assert state.mask_stack.lava_surface_mask is None
 
 
 def test_lava_helpers_route_and_measure_proximity_directly():
@@ -201,6 +248,21 @@ def test_talus_pass_writes_height_and_displacement_channel():
     )
 
 
+def test_talus_pass_rejects_region_scope_without_height_change():
+    from veilbreakers_terrain.handlers.terrain_semantics import BBox
+    from veilbreakers_terrain.handlers.terrain_talus import pass_talus
+
+    state = _state(biome="mountain", hints={"talus_iterations": 1, "talus_angle_deg": 10.0})
+    before = state.mask_stack.height.copy()
+
+    result = pass_talus(state, BBox(1.0, 1.0, 2.0, 2.0))
+
+    assert result.status == "skipped"
+    assert result.metrics["reason"] == "region_scope_unsupported"
+    np.testing.assert_array_equal(state.mask_stack.height, before)
+    assert state.mask_stack.talus_displaced is None
+
+
 def test_master_registrar_registers_lava_and_talus_passes():
     from veilbreakers_terrain.handlers.terrain_master_registrar import register_all_terrain_passes
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
@@ -210,6 +272,7 @@ def test_master_registrar_registers_lava_and_talus_passes():
 
     assert "pass_lava_simulation" in TerrainPassController.PASS_REGISTRY
     assert "talus" in TerrainPassController.PASS_REGISTRY
+    assert "structural_masks_post_talus" in TerrainPassController.PASS_REGISTRY
 
 
 def test_lava_and_talus_register_hooks_work_directly():
@@ -227,3 +290,5 @@ def test_lava_and_talus_register_hooks_work_directly():
     assert lava_entry.produces_channels == ("lava_depth", "lava_prox", "lava_surface_mask")
     assert talus_entry.produces_channels == ("height", "talus_displaced")
     assert talus_entry.overrides == ("height",)
+    assert not lava_entry.supports_region_scope
+    assert not talus_entry.supports_region_scope

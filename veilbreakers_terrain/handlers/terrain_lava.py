@@ -20,6 +20,7 @@ from .terrain_semantics import (
     PassResult,
     # TerrainMaskStack,  # FIX-11-9: unused import removed
     TerrainPipelineState,
+    ValidationIssue,
 )
 
 # ---------------------------------------------------------------------------
@@ -165,12 +166,31 @@ def pass_lava_simulation(
     Consumes : lava_source_mask (optional), height (optional)
     Produces : lava_depth, lava_prox, lava_surface_mask
 
-    When ``lava_source_mask`` is absent or all-zero, all three output
-    channels are written as zero arrays so downstream consumers never
-    receive None.
+    Non-volcanic tiles with no explicit source write zero outputs. Volcanic
+    tiles without an explicit source synthesize a small peak vent. Explicit
+    all-zero or invalid source masks write zero outputs and skip simulation.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
+    if region is not None:
+        return PassResult(
+            pass_name="pass_lava_simulation",
+            status="skipped",
+            duration_seconds=time.perf_counter() - t0,
+            consumed_channels=("lava_source_mask", "height"),
+            produced_channels=(),
+            metrics={"reason": "region_scope_unsupported"},
+            issues=[
+                ValidationIssue(
+                    code="lava_region_scope_unsupported",
+                    severity="soft",
+                    message=(
+                        "pass_lava_simulation requires full-tile flow context; "
+                        "region-scoped execution is unsupported."
+                    ),
+                )
+            ],
+        )
 
     # Check biome gate: skip heavy computation when clearly not volcanic.
     intent = state.intent
@@ -220,6 +240,23 @@ def pass_lava_simulation(
         if source_mask.shape != (rows, cols):
             # Shape mismatch — fall back to zeros with correct shape
             source_mask = np.zeros((rows, cols), dtype=np.float32)
+        if not source_mask.any():
+            zeros = np.zeros((rows, cols), dtype=np.float32)
+            stack.set("lava_depth", zeros, "pass_lava_simulation")
+            stack.set("lava_prox", zeros, "pass_lava_simulation")
+            stack.set("lava_surface_mask", zeros, "pass_lava_simulation")
+            return PassResult(
+                pass_name="pass_lava_simulation",
+                status="skipped",
+                duration_seconds=time.perf_counter() - t0,
+                consumed_channels=("lava_source_mask", "height"),
+                produced_channels=("lava_depth", "lava_prox", "lava_surface_mask"),
+                metrics={
+                    "reason": "empty_lava_source_mask",
+                    "active_cells": 0,
+                },
+                issues=[],
+            )
     else:
         # Volcanic biome but no explicit source mask — synthesise a small
         # source zone at the highest point (proxy for vent/caldera).
@@ -237,7 +274,7 @@ def pass_lava_simulation(
     # heightmap, but kept for future stochastic extensions).
     _ = derive_pass_seed(
         int(getattr(state.intent, "seed", 0)),
-        "lava_simulation",
+        "pass_lava_simulation",
         state.tile_x,
         state.tile_y,
         region,
@@ -302,7 +339,10 @@ def pass_lava_simulation(
 def _proximity_used_scipy(surface_mask: np.ndarray) -> bool:
     """Return True if scipy EDT is available (used in _compute_proximity)."""
     del surface_mask
-    return importlib.util.find_spec("scipy.ndimage") is not None
+    try:
+        return importlib.util.find_spec("scipy.ndimage") is not None
+    except ModuleNotFoundError:
+        return False
 
 
 def register_lava_pass() -> None:
@@ -320,6 +360,7 @@ def register_lava_pass() -> None:
             overrides=("lava_depth", "lava_prox", "lava_surface_mask"),
             seed_namespace="pass_lava_simulation",
             requires_scene_read=False,
+            supports_region_scope=False,
             may_modify_geometry=False,
             description=(
                 "Bundle P: D8 lava flow simulation — produces lava_depth, "

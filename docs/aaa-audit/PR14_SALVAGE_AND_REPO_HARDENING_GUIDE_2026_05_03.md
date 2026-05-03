@@ -146,6 +146,14 @@ Completion gate:
 
 Current strict ratchet is `3947` allowed errors. Target is `<150`.
 
+Snapshot note: `3947` is a 2026-05-03 baseline snapshot, not an accepted
+quality target. Regenerate/recheck the snapshot with:
+
+```powershell
+python scripts\pyright_strict_baseline_gate.py
+python -m pyright --project pyrightconfig.strict.json --outputjson > output\pyright-strict-current.json
+```
+
 Do not reduce by editing the baseline first. Fix code/tests, run strict gate, then regenerate the baseline only for confirmed reductions.
 
 Current largest buckets:

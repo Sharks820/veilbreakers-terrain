@@ -174,7 +174,8 @@ def pass_talus(
 
     Reads ``height`` from the stack, applies talus collapse, writes back
     corrected ``height`` and publishes ``talus_displaced`` (per-cell source
-    loss) and ``talus_total_displaced`` metric.
+    loss). Metrics include ``total_displaced_m3`` and
+    ``total_displaced_cells``.
 
     Consumes  : height
     Produces  : height (modified), talus_displaced
@@ -183,6 +184,27 @@ def pass_talus(
     stack = state.mask_stack
     issues: List[ValidationIssue] = []
 
+    if region is not None:
+        issues.append(
+            ValidationIssue(
+                code="talus_region_scope_unsupported",
+                severity="soft",
+                message=(
+                    "pass_talus requires full-tile 8-neighbour context; "
+                    "region-scoped execution is unsupported."
+                ),
+            )
+        )
+        return PassResult(
+            pass_name="talus",
+            status="skipped",
+            duration_seconds=time.perf_counter() - t0,
+            consumed_channels=("height",),
+            produced_channels=(),
+            metrics={"reason": "region_scope_unsupported"},
+            issues=issues,
+        )
+
     hints = dict(state.intent.composition_hints)
     talus_angle = float(hints.get("talus_angle_deg", DEFAULT_TALUS_ANGLE_DEG))
     talus_iters = int(hints.get("talus_iterations", DEFAULT_TALUS_ITERATIONS))
@@ -190,32 +212,12 @@ def pass_talus(
 
     h_in = np.asarray(stack.height, dtype=np.float64)
 
-    # Region scope: only operate within region bounds if specified
-    if region is not None:
-        r_slice, c_slice = region.to_cell_slice(
-            world_origin_x=stack.world_origin_x,
-            world_origin_y=stack.world_origin_y,
-            cell_size=cs,
-            grid_shape=h_in.shape,
-        )
-        h_sub = h_in[r_slice, c_slice].copy()
-        h_collapsed, disp_sub, total_disp = apply_talus_collapse(
-            h_sub,
-            iterations=talus_iters,
-            talus_angle_deg=talus_angle,
-            cell_size_m=cs,
-        )
-        new_height = h_in.copy()
-        new_height[r_slice, c_slice] = h_collapsed
-        disp_map = np.zeros_like(h_in, dtype=np.float64)
-        disp_map[r_slice, c_slice] = disp_sub
-    else:
-        new_height, disp_map, total_disp = apply_talus_collapse(
-            h_in,
-            iterations=talus_iters,
-            talus_angle_deg=talus_angle,
-            cell_size_m=cs,
-        )
+    new_height, disp_map, total_disp = apply_talus_collapse(
+        h_in,
+        iterations=talus_iters,
+        talus_angle_deg=talus_angle,
+        cell_size_m=cs,
+    )
 
     stack.set("height", new_height.astype(stack.height.dtype), "talus")
     stack.set("talus_displaced", disp_map.astype(np.float32), "talus")
@@ -252,6 +254,7 @@ def register_talus_pass() -> None:
             overrides=("height",),
             seed_namespace="talus",
             requires_scene_read=False,
+            supports_region_scope=False,
             may_modify_geometry=True,
             description="Bundle K: talus slope-collapse redistribution.",
         )
