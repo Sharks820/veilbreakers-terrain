@@ -37,6 +37,7 @@ tmp_review/
 tmp*/
 pytest-of-*/
 pytest-cache-files-*/
+pytest-pr*-temp*/
 
 # Generated repo-analysis outputs
 graphify-out/
@@ -56,6 +57,7 @@ output/aaa_node_v4/
 output/aaa_node_v5/
 output/aaa_node_v6/
 output/aaa_node_v*_build.log
+output/aaa_*_node_v1/
 output/pytest-tmp/
 output/test_artifacts/checkpoint_helpers/*/
 output/test_artifacts/terrain_validation/*/

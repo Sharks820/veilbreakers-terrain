@@ -1,9 +1,9 @@
 # Callable Wiring Summary
 
 Audit date: 2026-04-19
-Input handlers directory: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain-pr-cleanup\veilbreakers_terrain\handlers`
-Input grade sheet: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain-pr-cleanup\docs\aaa-audit\GRADES_VERIFIED.csv`
-Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain-pr-cleanup\output\spreadsheet\CALLABLE_WIRING_AUDIT_2026_04_19.csv`
+Input handlers directory: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\veilbreakers_terrain\handlers`
+Input grade sheet: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\docs\aaa-audit\GRADES_VERIFIED.csv`
+Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\CALLABLE_WIRING_AUDIT_2026_04_19.csv`
 
 ## Totals
 
