@@ -12,21 +12,11 @@ completed work.
 from __future__ import annotations
 
 import math
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-
-import logging
-
-logger = logging.getLogger(__name__)
-
-try:
-    from scipy.ndimage import label as _scipy_label
-    _SCIPY_TWELVE_STEP_AVAILABLE = True
-except ImportError:
-    _scipy_label = None  # type: ignore[assignment]
-    _SCIPY_TWELVE_STEP_AVAILABLE = False
 
 from ._terrain_world import (
     erode_world_heightmap,
@@ -40,6 +30,16 @@ from .terrain_world_math import (
     TileTransform,
     compute_erosion_params_for_world_range,
 )
+
+logger = logging.getLogger(__name__)
+
+try:
+    from scipy.ndimage import label as _scipy_label
+
+    _SCIPY_TWELVE_STEP_AVAILABLE = True
+except ImportError:
+    _scipy_label = None  # type: ignore[assignment]
+    _SCIPY_TWELVE_STEP_AVAILABLE = False
 
 _log = logging.getLogger(__name__)
 
