@@ -102,6 +102,33 @@ def test_export_manifest_records_contract_failures(monkeypatch):
     assert manifest["validation_issues"][0]["code"] == "FAKE_VALIDATION_FAILURE"
 
 
+def test_export_manifest_runs_water_runtime_contract_when_water_channels_exist():
+    from veilbreakers_terrain.handlers import terrain_unity_export as mod
+
+    stack = _make_unity_valid_stack()
+    shape = stack.height.shape
+    stack.set("water_surface_elevation_m", np.ones(shape, dtype=np.float32) * 12.0, "test")
+    stack.set("flow_direction", np.zeros(shape, dtype=np.float32), "test")
+    stack.set("flow_speed", np.zeros(shape, dtype=np.float32), "test")
+    stack.set("flow_accumulation", np.ones(shape, dtype=np.float32), "test")
+    stack.set("foam", np.zeros(shape, dtype=np.float32), "test")
+    stack.set("mist", np.zeros(shape, dtype=np.float32), "test")
+    stack.set("wet_rock", np.zeros(shape, dtype=np.float32), "test")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = mod.export_unity_manifest(
+            stack,
+            Path(td),
+            strict_unity_resolution=False,
+            fail_on_validation_error=False,
+        )
+
+    codes = {issue["code"] for issue in manifest["validation_issues"]}
+
+    assert manifest["validation_status"] == "failed"
+    assert "water_runtime_missing_water_depth_contract" in codes
+
+
 def test_export_manifest_hard_validation_raises_by_default(monkeypatch):
     from veilbreakers_terrain.handlers import terrain_unity_export as mod
 

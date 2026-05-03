@@ -15,13 +15,21 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from .terrain_semantics import BBox, PassDefinition, PassResult, TerrainMaskStack, TerrainPipelineState
+from .terrain_semantics import (
+    BBox,
+    PassDefinition,
+    PassResult,
+    TerrainMaskStack,
+    TerrainPipelineState,
+    ValidationIssue,
+)
 from .terrain_chunking import build_tile_seam_contract
 from .terrain_unity_export_contracts import (
     UnityExportContract,
     validate_bit_depth_contract,
     validate_mesh_attributes_present,
 )
+from .terrain_water_contracts import validate_water_runtime_contract
 
 
 _DETAIL_DENSITY_MAX_PER_CELL = 16
@@ -2235,6 +2243,35 @@ def export_unity_manifest(
     manifest["mesh_attributes_present"] = present_mesh_attributes
     validation_issues = validate_bit_depth_contract(UnityExportContract(), files)
     validation_issues.extend(validate_mesh_attributes_present(present_mesh_attributes))
+    water_contract_channels = (
+        "water_surface_elevation_m",
+        "water_depth_m",
+        "bathymetry",
+        "water_depth_zone",
+        "flow_direction",
+        "flow_speed",
+        "flow_accumulation",
+        "foam",
+        "mist",
+        "wet_rock",
+    )
+    if any(stack.get(channel) is not None for channel in water_contract_channels):
+        for issue in validate_water_runtime_contract(
+            stack,
+            water_shader_manifest=water_shader_manifest_json,
+        ):
+            validation_issues.append(
+                ValidationIssue(
+                    code=f"water_runtime_{issue['code']}",
+                    severity="hard",
+                    affected_feature="water_shader_manifest.json",
+                    message=issue["message"],
+                    remediation=(
+                        "Export canonical water elevation depth or bathymetry flow "
+                        "foam mist wet rock and shader texture metadata before Unity handoff."
+                    ),
+                )
+            )
     manifest["validation_issue_count"] = len(validation_issues)
     manifest["validation_issues"] = [
         {

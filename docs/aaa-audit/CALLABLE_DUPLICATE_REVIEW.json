@@ -489,6 +489,8 @@
         "terrain_path_contracts.py::PathSegmentContract.to_dict",
         "terrain_quixel_ingest.py::QuixelAsset.to_dict",
         "terrain_review_ingest.py::ReviewFinding.to_dict",
+        "terrain_scatter_points.py::ScatterCandidate.to_dict",
+        "terrain_scatter_points.py::ScatterCandidateTable.to_dict",
         "terrain_scatter_points.py::ScatterPoint.to_dict",
         "terrain_scatter_points.py::ScatterPointTable.to_dict",
         "terrain_stochastic_shader.py::StochasticShaderTemplate.to_dict",

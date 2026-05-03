@@ -417,9 +417,6 @@ def test_c2_speciesspec_to_dict_round_trips_all_new_fields():
 def test_c3_scatter_pass_carries_correct_slope_and_wind_profile():
     """C-3: ScatterPoint built inside _scatter_pass must use real slope (not
     altitude) and species-specific wind_profile (not hardcoded "none")."""
-    import numpy as np
-
-    from veilbreakers_terrain.handlers.environment_scatter import _scatter_pass
     from veilbreakers_terrain.handlers.terrain_scatter_points import (
         validate_scatter_point_table,
         ScatterPointTable,
@@ -510,3 +507,128 @@ def test_c3_validator_flags_duplicate_positions_and_single_species_tables():
     codes = {issue["code"] for issue in validate_scatter_point_table(table)}
     assert "duplicate_position" in codes
     assert "single_species_table" in codes
+
+
+def test_surface_support_gate_splits_accepted_and_rejected_candidates():
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
+        ScatterCandidate,
+        SurfaceSupportGate,
+        build_scatter_candidate_table,
+    )
+
+    accepted = ScatterCandidate(
+        candidate_id="oak_001",
+        source_rule_id="forest_canopy",
+        source_layer_id="tree_layer",
+        species_or_prop_id="tree_oak",
+        sampled_position=(1.0, 2.0, 3.0),
+        sampled_slope_deg=12.0,
+        sampled_material_layer_id="soil",
+        sampled_wetness=0.4,
+        sampled_deposition=0.6,
+        sampled_talus=0.0,
+        nearest_water_distance_m=18.0,
+        support_score=0.82,
+        embed_depth_m=0.08,
+    )
+    rejected = ScatterCandidate(
+        candidate_id="boulder_001",
+        source_rule_id="coastal_boulders",
+        source_layer_id="rock_layer",
+        species_or_prop_id="hero_boulder",
+        sampled_position=(5.0, 6.0, 0.0),
+        sampled_slope_deg=42.0,
+        sampled_material_layer_id="sand_dune",
+        sampled_wetness=0.1,
+        sampled_deposition=0.9,
+        sampled_talus=0.0,
+        nearest_water_distance_m=4.0,
+        support_score=0.2,
+        embed_depth_m=0.0,
+    )
+
+    table = build_scatter_candidate_table(
+        (accepted, rejected),
+        SurfaceSupportGate(
+            max_slope_deg=30.0,
+            min_support_score=0.55,
+            min_embed_depth_m=0.02,
+            allowed_material_layer_ids=("soil", "rock"),
+        ),
+        source="unit_test",
+    )
+
+    assert len(table.accepted) == 1
+    assert len(table.rejected) == 1
+    reason = table.rejected[0].rejected_reason
+    assert "slope_exceeds_gate" in reason
+    assert "support_score_below_gate" in reason
+    assert "embed_depth_below_gate" in reason
+    assert "material_incompatible" in reason
+    assert table.to_dict()["rejected_count"] == 1
+
+
+def test_surface_support_gate_rejects_non_finite_support_metrics():
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
+        ScatterCandidate,
+        SurfaceSupportGate,
+        build_scatter_candidate_table,
+    )
+
+    candidate = ScatterCandidate(
+        candidate_id="nan-rock",
+        source_rule_id="rocks",
+        source_layer_id="talus",
+        species_or_prop_id="hero_boulder",
+        sampled_position=(1.0, 2.0, 3.0),
+        sampled_slope_deg=10.0,
+        sampled_material_layer_id="rock",
+        sampled_wetness=0.1,
+        sampled_deposition=0.2,
+        sampled_talus=0.8,
+        nearest_water_distance_m=9.0,
+        support_score=float("nan"),
+        embed_depth_m=float("nan"),
+    )
+
+    table = build_scatter_candidate_table(
+        (candidate,),
+        SurfaceSupportGate(allowed_material_layer_ids=("rock",)),
+    ).to_dict()
+    reason = table["rejected"][0]["rejected_reason"]
+
+    assert table["accepted_count"] == 0
+    assert "non_finite_support_score" in reason
+    assert "non_finite_embed_depth" in reason
+
+
+def test_surface_support_gate_honors_waterlogged_flag_independent_of_max_wetness():
+    from veilbreakers_terrain.handlers.terrain_scatter_points import (
+        ScatterCandidate,
+        SurfaceSupportGate,
+        build_scatter_candidate_table,
+    )
+
+    candidate = ScatterCandidate(
+        candidate_id="wet-oak",
+        source_rule_id="forest",
+        source_layer_id="tree_layer",
+        species_or_prop_id="tree_oak",
+        sampled_position=(1.0, 2.0, 3.0),
+        sampled_slope_deg=10.0,
+        sampled_material_layer_id="soil",
+        sampled_wetness=0.2,
+        sampled_deposition=0.4,
+        sampled_talus=0.0,
+        nearest_water_distance_m=4.0,
+        support_score=0.9,
+        embed_depth_m=0.1,
+    )
+
+    table = build_scatter_candidate_table(
+        (candidate,),
+        SurfaceSupportGate(allow_waterlogged=False, max_wetness=1.0),
+    ).to_dict()
+
+    assert table["accepted_count"] == 0
+    assert "waterlogged_disallowed" in table["rejected"][0]["rejected_reason"]
