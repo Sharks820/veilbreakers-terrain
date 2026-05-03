@@ -280,7 +280,7 @@ Required flow:
 1. Author/customize plant variants in PlantFactory.
 2. Export to a staging asset library.
 3. Import into Blender for visual QA and material/scale/pivot validation.
-4. Register each variant in `assets/foliage_mesh_library.json` or equivalent manifest.
+4. Register each variant in `assets/foliage/catalog.json` or a documented successor manifest consumed by `terrain_foliage_catalog.py`.
 5. Add/resolve species in `terrain_foliage_catalog.py`.
 6. Scatter only through `ScatterPointTable`.
 7. Export Unity foliage placement manifests with LOD, wind profile, collider, impostor, and material metadata.

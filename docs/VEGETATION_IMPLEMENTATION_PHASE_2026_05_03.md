@@ -39,7 +39,7 @@ Required path:
 1. Source asset or recipe: PlantFactory, PlantCatalog, The Plant Library, PRO Forest, EZ-Tree, Hunyuan/Meshy, Freeze/Ivy generators, verified asset stores.
 2. Asset intake staging: source file, license file, source URL, tool version, seed/recipe if generated.
 3. Blender QA: scale, origin, pivot at base, orientation, UVs, PBR materials, alpha leaves, triangle counts, LOD meshes, screenshot/render.
-4. Mesh-library registration: `assets/foliage_mesh_library.json` or successor manifest.
+4. Mesh-library registration: `assets/foliage/catalog.json` or a documented successor manifest consumed by `terrain_foliage_catalog.py`.
 5. Species registration: `terrain_foliage_catalog.py` species/spec metadata.
 6. Rule graph: material/biome/slope/altitude/wetness/water-distance predicates resolve to baked point tables.
 7. Scatter truth: `ScatterPointTable` only.
@@ -330,7 +330,7 @@ VeilBreakers water must keep these channels as truth:
 1. Create asset intake manifest schema and validation command.
 2. Import 5 Plant Library assets and 3 PlantFactory/PlantCatalog assets as test fixtures.
 3. Convert one Plant Library biome preview into VeilBreakers rule graph + point table.
-4. Add license/provenance gates to foliage mesh library.
+4. Add license/provenance gates to `assets/foliage/catalog.json`.
 5. Add scatter point provenance fields.
 6. Add `ScatterCandidateTable` with rejected reasons.
 7. Add `SurfaceSupportGate` for boulders, ruins debris, trees, cliff props, and roots.

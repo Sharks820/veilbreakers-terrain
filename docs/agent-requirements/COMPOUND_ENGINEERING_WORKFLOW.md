@@ -11,7 +11,7 @@ Source inspected:
 
 ## Decision
 
-Compound Engineering is the primary planning/execution workflow layer for Codex and Claude Code sessions in this repo.
+Compound Engineering is the primary planning/execution workflow layer for Codex and Claude Code sessions in this repo. It is not the repo contract source of truth.
 
 Repo hard rules still live in `AGENTS.md` and `CLAUDE.md`. When CE guidance conflicts with VeilBreakers domain routing, branch protocol, safety policy, or visual-proof requirements, the repo rules win.
 
@@ -37,6 +37,7 @@ Result:
 - Repo fix applied: `.compound-engineering/config.local.example.yaml`
 
 WSL `bash.exe` failed because WSL needs update. Git Bash worked. The health script belongs to the plugin install, not this repo.
+Do not run `scripts/check-health` from the repository root; it is not a VeilBreakers repo script.
 
 Latest CE health after install:
 
