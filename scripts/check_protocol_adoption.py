@@ -15,7 +15,6 @@ CRITICAL_PROTOCOL_PASSES = {
     "scatter_intelligent",
     "karst",
     "navmesh",
-    "pass_navmesh_export",
     "gameplay_zones",
     "wildlife_zones",
     "framing",

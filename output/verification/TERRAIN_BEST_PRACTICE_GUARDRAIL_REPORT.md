@@ -1,20 +1,138 @@
 # Terrain Best-Practice Guardrail Report
 
-- Generated: 2026-05-01T01:54:27.015904+00:00
-- Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.csv`
-- Live callables: 1732
-- Matrix rows: 1732
+- Generated: 2026-05-03T06:35:30.666547+00:00
+- Matrix: `output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_03.csv`
+- Live callables: 1794
+- Matrix rows: 1794
 - Blocking: false
 - Missing rows: 0
 - Rows with required-field gaps: 0
 - Rows with unknown domains: 0
-- Duplicate callable-name groups: 0
+- Duplicate callable-name groups: 2
 - Reviewed duplicate callable-name groups: 59
-- P0 upgrade rows: 0
-- Non-A grade rows: 0
+- P0 upgrade rows: 55
+- Non-A grade rows: 56
 - Blocking grade-status rows: 0
 - Verification blockers: 0
 
+## P0 Upgrade Rows
+
+- `__init__.py::_populate_submodule_exports`: `P0`
+- `_mesh_bridge.py::_get_or_create_material`: `P0`
+- `_terrain_noise.py::_PermTableNoise._perm_for_seed`: `P0`
+- `_terrain_noise.py::domain_warp_fbm_array`: `P0`
+- `atmospheric_volumes.py::_build_bounds`: `P0`
+- `blender_capability_bridge.py::_get_viewport_context`: `P0`
+- `coastline.py::_build_tidal_flat`: `P0`
+- `environment.py::_enrich_composition_hints_from_biome`: `P0`
+- `environment_scatter.py::_generate_shared_poisson_candidates`: `P0`
+- `lod_pipeline.py::_compute_vertex_normals`: `P0`
+- `lod_pipeline.py::_poisson_disk_subsample`: `P0`
+- `lod_pipeline.py::_transfer_normals_from_lod0`: `P0`
+- `road_network.py::pass_road_network`: `P0`
+- `road_network.py::register_road_network_pass`: `P0`
+- `terrain_banded.py::_apply_band_erosion`: `P0`
+- `terrain_bundle_n.py::_check_foam_alpha`: `P0`
+- `terrain_bundle_n.py::_check_phantom_channel_reads`: `P0`
+- `terrain_bundle_n.py::_check_stochastic_seams`: `P0`
+- `terrain_bundle_n.py::_check_tree_z_export`: `P0`
+- `terrain_bundle_n.py::run_bundle_n_qa_battery`: `P0`
+- `terrain_checkpoints.py::_snapshot_mask_stack`: `P0`
+- `terrain_cliffs.py::generate_cliff_undercut`: `P0`
+- `terrain_determinism_ci.py::test_determinism_full_pass_sequence`: `P0`
+- `terrain_features.py::pass_biome_grammar_features`: `P0`
+- `terrain_features.py::register_biome_grammar_features_pass`: `P0`
+- `terrain_framing.py::_place_hero_features`: `P0`
+- `terrain_gameplay_zones.py::_compute_trigger_radius`: `P0`
+- `terrain_gameplay_zones.py::_resolve_zone_overlap`: `P0`
+- `terrain_gameplay_zones.py::_serialize_zone`: `P0`
+- `terrain_geology_validator.py::_derive_treeline_altitude_m`: `P0`
+- `terrain_karst.py::_place_cave_entrances`: `P0`
+- `terrain_lava.py::_compute_proximity`: `P0`
+- `terrain_lava.py::_d8_flow_routing`: `P0`
+- `terrain_lava.py::_proximity_used_scipy`: `P0`
+- `terrain_lava.py::pass_lava_simulation`: `P0`
+- `terrain_lava.py::register_lava_pass`: `P0`
+- `terrain_materials_v2.py::caldera_volcanic_rules`: `P0`
+- `terrain_pipeline.py::_shallow_stack_clone`: `P0`
+- `terrain_scatter_points.py::_build_scatter_chain`: `P0`
+- `terrain_semantics.py::TerrainPipelineState.tile_id`: `P0`
+- `terrain_stratigraphy.py::_clip_above_water`: `P0`
+- `terrain_stratigraphy.py::apply_stratigraphy_displacement`: `P0`
+- `terrain_talus.py::apply_talus_collapse`: `P0`
+- `terrain_talus.py::pass_talus`: `P0`
+- `terrain_talus.py::register_talus_pass`: `P0`
+- `terrain_unity_export_contracts.py::_assert_contract_lengths`: `P0`
+- `terrain_water_variants.py::_compute_foam_mask`: `P0`
+- `terrain_water_variants.py::_compute_mist_mask`: `P0`
+- `terrain_water_variants.py::_compute_wet_rock_mask`: `P0`
+- `terrain_weathering_timeline.py::pass_weathering_timeline`: `P0`
+- `terrain_weathering_timeline.py::register_weathering_timeline_pass`: `P0`
+- `terrain_wildlife_zones.py::_compute_spawn_density`: `P0`
+- `terrain_wind_field.py::_apply_log_wind_profile`: `P0`
+- `terrain_wind_field.py::_build_altitude_layers`: `P0`
+- `vegetation_system.py::export_grass_placement_records`: `P0`
+
+## Non-A Grade Rows
+
+- `__init__.py::_populate_submodule_exports`: `D+`
+- `_mesh_bridge.py::_get_or_create_material`: `D+`
+- `_mesh_bridge.py::_remap_edge_pair`: `B+`
+- `_terrain_noise.py::_PermTableNoise._perm_for_seed`: `D+`
+- `_terrain_noise.py::domain_warp_fbm_array`: `D+`
+- `atmospheric_volumes.py::_build_bounds`: `D+`
+- `blender_capability_bridge.py::_get_viewport_context`: `D+`
+- `coastline.py::_build_tidal_flat`: `D+`
+- `environment.py::_enrich_composition_hints_from_biome`: `D+`
+- `environment_scatter.py::_generate_shared_poisson_candidates`: `D+`
+- `lod_pipeline.py::_compute_vertex_normals`: `D+`
+- `lod_pipeline.py::_poisson_disk_subsample`: `D+`
+- `lod_pipeline.py::_transfer_normals_from_lod0`: `D+`
+- `road_network.py::pass_road_network`: `D+`
+- `road_network.py::register_road_network_pass`: `D+`
+- `terrain_banded.py::_apply_band_erosion`: `D+`
+- `terrain_bundle_n.py::_check_foam_alpha`: `D+`
+- `terrain_bundle_n.py::_check_phantom_channel_reads`: `D+`
+- `terrain_bundle_n.py::_check_stochastic_seams`: `D+`
+- `terrain_bundle_n.py::_check_tree_z_export`: `D+`
+- `terrain_bundle_n.py::run_bundle_n_qa_battery`: `D+`
+- `terrain_checkpoints.py::_snapshot_mask_stack`: `D+`
+- `terrain_cliffs.py::generate_cliff_undercut`: `D+`
+- `terrain_determinism_ci.py::test_determinism_full_pass_sequence`: `D+`
+- `terrain_features.py::pass_biome_grammar_features`: `D+`
+- `terrain_features.py::register_biome_grammar_features_pass`: `D+`
+- `terrain_framing.py::_place_hero_features`: `D+`
+- `terrain_gameplay_zones.py::_compute_trigger_radius`: `D+`
+- `terrain_gameplay_zones.py::_resolve_zone_overlap`: `D+`
+- `terrain_gameplay_zones.py::_serialize_zone`: `D+`
+- `terrain_geology_validator.py::_derive_treeline_altitude_m`: `D+`
+- `terrain_karst.py::_place_cave_entrances`: `D+`
+- `terrain_lava.py::_compute_proximity`: `D+`
+- `terrain_lava.py::_d8_flow_routing`: `D+`
+- `terrain_lava.py::_proximity_used_scipy`: `D+`
+- `terrain_lava.py::pass_lava_simulation`: `D+`
+- `terrain_lava.py::register_lava_pass`: `D+`
+- `terrain_materials_v2.py::caldera_volcanic_rules`: `D+`
+- `terrain_pipeline.py::_shallow_stack_clone`: `D+`
+- `terrain_scatter_points.py::_build_scatter_chain`: `D+`
+- `terrain_semantics.py::TerrainPipelineState.tile_id`: `D+`
+- `terrain_stratigraphy.py::_clip_above_water`: `D+`
+- `terrain_stratigraphy.py::apply_stratigraphy_displacement`: `D+`
+- `terrain_talus.py::apply_talus_collapse`: `D+`
+- `terrain_talus.py::pass_talus`: `D+`
+- `terrain_talus.py::register_talus_pass`: `D+`
+- `terrain_unity_export_contracts.py::_assert_contract_lengths`: `D+`
+- `terrain_water_variants.py::_compute_foam_mask`: `D+`
+- `terrain_water_variants.py::_compute_mist_mask`: `D+`
+- `terrain_water_variants.py::_compute_wet_rock_mask`: `D+`
+- `terrain_weathering_timeline.py::pass_weathering_timeline`: `D+`
+- `terrain_weathering_timeline.py::register_weathering_timeline_pass`: `D+`
+- `terrain_wildlife_zones.py::_compute_spawn_density`: `D+`
+- `terrain_wind_field.py::_apply_log_wind_profile`: `D+`
+- `terrain_wind_field.py::_build_altitude_layers`: `D+`
+- `vegetation_system.py::export_grass_placement_records`: `D+`
+
 ## Duplicate Callable Names
 
-No duplicate callable-name groups detected.
+- `_check_foam_alpha`: terrain_bundle_n.py::_check_foam_alpha, terrain_visual_qa.py::_check_foam_alpha
+- `_check_tree_z_export`: terrain_bundle_n.py::_check_tree_z_export, terrain_visual_qa.py::_check_tree_z_export
