@@ -46,7 +46,7 @@ import numpy as np
 
 try:
     from scipy.ndimage import map_coordinates as _map_coordinates
-    from scipy.ndimage import uniform_filter, generic_filter
+    from scipy.ndimage import uniform_filter
     _SCIPY_AVAILABLE = True
 except ImportError:
     _SCIPY_AVAILABLE = False
@@ -371,9 +371,6 @@ def _rasterize_vantage_silhouettes_onto_grid(
         return out
 
     ray_count = silhouettes.shape[1]
-    angles = np.linspace(0.0, 2.0 * np.pi, ray_count, endpoint=False)
-    cos_a = np.cos(angles)
-    sin_a = np.sin(angles)
 
     grid_cx = stack.world_origin_x + (cols * 0.5) * cell
     grid_cy = stack.world_origin_y + (rows * 0.5) * cell
@@ -607,24 +604,10 @@ def pass_saliency_refine(
 
     vantages = tuple(intent.composition_hints.get("vantages", ()))
 
-    # Compute per-vantage distance weights
     h_arr = np.asarray(stack.height, dtype=np.float64)
-    rows, cols = h_arr.shape
-    cell = float(stack.cell_size)
-    grid_cx = stack.world_origin_x + (cols * 0.5) * cell
-    grid_cy = stack.world_origin_y + (rows * 0.5) * cell
-    max_tile_dist = float(max(rows, cols) * cell)
 
     # Compute vantage silhouette mask if vantages are present
     if vantages:
-        vantage_weights = []
-        for vx, vy, _vz in vantages:
-            dist = float(np.hypot(vx - grid_cx, vy - grid_cy))
-            w = 1.0 / (1.0 + dist / max(max_tile_dist, 1.0))
-            vantage_weights.append(w)
-        total_w = sum(vantage_weights) + 1e-9
-        vantage_weights = [w / total_w for w in vantage_weights]
-
         ray_count = max(32, min(128, 64 // max(len(vantages), 1) * max(len(vantages), 1)))
         silhouettes = compute_vantage_silhouettes(stack, vantages, ray_count=ray_count)
         vantage_mask = _rasterize_vantage_silhouettes_onto_grid(
