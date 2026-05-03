@@ -132,6 +132,40 @@ def test_lava_pass_consumes_source_mask_and_persists_channels():
     np.testing.assert_allclose(loaded.lava_prox, state.mask_stack.lava_prox)
 
 
+def test_lava_helpers_route_and_measure_proximity_directly():
+    from veilbreakers_terrain.handlers.terrain_lava import (
+        _compute_proximity,
+        _d8_flow_routing,
+        _proximity_used_scipy,
+    )
+
+    height = np.array(
+        [
+            [3.0, 2.0, 1.0],
+            [3.0, 2.0, 0.0],
+            [3.0, 2.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    source = np.zeros_like(height, dtype=np.float64)
+    source[1, 0] = 1.0
+
+    lava_depth = _d8_flow_routing(
+        height,
+        source,
+        viscosity_threshold=0.01,
+        iterations=4,
+    )
+    proximity = _compute_proximity(lava_depth > 0.0)
+
+    assert float(lava_depth[1, 0]) > 0.0
+    assert float(lava_depth[1, 2]) > 0.0
+    assert float(lava_depth.max()) == pytest.approx(1.0)
+    assert float(lava_depth.min()) >= 0.0
+    assert float(proximity.max()) == pytest.approx(1.0)
+    assert isinstance(_proximity_used_scipy(lava_depth > 0.0), bool)
+
+
 def test_talus_collapse_counts_source_loss_once():
     from veilbreakers_terrain.handlers.terrain_talus import apply_talus_collapse
 
@@ -176,3 +210,20 @@ def test_master_registrar_registers_lava_and_talus_passes():
 
     assert "pass_lava_simulation" in TerrainPassController.PASS_REGISTRY
     assert "talus" in TerrainPassController.PASS_REGISTRY
+
+
+def test_lava_and_talus_register_hooks_work_directly():
+    from veilbreakers_terrain.handlers.terrain_lava import register_lava_pass
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_talus import register_talus_pass
+
+    TerrainPassController.clear_registry()
+    register_lava_pass()
+    register_talus_pass()
+
+    lava_entry = TerrainPassController.PASS_REGISTRY["pass_lava_simulation"]
+    talus_entry = TerrainPassController.PASS_REGISTRY["talus"]
+
+    assert lava_entry.produces_channels == ("lava_depth", "lava_prox", "lava_surface_mask")
+    assert talus_entry.produces_channels == ("height", "talus_displaced")
+    assert talus_entry.overrides == ("height",)
