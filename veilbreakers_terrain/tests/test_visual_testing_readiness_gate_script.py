@@ -19,6 +19,7 @@ import sys
 import types
 import zlib
 from pathlib import Path
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -286,6 +287,29 @@ def test_gate_rejects_placeholder_png_even_with_allow_flag(monkeypatch, tmp_path
     assert payload["placeholder_png"] is True
     assert "placeholder_png" in payload["blockers"]
     assert payload["captured_byte_length"] < 500
+
+
+def test_gate_rejects_corrupt_nonplaceholder_png(monkeypatch: Any, tmp_path: Path):
+    gate = _load_gate_module()
+    state = _stub_handlers(monkeypatch)
+    paths = _redirect_outputs(monkeypatch, gate, tmp_path)
+
+    corrupt_png = b"not-a-real-png" * 64
+    reference = _make_png(16, 16, (10, 20, 30))
+    paths["reference_dir"].mkdir(parents=True, exist_ok=True)
+    paths["reference"].write_bytes(reference)
+    _set_screenshot_result(
+        state, paths["thumbnail"], width=320, height=180, png_bytes=corrupt_png
+    )
+    monkeypatch.setattr(gate, "_running_in_blender_runtime", lambda: True)
+    monkeypatch.setattr(gate, "_ensure_blender_readiness_fixture", lambda: {"created": True})
+
+    payload, code = gate.run_gate(allow_no_blender=False, screenshot_width=320, screenshot_height=180)
+    assert code == 1
+    assert payload["placeholder_png"] is False
+    assert payload["thumbnail_decode_failed"] is True
+    assert "thumbnail_decode_failed" in payload["blockers"]
+    assert payload["pixel_diff"]["compared"] is False
 
 
 def test_gate_detects_pixel_diff_exceedance(monkeypatch, tmp_path):

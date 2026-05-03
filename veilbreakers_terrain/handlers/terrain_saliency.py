@@ -627,9 +627,9 @@ def pass_saliency_refine(
 
     base = np.asarray(stack.saliency_macro, dtype=np.float64)
 
-    # Dynamic 25-50% tactical blend, ramping with vantage count.
-    # More aggressive than the old 60/40 because the 8-factor scoring
-    # is more trustworthy than the old single-silhouette vantage mask.
+    # Dynamic 25-50% tactical blend, ramping with vantage count; this keeps
+    # macro terrain dominant when no vantages exist and lets tactical scoring
+    # take equal weight only when enough viewpoints justify it.
     tactical_influence = min(0.50, 0.25 + 0.05 * len(vantages))
     refined = np.clip(
         (1.0 - tactical_influence) * base + tactical_influence * tactical_score,
@@ -762,8 +762,9 @@ def register_saliency_pass() -> None:
                 "(3) slope shelter, (4) ridge prominence (TPI), (5) convexity / "
                 "topographic prominence, (6) sky exposure, (7) vegetation-break "
                 "potential, (8) tactical sight-line coverage from vantage silhouettes. "
-                "Blended 50/50 with existing saliency_macro. QualityGate validates "
-                "output variance >= 0.02 to catch degenerate scoring."
+                "Blended dynamically with existing saliency_macro: 25-50% tactical "
+                "influence, ramping by vantage count. QualityGate validates output "
+                "variance >= 0.02 to catch degenerate scoring."
             ),
         )
     )

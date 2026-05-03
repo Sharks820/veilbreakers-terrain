@@ -6,7 +6,7 @@ Output CSV: `output/spreadsheet/TEST_GUARDRAIL_AUDIT_2026_04_19.csv`
 ## Totals
 
 - Test files scanned: `149`
-- Collected tests mapped to files: `3796`
+- Collected tests mapped to files: `3797`
 - Files using legacy `blender_addon` alias: `0`
 - Files with source-introspection checks: `42`
 - Files with registry-surface checks: `9`

@@ -142,7 +142,7 @@ veilbreakers_terrain/tests/test_vegetation_depth_runtime_helpers.py,2,logic_guar
 veilbreakers_terrain/tests/test_visual_export_runtime_helpers.py,11,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_visual_qa_golden.py,73,structure_only,P1,no,no,yes,no,no,no,no,no,
 veilbreakers_terrain/tests/test_visual_testing_readiness.py,9,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
-veilbreakers_terrain/tests/test_visual_testing_readiness_gate_script.py,10,registry_surface,P2,no,yes,yes,yes,no,no,no,no,
+veilbreakers_terrain/tests/test_visual_testing_readiness_gate_script.py,11,registry_surface,P2,no,yes,yes,yes,no,no,no,no,
 veilbreakers_terrain/tests/test_w2_w4_water_depth_seam.py,19,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_water_network_upgrade.py,20,mock_plumbing,P2,no,yes,no,no,no,no,no,no,
 veilbreakers_terrain/tests/test_wind_runtime_helpers.py,2,logic_guardrail,P2,no,no,no,no,no,no,no,no,

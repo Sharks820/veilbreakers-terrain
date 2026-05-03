@@ -13,6 +13,8 @@ from typing import Dict
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "veilbreakers_terrain" / "tests"
 OUTPUT_DIR = REPO_ROOT / "output" / "spreadsheet"
+# Stable artifact id from the original 2026-04-19 audit. AUDIT_DATE records
+# the latest regeneration date without renaming downstream-consumed files.
 DATE_TAG = "2026_04_19"
 AUDIT_DATE = "2026-05-03"
 OUTPUT_CSV = OUTPUT_DIR / f"TEST_GUARDRAIL_AUDIT_{DATE_TAG}.csv"

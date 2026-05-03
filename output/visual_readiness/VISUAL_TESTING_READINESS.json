@@ -36,5 +36,6 @@
     320,
     180
   ],
-  "screenshot_contract_ok": false
+  "screenshot_contract_ok": false,
+  "thumbnail_decode_failed": false
 }
