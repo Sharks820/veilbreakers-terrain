@@ -183,7 +183,7 @@ OpenScatter release source:
 - latest release found: `v1.0.7_5.0+`, published 2026-01-13
 - source is a large Blender UI wrapper around Geometry Nodes sockets plus bundled `.blend`
 - useful controls: slope/elevation/angle masks, vertex-group masks, proximity, ecosystem attraction/repulsion, wind/collision, viewport density, optimized mesh, proxy object, camera culling, master seed, convert-to-mesh
-- license conflict: README says GPL-3.0; Blender manifest says `GPL-2.0-or-later`; treat as GPL reference-only
+- license conflict: README uses GPL-family wording; Blender manifest says `GPL-2.0-or-later`; treat as GPL reference-only
 
 GScatter/Graswald public asset docs:
 
@@ -315,12 +315,15 @@ VeilBreakers water must keep these channels as truth:
 
 - `water_surface_elevation_m`
 - `water_depth_m`
-- `flow_direction_xy`
-- `flow_speed_mps` or equivalent
+- `bathymetry`
+- `water_depth_zone`
+- `flow_direction`
+- `flow_speed`
 - `flow_accumulation`
-- `foam_mask`
-- `mist_mask`
-- wet rock / shoreline material masks
+- `foam`
+- `mist`
+- `wet_rock`
+- water material metadata and exported water shader manifest
 
 ## Implementation Order
 
@@ -344,7 +347,9 @@ VeilBreakers water must keep these channels as truth:
 
 ## Required Gates
 
-Run before PR:
+Run before PR.
+
+Windows / PowerShell:
 
 ```powershell
 python scripts\callable_census_gate.py --strict-zero
@@ -353,6 +358,17 @@ pyright -p pyrightconfig.json
 python -m pytest veilbreakers_terrain\tests\test_terrain_geology.py -q
 python -m pytest veilbreakers_terrain\tests\test_terrain_pipeline_smoke.py veilbreakers_terrain\tests\test_terrain_master_registrar.py veilbreakers_terrain\tests\test_terrain_iteration.py -q
 python scripts\visual_testing_readiness_gate.py
+```
+
+POSIX / Bash:
+
+```bash
+python scripts/callable_census_gate.py --strict-zero
+python scripts/scan_callable_wiring.py --strict-no-risk
+pyright -p pyrightconfig.json
+python -m pytest veilbreakers_terrain/tests/test_terrain_geology.py -q
+python -m pytest veilbreakers_terrain/tests/test_terrain_pipeline_smoke.py veilbreakers_terrain/tests/test_terrain_master_registrar.py veilbreakers_terrain/tests/test_terrain_iteration.py -q
+python scripts/visual_testing_readiness_gate.py
 ```
 
 Visual proof required before quality claims:

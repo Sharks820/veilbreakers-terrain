@@ -61,18 +61,22 @@ Risks:
 
 ## Required VeilBreakers Water Contract
 
-Every accepted water upgrade must preserve or improve:
+Every accepted water upgrade must preserve or improve current stack/export keys:
 
-- `water_surface_elevation_m`
-- `water_depth_m`
-- `flow_direction_xy`
-- `flow_speed_mps` or equivalent
-- `flow_accumulation`
-- `foam_mask`
-- `mist_mask`
-- shoreline wetness / wet-rock masks
-- caustic/material metadata
-- Unity water shader manifest
+| Concept | Canonical key |
+|---|---|
+| water surface elevation in metres | `water_surface_elevation_m` |
+| water depth in metres | `water_depth_m` |
+| bathymetry / depth below surface | `bathymetry` |
+| gameplay water depth classification | `water_depth_zone` |
+| flow direction | `flow_direction` |
+| flow speed | `flow_speed` |
+| flow accumulation | `flow_accumulation` |
+| foam intensity | `foam` |
+| mist intensity | `mist` |
+| shoreline wetness / wet rock | `wet_rock` |
+| caustic/material metadata | water material metadata and exported water shader manifest |
+| Unity water shader manifest | `water_shader_manifest.json` / `water_shader_manifest` export metadata |
 
 Acceptance:
 

@@ -195,7 +195,7 @@ Use as primary open-source scatter reference.
 Observed fit:
 
 - free/open-source Blender addon
-- GPL-3.0
+- `GPL-2.0-or-later` per latest release manifest SPDX metadata; GitHub/Superhive text also describes OpenScatter as GPL-family.
 - Blender 4.2-5.0 on Superhive
 - GitHub repo has addon code, assets, and docs
 - layer-style scatter systems
@@ -325,6 +325,6 @@ Before accepting e-on as production-ready, validate:
 - Blenderesse/Antoine Bagattini Ivy Generator page and secondary writeups describe a free Blender 3.0+ Geometry Nodes ivy generator; CG Journal reports personal/commercial use and Royalty Free license.
 - Vegeta Gumroad page lists Blender 3.0+, asset scatter, Geometry Nodes workflow, $10+ price, 152 MB add-on zip, and 4.9/1000+ ratings; license not visible in scraped page.
 - CGDive lists Freeze Generator as a free Blenderesse/Gumroad Geometry Nodes Fields resource for Blender 3.0; secondary coverage describes animated object freezing, icicles, and ice material controls.
-- Superhive and GitHub list OpenScatter as free/open-source/GPL-3.0 advanced Blender scattering; docs cover layer-style scatter systems, density/seed/math, self-collision, culling, slope/elevation/angle masks, proximity seek/avoid, and ecosystem attraction/repulsion.
+- Superhive and GitHub list OpenScatter as free/open-source/GPL-family advanced Blender scattering; latest release manifest inspected as `GPL-2.0-or-later`. Docs cover layer-style scatter systems, density/seed/math, self-collision, culling, slope/elevation/angle masks, proximity seek/avoid, and ecosystem attraction/repulsion.
 - Blender manual lists Scatter Objects as a bundled addon for distributing object instances on another object.
 - GScatter official page describes a free Blender scatter tool with effect layers for masking, optimization, and object effects; asset store details still need direct per-asset verification.

@@ -4,14 +4,16 @@ Version researched: `compound-engineering` plugin `3.4.1`
 
 Source inspected:
 
-- `C:\Users\Conner\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\README.md`
-- `C:\Users\Conner\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\skills`
-- `C:\Users\Conner\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\agents`
-- `C:\Users\Conner\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\.codex-plugin\plugin.json`
+- `%USERPROFILE%\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\README.md`
+- `%USERPROFILE%\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\skills`
+- `%USERPROFILE%\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\agents`
+- `%USERPROFILE%\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1\.codex-plugin\plugin.json`
 
 ## Decision
 
-Compound Engineering is the workflow source of truth for Codex and Claude Code sessions in this repo.
+Compound Engineering is the primary planning/execution workflow layer for Codex and Claude Code sessions in this repo.
+
+Repo hard rules still live in `AGENTS.md` and `CLAUDE.md`. When CE guidance conflicts with VeilBreakers domain routing, branch protocol, safety policy, or visual-proof requirements, the repo rules win.
 
 VeilBreakers project skills remain domain specialists for terrain, Blender, Unity, callable audits, asset import, and export validation.
 
@@ -22,7 +24,9 @@ Caveman remains communication style only. It does not own workflow, evidence rul
 Command used:
 
 ```powershell
-& 'C:\Program Files\Git\bin\bash.exe' scripts/check-health --version 3.4.1
+Push-Location "$env:USERPROFILE\.codex\plugins\cache\compound-engineering-plugin\compound-engineering\3.4.1"
+bash scripts/check-health --version 3.4.1
+Pop-Location
 ```
 
 Result:
@@ -32,7 +36,7 @@ Result:
 - Intentionally skipped: `vhs`
 - Repo fix applied: `.compound-engineering/config.local.example.yaml`
 
-WSL `bash.exe` failed because WSL needs update. Git Bash worked.
+WSL `bash.exe` failed because WSL needs update. Git Bash worked. The health script belongs to the plugin install, not this repo.
 
 Latest CE health after install:
 
@@ -57,6 +61,8 @@ These tools must be used when they are the best-fit proof or implementation tool
 ## Primary CE Routing
 
 Use this order unless the user explicitly routes elsewhere:
+
+For terrain, Blender, Unity, callable audit, asset import, and export-validation work, first load the matching VeilBreakers domain skill from `AGENTS.md`; then use the CE skill below as the process wrapper.
 
 1. `ce-strategy`: durable direction, product target, metrics, roadmap tracks.
 2. `ce-ideate`: generate and critique improvement options before picking work.
@@ -92,8 +98,8 @@ Use this order unless the user explicitly routes elsewhere:
 | `ce-optimize` | Run measured experiment loops for quality, performance, search, prompts, or other metrics. |
 | `ce-plan` | Build structured plans and deepen existing plans. |
 | `ce-polish-beta` | Human-in-loop polish after review with browser/dev-server checks. |
-| `ce-product-pulse` | Time-windowed report on usage, quality, errors, and followups. |
-| `ce-proof` | Share and iterate markdown docs through Proof editor. |
+| `ce-product-pulse` | Time-windowed report on usage, quality, errors, and follow-ups. |
+| `ce-proof` | Share and iterate Markdown docs through Proof editor. |
 | `ce-release-notes` | Inspect recent or historical CE plugin release notes. |
 | `ce-report-bug` | Report a bug against the CE plugin. |
 | `ce-resolve-pr-feedback` | Evaluate and resolve PR review comments. |
@@ -203,8 +209,8 @@ Remove candidates only after confirming:
 ## Session Startup Checklist
 
 1. Read `AGENTS.md` and `CLAUDE.md`.
-2. Use CE skill routing first.
+2. Apply VeilBreakers domain skill routing for terrain-specific work.
 3. Check branch/status before edits.
-4. Use domain skills for terrain-specific evidence.
+4. Use CE for planning, execution, debugging, PR feedback, and commit workflow after domain routing is clear.
 5. Keep visual claims blocked until real Blender/Unity proof exists.
 6. Use PR path, not direct `main` pushes.

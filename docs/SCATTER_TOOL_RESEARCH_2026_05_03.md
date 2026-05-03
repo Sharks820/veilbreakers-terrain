@@ -17,7 +17,7 @@ Production truth remains:
 Source says:
 
 - Free/open-source Blender addon for advanced scattering.
-- GitHub README says GPL-3.0, but latest release manifest says `SPDX:GPL-2.0-or-later`; treat as GPL-family/reference-only until legal review.
+- GitHub README uses GPL-family wording, but latest release manifest says `SPDX:GPL-2.0-or-later`; treat as GPL-family/reference-only until legal review.
 - Superhive lists Blender 4.2-5.0 and $1/$10 support tiers.
 - GitHub main branch only exposes README/license in normal clone; the actual addon code ships in GitHub release zips.
 - Latest release found: `v1.0.7_5.0+`, published 2026-01-13, asset `openscatter_1.0.7.zip`.
@@ -292,7 +292,9 @@ Rule graph fields:
 - `paint_mask_channel_id`
 - `source_tool_version`
 
-Point table fields:
+Point table fields to add:
+
+These are additive fields for `ScatterPointTable`; canonical base fields such as `position`, `normal`, `orient`, `scale`, and `prototype_id` remain required.
 
 - `source_rule_id`
 - `source_layer_id`
