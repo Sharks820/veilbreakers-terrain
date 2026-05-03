@@ -53,6 +53,10 @@ PLACEHOLDER_PNG_THRESHOLD_BYTES = 500
 PIXEL_DIFF_CHANNEL_THRESHOLD = 10.0  # out of 255
 
 
+def _is_placeholder_png_bytes(image_bytes: bytes | None) -> bool:
+    return image_bytes is None or len(image_bytes) <= PLACEHOLDER_PNG_THRESHOLD_BYTES
+
+
 def _status_ok(payload: Any) -> bool:
     return isinstance(payload, dict) and payload.get("status") == "ok"
 
@@ -474,14 +478,16 @@ def run_gate(
     # --- Thumbnail byte/pixel analysis -----------------------------------------
     thumbnail_bytes = _read_bytes_safely(THUMBNAIL_PATH)
     captured_byte_length = len(thumbnail_bytes) if thumbnail_bytes is not None else 0
-    placeholder_png = (
-        thumbnail_bytes is None
-        or captured_byte_length < PLACEHOLDER_PNG_THRESHOLD_BYTES
-    )
+    placeholder_png = _is_placeholder_png_bytes(thumbnail_bytes)
     perceptual_hash = (
         _compute_perceptual_hash(thumbnail_bytes) if thumbnail_bytes else "raw:missing"
     )
     image_stats = _image_luma_stats(thumbnail_bytes) if thumbnail_bytes else {"decoded": False}
+    thumbnail_decode_failed = bool(
+        thumbnail_bytes is not None
+        and not placeholder_png
+        and image_stats.get("decoded") is not True
+    )
     blank_png = bool(
         blender_runtime
         and image_stats.get("decoded")
@@ -495,7 +501,13 @@ def run_gate(
 
     pixel_diff_report: dict[str, Any] = {"compared": False}
     pixel_diff_exceeded = False
-    if thumbnail_bytes is not None and reference_bytes is not None:
+    if (
+        thumbnail_bytes is not None
+        and reference_bytes is not None
+        and image_stats.get("decoded") is True
+        and not _is_placeholder_png_bytes(thumbnail_bytes)
+        and not _is_placeholder_png_bytes(reference_bytes)
+    ):
         diff = _mean_abs_channel_diff(thumbnail_bytes, reference_bytes)
         pixel_diff_report = {"compared": True, **diff}
         if not diff["ok"]:
@@ -503,6 +515,12 @@ def run_gate(
         elif diff.get("mean_abs_diff", 0.0) > PIXEL_DIFF_CHANNEL_THRESHOLD:
             pixel_diff_exceeded = True
             pixel_diff_report["reason"] = "mean_abs_diff_exceeded"
+    elif thumbnail_bytes is not None and reference_bytes is not None:
+        pixel_diff_report = {
+            "compared": False,
+            "ok": False,
+            "reason": "decode_failed_or_placeholder",
+        }
 
     blockers: list[str] = []
     if missing_commands:
@@ -519,6 +537,8 @@ def run_gate(
         blockers.append("material_library_contract")
     if placeholder_png:
         blockers.append("placeholder_png")
+    if thumbnail_decode_failed:
+        blockers.append("thumbnail_decode_failed")
     if blank_png:
         blockers.append("blank_png")
     if pixel_diff_exceeded:
@@ -546,6 +566,7 @@ def run_gate(
         "blender_runtime_detected": blender_runtime,
         "captured_byte_length": captured_byte_length,
         "placeholder_png": placeholder_png,
+        "thumbnail_decode_failed": thumbnail_decode_failed,
         "blank_png": blank_png,
         "image_stats": image_stats,
         "blender_fixture": fixture_report,
@@ -575,6 +596,7 @@ def run_gate(
         placeholder_png
         or blank_png
         or pixel_diff_exceeded
+        or thumbnail_decode_failed
         or "missing_visual_reference" in blockers
         or "fixture_creation_failed" in blockers
     ):

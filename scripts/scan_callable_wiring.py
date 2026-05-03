@@ -31,10 +31,20 @@ HANDLERS_DIR = REPO_ROOT / "veilbreakers_terrain" / "handlers"
 TESTS_DIR = REPO_ROOT / "veilbreakers_terrain" / "tests"
 CSV_PATH = REPO_ROOT / "docs" / "aaa-audit" / "GRADES_VERIFIED.csv"
 OUTPUT_DIR = REPO_ROOT / "output" / "spreadsheet"
+# Stable artifact id from the original 2026-04-19 audit. AUDIT_DATE records
+# the latest regeneration date without renaming downstream-consumed files.
 DATE_TAG = "2026_04_19"
+AUDIT_DATE = "2026-05-03"
 OUTPUT_CSV = OUTPUT_DIR / f"CALLABLE_WIRING_AUDIT_{DATE_TAG}.csv"
 OUTPUT_SUMMARY = OUTPUT_DIR / f"CALLABLE_WIRING_SUMMARY_{DATE_TAG}.md"
 TRUE_RISK_STATUSES = {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only"}
+
+
+def _repo_relative(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 @dataclass(frozen=True)
@@ -676,10 +686,10 @@ def write_summary(path: Path, rows: List[dict], total_defs: int) -> None:
     lines = [
         "# Callable Wiring Summary",
         "",
-        "Audit date: 2026-04-19",
-        f"Input handlers directory: `{HANDLERS_DIR}`",
-        f"Input grade sheet: `{CSV_PATH}`",
-        f"Output CSV: `{OUTPUT_CSV}`",
+        f"Audit date: {AUDIT_DATE}",
+        f"Input handlers directory: `{_repo_relative(HANDLERS_DIR)}`",
+        f"Input grade sheet: `{_repo_relative(CSV_PATH)}`",
+        f"Output CSV: `{_repo_relative(OUTPUT_CSV)}`",
         "",
         "## Totals",
         "",
@@ -825,8 +835,8 @@ def main(argv: List[str] | None = None) -> int:
             {
                 "rows": len(rows),
                 "true_wiring_risks": len(true_risks),
-                "csv": str(OUTPUT_CSV),
-                "summary": str(OUTPUT_SUMMARY),
+                "csv": _repo_relative(OUTPUT_CSV),
+                "summary": _repo_relative(OUTPUT_SUMMARY),
             },
             indent=2,
         )

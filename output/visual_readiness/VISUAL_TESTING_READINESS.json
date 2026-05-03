@@ -9,7 +9,6 @@
   "blockers": [
     "screenshot_contract",
     "placeholder_png",
-    "pixel_diff_exceeded",
     "no_blender_runtime"
   ],
   "captured_byte_length": 8,
@@ -23,11 +22,11 @@
   "note": "Headless dispatch wiring checked. blender_runtime_detected=false means the next gate must be run inside Blender/headless Blender for real renders; the captured PNG, PHash, and pixel-diff fields only carry meaning when a real Blender runtime is present.",
   "perceptual_hash": "raw:70e4956d0d38456e",
   "pixel_diff": {
-    "compared": true,
+    "compared": false,
     "ok": false,
-    "reason": "decode_failed"
+    "reason": "decode_failed_or_placeholder"
   },
-  "pixel_diff_exceeded": true,
+  "pixel_diff_exceeded": false,
   "placeholder_png": true,
   "probe_failures": {},
   "ready_for_visual_testing": false,
@@ -37,5 +36,6 @@
     320,
     180
   ],
-  "screenshot_contract_ok": false
+  "screenshot_contract_ok": false,
+  "thumbnail_decode_failed": false
 }

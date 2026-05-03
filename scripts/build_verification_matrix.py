@@ -52,6 +52,13 @@ WIRING_CSV = REPO_ROOT / "output" / "spreadsheet" / "CALLABLE_WIRING_AUDIT_2026_
 TRUE_WIRING_RISK_STATUSES = {"orphan_candidate", "uninvoked_registrar", "registrar_declared_only"}
 
 
+def _repo_relative(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 DOMAIN_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("blender_tool", ("handle_", "bpy", "bmesh", "mathutils", "blender")),
     ("visual_qa", ("visual", "screenshot", "thumbnail", "render", "diff", "saliency")),
@@ -351,7 +358,7 @@ def write_outputs(rows: list[dict[str, str]]) -> None:
         "false_grade_count": false_grade_count,
         "direct_test_only_a_grade_count": direct_test_only_a,
         "tool_blocker_count": len(tool_blockers),
-        "csv": CSV_OUT.as_posix(),
+        "csv": _repo_relative(CSV_OUT),
     }
     JSON_OUT.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
