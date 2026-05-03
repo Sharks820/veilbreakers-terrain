@@ -580,10 +580,13 @@ def pass_saliency_refine(
 
     Reads ``intent.composition_hints["vantages"]`` (list of (x,y,z)).
     Computes full 8-factor saliency score and blends with existing saliency_macro:
-      - 50% existing saliency_macro (preserves analytical macro features)
-      - 50% 8-factor tactical score (height visibility, water proximity,
+      - 50–75% existing saliency_macro (preserves analytical macro features)
+      - 25–50% 8-factor tactical score (height visibility, water proximity,
         slope shelter, ridge prominence, convexity, sky exposure,
         veg-break potential, tactical sight-line coverage)
+
+    Tactical influence is ``min(0.50, 0.25 + 0.05 * vantage_count)``:
+    25% with no vantages, +5% per vantage, capped at 50% for 5+ vantages.
 
     Vantage silhouette mask feeds directly into Factor 8 (sight-line coverage).
     When no vantages are specified, Factors 1-7 still run (pure terrain analysis).
@@ -624,7 +627,7 @@ def pass_saliency_refine(
 
     base = np.asarray(stack.saliency_macro, dtype=np.float64)
 
-    # 50/50 blend: existing saliency + 8-factor tactical score
+    # Dynamic 25-50% tactical blend, ramping with vantage count.
     # More aggressive than the old 60/40 because the 8-factor scoring
     # is more trustworthy than the old single-silhouette vantage mask.
     tactical_influence = min(0.50, 0.25 + 0.05 * len(vantages))

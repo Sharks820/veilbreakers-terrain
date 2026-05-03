@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "veilbreakers_terrain" / "tests"
 OUTPUT_DIR = REPO_ROOT / "output" / "spreadsheet"
 DATE_TAG = "2026_04_19"
+AUDIT_DATE = "2026-05-03"
 OUTPUT_CSV = OUTPUT_DIR / f"TEST_GUARDRAIL_AUDIT_{DATE_TAG}.csv"
 OUTPUT_MD = OUTPUT_DIR / f"TEST_GUARDRAIL_SUMMARY_{DATE_TAG}.md"
 
@@ -28,6 +29,13 @@ PATTERNS = {
     "command_handlers_exec": ("COMMAND_HANDLERS[",),
     "validate_tile_seams": ("validate_tile_seams(",),
 }
+
+
+def _repo_relative(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 MANUAL_NOTES: Dict[str, Dict[str, str]] = {
@@ -199,8 +207,8 @@ def main() -> None:
     lines = [
         "# Test Guardrail Summary",
         "",
-        "Audit date: 2026-04-19",
-        f"Output CSV: `{OUTPUT_CSV}`",
+        f"Audit date: {AUDIT_DATE}",
+        f"Output CSV: `{_repo_relative(OUTPUT_CSV)}`",
         "",
         "## Totals",
         "",

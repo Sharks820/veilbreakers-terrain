@@ -495,7 +495,13 @@ def run_gate(
 
     pixel_diff_report: dict[str, Any] = {"compared": False}
     pixel_diff_exceeded = False
-    if thumbnail_bytes is not None and reference_bytes is not None:
+    if (
+        thumbnail_bytes is not None
+        and reference_bytes is not None
+        and image_stats.get("decoded") is True
+        and len(thumbnail_bytes) > PLACEHOLDER_PNG_THRESHOLD_BYTES
+        and len(reference_bytes) > PLACEHOLDER_PNG_THRESHOLD_BYTES
+    ):
         diff = _mean_abs_channel_diff(thumbnail_bytes, reference_bytes)
         pixel_diff_report = {"compared": True, **diff}
         if not diff["ok"]:
@@ -503,6 +509,12 @@ def run_gate(
         elif diff.get("mean_abs_diff", 0.0) > PIXEL_DIFF_CHANNEL_THRESHOLD:
             pixel_diff_exceeded = True
             pixel_diff_report["reason"] = "mean_abs_diff_exceeded"
+    elif thumbnail_bytes is not None and reference_bytes is not None:
+        pixel_diff_report = {
+            "compared": False,
+            "ok": False,
+            "reason": "decode_failed_or_placeholder",
+        }
 
     blockers: list[str] = []
     if missing_commands:

@@ -1,7 +1,7 @@
 # Test Guardrail Summary
 
-Audit date: 2026-04-19
-Output CSV: `C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\output\spreadsheet\TEST_GUARDRAIL_AUDIT_2026_04_19.csv`
+Audit date: 2026-05-03
+Output CSV: `output/spreadsheet/TEST_GUARDRAIL_AUDIT_2026_04_19.csv`
 
 ## Totals
 
