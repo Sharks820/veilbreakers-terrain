@@ -212,7 +212,7 @@
 "M","veilbreakers_terrain/handlers/terrain_rng.py","","defer-handler-code","Broad PR14 code/test change. Requires focused PR with local and CI proof; do not bulk-merge PR14."
 "M","veilbreakers_terrain/handlers/terrain_roughness_driver.py","","defer-handler-code","Broad PR14 code/test change. Requires focused PR with local and CI proof; do not bulk-merge PR14."
 "M","veilbreakers_terrain/handlers/terrain_saliency.py","","already-on-main","Equivalent useful work already exists on main or was superseded by later clean PR."
-"D","veilbreakers_terrain/handlers/terrain_scatter_altitude_safety.py","","needs-manual-review","Potentially useful governance/config/surface file, but not safe to salvage from PR14 without focused review."
+"D","veilbreakers_terrain/handlers/terrain_scatter_altitude_safety.py","","needs-manual-review","Deleted handler module. Not safe to salvage or remove from PR14 without focused runtime review and matching tests."
 "M","veilbreakers_terrain/handlers/terrain_scatter_points.py","","defer-handler-code","Broad PR14 code/test change. Requires focused PR with local and CI proof; do not bulk-merge PR14."
 "M","veilbreakers_terrain/handlers/terrain_scene_read.py","","defer-handler-code","Broad PR14 code/test change. Requires focused PR with local and CI proof; do not bulk-merge PR14."
 "M","veilbreakers_terrain/handlers/terrain_sculpt.py","","defer-handler-code","Broad PR14 code/test change. Requires focused PR with local and CI proof; do not bulk-merge PR14."

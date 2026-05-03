@@ -86,6 +86,9 @@ output/aaa_sunken_coastal_ruins_node_v1/**
 output/spreadsheet/GRADES_VERIFIED_STALE_ROWS_REMOVED_*.csv
 output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_04_30.*
 output/spreadsheet/INDUSTRY_BEST_PRACTICE_CALLABLE_MATRIX_2026_05_01.*
+output/spreadsheet/MASTER_CALLABLE_AUDIT_2026_04_19.csv
+output/visual_readiness/reference/test_live_preview_thumbnail.png
+output/visual_readiness/test_live_preview_thumbnail.png
 ```
 
 Reasons:
@@ -116,12 +119,15 @@ Reason: needs Unity compile/import proof.
 Handler/test/script churn:
 
 - broad `veilbreakers_terrain/handlers/**`
+- `docs/BRANCHING_AND_MERGE_POLICY.md`
+- `veilbreakers_terrain/procedural_meshes.py`
+- `veilbreakers_terrain/providers/**`
 - broad `veilbreakers_terrain/tests/**`
 - broad `scripts/**`
 
-Reason: 150+ files are mixed runtime, test, audit, visual, and generated-work
-changes. Salvage only by focused PR with targeted tests, pyright, callable
-gates, and full CI.
+Reason: 150+ files are mixed runtime, provider, procedural mesh, policy,
+test, audit, visual, and generated-work changes. Salvage only by focused PR
+with targeted tests, pyright, callable gates, and full CI.
 
 ## Manual Review Hotspots
 
