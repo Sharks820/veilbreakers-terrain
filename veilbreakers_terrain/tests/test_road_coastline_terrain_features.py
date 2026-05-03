@@ -1252,6 +1252,15 @@ class TestTidalZoneLabel:
         label = np.asarray(stack.get("tidal_zone_label")).ravel()
         assert list(label) == [0, 1, 2, 3, 4]
 
+    def test_zero_tidal_range_keeps_above_sea_zones_defined(self):
+        import numpy as np
+        from veilbreakers_terrain.handlers.coastline import detect_tidal_zones
+
+        stack = _make_tidal_stack([0.05, 0.15, 0.35, 0.75])
+        detect_tidal_zones(stack, sea_level_m=0.0, tidal_range_m=0.0)
+        label = np.asarray(stack.get("tidal_zone_label")).ravel()
+        assert list(label) == [1, 2, 3, 4]
+
     def test_label_dtype_is_uint8(self):
         import numpy as np
         from veilbreakers_terrain.handlers.coastline import detect_tidal_zones

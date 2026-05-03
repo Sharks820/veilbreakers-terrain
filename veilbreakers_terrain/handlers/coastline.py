@@ -1188,8 +1188,10 @@ def detect_tidal_zones(
     # 5-zone tidal label: subtidal=0, intertidal=1, splash=2, spray=3, supralittoral=4
     low = sea_level_m - half
     high_z = sea_level_m + half
-    splash_top = high_z + tidal_range_m
-    spray_top = high_z + 3.0 * tidal_range_m
+    # half already clamps the minimum range; effective full range is exact.
+    tidal_range_eff = 2.0 * half
+    splash_top = high_z + tidal_range_eff
+    spray_top = high_z + 3.0 * tidal_range_eff
     label = np.zeros_like(h, dtype=np.uint8)
     label[h >= low] = 1
     label[h >= high_z] = 2

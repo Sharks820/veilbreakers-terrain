@@ -7,14 +7,14 @@ Output CSV: `output/spreadsheet/CALLABLE_WIRING_AUDIT_2026_04_19.csv`
 
 ## Totals
 
-- Live handler callables scanned: `1732`
+- Live handler callables scanned: `1740`
 - Callables missing from the grade sheet: `0`
 - Callables without any R9 grade attached via matching CSV row: `548`
 
 Status distribution:
 - `direct_test_covered`: `238`
-- `helper_reachable`: `1286`
-- `runtime_primary`: `208`
+- `helper_reachable`: `1290`
+- `runtime_primary`: `212`
 
 ## Highest-Risk Files
 

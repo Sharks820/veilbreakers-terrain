@@ -30,8 +30,6 @@ import dataclasses
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-_log = logging.getLogger(__name__)
-
 from .terrain_semantics import (
     BBox,
     ChannelOwnershipError,
@@ -48,6 +46,8 @@ from .terrain_semantics import (
     ValidationIssue,
 )
 
+_log = logging.getLogger(__name__)
+
 
 class PipelineSubsystemError(RuntimeError):
     """Raised when a non-recoverable pipeline subsystem call fails (FIX-1.2)."""
@@ -59,6 +59,10 @@ def _make_gate_issue(code: str, severity: str, message: str) -> ValidationIssue:
 
 _PREVIEW_QUALITY_PROFILES = frozenset({"preview", "mobile", "low"})
 _ABSENT_CHANNEL = object()
+_VOLCANIC_HINT_TOKENS = frozenset({"volcanic", "lava", "caldera", "magma"})
+_LAVA_SOURCE_HINT_KEYS = frozenset(
+    {"lava_source_mask", "lava_sources", "authored_lava_source", "has_lava_source_mask"}
+)
 
 
 def _copy_checkpoint_value(value: Any) -> Any:
@@ -122,6 +126,25 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
     unity_export_opt_out = bool(composition_hints.get("unity_export_opt_out", False))
     skip_scatter = bool(composition_hints.get("skip_scatter", False))
     include_waterfalls = bool(composition_hints.get("waterfalls", True))
+    biome_hint = str(
+        composition_hints.get("biome")
+        or composition_hints.get("biome_name")
+        or getattr(intent, "biome_name", "")
+        or ""
+    ).lower()
+    lava_source_hint = any(bool(composition_hints.get(key, False)) for key in _LAVA_SOURCE_HINT_KEYS)
+    stack_source = getattr(getattr(intent, "mask_stack", None), "lava_source_mask", None)
+    try:
+        stack_has_lava_source = bool(stack_source is not None and stack_source.any())
+    except (AttributeError, TypeError, ValueError):
+        stack_has_lava_source = stack_source is not None
+    include_lava = (
+        bool(composition_hints.get("lava", False))
+        or lava_source_hint
+        or stack_has_lava_source
+        or any(token in biome_hint for token in _VOLCANIC_HINT_TOKENS)
+    )
+    include_talus = bool(composition_hints.get("talus", False))
     has_scene_read = getattr(intent, "scene_read", None) is not None
     validation_pass = (
         "validation_minimal"
@@ -158,7 +181,11 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "framing",
             *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
             *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
-            *(("integrate_deltas", "materials_v2", "emit_overhang_meshes") if has_scene_read else ("materials_v2",)),
+            *(("integrate_deltas",) if has_scene_read else ()),
+            *(("talus", "structural_masks_post_talus") if include_talus else ()),
+            *(("pass_lava_simulation",) if include_lava else ()),
+            "materials_v2",
+            *(("emit_overhang_meshes",) if has_scene_read else ()),
             *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),
             # C-2: Bundle J ecosystem passes
             "audio_zones",
@@ -1544,6 +1571,38 @@ def register_default_passes(*, strict: bool = False) -> None:
                 "Recompute structural terrain masks after erosion/composite height "
                 "updates so downstream water, scatter, materials, and validation "
                 "consume current slope/curvature/ridge fields."
+            ),
+        ),
+        PassDefinition(
+            name="structural_masks_post_talus",
+            func=_tw.pass_structural_masks,
+            requires_channels=("height",),
+            produces_channels=(
+                "slope",
+                "curvature",
+                "concavity",
+                "convexity",
+                "ridge",
+                "basin",
+                "saliency_macro",
+                "hero_exclusion",
+            ),
+            overrides=(
+                "slope",
+                "curvature",
+                "concavity",
+                "convexity",
+                "ridge",
+                "basin",
+                "saliency_macro",
+                "hero_exclusion",
+            ),
+            seed_namespace="structural_masks_post_talus",
+            requires_scene_read=False,
+            supports_region_scope=False,
+            description=(
+                "Recompute structural terrain masks after talus mutates height "
+                "so materials_v2 and scatter consume current slope/curvature fields."
             ),
         ),
         PassDefinition(
