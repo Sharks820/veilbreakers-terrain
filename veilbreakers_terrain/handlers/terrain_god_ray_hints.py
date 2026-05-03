@@ -202,7 +202,7 @@ def compute_god_ray_hints(
     # ------------------------------------------------------------------
     # Step 2: Foliage / scatter density
     # ------------------------------------------------------------------
-    forest_raw = stack.get("forest_mask")
+    forest_raw = stack.get("forest_mask", default=None)
     if forest_raw is not None:
         foliage = np.clip(np.asarray(forest_raw, dtype=np.float32), 0.0, 1.0)
     else:
@@ -252,8 +252,8 @@ def compute_god_ray_hints(
     # ------------------------------------------------------------------
     # Step 4: Feature-kind bonuses
     # ------------------------------------------------------------------
-    cave = stack.get("cave_candidate")
-    wfall = stack.get("waterfall_lip_candidate")
+    cave = stack.get("cave_candidate", default=None)
+    wfall = stack.get("waterfall_lip_candidate", default=None)
     cave_mask = (
         np.asarray(cave, dtype=np.float32)
         if cave is not None
@@ -393,18 +393,33 @@ def pass_god_ray_hints(
         sun_az = float(hints_cfg.get("sun_azimuth_rad", math.radians(135.0)))
         sun_alt = float(hints_cfg.get("sun_altitude_rad", math.radians(35.0)))
 
-    cs = stack.get("cloud_shadow")
+    cs = stack.get("cloud_shadow", default=None)
     if cs is None:
         cs = np.zeros_like(stack.height, dtype=np.float32)
 
     hints = compute_god_ray_hints(stack, (sun_az, sun_alt), np.asarray(cs))
+
+    # FIX-12-26: write god-ray intensity map to the stack so Unity receives
+    # the channel; previously hints were computed then immediately discarded.
+    h_shape = stack.height.shape
+    god_ray_map = np.zeros(h_shape, dtype=np.float32)
+    cell = float(stack.cell_size)
+    ox = float(stack.world_origin_x)
+    oy = float(stack.world_origin_y)
+    for hint in hints:
+        wx, wy, _ = hint.source_pos
+        col = int((wx - ox) / cell - 0.5)
+        row = int((wy - oy) / cell - 0.5)
+        if 0 <= row < h_shape[0] and 0 <= col < h_shape[1]:
+            god_ray_map[row, col] = max(god_ray_map[row, col], hint.intensity)
+    stack.set("god_ray_hints", god_ray_map, "pass_god_ray_hints")
 
     return PassResult(
         pass_name="god_ray_hints",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height", "cloud_shadow"),
-        produced_channels=(),
+        produced_channels=("god_ray_hints",),
         metrics={
             "hint_count": len(hints),
             "max_intensity": float(max((h.intensity for h in hints), default=0.0)),
@@ -423,7 +438,7 @@ def register_bundle_l_god_ray_hints_pass() -> None:
             name="god_ray_hints",
             func=pass_god_ray_hints,
             requires_channels=("height",),
-            produces_channels=(),
+            produces_channels=("god_ray_hints",),
             seed_namespace="god_ray_hints",
             requires_scene_read=False,
             description="Bundle L: god-ray / light-shaft hint detection",

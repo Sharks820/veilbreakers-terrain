@@ -217,11 +217,18 @@ def _register_all_terrain_passes_impl(
         ("G", f"{package_root}.terrain_banded", "register_bundle_g_passes"),
         ("H-morphology", f"{package_root}.terrain_morphology", "register_morphology_pass"),
         ("H-terrain-features", f"{package_root}.terrain_features", "register_terrain_features_pass"),
+        # FIX-13-18: biome grammar height features wired as a pass (periglacial, tafoni, etc.)
+        ("H-biome-grammar", f"{package_root}.terrain_features", "register_biome_grammar_features_pass"),
         ("H-framing", f"{package_root}.terrain_framing", "register_framing_pass"),
         ("F", f"{package_root}.terrain_caves", "register_bundle_f_passes"),
         ("I", f"{package_root}.terrain_geology_validator", "register_bundle_i_passes"),
-        ("I-glacial", f"{package_root}.terrain_glacial", "register_glacial_pass"),
+        # FIX-10-9: lava flow simulation — must run after geological passes so
+        # height is final; before waterfalls/materials so lava channels are
+        # available to splatmap rules and material consumers.
+        ("P-lava", f"{package_root}.terrain_lava", "register_lava_pass"),
+        ("P-talus", f"{package_root}.terrain_talus", "register_talus_pass"),
         ("C", f"{package_root}.terrain_waterfalls", "register_bundle_c_passes"),
+        ("Q-weathering", f"{package_root}.terrain_weathering_timeline", "register_weathering_timeline_pass"),
         # FIX-10-25: road network must run before scatter so road_mask is available
         ("road-network", f"{package_root}.road_network", "register_road_network_pass"),
         # Material + scatter (consume final height + all candidate masks)

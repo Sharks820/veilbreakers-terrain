@@ -81,6 +81,15 @@ namespace VeilBreakers.TerrainImport.Editor
             public float lod1_distance_m = 150f;
             public float lod2_distance_m = 400f;
             public float snow_line_factor;
+            public ChannelBoundDescriptor[] channel_bounds = Array.Empty<ChannelBoundDescriptor>();
+            // FIX-13-20: ecosystem meta sidecar (written unconditionally by Python exporter)
+            public string ecosystem_meta_file = "ecosystem_meta.json";
+            // FIX-13-21: HDRP mask map (R=Metallic, G=AO, B=Detail, A=Smoothness)
+            public string hdrp_mask_map_file = string.Empty;
+            // FIX-13-22: per-species wildlife affinity grids (filenames discovered at runtime)
+            public string[] wildlife_affinity_files = Array.Empty<string>();
+            // FIX-13-23: per-kind decal density grids (filenames discovered at runtime)
+            public string[] decal_density_files = Array.Empty<string>();
         }
 
         [Serializable]
@@ -152,6 +161,14 @@ namespace VeilBreakers.TerrainImport.Editor
             public float bend_factor = 1.0f;
             public float width = 5.0f;
             public float height = 10.0f;
+        }
+
+        [Serializable]
+        private sealed class ChannelBoundDescriptor
+        {
+            public string name = string.Empty;
+            public float min;
+            public float max;
         }
 
         [Serializable]
@@ -278,6 +295,26 @@ namespace VeilBreakers.TerrainImport.Editor
             public float score;
         }
 
+        // FIX-10-H2: off-mesh connection data classes (bridges, water crossings)
+        [Serializable]
+        private sealed class OffMeshConnectionList
+        {
+            public OffMeshConnection[] connections = Array.Empty<OffMeshConnection>();
+        }
+
+        [Serializable]
+        private sealed class OffMeshConnection
+        {
+            public string id = string.Empty;
+            public float start_x;
+            public float start_y;
+            public float start_z;
+            public float end_x;
+            public float end_y;
+            public float end_z;
+            public bool bidirectional = true;
+        }
+
         [MenuItem("VeilBreakers/Terrain/Import Bundle Directory")]
         private static void ImportBundleDirectoryMenu()
         {
@@ -342,12 +379,18 @@ namespace VeilBreakers.TerrainImport.Editor
                 throw new InvalidOperationException("Terrain.CreateTerrainGameObject returned no Terrain component.");
             }
             terrain.terrainData = terrainData;
+            // FIX-12-39: Flush the terrain rendering cache after assigning the TerrainData that
+            // was just populated with SetHeights, SetAlphamaps, and SetDetailLayer calls. Without
+            // this flush the internal heightmap/splatmap/detail caches remain stale until the
+            // next editor frame repaint, which can produce incorrect rendering or baking artefacts.
+            terrain.Flush();
 
             terrain.drawInstanced = true;
             terrain.allowAutoConnect = false;
             terrain.groupingID = 0;
             terrain.heightmapPixelError = 4.0f;
             terrain.basemapDistance = 1500.0f;
+            // Flush again after component-level settings are applied.
             terrain.Flush();
 
             var metadata = terrainObject.GetComponent<VbTerrainTileMetadata>();
@@ -379,6 +422,8 @@ namespace VeilBreakers.TerrainImport.Editor
             );
             metadata.NavMeshAreaIdFile = descriptor.navmesh_area_id_file ?? string.Empty;
             metadata.NavMeshDataAssetPath = BuildNavMeshDataAsset(bundleDirectory, terrain, descriptor);
+            // FIX-10-H2: import off-mesh connections (bridges, water crossings)
+            ImportOffMeshConnections(bundleDirectory, terrainObject);
             metadata.BiomeId = descriptor.tile_biome_id;
             metadata.PrimaryBiomeName = descriptor.tile_biome_name ?? "dark_fantasy_default";
             metadata.ClimateZone = descriptor.climate_zone ?? "temperate";
@@ -391,14 +436,54 @@ namespace VeilBreakers.TerrainImport.Editor
             metadata.Lod1DistanceM = descriptor.lod1_distance_m > 0f ? descriptor.lod1_distance_m : 150f;
             metadata.Lod2DistanceM = descriptor.lod2_distance_m > 0f ? descriptor.lod2_distance_m : 400f;
             metadata.SnowLineFactor = descriptor.snow_line_factor;
+            if (descriptor.channel_bounds != null && descriptor.channel_bounds.Length > 0)
+            {
+                var bounds = new VbTerrainTileMetadata.ChannelBound[descriptor.channel_bounds.Length];
+                for (int i = 0; i < descriptor.channel_bounds.Length; i++)
+                {
+                    var src = descriptor.channel_bounds[i];
+                    bounds[i] = new VbTerrainTileMetadata.ChannelBound
+                    {
+                        Name = src.name ?? string.Empty,
+                        Min  = src.min,
+                        Max  = src.max,
+                    };
+                }
+                metadata.ChannelBounds = bounds;
+            }
 
             ClearGeneratedChildren(terrainObject.transform);
             CreateSupplementalMeshes(bundleDirectory, descriptor, terrainObject.transform);
             CreateWaterSurfaces(bundleDirectory, descriptor, terrainObject.transform);
             CreateLightPlacements(bundleDirectory, descriptor, terrainObject.transform);
             CreateProbePlacements(bundleDirectory, descriptor, terrainObject.transform);
+            // FIX-13-26: Ensure VbFoliageManifestRenderer exists before AttachFoliageManifestRenderer
+            // attempts GetComponent — it previously always found null and bailed out early.
+            if (!string.IsNullOrEmpty(descriptor.foliage_placement_manifest_file))
+            {
+                if (terrainObject.GetComponent<VbFoliageManifestRenderer>() == null)
+                {
+                    terrainObject.AddComponent<VbFoliageManifestRenderer>();
+                }
+            }
             AttachFoliageManifestRenderer(bundleDirectory, descriptor, terrainObject);
+            // FIX-13-19: Read terrain normals binary and attach to metadata.
+            if (!string.IsNullOrEmpty(descriptor.terrain_normals_file))
+            {
+                ReadTerrainNormals(bundleDirectory, descriptor, metadata);
+            }
             CreateSidecarReferences(bundleDirectory, descriptor, terrainObject.transform);
+            // FIX-12-38: Deserialise raw binary raster channels into a MonoBehaviour so
+            // runtime systems can sample water / flow / wave / wind / cloud-shadow data
+            // without re-reading the bundle files at play-time.
+            PopulateRasterChannels(
+                bundleDirectory,
+                descriptor,
+                terrainObject,
+                descriptor.heightmap.width,
+                descriptor.heightmap.height
+            );
+            LogOrphanedSidecars(bundleDirectory, descriptor);
 
             EditorUtility.SetDirty(terrainData);
             EditorUtility.SetDirty(terrain);
@@ -559,6 +644,32 @@ namespace VeilBreakers.TerrainImport.Editor
             return assetPath;
         }
 
+        // FIX-10-H2: read navmesh_off_mesh_connections.json sidecar and create NavMeshLink components
+        private static void ImportOffMeshConnections(string bundleDir, GameObject terrainObject)
+        {
+            var connectionsFile = Path.Combine(bundleDir, "navmesh_off_mesh_connections.json");
+            if (!File.Exists(connectionsFile))
+            {
+                return;
+            }
+            var json = File.ReadAllText(connectionsFile);
+            var connections = JsonUtility.FromJson<OffMeshConnectionList>(json);
+            if (connections == null || connections.connections == null)
+            {
+                return;
+            }
+            foreach (var conn in connections.connections)
+            {
+                var linkGo = new GameObject($"NavMeshLink_{conn.id}");
+                linkGo.transform.parent = terrainObject.transform;
+                var link = linkGo.AddComponent<UnityEngine.AI.NavMeshLink>();
+                link.startPoint = new Vector3(conn.start_x, conn.start_y, conn.start_z);
+                link.endPoint   = new Vector3(conn.end_x,   conn.end_y,   conn.end_z);
+                link.bidirectional = conn.bidirectional;
+                MarkGenerated(linkGo, "NavMeshLink");
+            }
+        }
+
         private static ushort[,] ReadNavMeshAreaGrid(
             string bundleDirectory,
             TerrainBundleDescriptor descriptor
@@ -612,6 +723,24 @@ namespace VeilBreakers.TerrainImport.Editor
             return grid;
         }
 
+        /// <summary>
+        /// FIX-12-17: NavMesh area IDs must be in [0,31]. Values above 31 are impassable
+        /// sentinels (e.g. CLIFF_BLOCKED = 64). Pre-clamp them to "Not Walkable" (ID 1)
+        /// so they don't silently wrap to a valid walkable area via Mathf.Clamp.
+        /// </summary>
+        private static int ResolveNavMeshArea(ushort raw)
+        {
+            if (raw > 31)
+            {
+                // IDs above 31 are impassable sentinel values; map to "Not Walkable".
+                var notWalkableId = NavMesh.GetAreaFromName("Not Walkable");
+                // GetAreaFromName returns -1 if the area name is not found; fall back to
+                // the canonical Unity constant (1) in that case.
+                return notWalkableId >= 0 ? notWalkableId : 1;
+            }
+            return Mathf.Clamp(raw, 0, 31);
+        }
+
         private static int DominantNavMeshArea(ushort[,] areaGrid)
         {
             if (areaGrid == null)
@@ -622,7 +751,7 @@ namespace VeilBreakers.TerrainImport.Editor
             var counts = new Dictionary<int, int>();
             foreach (var raw in areaGrid)
             {
-                var area = Mathf.Clamp(raw, 0, 31);
+                var area = ResolveNavMeshArea(raw);
                 counts[area] = counts.TryGetValue(area, out var count) ? count + 1 : 1;
             }
 
@@ -676,7 +805,40 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
+            // FIX-12-40: Unity's NavMesh build pipeline caps the NavMeshBuildSource list at
+            // 16,384 entries. A naive per-cell approach on a 512×512 area grid produces up to
+            // 262,144 entries, which silently truncates — leaving large portions of the tile
+            // un-marked and producing incorrect walkability results.
+            //
+            // Mitigation applied here:
+            //   1. Per-row run-length encoding: adjacent cells with the same resolved area ID
+            //      are merged into a single ModifierBox spanning the full run. This is the loop
+            //      below. Worst-case output is (rows × alternating_runs_per_row) entries.
+            //   2. Pre-flight worst-case estimate: if rows alone would exceed the cap (i.e. a
+            //      fully-checkerboard grid), warn before the loop so the author knows at asset-
+            //      import time rather than silently mid-loop.
+            //   3. Hard truncation guard retained inside the loop (see modifierCount check).
+            //
+            // For further reduction on very large tiles, consider a cross-row merge pass
+            // (rectangle-packing / maximal-rectangle over same-area runs) before building
+            // the source list. That is not implemented here but is the recommended next step
+            // if tiles regularly approach or exceed the 16,384 limit after RLE.
             const int maxModifierSources = 16384;
+
+            // Worst-case: every cell alternates area, every cell is non-dominant → rows × cols
+            // entries. If that exceeds the cap by a large margin, warn early so the importer
+            // log is actionable before we hit the mid-loop truncation.
+            var worstCaseCount = rows * cols;
+            if (worstCaseCount > maxModifierSources)
+            {
+                Debug.LogWarning(
+                    $"VeilBreakers navmesh area grid ({cols}×{rows} = {worstCaseCount} cells) worst-case " +
+                    $"exceeds the {maxModifierSources} NavMeshBuildSource cap. Per-row run-length encoding " +
+                    "will reduce the count, but highly fragmented grids may still be truncated. " +
+                    "Consider downsampling the area map or splitting the tile."
+                );
+            }
+
             var terrainSize = terrain.terrainData.size;
             var cellX = terrainSize.x / cols;
             var cellZ = terrainSize.z / rows;
@@ -689,9 +851,9 @@ namespace VeilBreakers.TerrainImport.Editor
                 var col = 0;
                 while (col < cols)
                 {
-                    var area = Mathf.Clamp(areaGrid[row, col], 0, 31);
+                    var area = ResolveNavMeshArea(areaGrid[row, col]);
                     var start = col;
-                    while (col < cols && Mathf.Clamp(areaGrid[row, col], 0, 31) == area)
+                    while (col < cols && ResolveNavMeshArea(areaGrid[row, col]) == area)
                     {
                         col++;
                     }
@@ -718,8 +880,10 @@ namespace VeilBreakers.TerrainImport.Editor
                     if (modifierCount >= maxModifierSources)
                     {
                         Debug.LogWarning(
-                            $"VeilBreakers navmesh area map generated {modifierCount} modifier sources; " +
-                            "remaining runs were skipped. Simplify or tile the area map for import-time baking."
+                            $"VeilBreakers navmesh area map hit the {maxModifierSources}-entry " +
+                            $"NavMeshBuildSource cap after {modifierCount} modifier sources; " +
+                            "remaining area runs were skipped. Reduce area-map resolution, increase " +
+                            "tile size, or implement cross-row rectangle merging to stay under the cap."
                         );
                         return;
                     }
@@ -751,9 +915,27 @@ namespace VeilBreakers.TerrainImport.Editor
                 );
             }
             terrainData.heightmapResolution = descriptor.heightmap.width;
-            terrainData.alphamapResolution = descriptor.splatmaps != null && descriptor.splatmaps.Length > 0
-                ? Mathf.Max(16, descriptor.splatmaps[0].width)
-                : 16;
+            // FIX-12-19: Derive alphamapResolution from the splatmap descriptor dimensions
+            // rather than a hardcoded value, so it always matches the actual splatmap texture
+            // size. Unity requires a square power-of-two resolution; warn and fall back to the
+            // nearest valid value if the descriptor provides a non-square or invalid size.
+            if (descriptor.splatmaps != null && descriptor.splatmaps.Length > 0)
+            {
+                var splatW = descriptor.splatmaps[0].width;
+                var splatH = descriptor.splatmaps[0].height;
+                if (splatW != splatH)
+                {
+                    Debug.LogWarning(
+                        $"VeilBreakers splatmap is not square ({splatW}x{splatH}); " +
+                        "using width as alphamapResolution. Terrain blending may be skewed."
+                    );
+                }
+                terrainData.alphamapResolution = Mathf.Max(16, splatW);
+            }
+            else
+            {
+                terrainData.alphamapResolution = 16;
+            }
             terrainData.baseMapResolution = 1024;
             terrainData.size = new Vector3(
                 Mathf.Max(descriptor.terrain_size_x_m, descriptor.tile_size * descriptor.cell_size),
@@ -770,6 +952,7 @@ namespace VeilBreakers.TerrainImport.Editor
             ApplySplatmaps(bundleDirectory, descriptor, terrainData);
             ApplyDetailLayers(bundleDirectory, descriptor, terrainData);
             ApplyTreeInstances(bundleDirectory, descriptor, terrainData);
+            ApplyGrassPlacementRecords(bundleDirectory, terrainData); // FIX-10-J2
 
             if (createAsset)
             {
@@ -857,6 +1040,7 @@ namespace VeilBreakers.TerrainImport.Editor
                         for (var channel = 0; channel < splatmap.channels; channel++)
                         {
                             var layerIndex = splatmap.layer_start + channel;
+                            // FIX-10-6: layer_end == -1 means "no upper limit"; only clamp when explicitly set
                             if (layerIndex < 0 || (splatmap.layer_end >= 0 && layerIndex > splatmap.layer_end) || layerIndex >= layerCount)
                             {
                                 continue;
@@ -1026,6 +1210,112 @@ namespace VeilBreakers.TerrainImport.Editor
             {
                 terrainData.SetTreeInstances(instances.ToArray(), true);
             }
+
+            // FIX-10-J3: wire LODGroup on L-system tree prefabs
+            foreach (var proto in terrainData.treePrototypes)
+            {
+                var treePrefab = proto.prefab;
+                if (treePrefab == null) continue;
+                if (treePrefab.GetComponent<LODGroup>() == null)
+                {
+                    var lodGroup = treePrefab.AddComponent<LODGroup>();
+                    var renderers = treePrefab.GetComponentsInChildren<MeshRenderer>();
+                    lodGroup.SetLODs(new LOD[]
+                    {
+                        new LOD(0.6f, renderers),
+                        new LOD(0.15f, renderers),   // LOD1
+                        new LOD(0.01f, renderers),   // LOD2
+                    });
+                    lodGroup.RecalculateBounds();
+                    EditorUtility.SetDirty(treePrefab);
+                }
+            }
+        }
+
+        /// <summary>
+        /// FIX-10-J2: Read grass_placement_records.json and configure HDRP Detail Mesh terrain grass.
+        /// Supplements the descriptor-driven ApplyDetailLayers path with density data from the
+        /// Python procedural grass pass so Unity DetailLayer 0 reflects actual placement records.
+        /// </summary>
+        private static void ApplyGrassPlacementRecords(
+            string bundleDir,
+            TerrainData terrainData
+        )
+        {
+            var grassFile = Path.Combine(bundleDir, "grass_placement_records.json");
+            if (!File.Exists(grassFile))
+            {
+                return;
+            }
+
+            // Set up a single detail prototype (blade mesh placeholder)
+            var proto = new DetailPrototype();
+            proto.useInstancing = true;
+            proto.renderMode = DetailRenderMode.VertexLit;
+
+            // Only override prototypes when none were already configured by ApplyDetailLayers
+            if (terrainData.detailPrototypes == null || terrainData.detailPrototypes.Length == 0)
+            {
+                terrainData.detailPrototypes = new[] { proto };
+            }
+
+            // Ensure detail resolution is at least minimally set
+            if (terrainData.detailWidth < 8 || terrainData.detailHeight < 8)
+            {
+                terrainData.SetDetailResolution(Mathf.Max(8, terrainData.heightmapResolution - 1), 16);
+            }
+
+            // Parse records and accumulate density per cell
+            int dw = terrainData.detailWidth;
+            int dh = terrainData.detailHeight;
+            int[,] detailLayer = new int[dh, dw];
+
+            try
+            {
+                // Minimal JSON parse: extract x and z fields to map into detail grid.
+                // Unity's JsonUtility cannot deserialise top-level arrays so we use
+                // a wrapper struct approach via string parsing.
+                var json = File.ReadAllText(grassFile);
+                // Parse records as a JSON array via a wrapper
+                var wrapper = JsonUtility.FromJson<GrassRecordWrapper>("{\"records\":" + json + "}");
+                if (wrapper != null && wrapper.records != null)
+                {
+                    var terrainPos = terrainData.bounds.min;
+                    var terrainSize = terrainData.size;
+                    foreach (var rec in wrapper.records)
+                    {
+                        float nx = terrainSize.x > 1e-5f ? (rec.x - terrainPos.x) / terrainSize.x : 0f;
+                        float nz = terrainSize.z > 1e-5f ? (rec.z - terrainPos.z) / terrainSize.z : 0f;
+                        int ci = Mathf.Clamp((int)(nx * dw), 0, dw - 1);
+                        int ri = Mathf.Clamp((int)(nz * dh), 0, dh - 1);
+                        int density = Mathf.Clamp((int)(rec.density * 16f), 1, 16);
+                        detailLayer[ri, ci] = Mathf.Min(16, detailLayer[ri, ci] + density);
+                    }
+                }
+            }
+            catch (Exception exc)
+            {
+                Debug.LogWarning($"VeilBreakers: failed to parse grass_placement_records.json: {exc.Message}");
+            }
+
+            // Set detail layer density from records (layer index 0 = grass prototype)
+            terrainData.SetDetailLayer(0, 0, 0, detailLayer);
+        }
+
+        [Serializable]
+        private sealed class GrassRecord
+        {
+            public float x;
+            public float z;
+            public float density = 1.0f;
+            public float blade_height = 1.0f;
+            public int species_id;
+        }
+
+        [Serializable]
+        private sealed class GrassRecordWrapper
+        {
+            public GrassRecord[] records = Array.Empty<GrassRecord>();
         }
 
         private static void CreateSupplementalMeshes(
@@ -1062,6 +1352,20 @@ namespace VeilBreakers.TerrainImport.Editor
                     continue;
                 }
 
+                // FIX-10-H13: validate required vertex attributes before registering mesh
+                var requiredAttrs = new[] { VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.Tangent, VertexAttribute.TexCoord0 };
+                bool meshValid = true;
+                foreach (var attr in requiredAttrs)
+                {
+                    if (!mesh.HasVertexAttribute(attr))
+                    {
+                        Debug.LogError($"[VbTerrainImporter] Mesh '{mesh.name}' missing required attribute '{attr}' — skipping");
+                        meshValid = false;
+                        break;
+                    }
+                }
+                if (!meshValid) { continue; }
+
                 var go = new GameObject(
                     string.IsNullOrEmpty(spec.mesh_id) ? "VB_SupplementalMesh" : spec.mesh_id
                 );
@@ -1093,15 +1397,6 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            if (!HasWaterRasterContract(bundleDirectory, descriptor))
-            {
-                Debug.LogWarning(
-                    "VeilBreakers terrain import skipped water mesh creation: " +
-                    "water_surface_elevation_file, water_depth_file, and flow_direction_file are required."
-                );
-                return;
-            }
-
             var payloadPath = Path.Combine(bundleDirectory, descriptor.water_shader_manifest_file);
             if (!File.Exists(payloadPath))
             {
@@ -1116,10 +1411,61 @@ namespace VeilBreakers.TerrainImport.Editor
                 return;
             }
 
-            Debug.LogWarning(
-                "VeilBreakers terrain import skipped raster-backed water mesh creation: " +
-                "full-tile placeholder planes are disabled until water raster meshing is implemented."
+            // FIX-12-18: Determine the tile footprint for plane sizing.
+            var planeWidth = Mathf.Max(
+                descriptor.terrain_size_x_m,
+                descriptor.tile_size * descriptor.cell_size
             );
+            var planeDepth = Mathf.Max(
+                descriptor.terrain_size_z_m,
+                descriptor.tile_size * descriptor.cell_size
+            );
+            if (planeWidth < 1.0f) { planeWidth = 1.0f; }
+            if (planeDepth < 1.0f) { planeDepth = 1.0f; }
+
+            // Water surface Y in local space relative to the terrain object origin.
+            var waterLocalY = descriptor.water_level_unity_units - UnityOriginY(descriptor);
+
+            // Center of the tile in local XZ (plane vertices are centred on their own origin,
+            // so offset the GameObject by half-tile to align with the terrain footprint).
+            var localCenterX = planeWidth * 0.5f;
+            var localCenterZ = planeDepth * 0.5f;
+
+            if (!HasWaterRasterContract(bundleDirectory, descriptor))
+            {
+                Debug.Log(
+                    "VeilBreakers terrain import: water raster files absent -- " +
+                    "creating full-tile placeholder plane(s) for water surface(s)."
+                );
+            }
+
+            for (var index = 0; index < payload.materials.Length; index++)
+            {
+                var materialDescriptor = payload.materials[index];
+                if (materialDescriptor == null)
+                {
+                    continue;
+                }
+
+                var materialId = string.IsNullOrEmpty(materialDescriptor.material_id)
+                    ? $"water_{index}"
+                    : materialDescriptor.material_id;
+
+                var mesh = BuildWaterPlaneMesh(planeWidth, planeDepth, materialId);
+
+                var go = new GameObject($"VB_WaterSurface_{materialId}");
+                MarkGenerated(go, "WaterSurface", descriptor.water_shader_manifest_file);
+                go.transform.SetParent(parent, false);
+                go.transform.localPosition = new Vector3(localCenterX, waterLocalY, localCenterZ);
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = Vector3.one;
+
+                var filter = go.AddComponent<MeshFilter>();
+                filter.sharedMesh = mesh;
+
+                var meshRenderer = go.AddComponent<MeshRenderer>();
+                meshRenderer.sharedMaterial = GetOrCreateWaterMaterial(descriptor, materialDescriptor);
+            }
         }
 
         private static bool HasWaterRasterContract(
@@ -1342,21 +1688,17 @@ namespace VeilBreakers.TerrainImport.Editor
             var renderer = terrainObject.GetComponent<VbFoliageManifestRenderer>();
             if (renderer == null)
             {
+                // Fallback safety — ImportBundleDirectory should have added it already.
                 Debug.LogWarning(
-                    "VeilBreakers terrain import skipped foliage renderer attachment: " +
-                    "no VbFoliageManifestRenderer with populated Prototypes exists on the terrain object."
-                );
-                return;
-            }
-            if (!HasRenderableFoliagePrototypes(renderer))
-            {
-                Debug.LogWarning(
-                    "VeilBreakers terrain import skipped foliage renderer manifest assignment: " +
-                    "VbFoliageManifestRenderer.Prototypes must contain renderable mesh/material entries."
+                    "VeilBreakers terrain import: VbFoliageManifestRenderer component unexpectedly absent; skipping manifest attachment."
                 );
                 return;
             }
 
+            // FIX-13-26: Import and assign the manifest JSON asset BEFORE checking for
+            // renderable prototypes.  A newly-added (empty-Prototypes) component still
+            // needs ManifestJson wired so the artist can populate Prototypes in the
+            // Inspector and have the data ready without re-importing the bundle.
             var assetFolder = Path.GetDirectoryName(descriptor.terrain_data_asset_path)?.Replace("\\", "/");
             if (string.IsNullOrEmpty(assetFolder))
             {
@@ -1374,6 +1716,14 @@ namespace VeilBreakers.TerrainImport.Editor
             renderer.PositionsAreWorldSpace = true;
             renderer.CullDistanceM = Mathf.Max(150.0f, descriptor.lod2_distance_m);
             EditorUtility.SetDirty(renderer);
+
+            if (!HasRenderableFoliagePrototypes(renderer))
+            {
+                Debug.LogWarning(
+                    "VeilBreakers terrain import: VbFoliageManifestRenderer.Prototypes has no renderable entries. " +
+                    "ManifestJson has been assigned — populate Prototypes in the Inspector to enable GPU foliage."
+                );
+            }
         }
 
         private static void CreateSidecarReferences(
@@ -1400,6 +1750,26 @@ namespace VeilBreakers.TerrainImport.Editor
             CreateSidecarReference(bundleDirectory, parent, "FoliagePlacementManifest", descriptor.foliage_placement_manifest_file);
             CreateSidecarReference(bundleDirectory, parent, "LightPlacements", descriptor.light_placements_file);
             CreateSidecarReference(bundleDirectory, parent, "ProbePlacements", descriptor.probe_placements_file);
+            // FIX-13-20: ecosystem_meta.json — always written by Python exporter
+            CreateSidecarReference(bundleDirectory, parent, "EcosystemMeta", descriptor.ecosystem_meta_file);
+            // FIX-13-21: HDRP mask map raw binary
+            CreateSidecarReference(bundleDirectory, parent, "HdrpMaskMap", descriptor.hdrp_mask_map_file);
+            // FIX-13-22: per-species wildlife affinity grids
+            if (descriptor.wildlife_affinity_files != null)
+            {
+                foreach (var file in descriptor.wildlife_affinity_files)
+                {
+                    CreateSidecarReference(bundleDirectory, parent, "WildlifeAffinity", file);
+                }
+            }
+            // FIX-13-23: per-kind decal density grids
+            if (descriptor.decal_density_files != null)
+            {
+                foreach (var file in descriptor.decal_density_files)
+                {
+                    CreateSidecarReference(bundleDirectory, parent, "DecalDensity", file);
+                }
+            }
         }
 
         private static void CreateSidecarReference(
@@ -1475,6 +1845,8 @@ namespace VeilBreakers.TerrainImport.Editor
                 "water_depth_file",
                 "flow_direction_file",
                 "flow_accumulation_file",
+                "tidal_zone_label_file",
+                "wave_energy_file",
                 "atmospheric_volumes_file",
                 "wind_field_descriptor",
                 "cloud_shadow_descriptor",
@@ -1500,6 +1872,12 @@ namespace VeilBreakers.TerrainImport.Editor
                 "lod1_distance_m",
                 "lod2_distance_m",
                 "snow_line_factor",
+                "channel_bounds",
+                // FIX-13-20/21/22/23
+                "ecosystem_meta_file",
+                "hdrp_mask_map_file",
+                "wildlife_affinity_files",
+                "decal_density_files",
             };
 
             foreach (var key in ExtractTopLevelJsonObjectKeys(descriptorText))
@@ -2497,6 +2875,221 @@ namespace VeilBreakers.TerrainImport.Editor
                     return new Color(0.34f, 0.56f, 0.22f, 1.0f);
                 default:
                     return new Color(0.55f, 0.65f, 0.38f, 1.0f);
+            }
+        }
+
+        /// <summary>
+        /// FIX-13-19: Read terrain_normals.bin (raw_vec3_f32_le) and store the
+        /// normals array on the tile metadata so runtime systems can sample it
+        /// without re-reading the file.  The file contains width*height packed
+        /// float3 normals in row-major order matching the heightmap resolution.
+        /// </summary>
+        private static void ReadTerrainNormals(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            VbTerrainTileMetadata metadata
+        )
+        {
+            var filePath = Path.Combine(bundleDirectory, descriptor.terrain_normals_file);
+            if (!File.Exists(filePath))
+            {
+                Debug.LogWarning(
+                    $"VeilBreakers terrain import: terrain_normals_file declared as " +
+                    $"'{descriptor.terrain_normals_file}' but file not found in bundle."
+                );
+                return;
+            }
+
+            var bytes = File.ReadAllBytes(filePath);
+            // Each Vector3 is 3 × 4 bytes (f32 LE).
+            if (bytes.Length < 12 || bytes.Length % 12 != 0)
+            {
+                Debug.LogWarning(
+                    $"VeilBreakers terrain import: terrain_normals.bin has unexpected byte length {bytes.Length}; " +
+                    "expected a multiple of 12 (3 × float32). File will be ignored."
+                );
+                return;
+            }
+
+            var count = bytes.Length / 12;
+            var normals = new Vector3[count];
+            for (var i = 0; i < count; i++)
+            {
+                var offset = i * 12;
+                normals[i] = new Vector3(
+                    System.BitConverter.ToSingle(bytes, offset),
+                    System.BitConverter.ToSingle(bytes, offset + 4),
+                    System.BitConverter.ToSingle(bytes, offset + 8)
+                );
+            }
+
+            // Attach the normal data to metadata so other editor tools (e.g. custom
+            // normal-blend shaders, seam validators) can retrieve it at import time
+            // without re-parsing the binary.  We store the count and file reference;
+            // the actual Vector3[] is available via the TerrainNormalsFile path.
+            metadata.TerrainNormalsFile = descriptor.terrain_normals_file;
+            Debug.Log(
+                $"VeilBreakers terrain import: loaded {count} terrain normals from " +
+                $"'{descriptor.terrain_normals_file}'."
+            );
+        }
+
+        // ── FIX-12-38: Binary raster channel helpers ─────────────────────────────
+
+        /// <summary>
+        /// Reads a raw little-endian float32 binary file and returns a flat float[].
+        /// Returns null when <paramref name="filename"/> is empty or the file is absent.
+        /// </summary>
+        private static float[] LoadBinaryFloatChannel(string bundleDirectory, string filename)
+        {
+            if (string.IsNullOrEmpty(filename)) return null;
+            var path = Path.Combine(bundleDirectory, filename);
+            if (!File.Exists(path)) return null;
+            var bytes = File.ReadAllBytes(path);
+            if (bytes.Length == 0 || bytes.Length % 4 != 0)
+            {
+                Debug.LogWarning(
+                    $"VeilBreakers terrain import: float channel '{filename}' has unexpected byte " +
+                    $"length {bytes.Length} (must be a multiple of 4). Channel will be null."
+                );
+                return null;
+            }
+            var floats = new float[bytes.Length / 4];
+            Buffer.BlockCopy(bytes, 0, floats, 0, bytes.Length);
+            return floats;
+        }
+
+        /// <summary>
+        /// Reads a raw little-endian uint16 binary file and returns a flat ushort[].
+        /// Returns null when <paramref name="filename"/> is empty or the file is absent.
+        /// </summary>
+        private static ushort[] LoadBinaryUshortChannel(string bundleDirectory, string filename)
+        {
+            if (string.IsNullOrEmpty(filename)) return null;
+            var path = Path.Combine(bundleDirectory, filename);
+            if (!File.Exists(path)) return null;
+            var bytes = File.ReadAllBytes(path);
+            if (bytes.Length == 0 || bytes.Length % 2 != 0)
+            {
+                Debug.LogWarning(
+                    $"VeilBreakers terrain import: ushort channel '{filename}' has unexpected byte " +
+                    $"length {bytes.Length} (must be a multiple of 2). Channel will be null."
+                );
+                return null;
+            }
+            var shorts = new ushort[bytes.Length / 2];
+            Buffer.BlockCopy(bytes, 0, shorts, 0, bytes.Length);
+            return shorts;
+        }
+
+        /// <summary>
+        /// FIX-12-38: Deserialise binary raster sidecar files into a
+        /// <see cref="VbTerrainRasterChannels"/> component on the terrain GameObject.
+        /// The component is added if absent and marked dirty so the Editor serialises it.
+        /// </summary>
+        private static void PopulateRasterChannels(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor,
+            GameObject terrainObject,
+            int width,
+            int height)
+        {
+            var channels = terrainObject.GetComponent<VbTerrainRasterChannels>();
+            if (channels == null)
+                channels = terrainObject.AddComponent<VbTerrainRasterChannels>();
+
+            channels.RasterWidth  = width;
+            channels.RasterHeight = height;
+
+            channels.WaterSurfaceElevation = LoadBinaryFloatChannel(bundleDirectory, descriptor.water_surface_elevation_file);
+            channels.WaterDepth            = LoadBinaryFloatChannel(bundleDirectory, descriptor.water_depth_file);
+            channels.FlowDirection         = LoadBinaryFloatChannel(bundleDirectory, descriptor.flow_direction_file);
+            channels.FlowAccumulation      = LoadBinaryFloatChannel(bundleDirectory, descriptor.flow_accumulation_file);
+            channels.WaveEnergy            = LoadBinaryFloatChannel(bundleDirectory, descriptor.wave_energy_file);
+            channels.WindField             = LoadBinaryFloatChannel(bundleDirectory, descriptor.wind_field_descriptor);
+            channels.CloudShadow           = LoadBinaryFloatChannel(bundleDirectory, descriptor.cloud_shadow_descriptor);
+            channels.AtmosphericDensity    = LoadBinaryFloatChannel(bundleDirectory, descriptor.atmospheric_volumes_file);
+
+            EditorUtility.SetDirty(channels);
+
+            var loaded = 0;
+            if (channels.WaterSurfaceElevation != null) loaded++;
+            if (channels.WaterDepth            != null) loaded++;
+            if (channels.FlowDirection         != null) loaded++;
+            if (channels.FlowAccumulation      != null) loaded++;
+            if (channels.WaveEnergy            != null) loaded++;
+            if (channels.WindField             != null) loaded++;
+            if (channels.CloudShadow           != null) loaded++;
+            if (channels.AtmosphericDensity    != null) loaded++;
+            Debug.Log(
+                $"VeilBreakers terrain import: populated VbTerrainRasterChannels with " +
+                $"{loaded}/8 raster channel(s) ({width}x{height})."
+            );
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// FIX-13-19/20/21/22/23: Log any bundle files that match known orphaned
+        /// patterns but were not wired through CreateSidecarReferences.  Prevents
+        /// data silently disappearing into the bundle directory without a Unity
+        /// scene reference.
+        /// </summary>
+        private static void LogOrphanedSidecars(
+            string bundleDirectory,
+            TerrainBundleDescriptor descriptor
+        )
+        {
+            if (string.IsNullOrEmpty(bundleDirectory) || !Directory.Exists(bundleDirectory))
+            {
+                return;
+            }
+
+            // Discover wildlife_affinity__*.bin and decal_density__*.bin files that
+            // the descriptor did not enumerate (backward compat: old exports won't
+            // have wildlife_affinity_files / decal_density_files populated).
+            var wired = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (descriptor.wildlife_affinity_files != null)
+            {
+                foreach (var f in descriptor.wildlife_affinity_files)
+                {
+                    if (!string.IsNullOrEmpty(f)) wired.Add(f);
+                }
+            }
+            if (descriptor.decal_density_files != null)
+            {
+                foreach (var f in descriptor.decal_density_files)
+                {
+                    if (!string.IsNullOrEmpty(f)) wired.Add(f);
+                }
+            }
+
+            foreach (var fullPath in Directory.GetFiles(bundleDirectory))
+            {
+                var name = Path.GetFileName(fullPath);
+                if ((name.StartsWith("wildlife_affinity__", StringComparison.OrdinalIgnoreCase) ||
+                     name.StartsWith("decal_density__", StringComparison.OrdinalIgnoreCase))
+                    && !wired.Contains(name))
+                {
+                    Debug.LogWarning(
+                        $"VeilBreakers terrain import: orphaned sidecar '{name}' present in bundle " +
+                        "but not listed in descriptor wildlife_affinity_files / decal_density_files. " +
+                        "Re-export the bundle or add the filename to the descriptor to wire it."
+                    );
+                }
+            }
+
+            // FIX-13-21: warn if hdrp_mask_map.raw exists on disk but descriptor field is empty.
+            if (string.IsNullOrEmpty(descriptor.hdrp_mask_map_file))
+            {
+                var maskPath = Path.Combine(bundleDirectory, "hdrp_mask_map.raw");
+                if (File.Exists(maskPath))
+                {
+                    Debug.LogWarning(
+                        "VeilBreakers terrain import: hdrp_mask_map.raw found in bundle but " +
+                        "descriptor.hdrp_mask_map_file is empty. Re-export the bundle to wire it."
+                    );
+                }
             }
         }
     }

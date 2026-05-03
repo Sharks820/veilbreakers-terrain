@@ -44,12 +44,12 @@ def compute_roughness_from_wetness_wear(stack: TerrainMaskStack) -> np.ndarray:
 
     base = np.full((rows, cols), 0.55, dtype=np.float64)
 
-    wet = stack.get("wetness")
+    wet = stack.get("wetness", default=None)
     if wet is not None:
         wet_arr = np.clip(np.asarray(wet, dtype=np.float64), 0.0, 1.0)
         base = base * (1.0 - wet_arr) + 0.15 * wet_arr
 
-    erosion = stack.get("erosion_amount")
+    erosion = stack.get("erosion_amount", default=None)
     if erosion is not None:
         er = np.asarray(erosion, dtype=np.float64)
         er_max = float(er.max()) if er.size else 0.0
@@ -57,7 +57,7 @@ def compute_roughness_from_wetness_wear(stack: TerrainMaskStack) -> np.ndarray:
             er_norm = np.clip(er / er_max, 0.0, 1.0)
             base = base * (1.0 - 0.6 * er_norm) + 0.85 * 0.6 * er_norm
 
-    deposition = stack.get("deposition_amount")
+    deposition = stack.get("deposition_amount", default=None)
     if deposition is not None:
         dep = np.asarray(deposition, dtype=np.float64)
         dep_max = float(dep.max()) if dep.size else 0.0
@@ -65,7 +65,7 @@ def compute_roughness_from_wetness_wear(stack: TerrainMaskStack) -> np.ndarray:
             dep_norm = np.clip(dep / dep_max, 0.0, 1.0)
             base = base * (1.0 - 0.3 * dep_norm) + 0.70 * 0.3 * dep_norm
 
-    ao = stack.get("ambient_occlusion_bake")
+    ao = stack.get("ambient_occlusion_bake", default=None)
     if ao is not None:
         ao_arr = np.clip(np.asarray(ao, dtype=np.float64), 0.0, 1.0)
         # AO stored as 1=lit, 0=occluded (convention). Dust concentrates in low-AO.
@@ -124,7 +124,7 @@ def pass_roughness_driver(
     rough = compute_roughness_from_wetness_wear(stack).astype(np.float64)
 
     # Stage 2: slope contribution — steep = rough
-    slope_arr = stack.get("slope")
+    slope_arr = stack.get("slope", default=None)
     slope_driven = False
     if slope_arr is not None:
         s = np.abs(np.asarray(slope_arr, dtype=np.float64))
@@ -136,7 +136,7 @@ def pass_roughness_driver(
             slope_driven = True
 
     # Stage 3: curvature contribution — concave = smooth, convex = rough
-    curvature_arr = stack.get("curvature")
+    curvature_arr = stack.get("curvature", default=None)
     curvature_driven = False
     if curvature_arr is not None:
         c = np.asarray(curvature_arr, dtype=np.float64)
@@ -155,7 +155,7 @@ def pass_roughness_driver(
             curvature_driven = True
 
     # Stage 4: material zone roughness overrides
-    zone_arr = stack.get("material_zones")
+    zone_arr = stack.get("material_zones", default=None)
     zone_driven = False
     hints: dict = {}
     if state.intent is not None:
@@ -174,7 +174,7 @@ def pass_roughness_driver(
                 rough = np.where(mask, zone_r, rough)
                 zone_driven = True
 
-    breakup_arr = stack.get("roughness_breakup")
+    breakup_arr = stack.get("roughness_breakup", default=None)
     breakup_driven = False
     if breakup_arr is not None:
         breakup = np.asarray(breakup_arr, dtype=np.float64)
@@ -208,8 +208,8 @@ def pass_roughness_driver(
             "rough_min": float(rough_f32.min()),
             "rough_max": float(rough_f32.max()),
             "rough_mean": float(rough_f32.mean()),
-            "wet_driven": stack.get("wetness") is not None,
-            "erosion_driven": stack.get("erosion_amount") is not None,
+            "wet_driven": stack.get("wetness", default=None) is not None,  # FIX-10-H14
+            "erosion_driven": stack.get("erosion_amount", default=None) is not None,  # FIX-10-H14
             "slope_driven": slope_driven,
             "curvature_driven": curvature_driven,
             "zone_driven": zone_driven,

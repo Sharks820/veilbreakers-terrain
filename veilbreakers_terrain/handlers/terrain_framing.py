@@ -187,6 +187,35 @@ def enforce_sightline(
 # ---------------------------------------------------------------------------
 
 
+def _place_hero_features(
+    stack: TerrainMaskStack,
+    placement_density: "np.ndarray",
+) -> "np.ndarray":
+    """Gate hero-feature placement density against the water mask. FIX-9-42
+
+    Hero boulders, spires, and other prominent terrain features must not be
+    placed in rivers or lakes.  This function multiplies the incoming density
+    field by ``(1.0 - water_surface_mask)`` so that wet cells are excluded
+    from candidate generation.
+
+    Parameters
+    ----------
+    stack : TerrainMaskStack
+        Live pipeline stack.  ``water_surface_mask`` is read if present.
+    placement_density : np.ndarray
+        2-D float array of placement candidate density values, shape (H, W).
+
+    Returns
+    -------
+    np.ndarray
+        Density field with water cells zeroed out.
+    """
+    water_mask = stack.get("water_surface_mask", default=None)  # FIX-9-42
+    if water_mask is not None:
+        placement_density = placement_density * (1.0 - np.asarray(water_mask, dtype=np.float32))
+    return placement_density
+
+
 def pass_framing(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -240,10 +269,29 @@ def pass_framing(
     total_delta = np.zeros_like(stack.height, dtype=np.float64)
     sightlines_applied = 0
     pair_metrics: Dict[str, float] = {}
+    hero_density = np.zeros_like(stack.height, dtype=np.float32)
+    for feature in feature_specs:
+        fx, fy, _fz = feature.world_position
+        col = int((float(fx) - stack.world_origin_x) / max(float(stack.cell_size), 1e-9))
+        row = int((float(fy) - stack.world_origin_y) / max(float(stack.cell_size), 1e-9))
+        if 0 <= row < hero_density.shape[0] and 0 <= col < hero_density.shape[1]:
+            hero_density[row, col] = 1.0
+    hero_density = _place_hero_features(stack, hero_density)
 
     for vi, vantage in enumerate(vantages):
         for fi, feature in enumerate(feature_specs):
             target = feature.world_position
+            fx, fy, _fz = target
+            col = int((float(fx) - stack.world_origin_x) / max(float(stack.cell_size), 1e-9))
+            row = int((float(fy) - stack.world_origin_y) / max(float(stack.cell_size), 1e-9))
+            if (
+                0 <= row < hero_density.shape[0]
+                and 0 <= col < hero_density.shape[1]
+                and hero_density[row, col] <= 0.0
+            ):
+                pair_metrics[f"v{vi}_f{fi}_max_cut_m"] = 0.0
+                pair_metrics[f"v{vi}_f{fi}_water_excluded"] = 1.0
+                continue
             pair_delta = enforce_sightline(stack, vantage, target, clearance)
             pair_cut = float(-pair_delta.min())
 
@@ -284,6 +332,7 @@ def pass_framing(
             "sightlines_applied": sightlines_applied,
             "max_cut_m": max_cut,
             "mean_cut_m": mean_cut,
+            "hero_density_after_water_exclusion": float(hero_density.sum()),
             **pair_metrics,
         },
     )
@@ -412,4 +461,5 @@ __all__ = [
     "register_framing_pass",
     "_framing_quality_gate",
     "_FRAMING_GATE",
+    "_place_hero_features",
 ]

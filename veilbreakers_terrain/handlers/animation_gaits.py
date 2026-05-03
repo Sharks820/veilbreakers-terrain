@@ -5,7 +5,7 @@ No Blender imports.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass  # FIX-11-9: removed unused 'field'
 import math
 from typing import Any
 

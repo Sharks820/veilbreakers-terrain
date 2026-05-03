@@ -225,7 +225,7 @@ def compute_mist_envelope(
     h_range = max(float(h.max()) - valley_elev, 1.0)
 
     # Distance step size in normalised units (one cell step)
-    step_dist = float(stack.cell_size) / h_range
+    _ = float(stack.cell_size) / h_range  # FIX-11-10: step_dist unused; mist uses max_reach_m below
 
     # Maximum mist reach: falloff_steps cell-widths from any wet cell.
     # Beyond this radius mist is exactly zero (matches dilation-ring semantics).
@@ -316,7 +316,7 @@ def pass_fog_masks(
 
     fog_pool = compute_fog_pool_mask(stack)
 
-    wet = stack.get("wetness")
+    wet = stack.get("wetness", default=None)
     if wet is None:
         wet = np.zeros_like(stack.height, dtype=np.float32)
     mist = compute_mist_envelope(stack, np.asarray(wet, dtype=np.float32))

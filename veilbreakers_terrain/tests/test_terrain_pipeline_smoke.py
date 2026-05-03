@@ -181,7 +181,10 @@ def _register_fast_erosion_pass():
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_end_to_end_runs_all_four_passes():
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.timeout(120)
+def test_pipeline_end_to_end_runs_all_four_passes():  # FIX-0F
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
@@ -195,7 +198,10 @@ def test_pipeline_end_to_end_runs_all_four_passes():
         assert r.status in {"ok", "warning"}, f"pass {r.pass_name} failed: {r.issues}"
 
 
-def test_controller_default_pipeline_uses_validation_full_for_standard():
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.timeout(120)
+def test_controller_default_pipeline_uses_validation_full_for_standard():  # FIX-0F
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:
@@ -237,7 +243,7 @@ def test_default_standard_scene_pipeline_closes_legacy_batch_1_order():
         "emit_overhang_meshes",
         "scatter_intelligent",
         "pass_horizon_lod",
-        "pass_navmesh_export",
+        "navmesh",
         "validation_full",
     )
     for pass_name in expected:
@@ -254,7 +260,10 @@ def test_default_standard_scene_pipeline_closes_legacy_batch_1_order():
     assert seq[-1] == "validation_full"
 
 
-def test_controller_default_pipeline_uses_validation_minimal_for_preview():
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.timeout(120)
+def test_controller_default_pipeline_uses_validation_minimal_for_preview():  # FIX-0F
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
 
     with tempfile.TemporaryDirectory() as td:

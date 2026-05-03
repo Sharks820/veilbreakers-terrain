@@ -197,7 +197,11 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "pass_terrain_features",
             # C-8: sightline framing before scatter
             "framing",
-            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
+            # FIX-9-55: pass_water_variants must run after dam geometry is in place.
+            # No dedicated dam pass is registered yet; when one is added it must
+            # appear before water_variants in this sequence so dam-backed pools
+            # are reflected in the water surface elevation field.
+            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),  # FIX-9-55
             *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
             *(("integrate_deltas", "materials_v2", "emit_overhang_meshes") if has_scene_read else ("materials_v2",)),
             *(("scatter_intelligent", "pass_procedural_grass", "pass_horizon_lod") if has_scene_read and not skip_scatter else ()),
@@ -224,7 +228,8 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             # C-6: navmesh export runs regardless of unity_export_opt_out;
             # must precede decals so traversability is populated before
             # FOOTPRINT_TRAIL density is computed (BUG-3/BUG-4 fix).
-            "pass_navmesh_export",
+            # FIX-13-15: pass_navmesh_export alias removed; canonical name is "navmesh".
+            "navmesh",
             # decals runs last in the ecosystem block so all consumed channels
             # (traversability, gameplay_zone, basin, ridge, …) are populated.
             "decals",
@@ -314,8 +319,11 @@ def _normalize_delta_integration_sequence(pass_sequence: List[str]) -> List[str]
         idx
         for idx, name in enumerate(seq_without_integrator)
         if name in TerrainPassController.PASS_REGISTRY
-        and delta_channels.intersection(
-            TerrainPassController.PASS_REGISTRY[name].produces_channels
+        and (
+            name == "erosion"
+            or delta_channels.intersection(
+                TerrainPassController.PASS_REGISTRY[name].produces_channels
+            )
         )
     ]
     if not producer_indexes:
@@ -1133,7 +1141,7 @@ def pass_compute_terrain_labels(
 
     def _label_array(channel: str) -> "np.ndarray":
         nonlocal pre_stamped
-        existing = stack.get(channel)
+        existing = stack.get(channel, default=None)
         if existing is not None:
             # Preserve generator-stamped mask; clamp to [0, 1] (T-10-01-01)
             clamped = np.clip(np.asarray(existing, dtype=np.float32), 0.0, 1.0)
@@ -1302,6 +1310,8 @@ def pass_compute_snow_line(
 
 def register_snow_line_pass() -> None:
     """Register the snow_line pass on TerrainPassController."""
+    if "snow_line" in TerrainPassController.PASS_REGISTRY:
+        return
     TerrainPassController.register_pass(
         PassDefinition(
             name="snow_line",
@@ -1348,12 +1358,18 @@ def pass_water_depth(
     t0 = _time.perf_counter()
     stack = state.mask_stack
 
-    ws_elev = stack.get("water_surface_elevation_m")
+    def _optional_get(name: str):
+        try:
+            return stack.get(name, default=None)
+        except TypeError:
+            return stack.get(name)
+
+    ws_elev = _optional_get("water_surface_elevation_m")
     # Cannot use ``a or b`` on numpy arrays — ndarray truthy raises
     # ValueError ("ambiguous").  Use explicit None check instead.
-    height = stack.get("height_m")
+    height = _optional_get("height_m")
     if height is None:
-        height = stack.get("height")
+        height = _optional_get("height")
 
     if ws_elev is None or height is None:
         return PassResult(
@@ -1639,6 +1655,17 @@ def register_default_passes(*, strict: bool = False) -> None:
             description="Composite eroded low-freq + high-freq detail into final height (Fix 12.1)",
         ),
         PassDefinition(
+            name="snow_line",
+            func=pass_compute_snow_line,
+            requires_channels=("height",),
+            optional_channels=("slope",),
+            produces_channels=("snow_line_factor",),
+            seed_namespace="snow_line",
+            requires_scene_read=False,
+            may_modify_geometry=False,
+            description="Compute snow_line_factor: sigmoid altitude curve modulated by slope.",
+        ),
+        PassDefinition(
             name="validation_minimal",
             func=_tw.pass_validation_minimal,
             requires_channels=("height", "slope"),
@@ -1704,6 +1731,11 @@ def register_default_passes(*, strict: bool = False) -> None:
     register_pass_water_depth()
     register_biome_channel_pass()
     register_terrain_label_passes()
+    from .terrain_glacial import register_glacial_pass
+    register_glacial_pass()
+    # snow_line is now in raw_definitions (FIX-12-16) so it participates in the
+    # topological DAG and runs before snow-consuming passes. Keep the registrar
+    # invocation as an idempotent public wiring proof for static audits.
     register_snow_line_pass()
     # macro_color is owned by Bundle K (see terrain_macro_color.pass_macro_color).
     # The orphan ``pass_compute_macro_color`` helper that used to live here was

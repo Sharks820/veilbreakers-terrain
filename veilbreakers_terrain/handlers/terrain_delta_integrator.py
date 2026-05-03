@@ -38,7 +38,8 @@ _DELTA_CHANNELS: Tuple[str, ...] = (
     "cave_height_delta",
     "morphology_delta",
     "strat_erosion_delta",
-    "pool_deepening_delta",
+    # pool_deepening_delta is already embedded in hydro.height by the droplet
+    # simulation — including it here would carve riverbeds a second time (FIX-13-2).
     # Phase 52 — Bundle I delta conversion
     "coastline_delta",
     "karst_delta",
@@ -56,7 +57,7 @@ def _collect_deltas(stack: TerrainMaskStack) -> List[Tuple[str, np.ndarray]]:
     """Return all populated delta channels as (name, array) pairs."""
     found: List[Tuple[str, np.ndarray]] = []
     for ch_name in _DELTA_CHANNELS:
-        arr = stack.get(ch_name)
+        arr = stack.get(ch_name, default=None)
         if arr is not None:
             arr = np.asarray(arr, dtype=np.float64)
             if np.any(arr != 0.0):
@@ -106,7 +107,7 @@ def pass_integrate_deltas(
 
     # Apply protected zone mask: zero out delta in protected cells
     # 1. Hero exclusion channel
-    protected = stack.get("hero_exclusion")
+    protected = stack.get("hero_exclusion", default=None)
     prot_bool = np.zeros_like(total_delta, dtype=bool)
     if protected is not None:
         prot_bool |= np.asarray(protected, dtype=np.float64) > 0.0

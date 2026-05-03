@@ -251,8 +251,11 @@ def detect_karst_candidates(
         local_relief = win_max - win_min  # local depth of the depression
 
         # Reject cells that are NOT near the local minimum.
-        # A cell is a local sink if it is within 0.1 m of the 5×5 minimum.
-        if h[r, c] > win_min + 0.1:
+        # FIX-10-3: tile-relative threshold replaces absolute 0.1 m.
+        # 0.001 * tile_relief scales with terrain height range so the gate fires
+        # consistently on both flat and steep tiles.
+        dissolution_threshold = 0.001 * (h_max - h_min)  # FIX-10-3
+        if h[r, c] > win_min + dissolution_threshold:
             continue  # not a local minimum — skip
 
         center_z = float(h[r, c])
@@ -429,6 +432,39 @@ def carve_karst_features(
     return delta
 
 
+def _place_cave_entrances(
+    slope_arr: np.ndarray,
+    doline_mask: np.ndarray,
+    cliff_mask: np.ndarray,
+) -> np.ndarray:
+    """Place cave entrance candidates at steep cells adjacent to dolines. FIX-9-53
+
+    Previous implementation targeted doline rim elevation (flat surface), so
+    entrances appeared on horizontal rims rather than cliff faces — visually
+    wrong and unreachable by player navigation.  This version intersects:
+
+      * steep cells (slope > 35°, matching natural karst cliff angles)
+      * cells adjacent to a doline depression (binary dilation of doline_mask)
+      * cells within an existing cliff mask
+
+    The result is a float32 mask (0 or 1) suitable for stacking.set().
+
+    Parameters
+    ----------
+    slope_arr : np.ndarray (H, W)
+        Slope in radians (or degrees — threshold 0.61 rad ≈ 35°).
+    doline_mask : np.ndarray (H, W)
+        Non-zero where doline depressions were detected.
+    cliff_mask : np.ndarray (H, W)
+        Non-zero where cliffs exist.
+    """
+    import scipy.ndimage as ndi
+
+    steep = np.asarray(slope_arr) > 0.61  # > ~35 degrees
+    doline_adj = ndi.binary_dilation(np.asarray(doline_mask) > 0)
+    return (steep & doline_adj & (np.asarray(cliff_mask) > 0)).astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Pass
 # ---------------------------------------------------------------------------
@@ -458,8 +494,33 @@ def pass_karst(
             delta = carve_karst_features(stack, features)
             stack.set("karst_delta", delta.astype(np.float32), "karst")
             delta_mean = float(np.abs(delta).mean())
-    if stack.get("karst_delta") is None:
+    if stack.get("karst_delta", default=None) is None:
         stack.set("karst_delta", np.zeros_like(stack.height, dtype=np.float32), "karst")
+
+    # FIX-9-53: place cave entrances after doline_mask is available
+    _doline_mask = stack.get("karst_delta")  # karst_delta non-zero at doline sites
+    _cliff_mask = stack.get("cliff_mask")
+    if (
+        _doline_mask is not None
+        and _cliff_mask is not None
+        and stack.height is not None
+    ):
+        import numpy as _np
+        _slope_arr = stack.get("slope")
+        if _slope_arr is None:
+            # Approximate slope from height gradient (radians)
+            _gy, _gx = _np.gradient(stack.height.astype(np.float32))
+            _slope_arr = _np.arctan(_np.sqrt(_gx ** 2 + _gy ** 2))
+        cave_entrance_mask = _place_cave_entrances(
+            _slope_arr, _doline_mask, _cliff_mask
+        )
+        stack.set("cave_entrance_mask", cave_entrance_mask, "terrain_karst")
+    elif stack.height is not None:
+        stack.set(
+            "cave_entrance_mask",
+            np.zeros_like(stack.height, dtype=np.float32),
+            "terrain_karst",
+        )
 
     _ = derive_pass_seed(
         state.intent.seed, "karst", state.tile_x, state.tile_y, region
@@ -470,7 +531,7 @@ def pass_karst(
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height", "rock_hardness"),
-        produced_channels=("karst_delta",),
+        produced_channels=("karst_delta", "cave_entrance_mask"),
         metrics={
             "feature_count": len(features),
             "mean_delta_m": delta_mean,
@@ -558,6 +619,7 @@ __all__ = [
     "detect_karst_candidates",
     "_compose_uvala",
     "carve_karst_features",
+    "_place_cave_entrances",
     "pass_karst",
     "get_sinkhole_specs",
 ]

@@ -21,7 +21,7 @@ import hashlib
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -38,7 +38,15 @@ except ImportError:  # pragma: no cover
     _scipy_maximum_filter = None  # type: ignore[assignment]
     _SCIPY_VALIDATION_AVAILABLE = False
 
-from .terrain_pipeline import TerrainPassController
+# FIX-11-4: terrain_pipeline imports terrain_validation (deferred, inside-function)
+# and terrain_validation imported terrain_pipeline at module level — classic A↔B
+# cycle.  With "from __future__ import annotations" active every annotation in
+# this file is a lazily-evaluated string, so TerrainPassController only needs to
+# be available at call-time (inside function bodies).  Move the import under
+# TYPE_CHECKING so mypy/pyright still see the type while the module-level import
+# is skipped at runtime, breaking the cycle.
+if TYPE_CHECKING:  # FIX-11-4
+    from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import (
     BBox,
     PassDefinition,
@@ -672,7 +680,7 @@ def validate_hero_feature_placement(
                 )
             )
             continue
-        mask = _safe_asarray(stack.get(ch_name))
+        mask = _safe_asarray(stack.get(ch_name, default=None))
         if mask is None:
             issues.append(
                 ValidationIssue(
@@ -899,7 +907,7 @@ def validate_channel_dtypes(
     """9. Each populated channel has the dtype the contract promises."""
     issues: List[ValidationIssue] = []
     for name, kinds in _DTYPE_CONTRACT:
-        val = _safe_asarray(stack.get(name))
+        val = _safe_asarray(stack.get(name, default=None))
         if val is None:
             continue
         if val.dtype.kind not in kinds:
@@ -928,7 +936,7 @@ def validate_unity_export_ready(
     issues: List[ValidationIssue] = []
     opt_out = bool((intent.composition_hints or {}).get("unity_export_opt_out", False))
     required = ("heightmap_raw_u16", "splatmap_weights_layer", "navmesh_area_id")
-    missing = [c for c in required if _safe_asarray(stack.get(c)) is None]
+    missing = [c for c in required if _safe_asarray(stack.get(c, default=None)) is None]
     if missing and not opt_out:
         issues.append(
             ValidationIssue(
@@ -986,7 +994,7 @@ def check_cliff_silhouette_readability(
         cells; tiny fragments produce noisy, unreadable ridgelines.
     """
     issues: List[ValidationIssue] = []
-    cliff = stack.get("cliff_candidate")
+    cliff = stack.get("cliff_candidate", default=None)
     if cliff is None:
         return issues
 
@@ -1131,7 +1139,7 @@ def check_waterfall_chain_completeness(
     When foam/mist channels are present their population is also verified.
     """
     issues: List[ValidationIssue] = []
-    lips = stack.get("waterfall_lip_candidate")
+    lips = stack.get("waterfall_lip_candidate", default=None)
     if lips is None:
         return issues
 
@@ -1139,8 +1147,8 @@ def check_waterfall_chain_completeness(
     if not np.any(lip_arr > 0):
         return issues
 
-    pool_delta = _safe_asarray(stack.get("waterfall_pool_delta"))
-    flow_acc = _safe_asarray(stack.get("flow_accumulation"))
+    pool_delta = _safe_asarray(stack.get("waterfall_pool_delta", default=None))
+    flow_acc = _safe_asarray(stack.get("flow_accumulation", default=None))
 
     lip_rows, lip_cols = np.where(lip_arr > 0)
     n_lips = int(lip_rows.shape[0])
@@ -1197,8 +1205,8 @@ def check_waterfall_chain_completeness(
         )
 
     # Preserve original foam/mist check as additional completeness signals
-    foam = stack.get("foam")
-    mist = stack.get("mist")
+    foam = stack.get("foam", default=None)
+    mist = stack.get("mist", default=None)
     if foam is None or not np.any(np.asarray(foam) > 0):
         issues.append(
             ValidationIssue(
@@ -1236,7 +1244,7 @@ def check_cave_framing_presence(
     """
     issues: List[ValidationIssue] = []
 
-    cave = stack.get("cave_candidate")
+    cave = stack.get("cave_candidate", default=None)
     cave_framing_required = False
     if intent is not None:
         cave_framing_required = bool(
@@ -1259,8 +1267,8 @@ def check_cave_framing_presence(
         return issues
 
     cave_arr = np.asarray(cave, dtype=np.float32)
-    delta = _safe_asarray(stack.get("cave_height_delta"))
-    framing = _safe_asarray(stack.get("hero_exclusion"))
+    delta = _safe_asarray(stack.get("cave_height_delta", default=None))
+    framing = _safe_asarray(stack.get("hero_exclusion", default=None))
 
     cave_mask = cave_arr > 0
 
@@ -1336,7 +1344,7 @@ def validate_strata_consistency(
     """
     issues: List[ValidationIssue] = []
 
-    strata = _safe_asarray(stack.get("strata_layers"))
+    strata = _safe_asarray(stack.get("strata_layers", default=None))
     if strata is None:
         issues.append(
             ValidationIssue(
@@ -1368,7 +1376,7 @@ def validate_strata_consistency(
     # -----------------------------------------------------------------------
     # Check 1: depth ordering — strata_depths must increase with layer index.
     # -----------------------------------------------------------------------
-    strata_depths = _safe_asarray(stack.get("strata_depths"))
+    strata_depths = _safe_asarray(stack.get("strata_depths", default=None))
     if strata_depths is not None:
         if strata_depths.shape != strata.shape:
             issues.append(
@@ -1493,7 +1501,7 @@ def validate_glacial_plausibility(
     # Find the glacial mask channel (accept either name)
     glacial = None
     for _ch in ("glacial_extent", "glacier_mask", "glacial_mask"):
-        glacial = _safe_asarray(stack.get(_ch))
+        glacial = _safe_asarray(stack.get(_ch, default=None))
         if glacial is not None:
             break
 
@@ -1648,7 +1656,7 @@ def validate_karst_plausibility(
     # Collect karst feature masks (accept any of these names)
     karst_masks: Dict[str, Optional[np.ndarray]] = {}
     for _ch in ("cave_candidate", "karst_doline", "sinkhole_mask"):
-        _arr = _safe_asarray(stack.get(_ch))
+        _arr = _safe_asarray(stack.get(_ch, default=None))
         if _arr is not None and np.any(_arr > 0):
             karst_masks[_ch] = _arr
 
@@ -1687,7 +1695,7 @@ def validate_karst_plausibility(
     # ------------------------------------------------------------------
     # Check 1 + 2: limestone proxy presence and per-cell threshold
     # ------------------------------------------------------------------
-    proxy = _safe_asarray(stack.get("limestone_proxy"))
+    proxy = _safe_asarray(stack.get("limestone_proxy", default=None))
 
     if proxy is None:
         # Soft warning only — proxy pass may not have run yet
@@ -1785,7 +1793,7 @@ def check_focal_composition(
     # Per-focal-point occlusion check
     if intent is not None:
         focal_points = intent.composition_hints.get("focal_points", [])
-        slope_arr = _safe_asarray(stack.get("slope"))
+        slope_arr = _safe_asarray(stack.get("slope", default=None))
 
         for fp in focal_points:
             # fp may be (x, y) or (x, y, z)
@@ -1830,7 +1838,7 @@ def check_focal_composition(
             )
         )
 
-    slope = stack.get("slope")
+    slope = stack.get("slope", default=None)
     if slope is not None:
         slope_arr2 = np.asarray(slope, dtype=np.float32)
         steep_ratio = float(np.sum(slope_arr2 > math.radians(30.0))) / max(slope_arr2.size, 1)
@@ -2096,6 +2104,7 @@ def register_bundle_d_passes() -> None:
     Does NOT register default Bundle A passes — call
     ``terrain_pipeline.register_default_passes`` for those.
     """
+    from .terrain_pipeline import TerrainPassController  # FIX-11-4: deferred — breaks cycle
     TerrainPassController.register_pass(
         PassDefinition(
             name="validation_full",

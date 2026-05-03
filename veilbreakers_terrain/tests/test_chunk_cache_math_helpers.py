@@ -110,9 +110,10 @@ def test_terrain_rng_helpers_are_deterministic_and_tile_scoped():
     seq_a = make_rng("world", 7, 0.5).random(4)
     seq_b = make_rng("world", 7, 0.5).random(4)
     seq_c = make_rng("world", 8, 0.5).random(4)
-    tile_a = tile_rng(12.3456, -7.0, root_seed=99).integers(0, 1_000_000, size=4)
-    tile_b = tile_rng(12.3456, -7.0, root_seed=99).integers(0, 1_000_000, size=4)
-    tile_c = tile_rng(12.3466, -7.0, root_seed=99).integers(0, 1_000_000, size=4)
+    # tile_rng now takes a stable tile_id string (FIX-10-18)
+    tile_a = tile_rng("12_-7").integers(0, 1_000_000, size=4)
+    tile_b = tile_rng("12_-7").integers(0, 1_000_000, size=4)
+    tile_c = tile_rng("13_-7").integers(0, 1_000_000, size=4)
 
     assert np.allclose(seq_a, seq_b)
     assert not np.allclose(seq_a, seq_c)

@@ -537,20 +537,86 @@ def validate_strahler_ordering(
     return issues
 
 
+def _derive_treeline_altitude_m(stack: TerrainMaskStack) -> float:
+    """Derive treeline altitude (m) from climate_zone and latitude_deg stack channels.
+
+    FIX-12-9: the previous hardcoded 1800 m treeline was wrong for arctic and
+    tropical tiles.  This function reads ``climate_zone`` (string label) and
+    ``latitude_deg`` (scalar or per-cell array) from the stack and applies a
+    biome-appropriate lookup.  Falls back to 1500 m when neither channel is
+    available.
+
+    Lookup table (approximate global means):
+      arctic / tundra  → 300 m
+      temperate        → 1500 m
+      tropical         → 3500 m
+      alpine           → 2500 m
+      (all others)     → 1500 m (temperate fallback)
+    """
+    _TREELINE_BY_CLIMATE: Dict[str, float] = {
+        "arctic":    300.0,
+        "tundra":    300.0,
+        "temperate": 1500.0,
+        "tropical":  3500.0,
+        "alpine":    2500.0,
+    }
+    _FALLBACK = 1500.0
+
+    # Try climate_zone channel first
+    climate_zone_raw = stack.get("climate_zone")
+    if climate_zone_raw is not None:
+        # May be a scalar string stored in an object array, or a plain str attr
+        if hasattr(climate_zone_raw, "flat"):
+            try:
+                zone_str = str(next(iter(climate_zone_raw.flat))).lower().strip()
+            except StopIteration:
+                zone_str = ""
+        else:
+            zone_str = str(climate_zone_raw).lower().strip()
+        for key, alt in _TREELINE_BY_CLIMATE.items():
+            if key in zone_str:
+                return alt
+
+    # Try latitude_deg channel — scalar or per-cell mean
+    lat_raw = stack.get("latitude_deg")
+    if lat_raw is not None:
+        lat_arr = np.asarray(lat_raw, dtype=np.float64)
+        lat = float(lat_arr.mean()) if lat_arr.ndim > 0 else float(lat_arr)
+        abs_lat = abs(lat)
+        if abs_lat >= 60.0:
+            return _TREELINE_BY_CLIMATE["arctic"]
+        if abs_lat >= 45.0:
+            return _TREELINE_BY_CLIMATE["temperate"]
+        if abs_lat < 25.0:
+            return _TREELINE_BY_CLIMATE["tropical"]
+        return _TREELINE_BY_CLIMATE["temperate"]
+
+    return _FALLBACK
+
+
 def validate_glacial_plausibility(
     stack: TerrainMaskStack,
     glacier_paths: Sequence[Dict[str, Any]],
-    tree_line_altitude_m: float = 1800.0,
+    tree_line_altitude_m: Optional[float] = None,
 ) -> List[ValidationIssue]:
     """U-valleys should be carved only above the tree line.
 
     For every point in every glacier path, verify the underlying
     ``stack.height`` is at or above ``tree_line_altitude_m``. Reports a
     hard issue per path that dips too low.
+
+    When ``tree_line_altitude_m`` is None (default), the treeline is derived
+    from the ``climate_zone`` and ``latitude_deg`` stack channels via
+    ``_derive_treeline_altitude_m`` (FIX-12-9).
     """
     issues: List[ValidationIssue] = []
     if stack.height is None:
         return issues
+
+    # FIX-12-9: derive treeline from climate/latitude rather than hardcoding.
+    if tree_line_altitude_m is None:
+        tree_line_altitude_m = _derive_treeline_altitude_m(stack)
+
     h = np.asarray(stack.height, dtype=np.float64)
     H, W = h.shape
 
@@ -683,13 +749,13 @@ def register_bundle_i_passes() -> None:
             name="glacial",
             func=_glacial.pass_glacial,
             requires_channels=("height",),
-            produces_channels=("snow_line_factor", "glacial_delta"),
+            produces_channels=("snow_line_factor", "glacial_delta", "height"),
             # OVERRIDE: Bundle A's ``snow_line`` pass writes a sigmoid-altitude
             # baseline ``snow_line_factor``. Bundle I's glacial pass refines it
             # with glacial-carving context (ice flow reduces local snow line,
             # moraine accumulation raises it) and writes the authoritative
             # value used by downstream materials / ecosystem passes.
-            overrides=("snow_line_factor",),
+            overrides=("snow_line_factor", "glacial_delta", "height"),
             seed_namespace="glacial",
             requires_scene_read=False,
             description="Bundle I: glacial carving + snow line",

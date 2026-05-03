@@ -100,7 +100,7 @@ def _ripley_k_proxy(pts: np.ndarray, area: float, radii: np.ndarray) -> np.ndarr
             counts = tree.query_ball_point(pts, r, return_length=True)
             mean_count = float(np.mean(counts)) - 1.0  # subtract self
             K_r = mean_count / lam if lam > 0 else 0.0
-            csr = np.pi * r * r
+            _ = np.pi * r * r  # FIX-11-10: csr (CSR expected K) unused; L_vals uses K_r directly
             L_vals[i] = float(np.sqrt(max(K_r, 0.0) / np.pi)) - r if K_r > 0 else -r
     else:
         # Simple N² version

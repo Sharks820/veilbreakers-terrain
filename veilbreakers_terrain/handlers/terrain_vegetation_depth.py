@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import enum
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass  # FIX-11-9: removed unused 'field'
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -869,8 +869,8 @@ def place_clearings(
     # Grid cell size for the background grid = r / sqrt(2) so each grid cell
     # contains at most one sample.
     grid_cell = r_min_cells / np.sqrt(2.0)
-    grid_rows = max(1, int(np.ceil(rows / grid_cell)))
-    grid_cols = max(1, int(np.ceil(cols / grid_cell)))
+    _ = max(1, int(np.ceil(rows / grid_cell)))  # FIX-11-10: grid_rows unused; _grid_key uses grid_cell
+    _ = max(1, int(np.ceil(cols / grid_cell)))  # FIX-11-10: grid_cols unused; _grid_key uses grid_cell
 
     background: Dict[Tuple[int, int], Tuple[float, float]] = {}  # grid_ij -> (r, c)
 
@@ -1557,7 +1557,7 @@ def pass_vegetation_depth(
     # --- Layer modifiers ---
     # apply_edge_effects: always run — forest_mask channel activates biome-boundary
     # mode; falls back to a canopy-derived mask when channel is absent.
-    if hints.get("veg_edge_effects", True) or stack.get("forest_mask") is not None:
+    if hints.get("veg_edge_effects", True) or stack.get("forest_mask", default=None) is not None:  # FIX-10-H14
         biome_arr = stack.get("biome_id")
         forest_arr = stack.get("forest_mask")
         # Build biome boundary mask if biome_id is available
@@ -1582,7 +1582,7 @@ def pass_vegetation_depth(
         )
 
     # apply_cultivated_zones: run when hint is set OR gameplay_zone channel present
-    if hints.get("veg_cultivated_zones", False) or stack.get("gameplay_zone") is not None:
+    if hints.get("veg_cultivated_zones", False) or stack.get("gameplay_zone", default=None) is not None:  # FIX-10-H14
         cult = stack.get("gameplay_zone")
         if cult is not None:
             cult_mask = np.asarray(cult, dtype=np.int32) == 2
@@ -1593,7 +1593,7 @@ def pass_vegetation_depth(
 
     # apply_allelopathic_exclusion: always run — canopy acts as default suppressor;
     # if species_density channel is present on the stack, use it as well.
-    if hints.get("veg_allelopathic_exclusion", True) or stack.get("species_density") is not None:
+    if hints.get("veg_allelopathic_exclusion", True) or stack.get("species_density", default=None) is not None:  # FIX-10-H14
         species_dict = layers.as_dict()
         # Merge in any per-species density channels from the stack
         stack_species = stack.get("species_density")
@@ -1613,8 +1613,8 @@ def pass_vegetation_depth(
     disturbance_patches: List = []
     if (
         hints.get("veg_disturbance_patches", False)
-        or stack.get("slope") is not None
-        or stack.get("erosion_amount") is not None
+        or stack.get("slope", default=None) is not None  # FIX-10-H14
+        or stack.get("erosion_amount", default=None) is not None  # FIX-10-H14
     ):
         disturbance_patches = detect_disturbance_patches(
             stack, seed, intent=state.intent
@@ -1657,8 +1657,8 @@ def pass_vegetation_depth(
     clearings: List = []
     if (
         hints.get("veg_clearings", False)
-        or stack.get("cliff_mask") is not None
-        or stack.get("slope") is not None
+        or stack.get("cliff_mask", default=None) is not None  # FIX-10-H14
+        or stack.get("slope", default=None) is not None  # FIX-10-H14
     ):
         clearings = place_clearings(
             stack, state.intent, seed=seed, detail_density=merged
@@ -1666,7 +1666,7 @@ def pass_vegetation_depth(
 
     # place_fallen_logs: run when hint is set OR forest_mask channel present
     fallen_logs: List = []
-    if hints.get("veg_fallen_logs", False) or stack.get("forest_mask") is not None:
+    if hints.get("veg_fallen_logs", False) or stack.get("forest_mask", default=None) is not None:  # FIX-10-H14
         forest_mask = merged.get("canopy", layers.canopy_density) > 0.3
         fallen_logs = place_fallen_logs(
             stack, forest_mask, seed, detail_density=merged

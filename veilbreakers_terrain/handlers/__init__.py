@@ -1212,7 +1212,57 @@ COMMAND_HANDLERS: Dict[str, Callable] = _build_command_handlers()
 
 
 # ---------------------------------------------------------------------------
+# FIX-11-3: Eagerly populate the 19 names listed in __all__ that originate
+# from world_map, light_integration, and atmospheric_volumes so that
+# "from veilbreakers_terrain.handlers import *" can resolve all of them.
+# Without real module attributes, Python's wildcard import skips __getattr__
+# and raises ImportError for every name missing from the module namespace.
+# ---------------------------------------------------------------------------
+def _populate_submodule_exports() -> None:  # FIX-11-3
+    import importlib as _il3
+    import sys
+    import logging
+    _log = logging.getLogger(__name__)
+    _pkg3 = "veilbreakers_terrain.handlers"
+
+    _sub_exports: Dict[str, list] = {
+        "world_map": [
+            "generate_world_map", "place_landmarks", "generate_storytelling_scene",
+            "world_map_to_dict", "BIOME_TYPES", "POI_TYPES", "LANDMARK_TYPES",
+            "STORYTELLING_PATTERNS",
+        ],
+        "light_integration": [
+            "compute_light_placements", "merge_nearby_lights", "compute_light_budget",
+            "compute_probe_placements", "LIGHT_PROP_MAP", "FLICKER_PRESETS",
+        ],
+        "atmospheric_volumes": [
+            "ATMOSPHERIC_VOLUMES", "BIOME_ATMOSPHERE_RULES", "compute_atmospheric_placements",
+            "compute_volume_mesh_spec", "estimate_atmosphere_performance",
+        ],
+    }
+
+    _this_mod = sys.modules[__name__]
+    for _submod_name, _names in _sub_exports.items():
+        try:
+            _submod = _il3.import_module(f"{_pkg3}.{_submod_name}")
+            for _export_name in _names:
+                try:
+                    setattr(_this_mod, _export_name, getattr(_submod, _export_name))
+                except AttributeError:
+                    _log.warning(
+                        "FIX-11-3: %s.%s not found in %s",
+                        _submod_name, _export_name, _pkg3,
+                    )
+        except Exception as _exc:  # noqa: BLE001
+            _log.warning("FIX-11-3: failed to import %s.%s: %r", _pkg3, _submod_name, _exc)
+
+
+_populate_submodule_exports()
+
+
+# ---------------------------------------------------------------------------
 # Module-level lazy exports from world_map, light_integration, atmospheric_volumes
+# (kept for dynamic attribute access after module reload or late imports)
 # ---------------------------------------------------------------------------
 
 def __getattr__(name: str):  # noqa: N807

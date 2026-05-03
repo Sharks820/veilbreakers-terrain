@@ -1024,48 +1024,52 @@ def _scatter_sea_grass(hm, count=120):
 def _setup_lighting():
     import bpy
 
-    # ── Overcast diffuse sky sun — high angle, grey-white
+    # ── All cameras are now west of the ruins (in the ocean, X < -300), looking
+    # east toward the coastal cliffs. Sun comes from behind the cameras —
+    # south-west, ~40° elevation — to front-light ruins and cliff faces.
+    #
+    # Blender sun rotation_euler acts on the lamp's local -Z axis (light travel dir).
+    # rotation_euler = (0, Y, Z) in world XYZ intrinsic order:
+    #   (0, -50°, -20°) → light travels toward +X (east) and slightly +Y (north),
+    #   angled 40° above horizon — warm afternoon coastal sun from the SW.
     sun_data = bpy.data.lights.new("CoastalSun", "SUN")
-    sun_data.energy    = 2.8
-    sun_data.color     = (0.88, 0.90, 0.96)
-    sun_data.angle     = math.radians(5.0)   # soft sun disk
+    sun_data.energy = 2.0
+    sun_data.color  = (1.0, 0.93, 0.78)   # warm afternoon coastal gold
+    sun_data.angle  = math.radians(4.0)
     sun_obj = bpy.data.objects.new("VB_CoastalSun", sun_data)
-    sun_obj.rotation_euler = (math.radians(30.0), 0.0, math.radians(145.0))  # low-angle overcast
+    # Y=-50° tilts sun 40° above horizon pointing east; Z=-20° gives slight
+    # southward azimuth so shadows fall diagonally and add depth.
+    sun_obj.rotation_euler = (0.0, math.radians(-50.0), math.radians(-20.0))
     bpy.context.scene.collection.objects.link(sun_obj)
 
-    # ── Caustic fill: warm point above water surface to simulate light scattering
-    caust_data = bpy.data.lights.new("CausticFill", "POINT")
-    caust_data.energy          = 12000.0
-    caust_data.color           = (0.82, 0.94, 1.0)
-    caust_data.shadow_soft_size = 60.0
-    caust_obj = bpy.data.objects.new("VB_CausticFill", caust_data)
-    caust_obj.location = (-100.0, 0.0, 18.0)
-    bpy.context.scene.collection.objects.link(caust_obj)
+    # ── Bounce fill: cool blue light from above (open sky over the ocean)
+    fill_data = bpy.data.lights.new("SkyFill", "SUN")
+    fill_data.energy = 0.4
+    fill_data.color  = (0.55, 0.72, 1.0)
+    fill_obj = bpy.data.objects.new("VB_SkyFill", fill_data)
+    fill_obj.rotation_euler = (math.radians(10.0), 0.0, 0.0)   # near-zenith
+    bpy.context.scene.collection.objects.link(fill_obj)
 
-    # ── Horizon rim: cool blue-grey from the west (open sea)
-    rim_data = bpy.data.lights.new("SeaRim", "SUN")
-    rim_data.energy  = 0.55
-    rim_data.color   = (0.65, 0.78, 0.95)
-    rim_obj = bpy.data.objects.new("VB_SeaRim", rim_data)
-    rim_obj.rotation_euler = (math.radians(88.0), 0.0, math.radians(270.0))
-    bpy.context.scene.collection.objects.link(rim_obj)
-
-    # ── World: overcast sky + atmospheric haze volume
+    # ── World: procedural sky for coastal atmosphere (Nishita model if available)
     world = bpy.data.worlds["World"]
     world.use_nodes = True
     wnt = world.node_tree
-    bg = wnt.nodes.get("Background")
-    if bg:
-        bg.inputs["Color"].default_value   = (0.62, 0.70, 0.78, 1.0)   # grey-blue overcast
-        bg.inputs["Strength"].default_value = 1.8
-    world_out = wnt.nodes.get("World Output")
-    if world_out:
-        vol = wnt.nodes.new("ShaderNodeVolumeScatter")
-        vol.inputs["Density"].default_value = 0.0012
-        vol.inputs["Color"].default_value   = (0.78, 0.85, 0.92, 1.0)  # cool coastal haze
-        wnt.links.new(vol.outputs["Volume"], world_out.inputs["Volume"])
+    wnt.nodes.clear()
+    out  = wnt.nodes.new("ShaderNodeOutputWorld")
+    bg   = wnt.nodes.new("ShaderNodeBackground")
+    sky  = wnt.nodes.new("ShaderNodeTexSky")
+    sky.sky_type = "NISHITA"
+    sky.sun_elevation   = math.radians(38.0)
+    sky.sun_rotation    = math.radians(220.0)   # SW azimuth matching sun lamp
+    sky.altitude        = 5.0
+    sky.air_density     = 1.0
+    sky.dust_density    = 0.5
+    sky.ozone_density   = 1.0
+    bg.inputs["Strength"].default_value = 0.07
+    wnt.links.new(sky.outputs["Color"], bg.inputs["Color"])
+    wnt.links.new(bg.outputs["Background"], out.inputs["Surface"])
 
-    log("lighting: coastal sun + caustic fill + sea rim + overcast world + haze")
+    log("lighting: 4.5W SW coastal sun + 0.9W sky fill + Nishita sky str=0.18")
 
 
 # ---------------------------------------------------------------------------
@@ -1073,18 +1077,24 @@ def _setup_lighting():
 # ---------------------------------------------------------------------------
 
 def _setup_hero_camera():
-    """Hero: elevated inland looking west toward the ruins arch and sea."""
+    """Hero: from the open ocean looking east at the sunken coastal ruins + cliffs.
+
+    All cameras are now west of the ruins (ocean side, X < -300) where the
+    seabed is below sea level — guaranteed above terrain for any Z > 0.
+    """
     import bpy
     import mathutils
 
     cam_data = bpy.data.cameras.new("HeroCam")
-    cam_data.lens    = 35.0
-    cam_data.clip_end = 6000.0
+    cam_data.lens     = 35.0
+    cam_data.clip_end = 8000.0
     cam_obj = bpy.data.objects.new("VB_HeroCam", cam_data)
     bpy.context.scene.collection.objects.link(cam_obj)
 
-    cam_obj.location = mathutils.Vector((280.0, 40.0, 95.0))
-    target           = mathutils.Vector((-60.0, 20.0, 2.0))
+    # Elevated sea approach: camera ~55m above sea, 400m west of ruins.
+    # Looking slightly down toward the arch + inland cliff face.
+    cam_obj.location = mathutils.Vector((-420.0, -60.0, 70.0))
+    target           = mathutils.Vector((-50.0, 20.0, 22.0))
     direction        = target - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = cam_obj
@@ -1092,63 +1102,67 @@ def _setup_hero_camera():
 
 
 def _setup_waterline_camera():
-    """Ground-level shot looking along the tidal zone toward the arch."""
+    """Boat-eye view at sea surface looking east toward the ruins."""
     import bpy
     import mathutils
 
     cam_data = bpy.data.cameras.new("WaterlineCam")
-    cam_data.lens    = 28.0
-    cam_data.clip_end = 4000.0
+    cam_data.lens     = 28.0
+    cam_data.clip_end = 6000.0
     cam_obj = bpy.data.objects.new("VB_WaterlineCam", cam_data)
     bpy.context.scene.collection.objects.link(cam_obj)
 
-    cam_obj.location = mathutils.Vector((60.0, -200.0, 0.6))  # true waterline height
-    target           = mathutils.Vector((-55.0, 20.0, 6.0))
+    # 2.5m above sea surface, 500m west — dramatic low angle of ruins rising from sea.
+    cam_obj.location = mathutils.Vector((-520.0, 30.0, 2.5))
+    target           = mathutils.Vector((-55.0, 20.0, 14.0))
     direction        = target - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     return cam_obj
 
 
 def _setup_harbour_camera():
-    """Slightly elevated harbour interior — columns and arch framing the sea."""
+    """Diagonal approach from south-west: arch + columns in foreground, cliff behind."""
     import bpy
     import mathutils
 
     cam_data = bpy.data.cameras.new("HarbourCam")
-    cam_data.lens    = 24.0
-    cam_data.clip_end = 5000.0
+    cam_data.lens     = 28.0
+    cam_data.clip_end = 6000.0
     cam_obj = bpy.data.objects.new("VB_HarbourCam", cam_data)
     bpy.context.scene.collection.objects.link(cam_obj)
 
-    cam_obj.location = mathutils.Vector((30.0, 80.0, 18.0))
-    target           = mathutils.Vector((-180.0, -50.0, 0.0))
+    # Slightly south-west of ruins, 30m up — close enough to see column detail.
+    cam_obj.location = mathutils.Vector((-280.0, -160.0, 38.0))
+    target           = mathutils.Vector((-55.0, 20.0, 16.0))
     direction        = target - cam_obj.location
     cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     return cam_obj
 
 
 def _setup_orbit_cameras():
-    """Four cardinal orbit cameras."""
+    """Four aerial orbit cameras — all at safe altitude above the terrain."""
     import bpy
     import mathutils
 
     cams = []
+    # (angle_rad, radius, altitude_z, look_z) — centred on ruins at (-55, 20)
     orbit_configs = [
-        (math.pi * 0.10, 780.0, 280.0, 20.0),   # NE — inland cliff + sea
-        (math.pi * 0.60, 720.0, 180.0,  5.0),   # SE — harbour + columns
-        (math.pi * 1.10, 760.0, 200.0, 15.0),   # SW — sea stacks + open sea
-        (math.pi * 1.60, 740.0, 240.0, 30.0),   # NW — ruins arch silhouette
+        (math.pi * 0.20, 700.0, 340.0, 18.0),   # NNE aerial — cliff face + sea
+        (math.pi * 0.70, 660.0, 300.0, 12.0),   # ESE aerial — harbour + columns
+        (math.pi * 1.20, 720.0, 310.0, 20.0),   # SSW aerial — sea stacks + ocean
+        (math.pi * 1.70, 680.0, 320.0, 25.0),   # WNW aerial — ruins arch silhouette
     ]
+    cx0, cy0 = -55.0, 20.0   # orbit centre = ruins arch
     for i, (angle_off, r, z, tz) in enumerate(orbit_configs):
-        cx = math.cos(angle_off) * r
-        cy = math.sin(angle_off) * r
+        cx = cx0 + math.cos(angle_off) * r
+        cy = cy0 + math.sin(angle_off) * r
         cam_data = bpy.data.cameras.new(f"OrbitCam_{i}")
-        cam_data.lens    = 35.0
-        cam_data.clip_end = 8000.0
+        cam_data.lens     = 50.0
+        cam_data.clip_end = 10000.0
         cam_obj = bpy.data.objects.new(f"VB_OrbitCam_{i}", cam_data)
         bpy.context.scene.collection.objects.link(cam_obj)
         cam_obj.location = mathutils.Vector((cx, cy, z))
-        target = mathutils.Vector((0.0, 0.0, float(tz)))
+        target = mathutils.Vector((cx0, cy0, float(tz)))
         direction = target - cam_obj.location
         cam_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
         cams.append(cam_obj)
@@ -1201,10 +1215,12 @@ def _configure_render(samples=64, res_x=1920, res_y=1080):
     scn.render.image_settings.color_mode   = "RGBA"
     scn.render.film_transparent            = False
 
-    # Use AgX colour transform for cinematic look
+    # AgX High Contrast: coastal drama — punchy shadows on ruins, bright sea.
+    # Exposure -0.5 compensates for Nishita sky adding significant ambient.
     try:
         scn.view_settings.view_transform = "AgX"
         scn.view_settings.look           = "AgX - High Contrast"
+        scn.view_settings.exposure       = -1.0
     except Exception:
         pass
 

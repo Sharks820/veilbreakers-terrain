@@ -584,7 +584,7 @@ def pass_generate_low_freq_hmap(
     world_origin_y = float(stack.world_origin_y)
     terrain_type = _terrain_type_from_intent(intent)
 
-    existing_low = stack.get("hmap_low_freq")
+    existing_low = stack.get("hmap_low_freq", default=None)
     reused_existing = existing_low is not None
     if reused_existing:
         hmap_low = np.asarray(existing_low, dtype=np.float32).copy()
@@ -625,12 +625,15 @@ def pass_generate_low_freq_hmap(
                 target_shape=hmap_low.shape,
                 apply_egm96_offset=bool(hints.get("dem_apply_egm96_offset", False)),
             )
-            h_min = float(np.min(hmap_low))
-            h_max = float(np.max(hmap_low))
-            h_range = max(h_max - h_min, 1.0)
-            dem_scaled = h_min + np.asarray(dem_tile.heightmap, dtype=np.float32) * h_range
+            # FIX-10-5: back-project DEM heightmap [0,1] to actual world-metre
+            # elevations so erosion passes see realistic relief, not 0-1 range.
+            dem_elev_range = dem_tile.max_elev - dem_tile.min_elev
+            dem_metres = (
+                dem_tile.min_elev
+                + np.asarray(dem_tile.heightmap, dtype=np.float32) * dem_elev_range
+            ).astype(np.float32)
             blend = float(np.clip(hints.get("dem_blend_weight", 1.0), 0.0, 1.0))
-            hmap_low = ((1.0 - blend) * hmap_low + blend * dem_scaled).astype(np.float32)
+            hmap_low = ((1.0 - blend) * hmap_low + blend * dem_metres).astype(np.float32)
 
     stack.set("hmap_low_freq", hmap_low, "pass_generate_low_freq_hmap")
     stack.set("height", hmap_low, "pass_generate_low_freq_hmap")
@@ -891,15 +894,8 @@ def pass_macro_world(
             # Generate via the macro_world noise stack.
             # terrain_type is taken from noise_profile; default to "mountains"
             # for the dark-fantasy aesthetic.
-            noise_profile = (intent.noise_profile if intent else None) or "dark_fantasy_default"
-            terrain_type_map = {
-                "dark_fantasy_default": "mountains",
-                "temperate": "mountains",
-                "arid": "desert",
-                "arctic": "mountains",
-                "coastal": "coastal",
-            }
-            terrain_type = terrain_type_map.get(str(noise_profile), "mountains")
+            # FIX-6-7: use TERRAIN_PRESETS in fallback branch, not stale hardcoded terrain_type_map
+            terrain_type = _terrain_type_from_intent(intent)
 
             # World-space origin from tile coordinates and cell_size
             cell_size = float(stack.cell_size)
@@ -971,7 +967,7 @@ def pass_macro_world(
 
     # Fix 12.1 backward compat: always ensure hmap_low_freq is populated
     # (covers the case where height was pre-populated and needs_generate=False).
-    if stack.get("hmap_low_freq") is None:
+    if stack.get("hmap_low_freq", default=None) is None:  # FIX-10-H14
         stack.set("hmap_low_freq", stack.height, "macro_world")
 
     # -------------------------------------------------------------------------
@@ -1166,7 +1162,7 @@ def pass_erosion(
     # Fix 12.3: Variable erodibility from rock_hardness channel
     _K_BASE: float = 0.001           # soft sediment baseline
     _K_STRATA_SCALE: float = -0.0008 # hard rock reduces erodibility (granite ≈ 0.0002)
-    rock_hardness = stack.get("rock_hardness")
+    rock_hardness = stack.get("rock_hardness", default=None)
     if rock_hardness is not None:
         K_map: Optional[np.ndarray] = np.clip(
             _K_BASE + np.asarray(rock_hardness, dtype=np.float64) * _K_STRATA_SCALE,
@@ -1178,13 +1174,13 @@ def pass_erosion(
 
     # Fix 12.1: erode the low-freq base only; fall back to full height if split
     # not yet run (backward compat for tests that invoke pass_erosion in isolation).
-    _low = stack.get("hmap_low_freq")
+    _low = stack.get("hmap_low_freq", default=None)
     if _low is None:
         logger.warning(
             "pass_erosion: hmap_low_freq not populated — falling back to stack.height "
             "(run pass_generate_low_freq_hmap first for full Fix 12.1 behavior)"
         )
-    structural_ridge = stack.get("ridge")
+    structural_ridge = stack.get("ridge", default=None)
     h_before = (_low if _low is not None else stack.height).copy()
 
     # Combine hero_exclusion + protected-zone mask
@@ -1327,7 +1323,7 @@ def pass_erosion(
     # Fix 12.2: Stream-Power Law solver (Cordonnier 2016 ε-topological-order)
     # Requires flow_accumulation from Phase 7 Priority-Flood. Falls back to
     # uniform drainage_area if channel not yet populated.
-    flow_accum = stack.get("flow_accumulation")
+    flow_accum = stack.get("flow_accumulation", default=None)
     if flow_accum is None:
         logger.warning(
             "pass_erosion: flow_accumulation channel not populated — "
@@ -1362,7 +1358,7 @@ def pass_erosion(
     # hydraulic / thermal / SPL delta. Analytical erosion already consumed the
     # hardness modifier above; re-scaling from h_before would double-attenuate
     # that component whenever stratigraphy is present.
-    if rock_hardness is not None and stack.get("strat_erosion_delta") is not None:
+    if rock_hardness is not None and stack.get("strat_erosion_delta", default=None) is not None:  # FIX-10-H14
         rh_arr = np.asarray(rock_hardness, dtype=np.float64)
         rh_arr = rh_arr[:new_height.shape[0], :new_height.shape[1]]
         k_mod_full = 1.0 - 0.7 * np.clip(rh_arr, 0.0, 1.0)
@@ -1530,7 +1526,7 @@ def pass_validation_minimal(
 
     # 4. Channel NaN sweep
     for ch in ("slope", "curvature", "wetness", "drainage"):
-        arr = stack.get(ch)
+        arr = stack.get(ch, default=None)
         if arr is None:
             continue
         arr_np = np.asarray(arr)
@@ -1546,8 +1542,8 @@ def pass_validation_minimal(
             )
 
     # 5. Sediment mass balance
-    erosion_arr = stack.get("erosion_amount")
-    deposition_arr = stack.get("deposition_amount")
+    erosion_arr = stack.get("erosion_amount", default=None)
+    deposition_arr = stack.get("deposition_amount", default=None)
     mass_balance_ratio: float | None = None
     if erosion_arr is not None and deposition_arr is not None:
         total_erosion = float(np.asarray(erosion_arr).sum())

@@ -12,7 +12,7 @@ from typing import Tuple
 def slope_radians(heightmap: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
     """Compute slope magnitude in RADIANS. Result in [0, pi/2]."""
     gy, gx = np.gradient(heightmap.astype(np.float64), cell_size)
-    return np.arctan(np.sqrt(gx**2 + gy**2))
+    return np.arctan(np.hypot(gx, gy))  # FIX-11-6
 
 def slope_degrees(heightmap: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
     """Compute slope magnitude in DEGREES. Result in [0, 90]."""
@@ -21,7 +21,7 @@ def slope_degrees(heightmap: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
 def slope_gradient_magnitude(heightmap: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
     """Raw gradient magnitude (rise/run). NOT angle."""
     gy, gx = np.gradient(heightmap.astype(np.float64), cell_size)
-    return np.sqrt(gx**2 + gy**2)
+    return np.hypot(gx, gy)  # FIX-11-6
 
 def talus_height_units(talus_angle_deg: float, cell_size: float) -> float:
     """Convert a talus angle in DEGREES to a height difference per cell_size.

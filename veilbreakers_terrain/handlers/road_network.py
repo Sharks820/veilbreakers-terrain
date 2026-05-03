@@ -76,7 +76,7 @@ def _build_24_directions():
     for dr, dc in [(2, 2), (2, -2), (-2, 2), (-2, -2)]:
         dirs.append((dr, dc, 2.0 * math.sqrt(2.0)))
     # 3-step knight variants (3,1) and (1,3): 8 (total = 28, trim to 24)
-    count = len(dirs)  # 20 so far
+    _ = len(dirs)  # FIX-11-10: count unused (was 20 so far)
     for dr, dc in [(3, 1), (3, -1), (-3, 1), (-3, -1)]:
         dirs.append((dr, dc, math.sqrt(10.0)))
     return dirs[:24]
@@ -215,7 +215,7 @@ def _astar_24dir(
 
     # A* open set: (f, g, r, c, prev_dr, prev_dc, parent)
     # Use (r, c) -> (g, prev_dir, parent) closed dict
-    INF = float('inf')
+    _ = float('inf')  # FIX-11-10: INF unused
     open_heap = []
     g_start = 0.0
     h_start = _heuristic(sr, sc)
@@ -592,7 +592,7 @@ def _generate_switchback_points(
     if slope <= max_slope:
         return []
 
-    rng = random.Random(seed)
+    _ = random.Random(seed)  # FIX-11-10: seed retained for future stochastic perturbation
 
     dz = abs(end[2] - start[2])
     horiz = _dist2(start, end)
@@ -1038,6 +1038,7 @@ def _road_segment_mesh_spec(
     end,
     width: float = _TRAVEL_WIDTH_M,
     subdivisions: int = 8,
+    bed_width: float = _ROAD_BED_WIDTH_M,  # FIX-11-16: full cross-section width incl. shoulders
 ) -> dict:
     """Generate a terrain-conforming, crowned road mesh for one segment.
 
@@ -1108,7 +1109,7 @@ def _road_segment_mesh_spec(
             "shoulder_width": _SHOULDER_WIDTH_M,
             "crown_height": _CROWN_HEIGHT_M,
             "shoulder_drop": _SHOULDER_DROP_M,
-            "total_width": shoulder_hw * 2,
+            "total_width": bed_width,  # FIX-11-16: _ROAD_BED_WIDTH_M = travel + 2×shoulder
         },
         "material_hint": "terrain_road_compacted",
         "layers": [
@@ -1832,7 +1833,7 @@ def pass_road_network(
         sx, sy, _ = seg[0]
         ex, ey, _ = seg[1]
         width = float(seg[2])
-        hw = width * 0.5 + 1.0  # half-width + 1 m margin
+        _ = width * 0.5 + 1.0  # FIX-11-10: hw unused; dilation uses hardcoded 4.0 below
         # Walk along segment and paint cells
         dx, dy = ex - sx, ey - sy
         seg_len = math.sqrt(dx * dx + dy * dy)

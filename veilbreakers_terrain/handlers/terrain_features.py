@@ -291,7 +291,7 @@ def generate_canyon(
         + ["talus_debris", "overhang_cap"]
     )
     MAT_FLOOR    = 0
-    MAT_WALL     = 1
+    MAT_WALL     = 1  # FIX-11-10: reserved for future wall-face material tagging
     MAT_WET      = 2
     MAT_LEDGE    = 3
     MAT_STRATA_0 = 4
@@ -996,7 +996,7 @@ def generate_waterfall(
     pool_depth_val = rng.uniform(height * 0.1, height * 0.2)
     pool_center_y = -(effective_steps * 1.5 + effective_pool_radius * 0.6)
 
-    pool_vert_start = len(vertices)
+    _ = len(vertices)  # FIX-11-10: pool_vert_start unused; pool_vert_indices tracks indices directly
     pool_vert_indices: list[int] = []
 
     # Build hemispherical basin rings from rim (lat=0, z=0) down to nadir
@@ -3605,12 +3605,12 @@ def generate_floating_rocks(
             # Re-label the equatorial band faces as crystal_vein
             # Count backward from the current mat_indices tail
             # Equatorial band = ring_sizes_list[equator_ring] quads
-            eq_size = ring_sizes_list[equator_ring]
+            _ = ring_sizes_list[equator_ring]  # FIX-11-10: eq_size unused; shader handles vein tagging
             # Position in mat_indices: top_cap + sum of previous ring bands + eq band
             top_cap_faces = ring_sizes_list[0] if ring_starts else 0
             prev_band_faces = sum(ring_sizes_list[i] for i in range(equator_ring))
-            eq_start_mi = (len(mat_indices) - rock_end + rock_start
-                           + top_cap_faces + prev_band_faces)
+            _ = (len(mat_indices) - rock_end + rock_start  # FIX-11-10: eq_start_mi unused
+                 + top_cap_faces + prev_band_faces)
             # Simpler: just tag the vein in the RockSpec; downstream shader handles it
             # (adding geometry-level crystal veins would require UV seams)
 
@@ -4248,9 +4248,9 @@ def generate_lava_flow(
     for i, (cx, cy, cz) in enumerate(cl_points):
         # Tangent along centreline (forward difference)
         if i < flow_segments:
-            nx2, ny2, nz2 = cl_points[i + 1]
+            nx2, ny2, _ = cl_points[i + 1]  # FIX-11-10: nz2 unused
         else:
-            nx2, ny2, nz2 = cx, cy, cz
+            nx2, ny2, _ = cx, cy, cz  # FIX-11-10: nz2 unused
             if i > 0:
                 px, py, pz = cl_points[i - 1]
                 nx2, ny2 = cx + (cx - px), cy + (cy - py)
@@ -4269,7 +4269,7 @@ def generate_lava_flow(
             offset = -rock_edge_outer + jt * 2.0 * rock_edge_outer
             dist = abs(offset)
             half_w = width / 2.0
-            side = 1.0 if offset >= 0.0 else -1.0
+            _ = 1.0 if offset >= 0.0 else -1.0  # FIX-11-10: side unused; sign carried by offset
 
             # Height profile (inside-out):
             #   hot channel: sunken -0.2 m
@@ -4445,7 +4445,7 @@ def generate_lava_flow(
                     nx2, ny2 = cx + (cx - cl_points[i-1][0]), cy + (cy - cl_points[i-1][1])
                 tdx_e2 = nx2 - cx
                 tdy_e2 = ny2 - cy
-                tlen_e2 = math.sqrt(tdx_e2**2 + tdy_e2**2)
+                tlen_e2 = math.hypot(tdx_e2, tdy_e2)  # FIX-11-6
                 if tlen_e2 > 1e-9:
                     px_e = -tdy_e2 / tlen_e2
                     py_e = tdx_e2 / tlen_e2
@@ -4683,5 +4683,191 @@ def register_terrain_features_pass() -> None:
             seed_namespace="pass_terrain_features",
             requires_scene_read=False,
             description="Bundle terrain features: authored mesh spec generation for hero terrain props.",
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIX-13-18: Biome grammar height-modifying features wired as a pipeline pass
+# ---------------------------------------------------------------------------
+
+# Maps composition_hints kind key → _biome_grammar function name.
+# Height-mutating functions: return a modified heightmap (or (heightmap, extra)).
+_BIOME_GRAMMAR_KIND_MAP: dict[str, str] = {
+    "periglacial":       "apply_periglacial_patterns",
+    "desert_pavement":   "apply_desert_pavement",
+    "landslide_scars":   "apply_landslide_scars",
+    "hot_spring":        "apply_hot_spring_features",
+    "reef_platform":     "apply_reef_platform",
+    "tafoni":            "apply_tafoni_weathering",
+    "geological_folds":  "apply_geological_folds",
+}
+
+# Mask-producing functions: return a (H,W) float mask stored as a stack channel.
+# These do NOT modify the heightmap.
+_BIOME_GRAMMAR_MASK_MAP: dict[str, str] = {
+    "spring_line_mask":  "compute_spring_line_mask",
+}
+
+
+def pass_biome_grammar_features(
+    state: TerrainPipelineState,
+    region: Any,
+) -> PassResult:
+    """Apply biome-grammar height-modifying features (periglacial, tafoni, etc.).
+
+    Contract
+    --------
+    Consumes : height
+    Produces : height (modified in-place), hot_spring_locations (optional),
+               spring_line_mask (optional side-channel mask)
+
+    Triggered by ``composition_hints["biome_grammar_features"]``:
+        a list of dicts each with ``kind`` (str) and optional ``params`` (dict).
+
+    Height-mutating kinds (modify heightmap):
+        periglacial, desert_pavement, landslide_scars, hot_spring,
+        reef_platform, tafoni, geological_folds.
+
+    Mask-producing kinds (stored as stack channels, do not modify height):
+        spring_line_mask  — calls compute_spring_line_mask, stores result
+                            on stack as ``spring_line_mask`` channel.
+    """
+    import numpy as np
+    from . import _biome_grammar as _bg
+
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    hints = dict(getattr(state.intent, "composition_hints", {}) or {})
+    feature_specs = hints.get("biome_grammar_features") or []
+
+    if not feature_specs:
+        return PassResult(
+            pass_name="pass_biome_grammar_features",
+            status="ok",
+            duration_seconds=time.perf_counter() - t0,
+            consumed_channels=("height",),
+            produced_channels=(),
+            metrics={"features_applied": 0},
+        )
+
+    height = np.asarray(stack.height, dtype=np.float64)
+    base_seed = int(getattr(state.intent, "seed", 0))
+    applied: list[str] = []
+    skipped: list[str] = []
+    hot_spring_locations: list[dict] = []
+    spring_line_masks: list[Any] = []
+
+    for idx, spec in enumerate(feature_specs):
+        if isinstance(spec, str):
+            kind, kparams = spec, {}
+        elif isinstance(spec, dict):
+            kind = str(spec.get("kind") or "")
+            kparams = dict(spec.get("params") or {})
+        else:
+            continue
+
+        kparams.setdefault("seed", base_seed + idx)
+
+        # ── mask-producing branch ────────────────────────────────────────────
+        mask_fn_name = _BIOME_GRAMMAR_MASK_MAP.get(kind)
+        if mask_fn_name is not None:
+            mask_fn = getattr(_bg, mask_fn_name, None)
+            if mask_fn is None:
+                skipped.append(kind)
+                continue
+            try:
+                # compute_spring_line_mask(heightmap, geology_layers, seed)
+                mask_result = mask_fn(height, **kparams)
+            except Exception:
+                skipped.append(kind)
+                continue
+            spring_line_masks.append(np.asarray(mask_result, dtype=np.float32))
+            applied.append(kind)
+            continue
+
+        # ── height-mutating branch ───────────────────────────────────────────
+        fn_name = _BIOME_GRAMMAR_KIND_MAP.get(kind)
+        if fn_name is None:
+            skipped.append(kind)
+            continue
+
+        fn = getattr(_bg, fn_name, None)
+        if fn is None:
+            skipped.append(kind)
+            continue
+
+        try:
+            result = fn(height, **kparams)
+        except Exception:
+            skipped.append(kind)
+            continue
+
+        if isinstance(result, tuple):
+            # apply_desert_pavement returns (heightmap, pavement_mask)
+            # apply_hot_spring_features returns (heightmap, spring_list)
+            height = result[0]
+            if len(result) > 1:
+                extra = result[1]
+                if isinstance(extra, list):
+                    hot_spring_locations.extend(extra)
+        else:
+            height = result
+
+        applied.append(kind)
+
+    stack.set("height", height, "pass_biome_grammar_features")
+    if hot_spring_locations:
+        stack.set("hot_spring_locations", hot_spring_locations, "pass_biome_grammar_features")
+
+    # Merge accumulated spring-line masks (max-blend) and store as a channel.
+    if spring_line_masks:
+        import numpy as _np
+        merged_mask = spring_line_masks[0].copy()
+        for m in spring_line_masks[1:]:
+            _np.maximum(merged_mask, m, out=merged_mask)
+        stack.set("spring_line_mask", merged_mask, "pass_biome_grammar_features")
+
+    produced_list = ["height"]
+    if hot_spring_locations:
+        produced_list.append("hot_spring_locations")
+    if spring_line_masks:
+        produced_list.append("spring_line_mask")
+    produced = tuple(produced_list)
+
+    return PassResult(
+        pass_name="pass_biome_grammar_features",
+        status="ok" if not skipped else "warning",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("height",),
+        produced_channels=produced,
+        metrics={
+            "features_applied": len(applied),
+            "features_skipped": len(skipped),
+            "applied_kinds": applied,
+            "hot_spring_count": len(hot_spring_locations),
+            "spring_line_mask_computed": len(spring_line_masks) > 0,
+        },
+    )
+
+
+def register_biome_grammar_features_pass() -> None:
+    from .terrain_pipeline import TerrainPassController
+
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_biome_grammar_features",
+            func=pass_biome_grammar_features,
+            requires_channels=("height",),
+            produces_channels=("height",),
+            overrides=("height",),
+            seed_namespace="biome_grammar_features",
+            requires_scene_read=False,
+            may_modify_geometry=True,
+            respects_protected_zones=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
+            description="FIX-13-18: biome grammar height features (periglacial, tafoni, geological folds, etc.).",
         )
     )

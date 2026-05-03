@@ -161,6 +161,12 @@ class _PermTableNoise:
     def __init__(self, seed: int = 0) -> None:
         self._seed = seed
         self._perm = _build_permutation_table(seed)
+        # FIX-12-35: cache permutation tables for z-slice lookups in noise3/noise4
+        # so repeated calls at the same integer z level do not rebuild the 512-element
+        # table on every invocation.  Bounded to 512 entries (covers 256 distinct z
+        # levels × 2 slices per level) — negligible memory, eliminates O(256) shuffle
+        # per noise3 call in the terrain heightmap hot path.
+        self._perm_cache: dict = {}
 
     def noise2(self, x: float, y: float) -> float:
         """Scalar 2D noise evaluation, returns value in ~[-1, 1]."""
@@ -171,6 +177,20 @@ class _PermTableNoise:
     def noise2_array(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
         """Vectorized 2D noise evaluation over coordinate arrays."""
         return _perlin_noise2_array(xs, ys, self._perm)
+
+    def _perm_for_seed(self, seed_key: int) -> np.ndarray:
+        """Return a cached permutation table for *seed_key*.
+
+        FIX-12-35: builds and caches the 512-element table on first access;
+        subsequent calls with the same key return the cached array directly,
+        eliminating the O(256) shuffle that was previously run on every
+        noise3/noise4 call.  The cache is intentionally unbounded per-instance
+        (at most 512 distinct z-levels × 2 = 1024 entries ≈ 2 MB) because
+        _PermTableNoise instances are short-lived (one per generator call).
+        """
+        if seed_key not in self._perm_cache:
+            self._perm_cache[seed_key] = _build_permutation_table(seed_key)
+        return self._perm_cache[seed_key]
 
     def noise3(self, x: float, y: float, z: float) -> float:
         """Scalar 3D noise evaluation via two 2D slices combined.
@@ -189,10 +209,11 @@ class _PermTableNoise:
         tz = zf * zf * zf * (zf * (zf * 6.0 - 15.0) + 10.0)
         # Sample two 2D slices at integer z levels, blending between them.
         # Offset x/y by a large prime multiple of z so the two slices differ.
-        seed_z0 = self._seed ^ int(zi & 0xFF) * 0x6C62272E
-        seed_z1 = self._seed ^ int((zi + 1) & 0xFF) * 0x6C62272E
-        perm0 = _build_permutation_table(seed_z0 & 0x7FFFFFFF)
-        perm1 = _build_permutation_table(seed_z1 & 0x7FFFFFFF)
+        # FIX-12-35: use cached perm tables instead of rebuilding each call.
+        seed_z0 = (self._seed ^ int(zi & 0xFF) * 0x6C62272E) & 0x7FFFFFFF
+        seed_z1 = (self._seed ^ int((zi + 1) & 0xFF) * 0x6C62272E) & 0x7FFFFFFF
+        perm0 = self._perm_for_seed(seed_z0)
+        perm1 = self._perm_for_seed(seed_z1)
         xs = np.array([x], dtype=np.float64)
         ys = np.array([y], dtype=np.float64)
         n0 = float(_perlin_noise2_array(xs, ys, perm0)[0])
@@ -285,9 +306,9 @@ class _OpenSimplexWrapper(_PermTableNoise):
         # Offset x/y/z by a large prime multiple of wi to differentiate slices
         offset0 = int(wi & 0xFF) * 0x9E3779B9
         offset1 = int((wi + 1) & 0xFF) * 0x9E3779B9
-        # Reuse the permutation-table 3D approximation with distinct seeds
-        perm0 = _build_permutation_table((self._seed ^ offset0) & 0x7FFFFFFF)
-        perm1 = _build_permutation_table((self._seed ^ offset1) & 0x7FFFFFFF)
+        # FIX-12-35: use cached perm tables instead of rebuilding each call.
+        perm0 = self._perm_for_seed((self._seed ^ offset0) & 0x7FFFFFFF)
+        perm1 = self._perm_for_seed((self._seed ^ offset1) & 0x7FFFFFFF)
         xs_a = np.array([x], dtype=np.float64)
         ys_a = np.array([y], dtype=np.float64)
         n0 = float(_perlin_noise2_array(xs_a, ys_a, perm0)[0])
@@ -551,6 +572,13 @@ def fbm_iq(
         fBm value; amplitude grows with octaves but gradient dampening
         keeps steep areas from over-saturating.
     """
+    # FIX-12-7: guard against accidental array input — fbm_iq is scalar-only.
+    # Callers that need vectorized fBm should use generate_heightmap_with_noise.
+    if not (np.ndim(p_x) == 0 and np.ndim(p_y) == 0):
+        raise TypeError(
+            f"fbm_iq expects scalar inputs; got p_x.ndim={np.ndim(p_x)}, "
+            f"p_y.ndim={np.ndim(p_y)}. Use generate_heightmap_with_noise for arrays."
+        )  # FIX-12-7
     gen = _make_noise_generator(seed)
     v = 0.0
     a = 0.5
@@ -1306,9 +1334,10 @@ def generate_heightmap(
         xs_base, ys_base = np.meshgrid(x_coords, y_coords)      # both (height, width)
 
     # Apply domain warping for organic, non-repetitive terrain features
-    # (Quilez 2002 single-pass warp: simple but effective)
+    # (FIX-10-23: upgraded from single-pass to 3-pass IQ domain warp for
+    # richer swirling detail — domain_warp_fbm_array mirrors domain_warp_fbm)
     if warp_strength > 0.0:
-        xs_base, ys_base = domain_warp_array(
+        xs_base, ys_base = domain_warp_fbm_array(
             xs_base, ys_base,
             warp_strength=warp_strength,
             warp_scale=warp_scale,
@@ -2663,6 +2692,107 @@ def domain_warp_array(
     warp_y = gen.noise2_array(xs * warp_scale + 1.7, ys * warp_scale + 9.2)
 
     return (xs + warp_x * warp_strength, ys + warp_y * warp_strength)
+
+
+def domain_warp_fbm_array(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    warp_strength: float = 0.5,
+    warp_scale: float = 1.0,
+    seed: int = 0,
+    octaves: int = 3,
+    lacunarity: float = 2.0,
+    gain: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized 3-pass IQ domain warping (FIX-10-23 / REQ-P10-023).
+
+    Array counterpart to ``domain_warp_fbm``.  Runs the canonical Quilez
+    three-pass domain warp entirely with numpy arrays so it can be applied
+    to a full heightmap coordinate grid without per-pixel Python loops.
+
+    Each "pass" is a mini fBm stack (``octaves`` octaves, default 3) built
+    from ``noise2_array`` calls with fixed coordinate offsets taken from IQ's
+    shadertoy reference to break diagonal symmetry:
+
+      q = (fbm(p), fbm(p + (5.2, 1.3)))
+      r = (fbm(p + q*s + (1.7, 9.2)), fbm(p + q*s + (8.3, 2.8)))
+      result coords = p + r*s
+
+    Parameters
+    ----------
+    xs, ys : np.ndarray
+        Coordinate arrays (same shape).
+    warp_strength : float
+        Amplitude of the coordinate offset at each warp pass.
+    warp_scale : float
+        Base frequency multiplier applied to all noise samples.
+    seed : int
+        Deterministic seed.
+    octaves : int
+        Number of fBm octaves in each warp-pass mini-stack (default 3).
+        Higher values add fine detail at a proportional cost.
+    lacunarity : float
+        Frequency multiplier per fBm octave.
+    gain : float
+        Amplitude multiplier per fBm octave.
+
+    Returns
+    -------
+    tuple of (warped_xs, warped_ys)
+        Coordinate arrays distorted by three passes of domain warping.
+    """
+    gen = _make_noise_generator(seed)
+    gen_q = _make_noise_generator(seed + 17)
+    gen_rx = _make_noise_generator(seed + 1)
+    gen_ry = _make_noise_generator(seed + 19)
+
+    def _fbm_array(gen_inner: "_PermTableNoise", ox: float, oy: float) -> np.ndarray:
+        """Mini fBm stack with ``octaves`` levels, seeded generator, coord offset."""
+        acc = np.zeros_like(xs)
+        freq = warp_scale
+        amp = 1.0
+        total = 0.0
+        for _ in range(octaves):
+            acc += gen_inner.noise2_array((xs + ox) * freq, (ys + oy) * freq) * amp
+            total += amp
+            amp *= gain
+            freq *= lacunarity
+        return acc / max(total, 1e-9)
+
+    # Pass 1: q = (fbm(p), fbm(p + (5.2, 1.3)))
+    q_x = _fbm_array(gen,    0.0, 0.0)
+    q_y = _fbm_array(gen_q,  5.2, 1.3)
+
+    # Pass 2: r = (fbm(p + q*s + (1.7, 9.2)), fbm(p + q*s + (8.3, 2.8)))
+    # Temporarily shift xs/ys by q * warp_strength before sampling
+    xs_q = xs + q_x * warp_strength
+    ys_q = ys + q_y * warp_strength
+
+    def _fbm_array_shifted(
+        gen_inner: "_PermTableNoise",
+        xs_in: np.ndarray,
+        ys_in: np.ndarray,
+        ox: float,
+        oy: float,
+    ) -> np.ndarray:
+        acc = np.zeros_like(xs_in)
+        freq = warp_scale
+        amp = 1.0
+        total = 0.0
+        for _ in range(octaves):
+            acc += gen_inner.noise2_array((xs_in + ox) * freq, (ys_in + oy) * freq) * amp
+            total += amp
+            amp *= gain
+            freq *= lacunarity
+        return acc / max(total, 1e-9)
+
+    r_x = _fbm_array_shifted(gen_rx, xs_q, ys_q, 1.7, 9.2)
+    r_y = _fbm_array_shifted(gen_ry, xs_q, ys_q, 8.3, 2.8)
+
+    # Pass 3: output coords = p + r*s
+    warped_xs = xs + r_x * warp_strength
+    warped_ys = ys + r_y * warp_strength
+    return warped_xs, warped_ys
 
 
 # ---------------------------------------------------------------------------

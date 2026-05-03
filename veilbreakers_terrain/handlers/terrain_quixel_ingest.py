@@ -727,21 +727,21 @@ def apply_quixel_to_layer(
         if old_layer_scale is not None:
             base_n = base_n * old_layer_scale[:, :, np.newaxis]
 
-        # Whiteout blend: preserves correct normal perturbation vs simple linear add.
-        # Scale n2 toward flat (0,0,1) by (1-weight), then combine:
-        #   result.xy = n1.xy + n2_scaled.xy
-        #   result.z  = n1.z  * n2_scaled.z
-        w = layer_weight[:, :, np.newaxis]
-        n2_xy = sampled_normal[..., :2] * w
-        n2_z = 1.0 - w + sampled_normal[..., 2:3] * w  # lerp(1.0, n2.z, w)
-        blended_xy = base_n[..., :2] + n2_xy
-        blended_z = base_n[..., 2:3] * n2_z
-        blended_n = np.concatenate([blended_xy, blended_z], axis=-1)
-        norms = np.linalg.norm(blended_n, axis=2, keepdims=True)
-        norms = np.where(norms < 1e-8, 1.0, norms)
+        # FIX-10-Q1: whiteout blend — preserves high-frequency normals at 45° blends.
+        # Pure whiteout: combined = [n1.x+n2.x, n1.y+n2.y, n1.z*n2.z], then renormalize.
+        # This outperforms the weighted lerp-to-flat approach at steep blending angles.
+        n1 = base_n                  # [..., 3] in [-1, 1]
+        n2 = sampled_normal          # [..., 3] in [-1, 1]
+        combined = np.stack([
+            n1[..., 0] + n2[..., 0],
+            n1[..., 1] + n2[..., 1],
+            n1[..., 2] * n2[..., 2],
+        ], axis=-1)
+        length = np.linalg.norm(combined, axis=-1, keepdims=True)
+        combined = combined / np.maximum(length, 1e-8)  # FIX-10-Q1
         stack.set(
             "terrain_normals",
-            (blended_n / norms).astype(np.float32),
+            combined.astype(np.float32),
             "quixel_ingest",
         )
 
@@ -1030,25 +1030,25 @@ def pass_quixel_ingest(
         )
 
     rows, cols = np.asarray(stack.height).shape
-    if stack.get("macro_color") is None:
+    if stack.get("macro_color", default=None) is None:
         stack.set(
             "macro_color",
             np.zeros((rows, cols, 3), dtype=np.float32),
             "quixel_ingest",
         )
-    if stack.get("roughness_variation") is None:
+    if stack.get("roughness_variation", default=None) is None:
         stack.set(
             "roughness_variation",
             np.full((rows, cols), 0.5, dtype=np.float32),
             "quixel_ingest",
         )
-    if stack.get("terrain_normals") is None:
+    if stack.get("terrain_normals", default=None) is None:
         neutral_normals = np.zeros((rows, cols, 3), dtype=np.float32)
         neutral_normals[:, :, 2] = 1.0
         stack.set("terrain_normals", neutral_normals, "quixel_ingest")
-    if stack.get("terrain_ao") is None:
+    if stack.get("terrain_ao", default=None) is None:
         stack.set("terrain_ao", np.ones((rows, cols), dtype=np.float32), "quixel_ingest")
-    if stack.get("terrain_displacement") is None:
+    if stack.get("terrain_displacement", default=None) is None:
         stack.set(
             "terrain_displacement",
             np.zeros((rows, cols), dtype=np.float32),
@@ -1058,7 +1058,7 @@ def pass_quixel_ingest(
     produced_channels = ("splatmap_weights_layer",) + tuple(
         channel
         for channel in _OPTIONAL_PBR_OUTPUT_CHANNELS
-        if stack.get(channel) is not None
+        if stack.get(channel, default=None) is not None
     )
 
     return PassResult(

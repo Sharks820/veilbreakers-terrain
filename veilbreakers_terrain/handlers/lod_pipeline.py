@@ -83,6 +83,71 @@ MeshData = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# FIX-10-H7: smooth normal transfer from LOD0 after QEM decimation
+# ---------------------------------------------------------------------------
+
+
+def _compute_vertex_normals(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, ...]],
+) -> list[tuple[float, float, float]]:
+    """Compute per-vertex averaged face normals for a mesh.  # FIX-10-H7"""
+    n = len(vertices)
+    normals = [[0.0, 0.0, 0.0] for _ in range(n)]
+    for face in faces:
+        if len(face) < 3:
+            continue
+        v0 = vertices[face[0]]
+        v1 = vertices[face[1]]
+        v2 = vertices[face[2]]
+        ax, ay, az = v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]
+        bx, by, bz = v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]
+        nx = ay * bz - az * by
+        ny = az * bx - ax * bz
+        nz = ax * by - ay * bx
+        for vi in face:
+            if 0 <= vi < n:
+                normals[vi][0] += nx
+                normals[vi][1] += ny
+                normals[vi][2] += nz
+    result: list[tuple[float, float, float]] = []
+    for nrm in normals:
+        ln = (nrm[0] ** 2 + nrm[1] ** 2 + nrm[2] ** 2) ** 0.5
+        if ln > 1e-12:
+            result.append((nrm[0] / ln, nrm[1] / ln, nrm[2] / ln))
+        else:
+            result.append((0.0, 1.0, 0.0))
+    return result
+
+
+def _transfer_normals_from_lod0(
+    lod_vertices: list[tuple[float, float, float]],
+    lod_faces: list[tuple[int, ...]],
+    lod0_vertices: list[tuple[float, float, float]],
+    lod0_faces: list[tuple[int, ...]],
+) -> list[tuple[float, float, float]]:
+    """Transfer smooth normals from LOD0 to a decimated LOD mesh via nearest-vertex lookup.
+
+    Uses a KDTree when scipy is available; falls back to recomputing from the
+    decimated geometry when it is not.  # FIX-10-H7
+    """
+    if not lod0_vertices or not lod0_faces:
+        return _compute_vertex_normals(lod_vertices, lod_faces)
+    lod0_normals = _compute_vertex_normals(lod0_vertices, lod0_faces)
+    if _SCIPY_AVAILABLE:
+        try:
+            from scipy.spatial import KDTree as _KDTree
+            tree = _KDTree(np.array(lod0_vertices, dtype=np.float64))
+            query_pts = np.array(lod_vertices, dtype=np.float64)
+            _, indices = tree.query(query_pts)
+            return [lod0_normals[int(i)] for i in indices]
+        except Exception:
+            pass
+    # Fallback: recompute from decimated geometry
+    return _compute_vertex_normals(lod_vertices, lod_faces)
+
+
+# ---------------------------------------------------------------------------
 # Pure-logic: vector math helpers
 # ---------------------------------------------------------------------------
 
@@ -789,8 +854,11 @@ def generate_collision_mesh(
                     collision_verts, collision_faces, ratio, uniform_weights,
                 )
             return collision_verts, collision_faces
-        except Exception:
-            pass  # Fall through to incremental algorithm
+        except Exception as e:  # FIX-11-5
+            import logging as _log_lod
+            _log_lod.getLogger(__name__).debug(  # FIX-11-5
+                "scipy convex hull failed, falling back to incremental: %s", e
+            )
 
     pts = list(vertices)
     n = len(pts)
@@ -1345,6 +1413,51 @@ def _auto_detect_regions(
 
 
 # ---------------------------------------------------------------------------
+# FIX-12-24: Poisson-disk vertex subsampling for aggressive LOD levels
+# ---------------------------------------------------------------------------
+
+
+def _poisson_disk_subsample(
+    vertices: list[tuple[float, float, float]],
+    min_dist: float,
+) -> list[int]:
+    """Return indices of vertices selected by random sequential addition (Poisson-disk).
+
+    Picks random vertices one at a time, rejecting any that lie within
+    *min_dist* of an already-selected vertex.  Used to break the regular
+    grid remnants that QEM decimation leaves at LOD2/LOD3 boundaries.
+
+    Args:
+        vertices: Source vertex list.
+        min_dist: Minimum world-space distance between accepted vertices.
+
+    Returns:
+        List of accepted vertex indices (subset of range(len(vertices))).
+    """
+    if not vertices or min_dist <= 0.0:
+        return list(range(len(vertices)))
+
+    pts = np.array(vertices, dtype=np.float64)
+    n = len(pts)
+    order = np.random.default_rng(0xD15C0).permutation(n)
+    selected: list[int] = []
+    selected_pts: list[np.ndarray] = []
+    min_dist_sq = min_dist * min_dist
+
+    for idx in order:
+        p = pts[idx]
+        if selected_pts:
+            sp = np.array(selected_pts)
+            diffs = sp - p
+            if np.any(np.einsum("ij,ij->i", diffs, diffs) < min_dist_sq):
+                continue
+        selected.append(int(idx))
+        selected_pts.append(p)
+
+    return selected
+
+
+# ---------------------------------------------------------------------------
 # Pure-logic: LOD chain generation
 # ---------------------------------------------------------------------------
 
@@ -1446,10 +1559,34 @@ def generate_lod_chain(
             lod_chain.append((list(vertices), list(faces), level))
             prev_face_count = len(faces)
         else:
+            # FIX-12-24: For aggressive LOD levels (below 25% of source vertices),
+            # apply Poisson-disk subsampling to randomise vertex positions before
+            # QEM decimation.  This breaks regular grid remnants at LOD boundaries
+            # that cause staircase silhouettes at distance.
+            decimate_src_verts = vertices
+            decimate_src_faces = faces
+            decimate_src_weights = combined_importance
+            if ratio < 0.25 and len(vertices) > 8:
+                aabb = np.array(vertices, dtype=np.float64)
+                extents = aabb.max(axis=0) - aabb.min(axis=0)
+                diag = float(np.linalg.norm(extents))
+                min_pd_dist = diag * ratio * 0.5
+                if min_pd_dist > 0.0:
+                    kept_idx = _poisson_disk_subsample(vertices, min_pd_dist)
+                    if len(kept_idx) >= 4:
+                        idx_set = set(kept_idx)
+                        idx_remap = {old: new for new, old in enumerate(kept_idx)}
+                        decimate_src_verts = [vertices[i] for i in kept_idx]
+                        decimate_src_faces = [
+                            tuple(idx_remap[v] for v in f)
+                            for f in faces
+                            if all(v in idx_set for v in f)
+                        ]
+                        decimate_src_weights = [combined_importance[i] for i in kept_idx]
             # Decimate with QEM + silhouette protection
-            weights_copy = list(combined_importance)
+            weights_copy = list(decimate_src_weights)
             lod_verts, lod_faces = decimate_preserving_silhouette(
-                vertices, faces, ratio, weights_copy,
+                decimate_src_verts, decimate_src_faces, ratio, weights_copy,
             )
 
             # Enforce minimum triangle floor from preset
@@ -1466,10 +1603,16 @@ def generate_lod_chain(
             # Monotonicity guarantee: face count must not exceed previous level
             if len(lod_faces) > prev_face_count and lod_chain:
                 # Reuse the previous level's mesh unchanged
-                prev_verts, prev_faces, _ = lod_chain[-1]
+                prev_verts, prev_faces = lod_chain[-1][0], lod_chain[-1][1]
                 lod_verts, lod_faces = list(prev_verts), list(prev_faces)
 
-            lod_chain.append((lod_verts, lod_faces, level))
+            # FIX-10-H7: transfer smooth normals from LOD0 after QEM decimation
+            # so that per-vertex normals reflect the original surface curvature
+            # rather than the decimated geometry's coarser shading tangents.
+            _lod_normals = _transfer_normals_from_lod0(
+                lod_verts, lod_faces, list(vertices), list(faces)
+            )
+            lod_chain.append((lod_verts, lod_faces, level, _lod_normals))  # type: ignore[arg-type]
             prev_face_count = len(lod_faces)
 
     return lod_chain
@@ -1975,8 +2118,12 @@ def _setup_billboard_lod(
     bb_obj["lod_dist_min"] = bb_dist
     bb_obj["lod_billboard_material_ref"] = material_ref
     bb_obj["lod_camera_facing"] = 1         # screen-aligned impostor constraint
-    bb_obj["lod_azimuth_count"] = 8         # 8 azimuth capture views
+    bb_obj["lod_azimuth_count"] = len(_BILLBOARD_AZIMUTH_ANGLES)  # FIX-11-15
     bb_obj["lod_top_view"] = 1              # 1 top-down capture view
+    # FIX-11-15: store the actual azimuth angles so the bake/capture loop can
+    # iterate over each angle rather than relying on implicit count-only metadata.
+    for _az_idx, _az_deg in enumerate(_BILLBOARD_AZIMUTH_ANGLES):  # FIX-11-15
+        bb_obj[f"lod_azimuth_{_az_idx}_deg"] = _az_deg  # FIX-11-15
 
     # Store full four-tier distance thresholds and billboard spec as custom props
     template_obj["lod_billboard_enabled"]      = 1
@@ -1993,7 +2140,7 @@ def _setup_billboard_lod(
     template_obj["lod_billboard_tree_height"]  = tree_height
     template_obj["lod_billboard_tree_width"]   = max(tree_width, tree_depth)
     template_obj["lod_billboard_material_ref"] = material_ref
-    template_obj["lod_billboard_azimuth_count"] = 8
+    template_obj["lod_billboard_azimuth_count"] = len(_BILLBOARD_AZIMUTH_ANGLES)  # FIX-11-15
     template_obj["lod_billboard_top_view"]      = 1
     template_obj["lod_billboard_total_views"]   = _BILLBOARD_TOTAL_VIEWS
     template_obj["lod_billboard_camera_facing"] = 1  # screen-aligned impostor

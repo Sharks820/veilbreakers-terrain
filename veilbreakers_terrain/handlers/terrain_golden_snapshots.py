@@ -357,7 +357,7 @@ def seed_golden_library(
                         snapshots.append(snap)
                     elif failure is not None:
                         failures.append(failure)
-        except Exception as _parallel_exc:  # noqa: BLE001
+        except Exception as _e:  # FIX-11-10: renamed to _e (discard); noqa: BLE001
             # Pickling or spawn failure — fall back to sequential execution
             snapshots.clear()
             failures.clear()

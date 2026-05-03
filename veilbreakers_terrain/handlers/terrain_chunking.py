@@ -315,8 +315,10 @@ def compute_terrain_chunks(
         origin_x = float(world_origin[0])
         origin_y = float(world_origin[1])
 
-    # Resolve overlap_cells: explicit arg wins, then legacy overlap param
-    ov = int(overlap_cells) if overlap_cells is not None else int(overlap)
+    if overlap_cells is not None:
+        ov = int(overlap_cells)
+    else:
+        ov = int(overlap)
     if ov < 0:
         raise ValueError(f"overlap_cells must be >= 0, got {ov}")
 
@@ -788,16 +790,15 @@ def build_tile_batch_manifest(
             edge_a = edge_contracts.get(direction, {})
             edge_b = neighbor_contract.get("edge_contracts", {}).get(opposite, {})
             match = edge_a.get("sha256") == edge_b.get("sha256")
-            adjacency.append(
-                {
-                    "tile_a": [tx, ty],
-                    "tile_b": [neighbor_coords[0], neighbor_coords[1]],
-                    "direction": direction,
-                    "status": "matched" if match else "mismatch",
-                    "edge_hash_a": edge_a.get("sha256"),
-                    "edge_hash_b": edge_b.get("sha256"),
-                }
-            )
+            entry = {
+                "tile_a": [tx, ty],
+                "tile_b": [neighbor_coords[0], neighbor_coords[1]],
+                "direction": direction,
+                "status": "matched" if match else "mismatch",
+                "edge_hash_a": edge_a.get("sha256"),
+                "edge_hash_b": edge_b.get("sha256"),
+            }
+            adjacency.append(entry)
 
     sorted_tiles = sorted(by_coords.items(), key=lambda item: (item[0][1], item[0][0]))
     return {

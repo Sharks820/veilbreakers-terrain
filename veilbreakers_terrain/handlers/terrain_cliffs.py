@@ -354,16 +354,11 @@ def build_cliff_candidate_mask(
 
     AAA upgrade (2026-04-19)
     ------------------------
-    After the binary slope mask is built, Moore-neighbor contour tracing
-    is run on each connected component to extract an *ordered* boundary.
-    Each boundary is then:
-      1. Gaussian-smoothed (sigma = ``gauss_sigma`` samples) to remove
-         pixelation artefacts from the grid-aligned mask edge.
-      2. Fitted with a cubic B-spline (no straight-line grid cuts).
-    The smoothed contour is *not* used to alter the boolean mask (that
-    stays as the slope-threshold result); it is stored on the stack as
-    ``cliff_contour_spline`` for downstream consumers (hero mesh insertion,
-    scatter boundary).
+    After the binary slope mask is built the mask is returned directly.
+    The Moore-neighbor contour → Gaussian smooth → cubic B-spline path
+    was removed in FIX-13-6: the ``cliff_contour_spline`` channel it
+    produced had no downstream consumers and the CPU work was wasted on
+    every tile. The boolean slope-threshold mask remains authoritative.
     """
     slope = stack.get("slope")
     if slope is None:
@@ -409,22 +404,12 @@ def build_cliff_candidate_mask(
         if small.size:
             mask = np.where(np.isin(labels, small), False, mask)
 
-    # ------------------------------------------------------------------
-    # AAA: Moore-neighbor contour → Gaussian smooth → cubic B-spline
-    # The spline is stored on the stack for downstream passes; the
-    # boolean mask itself is untouched (slope-threshold result is
-    # authoritative for which cells are "cliff").
-    # ------------------------------------------------------------------
-    if mask.any():
-        contour_pts = _moore_contour_all_components(mask.astype(bool))
-        if contour_pts.shape[0] >= 4:
-            smooth_pts = _smooth_contour_gaussian(
-                contour_pts.astype(np.float64),
-                sigma=float(gauss_sigma),
-                closed=False,  # multi-component traces are open chains
-            )
-            spline_pts = _fit_bspline_contour(smooth_pts, closed=False)
-            stack.set("cliff_contour_spline", spline_pts, "cliffs")
+    # FIX-13-6: cliff_contour_spline computation removed — Moore-neighbor contour
+    # → Gaussian smooth → cubic B-spline was CPU-intensive work whose output was
+    # declared in produces_channels but had zero downstream consumers (hero mesh
+    # insertion and scatter boundary referenced in the original docstring were
+    # never implemented). Removing the dead computation avoids wasted cycles on
+    # large terrains. The boolean mask is the authoritative cliff representation.
 
     return mask.astype(bool)
 
@@ -837,6 +822,11 @@ def carve_cliff_system(
     # Rock material hint (for angle of repose selection)
     rock_material = "default"
 
+    # FIX-13-1: accumulate micro-erosion deltas across all cliff faces so the
+    # height field is actually modified.  Previously the delta was computed but
+    # only its mean was read for telemetry — the height was never updated.
+    cliff_erosion_delta = np.zeros_like(height, dtype=np.float64)
+
     cliffs: List[CliffStructure] = []
     for idx, (lid, size) in enumerate(component_sizes):
         if size < min_component_size:
@@ -980,6 +970,10 @@ def carve_cliff_system(
                 repose_rad=repose_rad,
                 k=0.002, n=1.4, dt=1.0,
             )
+            # FIX-13-1: accumulate delta so height is actually updated after
+            # all faces are processed.  Previously this delta was computed but
+            # only the mean was used for telemetry — height was never changed.
+            cliff_erosion_delta += erosion_delta
             face_eroded_vals = erosion_delta[face_mask]
             erosion_delta_mean = float(np.abs(face_eroded_vals).mean()) if face_eroded_vals.size else 0.0
             if erosion_delta_mean > 0.0:
@@ -1047,6 +1041,17 @@ def carve_cliff_system(
                 f":band_amplitude={strata_info:.4f}:x_shift_mean={strata_x_shift_mean:.4f}"
                 f":layer_count={len(strata_layers)}"
             )
+
+    # FIX-13-1: apply the accumulated cliff micro-erosion delta to the height
+    # field and publish it as a stack channel so downstream passes see the
+    # updated terrain surface.  Rule-10 (no clip on world heights) is respected
+    # — raw subtraction only; delta values are naturally small (≤ 2 m per face).
+    if np.any(cliff_erosion_delta != 0.0):
+        stack = state.mask_stack
+        h_updated = np.asarray(stack.height, dtype=np.float64).copy()
+        h_updated += cliff_erosion_delta  # delta is negative (material removed)
+        stack.set("height", h_updated, "terrain_cliffs")
+        stack.set("cliff_erosion_delta", cliff_erosion_delta, "terrain_cliffs")
 
     return cliffs
 
@@ -1797,8 +1802,8 @@ def pass_emit_overhang_meshes(
     """Publish persisted cave/cliff mesh specs onto a mesh-layer cache."""
     t0 = time.perf_counter()
     stack = state.mask_stack
-    cliff_specs = list(stack.get("cliff_mesh_specs") or [])
-    cave_specs = list(stack.get("cave_mesh_specs") or [])
+    cliff_specs = list(stack.get("cliff_mesh_specs", default=None) or [])
+    cave_specs = list(stack.get("cave_mesh_specs", default=None) or [])
     all_specs = cliff_specs + cave_specs
     layer_token = f"overhang_mesh_layer:{state.tile_x}:{state.tile_y}:{len(all_specs)}"
 
@@ -2443,16 +2448,18 @@ def insert_hero_cliff_meshes(
                 mesh_name = f"HeroCliff_{cliff.cliff_id}"
                 bmesh_data = _bpy.data.meshes.new(mesh_name)
                 bm = _bmesh.new()
-                for vert_data in mesh_to_build["vertices"]:
-                    bm.verts.new(vert_data)
-                bm.verts.ensure_lookup_table()
-                for face_data in mesh_to_build.get("faces", []):
-                    try:
-                        bm.faces.new([bm.verts[vi] for vi in face_data])
-                    except (ValueError, IndexError):
-                        pass
-                bm.to_mesh(bmesh_data)
-                bm.free()
+                try:
+                    for vert_data in mesh_to_build["vertices"]:
+                        bm.verts.new(vert_data)
+                    bm.verts.ensure_lookup_table()
+                    for face_data in mesh_to_build.get("faces", []):
+                        try:
+                            bm.faces.new([bm.verts[vi] for vi in face_data])
+                        except (ValueError, IndexError):
+                            pass
+                    bm.to_mesh(bmesh_data)
+                finally:
+                    bm.free()
                 bmesh_data.update()
 
                 cliff_obj = _bpy.data.objects.new(mesh_name, bmesh_data)
@@ -2584,6 +2591,32 @@ def validate_cliff_readability(
 
 
 # ---------------------------------------------------------------------------
+# FIX-9-41: cliff undercut helper
+# ---------------------------------------------------------------------------
+
+
+def generate_cliff_undercut(
+    cliff_mask: np.ndarray,
+    h_arr: np.ndarray,
+    texel_size_m: float,
+) -> np.ndarray:
+    """Generate per-cell horizontal undercut offset for cliff overhangs.
+
+    Returns a float32 array where cells on the inward edge of the cliff mask
+    carry a positive offset (metres) indicating how far the overhang protrudes.
+    Cells away from the edge are zero.
+
+    FIX-9-41
+    """
+    offset = max(0.125, 0.5 * texel_size_m)
+    from scipy.ndimage import binary_erosion  # FIX-9-41
+
+    inner = binary_erosion(cliff_mask > 0)  # FIX-9-41
+    undercut_edge = (cliff_mask > 0) & ~inner  # FIX-9-41
+    return np.where(undercut_edge, offset, 0.0).astype(np.float32)  # FIX-9-41
+
+
+# ---------------------------------------------------------------------------
 # Pass wiring
 # ---------------------------------------------------------------------------
 
@@ -2597,7 +2630,7 @@ def pass_cliffs(
     Contract
     --------
     Consumes: slope, saliency_macro (optional), ridge (optional)
-    Produces: cliff_candidate, cliff_contour_spline
+    Produces: cliff_candidate, cliff_mesh_specs, cliff_mask, talus_mask, strata_mask
     Respects protected zones: yes (via hero_exclusion + candidate filter)
     Requires scene read: no
     """
@@ -2615,7 +2648,7 @@ def pass_cliffs(
         region,
     )
 
-    # 1. Build the candidate mask (also stores cliff_contour_spline on stack)
+    # 1. Build the candidate mask (FIX-13-6: spline computation removed)
     candidate = build_cliff_candidate_mask(stack)
 
     # Region scope: only cliffs whose centre lies inside ``region`` count
@@ -2704,6 +2737,12 @@ def pass_cliffs(
     stack.set("talus_mask", talus_arr, "cliff_pass")
     stack.set("strata_mask", strata_arr, "cliff_pass")
 
+    # 5d. FIX-9-41: compute per-cell horizontal undercut offset for cliff overhangs
+    _texel_size_m = float(getattr(state.intent, "texel_size_m", 1.0))
+    _h_arr = np.asarray(stack.height, dtype=np.float32)
+    cliff_undercut_offset = generate_cliff_undercut(cliff_mask_arr, _h_arr, _texel_size_m)  # FIX-9-41
+    stack.set("cliff_undercut_offset", cliff_undercut_offset, "terrain_cliffs")  # FIX-9-41
+
     # 6. Record intent for hero mesh insertion (no geometry yet)
     insert_hero_cliff_meshes(state, cliffs)
     cliff_mesh_specs = _build_cliff_overhang_mesh_specs(cliffs, stack)
@@ -2738,8 +2777,11 @@ def pass_cliffs(
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("slope", "saliency_macro"),
         produced_channels=(
-            "cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs",
+            # FIX-13-6: cliff_contour_spline removed — computation deleted, no consumer.
+            "cliff_candidate", "cliff_mesh_specs",
             "cliff_mask", "talus_mask", "strata_mask",
+            "cliff_erosion_delta", "height",
+            "cliff_undercut_offset",  # FIX-9-41
         ),
         metrics={
             "candidate_cells": int(candidate.sum()),
@@ -2803,11 +2845,13 @@ def register_bundle_b_passes() -> None:
             name="cliffs",
             func=pass_cliffs,
             requires_channels=("slope", "height"),
-            produces_channels=("cliff_candidate", "cliff_contour_spline", "cliff_mesh_specs", "talus_boulder_placements", "cliff_mask", "talus_mask", "strata_mask"),
+            # FIX-13-6: cliff_contour_spline removed from produces_channels — dead channel,
+            # no consumer ever implemented.
+            produces_channels=("cliff_candidate", "cliff_mesh_specs", "talus_boulder_placements", "cliff_mask", "talus_mask", "strata_mask"),
             seed_namespace="cliffs",
             requires_scene_read=False,
             may_modify_geometry=False,
-            description="Bundle B — cliff anatomy (lip + face + ledges + talus + strata + overhang + contour spline).",
+            description="Bundle B — cliff anatomy (lip + face + ledges + talus + strata + overhang).",
         )
     )
     TerrainPassController.register_pass(

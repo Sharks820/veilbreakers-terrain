@@ -598,7 +598,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
         )
 
         mean_w = float(w[cell_rs, cell_cs].mean())
-        mean_s = float(s[cell_rs, cell_cs].mean())
+        _ = float(s[cell_rs, cell_cs].mean())  # FIX-11-10: mean_s unused; classification uses mean_w/mean_rh
 
         # Classify by pH proxy
         near_open = bool(near_water[cell_rs, cell_cs].any())
@@ -608,13 +608,13 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
             mean_rh = 0.3  # assume acidic when no data
 
         if near_open and mean_w > 0.5:
-            wetland_type = "marsh"
+            _ = "marsh"  # FIX-11-10: wetland_type unused; not passed to Wetland(...)
             veg_density = min(1.0, mean_w + 0.25)
         elif mean_rh > 0.55:
-            wetland_type = "fen"
+            _ = "fen"  # FIX-11-10: wetland_type unused
             veg_density = min(1.0, mean_w + 0.15)
         else:
-            wetland_type = "bog"
+            _ = "bog"  # FIX-11-10: wetland_type unused
             veg_density = min(1.0, mean_w + 0.10)
 
         # Radius from bounding box diagonal / 2
@@ -636,6 +636,58 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
             )
         )
     return wetlands
+
+
+# ---------------------------------------------------------------------------
+# FIX-10-H4: dependent mask recompute stubs
+# ---------------------------------------------------------------------------
+
+
+def _compute_foam_mask(stack: TerrainMaskStack) -> np.ndarray:
+    """Recompute foam_mask from current water_surface + wetness state.
+
+    Foam is strongest where water_surface is high AND wetness is high (turbulent
+    shallow water). Returns a float32 array in [0, 1].
+    """  # FIX-10-H4
+    shape = stack.height.shape
+    ws = stack.get("water_surface")
+    wet = stack.get("wetness")
+    ws_arr = np.asarray(ws, dtype=np.float32) if ws is not None else np.zeros(shape, dtype=np.float32)
+    wet_arr = np.asarray(wet, dtype=np.float32) if wet is not None else np.zeros(shape, dtype=np.float32)
+    foam = np.clip(ws_arr * 0.6 + wet_arr * 0.4, 0.0, 1.0)
+    return foam.astype(np.float32)
+
+
+def _compute_wet_rock_mask(stack: TerrainMaskStack) -> np.ndarray:
+    """Recompute wet_rock_mask from current wetness state.
+
+    Wet rock appears where wetness is moderate-to-high but water_surface is low
+    (rock faces that are damp but not submerged). Returns float32 in [0, 1].
+    """  # FIX-10-H4
+    shape = stack.height.shape
+    wet = stack.get("wetness")
+    ws = stack.get("water_surface")
+    wet_arr = np.asarray(wet, dtype=np.float32) if wet is not None else np.zeros(shape, dtype=np.float32)
+    ws_arr = np.asarray(ws, dtype=np.float32) if ws is not None else np.zeros(shape, dtype=np.float32)
+    # Rock is wet where wetness is present but not fully submerged
+    not_submerged = np.clip(1.0 - ws_arr * 2.0, 0.0, 1.0)
+    wet_rock = np.clip(wet_arr * not_submerged, 0.0, 1.0)
+    return wet_rock.astype(np.float32)
+
+
+def _compute_mist_mask(stack: TerrainMaskStack) -> np.ndarray:
+    """Recompute mist_mask from current water_surface + tidal state.
+
+    Mist concentrates near water surfaces — highest at open water cells and
+    tidal zones. Returns float32 in [0, 1].
+    """  # FIX-10-H4
+    shape = stack.height.shape
+    ws = stack.get("water_surface")
+    tidal = stack.get("tidal")
+    ws_arr = np.asarray(ws, dtype=np.float32) if ws is not None else np.zeros(shape, dtype=np.float32)
+    tidal_arr = np.asarray(tidal, dtype=np.float32) if tidal is not None else np.zeros(shape, dtype=np.float32)
+    mist = np.clip(ws_arr * 0.7 + tidal_arr * 0.3, 0.0, 1.0)
+    return mist.astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +744,14 @@ def apply_seasonal_water_state(
               "water_variants_seasonal")
     stack.set("tidal", tidal, "water_variants_seasonal")
 
+    # FIX-10-H4: recompute dependent masks after seasonal state change
+    if stack.get("foam_mask", default=None) is not None:  # FIX-10-H14
+        stack.set("foam_mask", _compute_foam_mask(stack), "apply_seasonal_water_state")
+    if stack.get("wet_rock_mask", default=None) is not None:  # FIX-10-H14
+        stack.set("wet_rock_mask", _compute_wet_rock_mask(stack), "apply_seasonal_water_state")
+    if stack.get("mist_mask", default=None) is not None:  # FIX-10-H14
+        stack.set("mist_mask", _compute_mist_mask(stack), "apply_seasonal_water_state")
+
 
 # ---------------------------------------------------------------------------
 # Pass entry point
@@ -729,13 +789,13 @@ def pass_water_variants(
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
 
-    existing_ws = stack.get("water_surface")
+    existing_ws = stack.get("water_surface", default=None)
     water_surface = (
         np.asarray(existing_ws, dtype=np.float32).copy()
         if existing_ws is not None
         else np.zeros(h.shape, dtype=np.float32)
     )
-    existing_wet = stack.get("wetness")
+    existing_wet = stack.get("wetness", default=None)
     wetness = (
         np.asarray(existing_wet, dtype=np.float32).copy()
         if existing_wet is not None
@@ -1414,7 +1474,7 @@ def pass_bathymetry(
             # Label connected components (4-connectivity for speed)
             # We implement a simple two-pass union-find flood fill without scipy
             label_grid = np.full(h.shape, -1, dtype=np.int32)
-            next_label = 0
+            _ = 0  # FIX-11-10: next_label unused; union-find uses parent list
 
             # First pass: row-major assignment with left/up neighbour merging
             parent = list(range(rows * cols))
@@ -1467,7 +1527,7 @@ def pass_bathymetry(
                         rim_values.append(float(h[nr, nc]))
 
             body_surface: dict = {
-                root: float(max(body_rims.get(root) or heights))
+                root: float(min(body_rims.get(root) or heights))
                 for root, heights in body_heights.items()
             }
 

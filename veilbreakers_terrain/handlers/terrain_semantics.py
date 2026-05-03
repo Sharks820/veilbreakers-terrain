@@ -279,6 +279,7 @@ class TerrainMaskStack:
     cave_underground_depth: Optional[np.ndarray] = None
     cave_chambers: Optional[np.ndarray] = None
     cave_nav_issues_count: Optional[np.ndarray] = None
+    cave_entrance_mask: Optional[np.ndarray] = None
     waterfall_lip_candidate: Optional[np.ndarray] = None
     waterfall_pool_delta: Optional[np.ndarray] = None
     hero_exclusion: Optional[np.ndarray] = None
@@ -289,6 +290,7 @@ class TerrainMaskStack:
     wetness: Optional[np.ndarray] = None
     ice_factor: Optional[np.ndarray] = None
     talus: Optional[np.ndarray] = None
+    talus_displaced: Optional[np.ndarray] = None
     drainage: Optional[np.ndarray] = None
     bank_instability: Optional[np.ndarray] = None
     # Ridge refined by ``pass_erosion`` (analytical ridge field after gully
@@ -311,10 +313,12 @@ class TerrainMaskStack:
     water_depth_m: Optional[np.ndarray] = None
     shoreline_blend: Optional[np.ndarray] = None
     foam: Optional[np.ndarray] = None
+    foam_density: Optional[np.ndarray] = None
     mist: Optional[np.ndarray] = None
     wet_rock: Optional[np.ndarray] = None
     riverbed_caustics: Optional[np.ndarray] = None
     tidal: Optional[np.ndarray] = None
+    tidal_flat: Optional[np.ndarray] = None
     # uint8 (H, W): 5-zone tidal classification (subtidal=0, intertidal=1, splash=2, spray=3, supralittoral=4)
     tidal_zone_label: Optional[np.ndarray] = None
     # float32 (H, W): per-cell JONSWAP wave energy in J/m², used by splatmap foam/wet_rock rules
@@ -367,7 +371,10 @@ class TerrainMaskStack:
     wildlife_affinity: Optional[Dict[str, np.ndarray]] = None
     gameplay_zone: Optional[np.ndarray] = None
     wind_field: Optional[np.ndarray] = None
+    dune_deposition: Optional[np.ndarray] = None
+    wind_field_3d: Optional[np.ndarray] = None
     cloud_shadow: Optional[np.ndarray] = None
+    god_ray_hints: Optional[np.ndarray] = None
     # Dual-producer channel rename (2026-04-23 wiring audit). The two
     # procedural/baked cloud-shadow paths now write disjoint channels so the
     # DAG can reason about them independently. The legacy ``cloud_shadow``
@@ -381,6 +388,8 @@ class TerrainMaskStack:
     strata_orientation: Optional[np.ndarray] = None
     rock_hardness: Optional[np.ndarray] = None
     snow_line_factor: Optional[np.ndarray] = None
+    snow_depth_m: Optional[np.ndarray] = None
+    snow_accumulation: Optional[np.ndarray] = None
 
     # Bundle A supplements (Addendum 1.B.1 erosion mask preservation)
     sediment_accumulation_at_base: Optional[np.ndarray] = None
@@ -460,6 +469,8 @@ class TerrainMaskStack:
     mist_zone_mask: Optional[np.ndarray] = None
     # Shader-facing wet-surface decal descriptors emitted by waterfall_mist.
     wet_surface_decal: Optional[List[Dict[str, Any]]] = None
+    player_paths: Optional[np.ndarray] = None
+    accessibility: Optional[np.ndarray] = None
     # Geometry-side mesh specs for negative-space features the heightfield
     # cannot represent directly (overhangs, cave mouth rings, cliff lips).
     cliff_mesh_specs: Optional[List[Dict[str, Any]]] = None
@@ -469,6 +480,16 @@ class TerrainMaskStack:
     # world position, power-law-sampled radius). Published by
     # ``terrain_cliffs.pass_cliffs`` and consumed by the scatter system.
     talus_boulder_placements: Optional[List[Dict[str, Any]]] = None
+    cliff_erosion_delta: Optional[np.ndarray] = None
+    cliff_undercut_offset: Optional[np.ndarray] = None
+    canopy_species_radius_m: Optional[np.ndarray] = None
+    hardness: Optional[np.ndarray] = None
+    geology: Optional[np.ndarray] = None
+    height_delta: Optional[np.ndarray] = None
+    vegetation_index: Optional[np.ndarray] = None
+    ndvi: Optional[np.ndarray] = None
+    forest_mask: Optional[np.ndarray] = None
+    species_density: Optional[np.ndarray] = None
     # Particle emitter specs emitted by the waterfall chain (lip/impact/mist
     # zones) and consumed by ``pass_emit_particle_systems`` to publish
     # ``state.particle_layer_specs`` for the Unity VFX Graph / Unreal Niagara
@@ -582,6 +603,7 @@ class TerrainMaskStack:
             "wetness",
             "ice_factor",
             "talus",
+            "talus_displaced",
             "drainage",
             "bank_instability",
             "flow_direction",
@@ -592,9 +614,11 @@ class TerrainMaskStack:
             "water_depth_m",
             "shoreline_blend",
             "foam",
+            "foam_density",
             "mist",
             "wet_rock",
             "tidal",
+            "tidal_flat",
             "waterfall_velocity",
             "flow_speed",
             "biome_id",
@@ -607,13 +631,18 @@ class TerrainMaskStack:
             "audio_reverb_class",
             "gameplay_zone",
             "wind_field",
+            "dune_deposition",
+            "wind_field_3d",
             "cloud_shadow",
+            "god_ray_hints",
             "sun_cloud_shadow",
             "baked_cloud_shadow",
             "traversability",
             "strata_orientation",
             "rock_hardness",
             "snow_line_factor",
+            "snow_depth_m",
+            "snow_accumulation",
             # Bundle A supplements (Addendum 1.B.1)
             "sediment_accumulation_at_base",
             "pool_deepening_delta",
@@ -648,6 +677,8 @@ class TerrainMaskStack:
             # POI proximity + waterfall mist zone (Phase 14)
             "poi_mask",
             "mist_zone_mask",
+            "player_paths",
+            "accessibility",
             # River-to-lake/ocean convergence channels (pass_river_convergence)
             "river_mouth_mask",
             "confluence_foam",
@@ -677,6 +708,7 @@ class TerrainMaskStack:
             "cave_underground_depth",
             "cave_chambers",
             "cave_nav_issues_count",
+            "cave_entrance_mask",
             # Neighbor seam boundary conditions (chunked generation)
             "north_edge",
             "south_edge",
@@ -693,6 +725,16 @@ class TerrainMaskStack:
             "terrain_ao",
             "terrain_displacement",
             "ridge_eroded",
+            "cliff_erosion_delta",
+            "cliff_undercut_offset",
+            "canopy_species_radius_m",
+            "hardness",
+            "geology",
+            "height_delta",
+            "vegetation_index",
+            "ndvi",
+            "forest_mask",
+            "species_density",
             # Bundle I coastline channels (FIX-14-2, FIX-14-3)
             "tidal_zone_label",
             "wave_energy",
@@ -772,21 +814,49 @@ class TerrainMaskStack:
 
     # -- core accessors -----------------------------------------------------
 
-    def get(self, channel: str) -> Any:
-        """Return the named channel, or None if not yet populated.
+    # FIX-10-H14: sentinel object — distinct from None so callers can
+    # distinguish "channel not written" from "channel written as None".
+    _MISSING: Any = object()
+
+    def get(self, channel: str, default: Any = _MISSING) -> Any:
+        """Return the named channel.
+
+        Declared channels that have not been written return ``None`` by default.
+        Unknown channels still raise ``ChannelNotWrittenError`` unless an
+        explicit default is supplied. This keeps optional producer/consumer
+        probes cheap while still catching misspelled or undeclared channels.
 
         Supports scalar ndarray channels plus dict-valued channels
         (``wildlife_affinity``, ``decal_density``) via explicit key suffix
         ``channel[key]`` and opaque JSON-compatible channels such as
         ``wet_surface_decal``.
-        """
+        """  # FIX-10-H14
         if "[" in channel and channel.endswith("]"):
             base, key = channel[:-1].split("[", 1)
             container = getattr(self, base, None)
             if isinstance(container, dict):
                 return container.get(key)
-            return None
-        return getattr(self, channel, None)
+            if default is TerrainMaskStack._MISSING:
+                raise ChannelNotWrittenError(
+                    f"Channel '{base}[{key}]' has no registered writer. "
+                    f"Written: {sorted(self.populated_by_pass)}"
+                )
+            return default
+        value = getattr(self, channel, TerrainMaskStack._MISSING)
+        if value is TerrainMaskStack._MISSING:
+            # Field doesn't exist on the dataclass at all
+            if default is not TerrainMaskStack._MISSING:
+                return default
+            raise ChannelNotWrittenError(
+                f"Channel '{channel}' has no registered writer. "
+                f"Written: {sorted(self.populated_by_pass)}"
+            )
+        if channel not in self.populated_by_pass:
+            # Field exists (dataclass default) but never written by a pass.
+            if value is not None:
+                return value
+            return default if default is not TerrainMaskStack._MISSING else None
+        return value
 
     def import_neighbor_edge(self, neighbor: "TerrainMaskStack", direction: str) -> None:
         """Copy the touching border of *neighbor* into this tile's seam field.
@@ -1060,14 +1130,21 @@ class TerrainMaskStack:
 
         for dict_field in ("wildlife_affinity", "decal_density", "detail_density"):
             container = getattr(self, dict_field, None)
-            if not container or not isinstance(container, dict):
+            if container is None:
                 continue
-            for k in sorted(container.keys()):
-                arr = np.ascontiguousarray(container[k])
-                hasher.update(f"{dict_field}[{k}]".encode("utf-8"))
-                hasher.update(str(arr.dtype).encode("utf-8"))
-                hasher.update(repr(arr.shape).encode("utf-8"))
-                hasher.update(arr.tobytes())
+            if isinstance(container, dict):
+                for k in sorted(container.keys()):
+                    arr = np.ascontiguousarray(container[k])
+                    hasher.update(f"{dict_field}[{k}]".encode("utf-8"))
+                    hasher.update(str(arr.dtype).encode("utf-8"))
+                    hasher.update(repr(arr.shape).encode("utf-8"))
+                    hasher.update(arr.tobytes())
+                continue
+            arr = np.ascontiguousarray(container)
+            hasher.update(dict_field.encode("utf-8"))
+            hasher.update(str(arr.dtype).encode("utf-8"))
+            hasher.update(repr(arr.shape).encode("utf-8"))
+            hasher.update(arr.tobytes())
 
         for name in self._OPAQUE_CHANNELS:
             val = getattr(self, name, None)
@@ -1102,11 +1179,15 @@ class TerrainMaskStack:
         dict_channels_meta: Dict[str, list] = {}
         for dict_field in self._DICT_CHANNELS:
             container = getattr(self, dict_field, None)
-            if container:
+            if container is None:
+                continue
+            if isinstance(container, dict):
                 keys = list(container.keys())
                 dict_channels_meta[dict_field] = keys
                 for i, k in enumerate(keys):
                     arrays[f"__dict_{dict_field}_{i}"] = np.ascontiguousarray(container[k])
+            else:
+                arrays[dict_field] = np.ascontiguousarray(container)
         meta = {
             "schema_version": self.schema_version,
             "tile_size": self.tile_size,
@@ -1190,6 +1271,9 @@ class TerrainMaskStack:
                         container[k] = np.array(data[arr_name])
                 if container:
                     stack.set(dict_field, container, "__npz__")
+            for dict_field in cls._DICT_CHANNELS:
+                if dict_field not in dict_channels and dict_field in data.files:
+                    stack.set(dict_field, np.array(data[dict_field]), "__npz__")
             for name, value in meta.get("opaque_channels", {}).items():
                 if name in cls._OPAQUE_CHANNELS:
                     stack.set(name, value, "__npz__")
@@ -1663,6 +1747,16 @@ class TerrainPipelineState:
     @property
     def tile_y(self) -> int:
         return self.mask_stack.tile_y
+
+    @property
+    def tile_id(self) -> str:
+        """Stable string identifier for this tile, suitable for seeding tile_rng.
+
+        Format: ``"{tile_x}_{tile_y}"`` — matches the convention used by
+        terrain_rng.tile_rng() and the scatter / erosion pass determinism
+        contract (FIX-10-18).
+        """
+        return f"{self.mask_stack.tile_x}_{self.mask_stack.tile_y}"
 
     def record_pass(self, result: PassResult) -> None:
         self.pass_history.append(result)

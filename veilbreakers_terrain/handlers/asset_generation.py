@@ -33,9 +33,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import random
+import secrets
 import shutil
-import string
 import tempfile
 import time
 import warnings
@@ -285,7 +284,7 @@ def _atomic_copy(src: Path, dst: Path) -> Path:
     """Copy ``src`` to ``dst`` atomically (write tmp + rename)."""
     dst = Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
+    suffix = secrets.token_hex(4)
     tmp = dst.with_name(f".{dst.name}.{suffix}.tmp")
     shutil.copyfile(src, tmp)
     os.replace(tmp, dst)
@@ -538,19 +537,24 @@ class RodinBackend(_BackendBase):
                 data["seed"] = str(request.seed)
             if request.target_poly_count:
                 data["poly_count"] = str(request.target_poly_count)
-            if request.reference_image_path is not None:
-                files["images"] = open(request.reference_image_path, "rb")
-            try:
+            if request.reference_image_path is not None:  # FIX-11-7
+                with open(request.reference_image_path, "rb") as img_f:  # FIX-11-7
+                    files["images"] = img_f  # FIX-11-7
+                    resp = requests.post(  # FIX-11-7
+                        f"{self.base_url}/rodin",
+                        headers=self._headers(),
+                        data=data,
+                        files=files,
+                        timeout=60,
+                    )  # FIX-11-7
+            else:
                 resp = requests.post(
                     f"{self.base_url}/rodin",
                     headers=self._headers(),
                     data=data,
-                    files=files or None,
+                    files=None,
                     timeout=60,
                 )
-            finally:
-                for fh in files.values():
-                    fh.close()
             resp.raise_for_status()
             body = resp.json()
             # API returns subscription_key, not a job UUID
@@ -779,7 +783,7 @@ class AssetGenerationPipeline:
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
+    suffix = secrets.token_hex(4)
     tmp = path.with_name(f".{path.name}.{suffix}.tmp")
     with tmp.open("w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, sort_keys=True)

@@ -225,6 +225,7 @@ def apply_hydraulic_erosion_masks(
     deposition_mask: Optional[np.ndarray] = None,
     erosion_mask_threshold: float = 0.5,
     deposition_mask_threshold: float = 0.5,
+    cell_size_m: float = 1.0,
 ) -> ErosionMasks:
     """Apply droplet-based hydraulic erosion with per-channel spatial masks.
 
@@ -403,7 +404,12 @@ def apply_hydraulic_erosion_masks(
             )
             h_diff = new_h - old_h
 
-            c = max(-h_diff, effective_min_slope) * speed * water * capacity
+            # Divide h_diff by cell_size_m to convert height delta to a
+            # dimensionless slope (rise / run).  Without this division the
+            # capacity term is in raw heightmap units rather than metres/metre,
+            # making it 1000× too large when cell_size_m ≈ 1 m (FIX-12-3).
+            _inv_cell = 1.0 / max(cell_size_m, 1e-6)
+            c = max(-h_diff * _inv_cell, effective_min_slope) * speed * water * capacity
 
             # Record wetness and drainage at current cell
             wetness[iy, ix] += water
@@ -448,6 +454,12 @@ def apply_hydraulic_erosion_masks(
                 if _erod_scale is not None:
                     erode_amount *= float(_erod_scale[iy, ix])
                 if not can_erode:
+                    erode_amount = 0.0
+                # FIX-12-4: never erode submerged cells (height <= 0).
+                # Submerged terrain sits below sea/water level and hydraulic
+                # erosion physics don't apply; gating prevents unphysical
+                # channel carving beneath the water table.
+                if old_h <= 0.0:
                     erode_amount = 0.0
                 sediment += erode_amount
                 if erode_amount != 0.0:

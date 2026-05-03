@@ -59,6 +59,7 @@ from .terrain_semantics import (  # noqa: E402
 _G: float = 9.81          # m/s² gravitational acceleration
 _MANNING_N: float = 0.04  # Manning's roughness for natural rock channel
 _MIN_WATER_ELEVATION_M: float = 0.04  # minimum water surface offset above terrain to prevent Z-fighting
+MIN_WATERFALL_DROP_M: float = 2.0  # FIX-11-11: minimum elevation drop (m) for a valid waterfall placement
 # Manning's equation: V = (1/n) * R^(2/3) * S^(1/2)
 # For waterfall lip, R ≈ hydraulic radius; we approximate R from drainage area.
 
@@ -421,8 +422,9 @@ def _mason_1985_pool(h_drop: float, discharge_m3s: float) -> Tuple[float, float]
 def _estimate_discharge(drainage_cells: float, cell_size_m: float) -> float:
     """Estimate discharge Q (m³/s) from flow accumulation.
 
-    Uses a simplified rational method approximation:
-        Q ≈ 0.001 * A^0.7  where A = drainage area in km²
+    Uses Mason (1985) discharge approximation:
+        Q ≈ mason_coefficient * A_km² ^ mason_exponent
+    where A_km² is the catchment area in km² (NOT m²).
 
     Args:
         drainage_cells: Number of upstream contributing cells (dimensionless).
@@ -431,8 +433,11 @@ def _estimate_discharge(drainage_cells: float, cell_size_m: float) -> float:
     Returns:
         Discharge Q in m³/s, clamped to [0.01, 5000].
     """
-    area_km2 = (drainage_cells * cell_size_m * cell_size_m) / 1_000_000.0
-    Q = 0.001 * (max(area_km2, 1e-6) ** 0.7)
+    # FIX-12-12: explicit Mason (1985) coefficient/exponent names; area in km²
+    mason_coefficient = 0.001  # empirical runoff constant (Mason 1985)
+    mason_exponent = 0.7       # area scaling exponent (Mason 1985)
+    area_km2 = (drainage_cells * cell_size_m * cell_size_m) / 1_000_000.0  # m² → km²
+    Q = mason_coefficient * (max(area_km2, 1e-6) ** mason_exponent)  # FIX-12-12
     return float(np.clip(Q, 0.01, 5000.0))
 
 
@@ -628,7 +633,7 @@ def _detect_cascade_chain(
                     visited.add((tr, tc))
                     found_tier = True
                     break
-            if found_tier:
+            if found_tier and drop_here >= MIN_WATERFALL_DROP_M:  # FIX-11-11
                 break
 
         cur_r, cur_c = nr, nc
@@ -976,7 +981,7 @@ def solve_waterfall_from_river(
             Q_here = _estimate_discharge(drain_here, cs)
             r_hyd = max(0.1, Q_here ** 0.4)
             v_h = _manning_velocity(slope_here, r_hyd)
-            Q = Q_here
+            _ = Q_here  # FIX-11-10: Q unused after update; pool uses Q_pool from drainage
 
         cur_r, cur_c = nr, nc
         plunge_path.append(_grid_to_world(stack, cur_r, cur_c))
@@ -1012,8 +1017,11 @@ def solve_waterfall_from_river(
     lip_x, lip_y, lip_z = lip.world_position
     az = lip.flow_direction_rad
     # Horizontal offset = V_h * t_impact
-    dx_impact = v_h * t_impact * math.sin(az)   # east component
-    dy_impact = v_h * t_impact * math.cos(az)   # north component
+    dx_impact = v_h * t_impact * math.sin(az)    # east component
+    # FIX-12-11: cos(az) gives north in geographic convention, but NumPy array
+    # row index increases southward (+Y is south).  Negate so the Y offset
+    # moves in the correct grid direction when az points north (az=0).
+    dy_impact = -v_h * t_impact * math.cos(az)  # north component (negated for NumPy +Y=south)
     # Pool position: blend between parabola endpoint and DEM path endpoint
     # weight 0.6 toward DEM path (actual terrain governs), 0.4 toward physics parabola
     path_pool_wx, path_pool_wy, path_pool_wz = _grid_to_world(stack, pool_r, pool_c)
@@ -1797,7 +1805,7 @@ def compute_physical_foam_composite(
             shore_seed = binary_dilation(edge, iterations=3).astype(np.float32)
         else:
             # Manual 3-cell dilation via 7×7 window
-            from numpy.lib.stride_tricks import sliding_window_view  # noqa
+            pass  # FIX-11-9: removed unused 'from numpy.lib.stride_tricks import sliding_window_view'  # noqa
             pad = 3
             padded = np.pad(wet.astype(np.uint8), pad, mode="constant", constant_values=0)
             any_dry_neighbour = np.zeros((rows, cols), dtype=bool)
@@ -2214,16 +2222,16 @@ def rasterize_channel_to_atlas(
                 img = _PILImage.fromarray(quantized.astype(np.int32), mode="I")
             img.save(str(target))
             return True
-        except Exception:
-            pass
+        except Exception as e:  # FIX-11-5
+            logger.debug("PIL atlas save failed, trying imageio: %s", e)  # FIX-11-5
 
         # Try imageio
         try:
             import imageio  # type: ignore[import]
             imageio.imwrite(str(target), quantized)
             return True
-        except Exception:
-            pass
+        except Exception as e:  # FIX-11-5
+            logger.debug("imageio atlas save failed, using npy fallback: %s", e)  # FIX-11-5
 
         # Fallback: raw numpy + sidecar JSON
         npy_path = target.with_suffix(".npy")
@@ -2338,7 +2346,7 @@ def pass_waterfalls(
         _cell_size=float(stack.cell_size),
         _world_origin_x=float(stack.world_origin_x),
         _world_origin_y=float(stack.world_origin_y),
-        water_surface=stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface"),
+        water_surface=stack.get("water_surface_mask", default=None) if stack.get("water_surface_mask", default=None) is not None else stack.get("water_surface", default=None),  # FIX-10-H14
     )
     for chain in chains:
         try:
@@ -2374,6 +2382,14 @@ def pass_waterfalls(
     # 4b. Upgrade foam to physically correct 5-source composite:
     #     rapids, flow-bend, waterfall-base dilation, shoreline, waterfall-chain.
     foam = compute_physical_foam_composite(stack, wf_chain_foam, lip_mask)
+    # FIX-13-7: blend confluence_foam (river convergence turbulence) into the
+    # composite additively so river-mouth zones get full foam coverage even
+    # when the waterfall chains do not reach the coast.
+    _cf = stack.get("confluence_foam", default=None)
+    if _cf is not None:
+        _cf_arr = np.asarray(_cf, dtype=np.float32)
+        if _cf_arr.shape == foam.shape:
+            foam = np.clip(foam + _cf_arr, 0.0, 1.0).astype(np.float32)
 
     # 5. Velocity field (AAA req #6 — float2 channel for Unity water shader)
     vel_field = np.zeros((*h_shape, 2), dtype=np.float32)
@@ -2397,17 +2413,17 @@ def pass_waterfalls(
     # then returns to normal (God of War / real canyon hydrology reference).
     # Formula (AAA spec): speed_boost = 1.0 + 0.5 * exp(-cell_dist / 5.0)
     # Applied to flow_speed channel over 10-cell downstream buffer per chain.
-    _flow_speed_raw = stack.get("flow_speed") if hasattr(stack, "get") else None
+    _flow_speed_raw = stack.get("flow_speed", default=None) if hasattr(stack, "get") else None
     if _flow_speed_raw is None:
         flow_speed = np.zeros(stack.height.shape, dtype=np.float32)
     else:
         flow_speed = np.asarray(_flow_speed_raw, dtype=np.float32).copy()
-    cs_m = float(stack.cell_size)
+    _ = float(stack.cell_size)  # FIX-11-10: cs_m unused; boost uses step_i directly
     for chain in chains:
         # Walk the outflow path and apply boost per cell
         outflow_pts = list(chain.outflow)
         n_boost_cells = min(10, len(outflow_pts))
-        pool_gx = _world_to_grid(
+        _ = _world_to_grid(  # FIX-11-10: pool_gx unused; outflow_pts walked directly
             stack,
             chain.pool.world_position[0],
             chain.pool.world_position[1],
@@ -2473,8 +2489,8 @@ def pass_waterfalls(
         from ._water_network_ext import compute_riverbed_caustics as _caustics
         caustic_map = _caustics(stack, seed=derived_seed)
         stack.set("riverbed_caustics", caustic_map, "waterfalls")
-    except Exception:
-        pass  # caustics are an enhancement; never block the pass
+    except Exception as e:  # FIX-11-5
+        logger.debug("riverbed caustics skipped (enhancement only): %s", e)  # FIX-11-5
 
     # 7d. Rasterize water atlas channels to PNG files for Unity material binding.
     # Atlas paths stored on stack so terrain_unity_export can bind shader props.
@@ -2485,9 +2501,9 @@ def pass_waterfalls(
         rasterize_channel_to_atlas(caustic_map, f"{_atlas_base}/water_caustics.png", bit_depth=8)
         stack.set("caustic_atlas_path", f"{_atlas_base}/water_caustics.png", "waterfalls")
     # Depth atlas: normalize bathymetry channel if present (16-bit for precision)
-    _depth_arr = stack.get("bathymetry") if hasattr(stack, "get") else None
+    _depth_arr = stack.get("bathymetry", default=None) if hasattr(stack, "get") else None
     if _depth_arr is None:
-        _depth_arr = stack.get("water_depth") if hasattr(stack, "get") else None
+        _depth_arr = stack.get("water_depth", default=None) if hasattr(stack, "get") else None
     if _depth_arr is not None:
         _d = np.asarray(_depth_arr, dtype=np.float32)
         _d_max = float(_d.max()) or 1.0
@@ -2727,7 +2743,7 @@ def pass_emit_particle_systems(
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
-    raw = list(stack.get("particle_emitter_specs") or [])
+    raw = list(stack.get("particle_emitter_specs", default=None) or [])
 
     layer_specs: List[dict] = []
     for spec in raw:

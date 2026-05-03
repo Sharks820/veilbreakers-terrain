@@ -76,7 +76,7 @@ import math
 import random
 import threading
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass  # FIX-11-9: removed unused 'field'
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 

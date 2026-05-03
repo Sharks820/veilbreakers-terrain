@@ -5,6 +5,9 @@ on:
     branches: ["main", "master"]
   workflow_dispatch: {}
 
+permissions: # FIX-11-8
+  contents: read
+
 jobs:
   visual-testing-readiness:
     runs-on: ubuntu-latest

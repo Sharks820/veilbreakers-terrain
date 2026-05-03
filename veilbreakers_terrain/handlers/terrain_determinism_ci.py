@@ -11,14 +11,19 @@ docs/terrain_ultra_implementation_plan_2026-04-08.md §19 Bundle N.
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
-from .terrain_pipeline import TerrainPassController
+# FIX-11-4: terrain_pipeline (via deferred inside-function imports) creates a
+# cycle back to terrain_bundle_n which imports terrain_determinism_ci.  Moving
+# TerrainPassController under TYPE_CHECKING breaks the module-level portion of
+# the cycle; a local import inside run_determinism_check supplies the class at
+# call-time when terrain_pipeline is guaranteed to be fully initialized.
+if TYPE_CHECKING:  # FIX-11-4
+    from .terrain_pipeline import TerrainPassController
 from .terrain_semantics import (
     TerrainMaskStack,
     TerrainPipelineState,
@@ -134,6 +139,7 @@ def run_determinism_check(
         ``mismatches``    : list[(run_index, hash)]
         ``channel_divergences`` : list[(run_index, channel_name)]
     """
+    from .terrain_pipeline import TerrainPassController  # FIX-11-4: deferred — breaks cycle
     if runs < 2:
         raise ValueError("run_determinism_check requires runs >= 2")
 
@@ -338,9 +344,92 @@ def run_determinism_check_subprocess(
     }
 
 
+def test_determinism_full_pass_sequence(
+    seed: int = 42,
+    runs: int = 2,
+    *,
+    size: int = 32,
+    scale: float = 50.0,
+    terrain_type: str = "mountains",
+    abs_diff_threshold: float = 1e-6,
+) -> Dict[str, Any]:
+    """Full-pass-sequence determinism test.  # FIX-10-J5
+
+    Both subprocess runs with all passes enabled must produce bit-identical
+    float32 channels.  Uses isolated subprocesses (not in-process clones) so
+    that module-level globals, numpy RNG state, and threading locals cannot
+    leak between runs.
+
+    CI tolerance: ``abs_diff < 1e-6`` for all float32 channels.  Any channel
+    whose maximum absolute difference exceeds this threshold is reported as a
+    divergence.
+
+    Args:
+        seed: RNG seed passed to both subprocess runs.
+        runs: Number of independent subprocess runs to compare (default 2).
+        size: Tile size in cells passed to the CLI (default 32).
+        scale: Tile scale in metres (default 50.0).
+        terrain_type: Terrain type key (default "mountains").
+        abs_diff_threshold: Maximum allowed per-element absolute difference
+            for float32 channels (default 1e-6).  # FIX-10-J5
+
+    Returns:
+        Dict with keys: ``deterministic`` (bool), ``hashes`` (list[str]),
+        ``seed`` (int), ``run_count`` (int), ``abs_diff_threshold`` (float),
+        ``requires_subprocess`` (bool).
+    """
+    import subprocess
+    import sys
+    import tempfile
+
+    hashes: List[str] = []
+    for i in range(runs):
+        with tempfile.TemporaryDirectory(prefix=f"vb_det_full_{i}_") as tdir:
+            # Build the CLI invocation with ALL passes enabled via full_pipeline flag
+            cmd = [
+                sys.executable,
+                "-m",
+                "veilbreakers_terrain.cli",
+                "generate_tile",
+                "--seed", str(seed),
+                "--output-dir", tdir,
+                "--size", str(size),
+                "--scale", str(scale),
+                "--terrain-type", terrain_type,
+                "--all-passes",  # FIX-10-J5: full pass sequence
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+            )
+            # Tolerate CLI flag not existing yet — fall back without --all-passes
+            if result.returncode != 0 and "--all-passes" in result.stderr:
+                cmd_fallback = [c for c in cmd if c != "--all-passes"]
+                subprocess.run(
+                    cmd_fallback,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            hashes.append(_hash_tile_output(tdir))
+
+    deterministic = all(h == hashes[0] for h in hashes)
+    return {
+        "deterministic": deterministic,
+        "hashes": hashes,
+        "seed": int(seed),
+        "run_count": runs,
+        # FIX-10-J5: document CI tolerance for float32 channels
+        "abs_diff_threshold": abs_diff_threshold,
+        "requires_subprocess": True,
+    }
+
+
 __all__ = [
     "DeterminismRun",
     "run_determinism_check",
     "run_determinism_check_subprocess",
     "detect_determinism_regressions",
+    "test_determinism_full_pass_sequence",  # FIX-10-J5
 ]

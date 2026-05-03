@@ -229,6 +229,11 @@ def compute_height_blended_weights(
     # Local 0..1 normalization for the gamma curve only — does NOT mutate
     # or clamp the underlying world heights.
     h01 = (heights - h_min) / span  # bounded in [0,1] by construction
+    # FIX-12-30: apply perceptual (sRGB) gamma correction to the normalized
+    # height before using it as the blend lerp weight. Linear world-space
+    # heights produce too-abrupt transitions at the dark end and too-gradual
+    # ones at the bright end; the 1/2.2 curve matches human height perception.
+    h01 = np.power(np.clip(h01, 0.0, 1.0), 1.0 / 2.2)
 
     out = np.zeros_like(base, dtype=np.float32)
     for idx, g in enumerate(channel_gammas):

@@ -167,13 +167,21 @@ def apply_wind_erosion(
     dy = math.sin(prevailing_dir_rad)
 
     # --- Saltation: asymmetric upwind/downwind shift ---
-    # Hop length = 2 cell sizes (typical saltation trajectory)
-    hop = 2.0
+    # FIX-4-7: physics-based saltation hop length
+    # Bagnold (1941): hop_length ∝ wind_speed² / (g * particle_diameter)
+    # intensity maps linearly to wind speed: 0→2 m/s, 1→10 m/s (typical aeolian range)
+    wind_speed = 2.0 + intensity * 8.0  # m/s
+    particle_diameter_m = 0.0002  # 0.2mm sand grain
+    g = 9.81
+    hop = max(0.5, min(20.0, wind_speed ** 2 / (g * particle_diameter_m) * 0.01))  # scaled
     up = _shift_fractional_with_edge_repeat(h, row_shift=-dy * hop, col_shift=-dx * hop)
     down = _shift_fractional_with_edge_repeat(h, row_shift=dy * hop, col_shift=dx * hop)
 
     # Wind-direction slope (positive = windward face)
-    gy, gx = np.gradient(h)
+    # FIX-10-1: pass cell spacing so gradient is in m/m (dimensionless slope),
+    # not Δh/pixel — Bagnold transport needs physical slope units.
+    _cell_m = float(stack.cell_size) if stack.cell_size else 1.0
+    gy, gx = np.gradient(h, _cell_m, _cell_m)
     slope_wind = gx * dx + gy * dy
 
     # Bagnold transport rate proxy: q ∝ slope_wind^3 on windward faces
@@ -216,19 +224,18 @@ def apply_wind_erosion(
         hardness = np.asarray(stack.rock_hardness, dtype=np.float64)
         delta = delta * (1.0 - 0.7 * np.clip(hardness, 0.0, 1.0))
 
-    # Sand flux conservation: total eroded mass must equal total deposited mass.
-    # Without this, wind erosion is a net height sink — every application
-    # removes material without replacing it, which accumulates to unrealistic
-    # terrain deflation over multi-pass pipelines.  Scale lee deposition up to
-    # match erosion so the field-level mass budget balances.
-    erosion_total = float(np.abs(np.minimum(delta, 0.0)).sum())
-    deposition_total = float(np.maximum(delta, 0.0).sum())
-    if deposition_total > 1e-12 and erosion_total > deposition_total:
-        # Scale all positive deltas up so they equal the erosion total
-        conservation_scale = erosion_total / deposition_total
-        # Cap at 3× to prevent runaway amplification on nearly-flat terrain
-        conservation_scale = min(conservation_scale, 3.0)
-        delta = np.where(delta > 0, delta * conservation_scale, delta)
+    # FIX-4-6: flux-divergence formulation instead of mass-conservation cap
+    # erosion_delta = div(flux) where flux = transport_capacity * wind_dir_unit
+    # sediment_flux encodes the Bagnold transport capacity field (normalised to intensity)
+    sediment_flux = bagnold * intensity
+    wind_u = dx  # east component of unit wind vector
+    wind_v = dy  # north component of unit wind vector
+    _, dx_flux = np.gradient(sediment_flux * wind_u, _cell_m, _cell_m)
+    dy_flux, _ = np.gradient(sediment_flux * wind_v, _cell_m, _cell_m)
+    erosion_delta = -(dx_flux + dy_flux)  # negative divergence = erosion, positive = deposition
+    # Blend flux-divergence correction into the existing kinematic delta so
+    # saltation + creep geometry is preserved while mass budget is flux-correct.
+    delta = delta + erosion_delta * _cell_m
 
     return delta
 
@@ -375,7 +382,7 @@ def generate_dunes(
         wavelength = 18.0
         for k in range(n_arms):
             arm_angle = wind_dir + k * math.pi / n_arms
-            arm_u = xs * math.cos(arm_angle) + ys * math.sin(arm_angle)
+            _ = xs * math.cos(arm_angle) + ys * math.sin(arm_angle)  # FIX-11-10: arm_u unused; arm_v drives profile
             arm_v = -xs * math.sin(arm_angle) + ys * math.cos(arm_angle)
             arm_profile = np.sin(2.0 * math.pi * arm_v / wavelength)
             # Arms radiate from same central peak — weight by proximity to centre
@@ -402,10 +409,10 @@ def pass_wind_erosion(
     """Bundle I pass: apply wind erosion + optional dune generation.
 
     Consumes: height (+ optional rock_hardness)
-    Produces: height (mutated) — also records wind_field if absent
+    Produces: wind_erosion_delta
 
-    Does not produce new named channels; it mutates the height channel
-    in place to integrate aeolian processes.
+    Delta-only by contract. ``integrate_deltas`` is the single pass that
+    applies this channel to height.
     """
     t0 = time.perf_counter()
     stack = state.mask_stack

@@ -269,9 +269,41 @@ def validate_scatter_point_table(table: ScatterPointTable) -> list[dict[str, str
     return issues
 
 
+def _build_scatter_chain(
+    geometry_spec: Any,
+    placement_spec: Any,
+    lod_spec: Any,
+    billboard_spec: Any,
+) -> list:
+    """Build ordered scatter processing chain. FIX-9-51
+
+    Assembles the four canonical scatter stage specs into an ordered list
+    consumed by the scatter pipeline executor.  The order is:
+      1. geometry_spec   — mesh/prototype selection and LOD budgets
+      2. placement_spec  — Poisson disk / density map candidate generation
+      3. lod_spec        — per-distance LOD switching thresholds
+      4. billboard_spec  — screen-space billboard impostor parameters
+
+    ``billboard_spec`` was previously missing from the chain (S22-P0-30),
+    causing impostors to fall back to full-geometry render at all distances.
+
+    Parameters
+    ----------
+    geometry_spec, placement_spec, lod_spec, billboard_spec : Any
+        Spec objects or dicts produced by the scatter stage builders.
+
+    Returns
+    -------
+    list
+        [geometry_spec, placement_spec, lod_spec, billboard_spec]
+    """
+    return [geometry_spec, placement_spec, lod_spec, billboard_spec]
+
+
 __all__ = [
     "ScatterPoint",
     "ScatterPointTable",
     "load_world_creator_instance_pointcloud",
     "validate_scatter_point_table",
+    "_build_scatter_chain",
 ]

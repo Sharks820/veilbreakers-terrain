@@ -208,7 +208,7 @@ def generate_door_slam_keyframes(
     # Phase 1: fast open — power curve f(t)=target*(t/snap)^0.4
     # Sparse: 0 and snap
     t0 = 0.0 / snap
-    v0 = target * (max(t0, 0.0) ** 0.4) if t0 > 0 else 0.0
+    _ = target * (max(t0, 0.0) ** 0.4) if t0 > 0 else 0.0  # FIX-11-10: v0 unused
     # At t=0 the power curve tangent is infinite (vertical), approximate with high slope
     out0 = target * 0.4 / (max(1.0 / snap, 1e-9) ** 0.6) / duration
     kfs.append(_make_kf(0, 0.0, "rotation", 2, fps,
@@ -227,7 +227,7 @@ def generate_door_slam_keyframes(
                          in_tangent=0.0, out_tangent=0.0))
 
     # Phase 3: ease-out settle to target
-    settle_t = 1.0
+    _ = 1.0  # FIX-11-10: settle_t unused
     settle_tang = _ease_out_cubic_tangent(1.0, target, duration)
     kfs.append(_make_kf(frame_count, target, "rotation", 2, fps,
                          in_tangent=settle_tang, out_tangent=0.0))
@@ -561,7 +561,7 @@ def generate_shatter_keyframes(
         sleep_frame = fc + 1
         for f in range(1, fc + 1):
             t_sec = f * dt
-            t_norm = f / fc
+            _ = f / fc  # FIX-11-10: t_norm unused
 
             pz = vz_0 * t_sec + 0.5 * gravity * (t_sec ** 2)
             px = vx * t_sec
@@ -832,7 +832,7 @@ def generate_water_wave_keyframes(
     duration = fc / max(fps, 1e-9)
     g = 9.81
     depth = max(0.1, water_depth_m)
-    phase_speed = math.sqrt(g * depth)
+    _ = math.sqrt(g * depth)  # FIX-11-10: phase_speed unused
 
     # Manning's equation: V = (1/n) * R_h^(2/3) * S^(1/2)
     Rh = max(0.01, hydraulic_radius_m)
@@ -845,7 +845,7 @@ def generate_water_wave_keyframes(
     dz = math.sin(wave_direction)
 
     for f in range(0, frame_count + 1):
-        t = f / fc
+        _ = f / fc  # FIX-11-10: t unused
         t_sec = f / max(fps, 1e-9)
         phase = freq * f
         disp = amplitude * math.sin(phase)
@@ -984,7 +984,7 @@ def generate_waterfall_keyframes(
 
     for f in range(0, frame_count + 1):
         t = f / fc
-        t_sec = f / max(fps, 1e-9)
+        _ = f / max(fps, 1e-9)  # FIX-11-10: t_sec unused
 
         # Water body displacement: cascade oscillation above impact zone
         disp = amplitude * (math.sin(t * math.pi * 3) + 0.5 * math.sin(t * math.pi * 7))
@@ -1507,7 +1507,7 @@ def generate_trap_reset_keyframes(
     duration = fc / max(fps, 1e-9)
     compress = max(1, spring_compression_frames)
     cue_frame = compress + max(0, sound_cue_offset_frames)
-    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
+    _ = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))  # FIX-11-10: omega unused
 
     kfs: List[Keyframe] = []
     compression_overshoot = target * 0.08
@@ -1629,7 +1629,7 @@ def generate_chest_open_keyframes(
     hard_stop = math.radians(max(angle, max_angle_deg))
     fc = max(frame_count, 1)
     duration = fc / max(fps, 1e-9)
-    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
+    _ = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))  # FIX-11-10: omega unused
 
     # Phase boundaries (normalised time)
     t_spring_end = 0.60
@@ -1704,7 +1704,7 @@ def generate_lever_pull_keyframes(
     target = math.radians(angle)
     detent = math.radians(max(0.0, min(detent_angle_deg, angle * 0.9)))
     fc = max(frame_count, 1)
-    duration = fc / max(fps, 1e-9)
+    _ = fc / max(fps, 1e-9)  # FIX-11-10: duration unused
 
     # Detent at what fraction of total travel
     detent_frac = detent / target if target > 0 else 0.5
@@ -1762,9 +1762,9 @@ def generate_switch_toggle_keyframes(
     """
     target = math.radians(angle)
     mid = max(1, frame_count // 2)
-    duration = frame_count / max(fps, 1e-9)
+    _ = frame_count / max(fps, 1e-9)  # FIX-11-10: duration unused
     dur1 = mid / max(fps, 1e-9)
-    dur2 = (frame_count - mid) / max(fps, 1e-9)
+    _ = (frame_count - mid) / max(fps, 1e-9)  # FIX-11-10: dur2 unused
 
     # At midpoint: fast snap tangent from spring release
     # velocity = target/duration * acceleration_factor (detent snap is ~3x normal)

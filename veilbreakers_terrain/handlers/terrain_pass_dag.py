@@ -116,78 +116,83 @@ def _merge_pass_outputs(
             f"Worker for pass '{source_result.pass_name}' returned no mask stack snapshot"
         )
 
-    # Warn on channels written by this pass but not declared in produces_channels
-    declared = set(definition.produces_channels)
-    for channel, writer in source_stack.populated_by_pass.items():
-        if writer == source_result.pass_name and channel not in declared:
-            logger.warning(
-                "Pass '%s' wrote channel '%s' but did not declare it in produces_channels; "
-                "add it to PassDefinition to ensure correct DAG ordering.",
-                source_result.pass_name, channel,
-            )
+    prev_hash = target_stack.content_hash  # FIX-9-14: save hash before merge so exception path can restore it
+    try:
+        # Warn on channels written by this pass but not declared in produces_channels
+        declared = set(definition.produces_channels)
+        for channel, writer in source_stack.populated_by_pass.items():
+            if writer == source_result.pass_name and channel not in declared:
+                logger.warning(
+                    "Pass '%s' wrote channel '%s' but did not declare it in produces_channels; "
+                    "add it to PassDefinition to ensure correct DAG ordering.",
+                    source_result.pass_name, channel,
+                )
 
-    for channel in definition.produces_channels:
-        # Skipped passes legitimately omit their outputs (e.g. pass_water_depth
-        # when water_surface_elevation_m is absent).  Don't error on missing
-        # channels for skipped results — the channel simply stays unset.
-        if source_result.status == "skipped":
-            continue
-        # Use stack.get() so we only accept channels that are actually populated,
-        # not arbitrary attributes that happen to share the name (hasattr would
-        # match __class__, __dict__, etc.).  Raises PassDAGError with a clear
-        # message if the worker function forgot to write a declared channel.
-        val = source_stack.get(channel)
-        if val is None:
-            # Check whether the channel attribute exists at all (vs. just unset).
-            # A None value from get() could mean "channel key absent" or "set to
-            # None"; either way the contract is violated for a non-None channel.
-            raise PassDAGError(
-                f"Pass '{source_result.pass_name}' declared produces_channels "
-                f"includes '{channel}' but the worker's mask stack has no value "
-                f"for it. Check that the pass function calls stack.set('{channel}', ...)."
-            )
+        for channel in definition.produces_channels:
+            # Skipped passes legitimately omit their outputs (e.g. pass_water_depth
+            # when water_surface_elevation_m is absent).  Don't error on missing
+            # channels for skipped results — the channel simply stays unset.
+            if source_result.status == "skipped":
+                continue
+            # Use stack.get() so we only accept channels that are actually populated,
+            # not arbitrary attributes that happen to share the name (hasattr would
+            # match __class__, __dict__, etc.).  Raises PassDAGError with a clear
+            # message if the worker function forgot to write a declared channel.
+            val = source_stack.get(channel)
+            if val is None:
+                # Check whether the channel attribute exists at all (vs. just unset).
+                # A None value from get() could mean "channel key absent" or "set to
+                # None"; either way the contract is violated for a non-None channel.
+                raise PassDAGError(
+                    f"Pass '{source_result.pass_name}' declared produces_channels "
+                    f"includes '{channel}' but the worker's mask stack has no value "
+                    f"for it. Check that the pass function calls stack.set('{channel}', ...)."
+                )
 
-        # Conflict detection: another pass already wrote this channel in the
-        # same merge sequence.  Newer pass (current) wins; log at WARNING.
-        existing_writer = target_stack.populated_by_pass.get(channel)
-        if existing_writer is not None and existing_writer != source_result.pass_name:
-            logger.warning(
-                "Channel conflict: channel '%s' was already written by pass '%s'; "
-                "pass '%s' is overwriting it (newer pass wins). "
-                "Check DAG produces_channels declarations to resolve the conflict.",
-                channel,
-                existing_writer,
-                source_result.pass_name,
-            )
+            # Conflict detection: another pass already wrote this channel in the
+            # same merge sequence.  Newer pass (current) wins; log at WARNING.
+            existing_writer = target_stack.populated_by_pass.get(channel)
+            if existing_writer is not None and existing_writer != source_result.pass_name:
+                logger.warning(
+                    "Channel conflict: channel '%s' was already written by pass '%s'; "
+                    "pass '%s' is overwriting it (newer pass wins). "
+                    "Check DAG produces_channels declarations to resolve the conflict.",
+                    channel,
+                    existing_writer,
+                    source_result.pass_name,
+                )
 
-        # Prefer numpy .copy() over copy.deepcopy for array channels — 10-100x
-        # faster on large heightmaps (deepcopy walks every element via Python).
-        # Fall back to deepcopy for non-array channel values (e.g. metadata dicts).
-        try:
-            import numpy as _np
-            if isinstance(val, _np.ndarray):
-                val = val.copy()
-            else:
+            # Prefer numpy .copy() over copy.deepcopy for array channels — 10-100x
+            # faster on large heightmaps (deepcopy walks every element via Python).
+            # Fall back to deepcopy for non-array channel values (e.g. metadata dicts).
+            try:
+                import numpy as _np
+                if isinstance(val, _np.ndarray):
+                    val = val.copy()
+                else:
+                    val = copy.deepcopy(val)
+            except ImportError:
                 val = copy.deepcopy(val)
-        except ImportError:
-            val = copy.deepcopy(val)
 
-        target_stack.set(channel, val, source_result.pass_name)
+            target_stack.set(channel, val, source_result.pass_name)
 
-    target_height = target_stack.get("height")
-    if target_height is not None:
-        try:
-            import numpy as _np
-            h = _np.asarray(target_height, dtype=_np.float64)
-            target_stack.height_min_m = float(h.min()) if h.size else 0.0
-            target_stack.height_max_m = float(h.max()) if h.size else 0.0
-        except Exception:  # noqa: BLE001
+        target_height = target_stack.get("height")
+        if target_height is not None:
+            try:
+                import numpy as _np
+                h = _np.asarray(target_height, dtype=_np.float64)
+                target_stack.height_min_m = float(h.min()) if h.size else 0.0
+                target_stack.height_max_m = float(h.max()) if h.size else 0.0
+            except Exception:  # noqa: BLE001
+                target_stack.height_min_m = source_stack.height_min_m
+                target_stack.height_max_m = source_stack.height_max_m
+        else:
             target_stack.height_min_m = source_stack.height_min_m
             target_stack.height_max_m = source_stack.height_max_m
-    else:
-        target_stack.height_min_m = source_stack.height_min_m
-        target_stack.height_max_m = source_stack.height_max_m
-    target_stack.content_hash = None
+        target_stack.content_hash = None
+    except Exception:
+        target_stack.content_hash = prev_hash  # FIX-9-14: restore hash on merge failure
+        raise
     if worker_side_effects:
         target_controller.state.side_effects.extend(list(worker_side_effects))
 

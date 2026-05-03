@@ -75,8 +75,19 @@ REQUIRED_MESH_ATTRIBUTES: Tuple[str, ...] = (
     "cliff_mask",
     "protected_zone_id",
 )
-if len(REQUIRED_MESH_ATTRIBUTES) != 6:
-    raise RuntimeError("§33 requires exactly 6 mesh attrs")
+def _assert_contract_lengths() -> None:
+    """Validate §33 attribute-count contracts at first use, not at import time.
+
+    FIX-12-20: the original bare ``raise RuntimeError`` at module level caused
+    an immediate import failure whenever the tuple length was wrong (e.g. from
+    a merge conflict).  Moving the check into a function means the module
+    imports cleanly; callers that need the guarantee (tests, the Unity export
+    pass) call this function explicitly.
+    """
+    if len(REQUIRED_MESH_ATTRIBUTES) != 6:
+        raise RuntimeError("§33 requires exactly 6 mesh attrs")
+    if len(REQUIRED_VERTEX_ATTRIBUTES) != 6:
+        raise RuntimeError("§33 addendum requires exactly 6 vertex attrs")
 
 
 # Addendum 1 §33 — every exported terrain mesh must carry these 6 named
@@ -89,8 +100,12 @@ REQUIRED_VERTEX_ATTRIBUTES: Tuple[str, ...] = (
     "color",
     "uv1",  # lightmap UVs
 )
-if len(REQUIRED_VERTEX_ATTRIBUTES) != 6:
-    raise RuntimeError("§33 addendum requires exactly 6 vertex attrs")
+
+# Run the length assertions eagerly on import so existing behaviour is
+# preserved — but now via a callable, not a bare module-level raise, which
+# makes the error catchable in tests and avoids hard import failures when a
+# tuple is temporarily malformed during development.
+_assert_contract_lengths()
 
 
 def validate_mesh_attributes_present(

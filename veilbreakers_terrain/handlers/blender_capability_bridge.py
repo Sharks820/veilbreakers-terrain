@@ -1230,6 +1230,30 @@ def modifier_list(object_name: str) -> Dict[str, Any]:
 _VALID_UV_METHODS = frozenset({"smart", "cube", "unwrap"})
 
 
+def _get_viewport_context() -> dict:
+    """Return a temp_override context dict for a VIEW_3D area/region.
+
+    bpy.ops.* calls that require an active area/region (UV unwrap, mode_set
+    in background renders, etc.) crash with ``RuntimeError: context is
+    incorrect`` unless a valid area+region is provided via temp_override.
+    Returns an empty dict when no suitable area is found so the caller can
+    still attempt the op (headless CI where no screen exists).
+    """
+    try:
+        import bpy as _bpy  # local import — only available inside Blender
+        for screen in _bpy.data.screens:
+            for area in screen.areas:
+                if area.type == "VIEW_3D":
+                    region = next(
+                        (r for r in area.regions if r.type == "WINDOW"), None
+                    )
+                    if region:
+                        return {"area": area, "region": region}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
 def uv_project(
     object_name: str,
     method: str = "smart",
@@ -1255,41 +1279,49 @@ def uv_project(
     if err:
         return err
 
+    _vp_ctx = _get_viewport_context()
     try:
         bpy.context.view_layer.objects.active = obj
         # Ensure object is selected.
         obj.select_set(True)
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
+        with bpy.context.temp_override(**_vp_ctx):
+            bpy.ops.object.mode_set(mode="EDIT")
+        with bpy.context.temp_override(**_vp_ctx):
+            bpy.ops.mesh.select_all(action="SELECT")
 
         import math
         angle = math.radians(float(angle_limit_deg))
 
         if method == "smart":
-            bpy.ops.uv.smart_project(
-                angle_limit=angle,
-                island_margin=float(island_margin),
-                correct_aspect=bool(correct_aspect),
-            )
+            with bpy.context.temp_override(**_vp_ctx):
+                bpy.ops.uv.smart_project(
+                    angle_limit=angle,
+                    island_margin=float(island_margin),
+                    correct_aspect=bool(correct_aspect),
+                )
         elif method == "cube":
-            bpy.ops.uv.cube_project(
-                cube_size=float(cube_size),
-                correct_aspect=bool(correct_aspect),
-            )
+            with bpy.context.temp_override(**_vp_ctx):
+                bpy.ops.uv.cube_project(
+                    cube_size=float(cube_size),
+                    correct_aspect=bool(correct_aspect),
+                )
         else:  # unwrap
-            bpy.ops.uv.unwrap(
-                method="ANGLE_BASED",
-                margin=float(island_margin),
-                correct_aspect=bool(correct_aspect),
-            )
+            with bpy.context.temp_override(**_vp_ctx):
+                bpy.ops.uv.unwrap(
+                    method="ANGLE_BASED",
+                    margin=float(island_margin),
+                    correct_aspect=bool(correct_aspect),
+                )
 
-        bpy.ops.object.mode_set(mode="OBJECT")
+        with bpy.context.temp_override(**_vp_ctx):
+            bpy.ops.object.mode_set(mode="OBJECT")
     except Exception as exc:  # noqa: BLE001
         # Restore object mode even on failure.
         try:
-            bpy.ops.object.mode_set(mode="OBJECT")
-        except Exception:
-            pass
+            with bpy.context.temp_override(**_vp_ctx):
+                bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception as _mode_err:  # FIX-11-5
+            logger.debug("mode_set OBJECT restore failed: %s", _mode_err)  # FIX-11-5
         return {"status": "error", "error": "uv_project_failed",
                 "method": method, "message": str(exc)}
 
@@ -1302,7 +1334,7 @@ def uv_project(
 # ---------------------------------------------------------------------------
 # Render engine + OpenGL viewport render
 # ---------------------------------------------------------------------------
-_VALID_ENGINES = frozenset({"BLENDER_EEVEE_NEXT", "BLENDER_EEVEE", "CYCLES", "BLENDER_WORKBENCH"})
+_VALID_ENGINES = frozenset({"BLENDER_EEVEE_NEXT", "CYCLES", "BLENDER_WORKBENCH"})
 
 
 def set_render_engine(engine: str = "BLENDER_EEVEE_NEXT") -> Dict[str, Any]:

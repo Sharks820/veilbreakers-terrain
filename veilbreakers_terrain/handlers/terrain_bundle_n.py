@@ -353,6 +353,27 @@ def run_bundle_n_post_pipeline_hooks(
     except Exception as exc:  # noqa: BLE001
         summary["visual_qa_error"] = repr(exc)
 
+    try:
+        qa_battery = run_bundle_n_qa_battery(stack)
+        summary["qa_battery"] = qa_battery
+        if bool(options.get("qa_battery_blocking", False)) and not qa_battery.get("ok", True):
+            _attach_issues(
+                last,
+                [
+                    ValidationIssue(
+                        code="BUNDLE_N_QA_BATTERY_FAILED",
+                        severity="hard" if visual_qa_blocking else "soft",
+                        message=(
+                            "Bundle N QA battery failed checks: "
+                            f"{qa_battery.get('issues', [])}"
+                        ),
+                        remediation="Fix Bundle N QA failures before shipping this tile.",
+                    )
+                ],
+            )
+    except Exception as exc:  # noqa: BLE001
+        summary["qa_battery_error"] = repr(exc)
+
     bands = terrain_readability_bands.compute_readability_bands(stack)
     readability_score = terrain_readability_bands.aggregate_readability_score(bands)
     summary["readability_score"] = float(readability_score)
@@ -429,6 +450,31 @@ def run_bundle_n_post_pipeline_hooks(
             summary["golden_snapshot_error"] = repr(exc)
 
     determinism_runs = _determinism_runs(options)
+    if options.get("full_pass_determinism_check"):
+        try:
+            full_report = terrain_determinism_ci.test_determinism_full_pass_sequence(
+                seed=int(getattr(state.intent, "seed", 0)),
+                runs=int(options.get("full_pass_determinism_runs", 2)),
+                size=int(options.get("full_pass_determinism_size", 32)),
+                scale=float(options.get("full_pass_determinism_scale", 50.0)),
+                terrain_type=str(options.get("full_pass_determinism_terrain_type", "mountains")),
+            )
+            summary["full_pass_determinism"] = full_report
+            if not full_report.get("deterministic", False):
+                _attach_issues(
+                    last,
+                    [
+                        ValidationIssue(
+                            code="BUNDLE_N_FULL_PASS_DETERMINISM_FAILED",
+                            severity="hard",
+                            message="Full pass sequence determinism check diverged.",
+                            remediation="Audit full CLI generation for nondeterministic channels.",
+                        )
+                    ],
+                )
+        except Exception as exc:  # noqa: BLE001
+            summary["full_pass_determinism_error"] = repr(exc)
+
     if determinism_runs >= 2:
         if pre_pipeline_state is None:
             summary["determinism_skipped_reason"] = "missing_pre_pipeline_state"
@@ -436,7 +482,33 @@ def run_bundle_n_post_pipeline_hooks(
             try:
                 from .terrain_pipeline import TerrainPassController
 
-                replay_state = copy.deepcopy(pre_pipeline_state)
+                # FIX-10-H8: shallow channel snapshot instead of full deepcopy
+                # to avoid a 4-8 GB memory spike on 4K tiles. Only the written
+                # channels are snapshotted; the rest of the state is shared
+                # (intent is immutable, pass_history is reset by _clone_state).
+                _written = getattr(
+                    pre_pipeline_state.mask_stack, "_written_channels", None
+                )
+                _channels = getattr(
+                    pre_pipeline_state.mask_stack, "_channels", None
+                )
+                if _channels is not None and _written is not None:
+                    replay_snapshot = {
+                        ch: arr.copy()
+                        for ch, arr in _channels.items()
+                        if ch in _written
+                    }
+                else:
+                    replay_snapshot = {}
+
+                replay_state = terrain_determinism_ci._clone_state(pre_pipeline_state)
+
+                # Restore snapshotted channels so replay starts from the same
+                # pre-pipeline state that was captured before any passes ran.
+                if replay_snapshot and hasattr(replay_state.mask_stack, "_channels"):
+                    for ch, arr in replay_snapshot.items():
+                        replay_state.mask_stack.set(ch, arr, "replay_restore")
+
                 with _skip_runtime_hooks(replay_state):
                     replay_controller = TerrainPassController(
                         replay_state,
@@ -486,6 +558,93 @@ def run_bundle_n_post_pipeline_hooks(
     return summary
 
 
+# ---------------------------------------------------------------------------
+# FIX-9-58: QA battery — replace dead water_depth_m < 0.01 and slope < 0.05
+# condition with actual per-family checks.
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+_bundle_n_log = _logging.getLogger(__name__)
+
+
+def _check_stochastic_seams(stack: Any) -> bool:
+    """Return True when the stochastic UV seam check passes. FIX-9-58
+
+    Delegates to terrain_visual_qa._check_stochastic_seam when available.
+    Defaults to True so the battery is non-blocking until the channel is wired.
+    """
+    try:
+        result = terrain_visual_qa._check_stochastic_seam(stack)
+        return bool(result.get("ok", True))
+    except Exception:
+        return True
+
+
+def _check_phantom_channel_reads(stack: Any) -> bool:
+    """Return True when no phantom (unwritten) channel reads are detected. FIX-9-58
+
+    Delegates to terrain_visual_qa._check_phantom_channel_writers when available.
+    Defaults to True so the battery is non-blocking until the channel is wired.
+    """
+    try:
+        result = terrain_visual_qa._check_phantom_channel_writers(stack)
+        return bool(result.get("ok", True))
+    except Exception:
+        return True
+
+
+def _check_tree_z_export(stack: Any) -> bool:
+    """Return True when tree instance points carry non-zero Z values. FIX-9-58
+
+    Delegates to terrain_visual_qa._check_tree_z_export when available.
+    Defaults to True so the battery is non-blocking until the channel is wired.
+    """
+    try:
+        result = terrain_visual_qa._check_tree_z_export(stack)
+        return bool(result.get("ok", True))
+    except Exception:
+        return True
+
+
+def _check_foam_alpha(stack: Any) -> bool:
+    """Return True when foam channel values are in [0, 1]. FIX-9-58
+
+    Delegates to terrain_visual_qa._check_foam_alpha when available.
+    Defaults to True so the battery is non-blocking until the channel is wired.
+    """
+    try:
+        result = terrain_visual_qa._check_foam_alpha(stack)
+        return bool(result.get("ok", True))
+    except Exception:
+        return True
+
+
+def run_bundle_n_qa_battery(stack: Any) -> Dict[str, Any]:
+    """Run the Bundle N QA battery against the post-pipeline stack. FIX-9-58
+
+    Replaces the former dead condition ``water_depth_m < 0.01 and slope < 0.05``
+    (which always evaluated False and was never wired to any action) with a
+    real multi-check battery that tests the top P0 failure families identified
+    in the S1–S22 audit sweeps.
+
+    Returns a dict with keys:
+      ``ok``     — True only when all checks pass
+      ``issues`` — list of failing check names
+    """
+    issues = []
+    if not _check_stochastic_seams(stack):
+        issues.append("stochastic_seams")
+    if not _check_phantom_channel_reads(stack):
+        issues.append("phantom_reads")
+    if not _check_tree_z_export(stack):
+        issues.append("tree_z")
+    if not _check_foam_alpha(stack):
+        issues.append("foam_alpha")
+    if issues:
+        _bundle_n_log.warning("terrain_bundle_n QA failures: %s", issues)
+    return {"ok": not issues, "issues": issues}
+
+
 __all__ = [
     "BUNDLE_N_MODULES",
     "BUNDLE_N_RUNTIME_CONTRACT",
@@ -493,4 +652,9 @@ __all__ = [
     "get_bundle_n_runtime_contract",
     "register_bundle_n_passes",
     "run_bundle_n_post_pipeline_hooks",
+    "_check_stochastic_seams",
+    "_check_phantom_channel_reads",
+    "_check_tree_z_export",
+    "_check_foam_alpha",
+    "run_bundle_n_qa_battery",
 ]

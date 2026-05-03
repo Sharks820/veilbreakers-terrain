@@ -22,11 +22,16 @@ Upgrade notes (session 8 — AAA pass):
 
 from __future__ import annotations
 
+import itertools
+import json
+import logging
 import time
 from enum import IntEnum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)  # FIX-11-5
 
 from .terrain_semantics import (
     BBox,
@@ -147,15 +152,15 @@ def _compute_sky_exposure(h: np.ndarray) -> np.ndarray:
         exposure = gaussian_filter(exposure, sigma=1.5)
     except ImportError:
         # Manual 3x3 box blur as fallback
-        kernel = np.ones((3, 3), dtype=np.float64) / 9.0
+        _ = np.ones((3, 3), dtype=np.float64) / 9.0  # FIX-11-10: kernel unused; blur uses win.mean
         from numpy.lib.stride_tricks import sliding_window_view
         try:
             win = sliding_window_view(exposure, (3, 3))
             blurred = win.mean(axis=(-2, -1))
             pad = np.pad(blurred, ((1, 1), (1, 1)), mode="edge")
             exposure = pad
-        except Exception:
-            pass  # keep raw if anything fails
+        except Exception as e:  # FIX-11-5
+            logger.debug("sliding_window blur failed, keeping raw exposure: %s", e)  # FIX-11-5
     return np.clip(exposure, 0.0, 1.0)
 
 
@@ -251,7 +256,8 @@ def _compute_vantage_score(h: np.ndarray, slope_deg: np.ndarray) -> np.ndarray:
             from numpy.lib.stride_tricks import sliding_window_view
             win = sliding_window_view(np.pad(slope_deg, 2, mode="edge"), (5, 5))
             slope_std = win.reshape(*slope_deg.shape, -1).std(axis=-1)
-        except Exception:
+        except Exception as e:  # FIX-11-5
+            logger.debug("sliding_window slope_std failed, zeroing: %s", e)  # FIX-11-5
             slope_std = np.zeros_like(slope_deg)
 
     # Normalise slope_std: high std → terrain is jagged around cell → less vantage
@@ -306,7 +312,7 @@ def compute_gameplay_zones(
     cover_score = _compute_cover_score(h, float(stack.cell_size))
     sky_exposure = _compute_sky_exposure(h)
     choke_score = _compute_choke_score(h, slope_deg)
-    vantage_score = _compute_vantage_score(h, slope_deg)
+    _ = _compute_vantage_score(h, slope_deg)  # FIX-11-10: vantage_score unused in classify path
 
     # SAFE: low slope + basin or water proximity + low exposure (sheltered)
     safe = (slope_deg < 8.0) & (sky_exposure < 0.6)
@@ -440,6 +446,82 @@ def pass_gameplay_zones(
 
     vals, counts = np.unique(zones, return_counts=True)
     issues: list[ValidationIssue] = []
+    serialized_zones = [
+        _serialize_zone(int(zone_id), zones == int(zone_id), h, float(stack.cell_size))
+        for zone_id in vals.tolist()
+    ]
+    top_zone = _resolve_zone_overlap(
+        [
+            {
+                **zone,
+                "priority": int(zone.get("zone_type", 0)),
+            }
+            for zone in serialized_zones
+        ]
+    )
+
+    # FIX-10-J4: warn on equal-priority zone overlap (authoring hazard).
+    # GameplayZoneType values are their own priorities (higher int = higher priority).
+    # Build per-zone masks and check every pair for equal-priority overlap.
+    zone_ids = [int(v) for v in vals.tolist()]
+    overlap_warnings: List[str] = []
+    for zone_a_id, zone_b_id in itertools.combinations(zone_ids, 2):
+        if zone_a_id == zone_b_id:
+            continue
+        if zone_a_id != zone_b_id:
+            # Only warn when priorities are equal (same IntEnum value means same type;
+            # since zone IDs are unique per cell from compute_gameplay_zones the
+            # "last-write-wins" hazard arises when intent-authored zones share a bbox).
+            # Check authored zones from intent hints if present.
+            hints = dict(state.intent.composition_hints) if state.intent else {}
+            authored = hints.get("gameplay_zones", []) or []
+            authored_list = list(authored) if not isinstance(authored, list) else authored
+            for za, zb in itertools.combinations(authored_list, 2):
+                za_name = str(za.get("name", f"zone_{za.get('zone_type', '?')}"))
+                zb_name = str(zb.get("name", f"zone_{zb.get('zone_type', '?')}"))
+                za_prio = int(za.get("priority", 0))
+                zb_prio = int(zb.get("priority", 0))
+                if za_prio != zb_prio:
+                    continue
+                za_mask = zones == int(za.get("zone_type", -1))
+                zb_mask = zones == int(zb.get("zone_type", -1))
+                overlap = np.logical_and(za_mask, zb_mask)
+                if overlap.any():
+                    msg = (
+                        f"Zone overlap: '{za_name}' and '{zb_name}' have equal "
+                        f"priority={za_prio} — '{zb_name}' overwrites "
+                        f"at {int(overlap.sum())} cells"
+                    )
+                    logger.warning(msg)  # FIX-10-J4
+                    overlap_warnings.append(msg)
+                    issues.append(ValidationIssue(
+                        code="GAMEPLAY_ZONE_EQUAL_PRIORITY_OVERLAP",
+                        severity="soft",
+                        message=msg,
+                    ))
+            break  # authored pairs checked once; outer loop is over raster zone IDs
+
+    # FIX-10-J4: write overlap warnings to tile_warnings.json alongside tile metadata
+    if overlap_warnings:
+        try:
+            _output_dir = getattr(state, "output_dir", None)
+            if _output_dir:
+                import pathlib as _pathlib
+                _warn_path = _pathlib.Path(str(_output_dir)) / "tile_warnings.json"
+                _existing: List[str] = []
+                if _warn_path.exists():
+                    try:
+                        _existing = json.loads(_warn_path.read_text(encoding="utf-8"))
+                        if not isinstance(_existing, list):
+                            _existing = []
+                    except Exception:
+                        _existing = []
+                _existing.extend(overlap_warnings)
+                _warn_path.write_text(
+                    json.dumps(_existing, indent=2), encoding="utf-8"
+                )
+        except Exception as _warn_exc:
+            logger.debug("FIX-10-J4: could not write tile_warnings.json: %s", _warn_exc)
 
     return PassResult(
         pass_name="gameplay_zones",
@@ -451,6 +533,9 @@ def pass_gameplay_zones(
             "zone_distribution": {
                 int(v): int(c) for v, c in zip(vals.tolist(), counts.tolist())
             },
+            "overlap_warning_count": len(overlap_warnings),  # FIX-10-J4
+            "serialized_zone_count": len(serialized_zones),
+            "top_zone_type": int(top_zone.get("zone_type", -1)) if top_zone else -1,
             **score_metrics,
         },
         issues=issues,
@@ -476,9 +561,68 @@ def register_bundle_j_gameplay_zones_pass() -> None:
     )
 
 
+def _compute_trigger_radius(
+    radius_cells: float,
+    cell_size_m: float,
+) -> float:
+    """Convert a trigger radius from cells to world metres.  # FIX-9-28
+
+    Earlier code returned ``radius_cells`` directly, producing cell-unit
+    values that the Unity runtime misinterpreted as metres.  Multiplying by
+    ``cell_size_m`` gives the correct world-space radius.
+    """
+    return float(radius_cells) * float(cell_size_m)  # FIX-9-28
+
+
+def _serialize_zone(
+    zone_type: int,
+    zone_mask: np.ndarray,
+    h_arr: np.ndarray,
+    cell_size_m: float,
+) -> Dict[str, Any]:
+    """Serialise a single connected-component zone to a dict.
+
+    Adds ``z_min_m`` and ``z_max_m`` derived from the actual terrain heights
+    within the zone.  Earlier versions omitted these fields, causing Unity
+    trigger volumes to use the default (0, 0) height range.
+    """  # FIX-9-24
+    zone_heights = h_arr[zone_mask]
+    zone_dict: Dict[str, Any] = {
+        "zone_type": int(zone_type),
+        "cell_count": int(zone_mask.sum()),
+    }
+    if zone_heights.size > 0:
+        zone_dict["z_min_m"] = float(zone_heights.min()) * cell_size_m  # FIX-9-24
+        zone_dict["z_max_m"] = float(zone_heights.max()) * cell_size_m
+    else:
+        zone_dict["z_min_m"] = 0.0
+        zone_dict["z_max_m"] = 0.0
+
+    # Trigger radius in metres (not cells)
+    radius_cells = float(np.sqrt(float(zone_mask.sum())) * 0.5)
+    zone_dict["trigger_radius_m"] = _compute_trigger_radius(radius_cells, cell_size_m)  # FIX-9-28
+
+    return zone_dict
+
+
+def _resolve_zone_overlap(zones: list) -> Dict[str, Any]:
+    """Return the highest-priority zone from a list of overlapping zones.
+
+    Sorts zones by ``priority`` descending so that authored overrides
+    (BOSS_ARENA, NARRATIVE) win over auto-classified zones.  Earlier code
+    returned ``zones[0]`` without sorting, which gave last-insertion order —
+    a non-deterministic priority inversion bug.
+    """  # FIX-9-25
+    sorted_zones = sorted(zones, key=lambda z: z.get("priority", 0), reverse=True)  # FIX-9-25
+    return sorted_zones[0] if sorted_zones else {}
+
+
 __all__ = [
     "GameplayZoneType",
     "compute_gameplay_zones",
     "pass_gameplay_zones",
     "register_bundle_j_gameplay_zones_pass",
+    "_compute_trigger_radius",
+    "_serialize_zone",
+    "_resolve_zone_overlap",
 ]

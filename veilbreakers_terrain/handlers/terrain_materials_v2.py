@@ -341,7 +341,7 @@ def compute_normal_z(heightmap: np.ndarray, cell_size_m: float = 1.0) -> np.ndar
         dy, dx = np.gradient(heightmap)
         dy /= cell_size_m
         dx /= cell_size_m
-        denom  = np.sqrt(dx**2 + dy**2 + 1.0)
+        denom  = np.sqrt(np.hypot(dx, dy) ** 2 + 1.0)  # FIX-11-6
         normal_z = 1.0 / denom
 
     NaN/Inf in heightmap are replaced with 0 before gradient (T-10-02-01).
@@ -493,7 +493,10 @@ def sample_macro_color(
     v = ((world_z / tile_size_m) % 1.0)
     ui = np.clip((u * tex_w).astype(np.int32), 0, tex_w - 1)
     vi = np.clip((v * tex_h).astype(np.int32), 0, tex_h - 1)
-    return macro_texture[vi, ui, :].astype(np.float32)
+    # FIX-12-28: macro_texture is authored in sRGB space; convert to linear
+    # before blending so all macro_color reads are in the same colour space.
+    raw = macro_texture[vi, ui, :].astype(np.float32)
+    return np.power(np.clip(raw, 0.0, 1.0), 2.2)
 
 
 # ---------------------------------------------------------------------------
@@ -609,21 +612,23 @@ def compute_slope_material_weights(
     slope = np.asarray(slope, dtype=np.float64)
     height = np.asarray(stack.height, dtype=np.float64)
 
-    curvature = stack.get("curvature")
+    curvature = stack.get("curvature", default=None)
     if curvature is None:
         curvature = np.zeros_like(slope)
     else:
         curvature = np.asarray(curvature, dtype=np.float64)
 
-    wetness = stack.get("wetness")
+    wetness = stack.get("wetness", default=None)
     if wetness is None:
         wetness = np.zeros_like(slope)
     else:
         wetness = np.asarray(wetness, dtype=np.float64)
 
-    lava_prox = stack.get("lava_prox")
+    lava_prox = stack.get("lava_prox", default=None)
     if lava_prox is None:
-        lava_prox = np.ones_like(slope)  # no lava_prox data → gate always passes
+        # FIX-10-11: zeros → lava_hot weight stays off on non-volcanic tiles.
+        # all-ones default was triggering lava_hot material on every tile.
+        lava_prox = np.zeros_like(slope)
     else:
         lava_prox = np.asarray(lava_prox, dtype=np.float64)
 
@@ -636,9 +641,10 @@ def compute_slope_material_weights(
     surface_normal_z = compute_normal_z(stack.height, cell_size_m=float(getattr(stack, "cell_size", 1.0)))
 
     # Fix 10.4 (REQ-P10-006): Read snow_line_factor for top-facing snow mask.
-    snow_line_factor = stack.get("snow_line_factor")
+    snow_line_factor = stack.get("snow_line_factor", default=None)
 
-    for idx, ch in enumerate(rules.channels):
+    for idx in rules.priority_order():  # FIX-9-39: iterate in priority order so high-priority rules win
+        ch = rules.channels[idx]
         # Fix 10.1: For triplanar/rock channels, use normal_z instead of slope.
         if ch.triplanar:
             # normal_z < ROCK_NORMAL_THRESHOLD indicates a rock face.
@@ -766,9 +772,9 @@ def compute_slope_material_weights(
     # Prefer the erosion-refined ridge field when available so ravines carved by
     # pass_erosion get their wet_rock uplift even when ``ridge`` still holds the
     # raw structural values from ``pass_structural_masks``.
-    ridge = stack.get("ridge_eroded")
+    ridge = stack.get("ridge_eroded", default=None)
     if ridge is None:
-        ridge = stack.get("ridge")
+        ridge = stack.get("ridge", default=None)
     if ridge is not None:
         ridge_arr = np.asarray(ridge, dtype=np.float32)
         ravine_mask = (ridge_arr < RAVINE_THRESHOLD).astype(np.float32)
@@ -792,20 +798,20 @@ def compute_slope_material_weights(
     # --- Structural label overrides (Fix 10.10 / REQ-P10-001) ---
     # Feature generators stamp labels during generation; labels take priority over
     # analytical slope classification. Labeled cells skip the analytical path.
-    rock_label          = stack.get("rock_label")          # float32 mask [0..1]
-    gravel_label        = stack.get("gravel_label")        # float32 mask [0..1]
-    water_label         = stack.get("water_label")         # float32 mask [0..1]
-    cliff_label         = stack.get("cliff_label")         # float32 mask [0..1]
+    rock_label          = stack.get("rock_label", default=None)          # float32 mask [0..1]
+    gravel_label        = stack.get("gravel_label", default=None)        # float32 mask [0..1]
+    water_label         = stack.get("water_label", default=None)         # float32 mask [0..1]
+    cliff_label         = stack.get("cliff_label", default=None)         # float32 mask [0..1]
     # water_surface_mask is produced by pass_water_variants (binary 0/1).
     # Bridge it to wet_rock so streams/rivers/caldera-rim pools hard-stamp
     # wet_rock=1.0 the same way water_label does — no more grass bleed-through.
-    water_surface_mask  = stack.get("water_surface_mask")  # float32 binary [0/1]
+    water_surface_mask  = stack.get("water_surface_mask", default=None)  # float32 binary [0/1]
     # wet_rock_splash is produced by pass_waterfalls — it marks the spray/pool
     # zones at waterfall bases and cascade pools. Without this bridge, grass
     # normalization overwrites those cells because no label held them.
     # Stack key is "wet_rock" (the pass name); the target channel_id is also
     # "wet_rock" — different namespaces, no collision.
-    wet_rock_splash = stack.get("wet_rock")  # float32 mask from pass_waterfalls
+    wet_rock_splash = stack.get("wet_rock", default=None)  # float32 mask from pass_waterfalls
     has_labels = any(lbl is not None for lbl in (
         rock_label, gravel_label, water_label, cliff_label,
         water_surface_mask, wet_rock_splash,
@@ -872,7 +878,7 @@ def compute_slope_material_weights(
     # Fix 10.9 (REQ-P10-005): SDF road edge blending — LAST operation.
     # Requires road_sdf_dist channel from Phase 8 Fix 8.13.
     # Gracefully skips if channel absent (Phase 8 not yet run). (T-10-03-01)
-    road_sdf_dist = stack.get("road_sdf_dist")
+    road_sdf_dist = stack.get("road_sdf_dist", default=None)
     if road_sdf_dist is not None:
         weights = apply_sdf_road_blend(weights, road_sdf_dist, rules)
 

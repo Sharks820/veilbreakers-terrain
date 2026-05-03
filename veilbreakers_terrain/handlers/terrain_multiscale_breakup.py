@@ -24,20 +24,45 @@ from .terrain_semantics import (
 )
 
 
-def _rng_grid_bilinear(shape: Tuple[int, int], seed: int, scale_cells: float) -> np.ndarray:
+def _rng_grid_bilinear(
+    shape: Tuple[int, int],
+    seed: int,
+    scale_cells: float,
+    world_offset_x: float = 0.0,
+    world_offset_y: float = 0.0,
+) -> np.ndarray:
+    """Bilinear-interpolated RNG grid with optional world-space offset.
+
+    ``world_offset_x`` / ``world_offset_y`` shift the sampling window into
+    the infinite noise grid so that adjacent tiles with different world-origin
+    values produce seamlessly continuous breakup noise (FIX-10-23 tile
+    continuity).  Both offsets are in grid-cell units (world_metres /
+    scale_metres).
+    """
     rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
     h, w = shape
-    gh = max(2, int(math.ceil(h / max(scale_cells, 1.0))) + 2)
-    gw = max(2, int(math.ceil(w / max(scale_cells, 1.0))) + 2)
+    # Extra grid cells to cover the tile plus its world offset.  We pad by 2
+    # so bilinear fetch never goes out of bounds after offsetting.
+    x_span = w / max(scale_cells, 1.0)
+    y_span = h / max(scale_cells, 1.0)
+    x_start = world_offset_x / max(scale_cells, 1.0)
+    y_start = world_offset_y / max(scale_cells, 1.0)
+    gw = max(2, int(math.ceil(x_start + x_span)) + 2)
+    gh = max(2, int(math.ceil(y_start + y_span)) + 2)
     grid = rng.uniform(-1.0, 1.0, size=(gh, gw)).astype(np.float64)
-    ys = np.linspace(0.0, gh - 1.0, h)
-    xs = np.linspace(0.0, gw - 1.0, w)
-    y0 = np.floor(ys).astype(np.int32)
+    # Sample coordinates span [world_offset, world_offset + tile_span] in
+    # grid-cell units so every tile reads from the correct window of the
+    # global noise grid.
+    xs = np.linspace(x_start, x_start + x_span * (w - 1) / max(w, 1), w)
+    ys = np.linspace(y_start, y_start + y_span * (h - 1) / max(h, 1), h)
     x0 = np.floor(xs).astype(np.int32)
-    y1 = np.clip(y0 + 1, 0, gh - 1)
+    y0 = np.floor(ys).astype(np.int32)
+    x0 = np.clip(x0, 0, gw - 2)
+    y0 = np.clip(y0, 0, gh - 2)
     x1 = np.clip(x0 + 1, 0, gw - 1)
-    ty = (ys - y0).reshape(-1, 1)
-    tx = (xs - x0).reshape(1, -1)
+    y1 = np.clip(y0 + 1, 0, gh - 1)
+    tx = (xs - np.floor(xs)).reshape(1, -1)
+    ty = (ys - np.floor(ys)).reshape(-1, 1)
     a = grid[np.ix_(y0, x0)]
     b = grid[np.ix_(y0, x1)]
     c = grid[np.ix_(y1, x0)]
@@ -56,6 +81,10 @@ def compute_multiscale_breakup(
 
     Sum of N octaves each scaled by amplitude = 1/(i+1). Scales are
     world-meters, converted to cells via ``stack.cell_size``.
+
+    World-space coordinates from ``stack.world_origin_x/y`` are used to
+    offset each noise layer so adjacent tiles produce seamlessly continuous
+    breakup patterns (FIX-10-23).
     """
     if stack.height is None:
         raise ValueError("compute_multiscale_breakup requires stack.height")
@@ -65,6 +94,8 @@ def compute_multiscale_breakup(
     h = np.asarray(stack.height)
     shape = h.shape
     cell_m = float(stack.cell_size)
+    world_x = float(stack.world_origin_x)
+    world_y = float(stack.world_origin_y)
 
     total = np.zeros(shape, dtype=np.float64)
     weight_sum = 0.0
@@ -73,7 +104,17 @@ def compute_multiscale_breakup(
             raise ValueError(f"scale #{i} must be > 0, got {scale}")
         scale_cells = max(1.0, float(scale) / max(cell_m, 1e-6))
         amp = 1.0 / (i + 1)
-        layer = _rng_grid_bilinear(shape, seed ^ (0x9E3779B1 * (i + 1)), scale_cells)
+        # Offset in grid-cell units: world_origin_m / scale_m so each tile
+        # reads the correct window of the global infinite noise grid.
+        offset_x = world_x / max(float(scale), 1e-6)
+        offset_y = world_y / max(float(scale), 1e-6)
+        layer = _rng_grid_bilinear(
+            shape,
+            seed ^ (0x9E3779B1 * (i + 1)),
+            scale_cells,
+            world_offset_x=offset_x,
+            world_offset_y=offset_y,
+        )
         total += layer * amp
         weight_sum += amp
 

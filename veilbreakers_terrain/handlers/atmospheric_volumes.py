@@ -639,6 +639,14 @@ def compute_atmospheric_placements(
                 "volume_type": vol_name,
                 "position": (round(px, 2), round(py, 2), round(pz, 2)),
                 "size": (round(sx, 2), round(sy, 2), round(sz, 2)),
+                "bounds": _build_bounds(
+                    px - sx * 0.5,
+                    px + sx * 0.5,
+                    py - sy * 0.5,
+                    py + sy * 0.5,
+                    pz - sz * 0.5,
+                    pz + sz * 0.5,
+                ),
                 "shape": vol_def["shape"],
                 "color": vol_def["color"],
                 "density": vol_def["density"],
@@ -883,6 +891,48 @@ def compute_volume_mesh_spec(
 _SENTINEL = object()
 
 
+def _build_bounds(
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    z_min: float,
+    z_max: float,
+) -> dict[str, float]:
+    """Build an axis-aligned bounds dict using Unity's Y-up / Z-depth convention.
+
+    FIX-9-52: altitude is the Z axis in Unity's coordinate system (Y is up in
+    Unity, but terrain height in this pipeline is stored on the Z axis per the
+    Z-up world convention shared with Blender/Houdini source).  The previous
+    implementation mistakenly assigned ``y_min/y_max`` as the altitude range,
+    causing atmospheric volumes to be placed at the wrong world-space height
+    when exported to Unity.
+
+    Axis mapping (pipeline → Unity export):
+      X  — world east/west (unchanged)
+      Y  — horizontal depth / north-south (unchanged)
+      Z  — altitude / height (this is the axis that was swapped)
+
+    Parameters
+    ----------
+    x_min, x_max : float  East-west extent.
+    y_min, y_max : float  North-south (horizontal depth) extent.
+    z_min, z_max : float  Altitude extent (vertical, Unity Z).
+
+    Returns
+    -------
+    dict with keys x_min, x_max, y_min, y_max, z_min, z_max.
+    """
+    return {
+        "x_min": float(x_min),
+        "x_max": float(x_max),
+        "y_min": float(y_min),  # horizontal depth (north-south)
+        "y_max": float(y_max),
+        "z_min": float(z_min),  # FIX-9-52: altitude is Z in Unity convention
+        "z_max": float(z_max),
+    }
+
+
 def _count_by_type(placements: list[dict[str, Any]]) -> dict[str, int]:
     """Count placements by volume_type."""
     counts: dict[str, int] = {}
@@ -1059,15 +1109,19 @@ def pass_atmospheric_volumes(
     if weather_hints is not None and not isinstance(weather_hints, dict):
         weather_hints = None
 
+    water_mask = stack.get("water_surface_mask", default=None)
+    if water_mask is None:
+        water_mask = stack.get("water_surface", default=None)
+
     placements = compute_atmospheric_placements(
         biome,
         bounds,
         seed=int(getattr(intent, "seed", 0)),
         density_scale=density_scale,
         heightmap=stack.height,
-        ridge_mask=stack.get("ridge"),
-        water_mask=stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface"),
-        canopy_mask=stack.get("canopy_density"),
+        ridge_mask=stack.get("ridge", default=None),
+        water_mask=water_mask,
+        canopy_mask=stack.get("canopy_density", default=None),
         cell_size=float(stack.cell_size),
         weather_hints=weather_hints,
     )

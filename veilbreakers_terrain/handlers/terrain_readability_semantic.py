@@ -530,7 +530,7 @@ def check_focal_composition(
         )
 
     # Occlusion check: slope at the focal-point cell
-    if stack.height is not None and stack.get("slope") is not None:
+    if stack.height is not None and stack.get("slope", default=None) is not None:  # FIX-10-H14
         h = np.asarray(stack.height, dtype=np.float64)
         slope_arr = np.asarray(stack.get("slope"), dtype=np.float64)
         if h.ndim == 2 and slope_arr.shape == h.shape:

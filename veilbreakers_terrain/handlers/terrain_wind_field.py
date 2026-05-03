@@ -21,6 +21,45 @@ from .terrain_semantics import (
     TerrainPipelineState,
 )
 
+# FIX-10-H6: altitude layers for 3D wind field
+Z_SLICES = 8
+_Z_ALTITUDES: Optional[np.ndarray] = None  # computed per-tile from max_elev_m
+
+
+def _build_altitude_layers(max_elev_m: float) -> np.ndarray:
+    """8 log-spaced altitude bands from ground to 1.5× max elevation."""
+    return np.logspace(np.log10(1.0), np.log10(max(max_elev_m * 1.5, 2.0)), Z_SLICES)
+
+
+def _apply_log_wind_profile(
+    u_surface: np.ndarray,
+    altitudes: np.ndarray,
+    z_ref: float = 10.0,
+    z0: float = 0.03,
+) -> np.ndarray:
+    """Apply logarithmic wind profile: u(z) = u_ref * ln(z/z0) / ln(z_ref/z0).
+
+    Args:
+        u_surface: (H, W) or (H, W, 2) surface wind speed/vector array.
+        altitudes: (Z_SLICES,) altitude values in metres above ground.
+        z_ref: Reference height in metres (default 10 m = standard met mast height).
+        z0: Roughness length in metres (default 0.03 m = open grassland, Davenport 1965).
+
+    Returns:
+        (H, W, Z_SLICES) float32 array with altitude-scaled wind magnitudes.
+        When u_surface is (H, W, 2), returns the vector-magnitude profile.
+    """
+    # Compute scalar surface magnitude for profile scaling
+    if u_surface.ndim == 3:
+        u_mag = np.sqrt(u_surface[..., 0] ** 2 + u_surface[..., 1] ** 2)
+    else:
+        u_mag = u_surface
+
+    # Log profile: ln(z/z0) / ln(z_ref/z0) — clamp altitudes to avoid ln(0)
+    profiles = np.log(np.maximum(altitudes, z0) / z0) / np.log(max(z_ref, z0 + 1e-6) / z0)
+    # Broadcast: (H, W) * (Z_SLICES,) -> (H, W, Z_SLICES)
+    return (u_mag[..., np.newaxis] * profiles[np.newaxis, np.newaxis, :]).astype(np.float32)
+
 
 def _perlin_gradient_field(
     shape: tuple,
@@ -264,7 +303,7 @@ def compute_wind_field(
     # Prefer the erosion-refined ridge_eroded channel when present so canyon
     # reinforcement from pass_erosion reaches the wind field; fall back to the
     # raw structural ridge otherwise.
-    ridge_src = stack.get("ridge_eroded")
+    ridge_src = stack.get("ridge_eroded", default=None)
     if ridge_src is None:
         ridge_src = stack.ridge
     if ridge_src is not None:
@@ -286,7 +325,7 @@ def compute_wind_field(
     _DUNE_SLOPE_GATE_MIN_RAD = math.radians(30.0)
     _DUNE_SLOPE_GATE_MAX_RAD = math.radians(90.0)
     dune_slope_gate = np.ones(shape, dtype=np.float64)
-    _slope_src = stack.get("slope")
+    _slope_src = stack.get("slope", default=None)
     if _slope_src is not None:
         _slope = np.asarray(_slope_src, dtype=np.float64)
         if _slope.shape == shape:
@@ -325,6 +364,12 @@ def compute_wind_field(
 
     speed = base_speed_mps * altitude_factor * ridge_factor * basin_factor * dune_slope_gate
 
+    # FIX-9-5: gate dune deposition by slope — no deposition on slopes steeper than angle of repose
+    slope_arr = np.asarray(_slope_src, dtype=np.float64) if _slope_src is not None else np.zeros(shape, dtype=np.float64)
+    dune_deposition = speed / max(float(base_speed_mps), 1e-9)  # normalised deposition proxy
+    dune_deposition = np.where(slope_arr > 0.26, 0.0, dune_deposition)
+    stack.set("dune_deposition", dune_deposition.astype(np.float32), "wind_field")
+
     vx = (np.cos(prevailing_direction_rad) * speed + 0.25 * base_speed_mps * perturb_u).astype(np.float32)
     vy = (np.sin(prevailing_direction_rad) * speed + 0.25 * base_speed_mps * perturb_v).astype(np.float32)
 
@@ -352,17 +397,25 @@ def pass_wind_field(
 
     speed = np.sqrt(field[..., 0] ** 2 + field[..., 1] ** 2)
 
+    # FIX-10-H6: build 3D wind field with altitude-dependent log profile
+    hmax = float(stack.height_max_m) if stack.height_max_m is not None else float(np.asarray(stack.height).max())
+    altitudes = _build_altitude_layers(max(hmax, 1.0))
+    wind_3d = _apply_log_wind_profile(field, altitudes)  # (H, W, Z_SLICES)
+    stack.set("wind_field_3d", wind_3d.astype(np.float32), "pass_wind_field")
+
     return PassResult(
         pass_name="wind_field",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("wind_field",),
+        produced_channels=("wind_field", "dune_deposition", "wind_field_3d"),
         metrics={
             "speed_min_mps": float(speed.min()),
             "speed_max_mps": float(speed.max()),
             "speed_mean_mps": float(speed.mean()),
             "direction_rad": direction,
+            "wind_3d_z_slices": Z_SLICES,
+            "wind_3d_alt_max_m": float(altitudes[-1]),
         },
         issues=[],
     )
@@ -376,7 +429,7 @@ def register_bundle_j_wind_field_pass() -> None:
             name="wind_field",
             func=pass_wind_field,
             requires_channels=("height",),
-            produces_channels=("wind_field",),
+            produces_channels=("wind_field", "dune_deposition", "wind_field_3d"),
             seed_namespace="wind_field",
             requires_scene_read=False,
             description="Bundle J: terrain-aware wind field generation",
@@ -385,6 +438,9 @@ def register_bundle_j_wind_field_pass() -> None:
 
 
 __all__ = [
+    "Z_SLICES",
+    "_build_altitude_layers",
+    "_apply_log_wind_profile",
     "_perlin_gradient_field",
     "_spectral_wind_noise",
     "_perlin_like_field",

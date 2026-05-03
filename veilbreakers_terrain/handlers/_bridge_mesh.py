@@ -859,7 +859,7 @@ def _generate_straight_bridge_mesh(
 
     dx = ex - sx
     dy = ey - sy
-    __dz = ez - sz  # retained for parity with original; unused
+    _ = ez - sz  # FIX-11-10: __dz unused; span computed from horizontal dist only
 
     horizontal_dist = math.sqrt(dx * dx + dy * dy)
     span = max(horizontal_dist, 1.0)

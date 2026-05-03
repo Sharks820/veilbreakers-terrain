@@ -153,7 +153,7 @@ MATERIAL_LIBRARY: dict[str, dict[str, Any]] = {
         "macro_normal_strength": 1.0,
     },
     "smooth_stone": {
-        "base_color": (0.18, 0.17, 0.15, 1.0),
+        "base_color": _DARK_STONE_LIGHT,  # FIX-11-17: wire dead constant (light stone variant)
         "roughness": 0.55,
         "roughness_variation": 0.08,
         "metallic": 0.0,
@@ -233,7 +233,7 @@ MATERIAL_LIBRARY: dict[str, dict[str, Any]] = {
 
     # PIPE-041 through PIPE-046: Missing stone/landmark materials
     "stone_dark": {
-        "base_color": (0.11, 0.10, 0.09, 1.0),
+        "base_color": _DARK_STONE_BASE,  # FIX-11-17: wire dead constant
         "roughness": 0.88,
         "roughness_variation": 0.15,
         "metallic": 0.0,
@@ -441,10 +441,10 @@ MATERIAL_LIBRARY: dict[str, dict[str, Any]] = {
     # Metals (5)
     # =======================================================================
     "rusted_iron": {
-        "base_color": _IRON_METAL,
+        "base_color": _RUSTED_IRON_BASE,  # FIX-11-17: wire dead constant (oxidised surface color)
         "roughness": 0.65,
         "roughness_variation": 0.25,
-        "metallic": 1.0,  # PBR: metals must be 1.0; rust shown via high roughness
+        "metallic": 0.1,  # FIX-11-17: rusted iron is partially de-metallic; _RUSTED_IRON_BASE is dielectric rust
         "normal_strength": 0.8,
         "detail_scale": 10.0,
         "wear_intensity": 0.6,
@@ -505,6 +505,45 @@ MATERIAL_LIBRARY: dict[str, dict[str, Any]] = {
         "wear_intensity": 0.15,  # STY-012: minimum wear 0.15 for dark fantasy compliance
         "node_recipe": "metal",
         "coat_weight": 0.5,
+        "micro_normal_strength": 0.7,
+        "meso_normal_strength": 0.3,
+        "macro_normal_strength": 0.3,
+    },
+    "silver_ornament": {  # FIX-11-17: wire _SILVER_METAL dead constant
+        "base_color": _SILVER_METAL,
+        "roughness": 0.25,
+        "roughness_variation": 0.06,
+        "metallic": 1.0,
+        "normal_strength": 0.3,
+        "detail_scale": 18.0,
+        "wear_intensity": 0.15,
+        "node_recipe": "metal",
+        "micro_normal_strength": 0.7,
+        "meso_normal_strength": 0.3,
+        "macro_normal_strength": 0.3,
+    },
+    "copper_fixture": {  # FIX-11-17: wire _COPPER_METAL dead constant
+        "base_color": _COPPER_METAL,
+        "roughness": 0.35,
+        "roughness_variation": 0.10,
+        "metallic": 1.0,
+        "normal_strength": 0.4,
+        "detail_scale": 14.0,
+        "wear_intensity": 0.20,
+        "node_recipe": "metal",
+        "micro_normal_strength": 0.7,
+        "meso_normal_strength": 0.3,
+        "macro_normal_strength": 0.3,
+    },
+    "rusted_iron_light": {  # FIX-11-17: wire _RUSTED_IRON_LIGHT dead constant
+        "base_color": _RUSTED_IRON_LIGHT,
+        "roughness": 0.72,
+        "roughness_variation": 0.20,
+        "metallic": 0.05,
+        "normal_strength": 0.7,
+        "detail_scale": 10.0,
+        "wear_intensity": 0.5,
+        "node_recipe": "metal",
         "micro_normal_strength": 0.7,
         "meso_normal_strength": 0.3,
         "macro_normal_strength": 0.3,
@@ -868,7 +907,7 @@ MATERIAL_LIBRARY: dict[str, dict[str, Any]] = {
         "macro_normal_strength": 1.2,
     },
     "ice_crystal": {
-        "base_color": (0.32, 0.40, 0.50, 1.0),
+        "base_color": _ICE_BLUE,  # FIX-11-17: wire dead constant
         "roughness": 0.10,
         "roughness_variation": 0.05,
         "metallic": 0.0,  # PBR: ice is dielectric, not metallic
@@ -913,7 +952,7 @@ MATERIAL_LIBRARY: dict[str, dict[str, Any]] = {
         "macro_normal_strength": 0.2,
     },
     "blood_splatter": {
-        "base_color": (0.25, 0.17, 0.16, 1.0),  # AAA palette: warmest red strictly under 40% sat cap (sat=36%)
+        "base_color": _BLOOD_RED,  # FIX-11-17: wire dead constant
         "roughness": 0.40,
         "roughness_variation": 0.15,
         "metallic": 0.0,

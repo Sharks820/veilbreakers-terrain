@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional  # FIX-11-9: removed unused 'Tuple'
 
 import numpy as np
 
@@ -48,6 +48,7 @@ from .terrain_semantics import (
     TerrainMaskStack,
     TerrainPipelineState,
 )
+from .terrain_protocol import enforce_protocol  # FIX-9-31
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +93,7 @@ _GAMEPLAY_ZONE_COSTS: Dict[int, Dict[str, Any]] = {
 
 
 def _gameplay_zone_cost_areas(stack: TerrainMaskStack) -> List[Dict[str, Any]]:
-    zones = stack.get("gameplay_zone")
+    zones = stack.get("gameplay_zone", default=None)
     if zones is None:
         return []
     arr = np.asarray(zones)
@@ -183,7 +184,7 @@ def compute_navmesh_area_id(
         out[wfall] = NAVMESH_CLIMB
 
     # 4. Dense forest — REDUCED_SPEED (only within walkable)
-    forest_raw = stack.get("forest_mask")
+    forest_raw = stack.get("forest_mask", default=None)
     if forest_raw is not None:
         dense_forest = (
             np.asarray(forest_raw, dtype=np.float32) > 0.8
@@ -191,14 +192,14 @@ def compute_navmesh_area_id(
         out[dense_forest] = NAVMESH_REDUCED_SPEED
 
     # 5. SWIM — water
-    water_depth_raw = stack.get("water_depth")
+    water_depth_raw = stack.get("water_depth", default=None)
     if water_depth_raw is not None:
         deep_water = np.asarray(water_depth_raw, dtype=np.float32) > 0.5
         out[deep_water] = NAVMESH_SWIM
     else:
-        _ws = stack.get("water_surface_mask")
+        _ws = stack.get("water_surface_mask", default=None)
         if _ws is None:
-            _ws = stack.get("water_surface")
+            _ws = stack.get("water_surface", default=None)
         if _ws is not None:
             swim = np.asarray(_ws, dtype=np.float32) > 0.0
             out[swim] = NAVMESH_SWIM
@@ -209,7 +210,7 @@ def compute_navmesh_area_id(
     out[hard_blocked & ~swim_mask] = NAVMESH_CLIFF_BLOCKED
 
     # 7. Hazard zones — explicit blocked
-    hazard_raw = stack.get("hazard_zone")
+    hazard_raw = stack.get("hazard_zone", default=None)
     if hazard_raw is not None:
         hazard = np.asarray(hazard_raw, dtype=np.float32) > 0.5
         out[hazard & ~swim_mask] = NAVMESH_CLIFF_BLOCKED
@@ -324,9 +325,9 @@ def compute_traversability(
 
     # --- Water penalty ---
     water_cost = np.zeros(shape, dtype=np.float64)
-    _ws_b1b = stack.get("water_surface_mask")
+    _ws_b1b = stack.get("water_surface_mask", default=None)
     if _ws_b1b is None:
-        _ws_b1b = stack.get("water_surface")
+        _ws_b1b = stack.get("water_surface", default=None)
     if _ws_b1b is not None:
         water_cost = np.where(
             np.asarray(_ws_b1b) > 0.0, 0.7, 0.0
@@ -396,16 +397,17 @@ def _build_navmesh_geometry(
     ox = float(stack.world_origin_x)
     oy = float(stack.world_origin_y)
 
-    # Build vertex grid
-    vertices: List[List[float]] = []
-    vert_idx = np.full((rows, cols), -1, dtype=np.int32)
-    for r in range(rows):
-        for c in range(cols):
-            vert_idx[r, c] = len(vertices)
-            wx = ox + c * cs
-            wz = oy + r * cs
-            wy = float(h[r, c])
-            vertices.append([wx, wy, wz])
+    # Build vertex grid — FIX-12-33: use a 2-D index array instead of a Python
+    # dict or nested loop so row/col → vertex-index lookup is O(1) array access.
+    vert_idx = np.arange(rows * cols, dtype=np.int32).reshape(rows, cols)
+    c_idx = np.arange(cols, dtype=np.float64)
+    r_idx = np.arange(rows, dtype=np.float64)
+    wx_grid = ox + c_idx * cs          # shape (cols,)
+    wz_grid = oy + r_idx * cs          # shape (rows,)
+    wx_all = np.broadcast_to(wx_grid, (rows, cols)).ravel()
+    wz_all = np.broadcast_to(wz_grid[:, None], (rows, cols)).ravel()
+    wy_all = h.ravel()
+    vertices: List[List[float]] = np.stack([wx_all, wy_all, wz_all], axis=1).tolist()
 
     _BLOCKED = (NAVMESH_UNWALKABLE, NAVMESH_CLIFF_BLOCKED)
 
@@ -601,6 +603,15 @@ def export_navmesh_json(
     return descriptor
 
 
+@enforce_protocol(  # FIX-9-31
+    require_rule_1=False,
+    require_rule_2=False,
+    require_rule_3=False,
+    require_rule_4=False,
+    require_rule_5=False,
+    require_rule_6=False,
+    require_rule_7=False,
+)
 def pass_navmesh(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -664,6 +675,15 @@ def pass_navmesh(
     )
 
 
+@enforce_protocol(  # FIX-9-31
+    require_rule_1=False,
+    require_rule_2=False,
+    require_rule_3=False,
+    require_rule_4=False,
+    require_rule_5=False,
+    require_rule_6=False,
+    require_rule_7=False,
+)
 def pass_navmesh_export(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -677,22 +697,23 @@ def pass_navmesh_export(
 def register_bundle_j_navmesh_pass() -> None:
     from .terrain_pipeline import TerrainPassController
 
-    for name, func in (("navmesh", pass_navmesh), ("pass_navmesh_export", pass_navmesh_export)):
-        TerrainPassController.register_pass(
-            PassDefinition(
-                name=name,
-                func=func,
-                requires_channels=("height",),
-                produces_channels=("navmesh_area_id", "traversability"),
-                overrides=("navmesh_area_id", "traversability") if name == "pass_navmesh_export" else (),
-                seed_namespace=name,
-                requires_scene_read=False,
-                protocol_enforced=True,
-                protocol_require_rule_5=True,
-                protocol_bulk_edit=True,
-                description="Bundle J: navmesh area classification + traversability gradient",
-            )
+    # FIX-13-15: register only pass_navmesh; pass_navmesh_export was an alias
+    # that caused navmesh to run twice when both were in the same pipeline.
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="navmesh",
+            func=pass_navmesh,
+            requires_channels=("height",),
+            produces_channels=("navmesh_area_id", "traversability"),
+            overrides=(),
+            seed_namespace="navmesh",
+            requires_scene_read=False,
+            protocol_enforced=True,
+            protocol_require_rule_5=True,
+            protocol_bulk_edit=True,
+            description="Bundle J: navmesh area classification + traversability gradient",
         )
+    )
 
 
 __all__ = [

@@ -967,8 +967,8 @@ def write_profile_jsons(root: Path) -> List[Path]:
             # Clean up the temp file on failure to avoid stale .tmp files
             try:
                 tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:  # FIX-11-5
+                _log.debug("tmp profile cleanup failed: %s", e)  # FIX-11-5
             raise
         written.append(out)
 

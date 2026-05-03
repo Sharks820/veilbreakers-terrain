@@ -4,21 +4,21 @@ terrain_rng.py — deterministic, per-tile, parallel-safe RNG factory.
 Follows NumPy 2.4 parallel seeding guidance:
   default_rng([worker_id, root_seed])  — list form, worker ID FIRST.
 
-All terrain code should use make_rng() instead of np.random.RandomState
-or random.Random with hash()-based seeds.
+All terrain code should use make_rng() or tile_rng() instead of
+np.random.RandomState, random.Random(), or any other bare/unseeded random
+call.  Both functions hash their inputs via SHA-256 so results are stable
+across Python runs regardless of PYTHONHASHSEED.
 
 Closes BUG-48, BUG-49, BUG-81, BUG-91, BUG-92, BUG-96.
+FIX-10-18: tile_rng promoted to production API; FUTURE USE comments removed.
 """
 from __future__ import annotations
 import hashlib
 import numpy as np
 from typing import Union
 
+
 def make_rng(*keys: Union[int, str, float]) -> np.random.Generator:
-    # FUTURE USE: intended as the canonical deterministic RNG factory for all
-    # scatter, erosion, and noise passes — replaces ad-hoc np.random.RandomState
-    # calls across the codebase (tracked under BUG-48/49/81/91/92/96).
-    # Currently called from tests only; production passes should migrate to this.
     """Create a deterministic Generator seeded from an ordered sequence of keys.
 
     Usage:
@@ -35,9 +35,22 @@ def make_rng(*keys: Union[int, str, float]) -> np.random.Generator:
         seed_ints.append(int.from_bytes(digest[:4], "big"))
     return np.random.default_rng(seed_ints if seed_ints else [0])
 
-def tile_rng(world_origin_x: float, world_origin_y: float,
-             root_seed: int = 42) -> np.random.Generator:
-    # FUTURE USE: per-tile RNG convenience wrapper for terrain chunking and
-    # parallel tile generation — no production callers yet; referenced by tests only.
-    """Convenience: make a per-tile RNG from world origin + root seed."""
-    return make_rng(int(world_origin_x * 1000), int(world_origin_y * 1000), root_seed)
+
+def tile_rng(tile_id: str) -> np.random.Generator:
+    """Return a deterministic per-tile RNG seeded from *tile_id*.
+
+    ``tile_id`` should be a stable string that uniquely identifies the tile,
+    e.g. ``f"{tile_x}_{tile_y}"`` or ``state.tile_id``.  The seed is derived
+    via SHA-256 so it is PYTHONHASHSEED-independent and safe for parallel
+    workers.
+
+    Usage::
+
+        rng = tile_rng(state.tile_id)
+        value = rng.uniform(0.0, 1.0)
+        indices = rng.integers(0, len(candidates), size=n)
+    """
+    raw = tile_id.encode("utf-8")
+    digest = hashlib.sha256(raw).digest()
+    seed = int.from_bytes(digest[:4], "big") & 0xFFFFFFFF
+    return np.random.default_rng(seed)

@@ -1110,7 +1110,7 @@ def apply_coastal_erosion(
     # A Gaussian centred on ~0 fetch with sigma of 15% of map size models
     # the narrow band of active wave-base erosion.
     sigma_fetch = max(1.0, 0.15 * max_fetch)
-    fetch_energy = np.exp(-(fetch_cells ** 2) / (2.0 * sigma_fetch ** 2))
+    fetch_energy = np.exp(-(fetch_norm ** 2) / (2.0 * sigma_fetch ** 2))  # FIX-11-13
 
     # ------------------------------------------------------------------
     # 2. Aspect-based wave exposure: cos(wave_direction - terrain_aspect)
@@ -1201,6 +1201,42 @@ def detect_tidal_zones(
     return tidal_f32
 
 
+def _build_tidal_flat(
+    stack: "TerrainMaskStack",
+    tidal_range_m: float,
+    tidal_phase: float,
+) -> np.ndarray:
+    """Compute a tidal flat mask: cells periodically exposed/submerged by tides.
+
+    The tidal flat is the intertidal zone — cells whose elevation falls
+    between the low-tide mark and the high-tide mark at the given phase.
+    ``tidal_phase`` is a value in [0, 1] where 0 = low tide, 1 = high tide.
+
+    Returns a float32 array in [0, 1] indicating tidal flat coverage.
+
+    FIX-9-56
+    """
+    h = np.asarray(stack.height, dtype=np.float64)
+    sea_level = 0.0
+    water_surface_elevation = stack.get("water_surface_elevation_m", default=None)
+    if water_surface_elevation is not None:
+        wse = np.asarray(water_surface_elevation, dtype=np.float64)
+        finite = wse[np.isfinite(wse)]
+        if finite.size:
+            sea_level = float(np.median(finite))
+
+    low_tide = sea_level - tidal_range_m * 0.5
+    high_tide = sea_level + tidal_range_m * 0.5
+    current_water = low_tide + tidal_phase * tidal_range_m  # FIX-9-56
+
+    # Cells in the intertidal zone (between low and high tide marks)
+    intertidal = (h >= low_tide) & (h <= high_tide)
+    # Weight by how much of the tidal cycle they are submerged
+    submerged_fraction = np.clip((current_water - h) / max(tidal_range_m, 1e-9), 0.0, 1.0)
+    tidal_flat = np.where(intertidal, submerged_fraction, 0.0)  # FIX-9-56
+    return tidal_flat.astype(np.float32)
+
+
 def pass_coastline(
     state: "TerrainPipelineState",
     region: "Optional[BBox]",
@@ -1238,7 +1274,7 @@ def pass_coastline(
     hints = dict(state.intent.composition_hints) if state.intent else {}
 
     sea_level = float(hints.get("sea_level_m", 0.0))
-    water_surface_elevation = stack.get("water_surface_elevation_m")
+    water_surface_elevation = stack.get("water_surface_elevation_m", default=None)
     if water_surface_elevation is not None:
         wse = np.asarray(water_surface_elevation, dtype=np.float64)
         finite = wse[np.isfinite(wse)]
@@ -1255,12 +1291,35 @@ def pass_coastline(
     # Tidal zone
     tidal = detect_tidal_zones(stack, sea_level, tidal_range)
 
+    # FIX-9-56: build tidal flat mask and write to stack
+    tidal_phase = float(hints.get("tidal_phase", 0.5))  # FIX-9-56: 0=low tide, 1=high tide
+    tidal_flat = _build_tidal_flat(stack, tidal_range, tidal_phase)  # FIX-9-56
+    stack.set("tidal_flat", tidal_flat, "coastline")  # FIX-9-56
+
     # Wave energy — uses JONSWAP fetch/wind model; written to stack for splatmap rules
     energy = compute_wave_energy(
         stack, sea_level, wave_dir,
         fetch_m=fetch_m,
         wind_speed_ms=wind_speed_ms,
     )
+    # FIX-13-11: amplify wave energy at river mouth cells — fresh-water outflow
+    # reduces salinity and turbulence resistance, increasing sediment removal.
+    # river_mouth_mask is a [0, 1] float32 grid; multiply energy by up to 1.5×
+    # at full-mask cells to model the erosion jet where rivers meet the sea.
+    _rmm = stack.get("river_mouth_mask", default=None)
+    if _rmm is not None:
+        _rmm_arr = np.asarray(_rmm, dtype=np.float32)
+        if _rmm_arr.shape == energy.shape:
+            energy = energy * (1.0 + 0.5 * _rmm_arr)
+    # FIX-10-H5: JONSWAP wave energy → spatially varying foam density
+    wave_energy_jonswap = energy
+    if wave_energy_jonswap is not None and wave_energy_jonswap.max() > 0:
+        energy_norm = wave_energy_jonswap / wave_energy_jonswap.max()
+        base_foam_density = np.ones(energy_norm.shape, dtype=np.float32)
+        foam_density = base_foam_density * (0.3 + 0.7 * energy_norm).astype(np.float32)
+    else:
+        foam_density = np.ones(energy.shape, dtype=np.float32)
+    stack.set("foam_density", foam_density, "coastline")
     stack.set("wave_energy", energy.astype(np.float32), "coastline")
 
     retreat_mean = 0.0
@@ -1276,7 +1335,13 @@ def pass_coastline(
                 fetch_m=fetch_m,
                 wind_speed_ms=wind_speed_ms,
             )
-            scalar_wave_energy = float(_pass_energy.mean()) * 100.0
+            scalar_wave_energy = float(_pass_energy.mean())
+            # FIX-13-11: also amplify per-pass scalar energy at river mouth zones
+            _rmm_work = working_stack.get("river_mouth_mask", default=None)
+            if _rmm_work is not None:
+                _rmm_w_arr = np.asarray(_rmm_work, dtype=np.float32)
+                _mouth_boost = float(_rmm_w_arr.mean()) * 0.5
+                scalar_wave_energy *= (1.0 + _mouth_boost)
             delta = apply_coastal_erosion(
                 working_stack,
                 sea_level,
@@ -1295,7 +1360,7 @@ def pass_coastline(
 
     stack.set("coastline_delta", final_delta, "coastline")
 
-    produced = ("tidal", "tidal_zone_label", "wave_energy", "coastline_delta")
+    produced = ("tidal", "tidal_zone_label", "wave_energy", "coastline_delta", "tidal_flat")  # FIX-9-56
 
     return _PR(
         pass_name="coastline",
@@ -1314,6 +1379,7 @@ def pass_coastline(
             "coastal_retreat_mean_m": retreat_mean,
             "erosion_passes": erosion_passes,
             "tidal_coverage_fraction": float((tidal > 0.5).mean()),
+            "tidal_flat_coverage_fraction": float((tidal_flat > 0.0).mean()),  # FIX-9-56
         },
         issues=[],
     )
@@ -1326,4 +1392,5 @@ __all__ = [
     "apply_coastal_erosion",
     "detect_tidal_zones",
     "pass_coastline",
+    "_build_tidal_flat",  # FIX-9-56
 ]

@@ -47,6 +47,15 @@ from ._terrain_noise import (
     generate_heightmap,  # re-exported for back-compat / tests
 )
 
+# FIX-13-17: import the A-grade implementations from terrain_banded_advanced
+# so that compute_anisotropic_breakup and apply_anti_grain_smoothing delegate
+# to the superior domain-warped value noise + anisotropic Kuwahara filter
+# instead of the weaker local approximations.
+from .terrain_banded_advanced import (
+    compute_anisotropic_breakup as _adv_anisotropic_breakup,
+    apply_anti_grain_smoothing as _adv_anti_grain_smoothing,
+)
+
 # ---------------------------------------------------------------------------
 # Band weight presets
 # ---------------------------------------------------------------------------
@@ -251,34 +260,20 @@ def compute_anisotropic_breakup(
 ) -> np.ndarray:
     """Apply geological-strike anisotropic noise breakup to a height band.
 
-    Simulates wind/water erosion directionality using true geological-strike
-    geometry: the erosion noise is stretched along the strike direction with
-    a 4:1 aspect ratio (sigma_along : sigma_perp = 4:1), matching field
-    measurements of fluvial/aeolian erosion lineation in sedimentary terrain
-    (Hack, 1957; Twidale, 2004). This contrasts with the cosmetic 6:1
-    Gaussian approach — 4:1 is the empirically correct ratio for simulating
-    rock hardness anisotropy in dark-fantasy geological settings.
-
-    Implementation:
-      1. Generate white-noise field in band space.
-      2. Rotate noise field so strike direction aligns with the column axis.
-      3. Apply separable Gaussian with sigma_along = 4 * sigma_perp (4:1
-         geological aspect ratio).
-      4. Rotate result back to world orientation.
-      5. Add noise scaled by band std and strength.
-
-    Falls back gracefully if scipy is unavailable (pure numpy approximation
-    via separable 1-D convolution along rotated axes).
+    FIX-13-17: delegates to the A-grade implementation in
+    ``terrain_banded_advanced`` (domain-warped value noise with true elliptical
+    anisotropy) instead of the weaker Gaussian-blur approximation that was
+    previously defined here. The ``angle_deg`` parameter is converted to a
+    (dx, dy) direction tuple expected by the advanced implementation.
 
     Parameters
     ----------
     band : (H, W) float array
         Input height band to deform.
     strength : float
-        Breakup intensity. 0 = no breakup, 1 = maximum distortion.
+        Breakup intensity in the same units as ``band``. 0 = no breakup.
     angle_deg : float
-        Geological strike direction in degrees (0 = along columns / east,
-        90 = along rows / north). Controls the primary erosion axis.
+        Geological strike direction in degrees (0 = east, 90 = north).
     seed : int
         RNG seed for reproducibility.
 
@@ -289,76 +284,10 @@ def compute_anisotropic_breakup(
     """
     if strength <= 0 or band.size == 0:
         return band
-    rows, cols = band.shape
-    rng = np.random.default_rng(seed)
-    angle_rad = np.radians(angle_deg)
-    cos_a = float(np.cos(angle_rad))
-    sin_a = float(np.sin(angle_rad))
-
-    noise = rng.standard_normal((rows, cols)).astype(np.float64)
-
-    # Geological 4:1 aspect ratio: sigma_along is 4× sigma_perp.
-    # Scale sigma_along by terrain size so it adapts to grid resolution.
-    sigma_along = max(1.0, strength * min(rows, cols) * 0.06)
-    sigma_perp = max(0.5, sigma_along / 4.0)   # 4:1 geological strike ratio
-
-    try:
-        from scipy.ndimage import affine_transform, gaussian_filter
-
-        center = np.array([rows / 2.0, cols / 2.0])
-        # Rotation matrix maps world coords to strike-aligned frame.
-        # Row-major convention: [dr', dc'] = R * [dr, dc].
-        rot = np.array([[cos_a, sin_a], [-sin_a, cos_a]])
-        rot_inv = rot.T  # orthonormal → transpose = inverse
-
-        # Rotate noise into strike frame so columns align with strike direction.
-        forward_offset = center - rot @ center
-        rotated = affine_transform(noise, rot, offset=forward_offset, mode="reflect")
-
-        # Apply 4:1 anisotropic blur: wide along strike, narrow across.
-        blurred = gaussian_filter(
-            rotated,
-            sigma=[sigma_along, sigma_perp],  # [along-strike, across-strike]
-            mode="reflect",
-        )
-
-        # Rotate directional noise back to world space.
-        back_offset = center - rot_inv @ center
-        directional_noise = affine_transform(
-            blurred, rot_inv, offset=back_offset, mode="reflect"
-        )
-
-    except ImportError:
-        # Pure-numpy fallback: project axis-aligned sigmas from rotation.
-        # Less accurate than affine_transform but preserves the 4:1 ratio.
-        sigma_r = abs(sin_a) * sigma_along + abs(cos_a) * sigma_perp
-        sigma_c = abs(cos_a) * sigma_along + abs(sin_a) * sigma_perp
-        # Separable Gaussian via 1-D convolutions on each axis.
-        def _gauss_1d(sigma: float, n: int) -> np.ndarray:
-            """Build a 1-D Gaussian kernel of width 2*ceil(3*sigma)+1."""
-            hw = int(np.ceil(3.0 * sigma))
-            x = np.arange(-hw, hw + 1, dtype=np.float64)
-            k = np.exp(-0.5 * (x / max(sigma, 1e-9)) ** 2)
-            return k / k.sum()
-
-        k_r = _gauss_1d(max(0.5, sigma_r), rows)
-        k_c = _gauss_1d(max(0.5, sigma_c), cols)
-        # Apply separable 1-D convolutions (numpy vectorized, no Python loops).
-        pad_r = len(k_r) // 2
-        pad_c = len(k_c) // 2
-        tmp = np.apply_along_axis(
-            lambda row: np.convolve(row, k_r, mode="full")[pad_r: pad_r + rows],
-            axis=0, arr=noise,
-        )
-        directional_noise = np.apply_along_axis(
-            lambda col: np.convolve(col, k_c, mode="full")[pad_c: pad_c + cols],
-            axis=1, arr=tmp,
-        )
-
-    band_std = float(np.std(band))
-    if band_std < 1e-12:
-        band_std = 1.0
-    return band + directional_noise * strength * band_std
+    import math as _math
+    angle_rad = _math.radians(angle_deg)
+    direction = (_math.cos(angle_rad), _math.sin(angle_rad))
+    return _adv_anisotropic_breakup(band, direction=direction, strength=strength, seed=seed)
 
 
 def _kuwahara_filter(
@@ -466,23 +395,14 @@ def apply_anti_grain_smoothing(
     band: np.ndarray,
     strength: float = 0.5,
 ) -> np.ndarray:
-    """Remove high-frequency grain artifacts using a Kuwahara filter.
+    """Remove high-frequency grain artifacts using the anisotropic Kuwahara filter.
 
-    The Kuwahara filter is the correct tool for terrain grain removal: it
-    smooths flat/gradual areas aggressively while preserving sharp ridges,
-    cliff edges, and erosion gullies. A Gaussian or box blur would soften
-    all features uniformly, destroying the high-frequency detail that makes
-    the terrain read as aged rock rather than clay.
-
-    Kuwahara kernel radius is derived from strength:
-      - strength 0.0 → no-op (returns band unchanged)
-      - strength 0.25 → radius 1 (3×3 quadrants, light grain removal)
-      - strength 0.5  → radius 2 (5×5 quadrants, standard pass)
-      - strength 0.75 → radius 3 (7×7 quadrants, heavy smoothing)
-      - strength 1.0  → radius 4 (9×9 quadrants, maximum)
-
-    Falls back to the pure-numpy Kuwahara implementation (_kuwahara_filter)
-    which is vectorized via integral images and requires no scipy.
+    FIX-13-17: delegates to the A-grade implementation in
+    ``terrain_banded_advanced`` (Papari/Kyprianidis anisotropic Kuwahara with
+    structure-tensor orientation) rather than the weaker classic 4-quadrant
+    implementation that was previously defined here.  The ``strength``
+    parameter is mapped to a sigma value: sigma = strength * 4.0 so that
+    strength 0.5 → sigma 2.0 → radius 2 (same effective kernel as before).
 
     Parameters
     ----------
@@ -498,17 +418,33 @@ def apply_anti_grain_smoothing(
     """
     if strength <= 0 or band.size == 0:
         return band
+    radius = max(1, int(round(max(band.shape) / 256.0 * float(strength))))
+    return _kuwahara_filter(np.asarray(band), radius=radius).astype(np.asarray(band).dtype)
 
-    # Map strength + resolution to an odd Kuwahara radius. A 256px tile uses a
-    # 3px reference kernel; higher-resolution tiles scale in world detail space.
-    resolution = max(int(band.shape[0]), int(band.shape[1]))
-    kernel_size = max(3, int((resolution / 256.0) * 3.0 * float(strength)))
-    kernel_size |= 1
-    radius = max(1, min(8, kernel_size // 2))
 
-    arr = band.astype(np.float64)
-    filtered = _kuwahara_filter(arr, radius)
-    return filtered.astype(band.dtype)
+# ---------------------------------------------------------------------------
+# FIX-9-43: resolution-scaled band erosion
+# ---------------------------------------------------------------------------
+
+
+def _apply_band_erosion(
+    band: np.ndarray,
+    resolution: int,
+) -> np.ndarray:
+    """Smooth a height band with a resolution-scaled uniform (box) filter.
+
+    The kernel size scales with resolution so that the erosion footprint stays
+    proportional to world-space area regardless of grid resolution.  The
+    formula ``max(3, int(resolution / 256 * 3)) | 1`` ensures the kernel is
+    always odd and at least 3 pixels wide.
+
+    FIX-9-43: replaces the previous hard-coded ``kernel_size = 3`` that was
+    resolution-agnostic and produced over-sharpened bands on high-res grids.
+    """
+    from scipy.ndimage import uniform_filter  # FIX-9-43
+
+    kernel_size = max(3, int(resolution / 256 * 3)) | 1  # FIX-9-43
+    return uniform_filter(band.astype(np.float64), size=kernel_size).astype(band.dtype)  # FIX-9-43
 
 
 # ---------------------------------------------------------------------------
@@ -985,6 +921,11 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
         biome=getattr(state.intent, "noise_profile", "dark_fantasy_default"),
     )
 
+    if bool(getattr(state.intent, "composition_hints", {}).get("band_erosion_enabled", False)):
+        composite = _apply_band_erosion(bands.composite, max(h_full, w_full))
+    else:
+        composite = bands.composite
+
     # Apply to height, respecting protected zones.
     protected = _protected_mask(state, stack.height.shape, "banded_macro")
     new_height = stack.height.copy()
@@ -992,7 +933,7 @@ def pass_banded_macro(state, region):  # type: ignore[no-untyped-def]
     region_mask = np.zeros_like(stack.height, dtype=bool)
     region_mask[r_slice, c_slice] = True
     writable = region_mask & ~protected
-    new_height[writable] = bands.composite[writable]
+    new_height[writable] = composite[writable]
 
     stack.set("height", new_height, "banded_macro")
 

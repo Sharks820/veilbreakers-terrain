@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import math
 import random
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -52,12 +52,64 @@ from ._scatter_engine import (
     lloyd_relax_points,
     context_scatter,
     generate_breakable_variants,
-    cluster_density_map,
-    edge_scatter,
+    # cluster_density_map,  # FIX-11-9: unused import removed
+    # edge_scatter,          # FIX-11-9: unused import removed
     apply_collision_exclusion,
 )
 from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
+
+
+# ---------------------------------------------------------------------------
+# FIX-8-17: shared candidate pool — generate once, partition by suitability
+# ---------------------------------------------------------------------------
+
+class _ScatterCandidate(NamedTuple):
+    """Lightweight candidate point with a suitability score in [0, 1].
+
+    suitability > 0.7  → structural (trees, large props)
+    0.3 < suitability ≤ 0.7 → ground cover (grass, bushes)
+    suitability ≤ 0.3 → debris (rocks, small props)
+    """
+    x: float
+    y: float
+    suitability: float
+
+
+def _generate_shared_poisson_candidates(
+    heightmap: "np.ndarray",
+    slope_map: "np.ndarray",
+    terrain_width: float,
+    terrain_height: float,
+    min_dist: float,
+    seed: int,
+) -> "list[_ScatterCandidate]":
+    """Generate one Poisson-disk pool and score each point by terrain suitability.
+
+    Suitability combines normalised height and inverse slope so that elevated
+    flat areas score high (→ structure) and steep low areas score low (→
+    debris).  The shared pool is generated once and partitioned by the caller,
+    avoiding three separate Poisson-disk runs that produce overlapping point
+    clouds.
+    """
+    raw_pts = poisson_disk_sample(terrain_width, terrain_height, min_dist, seed=seed)
+    rows, cols = heightmap.shape
+    candidates: list[_ScatterCandidate] = []
+    h_min = float(heightmap.min())
+    h_range = float(heightmap.max()) - h_min
+    if h_range < 1e-9:
+        h_range = 1.0
+    slope_max = float(slope_map.max()) if slope_map.size > 0 else 1.0
+    if slope_max < 1e-9:
+        slope_max = 1.0
+    for px, py in raw_pts:
+        ci = min(int(px / terrain_width * cols), cols - 1)
+        ri = min(int(py / terrain_height * rows), rows - 1)
+        h_norm = (float(heightmap[ri, ci]) - h_min) / h_range
+        s_norm = float(slope_map[ri, ci]) / slope_max
+        suitability = float(np.clip(0.6 * h_norm + 0.4 * (1.0 - s_norm), 0.0, 1.0))
+        candidates.append(_ScatterCandidate(x=px, y=py, suitability=suitability))
+    return candidates
 # L-3: generate_billboard_impostor is from the deprecated D-grade L-system pipeline.
 # Import lazily so failures are non-fatal; call sites should migrate to a proper
 # N-view Blender bake via Phase 9C of the 12-phase plan.
@@ -78,7 +130,7 @@ except ImportError:
             "vegetation_lsystem.generate_billboard_impostor unavailable (L-3); "
             "implement N-view Blender atlas bake in Phase 9C of the 12-phase plan."
         )
-from .lod_pipeline import generate_lod_chain
+# from .lod_pipeline import generate_lod_chain  # FIX-11-9: unused import removed
 from .terrain_semantics import WorldHeightTransform
 from .terrain_scatter_points import ScatterPoint, ScatterPointTable, validate_scatter_point_table
 
@@ -349,24 +401,25 @@ def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
 
     mesh = terrain_obj.data
     bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bm.verts.ensure_lookup_table()
-    vert_count = len(bm.verts)
+    try:
+        bm.from_mesh(mesh)
+        bm.verts.ensure_lookup_table()
+        vert_count = len(bm.verts)
 
-    # Detect actual grid dims by counting unique X and Y positions (handles non-square terrain)
-    xs = set(round(v.co.x, 3) for v in bm.verts)
-    ys = set(round(v.co.y, 3) for v in bm.verts)
-    cols, rows = len(xs), len(ys)
-    if cols * rows != vert_count or cols < 2 or rows < 2:
-        # Fallback: assume square grid
-        side = int(math.sqrt(vert_count))
-        if side < 2 or side * side != vert_count:
-            bm.free()
-            return None
-        rows, cols = side, side
+        # Detect actual grid dims by counting unique X and Y positions (handles non-square terrain)
+        xs = set(round(v.co.x, 3) for v in bm.verts)
+        ys = set(round(v.co.y, 3) for v in bm.verts)
+        cols, rows = len(xs), len(ys)
+        if cols * rows != vert_count or cols < 2 or rows < 2:
+            # Fallback: assume square grid
+            side = int(math.sqrt(vert_count))
+            if side < 2 or side * side != vert_count:
+                return None
+            rows, cols = side, side
 
-    heights = np.array([v.co.z for v in bm.verts], dtype=np.float64)
-    bm.free()
+        heights = np.array([v.co.z for v in bm.verts], dtype=np.float64)
+    finally:
+        bm.free()
     transform = WorldHeightTransform(
         world_min=float(heights.min()) if heights.size else 0.0,
         world_max=float(heights.max()) if heights.size else 1.0,
@@ -712,7 +765,9 @@ def _resolve_scatter_context_maps(
         water_map = np.maximum.reduce(water_layers).astype(np.float32, copy=False)
 
     disturbance_layers: list[np.ndarray] = []
-    for key in ("disturbance_patch_mask", "erosion_amount", "erosion_delta", "deposition_amount"):
+    # FIX-13-3: "erosion_delta" was a phantom read — channel never written.
+    # Stratigraphy writes "strat_erosion_delta"; use that name.
+    for key in ("disturbance_patch_mask", "erosion_amount", "strat_erosion_delta", "deposition_amount"):
         candidate = _resize_scatter_map(_stack_value(stack, key), target_shape)
         if candidate is None:
             continue
@@ -919,8 +974,8 @@ def _resolve_prototype_id(
             entry = resolve_fn(species_id)
             if not entry.get("fallback") and entry.get("unity_asset_path"):
                 return str(entry["unity_asset_path"])
-        except Exception:
-            pass
+        except Exception as e:  # FIX-11-5
+            logger.debug("resolve_fn failed for species %r: %s", species_id, e)  # FIX-11-5
     return species_id
 
 
@@ -1034,6 +1089,32 @@ def _generate_multipass_scatter_placements(
         building_zones_world or [],
         terrain_origin_x=terrain_origin_x,
         terrain_origin_y=terrain_origin_y,
+    )
+
+    # FIX-8-17: shared candidate pool — generate once, partition by type.
+    # Use the coarsest (largest) separation so the pool covers all pass types
+    # without under-sampling structure slots.
+    _shared_min_dist = max(0.9, 1.5 * float(separation_scale))
+    _shared_candidates = _generate_shared_poisson_candidates(
+        heightmap,
+        slope_map,
+        terrain_width=terrain_width,
+        terrain_height=terrain_height,
+        min_dist=_shared_min_dist,
+        seed=seed,
+    )
+    # Partition: structure → high suitability, ground_cover → mid, debris → low
+    _structure_hint_pts = [(c.x, c.y) for c in _shared_candidates if c.suitability > 0.7]
+    _ground_hint_pts    = [(c.x, c.y) for c in _shared_candidates if 0.3 < c.suitability <= 0.7]
+    _debris_hint_pts    = [(c.x, c.y) for c in _shared_candidates if c.suitability <= 0.3]
+    # Log sizes so pipeline auditors can verify the partition is non-empty
+    _log = logging.getLogger(__name__)
+    _log.debug(
+        "FIX-8-17 shared pool: total=%d structure=%d ground_cover=%d debris=%d",
+        len(_shared_candidates),
+        len(_structure_hint_pts),
+        len(_ground_hint_pts),
+        len(_debris_hint_pts),
     )
 
     terrain_size = max(terrain_width, terrain_height, 1.0)
@@ -1585,32 +1666,32 @@ def _create_vegetation_template(
     # pattern for types without a registered generator.
     mesh = bpy.data.meshes.new(f"_template_{veg_type}")
     bm_local = bmesh.new()
+    try:
+        if veg_type in ("grass", "weed"):
+            # Low billboard plane — ground-level cover
+            bmesh.ops.create_grid(bm_local, x_segments=1, y_segments=1, size=0.3)
+            # Rotate to stand vertically (Z-up convention for billboard grass)
+            bmesh.ops.rotate(  # FIX-11-9: removed unused 'import bmesh as _bmesh_mod'
+                bm_local,
+                cent=(0, 0, 0),
+                matrix=__import__("mathutils").Matrix.Rotation(math.radians(90), 3, "X"),
+                verts=bm_local.verts,
+            )
+        else:
+            # Generic vertical billboard — readable silhouette for any plant type
+            bmesh.ops.create_grid(bm_local, x_segments=1, y_segments=1, size=0.5)
+            bmesh.ops.rotate(
+                bm_local,
+                cent=(0, 0, 0),
+                matrix=__import__("mathutils").Matrix.Rotation(math.radians(90), 3, "X"),
+                verts=bm_local.verts,
+            )
+            # Shift up so the base of the billboard sits at Z=0 (not centred)
+            bmesh.ops.translate(bm_local, vec=(0, 0, 0.25), verts=bm_local.verts)
 
-    if veg_type in ("grass", "weed"):
-        # Low billboard plane — ground-level cover
-        bmesh.ops.create_grid(bm_local, x_segments=1, y_segments=1, size=0.3)
-        # Rotate to stand vertically (Z-up convention for billboard grass)
-        import bmesh as _bmesh_mod
-        bmesh.ops.rotate(
-            bm_local,
-            cent=(0, 0, 0),
-            matrix=__import__("mathutils").Matrix.Rotation(math.radians(90), 3, "X"),
-            verts=bm_local.verts,
-        )
-    else:
-        # Generic vertical billboard — readable silhouette for any plant type
-        bmesh.ops.create_grid(bm_local, x_segments=1, y_segments=1, size=0.5)
-        bmesh.ops.rotate(
-            bm_local,
-            cent=(0, 0, 0),
-            matrix=__import__("mathutils").Matrix.Rotation(math.radians(90), 3, "X"),
-            verts=bm_local.verts,
-        )
-        # Shift up so the base of the billboard sits at Z=0 (not centred)
-        bmesh.ops.translate(bm_local, vec=(0, 0, 0.25), verts=bm_local.verts)
-
-    bm_local.to_mesh(mesh)
-    bm_local.free()
+        bm_local.to_mesh(mesh)
+    finally:
+        bm_local.free()
 
     obj = bpy.data.objects.new(f"_template_{veg_type}", mesh)
     collection.objects.link(obj)
@@ -1927,65 +2008,66 @@ def create_leaf_card_tree(
 
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
+    try:
+        # Trunk: 6-segment tapered cylinder
+        trunk_radius = height * 0.06
+        trunk_segments = 6
+        trunk_verts_bottom = []
+        trunk_verts_top = []
+        for i in range(trunk_segments):
+            angle = math.radians(i * 360.0 / trunk_segments)
+            x = math.cos(angle) * trunk_radius
+            y = math.sin(angle) * trunk_radius
+            trunk_verts_bottom.append(bm.verts.new((position[0] + x, position[1] + y, position[2])))
+            trunk_verts_top.append(bm.verts.new((
+                position[0] + x * 0.7,
+                position[1] + y * 0.7,
+                position[2] + height * 0.55,
+            )))
 
-    # Trunk: 6-segment tapered cylinder
-    trunk_radius = height * 0.06
-    trunk_segments = 6
-    trunk_verts_bottom = []
-    trunk_verts_top = []
-    for i in range(trunk_segments):
-        angle = math.radians(i * 360.0 / trunk_segments)
-        x = math.cos(angle) * trunk_radius
-        y = math.sin(angle) * trunk_radius
-        trunk_verts_bottom.append(bm.verts.new((position[0] + x, position[1] + y, position[2])))
-        trunk_verts_top.append(bm.verts.new((
-            position[0] + x * 0.7,
-            position[1] + y * 0.7,
-            position[2] + height * 0.55,
-        )))
+        # Trunk wind vertex colors (SpeedTree packing):
+        # WORLD-006: guard against duplicate layer creation
+        wind_layer = bm.verts.layers.float_color.get("wind_vc")
+        if wind_layer is None:
+            wind_layer = bm.verts.layers.float_color.new("wind_vc")
+        trunk_phase = 0.0
+        for v in trunk_verts_bottom:
+            v[wind_layer] = (trunk_phase, 0.0, 0.5, 0.0)   # base: stationary
+        for v in trunk_verts_top:
+            v[wind_layer] = (trunk_phase, 0.2, 0.6, 0.0)   # top: gentle sway
 
-    # Trunk wind vertex colors (SpeedTree packing):
-    # WORLD-006: guard against duplicate layer creation
-    wind_layer = bm.verts.layers.float_color.get("wind_vc")
-    if wind_layer is None:
-        wind_layer = bm.verts.layers.float_color.new("wind_vc")
-    trunk_phase = 0.0
-    for v in trunk_verts_bottom:
-        v[wind_layer] = (trunk_phase, 0.0, 0.5, 0.0)   # base: stationary
-    for v in trunk_verts_top:
-        v[wind_layer] = (trunk_phase, 0.2, 0.6, 0.0)   # top: gentle sway
+        # Trunk faces
+        for i in range(trunk_segments):
+            j = (i + 1) % trunk_segments
+            try:
+                bm.faces.new([
+                    trunk_verts_bottom[i],
+                    trunk_verts_bottom[j],
+                    trunk_verts_top[j],
+                    trunk_verts_top[i],
+                ])
+            except ValueError:
+                pass
 
-    # Trunk faces
-    for i in range(trunk_segments):
-        j = (i + 1) % trunk_segments
-        try:
-            bm.faces.new([
-                trunk_verts_bottom[i],
-                trunk_verts_bottom[j],
-                trunk_verts_top[j],
-                trunk_verts_top[i],
-            ])
-        except ValueError:
-            pass
+        # Canopy: leaf card planes with backface duplicates and species/age atlas UVs
+        canopy_center = (
+            position[0],
+            position[1],
+            position[2] + height * 0.65,
+        )
+        num_planes_clamped = max(6, min(12, num_planes))
+        _add_leaf_card_canopy(
+            bm,
+            canopy_center,
+            canopy_radius,
+            num_planes_clamped,
+            rng,
+            species_row=species_variant,
+        )
 
-    # Canopy: leaf card planes with backface duplicates and species/age atlas UVs
-    canopy_center = (
-        position[0],
-        position[1],
-        position[2] + height * 0.65,
-    )
-    num_planes_clamped = max(6, min(12, num_planes))
-    _add_leaf_card_canopy(
-        bm,
-        canopy_center,
-        canopy_radius,
-        num_planes_clamped,
-        rng,
-        species_row=species_variant,
-    )
-
-    bm.to_mesh(mesh)
-    bm.free()
+        bm.to_mesh(mesh)
+    finally:
+        bm.free()
 
     for poly in mesh.polygons:
         poly.use_smooth = True
@@ -2063,67 +2145,68 @@ def _create_grass_card(
     name = f"GrassCard_{biome}_{seed}"
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
+    try:
+        # WORLD-006: guard against duplicate layer creation
+        wind_layer = bm.verts.layers.float_color.get("wind_vc")
+        if wind_layer is None:
+            wind_layer = bm.verts.layers.float_color.new("wind_vc")
 
-    # WORLD-006: guard against duplicate layer creation
-    wind_layer = bm.verts.layers.float_color.get("wind_vc")
-    if wind_layer is None:
-        wind_layer = bm.verts.layers.float_color.new("wind_vc")
+        mid_z = height * 0.5
+        bend_offset = height * 0.08  # slight forward bend at mid-point for arc silhouette
+        w = height * 0.18            # blade width proportional to height
 
-    mid_z = height * 0.5
-    bend_offset = height * 0.08  # slight forward bend at mid-point for arc silhouette
-    w = height * 0.18            # blade width proportional to height
+        def _add_blade(angle_deg: float, width_scale: float) -> None:
+            """Add one V-bent 2-quad blade rotated by angle_deg around Z."""
+            cos_a = math.cos(math.radians(angle_deg))
+            sin_a = math.sin(math.radians(angle_deg))
 
-    def _add_blade(angle_deg: float, width_scale: float) -> None:
-        """Add one V-bent 2-quad blade rotated by angle_deg around Z."""
-        cos_a = math.cos(math.radians(angle_deg))
-        sin_a = math.sin(math.radians(angle_deg))
+            def _rot(x: float, y: float) -> tuple[float, float]:
+                return x * cos_a - y * sin_a, x * sin_a + y * cos_a
 
-        def _rot(x: float, y: float) -> tuple[float, float]:
-            return x * cos_a - y * sin_a, x * sin_a + y * cos_a
+            bw = w * width_scale
 
-        bw = w * width_scale
+            # 6 verts: 2 at root, 2 at mid-bend, 2 at tip
+            rx0, ry0 = _rot(-bw, 0.0)
+            rx1, ry1 = _rot( bw, 0.0)
+            rx2, ry2 = _rot( bw * 0.6, bend_offset)
+            rx3, ry3 = _rot(-bw * 0.6, bend_offset)
+            rx4, ry4 = _rot( bw * 0.15, bend_offset * 2)
+            rx5, ry5 = _rot(-bw * 0.15, bend_offset * 2)
 
-        # 6 verts: 2 at root, 2 at mid-bend, 2 at tip
-        rx0, ry0 = _rot(-bw, 0.0)
-        rx1, ry1 = _rot( bw, 0.0)
-        rx2, ry2 = _rot( bw * 0.6, bend_offset)
-        rx3, ry3 = _rot(-bw * 0.6, bend_offset)
-        rx4, ry4 = _rot( bw * 0.15, bend_offset * 2)
-        rx5, ry5 = _rot(-bw * 0.15, bend_offset * 2)
+            phase = rng.random()
+            # SpeedTree wind packing: R=amplitude (flutter weight), G=frequency, B=phase, A=0
+            # R=0.0 at root (no sway), R=1.0 at tip (full sway) — matches SpeedTree primary wind weight.
+            amp_base, amp_mid, amp_tip = 0.0, 0.5, 1.0
+            freq_base, freq_mid, freq_tip = 0.5, 0.75, 1.0
 
-        phase = rng.random()
-        # SpeedTree wind packing: R=amplitude (flutter weight), G=frequency, B=phase, A=0
-        # R=0.0 at root (no sway), R=1.0 at tip (full sway) — matches SpeedTree primary wind weight.
-        amp_base, amp_mid, amp_tip = 0.0, 0.5, 1.0
-        freq_base, freq_mid, freq_tip = 0.5, 0.75, 1.0
+            vv0 = bm.verts.new((rx0, ry0, 0.0));    vv0[wind_layer] = (amp_base, freq_base, phase, 0.0)
+            vv1 = bm.verts.new((rx1, ry1, 0.0));    vv1[wind_layer] = (amp_base, freq_base, phase, 0.0)
+            vv2 = bm.verts.new((rx2, ry2, mid_z));  vv2[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
+            vv3 = bm.verts.new((rx3, ry3, mid_z));  vv3[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
+            vv4 = bm.verts.new((rx4, ry4, height)); vv4[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
+            vv5 = bm.verts.new((rx5, ry5, height)); vv5[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
 
-        vv0 = bm.verts.new((rx0, ry0, 0.0));    vv0[wind_layer] = (amp_base, freq_base, phase, 0.0)
-        vv1 = bm.verts.new((rx1, ry1, 0.0));    vv1[wind_layer] = (amp_base, freq_base, phase, 0.0)
-        vv2 = bm.verts.new((rx2, ry2, mid_z));  vv2[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
-        vv3 = bm.verts.new((rx3, ry3, mid_z));  vv3[wind_layer] = (amp_mid,  freq_mid,  phase, 0.0)
-        vv4 = bm.verts.new((rx4, ry4, height)); vv4[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
-        vv5 = bm.verts.new((rx5, ry5, height)); vv5[wind_layer] = (amp_tip,  freq_tip,  phase, 0.0)
+            # Lower quad (root → mid)
+            try:
+                bm.faces.new([vv0, vv1, vv2, vv3])
+            except ValueError:
+                pass
+            # Upper quad (mid → tip)
+            try:
+                bm.faces.new([vv3, vv2, vv4, vv5])
+            except ValueError:
+                pass
 
-        # Lower quad (root → mid)
-        try:
-            bm.faces.new([vv0, vv1, vv2, vv3])
-        except ValueError:
-            pass
-        # Upper quad (mid → tip)
-        try:
-            bm.faces.new([vv3, vv2, vv4, vv5])
-        except ValueError:
-            pass
+        # Three crossing blades at 0°, 60°, 120° — SpeedTree 3-quad grass card standard.
+        # Width scales vary slightly (1.0, 0.9, 0.8) for organic size asymmetry while
+        # keeping all three blades visible at any viewing angle.
+        _add_blade(0.0,   1.00)
+        _add_blade(60.0,  0.90)
+        _add_blade(120.0, 0.82)
 
-    # Three crossing blades at 0°, 60°, 120° — SpeedTree 3-quad grass card standard.
-    # Width scales vary slightly (1.0, 0.9, 0.8) for organic size asymmetry while
-    # keeping all three blades visible at any viewing angle.
-    _add_blade(0.0,   1.00)
-    _add_blade(60.0,  0.90)
-    _add_blade(120.0, 0.82)
-
-    bm.to_mesh(mesh)
-    bm.free()
+        bm.to_mesh(mesh)
+    finally:
+        bm.free()
 
     # Material
     mat_name = f"mat_grass_{biome}"
@@ -2471,8 +2554,8 @@ def _lod_for_distance(
                             return idx
                     # Below every threshold → final LOD (billboard / cull).
                     return len(screen_pcts) - 1 if len(screen_pcts) >= 4 else 3
-        except Exception:
-            pass  # fall through to distance-only table
+        except Exception as e:  # FIX-11-5
+            logger.debug("LOD preset lookup failed, using distance table: %s", e)  # FIX-11-5
 
     key = veg_type if veg_type in _LOD_THRESHOLDS else "default"
     lod1, lod2, cull = _LOD_THRESHOLDS[key]
@@ -3171,23 +3254,24 @@ def handle_scatter_vegetation(params: dict) -> dict:
     # Extract heightmap from terrain mesh
     mesh = obj.data
     bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bm.verts.ensure_lookup_table()
+    try:
+        bm.from_mesh(mesh)
+        bm.verts.ensure_lookup_table()
 
-    vert_count = len(bm.verts)
-    # Detect grid dims by counting unique positions (handles non-square terrain)
-    xs = set(round(v.co.x, 3) for v in bm.verts)
-    ys = set(round(v.co.y, 3) for v in bm.verts)
-    cols, rows = len(xs), len(ys)
-    if cols * rows != vert_count or cols < 2 or rows < 2:
-        side = int(math.sqrt(vert_count))
-        if side < 2 or side * side != vert_count:
-            bm.free()
-            raise ValueError("Terrain mesh too small or non-grid for scatter")
-        rows, cols = side, side
+        vert_count = len(bm.verts)
+        # Detect grid dims by counting unique positions (handles non-square terrain)
+        xs = set(round(v.co.x, 3) for v in bm.verts)
+        ys = set(round(v.co.y, 3) for v in bm.verts)
+        cols, rows = len(xs), len(ys)
+        if cols * rows != vert_count or cols < 2 or rows < 2:
+            side = int(math.sqrt(vert_count))
+            if side < 2 or side * side != vert_count:
+                raise ValueError("Terrain mesh too small or non-grid for scatter")
+            rows, cols = side, side
 
-    heights = np.array([v.co.z for v in bm.verts])
-    bm.free()
+        heights = np.array([v.co.z for v in bm.verts])
+    finally:
+        bm.free()
 
     height_min = float(heights.min()) if heights.size else 0.0
     height_max = float(heights.max()) if heights.size else 1.0
@@ -3203,7 +3287,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
     dims = obj.dimensions
     terrain_width = max(float(dims.x), 1.0)
     terrain_height = max(float(dims.y), 1.0)
-    terrain_size = max(terrain_width, terrain_height, 1.0)
+    _ = max(terrain_width, terrain_height, 1.0)  # FIX-11-10: terrain_size unused
     terrain_row_spacing, terrain_col_spacing = _terrain_axis_spacing_from_extent(
         terrain_width,
         terrain_height,
@@ -3668,25 +3752,25 @@ def handle_scatter_props(params: dict) -> dict:
     slope_map_np: "np.ndarray | None" = None
     if terrain_obj is not None and terrain_obj.type == "MESH" and terrain_obj.data is not None:
         _bm_prop = bmesh.new()
-        _bm_prop.from_mesh(terrain_obj.data)
-        _bm_prop.verts.ensure_lookup_table()
-        _vc = len(_bm_prop.verts)
-        _xs2 = set(round(v.co.x, 3) for v in _bm_prop.verts)
-        _ys2 = set(round(v.co.y, 3) for v in _bm_prop.verts)
-        _cols2, _rows2 = len(_xs2), len(_ys2)
-        if _cols2 * _rows2 == _vc and _cols2 >= 2 and _rows2 >= 2:
-            _hts = np.array([v.co.z for v in _bm_prop.verts], dtype=np.float32)
-            _bm_prop.free()
-            _hmin = float(_hts.min())
-            _hmax = float(_hts.max())
-            _hrange = max(_hmax - _hmin, 1e-6)
-            heightmap_np = ((_hts - _hmin) / _hrange).reshape(_rows2, _cols2)
-            _dims2 = terrain_obj.dimensions
-            _tw2 = max(float(_dims2.x), 1.0)
-            _th2 = max(float(_dims2.y), 1.0)
-            _rs2, _cs2 = _terrain_axis_spacing_from_extent(_tw2, _th2, _rows2, _cols2)
-            slope_map_np = compute_slope_map(heightmap_np, cell_size=(_rs2, _cs2))
-        else:
+        try:
+            _bm_prop.from_mesh(terrain_obj.data)
+            _bm_prop.verts.ensure_lookup_table()
+            _vc = len(_bm_prop.verts)
+            _xs2 = set(round(v.co.x, 3) for v in _bm_prop.verts)
+            _ys2 = set(round(v.co.y, 3) for v in _bm_prop.verts)
+            _cols2, _rows2 = len(_xs2), len(_ys2)
+            if _cols2 * _rows2 == _vc and _cols2 >= 2 and _rows2 >= 2:
+                _hts = np.array([v.co.z for v in _bm_prop.verts], dtype=np.float32)
+                _hmin = float(_hts.min())
+                _hmax = float(_hts.max())
+                _hrange = max(_hmax - _hmin, 1e-6)
+                heightmap_np = ((_hts - _hmin) / _hrange).reshape(_rows2, _cols2)
+                _dims2 = terrain_obj.dimensions
+                _tw2 = max(float(_dims2.x), 1.0)
+                _th2 = max(float(_dims2.y), 1.0)
+                _rs2, _cs2 = _terrain_axis_spacing_from_extent(_tw2, _th2, _rows2, _cols2)
+                slope_map_np = compute_slope_map(heightmap_np, cell_size=(_rs2, _cs2))
+        finally:
             _bm_prop.free()
 
     placements = context_scatter(
@@ -3774,26 +3858,28 @@ def handle_create_breakable(params: dict) -> dict:
 
     # Create intact version
     intact_bm = bmesh.new()
-    for op in intact_spec["geometry_ops"]:
-        if op["type"] == "cylinder":
-            bmesh.ops.create_cone(
-                intact_bm, cap_ends=True, cap_tris=True,
-                segments=op.get("segments", 12),
-                radius1=op["radius"], radius2=op["radius"],
-                depth=op["height"],
-            )
-        elif op["type"] == "box":
-            sx, sy, sz = op["size"]
-            bmesh.ops.create_cube(intact_bm, size=1.0)
-            for v in intact_bm.verts:
-                v.co.x *= sx
-                v.co.y *= sy
-                v.co.z *= sz
+    try:
+        for op in intact_spec["geometry_ops"]:
+            if op["type"] == "cylinder":
+                bmesh.ops.create_cone(
+                    intact_bm, cap_ends=True, cap_tris=True,
+                    segments=op.get("segments", 12),
+                    radius1=op["radius"], radius2=op["radius"],
+                    depth=op["height"],
+                )
+            elif op["type"] == "box":
+                sx, sy, sz = op["size"]
+                bmesh.ops.create_cube(intact_bm, size=1.0)
+                for v in intact_bm.verts:
+                    v.co.x *= sx
+                    v.co.y *= sy
+                    v.co.z *= sz
 
-    intact_mesh = bpy.data.meshes.new(f"{prop_type}_intact")
-    intact_bm.to_mesh(intact_mesh)
-    intact_vertex_count = len(intact_bm.verts)
-    intact_bm.free()
+        intact_mesh = bpy.data.meshes.new(f"{prop_type}_intact")
+        intact_bm.to_mesh(intact_mesh)
+        intact_vertex_count = len(intact_bm.verts)
+    finally:
+        intact_bm.free()
 
     intact_obj = bpy.data.objects.new(f"{prop_type}_intact", intact_mesh)
     intact_obj.parent = parent
@@ -3820,15 +3906,17 @@ def handle_create_breakable(params: dict) -> dict:
     fragment_count = len(destroyed_spec["fragment_ops"])
     for i, frag in enumerate(destroyed_spec["fragment_ops"]):
         frag_bm = bmesh.new()
-        sx, sy, sz = frag["size"]
-        bmesh.ops.create_cube(frag_bm, size=1.0)
-        for v in frag_bm.verts:
-            v.co.x *= sx
-            v.co.y *= sy
-            v.co.z *= sz
-        frag_mesh = bpy.data.meshes.new(f"{prop_type}_frag_{i}")
-        frag_bm.to_mesh(frag_mesh)
-        frag_bm.free()
+        try:
+            sx, sy, sz = frag["size"]
+            bmesh.ops.create_cube(frag_bm, size=1.0)
+            for v in frag_bm.verts:
+                v.co.x *= sx
+                v.co.y *= sy
+                v.co.z *= sz
+            frag_mesh = bpy.data.meshes.new(f"{prop_type}_frag_{i}")
+            frag_bm.to_mesh(frag_mesh)
+        finally:
+            frag_bm.free()
 
         frag_obj = bpy.data.objects.new(f"{prop_type}_frag_{i}", frag_mesh)
         frag_obj.location = tuple(frag["position"])
@@ -3839,15 +3927,17 @@ def handle_create_breakable(params: dict) -> dict:
     debris_count = len(destroyed_spec["debris_ops"])
     for i, deb in enumerate(destroyed_spec["debris_ops"]):
         deb_bm = bmesh.new()
-        sx, sy, sz = deb["size"]
-        bmesh.ops.create_cube(deb_bm, size=1.0)
-        for v in deb_bm.verts:
-            v.co.x *= sx
-            v.co.y *= sy
-            v.co.z *= sz
-        deb_mesh = bpy.data.meshes.new(f"{prop_type}_debris_{i}")
-        deb_bm.to_mesh(deb_mesh)
-        deb_bm.free()
+        try:
+            sx, sy, sz = deb["size"]
+            bmesh.ops.create_cube(deb_bm, size=1.0)
+            for v in deb_bm.verts:
+                v.co.x *= sx
+                v.co.y *= sy
+                v.co.z *= sz
+            deb_mesh = bpy.data.meshes.new(f"{prop_type}_debris_{i}")
+            deb_bm.to_mesh(deb_mesh)
+        finally:
+            deb_bm.free()
 
         deb_obj = bpy.data.objects.new(f"{prop_type}_debris_{i}", deb_mesh)
         deb_obj.location = tuple(deb["position"])

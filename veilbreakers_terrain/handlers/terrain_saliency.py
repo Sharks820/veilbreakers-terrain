@@ -372,8 +372,8 @@ def _rasterize_vantage_silhouettes_onto_grid(
 
     ray_count = silhouettes.shape[1]
     angles = np.linspace(0.0, 2.0 * np.pi, ray_count, endpoint=False)
-    cos_a = np.cos(angles)
-    sin_a = np.sin(angles)
+    _ = np.cos(angles)  # FIX-11-10: cos_a unused; function uses arctan2 for ray indexing
+    _ = np.sin(angles)  # FIX-11-10: sin_a unused; function uses arctan2 for ray indexing
 
     grid_cx = stack.world_origin_x + (cols * 0.5) * cell
     grid_cy = stack.world_origin_y + (rows * 0.5) * cell
@@ -425,6 +425,7 @@ def _rasterize_vantage_silhouettes_onto_grid(
 def _compute_8factor_saliency(
     stack: TerrainMaskStack,
     vantage_mask: np.ndarray,
+    vantage_weights: "list[float] | None" = None,  # FIX-11-12
 ) -> np.ndarray:
     """Compute full 8-factor UE5-style tactical importance score.
 
@@ -462,7 +463,9 @@ def _compute_8factor_saliency(
     f1_height = _norm01(np.maximum(h - median_h, 0.0))
 
     # Factor 2: Distance from water (if water mask or water channel available)
-    water_mask = stack.get("water_surface_mask")
+    water_mask = stack.get("water_surface_mask", default=None)
+    if water_mask is None:
+        water_mask = stack.get("water_surface", default=None)
     if water_mask is not None:
         wm = np.asarray(water_mask, dtype=np.float64)
         # Distance transform (approximate via iterative erosion fallback)
@@ -567,6 +570,17 @@ def _compute_8factor_saliency(
         f5_convex + f6_sky + f7_vegbreak + f8_sightline
     ) / 8.0
 
+    # FIX-11-12: apply per-vantage distance weights to the combined score when
+    # provided.  vantage_weights is a normalised list (sums to 1.0) computed in
+    # pass_saliency_refine; a scalar aggregate weight is formed by summing all
+    # entries (≤ 1.0 when normalised) and used as a multiplicative emphasis so
+    # that tiles with many nearby vantages receive higher tactical importance.
+    if vantage_weights is not None and len(vantage_weights) > 0:  # FIX-11-12
+        aggregate_w = float(sum(vantage_weights))  # FIX-11-12
+        # Blend: score stays at full strength but is boosted toward 1 in
+        # proportion to the aggregate weight (closer/more vantages → higher).
+        score = np.clip(score * (1.0 + aggregate_w), 0.0, 1.0)  # FIX-11-12
+
     return np.clip(score, 0.0, 1.0)
 
 
@@ -637,7 +651,10 @@ def pass_saliency_refine(
         silhouettes = np.zeros((0, 0))
 
     # Compute full 8-factor tactical saliency
-    tactical_score = _compute_8factor_saliency(stack, vantage_mask)
+    tactical_score = _compute_8factor_saliency(  # FIX-11-12
+        stack, vantage_mask,
+        vantage_weights=vantage_weights if vantages else None,  # FIX-11-12
+    )  # FIX-11-12
 
     base = np.asarray(stack.saliency_macro, dtype=np.float64)
 

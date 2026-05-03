@@ -38,7 +38,7 @@ except ImportError:
 from ..procedural_meshes import (
     _make_result,
     _merge_meshes,
-    generate_bridge_mesh,
+    # generate_bridge_mesh,  # FIX-11-9: unused import removed
 )
 
 # ---------------------------------------------------------------------------
@@ -184,7 +184,7 @@ def generate_cliff_face_mesh(
         MeshSpec with cliff face geometry, strata_bands count, erosion_channels
         count, and per-vertex uvs list in metadata.
     """
-    rng = random.Random(seed)
+    _ = random.Random(seed)  # FIX-11-10: rng unused; function uses rng_strata/rng_erosion
 
     # AAA requirement: minimum 8×8 grid
     seg_h = max(8, segments_horizontal)
@@ -388,7 +388,7 @@ def generate_cave_entrance_mesh(
     # the crown point is where both arcs meet at X=0.
     # Crown Z = spring_z + sqrt(R^2 - d^2)
     crown_z = spring_z + math.sqrt(max(R * R - d * d, 0.0))
-    apex_z = crown_z  # alias for clarity
+    _ = crown_z  # FIX-11-10: apex_z unused alias; arch uses crown_z directly
 
     max_overhang = overhang_factor * width
 
@@ -644,7 +644,7 @@ def generate_biome_transition_mesh(
     # σ_world = 5 m projected onto normalised [0,1] coord space.
     # -----------------------------------------------------------------------
     sigma_world = 5.0  # metres, Perlin warp standard deviation
-    sigma_norm = sigma_world / max(zone_depth, 1e-6)  # normalised σ
+    _ = sigma_world / max(zone_depth, 1e-6)  # FIX-11-10: sigma_norm unused; warp uses sigma_world directly
 
     def _boundary_warp_offset(iz: int) -> float:
         """Per-row normalised-X warp offset via 2-octave fBm domain warp."""
@@ -1275,7 +1275,7 @@ def generate_waterfall_mesh(
 # ``blender_addon.handlers._bridge_mesh`` so the toolkit-side ``road_network``
 # module can import it without reaching into this terrain module (D-09).
 # Re-exported here for any intra-terrain callers that already reference it.
-from ._bridge_mesh import generate_terrain_bridge_mesh  # noqa: E402, F401
+from ._bridge_mesh import generate_terrain_bridge_mesh  # noqa: E402, F401  -- intentional re-export  # noqa: E402, F401
 
 
 # ---------------------------------------------------------------------------

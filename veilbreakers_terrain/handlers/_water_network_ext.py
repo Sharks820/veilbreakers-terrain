@@ -603,7 +603,7 @@ def compute_wet_rock_mask(
     seed_strength = np.zeros((rows, cols), dtype=np.float64)
 
     fa_norm = None
-    fa = stack.get("flow_accumulation")
+    fa = stack.get("flow_accumulation", default=None)
     if fa is not None:
         fa_arr = np.asarray(fa, dtype=np.float64)
         if fa_arr.shape == h.shape:
@@ -636,7 +636,7 @@ def compute_wet_rock_mask(
             return 1.0
         return 0.55 + 0.45 * max(norm_candidates)
 
-    surface = stack.get("water_surface_mask") if stack.get("water_surface_mask") is not None else stack.get("water_surface")
+    surface = stack.get("water_surface_mask", default=None) if stack.get("water_surface_mask", default=None) is not None else stack.get("water_surface", default=None)  # FIX-10-H14
     if surface is not None:
         surface_arr = np.asarray(surface)
         if surface_arr.shape == h.shape:
@@ -1053,7 +1053,7 @@ def _tileable_value_noise(
 def compute_riverbed_caustics(
     stack: "Any",
     *,
-    depth_channel: str = "water_depth",
+    depth_channel: str = "water_depth_m",  # FIX-10-10: match pass_water_depth writer
     water_surface_channel: str = "water_surface",
     base_caustic_scale: float = 6.0,
     detail_caustic_scale: float = 18.0,

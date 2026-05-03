@@ -154,7 +154,7 @@ def compute_decal_density(stack: TerrainMaskStack, kind: DecalKind) -> np.ndarra
     )
     # Prefer the erosion-refined ridge channel when present so decals respect
     # ridge/ravine reinforcement from pass_erosion; fall back to raw ridge.
-    _ridge_src = stack.get("ridge_eroded")
+    _ridge_src = stack.get("ridge_eroded", default=None)
     if _ridge_src is None:
         _ridge_src = stack.ridge
     ridge = (
@@ -282,9 +282,7 @@ def pass_decals(
     for kind in DecalKind:
         layers[kind.value] = compute_decal_density(stack, kind)
 
-    decal_density = dict(stack.get("decal_density") or {})
-    decal_density.update(layers)
-    stack.set("decal_density", decal_density, "decals")
+    stack.set("decal_density", layers, "decals")
 
     metrics = {
         name: {

@@ -1,0 +1,34 @@
+{
+  "node_id": "VB_AAA_NODE_ASHEN_CALDERA_V2_2026_05_01_A",
+  "scene": "ashen_caldera",
+  "tile_m": 1024.0,
+  "heightmap_min_m": -5.0,
+  "heightmap_max_m": 445.7325134277344,
+  "heightmap_samples": 1025,
+  "step_m": 1.0,
+  "heightmap_file": "caldera_heightmap_v2.exr",
+  "splatmap_file": "caldera_splatmap_v2.exr",
+  "mask_channels": [
+    "caldera_slope_v2.exr",
+    "caldera_curvature_v2.exr",
+    "caldera_ridge_v2.exr",
+    "caldera_basin_v2.exr"
+  ],
+  "pipeline_ok": true,
+  "photometric": {
+    "reference_loaded": true,
+    "floor_vs_rim_depression_m": 378.7508544921875,
+    "floor_slope_mean_deg": 6.694038200338457,
+    "lava_prox_core_mean": null,
+    "photometric_ok": true,
+    "ref_basalt_albedo": [
+      0.063,
+      0.06,
+      0.057
+    ],
+    "ref_lava_emission_W_m2": 50.0
+  },
+  "failures": 0,
+  "failure_stages": [],
+  "elapsed_s": 8.07
+}

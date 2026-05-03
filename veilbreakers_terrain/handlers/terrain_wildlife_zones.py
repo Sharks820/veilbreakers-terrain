@@ -222,9 +222,9 @@ def compute_wildlife_affinity(
 
     # --- Water mask + distance field ---
     water_mask: Optional[np.ndarray] = None
-    _ws_b1c = stack.get("water_surface_mask")
+    _ws_b1c = stack.get("water_surface_mask", default=None)
     if _ws_b1c is None:
-        _ws_b1c = stack.get("water_surface")
+        _ws_b1c = stack.get("water_surface", default=None)
     if _ws_b1c is not None:
         water_mask = np.asarray(_ws_b1c) > 0.0
     elif stack.wetness is not None:
@@ -442,11 +442,17 @@ def pass_wildlife_zones(
 
     metrics: Dict[str, Any] = {}
     for species, arr in affinity.items():
+        active_cells = int((arr > 0.1).sum())
         metrics[species] = {
             "peak": float(arr.max()),
             "mean": float(arr.mean()),
             "coverage_frac": float((arr > 0.1).mean()),
             "zero_frac": float((arr == 0.0).mean()),
+            "spawn_density_per_m2": _compute_spawn_density(
+                float((arr > 0.1).sum()),
+                active_cells,
+                float(stack.cell_size),
+            ) if active_cells else 0.0,
         }
 
     issues: List[ValidationIssue] = []
@@ -501,6 +507,23 @@ def register_bundle_j_wildlife_zones_pass() -> None:
     )
 
 
+def _compute_spawn_density(
+    total_spawn_count: float,
+    cell_count: int,
+    cell_size_m: float,
+) -> float:
+    """Return spawn density in spawns per square metre.
+
+    Earlier code divided by ``cell_count`` (raw cell count), producing a
+    resolution-dependent density that changed whenever the tile resolution
+    changed.  Dividing by world-space area (cell_count * cell_size_m²) gives
+    a resolution-independent density.  # FIX-9-27
+    """
+    area_m2 = cell_count * (cell_size_m ** 2)  # FIX-9-27
+    spawn_density = float(total_spawn_count) / max(area_m2, 1.0)
+    return spawn_density
+
+
 __all__ = [
     "SpeciesAffinityRule",
     "DEFAULT_WILDLIFE_RULES",
@@ -508,4 +531,5 @@ __all__ = [
     "compute_wildlife_affinity",
     "pass_wildlife_zones",
     "register_bundle_j_wildlife_zones_pass",
+    "_compute_spawn_density",
 ]

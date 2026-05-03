@@ -22,11 +22,24 @@ from .terrain_unity_export_contracts import (
     validate_bit_depth_contract,
     validate_mesh_attributes_present,
 )
+from .terrain_protocol import enforce_protocol  # FIX-9-31
 
 
 _DETAIL_DENSITY_MAX_PER_CELL = 16
 _EXPORT_COORDINATE_SYSTEM = "y-up"
 _PRODUCTION_PLUS_PROFILES = frozenset({"hero_shot", "aaa_open_world"})
+
+# FIX-13-25: LOD transition distances (metres) per quality profile.
+# Terrain LOD0 = highest detail within this radius; LOD2 = billboard/impostor cutoff.
+_PROFILE_LOD_DISTANCES: dict[str, tuple[float, float, float]] = {
+    "mobile":        (30.0,  80.0, 200.0),
+    "standard":      (50.0, 150.0, 400.0),
+    "high_fidelity": (60.0, 200.0, 600.0),
+    "hero_shot":     (80.0, 250.0, 800.0),
+    "aaa_open_world": (80.0, 250.0, 800.0),
+    "production":    (60.0, 200.0, 600.0),
+}
+_DEFAULT_LOD_DISTANCES: tuple[float, float, float] = (50.0, 150.0, 400.0)
 
 UNITY_SCALE_FACTOR: float = 0.85
 """Conversion factor: 1 terrain metre = 0.85 Unity units (Fix 13.3).
@@ -81,7 +94,7 @@ def write_animation_clip_yaml(
         "  m_PrefabAsset: {fileID: 0}",
         f"  m_Name: {clip_name}",
         "  serializedVersion: 6",
-        "  m_Legacy: 0",
+        "  m_Legacy: 1",
         "  m_Compressed: 0",
         "  m_UseHighQualityCurve: 1",
         "  m_RotationCurves: []",
@@ -113,7 +126,7 @@ def write_animation_clip_yaml(
             lines.append("      m_PreInfinity: 2")
             lines.append("      m_PostInfinity: 2")
             lines.append("      m_RotationOrder: 4")
-            lines.append(f"    path: {bone}")
+            lines.append(f"    path: {str(bone).replace('.', '/')}")
             lines.append(f"    attribute: {property_name.get(channel, channel)}.{axis_name.get(axis, 'x')}")
             lines.append("    classID: 4")
             lines.append("    script: {fileID: 0}")
@@ -141,7 +154,7 @@ def write_animation_clip_yaml(
             lines.append("      m_PreInfinity: 2")
             lines.append("      m_PostInfinity: 2")
             lines.append("      m_RotationOrder: 4")
-            lines.append(f"    path: {bone}")
+            lines.append(f"    path: {str(bone).replace('.', '/')}")
             lines.append(f"    attribute: {property_name.get(channel, channel)}.{axis_name.get(axis, 'x')}")
             lines.append("    classID: 4")
             lines.append("    script: {fileID: 0}")
@@ -402,6 +415,15 @@ def _bit_depth_for_profile(profile: Optional[str]) -> int:
     return _PROFILE_TABLE.get(profile.lower(), 16)
 
 
+@enforce_protocol(  # FIX-9-31
+    require_rule_1=False,
+    require_rule_2=False,
+    require_rule_3=False,
+    require_rule_4=False,
+    require_rule_5=False,
+    require_rule_6=False,
+    require_rule_7=False,
+)
 def pass_prepare_terrain_normals(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -427,6 +449,15 @@ def pass_prepare_terrain_normals(
     )
 
 
+@enforce_protocol(  # FIX-9-31
+    require_rule_1=False,
+    require_rule_2=False,
+    require_rule_3=False,
+    require_rule_4=False,
+    require_rule_5=False,
+    require_rule_6=False,
+    require_rule_7=False,
+)
 def pass_prepare_heightmap_raw_u16(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -453,6 +484,15 @@ def pass_prepare_heightmap_raw_u16(
     )
 
 
+@enforce_protocol(  # FIX-9-31
+    require_rule_1=False,
+    require_rule_2=False,
+    require_rule_3=False,
+    require_rule_4=False,
+    require_rule_5=False,
+    require_rule_6=False,
+    require_rule_7=False,
+)
 def pass_prepare_unity_auxiliary_channels(
     state: TerrainPipelineState,
     region: Optional[BBox],
@@ -468,7 +508,7 @@ def pass_prepare_unity_auxiliary_channels(
     slope_deg = np.degrees(np.arctan(np.hypot(gx, gy))).astype(np.float32)
     physics = np.zeros((rows, cols), dtype=np.uint8)
     physics[slope_deg > 50.0] = 1
-    cave = stack.get("cave_candidate")
+    cave = stack.get("cave_candidate", default=None)
     if cave is not None:
         physics[np.asarray(cave, dtype=np.float32) > 0.0] = 2
 
@@ -726,6 +766,14 @@ def _binary_export_payload(channel: str, value: Any) -> tuple[np.ndarray, str, D
                 "precision_contract": "shadow_clipmap_32f",
                 "unity_usage": "shadow_clipmap",
             },
+        )
+    # FIX-10-7: C# ReadNavMeshAreaGrid reads 2 bytes/cell as little-endian ushort;
+    # cast to uint16 so the written format matches.
+    if channel == "navmesh_area_id":
+        return (
+            np.asarray(arr_np, dtype=np.uint16),
+            "raw_u16_le",
+            {"unity_usage": "navmesh_area_id"},
         )
     if arr_np.dtype == np.bool_:
         return np.asarray(arr_np, dtype=np.uint8), "raw_u8_le", extra
@@ -1309,7 +1357,7 @@ def _unity_mesh_attribute_arrays(stack: TerrainMaskStack) -> Dict[str, np.ndarra
         gy, gx = np.gradient(height.astype(np.float64), float(max(stack.cell_size, 1e-9)))
         return np.degrees(np.arctan(np.sqrt(gx * gx + gy * gy))).astype(np.float32)
 
-    slope = stack.get("slope")
+    slope = stack.get("slope", default=None)
     if slope is None:
         slope_arr = _height_slope_angle()
     else:
@@ -1317,13 +1365,13 @@ def _unity_mesh_attribute_arrays(stack: TerrainMaskStack) -> Dict[str, np.ndarra
         slope_arr = slope_raw if slope_raw.shape == height.shape else _height_slope_angle()
 
     def _float_attr(name: str, fallback: float = 0.0) -> np.ndarray:
-        value = stack.get(name)
+        value = stack.get(name, default=None)
         if value is None:
             return np.full(height.shape, fallback, dtype=np.float32)
         arr = np.asarray(value, dtype=np.float32)
         return arr if arr.shape == height.shape else np.full(height.shape, fallback, dtype=np.float32)
 
-    biome = stack.get("biome_id")
+    biome = stack.get("biome_id", default=None)
     if biome is None:
         biome_arr = np.zeros(height.shape, dtype=np.int32)
     else:
@@ -1334,9 +1382,9 @@ def _unity_mesh_attribute_arrays(stack: TerrainMaskStack) -> Dict[str, np.ndarra
             else np.zeros(height.shape, dtype=np.int32)
         )
 
-    cliff = stack.get("cliff_mask")
+    cliff = stack.get("cliff_mask", default=None)
     if cliff is None:
-        cliff = stack.get("cliff_candidate")
+        cliff = stack.get("cliff_candidate", default=None)
     cliff_arr = (
         np.asarray(cliff, dtype=np.float32)
         if cliff is not None and np.asarray(cliff).shape == height.shape
@@ -1434,6 +1482,21 @@ def _build_unity_import_descriptor(
             }
         )
 
+    # FIX-10-8: build channel bounds list so runtime blend-range systems have
+    # usable data.  Only numeric ndarray channels with non-empty arrays.
+    _ch_bounds: list[dict] = []
+    for _ch in stack._ARRAY_CHANNELS:
+        _arr = getattr(stack, _ch, None)
+        if _arr is None:
+            continue
+        if not isinstance(_arr, np.ndarray):
+            continue
+        if not np.issubdtype(_arr.dtype, np.number):
+            continue
+        if _arr.size == 0:
+            continue
+        _ch_bounds.append({"name": _ch, "min": float(_arr.min()), "max": float(_arr.max())})
+
     return {
         "schema_version": "1.0",
         "world_id": str(manifest.get("world_id", "unknown")),
@@ -1499,10 +1562,21 @@ def _build_unity_import_descriptor(
         "wave_energy_file": "wave_energy.bin" if "wave_energy.bin" in files else "",
         "tile_biome_id": manifest.get("tile_biome_id"),
         "tile_biome_name": manifest.get("tile_biome_name") or "dark_fantasy_default",
+        # FIX-13-24: climate_zone was never written — Unity always got the hardcoded
+        # default "temperate". Emit it explicitly from the stack so the C# importer
+        # can propagate it to VbTerrainTileMetadata.ClimateZone.
+        "climate_zone": str(
+            stack.get("climate_zone", default=None)
+            or stack.get("biome_type", default=None)
+            or "temperate"
+        ),
         "water_level_unity_units": manifest.get("water_level_unity_units"),
         "has_water_surface": bool(manifest.get("has_water_surface", False)),
         "scatter_count": int(manifest.get("scatter_count", 0) or 0),
         "snow_line_factor": float(manifest.get("snow_line_factor", 0.0) or 0.0),
+        "lod0_distance_m": float(manifest.get("lod0_distance_m", _DEFAULT_LOD_DISTANCES[0])),
+        "lod1_distance_m": float(manifest.get("lod1_distance_m", _DEFAULT_LOD_DISTANCES[1])),
+        "lod2_distance_m": float(manifest.get("lod2_distance_m", _DEFAULT_LOD_DISTANCES[2])),
         "light_placements_file": (
             "light_placements.json"
             if "light_placements.json" in files
@@ -1548,6 +1622,43 @@ def _build_unity_import_descriptor(
         "tile_metadata_asset_path": (
             f"Assets/VeilBreakersTerrain/Imported/{manifest.get('world_id', 'world')}"
             f"/TerrainTile_{manifest['tile_x']}_{manifest['tile_y']}.asset"
+        ),
+        "channel_bounds": _ch_bounds,
+        # FIX-13-20: ecosystem_meta.json is always written; give Unity its filename.
+        "ecosystem_meta_file": "ecosystem_meta.json",
+        # FIX-13-21: HDRP mask map — present only when the mask-map pass ran.
+        "hdrp_mask_map_file": "hdrp_mask_map.raw" if "hdrp_mask_map.raw" in files else "",
+        # FIX-13-22: per-species wildlife affinity grids (wildlife_affinity__<key>.bin)
+        "wildlife_affinity_files": sorted(
+            f for f in files if f.startswith("wildlife_affinity__") and f.endswith(".bin")
+        ),
+        # FIX-13-23: per-kind decal density grids (decal_density__<key>.bin)
+        "decal_density_files": sorted(
+            f for f in files if f.startswith("decal_density__") and f.endswith(".bin")
+        ),
+        # FIX-13-4: cave speleothem length grids for Unity geometry pass
+        "cave_stalactite_length_file": (
+            "cave_stalactite_length.bin" if "cave_stalactite_length.bin" in files else ""
+        ),
+        # FIX-13-5: cave stalagmite length grids for Unity geometry pass
+        "cave_stalagmite_length_file": (
+            "cave_stalagmite_length.bin" if "cave_stalagmite_length.bin" in files else ""
+        ),
+        # FIX-13-8: river delta fan direction for water mesh UV spread
+        "delta_fan_direction_file": (
+            "delta_fan_direction.bin" if "delta_fan_direction.bin" in files else ""
+        ),
+        # FIX-13-9: freeze-event ice coverage grid for climate/weathering shaders
+        "ice_factor_file": (
+            "ice_factor.bin" if "ice_factor.bin" in files else ""
+        ),
+        # FIX-13-12: riverbed caustic intensity map for HDRP water material
+        "riverbed_caustics_file": (
+            "riverbed_caustics.bin" if "riverbed_caustics.bin" in files else ""
+        ),
+        # FIX-13-13: per-vertex wave amplitude for water mesh vertex animation shader
+        "wave_amplitude_per_vertex_file": (
+            "wave_amplitude_per_vertex.bin" if "wave_amplitude_per_vertex.bin" in files else ""
         ),
     }
 
@@ -1766,7 +1877,7 @@ def export_unity_manifest(
             np.asarray(stack.heightmap_raw_u16, dtype=np.uint16),
             stack.populated_by_pass.get("heightmap_raw_u16", "prepare_heightmap_raw_u16"),
         )
-    normals = stack.get("terrain_normals")
+    normals = stack.get("terrain_normals", default=None)
     if normals is None or np.asarray(normals).shape != (*height_shape, 3):
         normals_zup = _compute_terrain_normals_zup(np.asarray(stack.height, dtype=np.float64), float(stack.cell_size))
         stack.set("terrain_normals", _zup_to_unity_vectors(normals_zup), "prepare_terrain_normals")
@@ -1777,9 +1888,9 @@ def export_unity_manifest(
             stack.populated_by_pass.get("terrain_normals", "prepare_terrain_normals"),
         )
     if (
-        stack.get("physics_collider_mask") is None
-        or stack.get("lightmap_uv_chart_id") is None
-        or stack.get("ambient_occlusion_bake") is None
+        stack.get("physics_collider_mask", default=None) is None  # FIX-10-H14
+        or stack.get("lightmap_uv_chart_id", default=None) is None  # FIX-10-H14
+        or stack.get("ambient_occlusion_bake", default=None) is None  # FIX-10-H14
     ):
         pass_prepare_unity_auxiliary_channels(
             TerrainPipelineState(intent=None, mask_stack=stack),  # type: ignore[arg-type]
@@ -1846,8 +1957,16 @@ def export_unity_manifest(
         "ambient_occlusion_bake",
         # Coastal / tidal channels (FIX-10-22)
         "tidal_zone_label", "wave_energy",
+        # Cave speleothem channels (FIX-13-4, FIX-13-5)
+        "cave_stalactite_length", "cave_stalagmite_length",
+        # River convergence channels (FIX-13-8, FIX-13-11)
+        "delta_fan_direction", "river_mouth_mask",
+        # Weathering freeze channel (FIX-13-9)
+        "ice_factor",
+        # Waterfall rendering channels (FIX-13-12, FIX-13-13)
+        "riverbed_caustics", "wave_amplitude_per_vertex",
     ):
-        value = stack.get(channel)
+        value = stack.get(channel, default=None)
         if value is None:
             continue
         export_arr, encoding, extra = _binary_export_payload(channel, value)
@@ -1867,8 +1986,8 @@ def export_unity_manifest(
     # HDRP Terrain Lit shader.  Only written when at least one source channel
     # (terrain_ao or roughness_variation) is present on the stack.
     # ---------------------------------------------------------------------- #
-    _terrain_ao = stack.get("terrain_ao")
-    _roughness_var = stack.get("roughness_variation")
+    _terrain_ao = stack.get("terrain_ao", default=None)
+    _roughness_var = stack.get("roughness_variation", default=None)
     if _terrain_ao is not None or _roughness_var is not None:
         _height_shape = np.asarray(stack.height, dtype=np.float32).shape
         _h, _w = _height_shape[:2]
@@ -1941,8 +2060,8 @@ def export_unity_manifest(
                 extra={"species": key},
             )
 
-    _decal_dens = stack.get("decal_density")
-    if _decal_dens and isinstance(_decal_dens, dict):
+    _decal_dens = stack.get("decal_density", default=None)
+    if isinstance(_decal_dens, dict):
         for key, value in _decal_dens.items():
             _write_raw_array(
                 files,
@@ -1956,6 +2075,25 @@ def export_unity_manifest(
 
     tree_instances_json = _tree_instances_json(stack)
     foliage_placement_manifest_json = _foliage_placement_manifest_json(stack, tree_instances_json)
+    try:
+        from .vegetation_system import export_grass_placement_records
+
+        grass_records_path = export_grass_placement_records(stack, output_dir)
+        if grass_records_path:
+            grass_path = Path(grass_records_path)
+            files[grass_path.name] = {
+                "sha256": _sha256(grass_path),
+                "size": int(grass_path.stat().st_size),
+                "dtype": "json",
+                "shape": [],
+                "channel": "grass_placement_records",
+                "channels": 1,
+                "bit_depth": 0,
+                "encoding": "json",
+                "flip_vertical": False,
+            }
+    except Exception:
+        grass_records_path = None
     audio_zones_json = _audio_zones_json(stack)
     gameplay_zones_json = _gameplay_zones_json(stack)
     wildlife_zones_json = _wildlife_zones_json(stack)
@@ -1988,7 +2126,7 @@ def export_unity_manifest(
         "has_cloud_shadow": stack.cloud_shadow is not None,
         "has_navmesh": stack.navmesh_area_id is not None,
         "has_traversability": stack.traversability is not None,
-        "has_decals": bool(stack.get("decal_density")),
+        "has_decals": bool(_decal_dens) if isinstance(_decal_dens, dict) else _decal_dens is not None,
         "has_supplemental_mesh_specs": bool(supplemental_mesh_specs_json["mesh_specs"]),
         "has_particle_emitters": bool(particle_emitter_specs_json["emitters"]),
         "wind_field_descriptor": "wind_field.bin" if stack.wind_field is not None else None,
@@ -2017,14 +2155,69 @@ def export_unity_manifest(
         ("ecosystem_meta.json", ecosystem_meta_json),
     ):
         _write_json(files, output_dir, filename=name, payload=payload)
+
+    # FIX-9-20: gameplay_zones.json goes to output/terrain_data/ subdirectory
+    data_dir = output_dir / "terrain_data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "gameplay_zones.json").write_text(
+        json.dumps(gameplay_zones_json, indent=2, sort_keys=True)
+    )  # FIX-9-20
+    files["terrain_data/gameplay_zones.json"] = {
+        "sha256": _sha256(data_dir / "gameplay_zones.json"),
+        "size": int((data_dir / "gameplay_zones.json").stat().st_size),
+        "channels": 0,
+        "encoding": "json",
+        "bit_depth": 0,
+    }
+
+    # FIX-9-21: wildlife_zones.json goes to output/terrain_data/ subdirectory
+    (data_dir / "wildlife_zones.json").write_text(
+        json.dumps(wildlife_zones_json, indent=2, sort_keys=True)
+    )  # FIX-9-21
+    files["terrain_data/wildlife_zones.json"] = {
+        "sha256": _sha256(data_dir / "wildlife_zones.json"),
+        "size": int((data_dir / "wildlife_zones.json").stat().st_size),
+        "channels": 0,
+        "encoding": "json",
+        "bit_depth": 0,
+    }
     # D-7: atmospheric volumes — written only when the pass ran
-    _atm_vols = stack.get("atmospheric_volumes")
-    if _atm_vols is not None:
+    _atm_vols = stack.get("atmospheric_volumes", default=None)
+    # FIX-13-10: merge mist_fog_volume descriptor into atmospheric_volumes.json.
+    # mist_fog_volume is a dict with keys mask_2d (ndarray), height_m, density_max,
+    # color. The 2-D mask is already exported as "mist.bin" via the channel loop
+    # above; here we strip it and write the scalar/metadata fields so Unity's
+    # VolumetricFogVolume importer can size and colour the volume without carrying
+    # the raw array through JSON.
+    _mist_fog = stack.get("mist_fog_volume", default=None)
+    _mist_fog_entry: "Dict[str, Any] | None" = None
+    if isinstance(_mist_fog, dict):
+        _mist_fog_entry = {
+            "type": "mist_fog_volume",
+            "height_m": float(_mist_fog.get("height_m", 3.0)),
+            "density_max": float(_mist_fog.get("density_max", 0.6)),
+            "color": list(_mist_fog.get("color", (0.7, 0.75, 0.8))),
+            # mask_2d is exported as mist.bin; reference by filename only
+            "mask_2d_file": "mist.bin" if "mist.bin" in files else "",
+        }
+    if _atm_vols is not None or _mist_fog_entry is not None:
+        if _atm_vols is not None:
+            _atm_payload: "Dict[str, Any]" = (
+                _atm_vols if isinstance(_atm_vols, dict) else {"volumes": list(_atm_vols)}
+            )
+        else:
+            _atm_payload = {"volumes": []}
+        if _mist_fog_entry is not None:
+            _vol_list = _atm_payload.get("volumes")
+            if isinstance(_vol_list, list):
+                _vol_list.append(_mist_fog_entry)
+            else:
+                _atm_payload["mist_fog_volume"] = _mist_fog_entry
         _write_json(
             files,
             output_dir,
             filename="atmospheric_volumes.json",
-            payload=_atm_vols if isinstance(_atm_vols, dict) else {"volumes": list(_atm_vols)},
+            payload=_atm_payload,
         )
     if supplemental_mesh_specs_json["mesh_specs"]:
         _write_json(
@@ -2086,11 +2279,11 @@ def export_unity_manifest(
     # so brief splash-zones don't inflate the baseline.
     # ---------------------------------------------------------------------- #
     water_level_m: Optional[float] = None
-    water_elevation = stack.get("water_surface_elevation_m")
+    water_elevation = stack.get("water_surface_elevation_m", default=None)
     if water_elevation is None:
-        water_elevation = stack.get("water_surface_elevation")
-    water_mask = stack.get("water_surface_mask")
-    water_surface = stack.get("water_surface")
+        water_elevation = stack.get("water_surface_elevation", default=None)
+    water_mask = stack.get("water_surface_mask", default=None)
+    water_surface = stack.get("water_surface", default=None)
     if water_mask is None and water_surface is not None:
         water_surface_arr = np.asarray(water_surface, dtype=np.float64)
         height_min = float(np.nanmin(np.asarray(stack.height, dtype=np.float64)))
@@ -2127,12 +2320,12 @@ def export_unity_manifest(
     #   recomputing it from geometry (avoids double-darkening in caves).
     # ---------------------------------------------------------------------- #
     lm_chart_count = 0
-    lm_chart_id = stack.get("lightmap_uv_chart_id")
+    lm_chart_id = stack.get("lightmap_uv_chart_id", default=None)
     if lm_chart_id is not None:
         lm_chart_count = int(np.unique(np.asarray(lm_chart_id)).size)
     lightmap_hints: Dict[str, Any] = {
         "uv_chart_count": lm_chart_count,
-        "ao_channel_present": stack.get("ambient_occlusion_bake") is not None,
+        "ao_channel_present": stack.get("ambient_occlusion_bake", default=None) is not None,  # FIX-10-H14
         "lightmap_scale": 1.0,
         "lightmap_resolution_hint": 64 if (profile or "").lower() == "mobile" else 256,
         "realtime_gi": profile not in _PRODUCTION_PLUS_PROFILES,
@@ -2159,6 +2352,8 @@ def export_unity_manifest(
         if stack.height_min_m is not None
         else float(np.asarray(stack.height, dtype=np.float64).min())
     )
+    # FIX-13-25: resolve LOD distances from quality profile before manifest build
+    _lod_dists = _PROFILE_LOD_DISTANCES.get(profile or "", _DEFAULT_LOD_DISTANCES)
     manifest: Dict[str, Any] = {
         "schema_version": stack.unity_export_schema_version,
         "world_id": world_id,
@@ -2206,7 +2401,10 @@ def export_unity_manifest(
         "tile_biome_id": biome_manifest["primary_biome_id"],
         "tile_biome_name": biome_manifest["primary_biome_name"],
         "biome_distribution": biome_manifest["distribution"],
-        "snow_line_factor": float(np.asarray(stack.get("snow_line_factor")).mean()) if stack.get("snow_line_factor") is not None else 0.0,
+        "snow_line_factor": float(np.asarray(stack.get("snow_line_factor", default=None)).mean()) if stack.get("snow_line_factor", default=None) is not None else 0.0,  # FIX-10-H14
+        "lod0_distance_m": _lod_dists[0],
+        "lod1_distance_m": _lod_dists[1],
+        "lod2_distance_m": _lod_dists[2],
         "has_water_surface": water_level_unity is not None,
         "water_surface_elevation_m": water_level_m,
         "scatter_count": int(np.asarray(stack.tree_instance_points).shape[0]) if stack.tree_instance_points is not None and np.asarray(stack.tree_instance_points).ndim >= 1 else 0,
@@ -2237,7 +2435,7 @@ def export_unity_manifest(
             batch_id=str(batch_id) if batch_id is not None else None,
         ),
     }
-    if stack.get("atmospheric_volumes") is not None:
+    if stack.get("atmospheric_volumes", default=None) is not None:  # FIX-10-H14
         manifest["atmospheric_volumes_file"] = "atmospheric_volumes.json"
     if light_placements_json["lights"]:
         manifest["light_placements_file"] = "light_placements.json"
@@ -2293,7 +2491,7 @@ def _light_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     from .light_integration import compute_light_placements
 
     props: list = []
-    talus = stack.get("talus_boulder_placements")
+    talus = stack.get("talus_boulder_placements", default=None)
     if talus and isinstance(talus, (list, tuple)):
         for p in talus:
             if isinstance(p, dict) and "position" in p:
@@ -2321,7 +2519,7 @@ def _probe_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
             "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
             "probes": [],
         }
-    water = stack.get("water_surface_mask")
+    water = stack.get("water_surface_mask", default=None)
     probes = compute_probe_placements(
         height,
         cell_size=float(stack.cell_size),
@@ -2471,7 +2669,7 @@ def _audio_zone_list_json(
 
 def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     zones: List[Dict[str, Any]] = []
-    arr = stack.get("gameplay_zone")
+    arr = stack.get("gameplay_zone", default=None)
     if arr is None:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
@@ -2521,7 +2719,7 @@ def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     volumes: List[Dict[str, Any]] = []
-    _wl = stack.get("wildlife_affinity") or {}
+    _wl = stack.get("wildlife_affinity", default=None) or {}
     if not _wl:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "volumes": volumes}
 
@@ -2561,7 +2759,7 @@ def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     decals: Dict[str, List[Dict[str, Any]]] = {}
-    _dd = stack.get("decal_density")
+    _dd = stack.get("decal_density", default=None)
     if not _dd or not isinstance(_dd, dict):
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
@@ -2705,7 +2903,7 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     skipped_out_of_bounds = 0
 
     # FIX-8-3: sample wind_field per instance instead of using a global default
-    _wind_arr = stack.get("wind_field")
+    _wind_arr = stack.get("wind_field", default=None)
     _has_wind_field = (
         _wind_arr is not None
         and isinstance(_wind_arr, np.ndarray)

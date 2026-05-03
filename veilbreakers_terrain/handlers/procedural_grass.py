@@ -24,10 +24,9 @@ import json
 import logging
 import math
 import os
-import random
-import string
+import secrets
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass  # FIX-11-9: removed unused 'field'
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
@@ -328,7 +327,7 @@ class ProceduralGrassSystem:
         # Slope cap
         slope = _stack_attr(stack, "slope")
         if slope is not None:
-            mask *= (np.asarray(slope, dtype=np.float32) <= species.slope_max_deg).astype(np.float32)
+            mask *= (np.asarray(slope, dtype=np.float32) <= np.radians(species.slope_max_deg)).astype(np.float32)
 
         # Cliff hard exclude
         cliff_label = _stack_attr(stack, "cliff_label")
@@ -634,7 +633,7 @@ if __name__ == "__main__":
     build()
 '''
         # Atomic write
-        suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
+        suffix = secrets.token_hex(4)
         tmp = output_path.with_name(f".{output_path.name}.{suffix}.tmp")
         tmp.write_text(script, encoding="utf-8")
         os.replace(tmp, output_path)
@@ -719,7 +718,7 @@ if __name__ == "__main__":
         manifest["lod_distribution"] = lod_distribution
 
         # Atomic write
-        suffix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
+        suffix = secrets.token_hex(4)
         tmp = out_path.with_name(f".{out_path.name}.{suffix}.tmp")
         with tmp.open("w", encoding="utf-8") as fh:
             json.dump(manifest, fh, indent=2, sort_keys=True)

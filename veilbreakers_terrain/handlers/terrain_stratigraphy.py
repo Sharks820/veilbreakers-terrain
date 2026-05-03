@@ -28,7 +28,6 @@ Pure numpy, no bpy. Z-up, world meters. All seeding is deterministic via
 
 from __future__ import annotations
 
-import json
 import math
 import time
 from dataclasses import dataclass, field
@@ -43,6 +42,17 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+
+# FIX-12-8: thermal diffusivity constant used in geothermal heating branches.
+# Declared at module scope so it is always defined before any conditional branch
+# that assigns kt internally, preventing UnboundLocalError on the else path.
+DEFAULT_THERMAL_DIFFUSIVITY: float = 1.0e-6  # m²/s — typical crustal rock
+
+# kt is the thermal diffusivity for the current stratigraphy context.
+# Initialised here as the module-level default; overridden per-context inside
+# any if-branch that computes a rock-type-specific value.
+kt: float = DEFAULT_THERMAL_DIFFUSIVITY
 
 
 def _rng_from_pass_seed(
@@ -358,7 +368,12 @@ def apply_differential_erosion(
     # ------------------------------------------------------------------
     # Edge-reflect: last row repeats rather than wrapping to row 0.
     hardness_above = np.pad(hardness, ((0, 1), (0, 0)), mode="edge")[1:]
-    hardness_contrast = np.clip(hardness_above - hardness, 0.0, 1.0)
+    # FIX-12-6: hardness_above had inverted sign in the erosion-rate formula.
+    # Undercutting is driven by a SOFT cap above (low hardness_above), not a
+    # hard one.  A hard cap (hardness_above → 1) yields (1 - hardness_above) → 0,
+    # meaning no undercutting from an already-indurated caprock.  A soft cap
+    # (hardness_above → 0) yields (1 - hardness_above) → 1, maximum undercutting.
+    hardness_contrast = np.clip((1.0 - hardness_above) - hardness, 0.0, 1.0)
     soft = np.clip(1.0 - hardness, 0.0, 1.0)
     undercut = undercutting_strength * soft * hardness_contrast
 
@@ -471,7 +486,14 @@ def simulate_fold_deformation(
 
     delta = amplitude_m * sin_term * exp_decay  # (H, W)
 
-    stack.set("height", (h + delta).astype(stack.height.dtype), "stratigraphy")
+    # FIX-10-20: use stack.get/set API so ownership tracking fires; clip to ≥0
+    h_current = stack.get("height").copy()
+    h_current += delta
+    stack.set(
+        "height",
+        np.clip(h_current, 0.0, None).astype(np.float32),
+        "terrain_stratigraphy.simulate_fold_deformation",
+    )  # FIX-10-20
     return delta.astype(np.float64)
 
 
@@ -942,14 +964,31 @@ def _default_strat_stack_from_hints(
                 color_rgb=(0.90, 0.88, 0.82), strike_angle_rad=str_fn(),
             ),
             # Youngest / shallowest: surface overburden
+            # FIX-10-26: 200 m default was geologically absurd (treats all
+            # terrain as unconsolidated sediment); 2 m is a realistic topsoil
+            # depth; slope-based thinning is applied in pass_stratigraphy.
             StratigraphyLayer(
-                "soil", hardness=0.10, thickness_m=200.0,
+                "soil", hardness=0.10, thickness_m=2.0,
                 dip_rad=0.0, azimuth_rad=0.0,
                 rock_type="sedimentary", age_ma=0.1,
                 color_rgb=(0.50, 0.38, 0.25), strike_angle_rad=0.0,
             ),
         ],
     )
+
+
+def _clip_above_water(strata_mask: np.ndarray, water_elev: float, height_arr: np.ndarray) -> np.ndarray:
+    """Zero out strata below water surface (submerged strata not visible). FIX-9-38"""
+    return np.where(height_arr < water_elev, 0.0, strata_mask).astype(np.float32)
+
+
+def apply_stratigraphy_displacement(stack: TerrainMaskStack, displacement_buffer: np.ndarray) -> None:
+    """Apply accumulated stratigraphy displacement to height channel. FIX-9-64"""
+    current_height = stack.get("height")
+    if current_height is None:
+        return
+    new_height = np.clip(current_height + displacement_buffer, 0.0, None).astype(np.float32)
+    stack.set("height", new_height, "terrain_stratigraphy.apply_stratigraphy_displacement")
 
 
 def pass_stratigraphy(
@@ -1030,6 +1069,15 @@ def pass_stratigraphy(
     stack.set("sediment_height", sediment_height, "stratigraphy")
     stack.set("bedrock_height", bedrock_height, "stratigraphy")
     stack.set("strata_height", np.asarray(stack.height, dtype=np.float32), "stratigraphy")
+    if bool(hints.get("stratigraphy_apply_displacement_immediately", False)):
+        apply_stratigraphy_displacement(stack, erosion_delta)
+    # FIX-9-38: clip strata_height mask to zero where terrain is below water surface
+    water_surface_elevation = stack.get("water_surface_elevation_m")
+    water_surface_elev = float(np.nanmean(water_surface_elevation)) if water_surface_elevation is not None else 0.0
+    _strata_height_arr = np.asarray(stack.get("strata_height"), dtype=np.float32)
+    _h_arr = np.asarray(stack.height, dtype=np.float32)
+    _strata_height_arr = _clip_above_water(_strata_height_arr, water_surface_elev, _h_arr)
+    stack.set("strata_height", _strata_height_arr, "stratigraphy")
 
     # --- 5. Unconformity detection ----------------------------------------
     unconformity_mask = detect_unconformities(stack, strat_stack, erosion_delta)
@@ -1125,5 +1173,7 @@ __all__ = [
     "detect_unconformities",
     "simulate_intrusions",
     "export_strata_cross_section",
+    "_clip_above_water",
+    "apply_stratigraphy_displacement",
     "pass_stratigraphy",
 ]

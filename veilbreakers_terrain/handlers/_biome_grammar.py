@@ -246,7 +246,7 @@ def generate_world_map_spec(
     # → climate-sorted biome index.
     _climate_rng = random.Random(seed ^ 0xFACEB00C)
     grid_side_c = max(1, int(math.ceil(math.sqrt(biome_count))))
-    cell_w_c = 1.0 / grid_side_c
+    _ = 1.0 / grid_side_c  # FIX-11-10: cell_w_c unused; seed_ys uses cell_h_c
     cell_h_c = 1.0 / grid_side_c
     seed_ys: list[float] = []
     for _bi in range(biome_count):
@@ -1197,7 +1197,7 @@ def apply_hot_spring_features(
         ring_cx = sx - grad_x / grad_mag * downhill_bias
 
         dist_pool  = np.sqrt((ys - sy) ** 2 + (xs - sx) ** 2)
-        dist_rings = np.sqrt((ys - ring_cy) ** 2 + (xs - ring_cx) ** 2)
+        _ = np.sqrt((ys - ring_cy) ** 2 + (xs - ring_cx) ** 2)  # FIX-11-10: dist_rings unused; dist_rings_full used below
 
         # Main pool depression
         pool_mask = np.clip(1.0 - dist_pool / pool_radius, 0.0, 1.0) ** 2
@@ -1358,7 +1358,7 @@ def apply_reef_platform(
     # Gradient of land mask points from sea toward land — "onshore" direction.
     # Exposure is high where there is a strong gradient (open ocean front).
     exposure = np.sqrt(grad_y_land ** 2 + grad_x_land ** 2)
-    exp_max = float(exposure.max()) or 1.0
+    _ = float(exposure.max()) or 1.0  # FIX-11-10: exp_max unused; exposure_norm uses exposure_smooth.max()
     # Smooth exposure to spread the windward signal beyond the coastline edge
     if _HAS_SCIPY:
         exposure_smooth = _scipy_ndimage.uniform_filter(
@@ -1617,7 +1617,7 @@ def apply_tafoni_weathering(
         """Blend base prob with Gaussian attraction map from placed cavities."""
         if not placed_cy:
             return base
-        n_placed = len(placed_cy)
+        _ = len(placed_cy)  # FIX-11-10: n_placed unused here; comment only references it
         cy_arr = np.array(placed_cy, dtype=np.float64)
         cx_arr = np.array(placed_cx, dtype=np.float64)
         # Vectorised: (n_placed, h*w) distance matrix — feasible for n_placed ≤ ~500

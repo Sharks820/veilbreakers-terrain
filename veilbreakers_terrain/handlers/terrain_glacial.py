@@ -116,7 +116,7 @@ def carve_u_valley(
         # Hack's law depth proxy: if flow_accumulation present, scale depth
         # per-path using mean accumulation along the path centreline.
         eff_depth = depth_m
-        if stack.get("flow_accumulation") is not None:
+        if stack.get("flow_accumulation", default=None) is not None:  # FIX-10-H14
             fa = np.asarray(stack.get("flow_accumulation"), dtype=np.float64)
             path_cells = [(int(round(pr)), int(round(pc))) for pr, pc in dense
                           if 0 <= int(round(pr)) < H and 0 <= int(round(pc)) < W]
@@ -124,9 +124,13 @@ def carve_u_valley(
                 rs = [p[0] for p in path_cells]
                 cs = [p[1] for p in path_cells]
                 mean_acc = float(fa[rs, cs].mean())
-                fa_max = float(fa.max()) if fa.max() > 0 else 1.0
-                # Hack exponent 0.4: larger catchment → deeper valley
-                hack_scale = (mean_acc / fa_max) ** 0.4
+                # FIX-10-2: Hack's law requires real catchment area in m²,
+                # not a normalised fraction — fraction compresses the power-law
+                # range to near-zero variance across the tile.
+                _csm = float(stack.cell_size) if stack.cell_size else 1.0
+                area_m2 = mean_acc * (_csm ** 2)
+                _ref_area_m2 = 1.0e6  # 1 km² reference
+                hack_scale = (area_m2 / _ref_area_m2) ** 0.4
                 # Clamp to [0.5, 2.0] so authored depth stays meaningful
                 hack_scale = float(np.clip(hack_scale, 0.5, 2.0))
                 eff_depth = depth_m * hack_scale
@@ -266,20 +270,50 @@ def scatter_moraines(
 def compute_snow_line(
     stack: TerrainMaskStack,
     snow_line_altitude_m: float,
+    seasonal_multiplier: float = 1.0,
+    base_snow_depth: float = 2.0,
 ) -> np.ndarray:
     """Populate ``stack.snow_line_factor`` (H, W) in [0, 1].
 
     0 below the snow line, smoothly ramping to 1 above it with a
     50-meter transition band. Slope also reduces snow accumulation
     (steep cliff faces shed snow).
+
+    FIX-10-J1: Adds wind-drift leeward accumulation, north-facing aspect bias
+    (-200 m effective snow line on N/NE slopes), and writes snow_depth_m /
+    snow_accumulation channels.
     """
     if stack.height is None:
         raise ValueError("compute_snow_line requires stack.height")
 
-    h = np.asarray(stack.height, dtype=np.float64)
+    h_arr = np.asarray(stack.height, dtype=np.float64)
     band = 50.0
-    raw = (h - snow_line_altitude_m) / band
+
+    # FIX-10-J1: north-facing aspect bias — snow 200 m lower on N/NE slopes
+    aspect_src = stack.get("aspect", default=None)
+    if aspect_src is not None:
+        aspect_arr = np.asarray(aspect_src, dtype=np.float64)
+        north_facing = np.cos(aspect_arr) > 0.5
+        snow_alt_with_bias = snow_line_altitude_m - np.where(north_facing, 200.0, 0.0)
+    else:
+        snow_alt_with_bias = snow_line_altitude_m
+
+    raw = (h_arr - snow_alt_with_bias) / band
     factor = np.clip(raw, 0.0, 1.0)
+
+    # FIX-10-J1: leeward wind-drift accumulation
+    wind_exp = stack.get("wind_field", default=None)
+    if wind_exp is not None:
+        wind_arr = np.asarray(wind_exp, dtype=np.float64)
+        # Use wind magnitude when field is (H, W, 2), else use as-is
+        if wind_arr.ndim == 3 and wind_arr.shape[2] >= 2:
+            wind_mag = np.sqrt(wind_arr[..., 0] ** 2 + wind_arr[..., 1] ** 2)
+        else:
+            wind_mag = np.abs(wind_arr)
+        wind_max = float(wind_mag.max())
+        if wind_max > 1e-6:
+            # leeward slopes (low wind exposure) accumulate more snow
+            factor = factor * (1.0 + 0.3 * (1.0 - wind_mag / wind_max))
 
     if stack.slope is not None:
         slope = np.asarray(stack.slope, dtype=np.float64)
@@ -287,8 +321,14 @@ def compute_snow_line(
         slope_penalty = np.clip(slope / (math.pi / 2.0), 0.0, 1.0) * 0.5
         factor = factor * (1.0 - slope_penalty)
 
-    factor = factor.astype(np.float32)
-    stack.set("snow_line_factor", factor, "glacial")
+    factor = np.clip(factor, 0.0, 1.0).astype(np.float32)
+    stack.set("snow_line_factor", factor, "pass_compute_snow_line")
+
+    # FIX-10-J1: write snow depth channels
+    snow_depth_m = factor * base_snow_depth * seasonal_multiplier
+    stack.set("snow_depth_m", snow_depth_m.astype(np.float32), "pass_compute_snow_line")
+    stack.set("snow_accumulation", snow_depth_m.astype(np.float32), "pass_compute_snow_line")
+
     return factor
 
 
@@ -315,14 +355,17 @@ def pass_glacial(
     elif "climate_zone" in hints and hasattr(hints["climate_zone"], "snow_line_m"):
         snow_alt = float(hints["climate_zone"].snow_line_m)
     else:
-        climate_zone = stack.get("climate_zone")
+        climate_zone = stack.get("climate_zone", default=None)
         if climate_zone is not None and hasattr(climate_zone, "snow_line_m"):
             snow_alt = float(climate_zone.snow_line_m)
         else:
             h_arr = np.asarray(stack.height, dtype=np.float64)
             snow_alt = float(np.nanmax(h_arr)) * 0.8
 
-    factor = compute_snow_line(stack, snow_alt)
+    seasonal_multiplier = float(hints.get("snow_seasonal_multiplier", 1.0))
+    base_snow_depth = float(hints.get("snow_base_depth_m", 2.0))
+
+    factor = compute_snow_line(stack, snow_alt, seasonal_multiplier=seasonal_multiplier, base_snow_depth=base_snow_depth)
 
     # Optional U-valley carving from hints
     carved = False
@@ -347,12 +390,19 @@ def pass_glacial(
                 carved = True
 
     stack.set("glacial_delta", total_delta.astype(np.float32), "glacial")
-    produced = ("snow_line_factor", "glacial_delta")
+    height = stack.get("height")
+    stack.set("height", np.clip(height - total_delta, 0.0, None).astype(np.float32), "pass_glacial")
+    # FIX-10-J1: snow_depth_m and snow_accumulation written by compute_snow_line
+    produced = ("snow_line_factor", "glacial_delta", "height", "snow_depth_m", "snow_accumulation")
 
     # Consumed channels include flow_accumulation when present (Hack's law scaling)
     consumed = ("height",)
-    if stack.get("flow_accumulation") is not None:
+    if stack.get("flow_accumulation", default=None) is not None:  # FIX-10-H14
         consumed = ("height", "flow_accumulation")
+
+    # FIX-10-J1: report snow depth stats
+    snow_depth_arr = stack.get("snow_depth_m")
+    snow_depth_mean = float(np.asarray(snow_depth_arr).mean()) if snow_depth_arr is not None else 0.0
 
     return PassResult(
         pass_name="pass_glacial",
@@ -364,7 +414,9 @@ def pass_glacial(
             "snow_line_altitude_m": snow_alt,
             "snow_coverage_fraction": float((factor > 0.5).mean()),
             "u_valleys_carved": int(len(glacier_paths)) if carved else 0,
-            "hack_law_scaling": stack.get("flow_accumulation") is not None,
+            "hack_law_scaling": stack.get("flow_accumulation", default=None) is not None,  # FIX-10-H14
+            "snow_depth_mean_m": snow_depth_mean,
+            "seasonal_multiplier": seasonal_multiplier,
         },
         issues=[],
     )
@@ -429,9 +481,15 @@ def register_glacial_pass() -> None:
             name="pass_glacial",
             func=pass_glacial,
             requires_channels=("height",),
-            optional_channels=("slope", "flow_accumulation"),
-            produces_channels=("snow_line_factor", "glacial_delta"),
-            overrides=("snow_line_factor", "glacial_delta"),
+            optional_channels=("slope", "flow_accumulation", "aspect", "wind_field"),
+            produces_channels=(
+                "snow_line_factor", "glacial_delta", "height",
+                "snow_depth_m", "snow_accumulation",  # FIX-10-J1
+            ),
+            overrides=(
+                "snow_line_factor", "glacial_delta", "height",
+                "snow_depth_m", "snow_accumulation",
+            ),
             seed_namespace="pass_glacial",
             requires_scene_read=False,
             may_modify_geometry=False,
@@ -447,4 +505,5 @@ __all__ = [
     "pass_glacial",
     "get_ice_formation_specs",
     "register_glacial_pass",
+    # FIX-10-J1 new channels: snow_depth_m, snow_accumulation
 ]

@@ -1380,7 +1380,7 @@ def build_cave_mouth_surround(
     # depth_vec: outward normal (face_normal XY, z=0)
     right_x = -ny   # 90° rotation of the XY normal
     right_y = nx
-    right_z = 0.0
+    _ = 0.0  # FIX-11-10: right_z unused (arch is in XY plane)
 
     inner_verts: List[Tuple[float, float, float]] = []
     outer_verts: List[Tuple[float, float, float]] = []
@@ -1527,7 +1527,8 @@ def _astar_cave_path(
     g_score: Dict[Tuple[int, int], float] = {(sr, sc): 0.0}
     came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {(sr, sc): None}
 
-    max_nodes = min(4096, rows * cols)
+    # FIX-4-3: scale A* node budget with tile area
+    max_nodes = min(rows * cols, max(4096, (rows * cols) // 64))
     visited = 0
 
     # 8-connected neighbours: (dr, dc, step_dist_factor)
@@ -3215,7 +3216,7 @@ def _generate_drip_channels(
     """
     rng = np.random.default_rng(int(seed ^ 0xE1E2E3E4) & 0xFFFFFFFF)
     floor_z = 0.0
-    h = float(wall_height)
+    _ = float(wall_height)  # FIX-11-10: h unused; wall_height used directly below
     props: List[Dict] = []
 
     N_COLS = 4    # 4 vertices across the strip width
@@ -3250,7 +3251,7 @@ def _generate_drip_channels(
 
             for col in range(N_COLS):
                 col_t = float(col) / float(N_COLS - 1)     # 0 left, 1 right
-                half_w = strip_w * 0.5
+                _ = strip_w * 0.5  # FIX-11-10: half_w unused; offset uses strip_w directly
                 offset = (col_t - 0.5) * strip_w           # -half_w … +half_w
                 vx = cx + right_x * offset + fwd_x * lean
                 vy = cy + right_y * offset + fwd_y * lean
@@ -3416,6 +3417,7 @@ def _find_entrance_candidates(
     max_candidates: int = 32,
     entrance_min_slope_deg: float = 35.0,
     min_entrance_area_cells: int = 4,
+    min_entrance_area_m2: float = 4.0,
 ) -> List[Tuple[float, float, float]]:
     """Source and score cave entrance candidates.
 
@@ -3454,11 +3456,20 @@ def _find_entrance_candidates(
                 if not region.contains_point(pos[0], pos[1]):
                     continue
             raw.append(tuple(pos))  # type: ignore[arg-type]
+    authored_raw = {tuple(float(v) for v in pos) for pos in raw}
 
     # Precompute scoring arrays from stack
     h = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cs = float(stack.cell_size)
+
+    # FIX-12-10: derive cell-count threshold from a physical m² area so the
+    # check scales correctly with cell_size_m.  At cell_size=1 m the default
+    # 4.0 m² → 4 cells (identical to the old hardcoded value).  At cell_size=
+    # 8 m each cell covers 64 m², so 4 m² → max(1, 0) = 1 cell, still a
+    # meaningful physical filter rather than an always-pass zero.
+    _cell_area_m2 = max(cs * cs, 1e-9)
+    min_entrance_area_cells = max(1, int(min_entrance_area_m2 / _cell_area_m2))
 
     # Slope in degrees
     if stack.slope is not None:
@@ -3496,8 +3507,34 @@ def _find_entrance_candidates(
                 access_arr = _a_np
                 break
 
-    # Precompute boolean steep mask for area check
-    steep_mask = slope_deg_arr >= entrance_min_slope_deg
+    # FIX-10-H10: cliff face cave entrances — steep AND concave, not flat doline rim.
+    # Replace the plain slope gate with a combined steep+concave filter so that
+    # candidates are drawn to vertical cliff faces (the geologically correct site)
+    # rather than flat-bottomed dolines.
+    try:
+        from scipy.ndimage import laplace as _scipy_laplace
+        _curvature_laplace = _scipy_laplace(h / max(float(h.max()), 1e-9))
+    except ImportError:
+        h_pad = np.pad(h / max(float(h.max()), 1e-9), 1, mode="reflect")
+        _curvature_laplace = (
+            h_pad[:-2, 1:-1] + h_pad[2:, 1:-1]
+            + h_pad[1:-1, :-2] + h_pad[1:-1, 2:]
+            - 4.0 * h / max(float(h.max()), 1e-9)
+        )
+    # Concave = negative laplacian value; threshold at 10% of peak magnitude
+    _curv_threshold = max(float(np.abs(_curvature_laplace).max()) * 0.1, 1e-9)
+    _steep = slope_deg_arr > entrance_min_slope_deg   # > ~35°
+    _concave = _curvature_laplace < -_curv_threshold  # concave surface
+    _water_mask = np.zeros(h.shape, dtype=bool)
+    _ws = stack.get("water_surface")
+    if _ws is not None:
+        _water_mask = np.asarray(_ws, dtype=np.float32) > 0.1
+    explicit_cliff = (
+        np.asarray(cliff_arr, dtype=np.float64) >= 0.35
+        if cliff_arr is not None and cliff_arr.shape == h.shape
+        else np.zeros(h.shape, dtype=bool)
+    )
+    steep_mask = ((_steep & _concave) | explicit_cliff) & ~_water_mask
 
     # Neighbourhood half-radius for area and accessibility checks (3 cells)
     _AREA_RADIUS = 3
@@ -3565,16 +3602,17 @@ def _find_entrance_candidates(
         """Return score float, or None to hard-reject this candidate."""
         row, col = _world_to_cell(stack, pos[0], pos[1])
         score = 0.0
+        authored_candidate = tuple(float(v) for v in pos) in authored_raw
 
         # (c) Slope steepness hard check — reject if too flat
         slope_val = float(slope_deg_arr[row, col])
-        if slope_val < entrance_min_slope_deg:
+        if not authored_candidate and slope_val < entrance_min_slope_deg:
             return None  # hard rejection — flat ground, not a cave entrance
 
         # (d) Minimum area requirement — count steep cells in neighbourhood
         rs, cs_sl = _neighbourhood_slice(row, col, _AREA_RADIUS)
         steep_count = int(steep_mask[rs, cs_sl].sum())
-        if steep_count < min_entrance_area_cells:
+        if not authored_candidate and steep_count < min_entrance_area_cells:
             return None  # isolated steep spike, no real cliff face
 
         # (e) Player traversal accessibility check
@@ -3637,40 +3675,44 @@ def pass_caves(
         region,
     )
 
+    # FIX-10-21: clear module-level snap cache so entries from a previous tile
+    # don't contaminate this tile's cliff-face snap lookups.
+    _cliff_entry_meta.clear()
+
     # Seed the stack.cave_candidate if unset (pure-bool zero array).
-    if stack.get("cave_candidate") is None:
+    if stack.get("cave_candidate", default=None) is None:  # FIX-10-H14
         stack.set(
             "cave_candidate",
             np.zeros_like(stack.height, dtype=bool),
             "caves",
         )
-    if stack.get("wet_rock") is None:
+    if stack.get("wet_rock", default=None) is None:  # FIX-10-H14
         stack.set(
             "wet_rock",
             np.zeros_like(stack.height, dtype=np.float32),
             "caves",
         )
-    if stack.get("cave_wall_texture") is None:
+    if stack.get("cave_wall_texture", default=None) is None:  # FIX-10-H14
         stack.set(
             "cave_wall_texture",
             np.zeros_like(stack.height, dtype=np.float32),
             "caves",
         )
-    if stack.get("cave_depth_hint") is None:
+    if stack.get("cave_depth_hint", default=None) is None:  # FIX-10-H14
         stack.set(
             "cave_depth_hint",
             np.zeros_like(stack.height, dtype=np.float32),
             "caves",
         )
-    if stack.get("cave_underground_depth") is None:
+    if stack.get("cave_underground_depth", default=None) is None:  # FIX-10-H14
         stack.set(
             "cave_underground_depth",
             np.zeros_like(stack.height, dtype=np.float32),
             "caves",
         )
-    if stack.get("cave_chambers") is None:
+    if stack.get("cave_chambers", default=None) is None:  # FIX-10-H14
         stack.set("cave_chambers", np.zeros(1, dtype=np.float32), "caves")
-    if stack.get("cave_nav_issues_count") is None:
+    if stack.get("cave_nav_issues_count", default=None) is None:  # FIX-10-H14
         stack.set("cave_nav_issues_count", np.zeros(1, dtype=np.float32), "caves")
 
     # Protected zone per-cell mask (applied to cave_candidate after carve)
@@ -3848,7 +3890,8 @@ def pass_caves(
     accumulated_delta = np.zeros_like(stack.height, dtype=np.float32)
     for cave in caves:
         if cave.height_delta is not None:
-            accumulated_delta += cave.height_delta
+            # FIX-4-4: clamp cave deltas — minimum merge prevents over-excavation on overlapping caves
+            accumulated_delta = np.minimum(accumulated_delta, cave.height_delta)
     stack.set("cave_height_delta", accumulated_delta, "caves")
 
     # Compute speleothem growth (Dreybrodt model) across all cave interiors.
@@ -4547,7 +4590,7 @@ def _build_chamber_mesh_geometry(
     # Floor Z reference for stalactite floor-penetration guard.
     # The floor center vertex was just added as floor_center_idx; read its Z
     # from the verts list (it is always the last vertex added so far).
-    _floor_z_ref = float(verts[floor_center_idx][2])
+    _ = float(verts[floor_center_idx][2])  # FIX-11-10: _floor_z_ref unused; floor guard uses verts directly
 
     # Track stalactite tip XY positions and their remaining headroom so the
     # stalagmite loop can attempt to pair columns where combined growth reaches
@@ -4889,14 +4932,14 @@ def _build_bezier_tunnel_geometry(
             t_next = t
             t_prev = float(si - 1) / float(n_segs)
             c_prev = _bezier_cubic(p0, p1, p2, p3, t_prev)
-            centre_next = centre
+            _ = centre  # FIX-11-10: centre_next unused; immediately overwritten below
             centre = c_prev
             centre = _bezier_cubic(p0, p1, p2, p3, t)
         c_next = _bezier_cubic(p0, p1, p2, p3, min(t_next, 1.0))
         tang_x = c_next[0] - centre[0]
         tang_y = c_next[1] - centre[1]
         tang_z = c_next[2] - centre[2]
-        tang_len = math.sqrt(tang_x**2 + tang_y**2 + tang_z**2) or 1.0
+        tang_len = math.hypot(tang_x, tang_y, tang_z) or 1.0  # FIX-11-6
         tang_x /= tang_len
         tang_y /= tang_len
         tang_z /= tang_len
@@ -4911,7 +4954,7 @@ def _build_bezier_tunnel_geometry(
         rx = tang_y * up_z - tang_z * up_y
         ry = tang_z * up_x - tang_x * up_z
         rz = tang_x * up_y - tang_y * up_x
-        r_len = math.sqrt(rx**2 + ry**2 + rz**2) or 1.0
+        r_len = math.hypot(rx, ry, rz) or 1.0  # FIX-11-6
         rx /= r_len; ry /= r_len; rz /= r_len
 
         # Recompute up = right × tangent
@@ -5114,16 +5157,18 @@ def handle_generate_cave(params: dict) -> dict:
             tunnel_mesh_name = f"{name}_Tunnel"
             tmesh = _bpy.data.meshes.new(tunnel_mesh_name)
             tbm = _bmesh.new()
-            for tv in tunnel_verts:
-                tbm.verts.new(tv)
-            tbm.verts.ensure_lookup_table()
-            for tf in tunnel_faces:
-                try:
-                    tbm.faces.new([tbm.verts[vi] for vi in tf])
-                except (ValueError, IndexError):
-                    pass
-            tbm.to_mesh(tmesh)
-            tbm.free()
+            try:
+                for tv in tunnel_verts:
+                    tbm.verts.new(tv)
+                tbm.verts.ensure_lookup_table()
+                for tf in tunnel_faces:
+                    try:
+                        tbm.faces.new([tbm.verts[vi] for vi in tf])
+                    except (ValueError, IndexError):
+                        pass
+                tbm.to_mesh(tmesh)
+            finally:
+                tbm.free()
             tmesh.update()
 
             tunnel_obj = _bpy.data.objects.new(tunnel_mesh_name, tmesh)

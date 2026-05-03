@@ -68,7 +68,7 @@ def _resolve_strata_color_map(stack: TerrainMaskStack) -> Optional[np.ndarray]:
 
     Returns ``None`` when the cross-section channel is absent or malformed.
     """
-    wrapper = stack.get("strata_cross_section")
+    wrapper = stack.get("strata_cross_section", default=None)
     if wrapper is None:
         return None
     # Channel is stored as a (1,)-shape object array around the dict
@@ -138,7 +138,7 @@ def compute_macro_color(
     h_norm = (h - hmin) / hspan  # 0..1
 
     # Base color: resolve per-cell biome id or default
-    biome = stack.get("biome_id")
+    biome = stack.get("biome_id", default=None)
     color = np.zeros((rows, cols, 3), dtype=np.float64)
     default_rgb = np.array(pal.get(DEFAULT_BIOME_ID, (0.3, 0.3, 0.3)), dtype=np.float64)
     color[:] = default_rgb.reshape(1, 1, 3)
@@ -151,7 +151,7 @@ def compute_macro_color(
 
     # Wetness darkens (wet ground darker + slight blue-grey shift, matching
     # UE5 Landscape wet-surface material response)
-    wet = stack.get("wetness")
+    wet = stack.get("wetness", default=None)
     if wet is not None:
         wet_arr = np.clip(np.asarray(wet, dtype=np.float64), 0.0, 1.0)[..., None]
         # darken up to 35%; also shift toward cool blue-grey for standing water
@@ -160,14 +160,14 @@ def compute_macro_color(
 
     # Erosion bleaching: eroded cells → paler, sandier (exposed fresh rock/soil
     # is lighter before weathering; matches Gaea's erosion color export)
-    erosion = stack.get("erosion_amount")
+    erosion = stack.get("erosion_amount", default=None)
     if erosion is not None:
         er = np.clip(np.asarray(erosion, dtype=np.float64), 0.0, 1.0)[..., None]
         bleach_target = np.array([0.62, 0.58, 0.50], dtype=np.float64).reshape(1, 1, 3)
         color = color * (1.0 - 0.25 * er) + bleach_target * (0.25 * er)
 
     # Deposition staining: deposited sediment → muddy ochre tones
-    deposition = stack.get("deposition_amount")
+    deposition = stack.get("deposition_amount", default=None)
     if deposition is not None:
         dep = np.clip(np.asarray(deposition, dtype=np.float64), 0.0, 1.0)[..., None]
         mud_target = np.array([0.38, 0.32, 0.22], dtype=np.float64).reshape(1, 1, 3)
@@ -184,7 +184,7 @@ def compute_macro_color(
         color = color * (1.0 - strata_color_weight) + strata_rgb * strata_color_weight
 
     # Stratigraphy can stamp additive RGB shifts for oxidised intrusions.
-    albedo_shift = stack.get("albedo_shift_rgb")
+    albedo_shift = stack.get("albedo_shift_rgb", default=None)
     if albedo_shift is not None:
         shift_arr = np.asarray(albedo_shift, dtype=np.float64)
         if shift_arr.shape == color.shape:
@@ -196,7 +196,7 @@ def compute_macro_color(
     color = color * (1.0 - alt_mix * 0.4) + cool_target * alt_mix * 0.4
 
     # Snow line overlay
-    snow = stack.get("snow_line_factor")
+    snow = stack.get("snow_line_factor", default=None)
     if snow is not None:
         snow_arr = np.clip(np.asarray(snow, dtype=np.float64), 0.0, 1.0)[..., None]
         snow_rgb = np.array([0.86, 0.88, 0.92], dtype=np.float64).reshape(1, 1, 3)

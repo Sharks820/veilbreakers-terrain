@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_aaa_sunken_coastal_ruins_node_v1.py", line 1233, in _run_build
+    water_mat = _mat_seawater()
+                ^^^^^^^^^^^^^^^
+  File "C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\scripts\build_aaa_sunken_coastal_ruins_node_v1.py", line 311, in _mat_seawater
+    wave1.inputs["Roughness"].default_value  = 0.6
+    ~~~~~~~~~~~~^^^^^^^^^^^^^
+KeyError: 'bpy_prop_collection[key]: key "Roughness" not found'

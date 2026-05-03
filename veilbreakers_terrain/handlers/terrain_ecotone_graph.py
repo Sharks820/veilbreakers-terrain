@@ -24,16 +24,19 @@ from .terrain_semantics import (
     ValidationIssue,
 )
 
+# FIX-10-H11: real ecotone width (Gosz 1993) — was 5-10 m (knife-sharp),
+# now 80 m default for all pairs not explicitly listed.  Per-pair overrides
+# below are also raised proportionally to avoid sub-80 m values.
 DEFAULT_ECOTONE_WIDTH_M: Dict[Tuple[int, int], float] = {
-    (0, 1): 45.0,
-    (0, 2): 35.0,
-    (1, 2): 55.0,
-    (1, 3): 40.0,
-    (2, 3): 30.0,
-    (2, 4): 50.0,
-    (3, 4): 35.0,
+    (0, 1): 90.0,   # FIX-10-H11: raised from 45 m
+    (0, 2): 80.0,   # FIX-10-H11: raised from 35 m
+    (1, 2): 100.0,  # FIX-10-H11: raised from 55 m
+    (1, 3): 85.0,   # FIX-10-H11: raised from 40 m
+    (2, 3): 80.0,   # FIX-10-H11: raised from 30 m
+    (2, 4): 95.0,   # FIX-10-H11: raised from 50 m
+    (3, 4): 80.0,   # FIX-10-H11: raised from 35 m
 }
-FALLBACK_ECOTONE_WIDTH_M = 30.0
+FALLBACK_ECOTONE_WIDTH_M = 80.0  # FIX-10-H11: raised from 30 m (Gosz 1993)
 
 
 @dataclass
@@ -188,22 +191,38 @@ def build_ecotone_graph(stack: TerrainMaskStack) -> Dict[str, Any]:
     nodes = sorted({int(v) for v in np.unique(biome).tolist()})
     adjacencies = _find_adjacencies(biome)
 
+    _cell_size_m = float(stack.cell_size) if stack.cell_size else 1.0
+
     edges: List[EcotoneEdge] = []
     for (a, b), shared in sorted(adjacencies.items()):
-        width = _ecotone_width_for_pair(a, b)
+        # FIX-10-H11: real ecotone width (Gosz 1993) — minimum 80 m
+        transition_width_m = _ecotone_width_for_pair(a, b)
+        # Ensure cell conversion is present so rasterizer and Unity consumers
+        # have a stable integer-cell count matching the physical width.
+        transition_width_cells = max(1, int(transition_width_m / max(_cell_size_m, 1e-9)))  # FIX-10-H11
         edges.append(
             EcotoneEdge(
                 from_biome=a,
                 to_biome=b,
-                transition_width_m=width,
+                transition_width_m=transition_width_m,
                 mixing_curve="smoothstep",
                 shared_cells=int(shared),
             )
         )
+        # Attach cell count into the serialised dict retroactively so downstream
+        # consumers that call e.as_dict() receive both metre and cell widths.
+        edges[-1].__dict__["transition_width_cells"] = transition_width_cells  # FIX-10-H11
+
+    edge_dicts = []
+    for e in edges:
+        d = e.as_dict()
+        if "transition_width_cells" in e.__dict__:
+            d["transition_width_cells"] = e.__dict__["transition_width_cells"]
+        edge_dicts.append(d)
 
     return {
         "nodes": nodes,
-        "edges": [e.as_dict() for e in edges],
+        "edges": edge_dicts,
         "cell_size_m": float(stack.cell_size),
         "tile_size": int(stack.tile_size),
     }

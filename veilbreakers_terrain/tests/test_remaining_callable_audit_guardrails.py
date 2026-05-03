@@ -70,10 +70,11 @@ def test_remaining_registration_functions_publish_expected_passes():
         "horizon_lod",
         "pass_horizon_lod",
         "navmesh",
-        "pass_navmesh_export",
         "wind_field",
     }
     assert expected <= set(TerrainPassController.PASS_REGISTRY)
+    # FIX-13-15: pass_navmesh_export alias removed; only "navmesh" is registered.
+    assert "pass_navmesh_export" not in TerrainPassController.PASS_REGISTRY
     assert "height" in TerrainPassController.PASS_REGISTRY["navmesh"].requires_channels
 
 
@@ -292,3 +293,21 @@ def test_wildlife_godray_and_tileable_noise_helpers():
     assert noise_a.dtype == np.float32
     assert noise_a.min() >= 0.0 and noise_a.max() <= 1.0
     np.testing.assert_array_equal(noise_a, noise_b)
+
+
+def test_caldera_rules_and_scatter_chain_helpers():
+    from veilbreakers_terrain.handlers.terrain_materials_v2 import caldera_volcanic_rules
+    from veilbreakers_terrain.handlers.terrain_scatter_points import _build_scatter_chain
+
+    rules = caldera_volcanic_rules()
+    chain = _build_scatter_chain(
+        {"geometry": "mesh"},
+        {"placement": "poisson"},
+        {"lod": "distance"},
+        {"billboard": "impostor"},
+    )
+
+    assert rules.channels
+    assert any(channel.channel_id == "lava_hot" for channel in rules.channels)
+    assert chain[-1] == {"billboard": "impostor"}
+    assert len(chain) == 4

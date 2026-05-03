@@ -830,9 +830,13 @@ def compute_wind_vertex_colors(
         # G: sway_frequency — height from ground
         g = min(1.0, max(0.0, (vz - ground_level) / height_range))
 
-        # B: phase_offset — spatial hash for desynchronized per-vertex motion
-        phase_hash = math.sin(vx * 12.9898 + vy * 78.233 + vz * 37.719) * 43758.5453
-        b = min(1.0, max(0.0, phase_hash - math.floor(phase_hash)))
+        # FIX-10-24: world-space position hash — each tree gets a unique phase so
+        # instances don't all sway in lockstep from the shared template coordinates.
+        # Python's built-in hash() on a quantised (x, z) tuple gives uniform distribution
+        # with no sinusoidal banding artefacts (the previous sin-based hash produced visible
+        # stripes on large meshes).
+        phase = (hash((int(vx * 100), int(vz * 100))) & 0xFFFFFFFF) / 2 ** 32 * 2 * math.pi
+        b = min(1.0, max(0.0, phase / (2 * math.pi)))
 
         colors.append((r, g, b))
 
@@ -1367,15 +1371,17 @@ def scatter_biome_vegetation(
     # Extract terrain geometry
     mesh = obj.data
     bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bm.verts.ensure_lookup_table()
-    bm.faces.ensure_lookup_table()
-    bm.normal_update()
+    try:
+        bm.from_mesh(mesh)
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        bm.normal_update()
 
-    bm_terrain_vertices = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
-    bm_terrain_normals = [(v.normal.x, v.normal.y, v.normal.z) for v in bm.verts]
-    bm_terrain_faces = [tuple(v.index for v in f.verts) for f in bm.faces]
-    bm.free()
+        bm_terrain_vertices = [(v.co.x, v.co.y, v.co.z) for v in bm.verts]
+        bm_terrain_normals = [(v.normal.x, v.normal.y, v.normal.z) for v in bm.verts]
+        bm_terrain_faces = [tuple(v.index for v in f.verts) for f in bm.faces]
+    finally:
+        bm.free()
 
     dims = obj.dimensions
     loc = obj.location
@@ -1447,18 +1453,18 @@ def scatter_biome_vegetation(
                 wind_colors = compute_wind_vertex_colors(tree_verts)
                 if "WindColor" in mesh_data.color_attributes:
                     mesh_data.color_attributes.remove(mesh_data.color_attributes["WindColor"])
+                # FIX-10-24: POINT domain so Unity reads per-vertex (not per-loop corner)
                 attr = mesh_data.color_attributes.new(
-                    name="WindColor", type="FLOAT_COLOR", domain="CORNER"
+                    name="WindColor", type="FLOAT_COLOR", domain="POINT"
                 )
-                n_loops = len(mesh_data.loops)
-                rgba = np.zeros((n_loops, 4), dtype=np.float32)
-                for poly in mesh_data.polygons:
-                    for loop_idx, vert_idx in zip(poly.loop_indices, poly.vertices):
-                        r, g, b = wind_colors[vert_idx]
-                        rgba[loop_idx, 0] = r
-                        rgba[loop_idx, 1] = g
-                        rgba[loop_idx, 2] = b
-                        rgba[loop_idx, 3] = 0.0
+                # POINT domain: one entry per vertex, not per loop.
+                n_verts = len(mesh_data.vertices)
+                rgba = np.zeros((n_verts, 4), dtype=np.float32)
+                for vert_idx, (r, g, b) in enumerate(wind_colors[:n_verts]):
+                    rgba[vert_idx, 0] = r
+                    rgba[vert_idx, 1] = g
+                    rgba[vert_idx, 2] = b
+                    rgba[vert_idx, 3] = 0.0
                 attr.data.foreach_set("color", rgba.ravel())
 
     for p in enriched_placements:
@@ -1831,17 +1837,79 @@ def build_foliage_placement_manifest(
     }
 
 
+def export_grass_placement_records(
+    stack: Any,
+    output_dir: Any,
+) -> str | None:
+    """Export grass placement records from the stack to ``grass_placement_records.json``.
+
+    FIX-10-J2: write grass_placement_records.json for Unity DetailLayer import.
+    Reads ``grass_placement_records`` from the stack (populated by
+    pass_procedural_grass) and writes a JSON file Unity's VbTerrainImporter
+    can read to configure HDRP Detail Mesh terrain grass.
+
+    Args:
+        stack: TerrainMaskStack with ``grass_placement_records`` channel set.
+        output_dir: Path-like directory to write ``grass_placement_records.json``.
+
+    Returns:
+        Absolute path of the written file, or None when the channel is absent.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    raw = stack.get("grass_placement_records", default=None) if hasattr(stack, "get") else None
+    if raw is None:
+        return None
+
+    records_raw = list(raw)
+    if not records_raw:
+        return None
+
+    # Normalise each record to the canonical Unity-import schema.
+    # Accepts both dataclass-dict records (from pass_procedural_grass) and
+    # legacy (x_m, z_m, density, blade_height, species_id) tuples.
+    records: list[dict[str, Any]] = []
+    for item in records_raw:
+        if isinstance(item, dict):
+            pos = item.get("position_world", [0.0, 0.0, 0.0])
+            records.append({
+                "x": float(pos[0]) if len(pos) > 0 else 0.0,
+                "z": float(pos[2]) if len(pos) > 2 else float(pos[1]) if len(pos) > 1 else 0.0,
+                "density": float(item.get("scale", 1.0)),
+                "blade_height": float(item.get("scale", 1.0)),
+                "species_id": int(item.get("lod_level", 0)),
+                "species": str(item.get("species", "")),
+                "biome": str(item.get("biome", "")),
+                "rotation_y_rad": float(item.get("rotation_y_rad", 0.0)),
+            })
+        elif isinstance(item, (list, tuple)) and len(item) >= 5:
+            # FIX-10-J2: legacy tuple format (x_m, z_m, density, blade_height, species_id)
+            records.append({
+                "x": float(item[0]),
+                "z": float(item[1]),
+                "density": float(item[2]),
+                "blade_height": float(item[3]),
+                "species_id": int(item[4]),
+            })
+
+    out = _Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    dest = out / "grass_placement_records.json"
+    dest.write_text(_json.dumps(records, indent=2), encoding="utf-8")
+    return str(dest)
+
+
 def write_foliage_placement_manifest(manifest: dict[str, Any], out_path: Any) -> Any:
     """Atomic JSON write (tmp + rename). Returns the written :class:`Path`."""
     import json as _json
     import os as _os
-    import string as _string
-    import random as _random
+    import secrets as _secrets
     from pathlib import Path as _Path
 
     p = _Path(out_path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    suffix = "".join(_random.choices(_string.ascii_letters + _string.digits, k=8))
+    suffix = _secrets.token_hex(4)
     tmp = p.with_name(f".{p.name}.{suffix}.tmp")
     with tmp.open("w", encoding="utf-8") as fh:
         _json.dump(manifest, fh, indent=2, sort_keys=True)

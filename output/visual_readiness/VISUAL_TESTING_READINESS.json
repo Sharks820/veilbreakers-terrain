@@ -2,50 +2,40 @@
   "allow_no_blender": false,
   "blank_png": false,
   "blender_fixture": {
-    "created": true,
-    "mesh_faces": 324,
-    "mesh_vertices": 361,
-    "object_count": 3,
-    "sample_warning": null
+    "created": false,
+    "reason": "no_blender_runtime"
   },
-  "blender_runtime_detected": true,
-  "blockers": [],
-  "captured_byte_length": 35493,
+  "blender_runtime_detected": false,
+  "blockers": [
+    "screenshot_contract",
+    "placeholder_png",
+    "pixel_diff_exceeded",
+    "no_blender_runtime"
+  ],
+  "captured_byte_length": 8,
   "image_stats": {
-    "decoded": true,
-    "mean": 59.151292534722955,
-    "stddev": 6.0842847045757855
+    "decoded": false
   },
   "location_mismatches": {},
   "material_contract_ok": true,
   "missing_commands": [],
   "noncallable_commands": [],
   "note": "Headless dispatch wiring checked. blender_runtime_detected=false means the next gate must be run inside Blender/headless Blender for real renders; the captured PNG, PHash, and pixel-diff fields only carry meaning when a real Blender runtime is present.",
-  "perceptual_hash": "0000001000000000",
+  "perceptual_hash": "raw:70e4956d0d38456e",
   "pixel_diff": {
-    "channel_means": [
-      0.0,
-      0.0,
-      0.0
-    ],
     "compared": true,
-    "mean_abs_diff": 0.0,
-    "ok": true,
-    "reason": null,
-    "shape": [
-      320,
-      180
-    ]
+    "ok": false,
+    "reason": "decode_failed"
   },
-  "pixel_diff_exceeded": false,
-  "placeholder_png": false,
+  "pixel_diff_exceeded": true,
+  "placeholder_png": true,
   "probe_failures": {},
-  "ready_for_visual_testing": true,
+  "ready_for_visual_testing": false,
   "reference_perceptual_hash": "0000001000000000",
   "reference_present": true,
   "requested_screenshot_shape": [
     320,
     180
   ],
-  "screenshot_contract_ok": true
+  "screenshot_contract_ok": false
 }

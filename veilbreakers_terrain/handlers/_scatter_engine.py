@@ -723,7 +723,25 @@ def context_scatter(
                 c1 = min(edt_cols, int((bx + fw / 2.0) * edt_cols / area_size) + 1)
                 obstacle[r0:r1, c0:c1] = True
             if obstacle.any():
-                edt_map = _edt(~obstacle)  # dist from nearest obstacle cell
+                # FIX-12-23: downsample 4× before EDT to avoid OOM on 4096×4096
+                # grids; upsample result with bilinear interpolation.  Accuracy
+                # loss is negligible for scatter exclusion radii > 4 cells.
+                ds = 4
+                ds_rows = max(1, (edt_rows + ds - 1) // ds)
+                ds_cols = max(1, (edt_cols + ds - 1) // ds)
+                pad_rows = ds_rows * ds - obstacle.shape[0]
+                pad_cols = ds_cols * ds - obstacle.shape[1]
+                obstacle_padded = _np.pad(
+                    obstacle,
+                    ((0, pad_rows), (0, pad_cols)),
+                    mode="edge",
+                )
+                obs_ds = obstacle_padded.reshape(
+                    ds_rows, ds, ds_cols, ds
+                ).any(axis=(1, 3))
+                edt_ds = _edt(~obs_ds)
+                from scipy.ndimage import zoom as _zoom
+                edt_map = _zoom(edt_ds, (edt_rows / ds_rows, edt_cols / ds_cols), order=1) * ds
         except ImportError:
             pass
 
@@ -1202,26 +1220,67 @@ def cluster_density_map(
         raise RuntimeError("cluster_density_map requires numpy")
 
     rng = _np_engine.random.default_rng(seed)
-    xs = _np_engine.linspace(0, width / max(cluster_size, 1e-6), resolution)
-    ys = _np_engine.linspace(0, depth / max(cluster_size, 1e-6), resolution)
+
+    # FIX-12-22: replaced the separable sin(x)*sin(y) lattice with
+    # domain-warped value noise.  The old formulation produced visible
+    # axis-aligned grid artifacts because sin(xx)*sin(yy) has extrema on a
+    # regular Cartesian lattice.  Value noise with per-octave random offsets
+    # and a domain-warp pass breaks the axis alignment.
+    #
+    # Implementation: 4-octave value noise (bilinear-interpolated hash grid)
+    # with a lightweight domain warp (offset coords by one octave of noise
+    # before sampling the next).  All ops stay in numpy; no scipy needed.
+
+    # Build a reusable hash-based value noise sampler.
+    _perm = rng.permutation(256).astype(_np_engine.int32)
+    _vtable = rng.uniform(-1.0, 1.0, 256).astype(_np_engine.float64)
+
+    def _value_noise(sx: "_np_engine.ndarray", sy: "_np_engine.ndarray") -> "_np_engine.ndarray":
+        """Bilinear value noise on the unit-tiled integer grid."""
+        x0 = _np_engine.floor(sx).astype(_np_engine.int32)
+        y0 = _np_engine.floor(sy).astype(_np_engine.int32)
+        fx = (sx - x0).astype(_np_engine.float64)
+        fy = (sy - y0).astype(_np_engine.float64)
+        # Quintic smoothstep for C2 continuity
+        u = fx * fx * fx * (fx * (fx * 6.0 - 15.0) + 10.0)
+        v = fy * fy * fy * (fy * (fy * 6.0 - 15.0) + 10.0)
+
+        def _h(xi: "_np_engine.ndarray", yi: "_np_engine.ndarray") -> "_np_engine.ndarray":
+            return _vtable[_perm[((_perm[xi & 255]) & 255) ^ (yi & 255)]]
+
+        v00 = _h(x0,     y0    )
+        v10 = _h(x0 + 1, y0    )
+        v01 = _h(x0,     y0 + 1)
+        v11 = _h(x0 + 1, y0 + 1)
+        return (v00 * (1 - u) + v10 * u) * (1 - v) + (v01 * (1 - u) + v11 * u) * v
+
+    # Build coordinate grids in normalised cluster-frequency space.
+    freq_scale = width / max(cluster_size, 1e-6)
+    xs = _np_engine.linspace(0.0, freq_scale, resolution, dtype=_np_engine.float64)
+    ys = _np_engine.linspace(0.0, depth / max(cluster_size, 1e-6), resolution, dtype=_np_engine.float64)
     xx, yy = _np_engine.meshgrid(xs, ys)
 
-    # 4-octave fBm gives stable large/mid/small cluster variation.
+    # 4-octave fBm with domain warp to break axis alignment.
     freq, amp, total = 1.0, 1.0, 0.0
-    noise = _np_engine.zeros((resolution, resolution), dtype=_np_engine.float32)
-    for _ in range(4):
-        phase_x = float(rng.uniform(0, 2 * math.pi))
-        phase_y = float(rng.uniform(0, 2 * math.pi))
-        noise += float(amp) * 0.5 * (
-            _np_engine.sin(xx * freq * 2 * math.pi + phase_x).astype(_np_engine.float32)
-            * _np_engine.sin(yy * freq * 2 * math.pi + phase_y).astype(_np_engine.float32)
-            + 1.0
-        )
+    noise = _np_engine.zeros((resolution, resolution), dtype=_np_engine.float64)
+    wx = xx.copy()
+    wy = yy.copy()
+    for i in range(4):
+        _ = _np_engine.random.default_rng(int(seed) ^ (i * 0x9E3779B9 & 0xFFFFFFFF))  # FIX-11-10: oct_rng unused; warp uses _value_noise directly
+        # Lightweight domain warp: offset sample coords by previous octave noise
+        if i > 0:
+            warp_amp = 0.3 / freq
+            wx = xx + warp_amp * _value_noise(xx * freq * 0.7, yy * freq * 0.7)
+            wy = yy + warp_amp * _value_noise(yy * freq * 0.7, xx * freq * 0.7)
+        oct_noise = _value_noise(wx * freq, wy * freq)
+        noise += amp * oct_noise
         total += amp
         freq *= 2.0
         amp *= 0.5
 
-    cluster_map = (noise / max(total, 1e-9)).astype(_np_engine.float32)
+    # Remap [-1,1] → [0,1]
+    noise = (noise / max(total, 1e-9) + 1.0) * 0.5
+    cluster_map = _np_engine.clip(noise, 0.0, 1.0).astype(_np_engine.float32)
     # Blend toward 1.0 by noise_amount so rogue items appear outside cluster centres
     result = cluster_map * (1.0 - float(noise_amount)) + float(noise_amount)
     return _np_engine.clip(result, 0.0, 1.0).astype(_np_engine.float32)

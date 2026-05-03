@@ -270,8 +270,8 @@ def _load_geotiff(path: Path) -> Tuple[np.ndarray, float, Optional[float], str]:
             if ds.crs is not None:
                 try:
                     crs_hint = ds.crs.to_string()
-                except Exception:
-                    pass
+                except Exception as e:  # FIX-11-5
+                    warnings.warn(f"CRS to_string failed, using default hint: {e}", stacklevel=2)  # FIX-11-5
 
         if nodata is not None:
             nodata_mask = np.isclose(band, float(nodata))

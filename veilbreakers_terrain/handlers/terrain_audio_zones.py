@@ -638,7 +638,7 @@ def _classify_raster(stack: TerrainMaskStack) -> np.ndarray:
 
     # Water surface
     water_near = np.zeros(shape, dtype=bool)
-    _ws_mask = stack.get("water_surface_mask")
+    _ws_mask = stack.get("water_surface_mask", default=None)
     if _ws_mask is not None:
         water_near |= np.asarray(_ws_mask) > 0.0
     if stack.wetness is not None:

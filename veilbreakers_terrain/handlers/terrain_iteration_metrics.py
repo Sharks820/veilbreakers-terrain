@@ -32,8 +32,9 @@ def _get_peak_memory_mb() -> float:
         if sys.platform == "darwin":
             return kb / (1024.0 * 1024.0)
         return kb / 1024.0
-    except Exception:
-        pass
+    except Exception as e:  # FIX-11-5
+        import logging as _log_itm
+        _log_itm.getLogger(__name__).debug("resource RSS unavailable: %s", e)  # FIX-11-5
     try:
         import psutil  # optional dependency
         return psutil.Process().memory_info().rss / (1024.0 * 1024.0)
@@ -309,8 +310,9 @@ def _percentile(samples: List[float], pct: float) -> float:
         try:
             import numpy as _np  # noqa: F811
             return float(_np.percentile(samples, p, interpolation="linear"))
-        except Exception:
-            pass
+        except Exception as e:  # FIX-11-5
+            import logging as _log_itm
+            _log_itm.getLogger(__name__).debug("numpy percentile fallback failed: %s", e)  # FIX-11-5
     # Pure-Python linear interpolation fallback
     ordered = sorted(samples)
     if len(ordered) == 1:

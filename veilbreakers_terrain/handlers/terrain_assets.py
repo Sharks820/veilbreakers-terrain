@@ -284,25 +284,25 @@ def _water_exclusion_mask(stack: TerrainMaskStack, height: np.ndarray) -> np.nda
     """Return cells where terrain scatter must not place assets."""
     water = np.zeros(height.shape, dtype=bool)
 
-    elev = stack.get("water_surface_elevation_m")
+    elev = stack.get("water_surface_elevation_m", default=None)
     if elev is not None:
         elev_arr = np.asarray(elev, dtype=np.float32)
         if elev_arr.shape == height.shape:
             water |= elev_arr > (height + 0.05)
 
-    depth = stack.get("water_depth_m")
+    depth = stack.get("water_depth_m", default=None)
     if depth is not None:
         depth_arr = np.asarray(depth, dtype=np.float32)
         if depth_arr.shape == height.shape:
             water |= depth_arr > 0.05
 
-    mask = stack.get("water_surface_mask")
+    mask = stack.get("water_surface_mask", default=None)
     if mask is not None:
         mask_arr = np.asarray(mask, dtype=np.float32)
         if mask_arr.shape == height.shape:
             water |= mask_arr > 0.5
 
-    legacy_surface = stack.get("water_surface")
+    legacy_surface = stack.get("water_surface", default=None)
     if legacy_surface is not None:
         surface_arr = np.asarray(legacy_surface, dtype=np.float32)
         if surface_arr.shape == height.shape:
@@ -337,7 +337,7 @@ def compute_viability(
     viable *= (~_water_exclusion_mask(stack, height)).astype(np.float32)
 
     # Slope bounds
-    slope = stack.get("slope")
+    slope = stack.get("slope", default=None)
     if slope is not None:
         slope_arr = np.asarray(slope, dtype=np.float32)
         viable *= (slope_arr >= rule.min_slope_rad).astype(np.float32)
@@ -349,7 +349,7 @@ def compute_viability(
             return viable
 
     # Wetness bounds (optional channel)
-    wetness = stack.get("wetness")
+    wetness = stack.get("wetness", default=None)
     if wetness is not None:
         w_arr = np.asarray(wetness, dtype=np.float32)
         viable *= (w_arr >= rule.wetness_min).astype(np.float32)
@@ -357,7 +357,7 @@ def compute_viability(
 
     # Required masks — every listed channel must be > 0
     for ch in rule.required_masks:
-        arr = stack.get(ch)
+        arr = stack.get(ch, default=None)
         if arr is None:
             viable[:] = 0.0
             return viable
@@ -365,7 +365,7 @@ def compute_viability(
 
     # Forbidden masks — every listed channel must be 0
     for ch in rule.forbidden_masks:
-        arr = stack.get(ch)
+        arr = stack.get(ch, default=None)
         if arr is None:
             continue
         viable *= (np.asarray(arr, dtype=np.float32) == 0.0).astype(np.float32)
@@ -848,21 +848,21 @@ def pass_scatter_intelligent(
     )
 
     # Cluster-add rocks/debris where hero-candidate masks exist.
-    cliff_mask = stack.get("cliff_candidate")
+    cliff_mask = stack.get("cliff_candidate", default=None)
     if cliff_mask is not None:
         placements.setdefault("cliff_boulder", [])
         placements["cliff_boulder"].extend(
             cluster_rocks_for_cliffs(stack, np.asarray(cliff_mask), intent, region=region)
         )
 
-    wl_mask = stack.get("waterfall_lip_candidate")
+    wl_mask = stack.get("waterfall_lip_candidate", default=None)
     if wl_mask is not None:
         placements.setdefault("waterfall_rock", [])
         placements["waterfall_rock"].extend(
             cluster_rocks_for_waterfalls(stack, np.asarray(wl_mask), intent, region=region)
         )
 
-    cave_mask = stack.get("cave_candidate")
+    cave_mask = stack.get("cave_candidate", default=None)
     if cave_mask is not None:
         placements.setdefault("cave_rubble", [])
         placements["cave_rubble"].extend(
