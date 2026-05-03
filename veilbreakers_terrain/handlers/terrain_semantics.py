@@ -317,7 +317,8 @@ class TerrainMaskStack:
     tidal: Optional[np.ndarray] = None
     # uint8 (H, W): 5-zone tidal classification (subtidal=0, intertidal=1, splash=2, spray=3, supralittoral=4)
     tidal_zone_label: Optional[np.ndarray] = None
-    # float32 (H, W): per-cell JONSWAP wave energy in J/m², used by splatmap foam/wet_rock rules
+    # float32 (H, W): normalized log-scaled wave-energy proxy in [0, 1],
+    # used by splatmap foam/wet_rock rules.
     wave_energy: Optional[np.ndarray] = None
     waterfall_velocity: Optional[np.ndarray] = None
     # Float32 (H, W): per-cell wave displacement amplitude in metres.
@@ -361,6 +362,11 @@ class TerrainMaskStack:
     roughness_breakup: Optional[np.ndarray] = None
     roughness_variation: Optional[np.ndarray] = None
     macro_color: Optional[np.ndarray] = None
+    # Lava simulation channels. lava_source_mask is optional authored/biome input;
+    # lava_depth/lava_surface_mask/lava_prox are produced by pass_lava_simulation.
+    lava_source_mask: Optional[np.ndarray] = None
+    lava_depth: Optional[np.ndarray] = None
+    lava_surface_mask: Optional[np.ndarray] = None
     # Scalar proximity to active lava / hot flow cells, 0=dry/cold and 1=active core.
     lava_prox: Optional[np.ndarray] = None
 
@@ -403,6 +409,7 @@ class TerrainMaskStack:
     stochastic_uv_mask: Optional[np.ndarray] = None
     shadow_map: Optional[np.ndarray] = None
     shadow_clipmap: Optional[np.ndarray] = None
+    talus_displaced: Optional[np.ndarray] = None
 
     # -- Unity integratable channels (AAA round-trip contract) --
     # Per-layer splatmap weights (Unity Terrain Layer alphamaps). Shape (H, W, L).
@@ -606,6 +613,9 @@ class TerrainMaskStack:
             "roughness_breakup",
             "roughness_variation",
             "macro_color",
+            "lava_source_mask",
+            "lava_depth",
+            "lava_surface_mask",
             "lava_prox",
             "audio_reverb_class",
             "gameplay_zone",
@@ -671,6 +681,7 @@ class TerrainMaskStack:
             "stochastic_uv_mask",
             "shadow_map",
             "shadow_clipmap",
+            "talus_displaced",
             "unconformity_mask",
             "intrusion_mask",
             "albedo_shift_rgb",
@@ -857,6 +868,11 @@ class TerrainMaskStack:
         "albedo_shift_rgb":       ("f", 3),
         "wave_amplitude_per_vertex": ("f", 2),
         "riverbed_caustics":         ("f", 2),
+        "lava_source_mask":          ("f", 2),
+        "lava_depth":                ("f", 2),
+        "lava_surface_mask":         ("f", 2),
+        "lava_prox":                 ("f", 2),
+        "talus_displaced":           ("f", 2),
         "tidal_zone_label":          ("u", 2),
         "wave_energy":               ("f", 2),
     }
