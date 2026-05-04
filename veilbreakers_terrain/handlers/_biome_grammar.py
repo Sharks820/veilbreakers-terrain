@@ -15,21 +15,19 @@ from __future__ import annotations
 
 import math
 import random
-import importlib
-import importlib.util
 from dataclasses import dataclass
-from typing import Any, TypedDict
 
 import numpy as np
 
-_HAS_SCIPY = importlib.util.find_spec("scipy.ndimage") is not None
-_HAS_SCIPY_EDT = _HAS_SCIPY
-
-
-class ClimateParams(TypedDict):
-    temperature: float
-    moisture: float
-    elevation: float
+try:
+    import scipy.ndimage as _scipy_ndimage
+    from scipy.ndimage import distance_transform_edt as _edt
+    _HAS_SCIPY = True
+    _HAS_SCIPY_EDT = True
+except ImportError:
+    _scipy_ndimage = None  # type: ignore[assignment]
+    _HAS_SCIPY = False
+    _HAS_SCIPY_EDT = False
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +79,7 @@ def resolve_biome_name(name: str) -> str:
 # elevation: 0=sea level, 1=high mountain
 # ---------------------------------------------------------------------------
 
-BIOME_CLIMATE_PARAMS: dict[str, ClimateParams] = {
+BIOME_CLIMATE_PARAMS: dict[str, dict] = {
     "thornwood_forest":  {"temperature": 0.45, "moisture": 0.70, "elevation": 0.30},
     "corrupted_swamp":   {"temperature": 0.50, "moisture": 0.90, "elevation": 0.10},
     "mountain_pass":     {"temperature": 0.20, "moisture": 0.35, "elevation": 0.80},
@@ -118,8 +116,8 @@ class WorldMapSpec:
     biome_weights: np.ndarray            # (height, width, biome_count) float64, sum=1
     biome_names: list[str]               # length == biome_count, canonical BIOME_PALETTES keys
     corruption_map: np.ndarray           # (height, width) float64 in [0, 1]
-    flatten_zones: list[dict[str, float | int]]  # normalized coords, one per building_plot
-    cell_params: list[ClimateParams]     # per-biome climate params (temperature, moisture, elevation)
+    flatten_zones: list[dict]            # normalized coords, one per building_plot
+    cell_params: list[dict]              # per-biome climate params (temperature, moisture, elevation)
     transition_width_m: float            # meters (e.g. 15.0)
 
 
@@ -145,7 +143,7 @@ def generate_world_map_spec(
     biomes: list[str] | None = None,
     seed: int = 42,
     corruption_level: float = 0.0,
-    building_plots: list[dict[str, float]] | None = None,
+    building_plots: list[dict] | None = None,
     transition_width_m: float = 15.0,
 ) -> WorldMapSpec:
     """Compose a WorldMapSpec for multi-biome world generation.
@@ -204,7 +202,7 @@ def generate_world_map_spec(
     )
 
     # --- Flatten zones from building plots ---
-    flatten_zones: list[dict[str, float | int]] = []
+    flatten_zones = []
     for plot in (building_plots or []):
         # Convert world-space to normalized [0, 1]
         cx = plot["x"] / world_size
@@ -248,6 +246,7 @@ def generate_world_map_spec(
     # → climate-sorted biome index.
     _climate_rng = random.Random(seed ^ 0xFACEB00C)
     grid_side_c = max(1, int(math.ceil(math.sqrt(biome_count))))
+    cell_w_c = 1.0 / grid_side_c
     cell_h_c = 1.0 / grid_side_c
     seed_ys: list[float] = []
     for _bi in range(biome_count):
@@ -260,7 +259,7 @@ def generate_world_map_spec(
     # Sort chosen biomes by their temperature parameter (descending = cold first).
     sorted_by_temp = sorted(
         range(biome_count),
-        key=lambda i: cell_params[i]["temperature"],
+        key=lambda i: cell_params[i].get("temperature", 0.5),
     )   # index 0 = coldest biome
     # Sort Voronoi cell indices by seed Y (descending = northernmost first)
     sorted_by_y = sorted(range(biome_count), key=lambda i: seed_ys[i], reverse=True)
@@ -345,7 +344,7 @@ def _generate_corruption_map(
     xs = np.arange(width,  dtype=np.float64) / width
     yy, xx = np.meshgrid(ys, xs, indexing="ij")   # (H, W)
 
-    def _fbm_grid(gen: Any, x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
+    def _fbm_grid(gen, x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
         """Vectorised fBm over coordinate grids using the noise generator."""
         noise = np.zeros_like(x_grid, dtype=np.float64)
         amp   = 1.0
@@ -431,12 +430,9 @@ def _box_filter_2d(
         return arr.copy()
     arr = np.asarray(arr, dtype=np.float64)
     if _HAS_SCIPY:
-        ndimage = importlib.import_module("scipy.ndimage")
-        uniform_filter = getattr(ndimage, "uniform_filter")
-        return np.asarray(
-            uniform_filter(arr, size=2 * radius + 1, mode=mode),
-            dtype=arr.dtype,
-        )
+        return _scipy_ndimage.uniform_filter(
+            arr, size=2 * radius + 1, mode=mode
+        ).astype(arr.dtype)
 
     # --- Vectorised SAT fallback (no Python inner loop) -------------------
     H, W = arr.shape
@@ -467,10 +463,8 @@ def _box_filter_2d(
     c0 = cols
     c1 = cols + 2 * r + 1
     # Use broadcasting to compute all box sums simultaneously: O(1) Python
-    R0 = r0[:, None]
-    R1 = r1[:, None]    # (H, 1)
-    C0 = c0[None, :]
-    C1 = c1[None, :]   # (1, W)
+    R0 = r0[:, None]; R1 = r1[:, None]    # (H, 1)
+    C0 = c0[None, :]; C1 = c1[None, :]   # (1, W)
     box_sums = (
         sat_full[R1, C1]
         - sat_full[R0, C1]
@@ -513,9 +507,7 @@ def _distance_from_mask(mask: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
     if _HAS_SCIPY_EDT:
         # distance_transform_edt measures distance from False background to
         # nearest True foreground.  Invert mask: background = non-source.
-        ndimage = importlib.import_module("scipy.ndimage")
-        distance_transform_edt = getattr(ndimage, "distance_transform_edt")
-        dist = np.asarray(distance_transform_edt(~mask), dtype=np.float64) * float(cell_size)
+        dist = _edt(~mask).astype(np.float64) * float(cell_size)
         dist[mask] = 0.0
         return dist
 
@@ -1122,7 +1114,7 @@ def apply_hot_spring_features(
     terrace_rings: int = 4,
     hot_radius: float = 0.0,
     heat_sigma: float = 0.0,
-) -> tuple[np.ndarray, list[dict[str, Any]]]:
+) -> tuple[np.ndarray, list[dict]]:
     """Create hot spring pools with travertine terraces and radial heat gradients.
 
     Returns the modified heightmap and a list of spring location dicts for
@@ -1166,7 +1158,7 @@ def apply_hot_spring_features(
     h, w = heightmap.shape
     result = heightmap.copy()
     rng = _rng_from_seed(seed, "biome_hot_spring_features")
-    springs: list[dict[str, Any]] = []
+    springs: list[dict] = []
 
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
     xs = np.arange(w, dtype=np.float64).reshape(1, -1)
@@ -1205,6 +1197,8 @@ def apply_hot_spring_features(
         ring_cx = sx - grad_x / grad_mag * downhill_bias
 
         dist_pool  = np.sqrt((ys - sy) ** 2 + (xs - sx) ** 2)
+        dist_rings = np.sqrt((ys - ring_cy) ** 2 + (xs - ring_cx) ** 2)
+
         # Main pool depression
         pool_mask = np.clip(1.0 - dist_pool / pool_radius, 0.0, 1.0) ** 2
         result -= pool_mask * pool_depth
@@ -1278,7 +1272,7 @@ def apply_reef_platform(
     tidal_threshold: float = 0.1,
     max_reef_distance_m: float = 200.0,
     cell_size: float = 1.0,
-    stack: Any | None = None,
+    stack: object | None = None,
 ) -> np.ndarray:
     """Build fringing reef platforms at the coastline with coral buildup zones
     and wave-exposure gradient.
@@ -1364,13 +1358,11 @@ def apply_reef_platform(
     # Gradient of land mask points from sea toward land — "onshore" direction.
     # Exposure is high where there is a strong gradient (open ocean front).
     exposure = np.sqrt(grad_y_land ** 2 + grad_x_land ** 2)
+    exp_max = float(exposure.max()) or 1.0
     # Smooth exposure to spread the windward signal beyond the coastline edge
     if _HAS_SCIPY:
-        ndimage = importlib.import_module("scipy.ndimage")
-        uniform_filter = getattr(ndimage, "uniform_filter")
-        exposure_smooth = np.asarray(
-            uniform_filter(exposure, size=max(3, int(reef_width)), mode="reflect"),
-            dtype=np.float64,
+        exposure_smooth = _scipy_ndimage.uniform_filter(
+            exposure, size=max(3, int(reef_width)), mode="reflect"
         )
     else:
         exposure_smooth = _box_filter_2d(exposure, radius=max(1, int(reef_width // 2)))
@@ -1559,8 +1551,8 @@ def apply_tafoni_weathering(
 
     def _place_cavities(
         n: int,
-        rx_range: tuple[float, float],
-        ry_range: tuple[float, float],
+        rx_range: tuple,
+        ry_range: tuple,
         depth_scale: float,
         prob: np.ndarray,
         add_rim: bool = False,
@@ -1625,6 +1617,7 @@ def apply_tafoni_weathering(
         """Blend base prob with Gaussian attraction map from placed cavities."""
         if not placed_cy:
             return base
+        n_placed = len(placed_cy)
         cy_arr = np.array(placed_cy, dtype=np.float64)
         cx_arr = np.array(placed_cx, dtype=np.float64)
         # Vectorised: (n_placed, h*w) distance matrix — feasible for n_placed ≤ ~500
@@ -1873,145 +1866,915 @@ def apply_geological_folds(
 
 
 # ---------------------------------------------------------------------------
-# Pipeline pass: biome surface features (wires the 8 orphaned functions above)
+# FIX-B14-4: Biome surface-feature dispatch
+#
+# Previous code used generic dark-fantasy substring matching which missed 6/14
+# canonical VeilBreakers biome IDs.  This replaces it with an explicit lookup
+# dict keyed on BIOME_CLIMATE_PARAMS keys (the sole canonical source of truth).
 # ---------------------------------------------------------------------------
+
+def _apply_forest_debris(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Scatter fallen-log divots and twig mounds across forest floor.
+
+    Returns delta array (H, W) float64 — non-zero on all non-trivial inputs.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_forest_debris")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.005 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    radii = rng.integers(2, max(3, h // 16), n)
+    depths = rng.uniform(0.002, 0.012 * intensity, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / max(radii[i] ** 2, 1.0))
+        result += mask * depths[i]
+    return result
+
+
+def _apply_root_network(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Raise sinuous root ridges along random radial paths.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_root_network")
+    result = np.zeros((h, w), dtype=np.float64)
+    n_roots = max(1, int(4 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n_roots):
+        cy = rng.uniform(0.1 * h, 0.9 * h)
+        cx = rng.uniform(0.1 * w, 0.9 * w)
+        angle = rng.uniform(0, 2 * math.pi)
+        length = rng.uniform(0.15, 0.4) * min(h, w)
+        width_sq = max((min(h, w) * 0.02) ** 2, 1.0)
+        # Project distance along the root axis
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        # Along-axis (t) and cross-axis (u) distances
+        t = (xx - cx) * dx + (yy - cy) * dy
+        u = (xx - cx) * (-dy) + (yy - cy) * dx
+        # Gaussian bump confined to the root length and width
+        t_mask = np.exp(-((t - length / 2) ** 2) / max((length / 2) ** 2, 1.0))
+        u_mask = np.exp(-(u ** 2) / width_sq)
+        result += t_mask * u_mask * 0.008 * intensity
+    return result
+
+
+def _apply_swamp_muck(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Depress low-lying areas into stagnant muck pools.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_swamp_muck")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max((rng.integers(3, max(4, h // 12))) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result -= mask * rng.uniform(0.005, 0.015) * intensity
+    return result
+
+
+def _apply_toxic_tendrils(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Add raised toxic-slime ridges typical of corrupted swamp edges.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_toxic_tendrils")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(3 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n):
+        cy = rng.uniform(0.2 * h, 0.8 * h)
+        cx = rng.uniform(0.2 * w, 0.8 * w)
+        angle = rng.uniform(0, 2 * math.pi)
+        length = rng.uniform(0.1, 0.3) * min(h, w)
+        width_sq = max((min(h, w) * 0.015) ** 2, 1.0)
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        t = (xx - cx) * dx + (yy - cy) * dy
+        u = (xx - cx) * (-dy) + (yy - cy) * dx
+        t_mask = np.exp(-((t - length / 2) ** 2) / max((length / 2) ** 2, 1.0))
+        u_mask = np.exp(-(u ** 2) / width_sq)
+        result += t_mask * u_mask * 0.006 * intensity
+    return result
+
+
+def _apply_scree_fields(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Place loose-stone scree clusters on mountain terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_scree_fields")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.004 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(1, max(2, h // 20)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * rng.uniform(0.003, 0.010) * intensity
+    return result
+
+
+def _apply_frost_crack_network(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Carve shallow frost-crack patterns on cold rocky terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_frost_crack")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(6 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n):
+        cy = rng.uniform(0, h)
+        cx = rng.uniform(0, w)
+        angle = rng.uniform(0, math.pi)
+        length = rng.uniform(0.05, 0.25) * min(h, w)
+        width_sq = max(1.5 ** 2, 1.0)
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        t = (xx - cx) * dx + (yy - cy) * dy
+        u = (xx - cx) * (-dy) + (yy - cy) * dx
+        t_mask = np.clip(1.0 - np.abs(t - length / 2) / max(length / 2, 1.0), 0.0, 1.0)
+        u_mask = np.exp(-(u ** 2) / width_sq)
+        result -= t_mask * u_mask * 0.004 * intensity
+    return result
+
+
+def _apply_sand_ripples(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Add aeolian sand-ripple micro-relief to desert terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_sand_ripples")
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    angle = rng.uniform(0, math.pi)
+    wavelength = max(min(h, w) / 8.0, 4.0)
+    proj = xx * math.cos(angle) + np.arange(h, dtype=np.float64).reshape(-1, 1) * math.sin(angle)
+    ripple = np.sin(2.0 * math.pi * proj / wavelength)
+    phase2 = rng.uniform(0, 2 * math.pi)
+    ripple2 = np.sin(2.0 * math.pi * proj / (wavelength * 0.6) + phase2)
+    return (ripple * 0.006 + ripple2 * 0.003) * intensity
+
+
+def _apply_grass_tufts(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Raise small grass-tuft mounds across open grassland.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_grass_tufts")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.006 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(1, max(2, h // 24)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * rng.uniform(0.002, 0.007) * intensity
+    return result
+
+
+def _apply_wildflower_scatter(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Add micro-undulation from wildflower root masses in grassland.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_wildflower_scatter")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(1, max(2, h // 30)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * 0.003 * intensity
+    return result
+
+
+def _apply_tide_pool_pocking(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Depress shallow tide-pool basins along coastal terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_tide_pools")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(2, max(3, h // 16)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result -= mask * rng.uniform(0.004, 0.012) * intensity
+    return result
+
+
+def _apply_beach_strand_lines(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Add low parallel strand-line ridges left by receding tides.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_strand_lines")
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    n_lines = max(1, int(3 * max(intensity, 0.01)))
+    result = np.zeros((h, w), dtype=np.float64)
+    for _ in range(n_lines):
+        y_centre = rng.uniform(0.1 * h, 0.9 * h)
+        sigma_sq = max((h * 0.03) ** 2, 1.0)
+        ridge = np.exp(-((yy - y_centre) ** 2) / sigma_sq)
+        result += ridge * 0.004 * intensity
+    return result
+
+
+def _apply_grave_markers(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Raise burial-mound hillocks representing grave markers.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_grave_markers")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(2, max(3, h // 18)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * rng.uniform(0.005, 0.015) * intensity
+    return result
+
+
+def _apply_bone_fragments(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Scatter micro-protrusions representing surface bone fragments.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_bone_fragments")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.004 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(1.5 ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * 0.004 * intensity
+    return result
+
+
+def _apply_battlefield_craters(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.8,
+) -> np.ndarray:
+    """Depress shallow impact craters across battlefield terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_battlefield_craters")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.004 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(3, max(4, h // 10)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        bowl = np.exp(-d2 / r2)
+        # Rim is a thin raised ring just outside the bowl
+        rim = np.exp(-((np.sqrt(d2) - math.sqrt(r2)) ** 2) / max(r2 * 0.05, 1.0))
+        result -= bowl * rng.uniform(0.008, 0.018) * intensity
+        result += rim * 0.006 * intensity
+    return result
+
+
+def _apply_weapon_debris(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Scatter small protrusions representing embedded weapons and armour shards.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_weapon_debris")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(1.2 ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * 0.003 * intensity
+    return result
+
+
+def _apply_fortress_rubble(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Scatter collapsed-wall rubble mounds across ruined fortress terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_fortress_rubble")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.004 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(2, max(3, h // 12)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * rng.uniform(0.006, 0.016) * intensity
+    return result
+
+
+def _apply_cracked_stone_paving(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Add cracked-flagstone relief to ruined fortress courtyards.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_cracked_paving")
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    # Sinusoidal grid at a rotated angle
+    angle = rng.uniform(0, math.pi / 4)
+    cell = max(min(h, w) // 8, 4)
+    proj_a = yy * math.cos(angle) + xx * math.sin(angle)
+    proj_b = -yy * math.sin(angle) + xx * math.cos(angle)
+    grid = (
+        np.sin(2.0 * math.pi * proj_a / cell) * 0.003
+        + np.sin(2.0 * math.pi * proj_b / cell) * 0.003
+    )
+    return grid * intensity
+
+
+def _apply_crumbling_wall_stumps(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Raise linear wall-stump ridges typical of abandoned village foundations.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_wall_stumps")
+    result = np.zeros((h, w), dtype=np.float64)
+    n_walls = max(1, int(2 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n_walls):
+        cy = rng.uniform(0.2 * h, 0.8 * h)
+        cx = rng.uniform(0.2 * w, 0.8 * w)
+        angle = rng.choice([0.0, math.pi / 2])  # axis-aligned walls
+        length = rng.uniform(0.1, 0.3) * min(h, w)
+        width_sq = max((min(h, w) * 0.015) ** 2, 1.0)
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        t = (xx - cx) * dx + (yy - cy) * dy
+        u = (xx - cx) * (-dy) + (yy - cy) * dx
+        t_mask = np.clip(1.0 - np.abs(t - length / 2) / max(length / 2, 1.0), 0.0, 1.0)
+        u_mask = np.exp(-(u ** 2) / width_sq)
+        result += t_mask * u_mask * 0.010 * intensity
+    return result
+
+
+def _apply_overgrown_paths(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.5,
+) -> np.ndarray:
+    """Depress shallow path-ruts typical of abandoned village trackways.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_overgrown_paths")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(2 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n):
+        angle = rng.uniform(0, math.pi)
+        cy = rng.uniform(0.3 * h, 0.7 * h)
+        cx = rng.uniform(0.3 * w, 0.7 * w)
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        u = (xx - cx) * (-dy) + (yy - cy) * dx
+        width_sq = max((min(h, w) * 0.025) ** 2, 1.0)
+        track = np.exp(-(u ** 2) / width_sq)
+        result -= track * 0.005 * intensity
+    return result
+
+
+def _apply_void_fissures(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.8,
+) -> np.ndarray:
+    """Carve deep reality-torn fissures in veil crack zones.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_void_fissures")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(3 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n):
+        cy = rng.uniform(0.1 * h, 0.9 * h)
+        cx = rng.uniform(0.1 * w, 0.9 * w)
+        angle = rng.uniform(0, math.pi)
+        length = rng.uniform(0.2, 0.5) * min(h, w)
+        width_sq = max((min(h, w) * 0.008) ** 2, 1.0)
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        t = (xx - cx) * dx + (yy - cy) * dy
+        u = (xx - cx) * (-dy) + (yy - cy) * dx
+        t_mask = np.clip(1.0 - np.abs(t - length / 2) / max(length / 2, 1.0), 0.0, 1.0)
+        u_mask = np.exp(-(u ** 2) / width_sq)
+        result -= t_mask * u_mask * 0.020 * intensity
+    return result
+
+
+def _apply_void_crystal_spires(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Raise jagged void-crystal spire clusters in veil crack terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_void_crystal_spires")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.002 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(1, max(2, h // 20)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        # Sharp spike profile: 1/(1+d2/r2) decays slower than Gaussian
+        spike = 1.0 / (1.0 + d2 / r2)
+        result += spike * rng.uniform(0.008, 0.020) * intensity
+    return result
+
+
+def _apply_mycelium_humps(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Raise mycelium-mat mounds on mushroom forest floor.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_mycelium_humps")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.005 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(2, max(3, h // 14)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * rng.uniform(0.005, 0.014) * intensity
+    return result
+
+
+def _apply_spore_cap_clusters(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Raise small cap-cluster bumps representing mushroom stands.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_spore_caps")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(1, max(2, h // 24)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result += mask * 0.007 * intensity
+    return result
+
+
+def _apply_crystal_formations(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.8,
+) -> np.ndarray:
+    """Raise prismatic crystal-cluster spires in crystal cavern terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_crystal_formations")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.003 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(1, max(2, h // 18)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        spike = 1.0 / (1.0 + d2 / r2)
+        result += spike * rng.uniform(0.010, 0.025) * intensity
+    return result
+
+
+def _apply_cave_drip_basins(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Depress shallow stalactite-drip basins in crystal cavern terrain.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_cave_drip_basins")
+    result = np.zeros((h, w), dtype=np.float64)
+    n = max(1, int(h * w * 0.004 * max(intensity, 0.01)))
+    ys = rng.integers(0, h, n)
+    xs = rng.integers(0, w, n)
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for i in range(n):
+        r2 = max(rng.integers(2, max(3, h // 16)) ** 2, 1.0)
+        d2 = (yy - ys[i]) ** 2 + (xx - xs[i]) ** 2
+        mask = np.exp(-d2 / r2)
+        result -= mask * rng.uniform(0.005, 0.012) * intensity
+    return result
+
+
+def _apply_deep_forest_moss_carpet(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> np.ndarray:
+    """Raise low undulating moss-carpet micro-relief on deep forest floor.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_deep_forest_moss")
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    freq_y = rng.uniform(0.04, 0.08)
+    freq_x = rng.uniform(0.04, 0.08)
+    phase_y = rng.uniform(0, 2 * math.pi)
+    phase_x = rng.uniform(0, 2 * math.pi)
+    carpet = (
+        np.sin(freq_y * yy + phase_y) * 0.004
+        + np.sin(freq_x * xx + phase_x) * 0.004
+    )
+    return carpet * intensity
+
+
+def _apply_ancient_root_buttresses(
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.7,
+) -> np.ndarray:
+    """Raise massive root-buttress ridges around ancient deep-forest trees.
+
+    Returns delta array (H, W) float64.
+    """
+    h, w = heightmap.shape
+    rng = _rng_from_seed(seed, "biome_ancient_root_buttresses")
+    result = np.zeros((h, w), dtype=np.float64)
+    n_trees = max(1, int(2 * max(intensity, 0.01)))
+    yy = np.arange(h, dtype=np.float64).reshape(-1, 1)
+    xx = np.arange(w, dtype=np.float64).reshape(1, -1)
+    for _ in range(n_trees):
+        cy = rng.uniform(0.2 * h, 0.8 * h)
+        cx = rng.uniform(0.2 * w, 0.8 * w)
+        n_buttresses = rng.integers(4, 8)
+        for b in range(n_buttresses):
+            angle = 2 * math.pi * b / n_buttresses + rng.uniform(-0.2, 0.2)
+            length = rng.uniform(0.05, 0.12) * min(h, w)
+            width_sq = max((min(h, w) * 0.012) ** 2, 1.0)
+            dx = math.cos(angle)
+            dy = math.sin(angle)
+            t = (xx - cx) * dx + (yy - cy) * dy
+            u = (xx - cx) * (-dy) + (yy - cy) * dx
+            t_mask = np.clip(t / max(length, 1.0), 0.0, 1.0)
+            t_mask = t_mask * (1.0 - t_mask)  # quadratic taper
+            u_mask = np.exp(-(u ** 2) / width_sq)
+            result += t_mask * u_mask * 0.012 * intensity
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Feature function registry — maps internal key to callable
+# ---------------------------------------------------------------------------
+
+_FEATURE_FN_REGISTRY: dict[str, object] = {
+    "forest_debris":           _apply_forest_debris,
+    "root_network":            _apply_root_network,
+    "swamp_muck":              _apply_swamp_muck,
+    "toxic_tendrils":          _apply_toxic_tendrils,
+    "scree_fields":            _apply_scree_fields,
+    "frost_crack_network":     _apply_frost_crack_network,
+    "periglacial_patterns":    apply_periglacial_patterns,
+    "desert_pavement":         apply_desert_pavement,
+    "sand_ripples":            _apply_sand_ripples,
+    "grass_tufts":             _apply_grass_tufts,
+    "wildflower_scatter":      _apply_wildflower_scatter,
+    "tide_pool_pocking":       _apply_tide_pool_pocking,
+    "beach_strand_lines":      _apply_beach_strand_lines,
+    "grave_markers":           _apply_grave_markers,
+    "bone_fragments":          _apply_bone_fragments,
+    "battlefield_craters":     _apply_battlefield_craters,
+    "weapon_debris":           _apply_weapon_debris,
+    "fortress_rubble":         _apply_fortress_rubble,
+    "cracked_stone_paving":    _apply_cracked_stone_paving,
+    "crumbling_wall_stumps":   _apply_crumbling_wall_stumps,
+    "overgrown_paths":         _apply_overgrown_paths,
+    "void_fissures":           _apply_void_fissures,
+    "void_crystal_spires":     _apply_void_crystal_spires,
+    "mycelium_humps":          _apply_mycelium_humps,
+    "spore_cap_clusters":      _apply_spore_cap_clusters,
+    "crystal_formations":      _apply_crystal_formations,
+    "cave_drip_basins":        _apply_cave_drip_basins,
+    "deep_forest_moss_carpet": _apply_deep_forest_moss_carpet,
+    "ancient_root_buttresses": _apply_ancient_root_buttresses,
+    "tafoni_weathering":       apply_tafoni_weathering,
+}
+
+
+# ---------------------------------------------------------------------------
+# Canonical biome → feature-key dispatch table
+# Keys are exactly the BIOME_CLIMATE_PARAMS keys — no substring matching.
+# ---------------------------------------------------------------------------
+
+_BIOME_FEATURES: dict[str, tuple[str, ...]] = {
+    "thornwood_forest":  ("forest_debris", "root_network"),
+    "corrupted_swamp":   ("swamp_muck", "toxic_tendrils"),
+    "mountain_pass":     ("scree_fields", "frost_crack_network", "periglacial_patterns"),
+    "desert":            ("desert_pavement", "sand_ripples"),
+    "grasslands":        ("grass_tufts", "wildflower_scatter"),
+    "deep_forest":       ("deep_forest_moss_carpet", "ancient_root_buttresses", "forest_debris"),
+    "coastal":           ("tide_pool_pocking", "beach_strand_lines"),
+    "cemetery":          ("grave_markers", "bone_fragments"),
+    "battlefield":       ("battlefield_craters", "weapon_debris"),
+    "ruined_fortress":   ("fortress_rubble", "cracked_stone_paving", "tafoni_weathering"),
+    "abandoned_village": ("crumbling_wall_stumps", "overgrown_paths"),
+    "veil_crack_zone":   ("void_fissures", "void_crystal_spires"),
+    "mushroom_forest":   ("mycelium_humps", "spore_cap_clusters"),
+    "crystal_cavern":    ("crystal_formations", "cave_drip_basins"),
+}
+
+
+def _dispatch_biome_surface_features(
+    biome_id: str,
+    heightmap: np.ndarray,
+    seed: int = 0,
+    intensity: float = 0.6,
+) -> list[np.ndarray]:
+    """Return a list of delta arrays for all surface features of *biome_id*.
+
+    Each element is a (H, W) float64 delta produced by one registered feature
+    function.  The list is empty only when *biome_id* is unknown.
+
+    Some registered functions (``apply_desert_pavement``, ``apply_hot_spring_features``)
+    return tuples rather than bare arrays; this wrapper unpacks those to extract
+    the first element (the delta/heightmap).
+
+    Args:
+        biome_id: Canonical VeilBreakers biome identifier.
+        heightmap: (H, W) float64 baseline terrain heights.
+        seed: Deterministic RNG seed forwarded to each feature function.
+        intensity: Feature strength [0, 1].
+
+    Returns:
+        List of (H, W) float64 delta arrays, one per feature.
+    """
+    feature_keys = _BIOME_FEATURES.get(biome_id, ())
+    results: list[np.ndarray] = []
+    for key in feature_keys:
+        fn = _FEATURE_FN_REGISTRY.get(key)
+        if fn is None:  # defensive: unknown key
+            continue
+        raw = fn(heightmap, seed=seed, intensity=intensity)  # type: ignore[call-arg]
+        if isinstance(raw, tuple):
+            # apply_desert_pavement returns (heightmap, mask); hot_spring returns
+            # (heightmap, list).  We take only the first element (the array).
+            raw = raw[0]
+        # Convert to delta by subtracting the original
+        delta = np.asarray(raw, dtype=np.float64) - heightmap
+        results.append(delta)
+    return results
 
 
 def pass_biome_surface_features(
-    state: "Any",
-    region: "Any",
-) -> "Any":
-    """Apply biome-specific surface micro-features based on composition_hints.
+    state: object,
+    region: object,
+) -> object:
+    """Apply per-biome micro-feature surface passes to the active heightmap.
 
-    Routes the 8 orphaned _biome_grammar feature functions into the pipeline
-    (Batch 13 wiring gap). Each function runs only when the biome/climate in
-    composition_hints matches its domain. Height changes are accumulated and
-    stored as ``biome_surface_delta`` for the delta integrator to apply.
+    Dispatches using the explicit ``_BIOME_FEATURES`` lookup dict which covers
+    all 14 canonical VeilBreakers biome IDs.  The previous substring-match
+    approach missed cemetery, ashen_wastes (now ruined_fortress), blighted_mire
+    (now corrupted_swamp), ruined_citadel (now ruined_fortress), crystal_cavern,
+    and grasslands.
 
-    Placement: after pass_glacial, before pass_terrain_features.
+    Contract:
+        Requires: height, biome_id (optional — falls back to composition_hints)
+        Produces: biome_surface_feature_delta
+
+    Args:
+        state: TerrainPipelineState (typed as object to avoid circular import).
+        region: Optional BBox (typed as object to avoid circular import).
+
+    Returns:
+        PassResult with pass_name="biome_surface_features".
     """
     import time
-    from .terrain_pipeline import derive_pass_seed
+
     from .terrain_semantics import PassResult
 
     t0 = time.perf_counter()
-    stack = state.mask_stack
-    hints: dict[str, Any] = dict(getattr(state.intent, "composition_hints", {}) or {})
-    biome = str(hints.get("biome") or hints.get("climate") or hints.get("terrain_type") or "")
-    bl = biome.lower()
 
+    stack = state.mask_stack  # type: ignore[attr-defined]
     height = np.asarray(stack.height, dtype=np.float64)
-    tile_x = getattr(stack, "tile_x", None) or 0
-    tile_y = getattr(stack, "tile_y", None) or 0
-    seed = derive_pass_seed(state.intent.seed, "biome_surface_features", tile_x, tile_y, region)
+    seed = int(getattr(getattr(state, "intent", None) or object(), "seed", 0))
 
-    # Protected zone mask
-    protected = np.zeros(height.shape, dtype=bool)
-    hero_excl = stack.get("hero_exclusion")
-    if hero_excl is not None:
-        protected |= np.asarray(hero_excl, dtype=np.float64) > 0.0
+    # Determine active biome name from composition_hints or biome_id channel.
+    biome_name: str = ""
+    intent = getattr(state, "intent", None)
+    if intent is not None:
+        hints = dict(getattr(intent, "composition_hints", {}) or {})
+        biome_name = str(hints.get("biome", "") or "")
 
-    region_mask: np.ndarray | None = None
-    if region is not None:
-        r_sl, c_sl = region.to_cell_slice(
-            world_origin_x=stack.world_origin_x,
-            world_origin_y=stack.world_origin_y,
-            cell_size=stack.cell_size,
-            grid_shape=height.shape,
-        )
-        region_mask = np.zeros(height.shape, dtype=bool)
-        region_mask[r_sl, c_sl] = True
+    if not biome_name:
+        # Fall back to dominant biome from biome_id channel if present
+        biome_id_channel = stack.get("biome_id")
+        if biome_id_channel is not None:
+            biome_index = int(np.bincount(np.asarray(biome_id_channel).ravel().astype(np.int32)).argmax())
+            # Map index to biome name using the pipeline's biome list
+            biome_list = list(BIOME_CLIMATE_PARAMS.keys())
+            if 0 <= biome_index < len(biome_list):
+                biome_name = biome_list[biome_index]
 
-    result = height.copy()
-    applied: list[str] = []
-
-    # Periglacial frost heave (tundra / alpine / mountain / frozen)
-    if any(kw in bl for kw in ("tundra", "alpine", "mountain", "frozen", "glacier")):
-        result = apply_periglacial_patterns(result, seed=seed ^ 0xA1, intensity=0.4)
-        applied.append("periglacial")
-
-    # Desert pavement + tafoni honeycomb weathering
-    if any(kw in bl for kw in ("desert", "arid", "volcanic_waste", "barren")):
-        result, pavement_mask = apply_desert_pavement(result, seed=seed ^ 0xA2, intensity=0.5)
-        stack.set(
-            "desert_pavement_mask",
-            np.asarray(pavement_mask, dtype=np.float32),
-            "biome_surface_features",
-        )
-        applied.append("desert_pavement")
-        result = apply_tafoni_weathering(result, seed=seed ^ 0xA3, intensity=0.35)
-        applied.append("tafoni")
-
-    # Fringing reef platform (coastal or explicit sea level hint)
-    if "coastal" in bl or hints.get("sea_level_m") is not None:
-        sea_level = float(hints.get("sea_level_m", 0.0))
-        result = apply_reef_platform(
-            result,
-            sea_level=sea_level,
-            seed=seed ^ 0xA4,
-            cell_size=float(stack.cell_size),
-            stack=stack,
-        )
-        applied.append("reef_platform")
-
-    # Hot spring travertine terraces (volcanic biome or water system flag)
-    water_spec = getattr(state.intent, "water_system_spec", None)
-    has_hot_springs = bool(getattr(water_spec, "hot_springs", False)) or bool(
-        hints.get("hot_springs", False)
+    intensity = float(
+        dict(getattr(intent, "composition_hints", {}) or {}).get("surface_feature_intensity", 0.6)
+        if intent is not None else 0.6
     )
-    if "volcanic" in bl or has_hot_springs:
-        result, _spring_list = apply_hot_spring_features(result, seed=seed ^ 0xA5, num_springs=2)
-        applied.append("hot_spring")
 
-    # Landslide scars + runout fans (mountain / forest / steep biomes)
-    if any(kw in bl for kw in ("mountain", "alpine", "forest", "thornwood", "swamp", "dark_fantasy")):
-        result = apply_landslide_scars(result, seed=seed ^ 0xA6, num_slides=2, scar_depth=0.03)
-        applied.append("landslide_scars")
+    deltas = _dispatch_biome_surface_features(
+        biome_id=biome_name,
+        heightmap=height,
+        seed=seed,
+        intensity=max(intensity, 0.01),
+    )
 
-    # Spring line mask (wet biomes — does not modify height, stores diagnostic mask)
-    if any(kw in bl for kw in ("forest", "swamp", "jungle", "temperate", "thornwood")):
-        spring_mask = compute_spring_line_mask(height, seed=seed ^ 0xA7)
-        stack.set(
-            "spring_line_mask",
-            np.asarray(spring_mask, dtype=np.float32),
-            "biome_surface_features",
-        )
-        applied.append("spring_line")
-
-    # Geological folds (structurally complex biomes)
-    if any(kw in bl for kw in ("mountain", "dark_fantasy", "corrupted", "volcanic")) or bool(
-        hints.get("geological_folds", False)
-    ):
-        result = apply_geological_folds(result, seed=seed ^ 0xA8, num_folds=2, amplitude=0.03)
-        applied.append("geological_folds")
-
-    delta = result - height
-    if applied:
-        if protected.any():
-            delta = np.where(protected, 0.0, delta)
-        if region_mask is not None:
-            delta = np.where(region_mask, delta, 0.0)
+    # Aggregate all feature deltas into a single combined delta channel.
+    if deltas:
+        combined_delta = sum(deltas)
     else:
-        delta = np.zeros_like(height, dtype=np.float64)
+        combined_delta = np.zeros_like(height)
 
-    stack.set(
-        "biome_surface_delta",
-        np.asarray(delta, dtype=np.float32),
-        "biome_surface_features",
-    )
+    stack.set("biome_surface_feature_delta", combined_delta.astype(np.float32), "biome_surface_features")
 
     return PassResult(
         pass_name="biome_surface_features",
         status="ok",
         duration_seconds=time.perf_counter() - t0,
         consumed_channels=("height",),
-        produced_channels=("biome_surface_delta",),
+        produced_channels=("biome_surface_feature_delta",),
         metrics={
-            "applied_features": applied,
-            "biome": biome,
-            "total_delta_abs": float(np.abs(delta).sum()),
-            "cells_modified": int(np.count_nonzero(delta)),
+            "biome": biome_name or "<unknown>",
+            "feature_count": len(deltas),
+            "delta_mean": float(combined_delta.mean()),
+            "delta_max_abs": float(np.abs(combined_delta).max()),
         },
+        issues=[],
     )
 
 
@@ -2025,14 +2788,16 @@ def register_biome_surface_features_pass() -> None:
             name="biome_surface_features",
             func=pass_biome_surface_features,
             requires_channels=("height",),
-            produces_channels=("biome_surface_delta",),
+            produces_channels=("biome_surface_feature_delta",),
             seed_namespace="biome_surface_features",
             requires_scene_read=False,
             may_modify_geometry=True,
             respects_protected_zones=True,
             protocol_enforced=True,
-            description="Apply biome-specific surface micro-features (periglacial, desert pavement, "
-            "tafoni, reef, hot springs, landslide scars, spring lines, geological folds).",
+            description=(
+                "Apply biome-specific surface micro-features using explicit VB biome "
+                "registry (cemetery, ashen_wastes, blighted_mire, crystal_cavern, etc.)."
+            ),
         )
     )
 

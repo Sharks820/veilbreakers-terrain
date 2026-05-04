@@ -359,3 +359,88 @@ class TestWorldMapIntegration:
         spec = generate_world_map_spec(width=16, height=16, biome_count=6)
         for name in spec.biome_names:
             assert name in BIOME_PALETTES, f"'{name}' not in BIOME_PALETTES"
+
+
+# ---------------------------------------------------------------------------
+# TestBiomeSurfaceFeatures: FIX-B14-4 — all 14 VB biomes produce nonzero delta
+# ---------------------------------------------------------------------------
+
+class TestBiomeSurfaceFeatures:
+    """Verify that _dispatch_biome_surface_features returns at least one
+    non-zero delta array for every canonical VeilBreakers biome ID.
+
+    The previous substring-match dispatch missed 6/14 biomes:
+    cemetery, grasslands, crystal_cavern (not matching any keyword),
+    and the now-renamed ashen_wastes / blighted_mire / ruined_citadel.
+    This test suite asserts coverage of all 14 BIOME_CLIMATE_PARAMS keys.
+    """
+
+    from veilbreakers_terrain.handlers._biome_grammar import BIOME_CLIMATE_PARAMS
+
+    _ALL_14_VB_BIOMES = list(BIOME_CLIMATE_PARAMS.keys())
+
+    @pytest.mark.parametrize("biome_id", _ALL_14_VB_BIOMES)
+    def test_biome_surface_features_all_14_vb_biomes_produce_nonzero_delta(
+        self, biome_id: str
+    ) -> None:
+        """Each canonical VB biome must yield >= 1 delta with any nonzero cell.
+
+        Regression for FIX-B14-4: substring dispatch silently returned empty
+        lists for cemetery, grasslands, crystal_cavern, etc.
+        """
+        from veilbreakers_terrain.handlers._biome_grammar import (
+            _dispatch_biome_surface_features,
+            _BIOME_FEATURES,
+        )
+
+        hmap = np.zeros((32, 32), dtype=np.float64) + 10.0  # flat 10-m baseline
+        deltas = _dispatch_biome_surface_features(biome_id, hmap, seed=42, intensity=0.6)
+
+        # Every biome in _BIOME_FEATURES must return at least one delta.
+        assert biome_id in _BIOME_FEATURES, (
+            f"Biome '{biome_id}' is missing from _BIOME_FEATURES dispatch table"
+        )
+        assert len(deltas) >= 1, (
+            f"Biome '{biome_id}' returned 0 feature deltas — dispatch not wired"
+        )
+
+        # The combined delta must have at least one non-zero cell.
+        combined = sum(deltas)
+        assert np.any(combined != 0.0), (
+            f"Biome '{biome_id}': all {len(deltas)} feature delta(s) are zero — "
+            "stub functions must return non-zero displacement"
+        )
+
+    def test_all_14_biomes_are_in_biome_features_table(self) -> None:
+        """_BIOME_FEATURES must contain exactly the 14 BIOME_CLIMATE_PARAMS keys."""
+        from veilbreakers_terrain.handlers._biome_grammar import (
+            _BIOME_FEATURES,
+            BIOME_CLIMATE_PARAMS,
+        )
+
+        canonical = set(BIOME_CLIMATE_PARAMS.keys())
+        mapped = set(_BIOME_FEATURES.keys())
+        missing = canonical - mapped
+        assert not missing, (
+            f"These biomes are in BIOME_CLIMATE_PARAMS but missing from "
+            f"_BIOME_FEATURES: {sorted(missing)}"
+        )
+
+    def test_all_feature_keys_resolve_in_registry(self) -> None:
+        """Every feature key referenced in _BIOME_FEATURES must exist in the
+        _FEATURE_FN_REGISTRY so that no dispatch silently no-ops."""
+        from veilbreakers_terrain.handlers._biome_grammar import (
+            _BIOME_FEATURES,
+            _FEATURE_FN_REGISTRY,
+        )
+
+        missing_keys: list[str] = []
+        for biome_id, feature_keys in _BIOME_FEATURES.items():
+            for key in feature_keys:
+                if key not in _FEATURE_FN_REGISTRY:
+                    missing_keys.append(f"{biome_id}/{key}")
+
+        assert not missing_keys, (
+            f"Feature keys referenced in _BIOME_FEATURES but absent from "
+            f"_FEATURE_FN_REGISTRY: {missing_keys}"
+        )

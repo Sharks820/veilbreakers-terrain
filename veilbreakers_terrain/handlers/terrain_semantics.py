@@ -426,6 +426,8 @@ class TerrainMaskStack:
     terrain_brucks_weight: Optional[np.ndarray] = None
     # Per-cell snow coverage fraction written by material passes. float32 (H, W) in [0,1].
     snow_coverage: Optional[np.ndarray] = None
+    # Summed micro-feature height delta produced by pass_biome_surface_features. float32 (H, W).
+    biome_surface_feature_delta: Optional[np.ndarray] = None
     # Navmesh area classification: walkable/unwalkable/jump/climb per cell.
     navmesh_area_id: Optional[np.ndarray] = None
     # Physics collider tag: solid / trigger / nocollide.
@@ -717,6 +719,8 @@ class TerrainMaskStack:
             # Material weight channels (FIX-B14-12)
             "terrain_brucks_weight",
             "snow_coverage",
+            # Biome surface feature delta (FIX-B14-4)
+            "biome_surface_feature_delta",
         ),
     )
 
