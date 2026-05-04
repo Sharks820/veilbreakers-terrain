@@ -521,10 +521,11 @@ class TestManningSlopeConvention:
         assert "slope_max_dimensionless" in result.metrics
         assert result.metrics["slope_max_dimensionless"] < 10.0
 
-    def test_radian_unit_error_raises(self):
-        """Feeding a radians-as-slope channel with huge magnitudes trips the assert."""
+    def test_radian_unit_error_raises(self, monkeypatch):
+        """Feeding a radians-as-slope channel with huge magnitudes trips the assert in dev mode."""
         from veilbreakers_terrain.handlers._water_network import pass_water_flow_speed
 
+        monkeypatch.setenv("TERRAIN_DEV_MODE", "1")
         height = np.zeros((8, 8), dtype=np.float64)
         # A "slope" array in bogus units — values of 25 indicate something
         # other than rise/run (e.g., gradient of a steep world-height DEM).
