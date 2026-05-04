@@ -82,32 +82,26 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 _LOG = logging.getLogger(__name__)
 
+# Import canonical biome IDs from the single source of truth.
+from .terrain_biome_registry import CANONICAL_BIOME_IDS as _CANONICAL_BIOME_IDS  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Biome key aliases — referenced by biome_mask fields below.  The full list
-# lives in environment_scatter._BIOME_DENSITY and _GRASS_BIOME_SPECS.
+# Biome key sets — all values are canonical IDs from terrain_biome_registry.
 # ---------------------------------------------------------------------------
 
-_ALL_BIOMES: FrozenSet[str] = frozenset({
-    "dark_forest",
-    "corrupted_wasteland",
-    "swamp",
-    "mountain",
-    "grassy_plains",
-    "prairie",
-    "forest",
-    "dead",
-    "default",
-})
+_ALL_BIOMES: FrozenSet[str] = frozenset(_CANONICAL_BIOME_IDS.keys())
 
 _TEMPERATE_BIOMES: FrozenSet[str] = frozenset({
-    "forest", "dark_forest", "grassy_plains", "prairie",
+    "thornwood_forest", "deep_forest", "grasslands",
 })
 
-_WET_BIOMES: FrozenSet[str] = frozenset({"swamp", "forest", "dark_forest"})
+_WET_BIOMES: FrozenSet[str] = frozenset({
+    "corrupted_swamp", "thornwood_forest", "deep_forest", "blighted_mire",
+})
 
 _DRY_BIOMES: FrozenSet[str] = frozenset({
-    "corrupted_wasteland", "dead", "mountain", "grassy_plains", "prairie",
+    "veil_crack_zone", "battlefield", "mountain_pass",
+    "grasslands", "desert", "ashen_wastes",
 })
 
 
@@ -267,7 +261,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=0.5,
         lod_viewer_distance_m=5.0,
-        biome_mask=_TEMPERATE_BIOMES | {"swamp"},
+        biome_mask=_TEMPERATE_BIOMES | {"corrupted_swamp"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Grass/GrassTall.prefab",
     ),
     "grass_short": SpeciesSpec(
@@ -280,7 +274,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=0.4,
         lod_viewer_distance_m=5.0,
-        biome_mask=_ALL_BIOMES - {"corrupted_wasteland"},
+        biome_mask=_ALL_BIOMES - {"veil_crack_zone"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Grass/GrassShort.prefab",
     ),
     "grass_dry": SpeciesSpec(
@@ -306,7 +300,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=0.5,
         lod_viewer_distance_m=5.0,
-        biome_mask=_WET_BIOMES | {"forest", "dark_forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Grass/GrassLush.prefab",
     ),
 
@@ -321,7 +315,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("rock_face",),
         poisson_min_distance_m=0.6,
         lod_viewer_distance_m=20.0,
-        biome_mask=frozenset({"mountain", "corrupted_wasteland", "dead", "grassy_plains"}),
+        biome_mask=frozenset({"mountain_pass", "veil_crack_zone", "battlefield", "grasslands"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Rocks/Gravel.prefab",
     ),
     "pebbles": SpeciesSpec(
@@ -334,7 +328,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=0.8,
         lod_viewer_distance_m=25.0,
-        biome_mask=_ALL_BIOMES - {"swamp"},
+        biome_mask=_ALL_BIOMES - {"corrupted_swamp"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Rocks/Pebbles.prefab",
     ),
 
@@ -349,7 +343,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("cliff_face", "rock_face"),
         poisson_min_distance_m=8.0,
         lod_viewer_distance_m=300.0,
-        biome_mask=frozenset({"mountain", "corrupted_wasteland", "dead"}),
+        biome_mask=frozenset({"mountain_pass", "veil_crack_zone", "battlefield"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Rocks/TalusBoulder.prefab",
     ),
     "hero_boulder": SpeciesSpec(
@@ -379,7 +373,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("rock_face",),
         poisson_min_distance_m=1.0,
         lod_viewer_distance_m=25.0,
-        biome_mask=_WET_BIOMES | {"forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Moss/MossRock.prefab",
     ),
     "moss_log": SpeciesSpec(
@@ -392,7 +386,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("trunk",),
         poisson_min_distance_m=1.2,
         lod_viewer_distance_m=25.0,
-        biome_mask=_WET_BIOMES | {"forest", "dark_forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Moss/MossLog.prefab",
     ),
     "moss_tree_base": SpeciesSpec(
@@ -405,7 +399,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("tree_base",),
         poisson_min_distance_m=1.0,
         lod_viewer_distance_m=20.0,
-        biome_mask=_WET_BIOMES | {"forest", "dark_forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Moss/MossTreeBase.prefab",
     ),
 
@@ -420,7 +414,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("cliff_face",),
         poisson_min_distance_m=2.0,
         lod_viewer_distance_m=60.0,
-        biome_mask=_WET_BIOMES | {"dark_forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Vines/VineHanging.prefab",
         requires_external_model_asset=True,
         notes="Cliff-hanging vine cluster; external alpha-card prop required.",
@@ -435,7 +429,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("trunk",),
         poisson_min_distance_m=2.5,
         lod_viewer_distance_m=60.0,
-        biome_mask=_WET_BIOMES | {"dark_forest", "forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Vines/VineClimbing.prefab",
     ),
 
@@ -450,7 +444,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=4.5,
         lod_viewer_distance_m=200.0,
-        biome_mask=frozenset({"forest", "grassy_plains", "prairie"}),
+        biome_mask=frozenset({"thornwood_forest", "grasslands"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Trees/TreeOak.prefab",
     ),
     "tree_birch": SpeciesSpec(
@@ -463,7 +457,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=3.0,
         lod_viewer_distance_m=180.0,
-        biome_mask=frozenset({"forest", "dark_forest", "mountain"}),
+        biome_mask=frozenset({"thornwood_forest", "deep_forest", "mountain_pass"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Trees/TreeBirch.prefab",
     ),
     "tree_pine": SpeciesSpec(
@@ -476,7 +470,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=4.0,
         lod_viewer_distance_m=220.0,
-        biome_mask=frozenset({"mountain", "dark_forest", "forest"}),
+        biome_mask=frozenset({"mountain_pass", "deep_forest", "thornwood_forest"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Trees/TreePine.prefab",
     ),
     "tree_dead": SpeciesSpec(
@@ -489,7 +483,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=6.0,
         lod_viewer_distance_m=220.0,
-        biome_mask=frozenset({"corrupted_wasteland", "dead", "mountain", "swamp"}),
+        biome_mask=frozenset({"veil_crack_zone", "battlefield", "mountain_pass", "corrupted_swamp"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Trees/TreeDead.prefab",
     ),
 
@@ -504,7 +498,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=6.0,
         lod_viewer_distance_m=120.0,
-        biome_mask=frozenset({"forest", "dark_forest", "swamp", "mountain"}),
+        biome_mask=frozenset({"thornwood_forest", "deep_forest", "corrupted_swamp", "mountain_pass"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Logs/LogFallen.prefab",
     ),
     "log_rotted": SpeciesSpec(
@@ -517,7 +511,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=7.0,
         lod_viewer_distance_m=100.0,
-        biome_mask=frozenset({"swamp", "dark_forest", "forest"}),
+        biome_mask=frozenset({"corrupted_swamp", "deep_forest", "thornwood_forest"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Logs/LogRotted.prefab",
     ),
 
@@ -532,7 +526,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=2.0,
         lod_viewer_distance_m=80.0,
-        biome_mask=frozenset({"forest", "grassy_plains", "prairie"}),
+        biome_mask=frozenset({"thornwood_forest", "grasslands"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Bushes/BushBerry.prefab",
     ),
     "bush_thorn": SpeciesSpec(
@@ -545,7 +539,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=2.2,
         lod_viewer_distance_m=80.0,
-        biome_mask=_DRY_BIOMES | {"mountain"},
+        biome_mask=_DRY_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Bushes/BushThorn.prefab",
     ),
     "bush_ornamental": SpeciesSpec(
@@ -558,7 +552,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=1.8,
         lod_viewer_distance_m=70.0,
-        biome_mask=frozenset({"grassy_plains", "prairie", "forest"}),
+        biome_mask=frozenset({"grasslands", "thornwood_forest"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Bushes/BushOrnamental.prefab",
     ),
 
@@ -573,7 +567,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=0.8,
         lod_viewer_distance_m=45.0,
-        biome_mask=frozenset({"swamp", "forest", "grassy_plains", "prairie"}),
+        biome_mask=frozenset({"corrupted_swamp", "thornwood_forest", "grasslands", "blighted_mire"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Water/Reeds.prefab",
     ),
     "lily_pad": SpeciesSpec(
@@ -586,7 +580,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=1.2,
         lod_viewer_distance_m=40.0,
-        biome_mask=frozenset({"swamp", "forest"}),
+        biome_mask=frozenset({"corrupted_swamp", "thornwood_forest", "blighted_mire"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Water/LilyPad.prefab",
     ),
     "algae": SpeciesSpec(
@@ -599,7 +593,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=0.6,
         lod_viewer_distance_m=30.0,
-        biome_mask=frozenset({"swamp", "forest", "dark_forest"}),
+        biome_mask=frozenset({"corrupted_swamp", "thornwood_forest", "deep_forest", "blighted_mire"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Water/Algae.prefab",
     ),
     "submerged_grass": SpeciesSpec(
@@ -612,7 +606,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=0.5,
         lod_viewer_distance_m=25.0,
-        biome_mask=frozenset({"swamp", "forest", "grassy_plains"}),
+        biome_mask=frozenset({"corrupted_swamp", "thornwood_forest", "grasslands", "blighted_mire"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Water/SubmergedGrass.prefab",
     ),
 
@@ -627,7 +621,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=6.0,
         lod_viewer_distance_m=80.0,
-        biome_mask=frozenset({"forest", "dark_forest", "mountain", "dead"}),
+        biome_mask=frozenset({"thornwood_forest", "deep_forest", "mountain_pass", "battlefield"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Stumps/StumpOld.prefab",
     ),
     "stump_fresh_cut": SpeciesSpec(
@@ -640,7 +634,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=10.0,
         lod_viewer_distance_m=80.0,
-        biome_mask=frozenset({"forest", "grassy_plains", "prairie"}),
+        biome_mask=frozenset({"thornwood_forest", "grasslands"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Stumps/StumpFreshCut.prefab",
         notes="Gameplay hint — indicates recent logging/settlement nearby.",
     ),
@@ -656,7 +650,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=2.5,
         lod_viewer_distance_m=90.0,
-        biome_mask=frozenset({"grassy_plains", "prairie", "forest"}),
+        biome_mask=frozenset({"grasslands", "thornwood_forest"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Fences/FenceWood.prefab",
         requires_external_model_asset=True,
         notes="Wooden fence segment; external 2 m modular prop required.",
@@ -671,7 +665,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=3.0,
         lod_viewer_distance_m=120.0,
-        biome_mask=frozenset({"mountain", "grassy_plains", "prairie", "dead"}),
+        biome_mask=frozenset({"mountain_pass", "grasslands", "battlefield"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Fences/FenceStone.prefab",
         requires_external_model_asset=True,
         notes="Stone wall segment; external 2 m modular prop required.",
@@ -688,7 +682,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=30.0,
         lod_viewer_distance_m=100.0,
-        biome_mask=_ALL_BIOMES - {"corrupted_wasteland"},
+        biome_mask=_ALL_BIOMES - {"veil_crack_zone"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Signs/SignWooden.prefab",
         requires_external_model_asset=True,
         notes="Crossroads wooden sign; external prop required.",
@@ -703,7 +697,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=60.0,
         lod_viewer_distance_m=140.0,
-        biome_mask=_ALL_BIOMES - {"corrupted_wasteland"},
+        biome_mask=_ALL_BIOMES - {"veil_crack_zone"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Signs/SignStoneWaypoint.prefab",
         requires_external_model_asset=True,
         notes="Stone waypoint marker; external prop required.",
@@ -734,7 +728,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=1.2,
         lod_viewer_distance_m=70.0,
-        biome_mask=_ALL_BIOMES - {"corrupted_wasteland"},
+        biome_mask=_ALL_BIOMES - {"veil_crack_zone"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Walkways/DirtPath.prefab",
     ),
     "walkway_plank": SpeciesSpec(
@@ -747,7 +741,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("water_edge",),
         poisson_min_distance_m=2.0,
         lod_viewer_distance_m=70.0,
-        biome_mask=frozenset({"swamp", "forest", "dark_forest"}),
+        biome_mask=frozenset({"corrupted_swamp", "thornwood_forest", "deep_forest", "blighted_mire"}),
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Walkways/PlankWalkway.prefab",
         requires_external_model_asset=True,
         notes="Plank boardwalk over swamp water; external prop required.",
@@ -764,7 +758,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=(),
         poisson_min_distance_m=0.8,
         lod_viewer_distance_m=25.0,
-        biome_mask=_TEMPERATE_BIOMES | {"mountain"},
+        biome_mask=_TEMPERATE_BIOMES | {"mountain_pass"},
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Accent/Flowers.prefab",
     ),
     "ferns": SpeciesSpec(
@@ -777,7 +771,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("tree_base",),
         poisson_min_distance_m=1.0,
         lod_viewer_distance_m=35.0,
-        biome_mask=_WET_BIOMES | {"forest", "dark_forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Accent/Ferns.prefab",
     ),
     "mushrooms": SpeciesSpec(
@@ -790,7 +784,7 @@ FOLIAGE_SPECIES_CATALOG: Dict[str, SpeciesSpec] = {
         place_near=("trunk", "tree_base"),
         poisson_min_distance_m=1.2,
         lod_viewer_distance_m=25.0,
-        biome_mask=_WET_BIOMES | {"forest", "dark_forest"},
+        biome_mask=_WET_BIOMES,
         unity_asset_path="Assets/VeilBreakersTerrain/Foliage/Accent/Mushrooms.prefab",
     ),
     "clovers": SpeciesSpec(

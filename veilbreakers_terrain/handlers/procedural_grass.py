@@ -35,6 +35,9 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Import canonical biome IDs from the single source of truth.
+from .terrain_biome_registry import CANONICAL_BIOME_IDS  # noqa: F401,E402 — re-exported
+
 
 # ---------------------------------------------------------------------------
 # Optional scipy SDF

@@ -38,6 +38,7 @@ try:
 except ImportError:
     np = None  # type: ignore[assignment]
 
+from .terrain_biome_registry import CANONICAL_BIOME_IDS  # noqa: F401 — re-exported for callers
 from .terrain_math import stack_world_to_cell
 from .terrain_rng import make_rng as _make_rng
 
