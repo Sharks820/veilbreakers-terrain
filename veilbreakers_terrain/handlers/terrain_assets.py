@@ -302,14 +302,7 @@ def _water_exclusion_mask(stack: TerrainMaskStack, height: np.ndarray) -> np.nda
         if mask_arr.shape == height.shape:
             water |= mask_arr > 0.5
 
-    legacy_surface = stack.get("water_surface")
-    if legacy_surface is not None:
-        surface_arr = np.asarray(legacy_surface, dtype=np.float32)
-        if surface_arr.shape == height.shape:
-            if float(np.nanmax(surface_arr)) <= 1.5:
-                water |= surface_arr > 0.5
-            else:
-                water |= surface_arr > (height + 0.05)
+    # W-1: legacy water_surface read removed; water_surface_mask (above) is canonical.
 
     return water
 

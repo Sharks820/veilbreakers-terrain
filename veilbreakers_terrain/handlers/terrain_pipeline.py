@@ -197,7 +197,7 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
             "pass_terrain_features",
             # C-8: sightline framing before scatter
             "framing",
-            *(("water_variants", "bathymetry", "pass_water_depth") if has_scene_read else ()),
+            *(("water_variants", "pass_seasonal_water_state", "bathymetry", "pass_water_depth") if has_scene_read else ()),
             *(("waterfalls", "emit_particle_systems") if has_scene_read and include_waterfalls else ()),
             *(("integrate_deltas",) if has_scene_read else ()),
             *(("talus", "structural_masks_post_talus") if include_talus else ()),
