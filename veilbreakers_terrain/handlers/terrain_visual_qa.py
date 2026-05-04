@@ -583,11 +583,11 @@ def _check_phantom_channel_writers(stack: Any) -> Dict[str, Any]:
     )
 
 
-def run_checks(stack: Any) -> Dict[str, Any]:
-    """Run Phase 9 visual-QA contract checks on a stack-like object.
+def run_data_contract_checks(stack: Any) -> Dict[str, Any]:
+    """Run Phase 9 data-contract checks on a stack-like object.
 
-    This is code-level validation only; it does not claim rendered visual
-    quality. Blender viewport/render proof remains a separate gate.
+    Validates channel presence and statistics only — this is NOT a visual
+    review gate. Blender viewport/render proof remains a separate gate.
     """
     checks = [
         _check_stochastic_seam(stack),
@@ -603,6 +603,24 @@ def run_checks(stack: Any) -> Dict[str, Any]:
         "failed": failed,
         "failed_names": [check["name"] for check in failed],
     }
+
+
+def run_checks(stack: Any) -> Dict[str, Any]:
+    """Deprecated alias for :func:`run_data_contract_checks`.
+
+    .. deprecated::
+        Use ``run_data_contract_checks`` instead.  The name ``run_checks``
+        is retained for backward compatibility with existing call sites and
+        tests.
+    """
+    import warnings
+
+    warnings.warn(
+        "run_checks() is deprecated; use run_data_contract_checks() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return run_data_contract_checks(stack)
 
 
 def handle_visual_qa_validate_channels(
