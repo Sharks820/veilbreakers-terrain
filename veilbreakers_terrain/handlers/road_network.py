@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import heapq
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .terrain_semantics import PassResult
 
 from .terrain_path_contracts import (
     PathNetworkContract,

@@ -28,7 +28,6 @@ from typing import Any
 
 import bpy
 import numpy as np
-from mathutils import Vector
 
 # ---------------------------------------------------------------------------
 # Paths
