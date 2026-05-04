@@ -3331,12 +3331,56 @@ def compute_world_splatmap_weights(
     return result
 
 
+def _sample_splatmap_weights_at_vertex(
+    stack: Any,
+    vx: float,
+    vy: float,
+    vz: float,  # noqa: ARG001 — kept for API symmetry; Z not used for 2-D lookup
+) -> tuple[float, float, float, float] | None:
+    """Sample splatmap weights from a stack at a vertex's world-XY position.
+
+    Returns a 4-tuple ``(w0, w1, w2, w3)`` representing the first four
+    splatmap layers at the grid cell that contains ``(vx, vy)``.  Layers
+    beyond the fourth are discarded; missing layers are padded with 0.0.
+
+    Returns ``None`` when the stack or its ``splatmap_weights_layer`` is not
+    available, allowing callers to fall back to ``auto_assign_terrain_layers``.
+    """
+    if stack is None:
+        return None
+    layer = getattr(stack, "splatmap_weights_layer", None)
+    if layer is None:
+        return None
+    try:
+        arr = np.asarray(layer)
+        if arr.ndim != 3 or arr.shape[2] < 1:
+            return None
+        n_rows, n_cols = arr.shape[:2]
+        cell_size = float(getattr(stack, "cell_size", 1.0) or 1.0)
+        origin_x = float(getattr(stack, "world_origin_x", 0.0))
+        origin_y = float(getattr(stack, "world_origin_y", 0.0))
+        col = int((vx - origin_x) / cell_size)
+        row = int((vy - origin_y) / cell_size)
+        col = max(0, min(col, n_cols - 1))
+        row = max(0, min(row, n_rows - 1))
+        cell = arr[row, col, :]
+        n = len(cell)
+        w0 = float(cell[0]) if n > 0 else 0.0
+        w1 = float(cell[1]) if n > 1 else 0.0
+        w2 = float(cell[2]) if n > 2 else 0.0
+        w3 = float(cell[3]) if n > 3 else 0.0
+        return (w0, w1, w2, w3)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def create_biome_terrain_material(
     biome_name: str,
     object_name: str | None = None,
     season: str | None = None,
     *,
     preserve_existing_splatmap: bool = True,
+    stack: Any = None,
 ) -> Any:
     """Create a multi-layer terrain material with vertex-color splatmap blending.
 
@@ -3492,29 +3536,50 @@ def create_biome_terrain_material(
                     preserve_layer = False
 
             if not preserve_layer:
-                if hasattr(mesh, "calc_normals_split"):
-                    mesh.calc_normals_split()
-                elif hasattr(mesh, "calc_normals"):
-                    mesh.calc_normals()
-                vl = [(v.co.x, v.co.y, v.co.z) for v in mesh.vertices]
-                nl = [(p.normal.x, p.normal.y, p.normal.z) for p in mesh.polygons]
-                fl = [tuple(p.vertices) for p in mesh.polygons]
-                # Do not auto-paint the "special" layer from arbitrary top/bottom
-                # height percentiles in Blender preview; that produces obviously
-                # fake terrain striping unrelated to actual terrain semantics.
-                weights: list[tuple[float, float, float, float]] = auto_assign_terrain_layers(
-                    vl,
-                    nl,
-                    fl,
-                    biome_name,
-                    special_low_pct=0.0,
-                    special_high_pct=1.0,
-                )
-                for poly in mesh.polygons:
-                    for li in poly.loop_indices:
-                        vi_idx = int(mesh.loops[li].vertex_index)
-                        w: tuple[float, float, float, float] = weights[vi_idx]
-                        vcol.data[li].color = (w[0], w[1], w[2], w[3])
+                # Prefer authoritative splatmap_weights_layer from the pipeline
+                # stack so the Blender preview matches what ships to Unity.
+                # Fall back to auto_assign_terrain_layers only when no stack
+                # weight data is available (e.g. standalone Blender usage).
+                use_stack_weights = stack is not None and getattr(
+                    stack, "splatmap_weights_layer", None
+                ) is not None
+
+                if use_stack_weights:
+                    for poly in mesh.polygons:
+                        for li in poly.loop_indices:
+                            vi_idx = mesh.loops[li].vertex_index
+                            v = mesh.vertices[vi_idx]
+                            sampled = _sample_splatmap_weights_at_vertex(
+                                stack, v.co.x, v.co.y, v.co.z
+                            )
+                            if sampled is not None:
+                                vcol.data[li].color = sampled
+                            else:
+                                vcol.data[li].color = (1.0, 0.0, 0.0, 0.0)
+                else:
+                    if hasattr(mesh, "calc_normals_split"):
+                        mesh.calc_normals_split()
+                    elif hasattr(mesh, "calc_normals"):
+                        mesh.calc_normals()
+                    vl = [(v.co.x, v.co.y, v.co.z) for v in mesh.vertices]
+                    nl = [(p.normal.x, p.normal.y, p.normal.z) for p in mesh.polygons]
+                    fl = [tuple(p.vertices) for p in mesh.polygons]
+                    # Do not auto-paint the "special" layer from arbitrary top/bottom
+                    # height percentiles in Blender preview; that produces obviously
+                    # fake terrain striping unrelated to actual terrain semantics.
+                    weights = auto_assign_terrain_layers(
+                        vl,
+                        nl,
+                        fl,
+                        biome_name,
+                        special_low_pct=0.0,
+                        special_high_pct=1.0,
+                    )
+                    for poly in mesh.polygons:
+                        for li in poly.loop_indices:
+                            vi_idx = mesh.loops[li].vertex_index
+                            w = weights[vi_idx]
+                            vcol.data[li].color = (w[0], w[1], w[2], w[3])
     if object_name:
         obj = bpy.data.objects.get(object_name)
         obj_data = getattr(obj, "data", None) if obj is not None else None

@@ -22,6 +22,7 @@ All pure-logic -- no Blender required.
 import math
 from typing import TypeAlias
 
+import numpy as np
 import pytest
 
 from veilbreakers_terrain.handlers.terrain_materials import (
@@ -31,6 +32,7 @@ from veilbreakers_terrain.handlers.terrain_materials import (
     REQUIRED_PALETTE_KEYS,
     TERRAIN_MATERIALS,
     VALID_LAYER_NAMES,
+    _sample_splatmap_weights_at_vertex,
     auto_assign_terrain_layers,
     compute_biome_transition,
     compute_world_splatmap_weights,
@@ -848,3 +850,107 @@ class TestTerrainMaterialDedup:
 
             with pytest.raises(ValueError, match="Unknown biome"):
                 create_biome_terrain_material("not_a_real_biome")
+
+
+# ===========================================================================
+# B14-11: _sample_splatmap_weights_at_vertex — Blender preview splatmap fix
+# ===========================================================================
+
+
+class _MockStack:
+    """Minimal stack stub for _sample_splatmap_weights_at_vertex tests."""
+
+    def __init__(self, weights, world_origin_x=0.0, world_origin_y=0.0, cell_size=1.0):
+        self.splatmap_weights_layer = weights
+        self.world_origin_x = world_origin_x
+        self.world_origin_y = world_origin_y
+        self.cell_size = cell_size
+
+
+class TestSampleSplatmapWeightsAtVertex:
+    """FIX-B14-11: Blender preview must sample authoritative splatmap_weights_layer."""
+
+    def test_returns_correct_weights_at_origin_cell(self):
+        """Vertex at world origin maps to cell (0, 0); weights must match."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[0, 0, :] = [0.5, 0.3, 0.2, 0.0]
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.5) < 1e-6
+        assert abs(result[1] - 0.3) < 1e-6
+        assert abs(result[2] - 0.2) < 1e-6
+        assert abs(result[3] - 0.0) < 1e-6
+
+    def test_returns_4_tuple(self):
+        """Return value is always a 4-tuple regardless of layer count."""
+        weights = np.ones((2, 2, 4), dtype=np.float32)
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None
+        assert len(result) == 4
+
+    def test_fewer_than_4_layers_pads_with_zeros(self):
+        """When splatmap has fewer than 4 layers, missing ones are padded with 0.0."""
+        weights = np.ones((2, 2, 2), dtype=np.float32) * 0.5
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.5) < 1e-6
+        assert abs(result[1] - 0.5) < 1e-6
+        assert abs(result[2] - 0.0) < 1e-6
+        assert abs(result[3] - 0.0) < 1e-6
+
+    def test_returns_none_when_stack_is_none(self):
+        result = _sample_splatmap_weights_at_vertex(None, 0.0, 0.0, 0.0)
+        assert result is None
+
+    def test_returns_none_when_splatmap_weights_layer_is_none(self):
+        stack = _MockStack(None)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is None
+
+    def test_world_position_maps_to_correct_cell(self):
+        """A vertex at (2.0, 3.0) with cell_size=1 maps to col=2, row=3."""
+        weights = np.zeros((8, 8, 4), dtype=np.float32)
+        weights[3, 2, :] = [0.1, 0.2, 0.3, 0.4]
+        stack = _MockStack(weights, world_origin_x=0.0, world_origin_y=0.0, cell_size=1.0)
+        result = _sample_splatmap_weights_at_vertex(stack, 2.0, 3.0, 99.0)
+        assert result is not None
+        assert abs(result[0] - 0.1) < 1e-6
+        assert abs(result[1] - 0.2) < 1e-6
+        assert abs(result[2] - 0.3) < 1e-6
+        assert abs(result[3] - 0.4) < 1e-6
+
+    def test_out_of_bounds_vertex_is_clamped(self):
+        """Vertices outside the grid are clamped to the nearest valid cell."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[3, 3, :] = [0.9, 0.0, 0.0, 0.1]
+        stack = _MockStack(weights)
+        # Vertex far outside the 4×4 grid
+        result = _sample_splatmap_weights_at_vertex(stack, 999.0, 999.0, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.9) < 1e-6
+
+    def test_non_zero_world_origin(self):
+        """world_origin offsets the grid lookup correctly."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[0, 0, :] = [0.7, 0.1, 0.1, 0.1]
+        stack = _MockStack(weights, world_origin_x=10.0, world_origin_y=20.0, cell_size=1.0)
+        # vx=10.5, vy=20.5 → col=0, row=0
+        result = _sample_splatmap_weights_at_vertex(stack, 10.5, 20.5, 0.0)
+        assert result is not None
+        assert abs(result[0] - 0.7) < 1e-6
+
+    def test_blender_preview_reads_splatmap_weights_when_populated(self):
+        """Integration: helper returns stack value at cell (0,0) for vertex at origin."""
+        weights = np.zeros((4, 4, 4), dtype=np.float32)
+        weights[0, 0, :] = [0.6, 0.2, 0.1, 0.1]
+        stack = _MockStack(weights)
+        result = _sample_splatmap_weights_at_vertex(stack, 0.0, 0.0, 0.0)
+        assert result is not None, "Expected weights from splatmap_weights_layer"
+        expected = list(weights[0, 0, :])
+        assert abs(result[0] - expected[0]) < 1e-6
+        assert abs(result[1] - expected[1]) < 1e-6
+        assert abs(result[2] - expected[2]) < 1e-6
+        assert abs(result[3] - expected[3]) < 1e-6

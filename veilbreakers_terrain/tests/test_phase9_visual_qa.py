@@ -115,9 +115,17 @@ def test_bundle_n_records_visual_qa_report_and_can_block_failures():
 
     assert "performance_report" in summary
     assert "visual_qa_report" in summary
+    assert "data_contract_qa_report" in summary
     assert "foam_alpha" in summary["visual_qa_failed_names"]
     assert result.status == "failed"
-    assert any(issue.code == "BUNDLE_N_VISUAL_QA_FOAM_ALPHA" for issue in result.issues)
+    # Accept both the old name (compat) and the new canonical name (B14-13 rename).
+    assert any(
+        issue.code in {
+            "BUNDLE_N_VISUAL_QA_FOAM_ALPHA",
+            "BUNDLE_N_DATA_CONTRACT_QA_FOAM_ALPHA",
+        }
+        for issue in result.issues
+    )
 
 
 def test_bundle_n_blocks_visual_qa_by_default_for_aaa_profile():

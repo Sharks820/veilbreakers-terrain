@@ -53,7 +53,7 @@ BUNDLE_N_RUNTIME_CONTRACT = {
         "enforce_budget",
         "compute_budget_report",
         "collect_performance_report",
-        "run_visual_qa_checks",
+        "run_data_contract_qa_checks",
         "compute_readability_bands",
         "apply_review_blockers",
     ),
@@ -246,7 +246,7 @@ def register_bundle_n_passes() -> Dict[str, Any]:
     _ = terrain_review_ingest.ingest_review_json
     _ = terrain_review_ingest.pass_apply_review_blockers
     _ = terrain_telemetry_dashboard.record_telemetry
-    _ = terrain_visual_qa.run_checks
+    _ = terrain_visual_qa.run_data_contract_checks
     return get_bundle_n_runtime_contract()
 
 
@@ -278,12 +278,19 @@ def run_bundle_n_post_pipeline_hooks(
     if options.get("skip_post_pipeline_hooks"):
         return {"skipped": True, "reason": "skip_post_pipeline_hooks"}
     quality_profile = str(getattr(controller.state.intent, "quality_profile", "") or "")
-    visual_qa_blocking = bool(
+    data_contract_qa_blocking = bool(
         options.get(
-            "visual_qa_blocking",
-            quality_profile in {"aaa_open_world", "production", "cinematic"},
+            # Accept both the new canonical key and the old key for compat.
+            "data_contract_qa_blocking",
+            options.get(
+                "visual_qa_blocking",
+                quality_profile in {"aaa_open_world", "production", "cinematic"},
+            ),
         )
     )
+    # Backward-compat alias — existing callers that read visual_qa_blocking
+    # from the options dict will still work.
+    visual_qa_blocking = data_contract_qa_blocking
 
     state = controller.state
     stack = state.mask_stack
@@ -329,17 +336,20 @@ def run_bundle_n_post_pipeline_hooks(
         summary["performance_report_error"] = repr(exc)
 
     try:
-        visual_report = terrain_visual_qa.run_checks(stack)
+        visual_report = terrain_visual_qa.run_data_contract_checks(stack)
+        summary["data_contract_qa_report"] = visual_report
+        summary["data_contract_qa_failed_names"] = list(visual_report.get("failed_names", []))
+        # Backward-compat aliases so existing consumers reading the old keys still work.
         summary["visual_qa_report"] = visual_report
-        summary["visual_qa_failed_names"] = list(visual_report.get("failed_names", []))
-        if visual_qa_blocking and not visual_report.get("ok", False):
+        summary["visual_qa_failed_names"] = summary["data_contract_qa_failed_names"]
+        if data_contract_qa_blocking and not visual_report.get("ok", False):
             _attach_issues(
                 last,
                 [
                     ValidationIssue(
-                        code=f"BUNDLE_N_VISUAL_QA_{str(check.get('name', 'unknown')).upper()}",
+                        code=f"BUNDLE_N_DATA_CONTRACT_QA_{str(check.get('name', 'unknown')).upper()}",
                         severity="hard",
-                        message=str(check.get("reason", "visual QA check failed")),
+                        message=str(check.get("reason", "data contract QA check failed")),
                         remediation=(
                             "Fix the named terrain channel contract before "
                             "shipping this tile."
@@ -350,7 +360,8 @@ def run_bundle_n_post_pipeline_hooks(
                 ],
             )
     except Exception as exc:  # noqa: BLE001
-        summary["visual_qa_error"] = repr(exc)
+        summary["data_contract_qa_error"] = repr(exc)
+        summary["visual_qa_error"] = summary["data_contract_qa_error"]  # compat
 
     bands = terrain_readability_bands.compute_readability_bands(stack)
     readability_score = terrain_readability_bands.aggregate_readability_score(bands)
