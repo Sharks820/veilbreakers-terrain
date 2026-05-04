@@ -1208,11 +1208,16 @@ def scatter_biome_vegetation(
 
     delegate_params: dict[str, Any] = {
         "terrain_name": params.get("terrain_name", ""),
+        "biome_name": biome_name,
         "min_distance": params.get("min_distance", 3.0),
         "seed": params.get("seed", 42),
         "max_instances": params.get("max_instances", 100_000),
         "moisture_map": params.get("moisture_map"),
         "stack": params.get("stack"),
+        "season": params.get("season"),
+        "lod_distances": params.get("lod_distances"),
+        "competition_radius": params.get("competition_radius"),
+        "exclusion_zones": params.get("exclusion_zones"),
     }
     if params.get("rules") is not None:
         delegate_params["rules"] = params["rules"]

@@ -8,18 +8,22 @@ Artifact filename note: `2026_04_19` is the stable first-pass artifact ID retain
 
 ## Totals
 
-- Live handler callables scanned: `1750`
-- Callables missing from the grade sheet: `0`
-- Callables without any R9 grade attached via matching CSV row: `548`
+- Live handler callables scanned: `1874`
+- Callables missing from the grade sheet: `124`
+- Callables without any R9 grade attached via matching CSV row: `670`
 
 Status distribution:
-- `direct_test_covered`: `240`
-- `helper_reachable`: `1298`
-- `runtime_primary`: `212`
+- `direct_test_covered`: `237`
+- `helper_reachable`: `1413`
+- `orphan_candidate`: `4`
+- `runtime_primary`: `220`
 
 ## Highest-Risk Files
 
-- None
+- `environment_scatter.py`: `1` callable(s) flagged as orphaned or registrar-only
+- `terrain_bundle_n.py`: `1` callable(s) flagged as orphaned or registrar-only
+- `vegetation_lsystem.py`: `1` callable(s) flagged as orphaned or registrar-only
+- `vegetation_system.py`: `1` callable(s) flagged as orphaned or registrar-only
 
 ## Interpretation
 

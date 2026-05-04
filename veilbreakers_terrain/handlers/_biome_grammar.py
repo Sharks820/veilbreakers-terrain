@@ -94,6 +94,10 @@ BIOME_CLIMATE_PARAMS: dict[str, dict] = {
     "veil_crack_zone":   {"temperature": 0.10, "moisture": 0.20, "elevation": 0.60},
     "mushroom_forest":   {"temperature": 0.55, "moisture": 0.85, "elevation": 0.30},
     "crystal_cavern":    {"temperature": 0.15, "moisture": 0.40, "elevation": 0.70},
+    "blighted_mire":     {"temperature": 0.40, "moisture": 0.95, "elevation": 0.05},
+    "ashen_wastes":      {"temperature": 0.75, "moisture": 0.10, "elevation": 0.40},
+    "frozen_hollows":    {"temperature": 0.05, "moisture": 0.45, "elevation": 0.55},
+    "ruined_citadel":    {"temperature": 0.40, "moisture": 0.30, "elevation": 0.65},
 }
 
 # Frozen set of all canonical VeilBreakers biome IDs — the single source of truth.
@@ -2690,6 +2694,10 @@ _BIOME_FEATURES: dict[str, tuple[str, ...]] = {
     "veil_crack_zone":   ("void_fissures", "void_crystal_spires"),
     "mushroom_forest":   ("mycelium_humps", "spore_cap_clusters"),
     "crystal_cavern":    ("crystal_formations", "cave_drip_basins"),
+    "blighted_mire":     ("swamp_muck", "toxic_tendrils", "bone_fragments"),
+    "ashen_wastes":      ("desert_pavement", "sand_ripples", "tafoni_weathering"),
+    "frozen_hollows":    ("frost_crack_network", "periglacial_patterns", "cave_drip_basins"),
+    "ruined_citadel":    ("fortress_rubble", "cracked_stone_paving", "overgrown_paths"),
 }
 
 

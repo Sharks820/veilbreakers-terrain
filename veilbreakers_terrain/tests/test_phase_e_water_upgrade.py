@@ -142,7 +142,7 @@ class TestRiverbedCausticsDepthAttenuation:
         h[:, :16] = 1.5  # depth 0.5 left
 
         stack = _DictStack(h)
-        stack.set("water_surface", ws)
+        stack.set("water_surface_elevation_m", ws)
 
         caustics = compute_riverbed_caustics(stack, seed=7)
         assert caustics.shape == (32, 32)
@@ -158,7 +158,7 @@ class TestRiverbedCausticsDepthAttenuation:
         h = np.zeros((16, 16), dtype=np.float32)
         ws = np.zeros((16, 16), dtype=np.float32)  # no water anywhere
         stack = _DictStack(h)
-        stack.set("water_surface", ws)
+        stack.set("water_surface_elevation_m", ws)
 
         caustics = compute_riverbed_caustics(stack, seed=0)
         assert float(caustics.max()) == 0.0
@@ -171,7 +171,7 @@ class TestRiverbedCausticsDepthAttenuation:
         h = np.zeros((24, 24), dtype=np.float32)
         ws = np.full((24, 24), 1.0, dtype=np.float32)
         stack = _DictStack(h)
-        stack.set("water_surface", ws)
+        stack.set("water_surface_elevation_m", ws)
 
         caustics = compute_riverbed_caustics(stack, seed=42)
         assert float(caustics.min()) >= 0.0
@@ -185,7 +185,7 @@ class TestRiverbedCausticsDepthAttenuation:
         h = np.zeros((16, 16), dtype=np.float32)
         ws = np.full((16, 16), 1.0, dtype=np.float32)
         stack = _DictStack(h)
-        stack.set("water_surface", ws)
+        stack.set("water_surface_elevation_m", ws)
 
         a = compute_riverbed_caustics(stack, seed=5)
         b = compute_riverbed_caustics(stack, seed=5)

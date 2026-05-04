@@ -1777,18 +1777,6 @@ def _write_splatmap_groups(
 
     H, W, L = weights_np.shape
 
-    # P1-17: Unity HDRP supports at most 4 layers per splatmap cell.
-    # Before normalising, zero out layers ranked 5+ by weight so complex
-    # biomes (5–6 layers) don't silently exceed the hardware cap.
-    if L > 4:
-        # argsort descending: indices of the 4 heaviest layers per cell.
-        order = np.argsort(weights_np, axis=2)[:, :, ::-1]  # (H, W, L) desc
-        # Build a mask that is True for the top-4 layers per cell.
-        top4_mask = np.zeros((H, W, L), dtype=bool)
-        for rank in range(4):
-            top4_mask[np.arange(H)[:, None], np.arange(W)[None, :], order[:, :, rank]] = True
-        weights_np = np.where(top4_mask, weights_np, 0.0).astype(np.float32)
-
     # Normalise per-pixel so all active layers across the full stack sum to 1.
     # This matches Unity's expectation: SetAlphamaps requires normalised weights.
     total_weight = weights_np.sum(axis=2, keepdims=True)

@@ -1481,7 +1481,13 @@ def pass_bathymetry(
     h_min = float(h.min())
     h_range = max(h_max - h_min, 1.0)
 
-    is_absolute_elevation = (ws_max > h_range * 0.1) and (ws_max - float(ws.min()) > 5.0)
+    _ws_elev = stack.get("water_surface_elevation_m")
+    if _ws_elev is not None:
+        # Authoritative per-cell elevation available — bypass unreliable heuristic.
+        ws = np.asarray(_ws_elev, dtype=np.float32)
+        is_absolute_elevation = True
+    else:
+        is_absolute_elevation = (ws_max > h_range * 0.1) and (ws_max - float(ws.min()) > 5.0)
 
     # Water mask: cells that are "wet" (water_surface > 0.5 for mask, or ws >= h for elevation)
     if is_absolute_elevation:

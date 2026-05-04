@@ -709,10 +709,8 @@ def pass_generate_high_freq_detail(
         normalize=False,
     ).astype(np.float32)
 
-    # Center high-freq around 0 using this tile's mean, not min/max
-    # normalization. Per-tile normalization changes amplitude at borders and
-    # is explicitly seam-breaking for world-coordinate noise.
-    hmap_high = hmap_high - float(np.mean(hmap_high))
+    # OpenSimplex/Perlin have zero mean by construction — per-tile mean
+    # subtraction varies slightly across tiles and breaks seams.
 
     stack.set("hmap_high_freq", hmap_high, "pass_generate_high_freq_detail")
     _apply_post_height_seams(stack, "hmap_high_freq")
@@ -946,9 +944,10 @@ def pass_macro_world(
                 "coastal": 60.0,
             }.get(terrain_type, 150.0)
             h_range_raw = float(hmap.max()) - float(hmap.min())
-            if h_range_raw < 1.0 and h_range_raw > 1e-9:
-                hmap = hmap * (_HEIGHT_SCALE / h_range_raw)
-            elif h_range_raw <= 1e-9:
+            if h_range_raw > 1e-9:
+                # Affine remap: [min, max] → [0, _HEIGHT_SCALE]
+                hmap = ((hmap - float(hmap.min())) / h_range_raw * _HEIGHT_SCALE).astype(np.float32)
+            else:
                 # Degenerate flat output — generate minimal relief via seed-based offset
                 rng_fb = np.random.default_rng(seed ^ 0xDEAD)
                 hmap = rng_fb.uniform(0.0, _HEIGHT_SCALE, hmap.shape).astype(np.float32)
