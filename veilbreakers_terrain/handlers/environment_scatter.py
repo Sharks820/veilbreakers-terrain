@@ -3277,29 +3277,37 @@ def handle_scatter_vegetation(params: dict[str, Any]) -> dict[str, Any]:
     if moisture_map_raw is not None:
         moisture_np = _resize_scatter_map(moisture_map_raw, heightmap.shape)
 
-    # Collect world-space building exclusion zones up front so the richer
-    # multi-pass scatter path can avoid them before candidate acceptance.
+    # P1-45: Read building exclusion zones from stack.building_zones when the
+    # pipeline has already computed and cached them; fall back to the bpy.data
+    # scan only when the cached value is absent (e.g. pre-pipeline callers).
     building_exclusion_zones_world: list[tuple[float, float, float, float]] = []
-    for _obj in bpy.data.objects:
-        if _obj.type == "EMPTY" and _obj.children:
-            min_x = min_y = float("inf")
-            max_x = max_y = float("-inf")
-            for _child in _obj.children:
-                if _child.type != "MESH":
-                    continue
-                bb_corners = [_child.matrix_world @ _mathutils_Vector(c) for c in _child.bound_box]
-                for corner in bb_corners:
-                    min_x = min(min_x, corner.x)
-                    max_x = max(max_x, corner.x)
-                    min_y = min(min_y, corner.y)
-                    max_y = max(max_y, corner.y)
-            if min_x < float("inf"):
-                fp_w = max(max_x - min_x, 0.1)
-                fp_d = max(max_y - min_y, 0.1)
-                margin = max(1.5, min(6.0, ((fp_w ** 2 + fp_d ** 2) ** 0.5) * 0.25))
-                building_exclusion_zones_world.append(
-                    (min_x - margin, min_y - margin, max_x + margin, max_y + margin)
-                )
+    _cached_zones = getattr(_stack, "building_zones", None) if _stack is not None else None
+    if _cached_zones is not None:
+        # stack.building_zones is already world-space tuples (min_x, min_y, max_x, max_y)
+        building_exclusion_zones_world = list(_cached_zones)
+    else:
+        # Collect world-space building exclusion zones up front so the richer
+        # multi-pass scatter path can avoid them before candidate acceptance.
+        for _obj in bpy.data.objects:
+            if _obj.type == "EMPTY" and _obj.children:
+                min_x = min_y = float("inf")
+                max_x = max_y = float("-inf")
+                for _child in _obj.children:
+                    if _child.type != "MESH":
+                        continue
+                    bb_corners = [_child.matrix_world @ _mathutils_Vector(c) for c in _child.bound_box]
+                    for corner in bb_corners:
+                        min_x = min(min_x, corner.x)
+                        max_x = max(max_x, corner.x)
+                        min_y = min(min_y, corner.y)
+                        max_y = max(max_y, corner.y)
+                if min_x < float("inf"):
+                    fp_w = max(max_x - min_x, 0.1)
+                    fp_d = max(max_y - min_y, 0.1)
+                    margin = max(1.5, min(6.0, ((fp_w ** 2 + fp_d ** 2) ** 0.5) * 0.25))
+                    building_exclusion_zones_world.append(
+                        (min_x - margin, min_y - margin, max_x + margin, max_y + margin)
+                    )
 
     biome_key = params.get("biome_name") or params.get("biome") or "default"
     viewer_param = (

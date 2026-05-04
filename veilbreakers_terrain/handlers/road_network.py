@@ -1946,7 +1946,7 @@ def handle_compute_road_network(params: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def enforce_turn_radius(path: list[Any], min_radius: float = 15.0) -> list[Any]:
+def enforce_turn_radius(path: list[Any], min_radius: float = 15.0, *, stack=None) -> list[Any]:
     """Insert circular arc fillets at any vertex whose turning radius < min_radius.
 
     For each interior vertex p[i], computes the geometric turning radius from
@@ -2033,6 +2033,24 @@ def enforce_turn_radius(path: list[Any], min_radius: float = 15.0) -> list[Any]:
             push = min_radius * (1.0 - math.cos(half_angle))
             mx += (bsx / bs_len) * push
             my += (bsy / bs_len) * push
+
+        # P1-21: Re-sample arc midpoint Z from the heightmap when available so
+        # steep terrain doesn't produce a linear Z-step at the arc apex.
+        if stack is not None:
+            try:
+                import numpy as np
+                _h = np.asarray(stack.height, dtype=np.float32)
+                _rows, _cols = _h.shape[:2]
+                _cs = float(getattr(stack, "cell_size", 1.0))
+                _ox = float(getattr(stack, "world_origin_x", 0.0))
+                _oy = float(getattr(stack, "world_origin_y", 0.0))
+                _col_f = (mx - _ox) / _cs
+                _row_f = (my - _oy) / _cs
+                _r = int(max(0, min(_rows - 1, round(_row_f))))
+                _c = int(max(0, min(_cols - 1, round(_col_f))))
+                mz = float(_h[_r, _c])
+            except Exception:  # noqa: BLE001
+                pass  # fall back to linear interpolation
 
         out.append(entry)
         out.append((mx, my, mz))

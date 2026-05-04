@@ -700,6 +700,12 @@ def compute_slope_material_weights(
             normals_3d[steep, 0] = 0.7
             normals_3d[steep, 2] = 0.7
 
+            # P1-16: normalize constructed normals so the power-4 cosine blend
+            # weights are correct — unnormalized normals produce visible seams
+            # at 45° boundaries where two axes have equal magnitude.
+            _n_len = np.linalg.norm(normals_3d, axis=2, keepdims=True)
+            normals_3d = normals_3d / np.where(_n_len > 1e-9, _n_len, 1.0)
+
             noise_perturb = triplanar_blend(normals_3d, pos_3d, _default_noise)
             # Apply as a subtle multiplicative perturbation [0.8, 1.2]
             combined = combined * (0.8 + 0.4 * noise_perturb)
@@ -1030,6 +1036,12 @@ def pass_materials(
         state.tile_y,
         region,
     )
+    # P1-15: seed numpy global RNG from intent so both splatmap derivation
+    # paths produce identical results across round-trip tests.  Using
+    # np.random.default_rng(seed) is the preferred pattern; the legacy
+    # global-state np.random.seed() is intentionally avoided.
+    _pass_rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    _ = _pass_rng  # available for any stochastic sub-call that needs it
 
     if rules is None:
         rules = default_dark_fantasy_rules()

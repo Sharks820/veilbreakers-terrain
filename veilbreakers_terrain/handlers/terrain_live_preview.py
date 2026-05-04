@@ -150,9 +150,16 @@ class LivePreviewSession:
 
         hash_before = self.current_hash()
 
-        if dirty_channels and region is not None:
+        if dirty_channels:
+            _dirty_region = region
+            if _dirty_region is None:
+                # P1-32: full-tile edit — mark dirty over the full tile bounds
+                # so downstream consumers see the change even when no sub-region
+                # was specified.
+                _dirty_region = self.state.intent.region_bounds
             for ch in dirty_channels:
-                self.tracker.mark_dirty(ch, region)
+                if _dirty_region is not None:
+                    self.tracker.mark_dirty(ch, _dirty_region)
                 # Cache entries touching this channel should be dropped.
                 self.cache.invalidate_prefix(ch)
 

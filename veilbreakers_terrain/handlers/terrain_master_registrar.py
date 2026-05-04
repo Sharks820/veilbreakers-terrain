@@ -215,6 +215,8 @@ def _register_all_terrain_passes_impl(
         ("B-cliffs", f"{package_root}.terrain_cliffs", "register_bundle_b_passes"),
         # Height mutators — MUST run before scatter/materials
         ("G", f"{package_root}.terrain_banded", "register_bundle_g_passes"),
+        # G-advanced: Kuwahara anti-grain smoothing pass (runs after banded_macro)
+        ("G-advanced", f"{package_root}.terrain_banded_advanced", "register_banded_advanced_pass"),
         ("H-morphology", f"{package_root}.terrain_morphology", "register_morphology_pass"),
         ("H-terrain-features", f"{package_root}.terrain_features", "register_terrain_features_pass"),
         ("H-framing", f"{package_root}.terrain_framing", "register_framing_pass"),

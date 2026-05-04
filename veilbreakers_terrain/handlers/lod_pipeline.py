@@ -1496,6 +1496,16 @@ def generate_lod_chain(
 
             # Monotonicity guarantee: face count must not exceed previous level
             if len(lod_faces) > prev_face_count and lod_chain:
+                # P1-43: Emit a ValidationIssue warning instead of silently
+                # substituting the previous mesh, so callers know decimation
+                # is not converging as expected for this asset.
+                import warnings as _warnings
+                _warnings.warn(
+                    f"LOD level {level}: face count {len(lod_faces)} exceeds "
+                    f"previous level {prev_face_count}; substituting previous mesh. "
+                    f"Check decimation ratio or mesh topology.",
+                    stacklevel=2,
+                )
                 # Reuse the previous level's mesh unchanged
                 prev_verts, prev_faces, _ = lod_chain[-1]
                 lod_verts, lod_faces = list(prev_verts), list(prev_faces)
@@ -1842,6 +1852,18 @@ def _make_billboard_lod_spec(
         (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0),  # Quad B
     ]
 
+    # P1-24: Adaptive atlas resolution based on tree height.
+    # Small (<3 m): 128 px — fits in a single mip-chain tile.
+    # Medium (3–8 m): 256 px — standard foliage impostor atlas.
+    # Hero (>8 m): 512 px — captures fine silhouette detail for large trees.
+    _h = max(float(tree_height), 0.01)
+    if _h < 3.0:
+        atlas_resolution = 128
+    elif _h <= 8.0:
+        atlas_resolution = 256
+    else:
+        atlas_resolution = 512
+
     return {
         "verts": verts,
         "faces": faces,
@@ -1850,6 +1872,7 @@ def _make_billboard_lod_spec(
         "face_count": len(faces),
         "impostor_type": "cross",
         "material_ref": material_ref,
+        "atlas_resolution": atlas_resolution,
     }
 
 

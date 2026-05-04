@@ -173,6 +173,11 @@ def build_default_pass_sequence(intent: TerrainIntentState) -> List[str]:
         "structural_masks",
         "pass_generate_high_freq_detail",
         "pass_composite_hmap",
+        # P1-9: banded_macro runs AFTER composite_hmap so its height output is
+        # not overwritten by the composite.  P1-10: banded_advanced refines the
+        # banded result with Kuwahara anti-grain smoothing.
+        "banded_macro",
+        "pass_banded_advanced",
         validation_pass,
     ]
     if has_scene_read:

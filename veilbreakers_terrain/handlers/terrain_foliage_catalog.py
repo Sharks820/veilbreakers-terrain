@@ -860,18 +860,21 @@ def categories_covered() -> FrozenSet[str]:
     return frozenset({spec.category for spec in FOLIAGE_SPECIES_CATALOG.values()})
 
 
-def _derive_species_constraints() -> Dict[str, Dict[str, float]]:
+def _derive_species_constraints(
+    height_max_m: float = 3000.0,
+) -> Dict[str, Dict[str, float]]:
     """Build the _SPECIES_CONSTRAINTS-compatible dict for environment_scatter.
 
     Each species becomes an entry with the normalised-altitude / slope /
     moisture fields that ``_passes_species_constraints`` expects.
 
-    Altitude is normalised against a nominal 3000 m world band — consistent
-    with existing tile altitude range — so the [0,1] heightmap comparison
-    the scatter engine already performs stays valid without touching the
-    _scatter_pass math.
+    Altitude is normalised against ``height_max_m`` (the top of the tile's
+    vertical range from ``intent.terrain_height_range_m[1]``).  Callers
+    should pass the intent value at scatter time so species with a high
+    ``min_altitude_m`` are not incorrectly suppressed on shallow tiles.
+    Defaults to 3000 m for the module-level pre-computed constant.
     """
-    norm = 3000.0
+    norm = max(float(height_max_m), 1.0)
     out: Dict[str, Dict[str, float]] = {}
     for species_id, spec in FOLIAGE_SPECIES_CATALOG.items():
         out[species_id] = {
@@ -890,7 +893,19 @@ def _derive_species_constraints() -> Dict[str, Dict[str, float]]:
     return out
 
 
+def get_species_constraints(height_max_m: float = 3000.0) -> Dict[str, Dict[str, float]]:
+    """Return species constraints normalised against ``height_max_m``.
+
+    Call this at scatter time with ``intent.terrain_height_range_m[1]`` so
+    altitude thresholds scale correctly to the tile's actual vertical range
+    instead of a hardcoded 3000 m constant.
+    """
+    return _derive_species_constraints(height_max_m=height_max_m)
+
+
 # Pre-computed constraint dict — imported by environment_scatter.
+# Uses the default 3000 m norm; prefer ``get_species_constraints(height_max_m)``
+# when the intent's terrain_height_range_m is available.
 SPECIES_CONSTRAINTS_FROM_CATALOG: Dict[str, Dict[str, float]] = _derive_species_constraints()
 
 

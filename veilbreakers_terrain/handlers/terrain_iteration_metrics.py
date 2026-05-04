@@ -23,12 +23,42 @@ from .terrain_semantics import PassResult
 
 
 def _get_peak_memory_mb() -> float:
-    """Return the current process RSS in MB, or 0.0 if unavailable."""
+    """Return the current process peak RSS in MB, or 0.0 if unavailable."""
+    import sys
+
+    # Windows path: use ctypes.windll.psapi.GetProcessMemoryInfo
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", ctypes.wintypes.DWORD),
+                    ("PageFaultCount", ctypes.wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            pmc = _PROCESS_MEMORY_COUNTERS()
+            pmc.cb = ctypes.sizeof(pmc)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]
+            if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb):  # type: ignore[attr-defined]
+                return pmc.PeakWorkingSetSize / (1024.0 * 1024.0)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Unix path (Linux / macOS)
     try:
         import resource  # Unix only
         kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         # On Linux ru_maxrss is kilobytes; on macOS it is bytes.
-        import sys
         if sys.platform == "darwin":
             return kb / (1024.0 * 1024.0)
         return kb / 1024.0

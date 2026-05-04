@@ -96,6 +96,12 @@ BIOME_CLIMATE_PARAMS: dict[str, dict] = {
     "crystal_cavern":    {"temperature": 0.15, "moisture": 0.40, "elevation": 0.70},
 }
 
+# Frozen set of all canonical VeilBreakers biome IDs — the single source of truth.
+# Use this to validate biome whitelist fields (e.g. GrassSpecies.biomes) so that
+# entries from different vocab sets (e.g. "forest" vs "thornwood_forest") are
+# caught at import time rather than silently producing zero placements at runtime.
+CANONICAL_BIOME_IDS: frozenset[str] = frozenset(BIOME_CLIMATE_PARAMS.keys())
+
 
 # ---------------------------------------------------------------------------
 # WorldMapSpec dataclass

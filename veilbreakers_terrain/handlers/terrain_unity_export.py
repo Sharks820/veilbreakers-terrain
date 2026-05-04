@@ -1018,7 +1018,7 @@ def _water_shader_manifest_json(
             "material_id": name,
             "base_color": base_color,
             "deep_color": deep_color,
-            "caustic_texture": caustic_atlas_path or f"Caustics/{name}_caustic.png",
+            "caustic_texture": caustic_atlas_path or "",
             "caustic_tiling": 4.0 if hero else 2.0,
             "caustic_strength": 0.75 if hero else 0.5,
             "normal_map": f"Normals/{name}_normal.png",
@@ -1027,7 +1027,7 @@ def _water_shader_manifest_json(
             "flow_map_texture": f"Flow/{name}_flowmap.png" if not has_flow_dir else None,
             "flow_speed_multiplier": 1.0,
             "foam_channel": "vertex_alpha" if has_foam else None,
-            "foam_texture": foam_atlas_path or f"Foam/{name}_foam.png",
+            "foam_texture": foam_atlas_path or "",
             "transparency_curve": [
                 {"depth_m": 0.0, "alpha": 0.35},
                 {"depth_m": 0.5, "alpha": 0.55},
@@ -1075,6 +1075,22 @@ def _water_shader_manifest_json(
     waterfall_mat["caustic_strength"] = 0.0  # no caustics in plume
     materials.append(waterfall_mat)
 
+    # P1-20: strip texture-path keys that have no real authored texture; emit ""
+    # instead of a placeholder string so Unity importers don't bind a bogus path.
+    _shader_textures: Dict[str, Any] = {}
+    if foam_atlas_path:
+        _shader_textures["foam_texture"] = foam_atlas_path
+    else:
+        _shader_textures["foam_texture"] = ""
+    if caustic_atlas_path:
+        _shader_textures["caustic_texture"] = caustic_atlas_path
+    else:
+        _shader_textures["caustic_texture"] = ""
+    if water_depth_atlas_path:
+        _shader_textures["_WaterDepthTex"] = water_depth_atlas_path
+    else:
+        _shader_textures["_WaterDepthTex"] = ""
+
     payload: Dict[str, Any] = {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -1082,11 +1098,7 @@ def _water_shader_manifest_json(
         "unity_scale_factor": UNITY_SCALE_FACTOR,
         "hero_profile": hero,
         "materials": materials,
-        "shader_textures": {
-            "foam_texture":    foam_atlas_path,
-            "caustic_texture": caustic_atlas_path,
-            "_WaterDepthTex":  water_depth_atlas_path,
-        },
+        "shader_textures": _shader_textures,
         "shader_integration_notes": {
             "unity_hdrp": (
                 "Plug materials into HDRP Water Surface. Use Color2 vertex "
@@ -1701,6 +1713,18 @@ def _write_splatmap_groups(
 
     H, W, L = weights_np.shape
 
+    # P1-17: Unity HDRP supports at most 4 layers per splatmap cell.
+    # Before normalising, zero out layers ranked 5+ by weight so complex
+    # biomes (5–6 layers) don't silently exceed the hardware cap.
+    if L > 4:
+        # argsort descending: indices of the 4 heaviest layers per cell.
+        order = np.argsort(weights_np, axis=2)[:, :, ::-1]  # (H, W, L) desc
+        # Build a mask that is True for the top-4 layers per cell.
+        top4_mask = np.zeros((H, W, L), dtype=bool)
+        for rank in range(4):
+            top4_mask[np.arange(H)[:, None], np.arange(W)[None, :], order[:, :, rank]] = True
+        weights_np = np.where(top4_mask, weights_np, 0.0).astype(np.float32)
+
     # Normalise per-pixel so all active layers across the full stack sum to 1.
     # This matches Unity's expectation: SetAlphamaps requires normalised weights.
     total_weight = weights_np.sum(axis=2, keepdims=True)
@@ -1885,11 +1909,24 @@ def export_unity_manifest(
     )
     splatmap_files = _write_splatmap_groups(files, output_dir, stack)
 
-    for channel in (
-        # Gameplay / engine channels
+    # P1-22: Channels to skip in the generic binary export loop — either handled
+    # by dedicated writers above, or not suitable for raw .bin export.
+    _SKIP_IN_GENERIC_EXPORT: frozenset[str] = frozenset({
+        # Written above as dedicated files
+        "height", "heightmap_raw_u16", "terrain_normals", "terrain_normals_tangent",
+        "splatmap_weights_layer", "material_weights",
+        "terrain_ao", "roughness_variation",  # packed into hdrp_mask_map
+        # Dict-valued channels exported by their own loops below
+        "detail_density", "wildlife_affinity", "decal_density",
+        # Non-array metadata fields
+        "coordinate_system", "content_hash",
+    })
+
+    # Iterate over all channels that were actually populated by a pass, plus the
+    # legacy hardcoded set, so newly-added channels are never silently dropped.
+    _legacy_channels: frozenset[str] = frozenset({
         "navmesh_area_id", "wind_field", "cloud_shadow", "gameplay_zone",
         "audio_reverb_class", "traversability",
-        # Terrain-derived data channels (previously dropped — CRITICAL fix)
         "slope", "curvature", "concavity", "convexity",
         "ridge", "basin", "saliency_macro",
         "erosion_amount", "deposition_amount", "wetness",
@@ -1905,11 +1942,25 @@ def export_unity_manifest(
         "sediment_accumulation_at_base", "pool_deepening_delta",
         "physics_collider_mask", "lightmap_uv_chart_id", "lod_bias",
         "ambient_occlusion_bake",
-    ):
+    })
+    _stack_channels: frozenset[str] = frozenset(
+        stack.populated_by_pass.keys()
+        if hasattr(stack, "populated_by_pass")
+        else ()
+    )
+    _export_channels = (_legacy_channels | _stack_channels) - _SKIP_IN_GENERIC_EXPORT
+
+    for channel in sorted(_export_channels):
         value = stack.get(channel)
         if value is None:
             continue
-        export_arr, encoding, extra = _binary_export_payload(channel, value)
+        # Skip dict/list values — those have dedicated export loops.
+        if isinstance(value, (dict, list)):
+            continue
+        try:
+            export_arr, encoding, extra = _binary_export_payload(channel, value)
+        except Exception:  # noqa: BLE001 — unknown channel type; skip gracefully
+            continue
         _write_raw_array(
             files,
             output_dir,
