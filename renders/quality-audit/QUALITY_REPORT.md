@@ -1,22 +1,40 @@
 # VeilBreakers Terrain — Dynamic Quality Audit Report
 
-> Generated: 2026-05-04T18:51:16Z  
+> Generated: 2026-05-04T18:51:16Z | **Visually re-reviewed: 2026-05-04**  
 > Passes audited: **73**  
 > Biomes: 6 (grassland, mountain, coastal, volcanic, frozen, desert)  
 > Renders per pass: 18 (6 biomes × 3 angles)  
 > Total renders analyzed: **1314**
 
+---
+
+## CRITICAL RENDERER LIMITATIONS — Read Before Interpreting Grades
+
+**Visual inspection of 40+ renders across all pass categories revealed two systemic failures in `dynamic_quality_renderer.py` that make most renders useless for pass differentiation:**
+
+**Failure 1 — All grassland/desert/frozen renders look pixel-for-pixel identical.** The renderer colorizes the height mesh using the "most significant changed channel," but the height mesh itself dominates the render regardless of channel tints. `erosion`, `scatter_intelligent`, `materials_v2`, `cliffs`, `caves`, `karst`, `waterfalls`, `navmesh`, `audio_zones`, `terrain_labels` (confirmed zero output), and `pass_banded_advanced` (confirmed no-op) ALL produce the same white spiky terrain with faint green gradient on grassland. You cannot distinguish a working pass from a broken one by visual inspection of these renders.
+
+**Failure 2 — Mountain and volcanic biomes have complete camera framing failure.** The renderer does not adapt camera distance/height to terrain Z-range. Mountain (height std≈67m) and volcanic (height std≈117m) terrain overflows the frame entirely — the render is a wall of white spikes from top to bottom with no framing context. These renders are unusable for quality assessment.
+
+**What this means for grades:** Per-pass grades in this report are based **entirely on channel data from `manifest.json`** (harness output: channel count, channel std-dev, nonzero coverage). The renders exist for your visual browsing but cannot confirm whether a pass produced its intended effect. Passes graded A have functioning channel writes and correct pipeline status — not visually confirmed AAA terrain output. The renderer system itself would receive an F grade for its stated purpose.
+
+**Additional red flag — Identical statistics across related passes:** `structural_masks`, `structural_masks_post_erosion`, and `structural_masks_post_talus` share identical avg_std values per biome (e.g., grassland=26.17 for all three). This suggests the harness pre-populates structural masks once and the "post" variants measure the same state. Grades for these 3 passes are downgraded from A to B to reflect this uncertainty. Similarly, 7 water passes (`pass_hydrology`, `pass_hydrology_post_erosion`, `pass_river_convergence`, `bathymetry`, `coastline`, `water_variants`, `pass_seasonal_water_state`) share identical `color_sep` values per biome — those grades are retained based on differentiating channel counts, but note this anomaly.
+
+---
+
 ## Summary
 
 | Grade | Count | Pct |
 |-------|-------|-----|
-| ✅ A — AAA Pass  | 47 | 64% |
-| 🟡 B — Near Pass | 10 | 14% |
-| ⚠️ C — Warn      | 8 | 11% |
-| ❌ D — Fail      | 7 | 10% |
-| 💀 F — Hard Fail | 1 | 1% |
+| ✅ A — AAA Pass (channel evidence)  | 44 | 60% |
+| 🟡 B — Near Pass / Cannot Fully Verify | 13 | 18% |
+| ⚠️ C — Warn / Partial or Unverifiable | 8 | 11% |
+| ❌ D — Fail (broken / skip / zero output) | 7 | 10% |
+| 💀 F — Hard Fail (complete no-op) | 1 | 1% |
 
-**Overall pipeline health: 57 pass / 8 warn / 8 fail (78% pass rate)**
+**Overall pipeline health: 44 channel-verified / 13 partial / 8 warn / 8 fail**
+
+> Note: "A" means channels are non-zero and pass reports status=ok. It does NOT mean the renders visually show AAA-quality output — the renderer cannot distinguish pass effects. Visual quality verification requires a purpose-built Blender shader per pass category, not the current unified height-mesh approach.
 
 ## Terrain Generation Passes
 
@@ -74,44 +92,46 @@
 
 ## Structural Mask Passes
 
-### ✅ `structural_masks` — Grade **A**
+### 🟡 `structural_masks` — Grade **B**
 
-**Overall:** 6A/0B/0C/0D/0F across 6 biomes
+**Overall:** 6B across 6 biomes — downgraded from A
 
-| Biome | Grade | Renders | Evidence |
-|-------|-------|---------|---------|
-| grassland | ✅ **A** | [iso](renders/quality-audit/structural_masks/grassland_isometric.png) · [top](renders/quality-audit/structural_masks/grassland_topdown.png) · [side](renders/quality-audit/structural_masks/grassland_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=26.1673 |
-| mountain | ✅ **A** | [iso](renders/quality-audit/structural_masks/mountain_isometric.png) · [top](renders/quality-audit/structural_masks/mountain_topdown.png) · [side](renders/quality-audit/structural_masks/mountain_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=16.9179 |
-| coastal | ✅ **A** | [iso](renders/quality-audit/structural_masks/coastal_isometric.png) · [top](renders/quality-audit/structural_masks/coastal_topdown.png) · [side](renders/quality-audit/structural_masks/coastal_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=13.5707 |
-| volcanic | ✅ **A** | [iso](renders/quality-audit/structural_masks/volcanic_isometric.png) · [top](renders/quality-audit/structural_masks/volcanic_topdown.png) · [side](renders/quality-audit/structural_masks/volcanic_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=30.6745 |
-| frozen | ✅ **A** | [iso](renders/quality-audit/structural_masks/frozen_isometric.png) · [top](renders/quality-audit/structural_masks/frozen_topdown.png) · [side](renders/quality-audit/structural_masks/frozen_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=27.9102 |
-| desert | ✅ **A** | [iso](renders/quality-audit/structural_masks/desert_isometric.png) · [top](renders/quality-audit/structural_masks/desert_topdown.png) · [side](renders/quality-audit/structural_masks/desert_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=23.5900 |
-
-### ✅ `structural_masks_post_erosion` — Grade **A**
-
-**Overall:** 6A/0B/0C/0D/0F across 6 biomes
+> **Reason for downgrade:** All three structural mask passes (`structural_masks`, `structural_masks_post_erosion`, `structural_masks_post_talus`) share identical avg_std values per biome (e.g., grassland=26.1673 across all three). This means the harness pre-populates structural mask channels once and all three passes measure the same state — we cannot independently verify that erosion and talus actually modify the masks. Channel counts are real (6/8 active), but the lack of differentiation between the three variants is a red flag.
 
 | Biome | Grade | Renders | Evidence |
 |-------|-------|---------|---------|
-| grassland | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_erosion/grassland_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/grassland_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/grassland_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=26.1673 |
-| mountain | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_erosion/mountain_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/mountain_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/mountain_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=16.9179 |
-| coastal | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_erosion/coastal_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/coastal_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/coastal_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=13.5707 |
-| volcanic | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_erosion/volcanic_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/volcanic_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/volcanic_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=30.6745 |
-| frozen | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_erosion/frozen_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/frozen_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/frozen_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=27.9102 |
-| desert | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_erosion/desert_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/desert_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/desert_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=23.5900 |
+| grassland | 🟡 **B** | [iso](renders/quality-audit/structural_masks/grassland_isometric.png) · [top](renders/quality-audit/structural_masks/grassland_topdown.png) · [side](renders/quality-audit/structural_masks/grassland_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=26.1673 — IDENTICAL to post-erosion and post-talus variants |
+| mountain | 🟡 **B** | [iso](renders/quality-audit/structural_masks/mountain_isometric.png) · [top](renders/quality-audit/structural_masks/mountain_topdown.png) · [side](renders/quality-audit/structural_masks/mountain_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=16.9179 — IDENTICAL to post-erosion and post-talus variants |
+| coastal | 🟡 **B** | [iso](renders/quality-audit/structural_masks/coastal_isometric.png) · [top](renders/quality-audit/structural_masks/coastal_topdown.png) · [side](renders/quality-audit/structural_masks/coastal_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=13.5707 — IDENTICAL to post-erosion and post-talus variants |
+| volcanic | 🟡 **B** | [iso](renders/quality-audit/structural_masks/volcanic_isometric.png) · [top](renders/quality-audit/structural_masks/volcanic_topdown.png) · [side](renders/quality-audit/structural_masks/volcanic_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=30.6745 — IDENTICAL to post-erosion and post-talus variants |
+| frozen | 🟡 **B** | [iso](renders/quality-audit/structural_masks/frozen_isometric.png) · [top](renders/quality-audit/structural_masks/frozen_topdown.png) · [side](renders/quality-audit/structural_masks/frozen_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=27.9102 — IDENTICAL to post-erosion and post-talus variants |
+| desert | 🟡 **B** | [iso](renders/quality-audit/structural_masks/desert_isometric.png) · [top](renders/quality-audit/structural_masks/desert_topdown.png) · [side](renders/quality-audit/structural_masks/desert_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=23.5900 — IDENTICAL to post-erosion and post-talus variants |
 
-### ✅ `structural_masks_post_talus` — Grade **A**
+### 🟡 `structural_masks_post_erosion` — Grade **B**
 
-**Overall:** 6A/0B/0C/0D/0F across 6 biomes
+**Overall:** 6B across 6 biomes — downgraded from A (identical stats to base structural_masks pass; see note above)
 
 | Biome | Grade | Renders | Evidence |
 |-------|-------|---------|---------|
-| grassland | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_talus/grassland_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/grassland_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/grassland_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=26.1673 |
-| mountain | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_talus/mountain_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/mountain_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/mountain_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=16.9179 |
-| coastal | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_talus/coastal_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/coastal_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/coastal_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=13.5707 |
-| volcanic | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_talus/volcanic_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/volcanic_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/volcanic_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=30.6745 |
-| frozen | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_talus/frozen_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/frozen_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/frozen_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=27.9102 |
-| desert | ✅ **A** | [iso](renders/quality-audit/structural_masks_post_talus/desert_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/desert_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/desert_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=23.5900 |
+| grassland | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_erosion/grassland_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/grassland_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/grassland_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=26.1673 — IDENTICAL to base variant |
+| mountain | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_erosion/mountain_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/mountain_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/mountain_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=16.9179 — IDENTICAL to base variant |
+| coastal | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_erosion/coastal_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/coastal_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/coastal_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=13.5707 — IDENTICAL to base variant |
+| volcanic | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_erosion/volcanic_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/volcanic_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/volcanic_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=30.6745 — IDENTICAL to base variant |
+| frozen | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_erosion/frozen_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/frozen_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/frozen_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=27.9102 — IDENTICAL to base variant |
+| desert | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_erosion/desert_isometric.png) · [top](renders/quality-audit/structural_masks_post_erosion/desert_topdown.png) · [side](renders/quality-audit/structural_masks_post_erosion/desert_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=23.5900 — IDENTICAL to base variant |
+
+### 🟡 `structural_masks_post_talus` — Grade **B**
+
+**Overall:** 6B across 6 biomes — downgraded from A (identical stats to base structural_masks pass; see note above)
+
+| Biome | Grade | Renders | Evidence |
+|-------|-------|---------|---------|
+| grassland | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_talus/grassland_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/grassland_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/grassland_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=26.1673 — IDENTICAL to base variant |
+| mountain | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_talus/mountain_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/mountain_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/mountain_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=16.9179 — IDENTICAL to base variant |
+| coastal | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_talus/coastal_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/coastal_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/coastal_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=13.5707 — IDENTICAL to base variant |
+| volcanic | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_talus/volcanic_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/volcanic_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/volcanic_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=30.6745 — IDENTICAL to base variant |
+| frozen | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_talus/frozen_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/frozen_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/frozen_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=27.9102 — IDENTICAL to base variant |
+| desert | 🟡 **B** | [iso](renders/quality-audit/structural_masks_post_talus/desert_isometric.png) · [top](renders/quality-audit/structural_masks_post_talus/desert_topdown.png) · [side](renders/quality-audit/structural_masks_post_talus/desert_sideprofile.png) | Structural masks: 6/8 channels active, avg_std=23.5900 — IDENTICAL to base variant |
 
 ## Erosion & Height-Modifying Passes
 
@@ -152,7 +172,7 @@
 | coastal | ❌ **D** | [iso](renders/quality-audit/glacial/coastal_isometric.png) · [top](renders/quality-audit/glacial/coastal_topdown.png) · [side](renders/quality-audit/glacial/coastal_sideprofile.png) | All erosion channels near-zero |
 | volcanic | ❌ **D** | [iso](renders/quality-audit/glacial/volcanic_isometric.png) · [top](renders/quality-audit/glacial/volcanic_topdown.png) · [side](renders/quality-audit/glacial/volcanic_sideprofile.png) | All erosion channels near-zero |
 | frozen | ❌ **D** | [iso](renders/quality-audit/glacial/frozen_isometric.png) · [top](renders/quality-audit/glacial/frozen_topdown.png) · [side](renders/quality-audit/glacial/frozen_sideprofile.png) | All erosion channels near-zero |
-| desert | ✅ **A** | [iso](renders/quality-audit/glacial/desert_isometric.png) · [top](renders/quality-audit/glacial/desert_topdown.png) · [side](renders/quality-audit/glacial/desert_sideprofile.png) | Erosion active: 1/2 channels, pixel_std=82.2 |
+| desert | ⚠️ **C** | [iso](renders/quality-audit/glacial/desert_isometric.png) · [top](renders/quality-audit/glacial/desert_topdown.png) · [side](renders/quality-audit/glacial/desert_sideprofile.png) | DOWNGRADED: 1/2 channels active on desert but 0/2 on frozen — glacial activation on hot/dry desert while failing on frozen biome is logically inverted; likely a harness channel pre-population artifact |
 
 ### ✅ `integrate_deltas` — Grade **A**
 
@@ -191,7 +211,7 @@
 | coastal | ❌ **D** | [iso](renders/quality-audit/pass_glacial/coastal_isometric.png) · [top](renders/quality-audit/pass_glacial/coastal_topdown.png) · [side](renders/quality-audit/pass_glacial/coastal_sideprofile.png) | All erosion channels near-zero |
 | volcanic | ❌ **D** | [iso](renders/quality-audit/pass_glacial/volcanic_isometric.png) · [top](renders/quality-audit/pass_glacial/volcanic_topdown.png) · [side](renders/quality-audit/pass_glacial/volcanic_sideprofile.png) | All erosion channels near-zero |
 | frozen | ❌ **D** | [iso](renders/quality-audit/pass_glacial/frozen_isometric.png) · [top](renders/quality-audit/pass_glacial/frozen_topdown.png) · [side](renders/quality-audit/pass_glacial/frozen_sideprofile.png) | All erosion channels near-zero |
-| desert | ✅ **A** | [iso](renders/quality-audit/pass_glacial/desert_isometric.png) · [top](renders/quality-audit/pass_glacial/desert_topdown.png) · [side](renders/quality-audit/pass_glacial/desert_sideprofile.png) | Erosion active: 1/2 channels, pixel_std=82.2 |
+| desert | ⚠️ **C** | [iso](renders/quality-audit/pass_glacial/desert_isometric.png) · [top](renders/quality-audit/pass_glacial/desert_topdown.png) · [side](renders/quality-audit/pass_glacial/desert_sideprofile.png) | DOWNGRADED: same logical inversion as `glacial` — 1/2 channels on desert, 0/2 on frozen; likely harness artifact |
 
 ### ❌ `pass_morphology` — Grade **D**
 
