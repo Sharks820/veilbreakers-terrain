@@ -265,7 +265,7 @@ class TestSeamContracts:
             "max_y": 204.0,
         }
         assert contract["edge_contracts"]["east"]["sample_count"] == 3
-        assert contract["corner_heights"]["south_east"] == 8.0
+        assert contract["corner_heights"]["south_east"] == [8.0]
 
     def test_tile_batch_manifest_reports_mismatch_and_frontier(self):
         left = build_tile_seam_contract(

@@ -35,7 +35,9 @@ def test_periglacial_stripe_is_phase_offset():
     stripe_angle values collapses toward zero amplitude.
     """
     h, w = 64, 64
-    xx, yy = np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))
+    # Pixel-space coordinates [0, w) and [0, h) — matches the actual implementation
+    # which uses np.arange(w) / np.arange(h), not normalized [0, 1].
+    xx, yy = np.meshgrid(np.arange(w, dtype=float), np.arange(h, dtype=float))
     stripe_freq = 2.0 * math.pi / (max(h, w) * 0.08)
     cos_dir, sin_dir = 1.0, 0.0  # stripe along x axis
     # constant phase offset (simulates a typical aspect value)
