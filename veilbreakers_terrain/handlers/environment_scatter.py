@@ -696,10 +696,8 @@ def _resolve_scatter_context_maps(
     wetness = _resize_scatter_map(_stack_value(stack, "wetness"), target_shape)
     if wetness is not None:
         water_layers.append(np.clip(wetness, 0.0, 1.0).astype(np.float32, copy=False))
-    # W-1 P2: prefer water_surface_mask (unambiguous binary); fall back to legacy water_surface
+    # W-1: use water_surface_mask (canonical binary); legacy water_surface fallback removed.
     _ws = _resize_scatter_map(_stack_value(stack, "water_surface_mask"), target_shape)
-    if _ws is None:
-        _ws = _resize_scatter_map(_stack_value(stack, "water_surface"), target_shape)
     if _ws is not None:
         water_layers.append(np.clip(_ws, 0.0, 1.0).astype(np.float32, copy=False))
     flow_acc = _resize_scatter_map(_stack_value(stack, "flow_accumulation"), target_shape)

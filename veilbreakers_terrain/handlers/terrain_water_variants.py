@@ -647,11 +647,15 @@ def apply_seasonal_water_state(
     stack: TerrainMaskStack,
     state: SeasonalState,
 ) -> None:
-    """Mutate wetness / water_surface / tidal in-place per seasonal state.
+    """Mutate wetness / water_surface_mask / tidal in-place per seasonal state.
 
     **IMPORTANT:** This function edits ``stack`` in place. Callers that
     need to recover the prior state must checkpoint via
     ``TerrainPassController`` before invoking.
+
+    W-1 migration: this function no longer writes to the legacy
+    ``water_surface`` channel. All binary water presence is written to
+    ``water_surface_mask`` exclusively.
     """
     if not isinstance(state, SeasonalState):
         raise TypeError(f"state must be SeasonalState, got {type(state).__name__}")
@@ -662,10 +666,11 @@ def apply_seasonal_water_state(
         wetness = np.zeros(shape, dtype=np.float32)
     wetness = np.asarray(wetness, dtype=np.float32).copy()
 
-    water_surface = stack.get("water_surface")
-    if water_surface is None:
-        water_surface = np.zeros(shape, dtype=np.float32)
-    water_surface = np.asarray(water_surface, dtype=np.float32).copy()
+    # W-1: read from water_surface_mask (canonical) instead of water_surface (legacy).
+    water_surface_mask = stack.get("water_surface_mask")
+    if water_surface_mask is None:
+        water_surface_mask = np.zeros(shape, dtype=np.float32)
+    water_surface_mask = np.asarray(water_surface_mask, dtype=np.float32).copy()
 
     tidal = stack.get("tidal")
     if tidal is None:
@@ -674,22 +679,21 @@ def apply_seasonal_water_state(
 
     if state is SeasonalState.DRY:
         wetness *= 0.3
-        water_surface *= 0.5
+        water_surface_mask *= 0.5
     elif state is SeasonalState.NORMAL:
         pass  # no-op; canonical state
     elif state is SeasonalState.WET:
         wetness = np.clip(wetness * 1.5 + 0.2, 0.0, 1.0)
-        water_surface = np.clip(water_surface + 0.15, 0.0, 1.0)
+        water_surface_mask = np.clip(water_surface_mask + 0.15, 0.0, 1.0)
     elif state is SeasonalState.FROZEN:
         # Frozen: surface water becomes ice; tidal is locked to max.
-        water_surface = np.clip(water_surface + 0.1, 0.0, 1.0)
+        water_surface_mask = np.clip(water_surface_mask + 0.1, 0.0, 1.0)
         wetness *= 0.6
         tidal[:] = 1.0
 
     stack.set("wetness", wetness, "water_variants_seasonal")
-    stack.set("water_surface", water_surface, "water_variants_seasonal")
-    stack.set("water_surface_mask", (water_surface > 0.0).astype(np.float32),
-              "water_variants_seasonal")
+    # W-1: write only to water_surface_mask; do NOT write legacy water_surface.
+    stack.set("water_surface_mask", water_surface_mask, "water_variants_seasonal")
     stack.set("tidal", tidal, "water_variants_seasonal")
 
 
@@ -887,6 +891,74 @@ def pass_water_variants(
         },
         issues=issues,
         seed_used=seed,
+    )
+
+
+def pass_seasonal_water_state(
+    state: TerrainPipelineState,
+    region: Optional[BBox],  # noqa: ARG001 — region unused; mutation is tile-wide
+) -> PassResult:
+    """DAG-visible wrapper for ``apply_seasonal_water_state``.
+
+    Contract
+    --------
+    Consumes: wetness, water_surface_mask, tidal
+    Produces (overrides): wetness, water_surface_mask, tidal
+    Respects protected zones: no — seasonal state applies uniformly
+    Requires scene read: yes (seasonal_state lives on intent.scene_read)
+    """
+    t0 = time.perf_counter()
+    stack = state.mask_stack
+    issues: List[ValidationIssue] = []
+
+    # Resolve the seasonal state from composition_hints or default to NORMAL.
+    composition_hints = dict(getattr(state.intent, "composition_hints", {}) or {})
+    raw_season = composition_hints.get("seasonal_state", "normal")
+    try:
+        seasonal_state = SeasonalState(str(raw_season).lower())
+    except ValueError:
+        issues.append(ValidationIssue(
+            severity="warning",
+            message=(
+                f"pass_seasonal_water_state: unknown seasonal_state={raw_season!r}; "
+                "falling back to NORMAL (no-op)."
+            ),
+            channel="wetness",
+        ))
+        seasonal_state = SeasonalState.NORMAL
+
+    apply_seasonal_water_state(stack, seasonal_state)
+
+    return PassResult(
+        pass_name="pass_seasonal_water_state",
+        status="ok",
+        duration_seconds=time.perf_counter() - t0,
+        consumed_channels=("wetness", "water_surface_mask", "tidal"),
+        produced_channels=("wetness", "water_surface_mask", "tidal"),
+        metrics={"seasonal_state": seasonal_state.value},
+        issues=issues,
+    )
+
+
+def register_pass_seasonal_water_state() -> None:
+    """Register pass_seasonal_water_state on the TerrainPassController."""
+    TerrainPassController.register_pass(
+        PassDefinition(
+            name="pass_seasonal_water_state",
+            func=pass_seasonal_water_state,
+            requires_channels=("wetness", "water_surface_mask"),
+            produces_channels=("wetness", "water_surface_mask", "tidal"),
+            # Overrides declared so the DAG knows this pass re-writes channels
+            # that water_variants already wrote; without this declaration the
+            # PassDAG would consider downstream readers stale on second run.
+            overrides=("wetness", "water_surface_mask", "tidal"),
+            seed_namespace="seasonal_water_state",
+            requires_scene_read=True,
+            description=(
+                "Bundle O supplement — apply per-season wetness/water_surface_mask/tidal "
+                "mutations as a registered DAG pass so downstream passes see fresh values."
+            ),
+        )
     )
 
 
@@ -1570,6 +1642,8 @@ __all__ = [
     "detect_hot_springs",
     "detect_wetlands",
     "apply_seasonal_water_state",
+    "pass_seasonal_water_state",
+    "register_pass_seasonal_water_state",
     "pass_water_variants",
     "register_water_variants_pass",
     "pass_bathymetry",

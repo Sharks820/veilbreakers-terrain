@@ -353,9 +353,8 @@ class ProceduralGrassSystem:
             mask *= (height >= ws).astype(np.float32)
         else:
             # Binary mask path: water_surface_mask > 0 means cell IS water — exclude it.
+            # W-1: use water_surface_mask exclusively; legacy water_surface fallback removed.
             ws_mask = _stack_attr(stack, "water_surface_mask")
-            if ws_mask is None:
-                ws_mask = _stack_attr(stack, "water_surface")
             if ws_mask is not None:
                 mask *= (np.asarray(ws_mask, dtype=np.float32) <= 0.0).astype(np.float32)
 
