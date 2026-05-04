@@ -45,8 +45,10 @@ _DELTA_CHANNELS: Tuple[str, ...] = (
     "karst_delta",
     "wind_erosion_delta",
     "glacial_delta",
-    # Batch 13 wiring fix — biome surface features delta
-    "biome_surface_delta",
+    # FIX-B14-4: biome surface micro-feature delta (explicit VB biome registry)
+    "biome_surface_feature_delta",
+    # FIX-B14-18: worn-path erosion along road corridors
+    "road_worn_path_delta",
 )
 
 

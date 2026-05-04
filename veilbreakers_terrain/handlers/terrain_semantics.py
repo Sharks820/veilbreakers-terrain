@@ -454,6 +454,13 @@ class TerrainMaskStack:
     # Road network channels (Phase 8)
     road_mask: Optional[np.ndarray] = None
     road_sdf_dist: Optional[np.ndarray] = None
+    # FIX-B14-18: height delta carved by worn-path erosion along road corridors.
+    # Negative values = terrain deepened; populated by pass_road_network and
+    # consumed by the delta integrator (integrate_deltas pass).
+    road_worn_path_delta: Optional[np.ndarray] = None
+    # Serialisable road segment list populated by pass_road_network.
+    # Each entry is a dict with keys: start, end, width, road_type.
+    road_segments: Optional[list] = None
 
     # Structural terrain labels (Phase 10 / Fix 10.10 / REQ-P10-001)
     # Feature generators stamp these during generation; materials pass reads as
@@ -659,6 +666,7 @@ class TerrainMaskStack:
             # Road network (Phase 8)
             "road_mask",
             "road_sdf_dist",
+            "road_worn_path_delta",
             # Horizon LOD / skyline sampling (Bundle L)
             "horizon_elevation_angles",
             # Height decomposition (Fix 12.1)
