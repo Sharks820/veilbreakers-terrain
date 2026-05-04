@@ -521,8 +521,14 @@ def add_grass_sprites(
     if flat.sum() < 1e-6:
         return
     probs = flat / flat.sum()
+    # When the density map is very sparse (e.g. frozen/desert biomes), non-zero
+    # cells may be fewer than n_sprites — clamp to what's available.
+    n_nonzero = int((probs > 0).sum())
+    n_sprites = min(n_sprites, n_nonzero, len(flat))
+    if n_sprites == 0:
+        return
     rng = np.random.default_rng(42)
-    chosen = rng.choice(len(flat), size=min(n_sprites, len(flat)), replace=False, p=probs)
+    chosen = rng.choice(len(flat), size=n_sprites, replace=False, p=probs)
 
     xs_arr = np.linspace(-tile_m / 2, tile_m / 2, W)
     ys_arr = np.linspace(-tile_m / 2, tile_m / 2, H)
@@ -537,7 +543,7 @@ def add_grass_sprites(
     mat = bpy.data.materials.new("grass_sprite_mat")
     mat.use_nodes = True
     mat.blend_method = "CLIP"
-    mat.shadow_method = "CLIP"
+    # shadow_method removed in Blender 4.x
     nt = mat.node_tree
     for n in list(nt.nodes):
         nt.nodes.remove(n)
@@ -547,11 +553,15 @@ def add_grass_sprites(
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
 
+    hH, hW = height.shape
     for idx in chosen:
         r, c = divmod(int(idx), W)
         x = float(xs_arr[c])
         y = float(ys_arr[r])
-        z = float(height[r, c]) * z_scale
+        # remap to height grid (density map may differ in resolution)
+        r_h = min(int(r * hH / H), hH - 1)
+        c_h = min(int(c * hW / W), hW - 1)
+        z = float(height[r_h, c_h]) * z_scale
         d = float(density_norm[r, c])
         h_sprite = 0.8 + d * 2.5  # taller where denser
         w_sprite = 0.3 + d * 0.5
