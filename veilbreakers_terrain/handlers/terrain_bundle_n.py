@@ -15,7 +15,6 @@ contract surface, not a pass registrar.
 
 from __future__ import annotations
 
-import copy
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
@@ -430,57 +429,35 @@ def run_bundle_n_post_pipeline_hooks(
 
     determinism_runs = _determinism_runs(options)
     if determinism_runs >= 2:
-        if pre_pipeline_state is None:
-            summary["determinism_skipped_reason"] = "missing_pre_pipeline_state"
-        else:
-            try:
-                from .terrain_pipeline import TerrainPassController
-
-                replay_state = copy.deepcopy(pre_pipeline_state)
-                with _skip_runtime_hooks(replay_state):
-                    replay_controller = TerrainPassController(
-                        replay_state,
-                        checkpoint_dir=controller.checkpoint_dir,
-                    )
-                    report = terrain_determinism_ci.run_determinism_check(
-                        replay_controller,
-                        seed=int(replay_state.intent.seed),
-                        runs=determinism_runs,
-                        pass_sequence=tuple(executed_passes),
-                    )
-                summary["deterministic"] = bool(report.get("deterministic", False))
-                summary["determinism_run_count"] = int(report.get("run_count", 0))
-                summary["determinism_suspect_passes"] = list(
-                    report.get("suspect_passes", [])
+        try:
+            seed = int(state.intent.seed)
+            report = terrain_determinism_ci.run_determinism_check_subprocess(
+                seed=seed,
+                runs=determinism_runs,
+            )
+            summary["deterministic"] = bool(report.get("deterministic", False))
+            summary["determinism_run_count"] = int(report.get("run_count", 0))
+            summary["determinism_requires_subprocess"] = True
+            if not report.get("deterministic", False):
+                _attach_issues(
+                    last,
+                    [
+                        ValidationIssue(
+                            code="BUNDLE_N_DETERMINISM_FAILED",
+                            severity="hard",
+                            message=(
+                                "Bundle N subprocess determinism check diverged — "
+                                "tile outputs differ across isolated interpreter runs"
+                            ),
+                            remediation=(
+                                "Audit all passes for nondeterministic state: "
+                                "unseeded RNG, wall-clock inputs, module-level globals."
+                            ),
+                        )
+                    ],
                 )
-                if not report.get("deterministic", False):
-                    suspects = [
-                        pass_name
-                        for _, pass_name in report.get("suspect_passes", [])
-                    ]
-                    _attach_issues(
-                        last,
-                        [
-                            ValidationIssue(
-                                code="BUNDLE_N_DETERMINISM_FAILED",
-                                severity="hard",
-                                message=(
-                                    "Bundle N determinism replay diverged"
-                                    + (
-                                        f"; suspect passes={suspects[:3]}"
-                                        if suspects
-                                        else ""
-                                    )
-                                ),
-                                remediation=(
-                                    "Audit the suspect passes for nondeterministic "
-                                    "state, wall-clock inputs, or unseeded RNG use."
-                                ),
-                            )
-                        ],
-                    )
-            except Exception as exc:  # noqa: BLE001
-                summary["determinism_error"] = repr(exc)
+        except Exception as exc:  # noqa: BLE001
+            summary["determinism_error"] = repr(exc)
 
     _merge_bundle_n_metrics(last, summary)
     return summary
