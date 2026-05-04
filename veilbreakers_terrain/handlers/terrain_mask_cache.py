@@ -100,16 +100,41 @@ def cache_key_for_pass(
 
 
 # ---------------------------------------------------------------------------
-# MaskCache (LRU, thread-safe)
+# MaskCache (LRU, thread-safe, byte-budget)
 # ---------------------------------------------------------------------------
+
+
+def _entry_numpy_bytes(value: Any) -> int:
+    """Return the total numpy byte footprint of a cached value.
+
+    Understands the ``{"result": ..., "produced": {ch: ndarray}}`` dict
+    layout used by ``pass_with_cache`` / ``controller_pass_with_cache``.
+    For any other value type, returns 0 (conservative — no eviction pressure
+    for non-ndarray payloads).
+    """
+    total = 0
+    if isinstance(value, dict):
+        produced = value.get("produced")
+        if isinstance(produced, dict):
+            for arr in produced.values():
+                if isinstance(arr, np.ndarray):
+                    total += arr.nbytes
+    elif isinstance(value, np.ndarray):
+        total = value.nbytes
+    return total
 
 
 class MaskCache:
     """Thread-safe LRU cache for pass results / mask computations.
 
-    Stores arbitrary values keyed by string. Supports a max-entry cap
-    with oldest-first eviction. Tracks hit/miss counters for speedup
-    measurement.
+    Stores arbitrary values keyed by string. Enforces a *byte budget* (not
+    an entry count) with LRU eviction so that production-resolution sessions
+    (4096² float32 = 64 MB/channel) never exhaust system RAM.
+
+    The default budget is 2 GB (2_147_483_648 bytes).  At 4096² float32 with
+    3–5 channels per snapshot (~192–320 MB per entry) the cache holds roughly
+    6–10 entries — compared to the old 128-entry cap which would have required
+    ~30–40 GB.
 
     Thread safety
     -------------
@@ -131,14 +156,86 @@ class MaskCache:
     stored entry with the pass name and its consumed channel names.
     """
 
-    def __init__(self, max_entries: int = 128) -> None:
+    # 64 MB per-entry estimate used when converting a legacy max_entries
+    # argument to a byte budget.
+    _ENTRY_SIZE_ESTIMATE_BYTES: int = 64 * 1024 * 1024
+
+    def __init__(
+        self,
+        max_bytes: int = 2_147_483_648,
+        *,
+        max_entries: Optional[int] = None,
+    ) -> None:
+        """Initialise the cache.
+
+        Parameters
+        ----------
+        max_bytes:
+            Maximum total bytes of numpy channel data to keep cached.
+            Defaults to 2 GB.  LRU entries are evicted when adding a new
+            entry would exceed this budget.
+        max_entries:
+            Legacy backward-compat kwarg (keyword-only).  If supplied, it is
+            converted to a byte budget using a 64 MB-per-entry estimate and
+            the result overrides ``max_bytes``.  This lets existing call-sites
+            that pass ``max_entries=N`` continue to work without change.
+        """
+        if max_entries is not None:
+            max_bytes = max(1, int(max_entries)) * self._ENTRY_SIZE_ESTIMATE_BYTES
+        self._max_bytes: int = max(1, int(max_bytes))
+        # When max_entries is explicitly supplied we also enforce a hard entry
+        # count cap so that legacy test code storing non-numpy values (which
+        # contribute 0 bytes) still sees LRU eviction at the expected count.
+        self._max_entries: Optional[int] = (
+            max(1, int(max_entries)) if max_entries is not None else None
+        )
         self._data: "OrderedDict[str, Any]" = OrderedDict()
-        self._max = max(1, int(max_entries))
+        # Parallel dict: cache key → numpy byte footprint of that entry.
+        self._entry_bytes: Dict[str, int] = {}
+        self._total_cached_bytes: int = 0
         self.hits: int = 0
         self.misses: int = 0
         self._lock: threading.Lock = threading.Lock()
         # tag → set of cache keys registered under that tag
         self._tag_index: Dict[str, set] = {}
+
+    # ------------------------------------------------------------------
+    # Internal helpers (called under self._lock)
+    # ------------------------------------------------------------------
+
+    def _evict_lru_until_budget(self, incoming_bytes: int) -> None:
+        """Evict oldest (LRU) entries until the budget allows *incoming_bytes*.
+
+        Enforces two independent limits:
+        - Byte budget (``self._max_bytes``): primary OOM guard for numpy payloads.
+        - Entry count (``self._max_entries``): secondary guard, only active when
+          ``max_entries`` was explicitly supplied at construction time.  This
+          preserves backward-compatible LRU eviction for callers that store
+          non-numpy values (which contribute 0 bytes and would otherwise never
+          trigger byte-based eviction).
+
+        Must be called while holding ``self._lock``.
+        """
+        while self._data and (
+            self._total_cached_bytes + incoming_bytes > self._max_bytes
+            or (
+                self._max_entries is not None
+                and len(self._data) >= self._max_entries
+            )
+        ):
+            evicted_key, _ = self._data.popitem(last=False)
+            evicted_size = self._entry_bytes.pop(evicted_key, 0)
+            self._total_cached_bytes -= evicted_size
+            self._remove_from_tag_index(evicted_key)
+
+    def _remove_from_tag_index(self, key: str) -> None:
+        """Remove key from all tag index sets (called without external lock)."""
+        for tag_set in self._tag_index.values():
+            tag_set.discard(key)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def __len__(self) -> int:
         with self._lock:
@@ -172,23 +269,25 @@ class MaskCache:
         tags:  Optional logical namespace tags (e.g. pass name, channel names).
                ``invalidate_prefix(tag)`` will remove all entries sharing a tag.
         """
+        entry_size = _entry_numpy_bytes(value)
         with self._lock:
             if key in self._data:
+                # Update in-place: adjust byte accounting for the replaced value.
+                old_size = self._entry_bytes.get(key, 0)
+                self._total_cached_bytes -= old_size
                 self._data.move_to_end(key)
                 self._data[key] = value
+                self._entry_bytes[key] = entry_size
+                self._total_cached_bytes += entry_size
             else:
+                # Evict LRU entries until there is room for the new entry.
+                self._evict_lru_until_budget(entry_size)
                 self._data[key] = value
-                if len(self._data) > self._max:
-                    evicted, _ = self._data.popitem(last=False)
-                    self._remove_from_tag_index(evicted)
+                self._entry_bytes[key] = entry_size
+                self._total_cached_bytes += entry_size
             if tags:
                 for tag in tags:
                     self._tag_index.setdefault(tag, set()).add(key)
-
-    def _remove_from_tag_index(self, key: str) -> None:
-        """Remove key from all tag index sets (called without external lock)."""
-        for tag_set in self._tag_index.values():
-            tag_set.discard(key)
 
     def get_or_compute(
         self,
@@ -220,15 +319,16 @@ class MaskCache:
 
         # Compute outside the lock.
         value = compute_fn()
+        entry_size = _entry_numpy_bytes(value)
 
         # Re-acquire to store; second check avoids storing if another thread
         # won the race and already populated the same key.
         with self._lock:
             if key not in self._data:
+                self._evict_lru_until_budget(entry_size)
                 self._data[key] = value
-                if len(self._data) > self._max:
-                    evicted, _ = self._data.popitem(last=False)
-                    self._remove_from_tag_index(evicted)
+                self._entry_bytes[key] = entry_size
+                self._total_cached_bytes += entry_size
                 if tags:
                     for tag in tags:
                         self._tag_index.setdefault(tag, set()).add(key)
@@ -243,6 +343,8 @@ class MaskCache:
         with self._lock:
             if key in self._data:
                 del self._data[key]
+                evicted_size = self._entry_bytes.pop(key, 0)
+                self._total_cached_bytes -= evicted_size
                 self._remove_from_tag_index(key)
                 return True
             return False
@@ -282,6 +384,8 @@ class MaskCache:
             for key in keys_to_remove:
                 if key in self._data:
                     del self._data[key]
+                    evicted_size = self._entry_bytes.pop(key, 0)
+                    self._total_cached_bytes -= evicted_size
                     count += 1
                 self._remove_from_tag_index(key)
 
@@ -293,6 +397,8 @@ class MaskCache:
     def invalidate_all(self) -> None:
         with self._lock:
             self._data.clear()
+            self._entry_bytes.clear()
+            self._total_cached_bytes = 0
             self._tag_index.clear()
 
     def stats(self) -> Dict[str, int]:
@@ -301,7 +407,8 @@ class MaskCache:
             hit_rate_pct = int((self.hits * 100) / total) if total > 0 else 0
             return {
                 "entries": len(self._data),
-                "max_entries": self._max,
+                "max_bytes": self._max_bytes,
+                "total_cached_bytes": self._total_cached_bytes,
                 "hits": self.hits,
                 "misses": self.misses,
                 "hit_rate_pct": hit_rate_pct,
