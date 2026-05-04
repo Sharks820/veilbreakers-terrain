@@ -106,13 +106,10 @@ def _camera(loc: tuple, look_at: tuple = (0, 0, 0), fov_deg: float = 55.0) -> No
     bpy.ops.object.camera_add(location=loc)
     cam = bpy.context.active_object
     cam.data.angle = math.radians(fov_deg)
-    # Point at target
-    dx, dy, dz = (look_at[i] - loc[i] for i in range(3))
-    dist = math.sqrt(dx**2 + dy**2 + dz**2)
-    if dist > 1e-6:
-        pitch = -math.asin(dz / dist)
-        yaw = math.atan2(dx, -dy)
-        cam.rotation_euler = (math.pi / 2 + pitch, 0, yaw)
+    from mathutils import Vector  # available inside Blender
+    direction = Vector(look_at) - Vector(loc)
+    if direction.length > 1e-6:
+        cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = cam
 
 

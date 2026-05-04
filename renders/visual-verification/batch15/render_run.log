@@ -16,18 +16,18 @@ Warning: 'import_mesh.hgt_handler' does not contain '_FH_' with prefix and suffi
 -------Registering gflow-------
 [bl_ext.blender_org.terrainmixer] WARNING: Using legacy path-finding for older Blender version.
 UniV: Skipping registration in background mode
-Successfully registered mesh_exporter: <bpy_struct, PointerProperty("mesh_exporter") at 0x00000276580D8B08>
-ℹ️  blenderkit: Verbose is enabled [08:18:41.920, addon_updater.py:150]
-ℹ️  blenderkit: Read in JSON settings from file [08:18:41.920, addon_updater.py:150]
-ℹ️  blenderkit: Ports reordered so first port is now 62485 (previous index was 0) [08:18:41.920, client_lib.py:129]
+Successfully registered mesh_exporter: <bpy_struct, PointerProperty("mesh_exporter") at 0x0000019F365A4B08>
+ℹ️  blenderkit: Verbose is enabled [12:33:51.405, addon_updater.py:150]
+ℹ️  blenderkit: Read in JSON settings from file [12:33:51.405, addon_updater.py:150]
+ℹ️  blenderkit: Ports reordered so first port is now 62485 (previous index was 0) [12:33:51.405, client_lib.py:129]
 BlenderMCP addon registered
 Reloading external rigs...
 Reloading external metarigs...
 INFO: Ucupaint update routine is done in 0.00 ms!
 [GamiFlow] Scene Scene was saved in different version (0)
-Created history step 8b10edaf-d4d6-4dfe-b3e7-02ef5920fda4
-ℹ️  blenderkit: Created new search history step [08:18:42.509, search.py:2525]
-ℹ️  blenderkit: No temporarily enabled addons to clean up [08:18:42.509, download.py:416]
+Created history step 3583ff84-a4ab-4185-b169-7f01a2428de8
+ℹ️  blenderkit: Created new search history step [12:33:51.974, search.py:2525]
+ℹ️  blenderkit: No temporarily enabled addons to clean up [12:33:51.974, download.py:416]
 [B15]    0.0s  Batch 15 visual verification — 7 renders
 [B15]    0.0s  Output: C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15
 [B15]    0.0s  --- render_01: grasslands + affine rescale ---
@@ -41,66 +41,66 @@ bl_ext.blender_org.easymesh_batch_exporter:INFO: Unregistration complete.
 bl_ext.blender_org.Modifier_List_Fork: Unregistered 62 classes
 INFO: Ucupaint 2.4.5 is unregistered!
 -------Unregistering gflow-------
-ℹ️  blenderkit: Unregistering BlenderKit add-on [08:18:42.527, __init__.py:2881]
-ℹ️  blenderkit: No temporarily enabled addons to clean up [08:18:42.527, download.py:416]
+ℹ️  blenderkit: Unregistering BlenderKit add-on [12:33:51.990, __init__.py:2881]
+ℹ️  blenderkit: No temporarily enabled addons to clean up [12:33:51.990, download.py:416]
 BlenderMCP addon unregistered
 [B15]    0.1s    hmap range: 0.0 – 40.0 m  (expect ~0–40)
-Fra:1 Mem:54.25M (Peak 63.02M) | Time:00:01.56 | Rendering 1 / 16 samples
-Fra:1 Mem:54.25M (Peak 63.02M) | Time:00:01.57 | Rendering 16 / 16 samples
+Fra:1 Mem:54.25M (Peak 63.02M) | Time:00:00.64 | Rendering 1 / 16 samples
+Fra:1 Mem:54.25M (Peak 63.02M) | Time:00:00.66 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_01_grasslands_rescale.png'
-Time: 00:01.76 (Saving: 00:00.16)
+Time: 00:00.85 (Saving: 00:00.16)
 
-[B15]    1.8s    saved render_01_grasslands_rescale  (1.8s total)
-[B15]    1.8s  --- render_02: mountain pass ---
-[B15]    1.9s    hmap range: 17.8 – 306.5 m  (expect ~0–320)
+[B15]    0.9s    saved render_01_grasslands_rescale  (0.9s total)
+[B15]    0.9s  --- render_02: mountain pass ---
+[B15]    1.0s    hmap range: 17.8 – 306.5 m  (expect ~0–320)
 Fra:1 Mem:54.28M (Peak 54.28M) | Time:00:00.10 | Rendering 1 / 16 samples
-Fra:1 Mem:54.28M (Peak 54.28M) | Time:00:00.12 | Rendering 16 / 16 samples
+Fra:1 Mem:54.28M (Peak 54.28M) | Time:00:00.13 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_02_mountain_pass.png'
 Time: 00:00.21 (Saving: 00:00.06)
 
-[B15]    2.1s    saved render_02_mountain_pass  (2.1s total)
-[B15]    2.1s  --- render_03: biome mosaic (9 tiles) ---
-Fra:1 Mem:74.20M (Peak 82.22M) | Time:00:00.12 | Rendering 1 / 16 samples
+[B15]    1.2s    saved render_02_mountain_pass  (1.2s total)
+[B15]    1.2s  --- render_03: biome mosaic (9 tiles) ---
+Fra:1 Mem:74.20M (Peak 82.22M) | Time:00:00.11 | Rendering 1 / 16 samples
 Fra:1 Mem:74.20M (Peak 82.22M) | Time:00:00.15 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_03_biome_mosaic.png'
-Time: 00:00.34 (Saving: 00:00.15)
+Time: 00:00.31 (Saving: 00:00.12)
 
-[B15]    2.5s    saved render_03_biome_mosaic  (2.5s total)
-[B15]    2.5s  --- render_04: water caustics ---
+[B15]    1.6s    saved render_03_biome_mosaic  (1.6s total)
+[B15]    1.6s  --- render_04: water caustics ---
 Fra:1 Mem:56.35M (Peak 56.35M) | Time:00:00.14 | Rendering 1 / 16 samples
-Fra:1 Mem:56.35M (Peak 56.35M) | Time:00:00.15 | Rendering 16 / 16 samples
+Fra:1 Mem:56.35M (Peak 56.35M) | Time:00:00.17 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_04_water_caustics.png'
-Time: 00:00.24 (Saving: 00:00.06)
+Time: 00:00.27 (Saving: 00:00.07)
 
-[B15]    2.9s    saved render_04_water_caustics  (2.9s total)
-[B15]    2.9s  --- render_05: water bathymetry ---
-Fra:1 Mem:54.26M (Peak 54.26M) | Time:00:00.62 | Rendering 1 / 16 samples
-Fra:1 Mem:54.26M (Peak 54.26M) | Time:00:00.64 | Rendering 16 / 16 samples
+[B15]    1.9s    saved render_04_water_caustics  (1.9s total)
+[B15]    1.9s  --- render_05: water bathymetry ---
+Fra:1 Mem:54.26M (Peak 54.26M) | Time:00:00.11 | Rendering 1 / 16 samples
+Fra:1 Mem:54.26M (Peak 54.26M) | Time:00:00.14 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_05_water_bathymetry.png'
-Time: 00:00.73 (Saving: 00:00.06)
+Time: 00:00.24 (Saving: 00:00.07)
 
-[B15]    3.7s    saved render_05_water_bathymetry  (3.7s total)
-[B15]    3.7s  --- render_06: splatmap 5 layers ---
-Fra:1 Mem:54.04M (Peak 54.04M) | Time:00:00.63 | Rendering 1 / 16 samples
-Fra:1 Mem:54.04M (Peak 54.04M) | Time:00:00.65 | Rendering 16 / 16 samples
+[B15]    2.2s    saved render_05_water_bathymetry  (2.2s total)
+[B15]    2.2s  --- render_06: splatmap 5 layers ---
+Fra:1 Mem:54.04M (Peak 54.04M) | Time:00:00.11 | Rendering 1 / 16 samples
+Fra:1 Mem:54.04M (Peak 54.04M) | Time:00:00.13 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_06_splatmap_layers.png'
-Time: 00:00.74 (Saving: 00:00.06)
+Time: 00:00.21 (Saving: 00:00.05)
 
-[B15]    4.5s    saved render_06_splatmap_layers  (4.5s total)
-[B15]    4.5s  --- render_07: scatter biome ---
+[B15]    2.5s    saved render_06_splatmap_layers  (2.5s total)
+[B15]    2.5s  --- render_07: scatter biome ---
 Fra:1 Mem:86.53M (Peak 92.62M) | Time:00:00.20 | Rendering 1 / 16 samples
-Fra:1 Mem:86.53M (Peak 92.62M) | Time:00:00.27 | Rendering 16 / 16 samples
+Fra:1 Mem:86.53M (Peak 92.62M) | Time:00:00.30 | Rendering 16 / 16 samples
 Saved: 'C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\render_07_scatter_biome.png'
-Time: 00:00.37 (Saving: 00:00.06)
+Time: 00:00.40 (Saving: 00:00.07)
 
-[B15]    5.8s    saved render_07_scatter_biome  (5.8s total)
-[B15]    5.8s  Manifest: C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\MANIFEST.json
-[B15]    5.8s  Done — 7 renders, status=OK
-[B15]    5.8s  Total time: 5.8s
-Exception ignored in: <function ImagePreviewCollection.__del__ at 0x0000027656F8C4A0>
+[B15]    3.9s    saved render_07_scatter_biome  (3.9s total)
+[B15]    3.9s  Manifest: C:\Users\Conner\OneDrive\Documents\veilbreakers-terrain\renders\visual-verification\batch15\MANIFEST.json
+[B15]    3.9s  Done — 7 renders, status=OK
+[B15]    3.9s  Total time: 3.9s
+Exception ignored in: <function ImagePreviewCollection.__del__ at 0x0000019F3545C4A0>
 Traceback (most recent call last):
   File "C:\Program Files\Blender Foundation\Blender 4.5\4.5\scripts\modules\bpy\utils\previews.py", line 63, in __del__
     raise ResourceWarning(
-ResourceWarning: <ImagePreviewCollection id=0x2765992e330[4], <super: <class 'ImagePreviewCollection'>, <ImagePreviewCollection object>>>: left open, remove with 'bpy.utils.previews.remove()'
+ResourceWarning: <ImagePreviewCollection id=0x19f37da23f0[4], <super: <class 'ImagePreviewCollection'>, <ImagePreviewCollection object>>>: left open, remove with 'bpy.utils.previews.remove()'
 
 Blender quit
