@@ -327,3 +327,134 @@ class TestBug102:
         tile_b = _row_marker_grid(8, 0, 2.0)
         result = validate_tile_seams(tile_a, tile_b, direction="south", tolerance=1e-6)
         assert result["match"] is True, f"South seam regression: {result}"
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-21 — snapshot_stack copy-on-write (OOM fix)
+# ---------------------------------------------------------------------------
+
+
+class TestFixB1421SnapshotStackOOM:
+    """FIX-B14-21: snapshot_stack must not deep-copy arrays (was ~5 GB per call)."""
+
+    def test_snapshot_stack_under_1gb_for_single_channel_edit_at_production_resolution(self):
+        """StackSnapshot stores hashes only; size must be <<100 KB for any stack size."""
+        import sys
+
+        from veilbreakers_terrain.handlers.terrain_live_preview import StackSnapshot
+        from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+
+        # Use a 4096×4096 stack with 5 populated channels.
+        # Allocating the full array is fine; we are testing the SNAPSHOT size.
+        H, W = 4096, 4096
+        height = np.zeros((H, W), dtype=np.float32)
+        stack = TerrainMaskStack(
+            height=height,
+            tile_size=H,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+        )
+        for ch in ("slope", "curvature", "wetness", "erosion_amount"):
+            stack.set(ch, np.zeros((H, W), dtype=np.float32), "test")
+
+        # Take a copy-on-write snapshot.
+        snapshot = StackSnapshot(stack)
+
+        # Edit exactly one channel.
+        new_slope = np.zeros((H, W), dtype=np.float32)
+        new_slope[100, 200] = 1.0
+        stack.set("slope", new_slope, "test")
+
+        # Snapshot diff must identify exactly 1 changed channel.
+        changed = snapshot.changed_channels(stack)
+        assert changed == ["slope"], (
+            f"Expected only 'slope' changed, got: {changed}"
+        )
+
+        # Snapshot object (hash dict) must be tiny — well under 100 KB.
+        snapshot_bytes = sys.getsizeof(snapshot.hash_dict)
+        # Each entry is a str key + int value; 5 channels → a few hundred bytes.
+        assert snapshot_bytes < 100 * 1024, (
+            f"Snapshot hash dict must be <100 KB, got {snapshot_bytes} bytes. "
+            "The snapshot must NOT store array copies."
+        )
+
+
+# ---------------------------------------------------------------------------
+# FIX-B14-22 — dirty tracker marks actual changed region, not full tile
+# ---------------------------------------------------------------------------
+
+
+class TestFixB1422DirtyTrackerPrecision:
+    """FIX-B14-22: mask_stack.set() hook must record the tight changed-cell bbox."""
+
+    def _make_state(self, size: int = 32):
+        from veilbreakers_terrain.handlers.terrain_semantics import (
+            BBox,
+            TerrainIntentState,
+            TerrainMaskStack,
+            TerrainPipelineState,
+        )
+
+        height = np.zeros((size, size), dtype=np.float32)
+        stack = TerrainMaskStack(
+            height=height,
+            tile_size=size,
+            cell_size=1.0,
+            world_origin_x=0.0,
+            world_origin_y=0.0,
+            tile_x=0,
+            tile_y=0,
+        )
+        intent = TerrainIntentState(
+            seed=1,
+            region_bounds=BBox(0.0, 0.0, float(size), float(size)),
+            tile_size=size,
+            cell_size=1.0,
+        )
+        return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+    def test_single_cell_edit_marks_only_that_cell_region_dirty(self):
+        from veilbreakers_terrain.handlers.terrain_dirty_tracking import attach_dirty_tracker
+
+        state = self._make_state(size=32)
+        tracker = attach_dirty_tracker(state)
+
+        # First write: set the full slope channel (marks some region dirty).
+        full_arr = np.zeros((32, 32), dtype=np.float32)
+        state.mask_stack.set("slope", full_arr, "test_setup")
+        tracker.clear()  # Reset dirty state after setup write.
+
+        # Second write: change only cell [10, 10].
+        edited_arr = full_arr.copy()
+        edited_arr[10, 10] = 99.0
+        state.mask_stack.set("slope", edited_arr, "single_cell_edit")
+
+        regions = tracker.get_dirty_regions()
+        assert regions, "Tracker must have at least one dirty region after cell edit."
+
+        # The dirty region bbox must be tight around (10, 10) — world coords
+        # with cell_size=1 and origin (0,0): col=10 → x in [10, 11], row=10 → y in [10, 11].
+        dirty = regions[0].bounds
+        tile_area = 32.0 * 32.0
+        dirty_area = dirty.width * dirty.height
+
+        assert dirty_area < tile_area, (
+            f"Dirty region covers {dirty_area} m² but full tile is {tile_area} m². "
+            "The tracker must record the tight changed-cell bbox, not FULL_TILE."
+        )
+        # Tight bound: single cell edit → dirty area should be just 1 cell (1 m²)
+        assert dirty_area <= 4.0, (
+            f"Single-cell edit dirty area should be ≤4 m² (one cell with rounding), "
+            f"got {dirty_area} m²."
+        )
+        # The dirty region must enclose the edited cell's world position (10.0–11.0, 10.0–11.0).
+        assert dirty.min_x <= 10.0 and dirty.max_x >= 11.0, (
+            f"Dirty bbox x-range {dirty.min_x}–{dirty.max_x} must contain cell col 10."
+        )
+        assert dirty.min_y <= 10.0 and dirty.max_y >= 11.0, (
+            f"Dirty bbox y-range {dirty.min_y}–{dirty.max_y} must contain cell row 10."
+        )
