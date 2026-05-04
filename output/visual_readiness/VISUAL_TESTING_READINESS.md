@@ -1,15 +1,15 @@
 # Visual Testing Readiness
 
-- Ready for visual testing: False
-- Blockers: screenshot_contract, placeholder_png, no_blender_runtime
-- Blender runtime detected: False
-- Screenshot contract ok: False
+- Ready for visual testing: True
+- Blockers: none
+- Blender runtime detected: True
+- Screenshot contract ok: True
 - Material library contract ok: True
-- Captured thumbnail bytes: 8
-- Placeholder PNG detected: True
+- Captured thumbnail bytes: 35493
+- Placeholder PNG detected: False
 - Blank PNG detected: False
-- Blender fixture created: False
-- Perceptual hash: raw:70e4956d0d38456e
+- Blender fixture created: True
+- Perceptual hash: 0000001000000000
 - Reference present: True
 - Pixel diff exceeded: False
 

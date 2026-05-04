@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Tuple
+from numbers import Real
+from typing import TYPE_CHECKING, Callable, Optional, Tuple, cast
 
 import numpy as np
 
@@ -30,6 +32,21 @@ from .terrain_semantics import (
     TerrainMaskStack,
     TerrainPipelineState,
 )
+
+if TYPE_CHECKING:
+    from .terrain_materials_ext import MaterialChannelExt
+
+
+HintMap = Mapping[str, object]
+
+
+def _coerce_float(raw: object, default: float) -> float:
+    if isinstance(raw, (str, Real)):
+        try:
+            return float(raw)
+        except ValueError:
+            return default
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +411,7 @@ def apply_brucks_blend(
 def compute_snow_line_factor(
     height: np.ndarray,
     slope: np.ndarray,
-    climate_params: Optional[dict] = None,
+    climate_params: Optional[HintMap] = None,
     normal_z: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Compute snow line coverage factor per cell (Fix 10.5 / REQ-P10-006).
@@ -425,8 +442,14 @@ def compute_snow_line_factor(
     """
     if climate_params is None:
         climate_params = {}
-    snow_alt = float(np.clip(climate_params.get("snow_altitude", 0.7), 0.0, 1.0))
-    snow_width = float(np.clip(climate_params.get("snow_transition", 0.1), 0.01, 0.5))
+
+    snow_alt_raw = climate_params.get("snow_altitude", 0.7)
+    snow_alt_value = _coerce_float(snow_alt_raw, 0.7)
+    snow_alt = min(max(snow_alt_value, 0.0), 1.0)
+
+    snow_width_raw = climate_params.get("snow_transition", 0.1)
+    snow_width_value = _coerce_float(snow_width_raw, 0.1)
+    snow_width = min(max(snow_width_value, 0.01), 0.5)
     h = np.asarray(height, dtype=np.float64)
     base = 1.0 / (1.0 + np.exp(-(h - snow_alt) / snow_width))
     if normal_z is not None:
@@ -673,10 +696,9 @@ def compute_slope_material_weights(
             normals_3d[..., 2] = 1.0  # default up-normal
 
             # Tilt normals for steep cells using slope channel
-            if slope is not None:
-                steep = slope > math.radians(45.0)
-                normals_3d[steep, 0] = 0.7
-                normals_3d[steep, 2] = 0.7
+            steep = slope > math.radians(45.0)
+            normals_3d[steep, 0] = 0.7
+            normals_3d[steep, 2] = 0.7
 
             noise_perturb = triplanar_blend(normals_3d, pos_3d, _default_noise)
             # Apply as a subtle multiplicative perturbation [0.8, 1.2]
@@ -716,15 +738,15 @@ def compute_slope_material_weights(
     try:
         cliff_idx = rules.index_of("cliff")
         ground_idx = rules.index_of("ground")
+        scree_idx: int | None = None
+        orig_cliff = weights[:, :, cliff_idx].copy()
+        orig_scree: np.ndarray | None = None
         try:
             scree_idx = rules.index_of("scree")
-            _orig_cliff = weights[:, :, cliff_idx].copy()
-            _orig_scree = weights[:, :, scree_idx].copy()
-            rock_boundary_weight = np.maximum(_orig_cliff, _orig_scree)
-            _has_scree = True
+            orig_scree = weights[:, :, scree_idx].copy()
+            rock_boundary_weight = np.maximum(orig_cliff, orig_scree)
         except KeyError:
-            rock_boundary_weight = weights[:, :, cliff_idx]
-            _has_scree = False
+            rock_boundary_weight = orig_cliff
         strata_h = stack.get("strata_height")
         if strata_h is not None:
             rock_h_factor = np.asarray(strata_h, dtype=np.float32)
@@ -736,11 +758,11 @@ def compute_slope_material_weights(
             total_bd = b_rock + b_dirt + 1e-8
             b_rock_norm = (b_rock / total_bd).astype(np.float32)
             weights[:, :, ground_idx] = (b_dirt / total_bd).astype(np.float32)
-            if _has_scree:
+            if scree_idx is not None and orig_scree is not None:
                 # FIX-7-14: distribute b_rock proportionally between cliff and scree
-                _sum_cs = _orig_cliff + _orig_scree + 1e-9
-                weights[:, :, cliff_idx] = (b_rock_norm * (_orig_cliff / _sum_cs)).astype(np.float32)
-                weights[:, :, scree_idx] = (b_rock_norm * (_orig_scree / _sum_cs)).astype(np.float32)
+                sum_cliff_scree = orig_cliff + orig_scree + 1e-9
+                weights[:, :, cliff_idx] = (b_rock_norm * (orig_cliff / sum_cliff_scree)).astype(np.float32)
+                weights[:, :, scree_idx] = (b_rock_norm * (orig_scree / sum_cliff_scree)).astype(np.float32)
             else:
                 weights[:, :, cliff_idx] = b_rock_norm
     except KeyError:
@@ -783,6 +805,14 @@ def compute_slope_material_weights(
     cliff_label        = stack.get("cliff_label")         # float32 mask [0..1]
     water_surface_mask = stack.get("water_surface_mask")  # float32 binary [0,1]
     wet_rock_splash    = stack.get("wet_rock")            # pass_waterfalls spray mask
+    label_arrays: dict[str, object | None] = {
+        "rock_label": rock_label,
+        "gravel_label": gravel_label,
+        "water_label": water_label,
+        "cliff_label": cliff_label,
+        "water_surface_mask": water_surface_mask,
+        "wet_rock_splash": wet_rock_splash,
+    }
     has_labels = any(lbl is not None for lbl in (
         rock_label,
         gravel_label,
@@ -802,14 +832,6 @@ def compute_slope_material_weights(
             "cliff_label":        ("cliff",),     # cliff structural label -> cliff material
             "water_surface_mask": ("wet_rock",),  # binary water mask -> wet_rock material
             "wet_rock_splash":    ("wet_rock",),  # waterfall spray mask -> wet_rock material
-        }
-        label_arrays = {
-            "rock_label":         rock_label,
-            "gravel_label":       gravel_label,
-            "water_label":        water_label,
-            "cliff_label":        cliff_label,
-            "water_surface_mask": water_surface_mask,
-            "wet_rock_splash":    wet_rock_splash,
         }
         for label_key, target_ids in _label_channel_map.items():
             lbl = label_arrays[label_key]
@@ -869,21 +891,57 @@ _DEFAULT_HEIGHT_BLEND_GAMMAS = {
 }
 
 
+def _float_hint(
+    hints: HintMap,
+    key: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    value = _coerce_float(hints.get(key, default), default)
+    if minimum is not None:
+        value = max(value, minimum)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
+
+
+def _optional_float_hint(hints: HintMap, key: str) -> float | None:
+    raw = hints.get(key)
+    if raw is None:
+        return None
+    return _coerce_float(raw, 0.0)
+
+
+def _mapping_hint(hints: HintMap, key: str) -> dict[str, object]:
+    raw = hints.get(key)
+    if isinstance(raw, Mapping):
+        typed_raw = cast("Mapping[object, object]", raw)
+        return {str(k): v for k, v in typed_raw.items()}
+    return {}
+
+
+def _string_set_hint(hints: HintMap, key: str) -> set[str]:
+    raw = hints.get(key)
+    if isinstance(raw, (list, tuple, set)):
+        typed_raw = cast("list[object] | tuple[object, ...] | set[object]", raw)
+        return {str(item) for item in typed_raw}
+    return set()
+
+
 def _resolve_height_blend_gammas(
     rules: MaterialRuleSet,
-    hints: dict,
+    hints: HintMap,
 ) -> Tuple[float, ...]:
-    overrides = hints.get("material_height_blend_gamma") or {}
-    gammas = []
+    overrides = _mapping_hint(hints, "material_height_blend_gamma")
+    gammas: list[float] = []
     for ch in rules.channels:
         gamma = overrides.get(
             ch.channel_id,
             _DEFAULT_HEIGHT_BLEND_GAMMAS.get(ch.channel_id, 1.0),
         )
-        try:
-            gammas.append(max(float(gamma), 1e-6))
-        except (TypeError, ValueError):
-            gammas.append(1.0)
+        gammas.append(max(_coerce_float(gamma, 1.0), 1e-6))
     return tuple(gammas)
 
 
@@ -910,29 +968,23 @@ def _apply_region_mask(
 
 def _build_material_channel_exts(
     rules: MaterialRuleSet,
-    hints: dict,
-):
+    hints: HintMap,
+) -> list["MaterialChannelExt"]:
     from .terrain_materials_ext import MaterialChannelExt
 
     gamma_map = dict(zip(
         (ch.channel_id for ch in rules.channels),
         _resolve_height_blend_gammas(rules, hints),
     ))
-    density_overrides = hints.get("material_texel_density_m") or {}
-    hero_ids = {
-        str(cid)
-        for cid in (hints.get("hero_material_ids") or ())
-    }
-    channels = []
+    density_overrides = _mapping_hint(hints, "material_texel_density_m")
+    hero_ids = _string_set_hint(hints, "hero_material_ids")
+    channels: list[MaterialChannelExt] = []
     for ch in rules.channels:
         default_density = 512.0 if ch.triplanar else 256.0
         if ch.channel_id in hero_ids:
             default_density = max(default_density, 1024.0)
         density_raw = density_overrides.get(ch.channel_id, default_density)
-        try:
-            texel_density = float(density_raw)
-        except (TypeError, ValueError):
-            texel_density = default_density
+        texel_density = _coerce_float(density_raw, default_density)
         channels.append(
             MaterialChannelExt(
                 base=ch,
@@ -982,9 +1034,7 @@ def pass_materials(
     if rules is None:
         rules = default_dark_fantasy_rules()
 
-    hints: dict = {}
-    if state.intent is not None:
-        hints = state.intent.composition_hints or {}
+    hints: HintMap = state.intent.composition_hints or {}
 
     new_weights = compute_slope_material_weights(stack, rules)
     issues: list[ValidationIssue] = []
@@ -1003,16 +1053,16 @@ def pass_materials(
 
     texel_issues = validate_texel_density_coherency(
         material_exts,
-        max_ratio=float(hints.get("material_texel_density_max_ratio", 2.0)),
+        max_ratio=_float_hint(hints, "material_texel_density_max_ratio", 2.0),
     )
     for issue in texel_issues:
         (issues if issue.is_hard() else warnings).append(issue)
 
-    hero_cliff_coverage = hints.get("hero_cliff_pixel_coverage_fraction")
+    hero_cliff_coverage = _optional_float_hint(hints, "hero_cliff_pixel_coverage_fraction")
     if hero_cliff_coverage is not None:
         for issue in validate_cliff_silhouette_area(hero_cliff_coverage, tier="hero"):
             (issues if issue.is_hard() else warnings).append(issue)
-    secondary_cliff_coverage = hints.get("secondary_cliff_pixel_coverage_fraction")
+    secondary_cliff_coverage = _optional_float_hint(hints, "secondary_cliff_pixel_coverage_fraction")
     if secondary_cliff_coverage is not None:
         for issue in validate_cliff_silhouette_area(secondary_cliff_coverage, tier="secondary"):
             (issues if issue.is_hard() else warnings).append(issue)
@@ -1071,7 +1121,7 @@ def pass_materials(
     # Aggregate metrics
     per_layer_coverage = new_weights.mean(axis=(0, 1))
     dominant = int(per_layer_coverage.argmax())
-    metrics = {
+    metrics: dict[str, object] = {
         "layer_count": int(new_weights.shape[2]),
         "layer_ids": [c.channel_id for c in rules.channels],
         "dominant_layer": rules.channels[dominant].channel_id,

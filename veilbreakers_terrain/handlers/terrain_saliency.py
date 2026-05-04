@@ -39,17 +39,16 @@ See docs/terrain_ultra_implementation_plan_2026-04-08.md §13 Bundle H.
 
 from __future__ import annotations
 
+import importlib
 import time
-from typing import Optional, Sequence, Tuple
+from types import ModuleType
+from typing import Any, Optional, Sequence, Tuple, TypeAlias, cast
 
 import numpy as np
+from numpy.typing import NDArray
 
-try:
-    from scipy.ndimage import map_coordinates as _map_coordinates
-    from scipy.ndimage import uniform_filter
-    _SCIPY_AVAILABLE = True
-except ImportError:
-    _SCIPY_AVAILABLE = False
+FloatArray: TypeAlias = NDArray[np.float64]
+Uint8Array: TypeAlias = NDArray[np.uint8]
 
 from .terrain_semantics import (
     BBox,
@@ -60,10 +59,60 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+
+def _load_scipy_ndimage() -> ModuleType | None:
+    try:
+        return importlib.import_module("scipy.ndimage")
+    except ImportError:
+        return None
+
+
+_scipy_ndimage = _load_scipy_ndimage()
+_SCIPY_AVAILABLE: bool = _scipy_ndimage is not None
 from .terrain_math import stack_world_to_cell as _world_to_cell
 
 
-def _sample_height_bilinear(height: np.ndarray, rf: float, cf: float) -> float:
+def _scipy_map_coordinates_2d(
+    arr: FloatArray,
+    coords: FloatArray,
+    *,
+    order: int,
+    mode: str,
+) -> FloatArray | None:
+    if _scipy_ndimage is None:
+        return None
+    result = cast(Any, _scipy_ndimage).map_coordinates(
+        arr,
+        coords,
+        order=order,
+        mode=mode,
+    )
+    return np.asarray(result, dtype=np.float64)
+
+
+def _scipy_uniform_filter(arr: FloatArray, size: int) -> FloatArray | None:
+    if _scipy_ndimage is None:
+        return None
+    result = cast(Any, _scipy_ndimage).uniform_filter(arr, size=size)
+    return np.asarray(result, dtype=np.float64)
+
+
+def _scipy_maximum_filter(arr: FloatArray, size: int) -> FloatArray | None:
+    if _scipy_ndimage is None:
+        return None
+    result = cast(Any, _scipy_ndimage).maximum_filter(arr, size=size)
+    return np.asarray(result, dtype=np.float64)
+
+
+def _scipy_distance_transform_edt(mask: Uint8Array) -> FloatArray | None:
+    if _scipy_ndimage is None:
+        return None
+    result = cast(Any, _scipy_ndimage).distance_transform_edt(mask)
+    return np.asarray(result, dtype=np.float64)
+
+
+def _sample_height_bilinear(height: FloatArray, rf: float, cf: float) -> float:
     """Bilinearly sample *height* at fractional grid position (rf, cf).
 
     Clamps to [0, rows-1] × [0, cols-1] so out-of-bounds fractional coords
@@ -104,7 +153,7 @@ def compute_vantage_silhouettes(
     stack: TerrainMaskStack,
     vantage_points: Sequence[Tuple[float, float, float]],
     ray_count: int = 64,
-) -> np.ndarray:
+) -> FloatArray:
     """Cast azimuthal rays from each vantage; detect sky-vs-terrain horizon.
 
     For each vantage position, ``ray_count`` rays are cast across the
@@ -123,7 +172,7 @@ def compute_vantage_silhouettes(
         angle (radians) of the sky-terrain horizon along that ray.
         Positive values mean terrain rises above the vantage eye level.
     """
-    h = np.asarray(stack.height, dtype=np.float64)
+    h: FloatArray = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cell = float(stack.cell_size)
     tile_extent = float(max(rows, cols) * cell)
@@ -158,10 +207,21 @@ def compute_vantage_silhouettes(
         if _SCIPY_AVAILABLE:
             rf_clamped = np.clip(rf_all, 0.0, rows - 1)
             cf_clamped = np.clip(cf_all, 0.0, cols - 1)
-            coords = np.array([rf_clamped.ravel(), cf_clamped.ravel()])
-            hz_all = _map_coordinates(
-                h, coords, order=1, mode="nearest"
-            ).reshape(ray_count, n_samples)
+            coords: FloatArray = np.asarray(
+                [rf_clamped.ravel(), cf_clamped.ravel()],
+                dtype=np.float64,
+            )
+            sampled = _scipy_map_coordinates_2d(
+                h,
+                coords,
+                order=1,
+                mode="nearest",
+            )
+            hz_all: FloatArray
+            if sampled is None:
+                hz_all = np.zeros((ray_count, n_samples), dtype=np.float64)
+            else:
+                hz_all = sampled.reshape(ray_count, n_samples)
         else:
             rf_c = np.clip(rf_all, 0.0, rows - 1.0001)
             cf_c = np.clip(cf_all, 0.0, cols - 1.0001)
@@ -213,7 +273,7 @@ def auto_sculpt_around_feature(
     feature_pos: Tuple[float, float, float],
     feature_kind: str,
     intensity: float,
-) -> np.ndarray:
+) -> FloatArray:
     """Return a height delta that emphasises a feature via natural desire lines.
 
     Unlike a naive radial Gaussian, this function follows the terrain gradient
@@ -250,7 +310,7 @@ def auto_sculpt_around_feature(
     -------
     np.ndarray  shape (rows, cols) float64  height delta to add to terrain
     """
-    h = np.asarray(stack.height, dtype=np.float64)
+    h: FloatArray = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cell = float(stack.cell_size)
     delta = np.zeros_like(h)
@@ -348,8 +408,8 @@ def auto_sculpt_around_feature(
 def _rasterize_vantage_silhouettes_onto_grid(
     stack: TerrainMaskStack,
     vantage_points: Sequence[Tuple[float, float, float]],
-    silhouettes: np.ndarray,
-) -> np.ndarray:
+    silhouettes: FloatArray,
+) -> FloatArray:
     """Project silhouette ray contributions onto the heightmap via fast DDA.
 
     For each vantage, each ray is DDA-rasterized from the vantage cell
@@ -362,7 +422,7 @@ def _rasterize_vantage_silhouettes_onto_grid(
     np.ndarray
         (H, W) float64 silhouette contribution, normalised to [0, 1].
     """
-    h_arr = stack.height
+    h_arr: FloatArray = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h_arr.shape
     cell = float(stack.cell_size)
     out = np.zeros((rows, cols), dtype=np.float64)
@@ -378,9 +438,11 @@ def _rasterize_vantage_silhouettes_onto_grid(
     max_dist_ref = float(max(rows, cols) * cell)
     view_dist_sq = max_dist_ref * max_dist_ref + 1e-9
 
-    rr_idx, cc_idx = np.mgrid[0:rows, 0:cols]
-    wx_grid = cc_idx.astype(np.float64) * cell + stack.world_origin_x
-    wy_grid = rr_idx.astype(np.float64) * cell + stack.world_origin_y
+    grid_indices: FloatArray = np.indices((rows, cols), dtype=np.float64)
+    rr_idx: FloatArray = np.asarray(grid_indices[0], dtype=np.float64)
+    cc_idx: FloatArray = np.asarray(grid_indices[1], dtype=np.float64)
+    wx_grid: FloatArray = cc_idx * cell + stack.world_origin_x
+    wy_grid: FloatArray = rr_idx * cell + stack.world_origin_y
 
     accumulator = np.zeros((rows, cols), dtype=np.float64)
 
@@ -421,8 +483,8 @@ def _rasterize_vantage_silhouettes_onto_grid(
 
 def _compute_8factor_saliency(
     stack: TerrainMaskStack,
-    vantage_mask: np.ndarray,
-) -> np.ndarray:
+    vantage_mask: FloatArray,
+) -> FloatArray:
     """Compute full 8-factor UE5-style tactical importance score.
 
     Factors
@@ -443,11 +505,11 @@ def _compute_8factor_saliency(
     -------
     np.ndarray (H, W) float64 in [0, 1]
     """
-    h = np.asarray(stack.height, dtype=np.float64)
+    h: FloatArray = np.asarray(stack.height, dtype=np.float64)
     rows, cols = h.shape
     cell = float(stack.cell_size)
 
-    def _norm01(arr):
+    def _norm01(arr: FloatArray) -> FloatArray:
         lo, hi = float(arr.min()), float(arr.max())
         if hi - lo < 1e-9:
             return np.zeros_like(arr)
@@ -464,16 +526,18 @@ def _compute_8factor_saliency(
         wm = np.asarray(water_mask, dtype=np.float64)
         # Distance transform (approximate via iterative erosion fallback)
         try:
-            from scipy.ndimage import distance_transform_edt
-            water_binary = (wm > 0.1).astype(np.uint8)
+            water_binary: Uint8Array = (wm > 0.1).astype(np.uint8)
             if water_binary.any():
-                dist_water = distance_transform_edt(1 - water_binary)
+                dist_water = _scipy_distance_transform_edt(1 - water_binary)
                 # High score = close to water (f2 peaks at water edge)
-                max_d = float(dist_water.max()) + 1e-9
-                f2_water = _norm01(1.0 - dist_water / max_d)
+                if dist_water is not None:
+                    max_d = float(dist_water.max()) + 1e-9
+                    f2_water = _norm01(1.0 - dist_water / max_d)
+                else:
+                    f2_water = np.zeros_like(h)
             else:
                 f2_water = np.zeros_like(h)
-        except ImportError:
+        except (TypeError, ValueError):
             f2_water = np.zeros_like(h)
     else:
         # Without water data: proxy by low-elevation cells (likely near streams)
@@ -483,9 +547,12 @@ def _compute_8factor_saliency(
     # receive shelter from wind/view, increasing tactical value.
     # Laplacian of height ≈ curvature: negative = concave = sheltered.
     if _SCIPY_AVAILABLE:
-        h_blur = uniform_filter(h, size=5)
-        curvature = h_blur - h  # positive where h is above local mean → ridge
-        f3_shelter = _norm01(np.maximum(-curvature, 0.0))  # concave = high shelter
+        h_blur = _scipy_uniform_filter(h, size=5)
+        if h_blur is not None:
+            curvature = h_blur - h  # positive where h is above local mean → ridge
+            f3_shelter = _norm01(np.maximum(-curvature, 0.0))  # concave = high shelter
+        else:
+            f3_shelter = np.zeros_like(h)
     else:
         # Manual 3×3 Laplacian approximation
         pad = np.pad(h, 1, mode='edge')
@@ -499,9 +566,12 @@ def _compute_8factor_saliency(
     # Factor 4: Ridge prominence — Topographic Position Index (TPI)
     # TPI = height - mean height in neighbourhood. Positive = ridge/peak.
     if _SCIPY_AVAILABLE:
-        local_mean = uniform_filter(h, size=max(5, int(50.0 / cell)))
-        tpi = h - local_mean
-        f4_ridge = _norm01(np.maximum(tpi, 0.0))
+        local_mean = _scipy_uniform_filter(h, size=max(5, int(50.0 / cell)))
+        if local_mean is not None:
+            tpi = h - local_mean
+            f4_ridge = _norm01(np.maximum(tpi, 0.0))
+        else:
+            f4_ridge = np.zeros_like(h)
     else:
         pad = np.pad(h, 2, mode='edge')
         kernel_size = 5
@@ -516,11 +586,15 @@ def _compute_8factor_saliency(
     # Cells above their local neighbourhood by more than 1 standard deviation
     # have high convexity — they stand out visually.
     if _SCIPY_AVAILABLE:
-        local_mean_sm = uniform_filter(h, size=max(3, int(20.0 / cell)))
-        local_sq = uniform_filter(h ** 2, size=max(3, int(20.0 / cell)))
-        local_std = np.sqrt(np.maximum(local_sq - local_mean_sm ** 2, 0.0)) + 1e-9
-        prominence = (h - local_mean_sm) / local_std
-        f5_convex = _norm01(np.maximum(prominence, 0.0))
+        local_mean_sm = _scipy_uniform_filter(h, size=max(3, int(20.0 / cell)))
+        h_sq: FloatArray = np.asarray(h ** 2, dtype=np.float64)
+        local_sq = _scipy_uniform_filter(h_sq, size=max(3, int(20.0 / cell)))
+        if local_mean_sm is not None and local_sq is not None:
+            local_std = np.sqrt(np.maximum(local_sq - local_mean_sm ** 2, 0.0)) + 1e-9
+            prominence = (h - local_mean_sm) / local_std
+            f5_convex = _norm01(np.maximum(prominence, 0.0))
+        else:
+            f5_convex = f4_ridge.copy()
     else:
         f5_convex = f4_ridge.copy()
 
@@ -528,11 +602,12 @@ def _compute_8factor_saliency(
     # unobstructed sky views, increasing their landmark/beacon potential.
     # Proxy: inverse of max height in local neighbourhood minus self.
     if _SCIPY_AVAILABLE:
-        # Max filter via generic_filter
-        from scipy.ndimage import maximum_filter
-        local_max = maximum_filter(h, size=max(5, int(40.0 / cell)))
-        sky_obstruction = np.maximum(local_max - h, 0.0)
-        f6_sky = _norm01(1.0 / (1.0 + sky_obstruction))
+        local_max = _scipy_maximum_filter(h, size=max(5, int(40.0 / cell)))
+        if local_max is not None:
+            sky_obstruction = np.maximum(local_max - h, 0.0)
+            f6_sky = _norm01(1.0 / (1.0 + sky_obstruction))
+        else:
+            f6_sky = 1.0 - f4_ridge
     else:
         f6_sky = 1.0 - f4_ridge  # crude proxy
 
@@ -543,9 +618,12 @@ def _compute_8factor_saliency(
     slope_mag = np.sqrt(grad_r ** 2 + grad_c ** 2)
 
     if _SCIPY_AVAILABLE:
-        slope_mean = uniform_filter(slope_mag, size=5)
-        slope_var = np.abs(slope_mag - slope_mean)
-        f7_vegbreak = _norm01(slope_var)
+        slope_mean = _scipy_uniform_filter(slope_mag, size=5)
+        if slope_mean is not None:
+            slope_var = np.abs(slope_mag - slope_mean)
+            f7_vegbreak = _norm01(slope_var)
+        else:
+            f7_vegbreak = _norm01(slope_mag)
     else:
         f7_vegbreak = _norm01(slope_mag)
 
@@ -662,14 +740,14 @@ def pass_saliency_refine(
 def _saliency_quality_gate(
     result: "PassResult",
     stack: "TerrainMaskStack",
-) -> list:
+) -> list[ValidationIssue]:
     """Confirm saliency_macro has meaningful variance after refinement.
 
     A flat saliency map (std < 0.02) indicates the 8-factor scoring produced
     no useful signal — likely a degenerate heightmap or all-zero input.
     Raises a soft ValidationIssue so the pipeline logs a warning but continues.
     """
-    issues = []
+    issues: list[ValidationIssue] = []
     if stack.saliency_macro is None:
         issues.append(
             ValidationIssue(

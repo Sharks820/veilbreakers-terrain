@@ -7,15 +7,26 @@ import math
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import pytest
+from numpy.typing import NDArray
+from pytest import MonkeyPatch
+
+from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    TerrainIntentState,
+    TerrainMaskStack,
+    TerrainPipelineState,
+)
 
 
-def _stack(height: np.ndarray | None = None):
-    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+FloatArray = NDArray[np.floating[Any]]
 
-    h = (
+
+def _stack(height: FloatArray | None = None) -> TerrainMaskStack:
+    h: NDArray[np.float32] = (
         np.asarray(height, dtype=np.float32)
         if height is not None
         else np.arange(9, dtype=np.float32).reshape(3, 3)
@@ -31,6 +42,46 @@ def _stack(height: np.ndarray | None = None):
     )
 
 
+def _state(stack: TerrainMaskStack) -> TerrainPipelineState:
+    intent = TerrainIntentState(
+        seed=1,
+        region_bounds=BBox(0.0, 0.0, 6.0, 6.0),
+        tile_size=stack.tile_size,
+        cell_size=stack.cell_size,
+    )
+    return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+class _FakeAxis:
+    def imshow(self, *args: object, **kwargs: object) -> object:
+        return object()
+
+    def set_title(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+class _FakeMatplotlib(types.ModuleType):
+    def use(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+class _FakePyplot(types.ModuleType):
+    def subplots(self, *args: object, **kwargs: object) -> tuple[object, _FakeAxis]:
+        return object(), _FakeAxis()
+
+    def colorbar(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def tight_layout(self) -> None:
+        return None
+
+    def savefig(self, path: str, **kwargs: object) -> None:
+        Path(path).write_bytes(b"fake png")
+
+    def close(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
 def test_decal_safe_norm_and_log_norm_handle_degenerate_and_positive_flow():
     from veilbreakers_terrain.handlers.terrain_decal_placement import (
         _log_norm,
@@ -41,8 +92,8 @@ def test_decal_safe_norm_and_log_norm_handle_degenerate_and_positive_flow():
     normalized = _safe_norm(np.array([[2.0, 4.0]], dtype=np.float32))
     assert np.allclose(normalized, [[0.0, 1.0]])
     log_normalized = _log_norm(np.array([[-10.0, 0.0, 9.0]], dtype=np.float32))
-    assert log_normalized[0, 0] == pytest.approx(0.0)
-    assert log_normalized[0, 2] == pytest.approx(1.0)
+    assert math.isclose(float(log_normalized[0, 0]), 0.0, abs_tol=1e-12)
+    assert math.isclose(float(log_normalized[0, 2]), 1.0, abs_tol=1e-12)
 
 
 def test_banded_sdf_normalize_and_kuwahara_filter_preserve_shape_and_edges():
@@ -107,21 +158,26 @@ def test_checkpoint_day_key_and_week_key_use_utc_calendar_boundaries():
     assert _week_key(timestamp) == (2026, 1)
 
 
-def test_live_preview_diff_snapshot_and_render_thumbnail(monkeypatch):
+def test_live_preview_diff_snapshot_and_render_thumbnail(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     from veilbreakers_terrain.handlers import terrain_live_preview as live_preview
 
     stack = _stack()
-    state = types.SimpleNamespace(mask_stack=stack)
-    session = object.__new__(live_preview.LivePreviewSession)
-    session.controller = types.SimpleNamespace(state=state)
+    session = live_preview.LivePreviewSession(TerrainPassController(_state(stack)))
+
+    def fake_compute_visual_diff(
+        before: TerrainMaskStack, after: TerrainMaskStack
+    ) -> dict[str, float]:
+        return {
+            "before_height_sum": float(before.height.sum()),
+            "after_height_sum": float(after.height.sum()),
+        }
 
     monkeypatch.setattr(
         live_preview,
         "compute_visual_diff",
-        lambda before, after: {
-            "before_height_sum": float(before.height.sum()),
-            "after_height_sum": float(after.height.sum()),
-        },
+        fake_compute_visual_diff,
     )
 
     snapshot = session.snapshot_stack()
@@ -132,30 +188,12 @@ def test_live_preview_diff_snapshot_and_render_thumbnail(monkeypatch):
     assert snapshot.height[0, 0] != stack.height[0, 0]
     assert diff["before_height_sum"] != diff["after_height_sum"]
 
-    fake_matplotlib = types.ModuleType("matplotlib")
-    fake_matplotlib.use = lambda *_args, **_kwargs: None
-    fake_pyplot = types.ModuleType("matplotlib.pyplot")
-
-    class _FakeAxis:
-        def imshow(self, *_args, **_kwargs):
-            return object()
-
-        def set_title(self, *_args, **_kwargs):
-            return None
-
-    fake_pyplot.subplots = lambda *_args, **_kwargs: (object(), _FakeAxis())
-    fake_pyplot.colorbar = lambda *_args, **_kwargs: None
-    fake_pyplot.tight_layout = lambda: None
-
-    def fake_savefig(path: str, **_kwargs):
-        Path(path).write_bytes(b"fake png")
-
-    fake_pyplot.savefig = fake_savefig
-    fake_pyplot.close = lambda *_args, **_kwargs: None
+    fake_matplotlib = _FakeMatplotlib("matplotlib")
+    fake_pyplot = _FakePyplot("matplotlib.pyplot")
     monkeypatch.setitem(sys.modules, "matplotlib", fake_matplotlib)
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", fake_pyplot)
 
-    output = Path("output/visual_readiness/test_live_preview_thumbnail.png")
+    output = tmp_path / "test_live_preview_thumbnail.png"
     rendered_path = session.render_thumbnail_png(str(output), view="top")
 
     assert rendered_path == str(output)
@@ -182,7 +220,7 @@ def test_waterfall_volume_bounds_matrix_volume_and_validation():
         bounds.axis_up,
         bounds.axis_cascade_normal,
     )
-    assert bounds.volume_m3() == pytest.approx(8.0 * 4.0 * 10.0 * 6.0)
+    assert math.isclose(bounds.volume_m3(), 8.0 * 4.0 * 10.0 * 6.0)
     assert validate_waterfall_volume_bounds(bounds, math.pi / 4.0) == []
 
 
@@ -212,8 +250,9 @@ def test_waterfall_particle_seed_zones_scale_with_discharge_and_validate():
     )
 
     assert [z.name for z in zones_low] == ["lip_zone", "impact_zone", "mist_zone"]
-    assert zones_high[0].particle_density == pytest.approx(
-        zones_low[0].particle_density * 2.0
+    assert math.isclose(
+        zones_high[0].particle_density,
+        zones_low[0].particle_density * 2.0,
     )
     assert validate_particle_seed_zones(zones_low, discharge_m3s=1.0) == []
 
@@ -346,15 +385,15 @@ def test_unity_export_resolution_color_layers_components_and_vertical_extent():
 
     assert _is_unity_heightmap_resolution(513)
     assert not _is_unity_heightmap_resolution(512)
-    assert _hex_to_rgb01("#336699") == pytest.approx([0.2, 0.4, 0.6], abs=1e-6)
+    assert np.allclose(_hex_to_rgb01("#336699"), [0.2, 0.4, 0.6], atol=1e-6)
     assert _hex_to_rgb01("bad") == [0.5, 0.5, 0.5]
     assert len(components) == 1
     assert set(bounds) == {"min", "max"}
     assert bounds["min"][0] <= bounds["max"][0]
     assert bounds["min"][1] <= bounds["max"][1]
     assert bounds["min"][2] <= bounds["max"][2]
-    assert min_z == pytest.approx(0.5)
-    assert max_z == pytest.approx(7.0)
+    assert math.isclose(min_z, 0.5)
+    assert math.isclose(max_z, 7.0)
     assert len(layers) == 6
     assert layers[0]["layer_id"] == "ground"
     assert layers[5]["layer_id"] == "layer_05"
@@ -375,8 +414,8 @@ def test_waterfall_foam_helpers_and_vertex_export_contract():
     assert saturate(-1.0) == 0.0
     assert saturate(2.0) == 1.0
     assert np.allclose(saturate(np.array([-1.0, 0.5, 2.0])), [0.0, 0.5, 1.0])
-    assert bake_foam_vertex_alpha(0.0, 0.0, foam_radius=2.0) == pytest.approx(1.0)
-    assert bake_foam_vertex_alpha(2.0, 0.0, foam_radius=2.0) == pytest.approx(0.0)
-    assert bake_foam_vertex_alpha(2.0, 10.0, foam_radius=2.0) == pytest.approx(0.0)
+    assert math.isclose(bake_foam_vertex_alpha(0.0, 0.0, foam_radius=2.0), 1.0)
+    assert math.isclose(bake_foam_vertex_alpha(2.0, 0.0, foam_radius=2.0), 0.0)
+    assert math.isclose(bake_foam_vertex_alpha(2.0, 10.0, foam_radius=2.0), 0.0)
     assert len(vertices) == 4
     assert {"position", "foam_alpha"} <= set(vertices[0])

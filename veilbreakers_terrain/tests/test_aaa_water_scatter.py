@@ -18,47 +18,78 @@ from __future__ import annotations
 import math
 import types
 import unittest
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from typing import TypeAlias, cast
 from unittest.mock import patch
 
 import numpy as np
+from numpy.typing import NDArray
+
+Color4: TypeAlias = tuple[float, float, float, float]
+UV2: TypeAlias = tuple[float, float]
+Coord3: TypeAlias = tuple[float, float, float] | types.SimpleNamespace
+WaterParams: TypeAlias = Mapping[str, object]
+WaterResult: TypeAlias = dict[str, object]
+
+
+def _color4(values: Iterable[float]) -> Color4:
+    value = tuple(values)
+    if len(value) != 4:
+        raise AssertionError(f"expected 4 color channels, got {len(value)}")
+    return value
+
+
+def _result_int(result: WaterResult, key: str, default: int = 0) -> int:
+    return int(cast(int | float, result.get(key, default)))
+
+
+def _result_float(result: WaterResult, key: str, default: float = 0.0) -> float:
+    return float(cast(int | float, result.get(key, default)))
+
+
+def _material_fraction(result: WaterResult, material_name: str) -> float:
+    names = cast(Sequence[str], result["material_names"])
+    ids = cast(NDArray[np.int_], result["material_ids"])
+    mask = ids == names.index(material_name)
+    return float(np.count_nonzero(mask)) / float(mask.size)
 
 # ---------------------------------------------------------------------------
 # Full bpy / bmesh stubs required by handle_create_water
 # ---------------------------------------------------------------------------
 
-def _build_full_bpy_stubs():
+def _build_full_bpy_stubs() -> tuple[types.SimpleNamespace, types.SimpleNamespace]:
     """Build complete bpy/bmesh stubs that support handle_create_water."""
 
     # --- bmesh layer types ---
 
     class _FloatColorLayer:
-        def __init__(self):
-            self._data = {}
+        def __init__(self) -> None:
+            self._data: dict[int, Color4] = {}
 
-        def __getitem__(self, key):
+        def __getitem__(self, key: object) -> Color4:
             return self._data.get(id(key), (0.0, 0.0, 0.0, 0.0))
 
-        def __setitem__(self, key, val):
-            self._data[id(key)] = tuple(val)
+        def __setitem__(self, key: object, val: Iterable[float]) -> None:
+            self._data[id(key)] = _color4(val)
 
     class _LayerGroup:
-        def __init__(self):
-            self._layers = {}
+        def __init__(self) -> None:
+            self._layers: dict[str, _FloatColorLayer] = {}
 
-        def new(self, name):
+        def new(self, name: str) -> _FloatColorLayer:
             layer = _FloatColorLayer()
             self._layers[name] = layer
             return layer
 
-        def get(self, name):
+        def get(self, name: str) -> _FloatColorLayer | None:
             return self._layers.get(name)
 
     class _VertLayerAccess:
-        def __init__(self):
+        def __init__(self) -> None:
             self.float_color = _LayerGroup()
 
     class _LoopLayerAccess:
-        def __init__(self):
+        def __init__(self) -> None:
             self.float_color = _LayerGroup()
             # environment.py's water spline builder also writes a UV layer
             # via bm.loops.layers.uv.new("UVMap"); expose the same stubbed
@@ -73,47 +104,49 @@ def _build_full_bpy_stubs():
         spline builder can do ``loop[uv_layer].uv = (u, v)``.
         """
 
-        def __init__(self, initial=(0.0, 0.0, 0.0, 0.0)):
-            self._value = tuple(initial)
-            self.uv = (0.0, 0.0)
+        def __init__(self, initial: Iterable[float] = (0.0, 0.0, 0.0, 0.0)) -> None:
+            self._value: tuple[float, ...] = tuple(initial)
+            self.uv: UV2 = (0.0, 0.0)
 
-        def __iter__(self):
+        def __iter__(self) -> Iterator[float]:
             return iter(self._value)
 
-        def __getitem__(self, idx):
+        def __getitem__(self, idx: int) -> float:
             return self._value[idx]
 
-        def __len__(self):
+        def __len__(self) -> int:
             return len(self._value)
 
-        def __eq__(self, other):
-            return tuple(self._value) == tuple(other)
+        def __eq__(self, other: object) -> bool:
+            if not isinstance(other, Iterable):
+                return False
+            return tuple(self._value) == tuple(cast(Iterable[object], other))
 
     class _Loop:
-        def __init__(self):
-            self._cells = {}
+        def __init__(self) -> None:
+            self._cells: dict[int, _LoopLayerCell] = {}
 
-        def __setitem__(self, layer, val):
+        def __setitem__(self, layer: object, val: Iterable[float]) -> None:
             cell = self._cells.setdefault(id(layer), _LoopLayerCell())
             cell._value = tuple(val)
 
-        def __getitem__(self, layer):
+        def __getitem__(self, layer: object) -> _LoopLayerCell:
             return self._cells.setdefault(id(layer), _LoopLayerCell())
 
     class _Vert:
-        def __init__(self, co):
+        def __init__(self, co: Coord3) -> None:
             self.co = co
-            self._colors = {}
-            self.link_loops = []
+            self._colors: dict[int, Color4] = {}
+            self.link_loops: list[_Loop] = []
 
-        def __setitem__(self, layer, val):
-            self._colors[id(layer)] = tuple(val)
+        def __setitem__(self, layer: object, val: Iterable[float]) -> None:
+            self._colors[id(layer)] = _color4(val)
 
-        def __getitem__(self, layer):
+        def __getitem__(self, layer: object) -> Color4:
             return self._colors.get(id(layer), (0.0, 0.0, 0.0, 0.0))
 
     class _Face:
-        def __init__(self, verts):
+        def __init__(self, verts: Sequence[_Vert]) -> None:
             self.verts = list(verts)
             self.loops = [_Loop() for _ in verts]
             for v, lp in zip(self.verts, self.loops):
@@ -122,14 +155,14 @@ def _build_full_bpy_stubs():
     # --- BMesh ---
 
     class _BMesh:
-        def __init__(self):
-            self._verts = []
-            self._faces = []
+        def __init__(self) -> None:
+            self._verts: list[_Vert] = []
+            self._faces: list[_Face] = []
             self._vert_layer_access = _VertLayerAccess()
             self._loop_layer_access = _LoopLayerAccess()
 
             # bm.verts namespace
-            def _new_vert(co):
+            def _new_vert(co: Coord3) -> _Vert:
                 v = _Vert(co)
                 self._verts.append(v)
                 return v
@@ -144,17 +177,17 @@ def _build_full_bpy_stubs():
             )
 
         @property
-        def faces(self):
+        def faces(self) -> types.SimpleNamespace:
             bm = self
 
-            def _new_face(verts):
+            def _new_face(verts: Sequence[_Vert]) -> _Face:
                 f = _Face(verts)
                 bm._faces.append(f)
                 return f
 
             return types.SimpleNamespace(new=_new_face)
 
-        def to_mesh(self, mesh):
+        def to_mesh(self, mesh: "_Mesh") -> None:
             mesh._bm = self
             # Populate polygons so tri counting works
             mesh.polygons = [
@@ -167,55 +200,66 @@ def _build_full_bpy_stubs():
             # Populate vertices so len(mesh.vertices) reflects actual vert count
             mesh.vertices = list(self._verts)
 
-        def free(self):
+        def free(self) -> None:
             pass
 
     # --- Mesh / Object / Collection ---
 
     class _Mesh:
-        def __init__(self, name):
+        def __init__(self, name: str) -> None:
             self.name = name
-            self.polygons = []
-            self.vertices = []
-            self.materials = []
-            self._bm = None
+            self.polygons: list[types.SimpleNamespace] = []
+            self.vertices: list[object] = []
+            self.materials: list[object] = []
+            self._bm: _BMesh | None = None
 
-        def from_pydata(self, verts, edges, faces):
+        def from_pydata(
+            self,
+            verts: Sequence[Coord3],
+            edges: Sequence[object],
+            faces: Sequence[Sequence[int]],
+        ) -> None:
             self.vertices = list(verts)
             self.polygons = [
                 types.SimpleNamespace(vertices=list(f), use_smooth=False)
                 for f in faces
             ]
 
-        def validate(self):
+        def validate(self) -> None:
             pass
 
-        def update(self):
+        def update(self) -> None:
             pass
 
     class _Object:
-        def __init__(self, name, mesh):
+        def __init__(self, name: str, mesh: _Mesh) -> None:
             self.name = name
             self.data = mesh
             self.location = (0.0, 0.0, 0.0)
 
     class _Collection:
-        def __init__(self):
+        def __init__(self) -> None:
+            def _link_object(obj: object) -> None:
+                return None
+
+            def _unlink_object(obj: object) -> None:
+                return None
+
             self.objects = types.SimpleNamespace(
-                link=lambda o: None,
-                unlink=lambda o: None,
+                link=_link_object,
+                unlink=_unlink_object,
             )
 
     # --- Materials ---
 
     class _MaterialStore:
-        def __init__(self):
-            self._store = {}
+        def __init__(self) -> None:
+            self._store: dict[str, types.SimpleNamespace] = {}
 
-        def get(self, name):
+        def get(self, name: str) -> types.SimpleNamespace | None:
             return self._store.get(name)
 
-        def new(self, name):
+        def new(self, name: str) -> types.SimpleNamespace:
             bsdf = types.SimpleNamespace(
                 inputs={
                     "Base Color": types.SimpleNamespace(default_value=(0.0, 0.0, 0.0, 1.0)),
@@ -240,10 +284,10 @@ def _build_full_bpy_stubs():
             }
             nodes_list = [bsdf, output_node]
 
-            def _nodes_get(n, _store=nodes_store):
-                return _store.get(n)
+            def _nodes_get(n: str) -> types.SimpleNamespace | None:
+                return nodes_store.get(n)
 
-            def _nodes_new(t, _list=nodes_list):
+            def _nodes_new(t: str) -> types.SimpleNamespace:
                 # Return type-appropriate stubs so handler key lookups work
                 if "Output" in t:
                     node = types.SimpleNamespace(
@@ -271,12 +315,15 @@ def _build_full_bpy_stubs():
                         outputs={"Fac": types.SimpleNamespace(), "Normal": types.SimpleNamespace()},
                         location=(0, 0),
                     )
-                _list.append(node)
+                nodes_list.append(node)
                 return node
 
-            def _nodes_clear(_store=nodes_store, _list=nodes_list):
-                _store.clear()
-                _list.clear()
+            def _nodes_clear() -> None:
+                nodes_store.clear()
+                nodes_list.clear()
+
+            def _link_nodes(a: object, b: object) -> None:
+                return None
 
             node_tree = types.SimpleNamespace(
                 nodes=types.SimpleNamespace(
@@ -284,7 +331,7 @@ def _build_full_bpy_stubs():
                     new=_nodes_new,
                     clear=_nodes_clear,
                 ),
-                links=types.SimpleNamespace(new=lambda a, b: None),
+                links=types.SimpleNamespace(new=_link_nodes),
             )
             mat = types.SimpleNamespace(
                 name=name,
@@ -300,35 +347,62 @@ def _build_full_bpy_stubs():
     material_store = _MaterialStore()
     col = _Collection()
 
+    def _new_mesh(name: str) -> _Mesh:
+        return _Mesh(name)
+
+    def _get_mesh(name: str) -> None:
+        return None
+
+    def _remove_mesh(mesh: _Mesh, **kwargs: object) -> None:
+        return None
+
+    def _new_object_data(name: str, mesh: _Mesh) -> _Object:
+        return _Object(name, mesh)
+
+    def _get_object_data(name: str) -> None:
+        return None
+
+    def _remove_object_data(obj: _Object, **kwargs: object) -> None:
+        return None
+
+    def _new_collection(name: str) -> _Collection:
+        return _Collection()
+
     bpy_data = types.SimpleNamespace(
         meshes=types.SimpleNamespace(
-            new=lambda n: _Mesh(n),
-            get=lambda n: None,
-            remove=lambda m, **kw: None,
+            new=_new_mesh,
+            get=_get_mesh,
+            remove=_remove_mesh,
         ),
         objects=types.SimpleNamespace(
-            new=lambda n, m: _Object(n, m),
-            get=lambda n: None,
-            remove=lambda o, **kw: None,
+            new=_new_object_data,
+            get=_get_object_data,
+            remove=_remove_object_data,
         ),
         materials=material_store,
-        collections=types.SimpleNamespace(new=lambda n: _Collection()),
+        collections=types.SimpleNamespace(new=_new_collection),
     )
 
-    bpy_mod = types.ModuleType("bpy")
+    def _select_all(action: str = "DESELECT") -> None:
+        return None
+
+    bpy_mod = types.SimpleNamespace()
     bpy_mod.data = bpy_data
     bpy_mod.context = types.SimpleNamespace(
         collection=col,
         scene=types.SimpleNamespace(collection=col),
     )
     bpy_mod.ops = types.SimpleNamespace(
-        object=types.SimpleNamespace(select_all=lambda action="DESELECT": None)
+        object=types.SimpleNamespace(select_all=_select_all)
     )
     bpy_mod.types = types.SimpleNamespace(Object=_Object, Collection=_Collection)
 
     # bmesh
-    bmesh_mod = types.ModuleType("bmesh")
-    bmesh_mod.new = lambda: _BMesh()
+    def _new_bmesh() -> _BMesh:
+        return _BMesh()
+
+    bmesh_mod = types.SimpleNamespace()
+    bmesh_mod.new = _new_bmesh
     bmesh_mod.types = types.ModuleType("bmesh.types")
 
     return bpy_mod, bmesh_mod
@@ -354,10 +428,10 @@ from veilbreakers_terrain.handlers.environment import handle_create_water  # noq
 class TestWaterMeshNotDisc(unittest.TestCase):
     """Verify water mesh has more than 4 faces (not a flat disc placeholder)."""
 
-    def _water(self, **extra):
-        params = {"name": "TestWater", "water_level": 0.0}
+    def _water(self, **extra: object) -> WaterResult:
+        params: dict[str, object] = {"name": "TestWater", "water_level": 0.0}
         params.update(extra)
-        return handle_create_water(params)
+        return cast(WaterResult, handle_create_water(params))
 
     def test_basic_water_creation_returns_dict(self):
         result = self._water()
@@ -366,7 +440,7 @@ class TestWaterMeshNotDisc(unittest.TestCase):
 
     def test_water_has_cross_sections_in_range(self):
         result = self._water()
-        cs = result.get("cross_sections", 0)
+        cs = _result_int(result, "cross_sections")
         self.assertGreaterEqual(cs, 8, f"cross_sections={cs} < 8")
         self.assertLessEqual(cs, 16, f"cross_sections={cs} > 16")
 
@@ -381,19 +455,19 @@ class TestWaterMeshNotDisc(unittest.TestCase):
 
     def test_water_custom_cross_sections_clamped_low(self):
         result = self._water(cross_sections=2)  # below min 8
-        self.assertGreaterEqual(result.get("cross_sections", 0), 8)
+        self.assertGreaterEqual(_result_int(result, "cross_sections"), 8)
 
     def test_water_custom_cross_sections_clamped_high(self):
         result = self._water(cross_sections=100)  # above max 16
-        self.assertLessEqual(result.get("cross_sections", 99), 16)
+        self.assertLessEqual(_result_int(result, "cross_sections", 99), 16)
 
     def test_water_level_preserved(self):
         result = self._water(water_level=2.5)
-        self.assertAlmostEqual(result.get("water_level", 0.0), 2.5, places=2)
+        self.assertAlmostEqual(_result_float(result, "water_level"), 2.5, places=2)
 
     def test_water_area_positive(self):
         result = self._water()
-        self.assertGreater(result.get("area", 0.0), 0.0)
+        self.assertGreater(_result_float(result, "area"), 0.0)
 
 
 class TestWaterFlowVertexColors(unittest.TestCase):
@@ -514,17 +588,25 @@ class TestWaterMaterialProperties(unittest.TestCase):
         orig_bpy = _environment_mod.bpy
         orig_bmesh = _environment_mod.bmesh
 
-        def _vec(x, y, z):
+        def _vec(x: float, y: float, z: float) -> types.SimpleNamespace:
             return types.SimpleNamespace(x=float(x), y=float(y), z=float(z))
 
         grid = (-6.0, -2.0, 2.0, 6.0)
-        verts = []
+        verts: list[types.SimpleNamespace] = []
         for y in grid:
             for x in grid:
                 z = -1.0 if abs(x) <= 2.0 and abs(y) <= 2.0 else 1.2
                 verts.append(types.SimpleNamespace(co=_vec(x, y, z)))
 
-        terrain_mesh = types.SimpleNamespace(vertices=verts, materials=[], polygons=[], update=lambda: None)
+        def _update_terrain_mesh() -> None:
+            return None
+
+        terrain_mesh = types.SimpleNamespace(
+            vertices=verts,
+            materials=[],
+            polygons=[],
+            update=_update_terrain_mesh,
+        )
         terrain_obj = types.SimpleNamespace(
             name="TerrainMaskSource",
             data=terrain_mesh,
@@ -532,28 +614,38 @@ class TestWaterMaterialProperties(unittest.TestCase):
             dimensions=types.SimpleNamespace(x=12.0, y=12.0, z=2.2),
         )
 
-        created_objects = {}
-        linked_objects = []
+        created_objects: dict[str, object] = {}
+        linked_objects: list[object] = []
         orig_objects = bpy_stub.data.objects
 
-        def _new_object(name, mesh):
+        def _new_object(name: str, mesh: object) -> object:
             obj = orig_objects.new(name, mesh)
             created_objects[name] = obj
             return obj
 
-        def _get_object(name):
+        def _get_object(name: str) -> object | None:
             if name == terrain_obj.name:
                 return terrain_obj
             return created_objects.get(name)
 
+        def _remove_object(obj: object, **kwargs: object) -> None:
+            name = cast(types.SimpleNamespace, obj).name
+            created_objects.pop(name, None)
+
+        def _link_object(obj: object) -> None:
+            linked_objects.append(obj)
+
+        def _unlink_object(obj: object) -> None:
+            return None
+
         bpy_stub.data.objects = types.SimpleNamespace(
             new=_new_object,
             get=_get_object,
-            remove=lambda obj, **kwargs: created_objects.pop(obj.name, None),
+            remove=_remove_object,
         )
         bpy_stub.context.collection.objects = types.SimpleNamespace(
-            link=lambda obj: linked_objects.append(obj),
-            unlink=lambda obj: None,
+            link=_link_object,
+            unlink=_unlink_object,
         )
 
         _environment_mod.bpy = bpy_stub
@@ -604,11 +696,8 @@ class TestAutoSplatSlopeToRock(unittest.TestCase):
     def test_cliff_slope_dominant_material_is_cliff(self):
         hm = np.full((16, 16), 0.5)
         slope = np.full((16, 16), 60.0)  # 60 deg everywhere -> cliff
-        result = auto_splat_terrain(hm, slope_map=slope)
-        ids = result["material_ids"]
-        names = result["material_names"]
-        cliff_idx = names.index("cliff")
-        cliff_fraction = np.mean(ids == cliff_idx)
+        result = cast(WaterResult, auto_splat_terrain(hm, slope_map=slope))
+        cliff_fraction = _material_fraction(result, "cliff")
         self.assertGreater(cliff_fraction, 0.9,
             f"Expected >90% cliff at 60-deg slope, got {cliff_fraction:.2%}")
 
@@ -616,11 +705,8 @@ class TestAutoSplatSlopeToRock(unittest.TestCase):
         """Slopes 30-55 deg -> rock/gravel blend, not pure cliff."""
         hm = np.full((16, 16), 0.4)
         slope = np.full((16, 16), 40.0)
-        result = auto_splat_terrain(hm, slope_map=slope)
-        names = result["material_names"]
-        ids = result["material_ids"]
-        cliff_idx = names.index("cliff")
-        cliff_fraction = np.mean(ids == cliff_idx)
+        result = cast(WaterResult, auto_splat_terrain(hm, slope_map=slope))
+        cliff_fraction = _material_fraction(result, "cliff")
         # At 40 deg we should NOT be mostly cliff
         self.assertLess(cliff_fraction, 0.5,
             f"At 40-deg slope expected <50% cliff, got {cliff_fraction:.2%}")
@@ -641,11 +727,8 @@ class TestAutoSplatMoistureToSwamp(unittest.TestCase):
         hm = np.full((16, 16), 0.2)
         slope = np.zeros((16, 16))
         water_prox = np.full((16, 16), 0.9)
-        result = auto_splat_terrain(hm, slope_map=slope, water_proximity=water_prox)
-        names = result["material_names"]
-        ids = result["material_ids"]
-        mud_idx = names.index("mud")
-        mud_fraction = np.mean(ids == mud_idx)
+        result = cast(WaterResult, auto_splat_terrain(hm, slope_map=slope, water_proximity=water_prox))
+        mud_fraction = _material_fraction(result, "mud")
         self.assertGreater(mud_fraction, 0.9,
             f"Expected >90% mud on wet flat terrain, got {mud_fraction:.2%}")
 
@@ -653,11 +736,8 @@ class TestAutoSplatMoistureToSwamp(unittest.TestCase):
         hm = np.full((16, 16), 0.3)
         slope = np.zeros((16, 16))
         water_prox = np.zeros((16, 16))
-        result = auto_splat_terrain(hm, slope_map=slope, water_proximity=water_prox)
-        names = result["material_names"]
-        ids = result["material_ids"]
-        mud_idx = names.index("mud")
-        mud_fraction = np.mean(ids == mud_idx)
+        result = cast(WaterResult, auto_splat_terrain(hm, slope_map=slope, water_proximity=water_prox))
+        mud_fraction = _material_fraction(result, "mud")
         self.assertLess(mud_fraction, 0.1,
             f"Expected <10% mud on dry terrain, got {mud_fraction:.2%}")
 
@@ -712,22 +792,16 @@ class TestAutoSplatHeightToSnow(unittest.TestCase):
     def test_high_altitude_gives_snow(self):
         hm = np.full((16, 16), 0.85)
         slope = np.zeros((16, 16))
-        result = auto_splat_terrain(hm, slope_map=slope)
-        names = result["material_names"]
-        ids = result["material_ids"]
-        snow_idx = names.index("snow")
-        snow_fraction = np.mean(ids == snow_idx)
+        result = cast(WaterResult, auto_splat_terrain(hm, slope_map=slope))
+        snow_fraction = _material_fraction(result, "snow")
         self.assertGreater(snow_fraction, 0.9,
             f"Expected >90% snow at elevation 0.85, got {snow_fraction:.2%}")
 
     def test_low_altitude_not_snow(self):
         hm = np.full((16, 16), 0.3)
         slope = np.zeros((16, 16))
-        result = auto_splat_terrain(hm, slope_map=slope)
-        names = result["material_names"]
-        ids = result["material_ids"]
-        snow_idx = names.index("snow")
-        snow_fraction = np.mean(ids == snow_idx)
+        result = cast(WaterResult, auto_splat_terrain(hm, slope_map=slope))
+        snow_fraction = _material_fraction(result, "snow")
         self.assertLess(snow_fraction, 0.05,
             f"Expected <5% snow at elevation 0.3, got {snow_fraction:.2%}")
 

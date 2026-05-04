@@ -13,18 +13,50 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Any, Dict, List, Optional, Tuple
+import importlib
+import importlib.util
+from collections.abc import Callable, Sequence
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 
 import logging
 
-try:
-    from scipy.ndimage import label as _scipy_label
-    _SCIPY_TWELVE_STEP_AVAILABLE = True
-except ImportError:
-    _scipy_label = None  # type: ignore[assignment]
-    _SCIPY_TWELVE_STEP_AVAILABLE = False
+_NDIMAGE_MODULE: Any | None = (
+    importlib.import_module("scipy.ndimage")
+    if importlib.util.find_spec("scipy.ndimage") is not None
+    else None
+)
+_SCIPY_TWELVE_STEP_AVAILABLE = _NDIMAGE_MODULE is not None
+
+
+def _ndimage_callable(name: str) -> Callable[..., Any] | None:
+    if _NDIMAGE_MODULE is None:
+        return None
+    candidate = getattr(_NDIMAGE_MODULE, name, None)
+    return cast(Callable[..., Any], candidate) if callable(candidate) else None
+
+
+_scipy_label = _ndimage_callable("label")
+_max_filter = _ndimage_callable("maximum_filter")
+_distance_transform_edt = _ndimage_callable("distance_transform_edt")
+
+GridCell: TypeAlias = tuple[int, int]
+RoadProfile: TypeAlias = dict[str, float]
+RoadSpec: TypeAlias = dict[str, Any]
+
+
+def _distance_transform(mask: np.ndarray) -> np.ndarray:
+    if _distance_transform_edt is not None:
+        return np.asarray(_distance_transform_edt(mask), dtype=np.float32)
+    rows, cols = mask.shape
+    target = np.argwhere(mask == 0)
+    if target.size == 0:
+        return np.zeros((rows, cols), dtype=np.float32)
+    rr, cc = np.mgrid[0:rows, 0:cols]
+    query = np.stack([rr.ravel(), cc.ravel()], axis=1)
+    distances = np.sqrt(((query[:, None, :] - target[None, :, :]) ** 2).sum(axis=2))
+    return distances.min(axis=1).reshape(rows, cols).astype(np.float32)
 
 from ._terrain_world import (
     erode_world_heightmap,
@@ -129,7 +161,7 @@ def _apply_flatten_zones(world_hmap: np.ndarray, intent: TerrainIntentState) -> 
 
 def _apply_canyon_river_carves(
     world_hmap: np.ndarray, intent: TerrainIntentState
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Step 5 — carve canyon and river channels into the world heightmap.
 
     Canyon carving
@@ -234,8 +266,10 @@ def _apply_canyon_river_carves(
         if h_span > 0.0:
             result_norm = (result - h_min) / h_span
             for carve in river_carves:
-                source = tuple(int(v) for v in carve["source"])
-                dest = tuple(int(v) for v in carve["dest"])
+                source_raw = cast(Sequence[Any], carve["source"])
+                dest_raw = cast(Sequence[Any], carve["dest"])
+                source: GridCell = (int(source_raw[0]), int(source_raw[1]))
+                dest: GridCell = (int(dest_raw[0]), int(dest_raw[1]))
                 width = int(carve.get("width", 2))
                 depth = float(carve.get("depth", 0.05))
                 seed = int(carve.get("seed", 0))
@@ -263,7 +297,7 @@ def _detect_cliff_edges(
     min_component_size: int = 20,
     max_components: int = 50,
     cell_size: float = 1.0,
-) -> List[Tuple[int, int]]:
+) -> list[GridCell]:
     """Detect cliff edges using fully vectorized slope mask + scipy connected-component labeling.
 
     AAA upgrade (C+→A-):
@@ -306,7 +340,7 @@ def _detect_cliff_edges(
         max_components: Maximum number of components to return.
         cell_size: World metres per grid cell.  Defaults to 1.0.
     """
-    coords: List[Tuple[int, int]] = []
+    coords: list[GridCell] = []
     if world_hmap.size == 0:
         return coords
 
@@ -334,12 +368,17 @@ def _detect_cliff_edges(
     if _SCIPY_TWELVE_STEP_AVAILABLE and _scipy_label is not None:
         # SciPy fast path: compiled C union-find, no Python per-cell overhead
         struct_8 = np.ones((3, 3), dtype=np.int32)
-        labels, _n_labels = _scipy_label(cliff_mask, structure=struct_8)
+        labels_raw, _n_labels = cast(
+            tuple[Any, Any],
+            _scipy_label(cliff_mask, structure=struct_8),
+        )
+        labels = np.asarray(labels_raw, dtype=np.int32)
     else:
         # Vectorized fallback: iterative label propagation via np.roll
         # Assign each cliff pixel a unique initial label; propagate minimum
         # label through 8 neighbors until convergence.
-        labels = np.where(cliff_mask, np.arange(1, rows * cols + 1).reshape(rows, cols), 0).astype(np.int32)
+        label_seed = np.arange(1, rows * cols + 1, dtype=np.int32).reshape(rows, cols)
+        labels = np.where(cliff_mask, label_seed, 0).astype(np.int32)
         _d8_shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
         for _ in range(rows + cols):  # upper bound on label propagation depth
             changed = False
@@ -389,7 +428,7 @@ def _detect_cave_candidates(
     min_cluster_size: int = 3,
     min_depth_m: float = 2.0,
     cell_size_m: float = 1.0,
-) -> List[Tuple[int, int]]:
+) -> list[GridCell]:
     """Detect cave entrance candidates using a four-condition morphological filter.
 
     A cell qualifies as a cave candidate when ALL of:
@@ -505,10 +544,12 @@ def _detect_cave_candidates(
     # ------------------------------------------------------------------ #
     depth_threshold_units = min_depth_m / max(float(cell_size_m), 1e-9)
 
-    try:
-        from scipy.ndimage import maximum_filter as _max_filter
-        local_max = _max_filter(world_hmap, size=11, mode="nearest")
-    except ImportError:
+    if _max_filter is not None:
+        local_max = np.asarray(
+            _max_filter(world_hmap, size=11, mode="nearest"),
+            dtype=np.float64,
+        )
+    else:
         # Pure-numpy fallback via sliding_window_view (numpy >= 1.20)
         pad = 5
         padded = np.pad(world_hmap, pad, mode="edge")
@@ -536,7 +577,7 @@ def _detect_cave_candidates(
         for r0, c0 in zip(cand_rows.tolist(), cand_cols.tolist()):
             if labels_cave[r0, c0] != 0:
                 continue
-            bfs_q: List[Tuple[int, int]] = [(r0, c0)]
+            bfs_q: list[GridCell] = [(int(r0), int(c0))]
             comp_id = next_id
             next_id += 1
             while bfs_q:
@@ -550,7 +591,7 @@ def _detect_cave_candidates(
 
         if next_id > 1:
             ids_cv, counts_cv = np.unique(labels_cave[labels_cave > 0], return_counts=True)
-            kept_ids_cv = {
+            kept_ids_cv: set[int] = {
                 int(i) for i, cnt in zip(ids_cv.tolist(), counts_cv.tolist())
                 if cnt >= min_cluster_size
             }
@@ -573,10 +614,10 @@ def _detect_waterfall_lips(
     world_origin_x: float,
     world_origin_y: float,
     cell_size: float,
-    flow_accumulation: Optional[np.ndarray] = None,
+    flow_accumulation: np.ndarray | None = None,
     min_drainage: float = 500.0,
     min_drop_m: float = 4.0,
-) -> list:
+) -> list[Any]:
     """Detect waterfall lip candidates using drainage-weighted D8 steepest descent.
 
     A waterfall lip cell satisfies:
@@ -666,14 +707,14 @@ def _road_type_for_anchor_pair(kind_a: str, kind_b: str) -> str:
     return "trail"
 
 
-def _road_profile_params(road_type: str) -> dict:
+def _road_profile_params(road_type: str) -> RoadProfile:
     """Return 3-zone carving parameters for a road type.
 
     main:  road_width=3.0, shoulder_width=4.0, influence_width=6.0
     path:  road_width=2.0, shoulder_width=3.0, influence_width=5.0
     trail: road_width=1.0, shoulder_width=2.0, influence_width=3.0
     """
-    profiles = {
+    profiles: dict[str, RoadProfile] = {
         "main":  {"road_width": 3.0, "shoulder_width": 4.0, "influence_width": 6.0},
         "path":  {"road_width": 2.0, "shoulder_width": 3.0, "influence_width": 5.0},
         "trail": {"road_width": 1.0, "shoulder_width": 2.0, "influence_width": 3.0},
@@ -764,7 +805,7 @@ def _generate_road_mesh_specs(
     seed: int,
     rock_hardness: "np.ndarray | None" = None,
     water_surface: "np.ndarray | None" = None,
-) -> Tuple[List[Dict[str, Any]], np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[list[RoadSpec], np.ndarray, np.ndarray, np.ndarray]:
     """Generate road mesh specifications and return the carved heightmap + channels.
 
     Uses the full Rune pipeline: cost_map → _astar → smooth_road_path →
@@ -785,7 +826,16 @@ def _generate_road_mesh_specs(
     _empty_mask = np.zeros((rows, cols), dtype=np.uint8)
     _empty_sdf = np.zeros((rows, cols), dtype=np.float32)
 
-    waypoints: List[Tuple[int, int]] = getattr(intent, "road_waypoints", None) or []
+    raw_waypoints: object = getattr(intent, "road_waypoints", None) or []
+    waypoints: list[GridCell] = []
+    if isinstance(raw_waypoints, Sequence) and not isinstance(raw_waypoints, (str, bytes)):
+        waypoint_items = cast(Sequence[object], raw_waypoints)
+        for point_raw in waypoint_items:
+            if not isinstance(point_raw, Sequence) or isinstance(point_raw, (str, bytes)):
+                continue
+            point = cast(Sequence[Any], point_raw)
+            if len(point) >= 2:
+                waypoints.append((int(point[0]), int(point[1])))
 
     # Build POI-derived waypoints from anchors if road_waypoints not explicitly set
     anchors = getattr(intent, "anchors", ()) or ()
@@ -793,7 +843,7 @@ def _generate_road_mesh_specs(
         cell = cell_size if cell_size > 0 else 1.0
         origin_x = float(intent.region_bounds.min_x)
         origin_y = float(intent.region_bounds.min_y)
-        anchor_cells = []
+        anchor_cells: list[tuple[int, int, str]] = []
         for a in anchors:
             wx, wy = float(a.world_position[0]), float(a.world_position[1])
             col_idx = int((wx - origin_x) / cell)
@@ -801,7 +851,7 @@ def _generate_road_mesh_specs(
             col_idx = max(0, min(cols - 1, col_idx))
             row_idx = max(0, min(rows - 1, row_idx))
             anchor_cells.append((row_idx, col_idx, a.anchor_kind))
-        waypoints = [(r, c) for r, c, _ in anchor_cells]
+        waypoints = [(r, c) for r, c, _kind in anchor_cells]
 
     if len(waypoints) < 2:
         _log.info(
@@ -823,7 +873,7 @@ def _generate_road_mesh_specs(
     terrain_bounds = _resolve_road_solver_bounds(world_hmap, intent, cell_size)
 
     # Run 24-dir world-space A* for each waypoint pair then convert back to cells.
-    full_raw_path: List[Tuple[int, int]] = []
+    full_raw_path: list[GridCell] = []
     for i in range(len(waypoints) - 1):
         start_world = _grid_cell_to_world_center(
             waypoints[i][0], waypoints[i][1], terrain_bounds, cell_size, world_hmap
@@ -865,7 +915,7 @@ def _generate_road_mesh_specs(
         influence_width=profile["influence_width"],
     )
 
-    road_specs: List[Dict[str, Any]] = [{
+    road_specs: list[RoadSpec] = [{
         "path": smooth_path,
         "raw_path_len": len(full_raw_path),
         "road_type": road_type,
@@ -883,11 +933,11 @@ def _generate_road_mesh_specs(
 
 def _apply_road_profile_to_heightmap(
     hmap: np.ndarray,
-    path: "list[tuple[int, int]]",
+    path: list[GridCell],
     road_width: float = 2.0,
     shoulder_width: float = 3.0,
     influence_width: float = 5.0,
-) -> "tuple[np.ndarray, np.ndarray, np.ndarray]":
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Apply Rune 3-zone road profile and produce road_mask + road_sdf_dist.
 
     Zone 1 (dist <= road_width): Flatten to segment road elevation; cosine blend.
@@ -900,20 +950,12 @@ def _apply_road_profile_to_heightmap(
     road_mask: 1 inside Zone 1, 0 elsewhere.
     road_sdf_dist: scipy EDT distance in cells from road_mask boundary.
     """
-    from scipy.ndimage import distance_transform_edt
-    try:
-        from scipy.spatial import cKDTree as _KDTree
-    except ImportError:
-        from scipy.spatial import KDTree as _KDTree  # type: ignore[assignment]
-
     result = hmap.copy()
     rows, cols = result.shape
     road_mask = np.zeros((rows, cols), dtype=np.uint8)
 
     if not path:
-        road_sdf_dist = distance_transform_edt(
-            np.ones((rows, cols), dtype=np.uint8)
-        ).astype(np.float32)
+        road_sdf_dist = _distance_transform(np.ones((rows, cols), dtype=np.uint8))
         return result, road_mask, road_sdf_dist
 
     total_outer = road_width + shoulder_width + influence_width
@@ -922,20 +964,26 @@ def _apply_road_profile_to_heightmap(
     path_arr = np.array([(r, c) for r, c in path if 0 <= r < rows and 0 <= c < cols],
                         dtype=np.float64)
     if len(path_arr) == 0:
-        road_sdf_dist = distance_transform_edt(
-            np.ones((rows, cols), dtype=np.uint8)
-        ).astype(np.float32)
+        road_sdf_dist = _distance_transform(np.ones((rows, cols), dtype=np.uint8))
         return result, road_mask, road_sdf_dist
 
     # Road elevations at each valid path cell
     path_elevs = np.array([float(result[int(r), int(c)]) for r, c in path_arr],
                            dtype=np.float64)
-    tree = _KDTree(path_arr)
+    spatial_module = importlib.import_module("scipy.spatial")
+    tree_factory = cast(
+        Callable[[np.ndarray], Any],
+        getattr(spatial_module, "cKDTree", getattr(spatial_module, "KDTree")),
+    )
+    tree = tree_factory(path_arr)
 
     # Query all grid cells at once — O(H*W * log(path_len))
     rr, cc = np.mgrid[0:rows, 0:cols]
     query_pts = np.stack([rr.ravel(), cc.ravel()], axis=1).astype(np.float64)
-    dist_flat, idx_flat = tree.query(query_pts, k=1)
+    tree_query = cast(Callable[..., tuple[Any, Any]], getattr(tree, "query"))
+    dist_flat_raw, idx_flat_raw = tree_query(query_pts, k=1)
+    dist_flat = np.asarray(dist_flat_raw, dtype=np.float64)
+    idx_flat = np.asarray(idx_flat_raw, dtype=np.int64)
     dist_map = dist_flat.reshape(rows, cols)
     nearest_road_elev = path_elevs[idx_flat].reshape(rows, cols)
 
@@ -965,17 +1013,17 @@ def _apply_road_profile_to_heightmap(
 
     # Compute road_sdf_dist via scipy EDT
     not_road = (1 - road_mask).astype(np.uint8)
-    road_sdf_dist = distance_transform_edt(not_road).astype(np.float32)
+    road_sdf_dist = _distance_transform(not_road)
 
     return result, road_mask, road_sdf_dist
 
 
 def _generate_water_body_specs(
     world_hmap: np.ndarray,
-    world_flow: Dict[str, Any],
+    world_flow: dict[str, Any],
     intent: TerrainIntentState,
     cell_size: float,
-) -> List[Dict[str, Any]]:
+) -> list[RoadSpec]:
     """Step 11: generate water body specifications from flow accumulation.
 
     Identifies cells with high flow accumulation (potential lake / river pools)
@@ -983,7 +1031,7 @@ def _generate_water_body_specs(
 
     Returns an empty list when no significant accumulation basins are found.
     """
-    water_specs: List[Dict[str, Any]] = []
+    water_specs: list[RoadSpec] = []
 
     # Extract flow accumulation from the world flow map
     flow_acc_raw = world_flow.get("flow_accumulation")
@@ -1035,7 +1083,7 @@ def run_twelve_step_world_terrain(
     intent: TerrainIntentState,
     tile_grid_x: int,
     tile_grid_y: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Execute the canonical 12-step world terrain sequence.
 
     All non-fatal step failures are accumulated into ``errors`` (keyed by step
@@ -1055,8 +1103,8 @@ def run_twelve_step_world_terrain(
         - errors: Dict[str, str] — step-name → error message for any soft failures
         - metadata: dict
     """
-    sequence: List[str] = []
-    errors: Dict[str, str] = {}
+    sequence: list[str] = []
+    errors: dict[str, str] = {}
     t_start = time.time()
 
     # Step 1 — Parse params  (hard failure — nothing to return without these)
@@ -1111,7 +1159,7 @@ def run_twelve_step_world_terrain(
 
     # Step 6 — erode world heightmap (exact — full region, before split)
     sequence.append("6_erode_world_heightmap")
-    erosion_params: Dict[str, Any] = {}
+    erosion_params: dict[str, Any] = {}
     try:
         erosion_params = compute_erosion_params_for_world_range(
             float(world_hmap.max() - world_hmap.min())
@@ -1134,9 +1182,14 @@ def run_twelve_step_world_terrain(
     # Step 7 — compute_flow_map on eroded world  (soft failure — empty flow)
     sequence.append("7_compute_flow_map")
     try:
-        world_flow: Any = erosion_result.get("flow_map") or compute_flow_map(world_eroded)
-        if not world_flow:
-            world_flow = {}
+        flow_raw: object = erosion_result.get("flow_map")
+        if isinstance(flow_raw, dict):
+            world_flow: dict[str, Any] = {
+                str(key): value for key, value in cast(dict[Any, Any], flow_raw).items()
+            }
+        else:
+            computed_flow = compute_flow_map(world_eroded)
+            world_flow = {str(key): value for key, value in computed_flow.items()}
     except Exception as exc:
         errors["7_compute_flow_map"] = str(exc)
         _log.warning("Step 7 flow map failed: %s", exc)
@@ -1144,9 +1197,9 @@ def run_twelve_step_world_terrain(
 
     # Step 8 — detect cliff edges / caves / waterfall lips  (soft failure per sub-step)
     sequence.append("8_detect_hero_candidates")
-    cliff_candidates: List = []
-    cave_candidates: List = []
-    waterfall_lip_candidates: List = []
+    cliff_candidates: list[GridCell] = []
+    cave_candidates: list[GridCell] = []
+    waterfall_lip_candidates: list[Any] = []
     try:
         cliff_candidates = _detect_cliff_edges(world_eroded)
     except Exception as exc:
@@ -1159,13 +1212,12 @@ def run_twelve_step_world_terrain(
         _log.warning("Step 8 cave detection failed: %s", exc)
     # Pass flow_accumulation from the erosion/flow result so the lip detector
     # can use real drainage values rather than recomputing them.
-    _world_flow_acc = None
-    if isinstance(world_flow, dict):
-        _world_flow_acc_raw = world_flow.get("flow_accumulation")
-        if _world_flow_acc_raw is not None:
-            _world_flow_acc = np.asarray(_world_flow_acc_raw, dtype=np.float64)
-            if _world_flow_acc.shape != world_eroded.shape:
-                _world_flow_acc = None
+    _world_flow_acc: np.ndarray | None = None
+    _world_flow_acc_raw = world_flow.get("flow_accumulation")
+    if _world_flow_acc_raw is not None:
+        _world_flow_acc = np.asarray(_world_flow_acc_raw, dtype=np.float64)
+        if _world_flow_acc.shape != world_eroded.shape:
+            _world_flow_acc = None
     try:
         waterfall_lip_candidates = _detect_waterfall_lips(
             world_eroded, world_origin_x, world_origin_y, cell_size,
@@ -1178,13 +1230,13 @@ def run_twelve_step_world_terrain(
     # Step 9 — apply road carve to world heightmap before tile extraction
     # Road carving must precede tile extraction so graded heights reach every tile.
     sequence.append("9_apply_road_carve")
-    road_specs: List[Dict[str, Any]] = []
+    road_specs: list[RoadSpec] = []
     world_road_mask = np.zeros(world_eroded.shape, dtype=np.uint8)
     world_road_sdf = np.zeros(world_eroded.shape, dtype=np.float32)
 
     # Routing gate: skip Step 9 entirely when no waypoints are defined.
     # This prevents phantom road geometry on worlds with no road intent.
-    _road_waypoints = getattr(intent, "road_waypoints", None) or []
+    _road_waypoints: object = getattr(intent, "road_waypoints", None) or []
     _road_anchors = getattr(intent, "anchors", ()) or ()
     _has_road_intent = bool(_road_waypoints) or len(_road_anchors) >= 2
 
@@ -1211,7 +1263,7 @@ def run_twelve_step_world_terrain(
         # water_surface: positive flow_accumulation (normalised) marks water cells.
         _world_water_surface: "np.ndarray | None" = None
         try:
-            _flow_acc_raw = world_flow.get("flow_accumulation") if isinstance(world_flow, dict) else None
+            _flow_acc_raw = world_flow.get("flow_accumulation")
             if _flow_acc_raw is not None:
                 _flow_acc = np.asarray(_flow_acc_raw, dtype=np.float32)
                 if _flow_acc.shape == world_eroded.shape:
@@ -1233,9 +1285,9 @@ def run_twelve_step_world_terrain(
 
     # Step 10 — per-tile extraction (from carved world heightmap)
     sequence.append("10_per_tile_extract")
-    tile_stacks: Dict[Tuple[int, int], TerrainMaskStack] = {}
-    tile_transforms: Dict[Tuple[int, int], TileTransform] = {}
-    extracted_heights: Dict[Tuple[int, int], np.ndarray] = {}
+    tile_stacks: dict[GridCell, TerrainMaskStack] = {}
+    tile_transforms: dict[GridCell, TileTransform] = {}
+    extracted_heights: dict[GridCell, np.ndarray] = {}
 
     tile_size_world = float(tile_size) * cell_size
 
@@ -1290,7 +1342,7 @@ def run_twelve_step_world_terrain(
 
     # Step 11 — generate water bodies in world space  (soft failure — empty list)
     sequence.append("11_generate_water_bodies")
-    water_specs: List[Dict[str, Any]] = []
+    water_specs: list[RoadSpec] = []
     try:
         water_specs = _generate_water_body_specs(world_eroded, world_flow, intent, cell_size)
     except Exception as exc:
@@ -1299,7 +1351,7 @@ def run_twelve_step_world_terrain(
 
     # Step 12 — validate tile seams (hard gate; errors surfaced in seam_report)
     sequence.append("12_validate_tile_seams")
-    seam_report: Dict[str, Any] = {"seam_ok": False, "issues": ["not_run"], "max_edge_delta": None}
+    seam_report: dict[str, Any] = {"seam_ok": False, "issues": ["not_run"], "max_edge_delta": None}
     try:
         seam_report = validate_tile_seams(extracted_heights, atol=1e-6)
     except Exception as exc:
@@ -1329,8 +1381,8 @@ def run_twelve_step_world_terrain(
             "elapsed_s": t_elapsed,
             "erosion_params": erosion_params,
             "world_shape": list(world_eroded.shape),
-            "road_mask_shape": list(world_road_mask.shape) if world_road_mask is not None else None,
-            "road_sdf_computed": world_road_sdf is not None,
+            "road_mask_shape": list(world_road_mask.shape),
+            "road_sdf_computed": True,
         },
     }
 

@@ -13,10 +13,21 @@ from __future__ import annotations
 
 import threading
 import time
+import math
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable, TypeAlias, cast
 
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainAnchor,
+        TerrainPipelineState,
+    )
+
+ProtocolParams: TypeAlias = dict[str, object]
+ProtocolGateFn: TypeAlias = Callable[[ProtocolParams], None]
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +35,12 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_state(*, include_scene_read=True, include_viewport=True, anchors=()):
+def _make_state(
+    *,
+    include_scene_read: bool = True,
+    include_viewport: bool = True,
+    anchors: tuple["TerrainAnchor", ...] = (),
+) -> "TerrainPipelineState":
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -70,7 +86,7 @@ def _make_state(*, include_scene_read=True, include_viewport=True, anchors=()):
     )
     state = TerrainPipelineState(intent=intent, mask_stack=stack)
     if include_viewport:
-        state.viewport_vantage = read_user_vantage()  # type: ignore[attr-defined]
+        state.viewport_vantage = read_user_vantage()
     return state
 
 
@@ -168,7 +184,10 @@ def test_rule_3_drifted_anchor_raises():
 def test_rule_4_real_geometry_allowed():
     from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
-    ProtocolGate.rule_4_real_geometry_not_vertex_tricks(
+    rule_4 = cast(
+        ProtocolGateFn, getattr(ProtocolGate, "rule_4_real_geometry_not_vertex_tricks")
+    )
+    rule_4(
         {"feature_kind": "cliff", "vertex_color_fake": False}
     )
 
@@ -180,7 +199,11 @@ def test_rule_4_vertex_fake_hero_raises():
     )
 
     with pytest.raises(ProtocolViolation, match="rule_4"):
-        ProtocolGate.rule_4_real_geometry_not_vertex_tricks(
+        rule_4 = cast(
+            ProtocolGateFn,
+            getattr(ProtocolGate, "rule_4_real_geometry_not_vertex_tricks"),
+        )
+        rule_4(
             {"feature_kind": "waterfall", "vertex_color_fake": True}
         )
 
@@ -221,7 +244,11 @@ def test_rule_5_bulk_edit_flag_allows():
 def test_rule_6_valid_placement_class_passes():
     from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
-    ProtocolGate.rule_6_surface_vs_interior_classification(
+    rule_6 = cast(
+        ProtocolGateFn,
+        getattr(ProtocolGate, "rule_6_surface_vs_interior_classification"),
+    )
+    rule_6(
         {"placements": [{"id": "rock_1", "placement_class": "surface"}]}
     )
 
@@ -233,7 +260,11 @@ def test_rule_6_invalid_placement_class_raises():
     )
 
     with pytest.raises(ProtocolViolation, match="rule_6"):
-        ProtocolGate.rule_6_surface_vs_interior_classification(
+        rule_6 = cast(
+            ProtocolGateFn,
+            getattr(ProtocolGate, "rule_6_surface_vs_interior_classification"),
+        )
+        rule_6(
             {"placements": [{"id": "rock_1", "placement_class": "on_a_cliff"}]}
         )
 
@@ -241,7 +272,8 @@ def test_rule_6_invalid_placement_class_raises():
 def test_rule_7_plugin_version_passes():
     from veilbreakers_terrain.handlers.terrain_protocol import ProtocolGate
 
-    ProtocolGate.rule_7_plugin_usage({})
+    rule_7 = cast(ProtocolGateFn, getattr(ProtocolGate, "rule_7_plugin_usage"))
+    rule_7({})
 
 
 def test_enforce_protocol_decorator_runs_gates():
@@ -251,7 +283,11 @@ def test_enforce_protocol_decorator_runs_gates():
     clear_all_locks()
 
     @enforce_protocol(require_rule_3=False, require_rule_6=False, require_rule_7=False)
-    def my_handler(state, params):
+    def my_handler(
+        state: "TerrainPipelineState", params: ProtocolParams
+    ) -> dict[str, bool]:
+        assert state.intent.seed == 42
+        assert params["feature_kind"] == "rock"
         return {"ok": True}
 
     state = _make_state()
@@ -266,7 +302,11 @@ def test_enforce_protocol_decorator_blocks_on_failure():
     )
 
     @enforce_protocol(require_rule_3=False, require_rule_6=False, require_rule_7=False)
-    def my_handler(state, params):
+    def my_handler(
+        state: "TerrainPipelineState", params: ProtocolParams
+    ) -> dict[str, bool]:
+        assert state.intent.seed == 42
+        assert params == {}
         return {"ok": True}
 
     state = _make_state(include_scene_read=False)
@@ -286,7 +326,11 @@ def test_enforce_protocol_requires_explicit_viewport_opt_out():
         require_rule_6=False,
         require_rule_7=False,
     )
-    def my_handler(state, params):
+    def my_handler(
+        state: "TerrainPipelineState", params: ProtocolParams
+    ) -> dict[str, bool]:
+        assert state.intent.seed == 42
+        assert params == {} or params["out_of_view_ok"] is True
         return {"ok": True}
 
     state = _make_state(include_viewport=False)
@@ -693,6 +737,9 @@ def test_convert_y_up_to_z_up_maps_axes():
 
     pos, rot = convert_y_up_to_z_up((1.0, 2.0, 3.0))
     assert pos == (1.0, -3.0, 2.0)
+    assert abs(rot[0] + math.pi / 2.0) < 1e-12
+    assert abs(rot[1]) < 1e-12
+    assert abs(rot[2]) < 1e-12
 
 
 def test_guard_z_up_blocks_y():
@@ -702,10 +749,11 @@ def test_guard_z_up_blocks_y():
     )
 
     @guard_z_up
-    def setter(value, *, up_axis=None):
+    def setter(value: int, *, up_axis: str | None = None) -> int:
+        assert up_axis in {"Z", "Y"}
         return value
 
-    setter(1, up_axis="Z")
+    assert setter(1, up_axis="Z") == 1
     with pytest.raises(CoordinateSystemError):
         setter(1, up_axis="Y")
 

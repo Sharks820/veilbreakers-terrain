@@ -16,10 +16,20 @@ from __future__ import annotations
 
 import tempfile
 import time
+import importlib
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
+from typing import cast
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
+
+from veilbreakers_terrain.handlers.terrain_semantics import (
+    BBox,
+    PassResult,
+    TerrainPipelineState,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +37,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _register_passes():
+def _register_passes_impl() -> Iterator[None]:
     from veilbreakers_terrain.handlers.terrain_pipeline import (
         TerrainPassController,
         register_default_passes,
@@ -40,10 +49,16 @@ def _register_passes():
     TerrainPassController.clear_registry()
 
 
-def _build_state(tile_size: int = 32, seed: int = 1234, include_scene_read: bool = True):
+_register_passes = pytest.fixture(autouse=True)(_register_passes_impl)
+
+
+def _build_state(
+    tile_size: int = 32,
+    seed: int = 1234,
+    include_scene_read: bool = True,
+) -> TerrainPipelineState:
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
     from veilbreakers_terrain.handlers.terrain_semantics import (
-        BBox,
         TerrainIntentState,
         TerrainMaskStack,
         TerrainPipelineState,
@@ -99,7 +114,7 @@ def _build_state(tile_size: int = 32, seed: int = 1234, include_scene_read: bool
     return TerrainPipelineState(intent=intent, mask_stack=stack)
 
 
-def _tempdir():
+def _tempdir() -> tempfile.TemporaryDirectory[str]:
     return tempfile.TemporaryDirectory()
 
 
@@ -109,15 +124,18 @@ def _register_height_delta_pass(
     delay_s: float = 0.0,
     *,
     channel: str = "height",
-    requires_channels=(),
-):
+    requires_channels: Sequence[str] = (),
+) -> object:
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
-    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
+    from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
-    def _pass(state, region):
+    def _pass(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         if delay_s > 0.0:
             time.sleep(delay_s)
-        height = np.asarray(state.mask_stack.height, dtype=np.float64).copy()
+        height: NDArray[np.float64] = np.asarray(
+            state.mask_stack.height,
+            dtype=np.float64,
+        ).copy()
         if region is None:
             height = height + delta
         else:
@@ -257,13 +275,18 @@ def test_mask_cache_get_or_compute_runs_fn_once():
 
 
 def test_mask_cache_key_determinism():
-    from veilbreakers_terrain.handlers.terrain_mask_cache import cache_key_for_pass
-    from veilbreakers_terrain.handlers.terrain_semantics import BBox
-
+    terrain_mask_cache = importlib.import_module(
+        "veilbreakers_terrain.handlers.terrain_mask_cache"
+    )
     state = _build_state()
-    k1 = cache_key_for_pass("erosion", state.intent, BBox(0, 0, 10, 10), (0, 0))
-    k2 = cache_key_for_pass("erosion", state.intent, BBox(0, 0, 10, 10), (0, 0))
-    k3 = cache_key_for_pass("erosion", state.intent, BBox(0, 0, 20, 20), (0, 0))
+    tile_coords = cast(tuple[int, ...], (0, 0))
+    typed_cache_key_for_pass = cast(
+        Callable[[str, object, BBox | None, tuple[int, ...] | None], str],
+        getattr(terrain_mask_cache, "cache_key_for_pass"),
+    )
+    k1 = typed_cache_key_for_pass("erosion", state.intent, BBox(0, 0, 10, 10), tile_coords)
+    k2 = typed_cache_key_for_pass("erosion", state.intent, BBox(0, 0, 10, 10), tile_coords)
+    k3 = typed_cache_key_for_pass("erosion", state.intent, BBox(0, 0, 20, 20), tile_coords)
     assert k1 == k2
     assert k1 != k3
 
@@ -480,7 +503,7 @@ def test_pass_dag_execute_parallel_propagates_worker_failures():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
-    def _explode(state, region):
+    def _explode(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         raise RuntimeError("boom")
 
     TerrainPassController.register_pass(
@@ -510,7 +533,7 @@ def test_pass_dag_wave_failure_keeps_merged_content_hash_current():
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition
 
-    def _explode(state, region):
+    def _explode(state: TerrainPipelineState, region: BBox | None) -> PassResult:
         raise RuntimeError("boom")
 
     TerrainPassController.clear_registry()
@@ -545,8 +568,8 @@ def test_pass_dag_execute_parallel_is_actually_parallel_for_independent_passes()
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import PassDefinition, PassResult
 
-    def _sleepy(name: str):
-        def _inner(state, region):
+    def _sleepy(name: str) -> Callable[[TerrainPipelineState, BBox | None], PassResult]:
+        def _inner(state: TerrainPipelineState, region: BBox | None) -> PassResult:
             time.sleep(0.2)
             return PassResult(pass_name=name, status="ok", duration_seconds=0.0)
 
@@ -628,7 +651,7 @@ def test_iteration_metrics_record_and_speedup():
 
     assert abs(speedup_factor(baseline, current) - 5.0) < 1e-6
     assert baseline.avg_pass_duration_s == 1.0
-    assert current.avg_pass_duration_s == pytest.approx(0.2)
+    assert abs(current.avg_pass_duration_s - 0.2) < 1e-6
 
 
 def test_iteration_metrics_cache_hit_rate():
@@ -642,7 +665,7 @@ def test_iteration_metrics_cache_hit_rate():
     record_cache_hit(m)
     record_cache_hit(m)
     record_cache_miss(m)
-    assert m.cache_hit_rate == pytest.approx(2 / 3)
+    assert abs(m.cache_hit_rate - (2 / 3)) < 1e-6
 
 
 # ===========================================================================
@@ -738,5 +761,7 @@ def test_dirty_tracker_integration_with_live_preview():
                 "use_cache": True,
             }
         )
-        assert not session.tracker.is_clean()
-        assert "height" in session.tracker.get_dirty_channels()
+        tracker = session.tracker
+        assert tracker is not None
+        assert not tracker.is_clean()
+        assert "height" in tracker.get_dirty_channels()

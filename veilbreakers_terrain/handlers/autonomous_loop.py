@@ -51,9 +51,21 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
+
+Vec2 = Sequence[float]
+Vec3 = Sequence[float]
+Face = Sequence[int]
+
+__all__ = [
+    "_compute_edge_face_counts",
+    "_dot",
+    "evaluate_mesh_quality",
+    "select_fix_action",
+]
 
 # ---------------------------------------------------------------------------
 # AAA topology grading thresholds
@@ -80,7 +92,7 @@ AAA_UV_COVERAGE_MIN: float = 0.25
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _cross(a: tuple, b: tuple) -> tuple:
+def _cross(a: Vec3, b: Vec3) -> Vec3:
     return (
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -88,26 +100,26 @@ def _cross(a: tuple, b: tuple) -> tuple:
     )
 
 
-def _dot(a: tuple, b: tuple) -> float:
+def _dot(a: Vec3, b: Vec3) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
-def _sub(a: tuple, b: tuple) -> tuple:
+def _sub(a: Vec3, b: Vec3) -> Vec3:
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
-def _length(v: tuple) -> float:
+def _length(v: Vec3) -> float:
     return math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
 
 
-def _normalize(v: tuple) -> tuple | None:
+def _normalize(v: Vec3) -> Vec3 | None:
     l = _length(v)
     if l < 1e-12:
         return None
     return (v[0] / l, v[1] / l, v[2] / l)
 
 
-def _face_normal(verts: list, face: tuple) -> tuple | None:
+def _face_normal(verts: Sequence[Vec3], face: Face) -> Vec3 | None:
     """Compute face normal via Newell's method (works for n-gons)."""
     n = len(face)
     if n < 3:
@@ -122,7 +134,7 @@ def _face_normal(verts: list, face: tuple) -> tuple | None:
     return _normalize((nx, ny, nz))
 
 
-def _is_degenerate(verts: list, face: tuple) -> bool:
+def _is_degenerate(verts: Sequence[Vec3], face: Face) -> bool:
     """True if all vertices of the face are collinear (zero area)."""
     n = len(face)
     if n < 3:
@@ -138,12 +150,12 @@ def _is_degenerate(verts: list, face: tuple) -> bool:
     return True
 
 
-def _edge_key(a: int, b: int) -> tuple:
+def _edge_key(a: int, b: int) -> tuple[int, int]:
     return (min(a, b), max(a, b))
 
 
-def _compute_edge_face_counts(faces: list) -> dict[tuple, int]:
-    counts: dict[tuple, int] = defaultdict(int)
+def _compute_edge_face_counts(faces: Sequence[Face]) -> dict[tuple[int, int], int]:
+    counts: dict[tuple[int, int], int] = defaultdict(int)
     for face in faces:
         n = len(face)
         for i in range(n):
@@ -152,7 +164,7 @@ def _compute_edge_face_counts(faces: list) -> dict[tuple, int]:
     return counts
 
 
-def _uv_triangle_area(uv0: tuple, uv1: tuple, uv2: tuple) -> float:
+def _uv_triangle_area(uv0: Vec2, uv1: Vec2, uv2: Vec2) -> float:
     ax = uv1[0] - uv0[0]
     ay = uv1[1] - uv0[1]
     bx = uv2[0] - uv0[0]
@@ -160,7 +172,7 @@ def _uv_triangle_area(uv0: tuple, uv1: tuple, uv2: tuple) -> float:
     return abs(ax * by - ay * bx) * 0.5
 
 
-def _face_uv_area(uvs: list, face: tuple) -> float:
+def _face_uv_area(uvs: Sequence[Vec2], face: Face) -> float:
     """Sum of triangle fan areas for a polygon face in UV space."""
     if len(face) < 3:
         return 0.0
@@ -189,9 +201,9 @@ def _grade_worse_than(grade: str, target: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def evaluate_mesh_quality(
-    verts: list,
-    faces: list,
-    uvs: list | None = None,
+    verts: Sequence[Vec3],
+    faces: Sequence[Face],
+    uvs: Sequence[Vec2] | None = None,
 ) -> dict[str, Any]:
     """Evaluate mesh quality and return a metrics dict.
 
@@ -287,6 +299,8 @@ def evaluate_mesh_quality(
     degenerate_face_count = 0
 
     tri_indices = np.where(tri_mask)[0]
+    tri_faces = np.empty((0, 3), dtype=np.int64)
+    cross_mag = np.empty((0,), dtype=np.float64)
     if tri_indices.size > 0:
         tri_faces = np.array([faces[i] for i in tri_indices], dtype=np.int64)  # (T, 3)
         v0 = V[tri_faces[:, 0]]  # (T, 3)
@@ -313,7 +327,9 @@ def evaluate_mesh_quality(
     # Build a flat (total_half_edges, 2) array where each row is a sorted
     # vertex-index pair for one directed half-edge.  np.unique with
     # return_counts gives valence per unique undirected edge in O(E log E).
-    half_edge_rows = []
+    edge_arr = np.empty((0, 2), dtype=np.int64)
+
+    half_edge_rows: list[tuple[int, int]] = []
     for face in faces:
         n = len(face)
         for i in range(n):

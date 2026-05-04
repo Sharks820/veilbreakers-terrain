@@ -11,28 +11,40 @@ Pure-Python, no bpy dependency. Provides:
 from __future__ import annotations
 
 import math
-from typing import Any, Sequence, Union
+from collections.abc import Sequence
+from typing import Any, TypeAlias, cast
 
 import numpy as np
+from numpy.typing import NDArray
+
+
+Vector3: TypeAlias = Sequence[float]
+VertexInput: TypeAlias = Sequence[Sequence[float]] | NDArray[Any]
+PointInput: TypeAlias = Sequence[float] | NDArray[Any]
+CriteriaValue: TypeAlias = object
+CriteriaDict: TypeAlias = dict[str, CriteriaValue]
+ExpectedType: TypeAlias = type[Any] | tuple[type[Any], ...]
+NumericBound: TypeAlias = int | float | None
+OperationSpec: TypeAlias = tuple[ExpectedType, NumericBound, NumericBound]
 
 
 # ---------------------------------------------------------------------------
 # Internal math helpers
 # ---------------------------------------------------------------------------
 
-def _dist3d_sq(a: tuple, b: tuple) -> float:
+def _dist3d_sq(a: Vector3, b: Vector3) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 
 
-def _dot3(a: tuple, b: tuple) -> float:
+def _dot3(a: Vector3, b: Vector3) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
-def _sub3(a: tuple, b: tuple) -> tuple:
+def _sub3(a: Vector3, b: Vector3) -> Vector3:
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
-def _normalize3(v: tuple) -> tuple | None:
+def _normalize3(v: Vector3) -> Vector3 | None:
     l2 = v[0] ** 2 + v[1] ** 2 + v[2] ** 2
     if l2 < 1e-24:
         return None
@@ -45,13 +57,13 @@ def _normalize3(v: tuple) -> tuple | None:
 # ---------------------------------------------------------------------------
 
 def _select_by_box(
-    verts: Union[Sequence[tuple], np.ndarray],
-    min_pt: Union[tuple, Sequence, np.ndarray],
-    max_pt: Union[tuple, Sequence, np.ndarray],
+    verts: VertexInput,
+    min_pt: PointInput,
+    max_pt: PointInput,
     *,
     margin: float = 0.0,
     return_mask: bool = False,
-) -> Union[list[int], np.ndarray]:
+) -> list[int] | NDArray[np.bool_]:
     """Return indices (or boolean mask) of vertices inside the axis-aligned box.
 
     Supports numpy vertex arrays directly; all comparisons are vectorized.
@@ -89,12 +101,12 @@ def _select_by_box(
 
 
 def _select_by_sphere(
-    verts: Union[Sequence[tuple], np.ndarray],
-    center: Union[tuple, Sequence, np.ndarray],
+    verts: VertexInput,
+    center: PointInput,
     radius: float,
     *,
     return_mask: bool = False,
-) -> Union[list[int], np.ndarray]:
+) -> list[int] | NDArray[np.bool_]:
     """Return indices (or boolean mask) of vertices within the sphere.
 
     Uses squared Euclidean distance to avoid a sqrt per vertex.
@@ -127,14 +139,14 @@ def _select_by_sphere(
 
 
 def _select_by_plane(
-    verts: Union[Sequence[tuple], np.ndarray],
-    plane_point: Union[tuple, Sequence, np.ndarray],
-    normal: Union[tuple, Sequence, np.ndarray],
+    verts: VertexInput,
+    plane_point: PointInput,
+    normal: PointInput,
     side: str,
     *,
     tolerance: float = 0.0,
     return_mask: bool = False,
-) -> Union[list[int], np.ndarray]:
+) -> list[int] | NDArray[np.bool_]:
     """Return indices (or boolean mask) of vertices on the specified side of a plane.
 
     Uses signed distance-to-plane testing. The *tolerance* band straddles the
@@ -222,7 +234,7 @@ _VALID_MODES: frozenset[str] = frozenset({"vertex", "edge", "face", "object"})
 _NUMERIC_KEYS: frozenset[str] = frozenset({"threshold", "angle", "distance", "min", "max"})
 
 # Default values injected when a key is absent
-_CRITERIA_DEFAULTS: dict[str, Any] = {
+_CRITERIA_DEFAULTS: CriteriaDict = {
     "operator": "greater_than",
     "threshold": 0.0,
     "invert": False,
@@ -231,10 +243,10 @@ _CRITERIA_DEFAULTS: dict[str, Any] = {
 
 
 def _parse_selection_criteria(
-    criteria: Union[dict, list, str, None],
+    criteria: object,
     *,
     strict: bool = False,
-) -> dict:
+) -> CriteriaDict:
     """Normalise and validate a selection criteria specification.
 
     Accepts three input forms:
@@ -276,14 +288,14 @@ def _parse_selection_criteria(
     # 1. Normalise input form -> raw dict
     # ------------------------------------------------------------------
     if criteria is None:
-        raw: dict = {}
+        raw: CriteriaDict = {}
     elif isinstance(criteria, dict):
-        raw = dict(criteria)
+        raw = dict(cast(CriteriaDict, criteria))
     elif isinstance(criteria, list):
         raw = {}
-        for item in criteria:
+        for item in cast(list[object], criteria):
             if isinstance(item, dict):
-                raw.update(item)
+                raw.update(cast(CriteriaDict, item))
             else:
                 raise TypeError(
                     f"List criteria items must be dicts, got {type(item).__name__!r}"
@@ -316,7 +328,7 @@ def _parse_selection_criteria(
     # ------------------------------------------------------------------
     # 3. Validate and normalise each key
     # ------------------------------------------------------------------
-    out: dict = {}
+    out: CriteriaDict = {}
     for key, value in raw.items():
         if key not in _KNOWN_CRITERIA_KEYS:
             if strict:
@@ -357,7 +369,7 @@ def _parse_selection_criteria(
                         max_val = float(max_val)
                     except ValueError:
                         max_val = None
-                if max_val is not None and value > float(max_val):
+                if isinstance(max_val, (int, float)) and value > float(max_val):
                     raise ValueError(
                         f"criteria['min'] ({value}) must be <= criteria['max'] ({max_val})"
                     )
@@ -416,7 +428,7 @@ _VALID_EDIT_OPERATIONS: frozenset[str] = frozenset({
 })
 
 # Schema: maps operation name -> required keys with (type, min, max) or (type, valid_set)
-_EDIT_OPERATION_SCHEMA: dict[str, dict[str, tuple]] = {
+_EDIT_OPERATION_SCHEMA: dict[str, dict[str, OperationSpec]] = {
     "move": {
         "offset": (list, None, None),
     },
@@ -450,7 +462,7 @@ _EDIT_OPERATION_SCHEMA: dict[str, dict[str, tuple]] = {
 
 def _validate_edit_operation(
     operation: str,
-    params: dict | None = None,
+    params: dict[str, object] | None = None,
 ) -> None:
     """Validate that *operation* is a known mesh edit operation.
 
@@ -487,8 +499,8 @@ def _validate_edit_operation(
             )
         value = params[key]
         expected_type = spec[0]
-        min_val = spec[1] if len(spec) > 1 else None
-        max_val = spec[2] if len(spec) > 2 else None
+        min_val = spec[1]
+        max_val = spec[2]
 
         if not isinstance(value, expected_type):
             raise TypeError(

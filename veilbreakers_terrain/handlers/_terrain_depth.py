@@ -14,32 +14,45 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Any
+import importlib
+import importlib.util
+from collections.abc import Callable
+from typing import Any, cast
 
 import numpy as np
 
-try:
-    from scipy.ndimage import binary_erosion as _binary_erosion
-    from scipy.ndimage import label as _ndimage_label
-    from scipy.ndimage import convolve as _scipy_convolve
-    _SCIPY_DEPTH_AVAILABLE = True
-except ImportError:
-    _binary_erosion = None  # type: ignore[assignment]
-    _ndimage_label = None   # type: ignore[assignment]
-    _scipy_convolve = None  # type: ignore[assignment]
-    _SCIPY_DEPTH_AVAILABLE = False
+_NDIMAGE_MODULE: Any | None = (
+    importlib.import_module("scipy.ndimage")
+    if importlib.util.find_spec("scipy.ndimage") is not None
+    else None
+)
+_SCIPY_DEPTH_AVAILABLE = _NDIMAGE_MODULE is not None
 
-try:
-    import opensimplex as _opensimplex
-    _HAS_OPENSIMPLEX = True
-except ImportError:
-    _HAS_OPENSIMPLEX = False
+
+def _ndimage_callable(name: str) -> Callable[..., Any] | None:
+    if _NDIMAGE_MODULE is None:
+        return None
+    candidate = getattr(_NDIMAGE_MODULE, name, None)
+    return cast(Callable[..., Any], candidate) if callable(candidate) else None
+
+
+_binary_erosion = _ndimage_callable("binary_erosion")
+_binary_dilation = _ndimage_callable("binary_dilation")
+_ndimage_label = _ndimage_callable("label")
+_scipy_convolve = _ndimage_callable("convolve")
+
+_OPENSIMPLEX_MODULE: Any | None = (
+    importlib.import_module("opensimplex")
+    if importlib.util.find_spec("opensimplex") is not None
+    else None
+)
+_HAS_OPENSIMPLEX = _OPENSIMPLEX_MODULE is not None
 
 from ..procedural_meshes import (
     _make_result,
     _merge_meshes,
-    generate_bridge_mesh,
 )
+from . import _bridge_mesh
 
 # ---------------------------------------------------------------------------
 # Type alias (matches procedural_meshes.py)
@@ -95,14 +108,18 @@ def _fbm_noise2(
     """
     n_oct = max(1, int(octaves))
 
-    if _HAS_OPENSIMPLEX:
-        _opensimplex.seed(seed)
+    if _OPENSIMPLEX_MODULE is not None:
+        seed_fn = getattr(_OPENSIMPLEX_MODULE, "seed", None)
+        noise2_fn = getattr(_OPENSIMPLEX_MODULE, "noise2", None)
+        if not callable(seed_fn) or not callable(noise2_fn):
+            raise RuntimeError("opensimplex module is missing seed/noise2 callables")
+        cast(Callable[[int], Any], seed_fn)(seed)
         v = 0.0
         amp = 1.0
         freq = 1.0
         total_amp = 0.0
         for _ in range(n_oct):
-            v += amp * _opensimplex.noise2(x * freq, y * freq)
+            v += amp * float(cast(Callable[[float, float], Any], noise2_fn)(x * freq, y * freq))
             total_amp += amp
             freq *= lacunarity
             amp *= gain
@@ -184,8 +201,6 @@ def generate_cliff_face_mesh(
         MeshSpec with cliff face geometry, strata_bands count, erosion_channels
         count, and per-vertex uvs list in metadata.
     """
-    rng = random.Random(seed)
-
     # AAA requirement: minimum 8×8 grid
     seg_h = max(8, segments_horizontal)
     seg_v = max(8, segments_vertical)
@@ -218,8 +233,8 @@ def generate_cliff_face_mesh(
     # -----------------------------------------------------------------------
     rng_erosion = random.Random(seed ^ 0xE0E0)
     n_channels = rng_erosion.randint(4, 8)
-    channels = []
-    for ci in range(n_channels):
+    channels: list[tuple[float, float, float, float, int]] = []
+    for _ in range(n_channels):
         ch_x = rng_erosion.uniform(0.05, 0.95)      # normalised X centre
         ch_w = rng_erosion.uniform(0.04, 0.12)       # normalised half-width
         ch_amp = rng_erosion.uniform(0.02, 0.10)     # recession depth metres
@@ -388,7 +403,6 @@ def generate_cave_entrance_mesh(
     # the crown point is where both arcs meet at X=0.
     # Crown Z = spring_z + sqrt(R^2 - d^2)
     crown_z = spring_z + math.sqrt(max(R * R - d * d, 0.0))
-    apex_z = crown_z  # alias for clarity
 
     max_overhang = overhang_factor * width
 
@@ -398,6 +412,9 @@ def generate_cave_entrance_mesh(
     profile_rings: list[list[tuple[float, float, float]]] = []
 
     N_arch = max(12, arch_segments)
+    radius_denominator = max(R, 1.0e-6)
+    foot_angle_L = math.acos(max(-1.0, min(1.0, (d - half_w) / radius_denominator)))
+    crown_angle_L = math.acos(max(-1.0, min(1.0, d / radius_denominator)))
 
     for depth_i in range(depth_segs + 1):
         depth_frac = depth_i / depth_segs
@@ -422,9 +439,6 @@ def generate_cave_entrance_mesh(
         # foot angle: X = -d + R*cos(θ) = -half_w  →  cos(θ) = (d - half_w)/R
         # crown angle: X = -d + R*cos(θ) = 0        →  cos(θ) = d/R
         # ---------------------------------------------------------------
-        foot_angle_L = math.acos(max(-1.0, min(1.0, (d - half_w) / R)))  # < π/2
-        crown_angle_L = math.acos(max(-1.0, min(1.0, d / R)))             # > 0
-
         # Left arc: from foot_angle_L down to crown_angle_L (decreasing angle)
         for ai in range(N_arch + 1):
             t = ai / N_arch  # 0 = foot, 1 = crown
@@ -644,8 +658,6 @@ def generate_biome_transition_mesh(
     # σ_world = 5 m projected onto normalised [0,1] coord space.
     # -----------------------------------------------------------------------
     sigma_world = 5.0  # metres, Perlin warp standard deviation
-    sigma_norm = sigma_world / max(zone_depth, 1e-6)  # normalised σ
-
     def _boundary_warp_offset(iz: int) -> float:
         """Per-row normalised-X warp offset via 2-octave fBm domain warp."""
         z_frac = iz / max(segments, 1)
@@ -1275,7 +1287,28 @@ def generate_waterfall_mesh(
 # ``blender_addon.handlers._bridge_mesh`` so the toolkit-side ``road_network``
 # module can import it without reaching into this terrain module (D-09).
 # Re-exported here for any intra-terrain callers that already reference it.
-from ._bridge_mesh import generate_terrain_bridge_mesh  # noqa: E402, F401
+def generate_terrain_bridge_mesh(
+    start_pos: tuple[float, float, float] = (0, 0, 0),
+    end_pos: tuple[float, float, float] = (10, 0, 0),
+    width: float = 3.0,
+    style: str = "stone_arch",
+    seed: int = 0,
+    control_points: list[tuple[float, float, float]] | tuple[tuple[float, float, float], ...] | None = None,
+    water_level: float | None = None,
+    support_foundation_z: float | None = None,
+    waterbed_z: float | None = None,
+) -> MeshSpec:
+    return _bridge_mesh.generate_terrain_bridge_mesh(
+        start_pos=start_pos,
+        end_pos=end_pos,
+        width=width,
+        style=style,
+        seed=seed,
+        control_points=control_points,
+        water_level=water_level,
+        support_foundation_z=support_foundation_z,
+        waterbed_z=waterbed_z,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1367,6 +1400,8 @@ def detect_cliff_edges(
     # ------------------------------------------------------------------
     # SOBEL + HYSTERESIS PATH (requires scipy)
     # ------------------------------------------------------------------
+    heightmap_2d = np.asarray(heightmap, dtype=np.float64)
+
     if _SCIPY_DEPTH_AVAILABLE and _scipy_convolve is not None:
         detection_method = "sobel_hysteresis"
 
@@ -1380,11 +1415,15 @@ def detect_cliff_edges(
 
         # Scale heightmap to world metres before Sobel so gradient magnitudes
         # are in m/m (dimensionless slope), then convert to degrees.
-        hmap_world = heightmap.astype(np.float64) * float(height_scale)
-        gx = _scipy_convolve(hmap_world, sobel_x / (8.0 * col_spacing),
-                              mode='nearest')
-        gy = _scipy_convolve(hmap_world, sobel_y / (8.0 * row_spacing),
-                              mode='nearest')
+        hmap_world = heightmap_2d * float(height_scale)
+        gx = np.asarray(
+            _scipy_convolve(hmap_world, sobel_x / (8.0 * col_spacing), mode="nearest"),
+            dtype=np.float64,
+        )
+        gy = np.asarray(
+            _scipy_convolve(hmap_world, sobel_y / (8.0 * row_spacing), mode="nearest"),
+            dtype=np.float64,
+        )
         sobel_slope_deg = np.degrees(np.arctan(np.sqrt(gx ** 2 + gy ** 2)))
 
         # Hysteresis thresholds
@@ -1398,13 +1437,16 @@ def detect_cliff_edges(
         # Use iterative dilation of strong_mask into weak_mask until stable.
         structure = np.ones((3, 3), dtype=bool)
         promoted = strong_mask.copy()
-        from scipy.ndimage import binary_dilation as _binary_dilation
-        for _ in range(min(rows, cols)):
-            expanded = _binary_dilation(promoted, structure=structure)
-            newly_promoted = expanded & weak_mask & ~promoted
-            if not newly_promoted.any():
-                break
-            promoted |= newly_promoted
+        if _binary_dilation is not None:
+            for _ in range(min(rows, cols)):
+                expanded = np.asarray(
+                    _binary_dilation(promoted, structure=structure),
+                    dtype=bool,
+                )
+                newly_promoted = expanded & weak_mask & ~promoted
+                if not newly_promoted.any():
+                    break
+                promoted |= newly_promoted
 
         cliff_edges = promoted  # final hysteresis result
 
@@ -1417,7 +1459,10 @@ def detect_cliff_edges(
 
         if _binary_erosion is not None:
             structure = np.ones((3, 3), dtype=bool)
-            eroded = _binary_erosion(cliff_mask, structure=structure)
+            eroded = np.asarray(
+                _binary_erosion(cliff_mask, structure=structure),
+                dtype=bool,
+            )
             cliff_edges = np.logical_xor(cliff_mask, eroded)
         else:
             cliff_edges = cliff_mask
@@ -1428,36 +1473,47 @@ def detect_cliff_edges(
     structure8 = np.ones((3, 3), dtype=bool)
 
     if _ndimage_label is not None:
-        labels, num_labels = _ndimage_label(cliff_edges, structure=structure8)
+        labels_raw, num_labels_raw = cast(
+            tuple[Any, Any],
+            _ndimage_label(cliff_edges, structure=structure8),
+        )
+        labels = np.asarray(labels_raw, dtype=np.int32)
+        num_labels = int(num_labels_raw)
     else:
         # Trivial fallback: treat all edge pixels as one cluster
-        labels = cliff_edges.astype(np.int32)
+        labels = np.asarray(cliff_edges, dtype=np.int32)
         num_labels = 1
 
     # Gradient direction for face orientation (computed once, world-space)
     dy_grad, dx_grad = np.gradient(
-        heightmap.astype(np.float64) * float(height_scale),
+        heightmap_2d * float(height_scale),
         row_spacing, col_spacing,
     )
+    dy_grad = np.asarray(dy_grad, dtype=np.float64)
+    dx_grad = np.asarray(dx_grad, dtype=np.float64)
 
     placements: list[dict[str, Any]] = []
 
     for lid in range(1, num_labels + 1):
-        cells = np.argwhere(labels == lid)
+        cells = np.asarray(np.argwhere(labels == lid), dtype=np.int64)
         if len(cells) < min_cluster_size:
             continue
 
-        r_min, c_min = cells.min(axis=0)
-        r_max, c_max = cells.max(axis=0)
-        r_center = (r_min + r_max) / 2.0
-        c_center = (c_min + c_max) / 2.0
+        row_indices = cells[:, 0]
+        col_indices = cells[:, 1]
+        r_min = int(row_indices.min())
+        c_min = int(col_indices.min())
+        r_max = int(row_indices.max())
+        c_max = int(col_indices.max())
+        r_center = (float(r_min) + float(r_max)) / 2.0
+        c_center = (float(c_min) + float(c_max)) / 2.0
 
         wx = (c_center / max(cols - 1, 1) - 0.5) * terrain_width
         wy = (r_center / max(rows - 1, 1) - 0.5) * terrain_height
 
         ri = int(np.clip(r_center, 0, rows - 1))
         ci = int(np.clip(c_center, 0, cols - 1))
-        wz = float(heightmap[ri, ci]) * float(height_scale)
+        wz = float(heightmap_2d[ri, ci]) * float(height_scale)
 
         grad_x = float(dx_grad[ri, ci])
         grad_y = float(dy_grad[ri, ci])
@@ -1468,8 +1524,8 @@ def detect_cliff_edges(
         width = max(width_x, width_y)
 
         raw_height_range = float(
-            heightmap[cells[:, 0], cells[:, 1]].max()
-            - heightmap[cells[:, 0], cells[:, 1]].min()
+            heightmap_2d[row_indices, col_indices].max()
+            - heightmap_2d[row_indices, col_indices].min()
         )
         cliff_height = max(raw_height_range * float(height_scale), 2.0)
 
@@ -1486,13 +1542,14 @@ def detect_cliff_edges(
             # Cluster is taller vertically: sort by row index
             order = np.argsort(cells[:, 0])
         ordered_cells = cells[order]
-        edge_polyline = [
-            (
+        edge_polyline: list[tuple[float, float]] = []
+        for cell in ordered_cells:
+            r = int(cell[0])
+            c = int(cell[1])
+            edge_polyline.append((
                 (float(c) / max(cols - 1, 1) - 0.5) * terrain_width,
                 (float(r) / max(rows - 1, 1) - 0.5) * terrain_height,
-            )
-            for r, c in ordered_cells
-        ]
+            ))
 
         placements.append({
             "position": [wx, wy, wz],

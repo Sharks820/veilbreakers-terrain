@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from typing import Generator
 
 from veilbreakers_terrain.handlers.terrain_pipeline import (
     TerrainPassController,
@@ -66,7 +67,7 @@ from veilbreakers_terrain.handlers.terrain_bundle_o import register_bundle_o_pas
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry():
+def clean_registry() -> Generator[None, None, None]:
     TerrainPassController.clear_registry()
     yield
     TerrainPassController.clear_registry()
@@ -93,7 +94,7 @@ def _make_stack(rows: int = 32, cols: int = 32) -> TerrainMaskStack:
     )
 
 
-def _set_channel(stack: TerrainMaskStack, channel: str, value):
+def _set_channel(stack: TerrainMaskStack, channel: str, value: np.ndarray) -> np.ndarray:
     stack.set(channel, value, "test_fixture")
     return value
 
@@ -214,8 +215,8 @@ def test_generate_water_bottom_mesh_outputs_materialized_bottom_geometry():
     assert {BOTTOM_MAT_SILT, BOTTOM_MAT_GRAVEL, BOTTOM_MAT_ROCK}.issubset(
         set(mesh["material_indices"].tolist())
     )
-    assert mesh["depth_stats"]["mean_depth_m"] == pytest.approx(2.0)
-    assert mesh["depth_stats"]["max_depth_m"] == pytest.approx(2.0)
+    assert abs(float(mesh["depth_stats"]["mean_depth_m"]) - 2.0) < 1e-6
+    assert abs(float(mesh["depth_stats"]["max_depth_m"]) - 2.0) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -371,10 +372,10 @@ def test_hot_spring_shape_validation():
 def test_wetland_detection_low_slope_high_wetness():
     stack = _make_stack()
     shape = stack.height.shape
-    _set_channel(stack, "wetness", np.zeros(shape, dtype=np.float32))
-    stack.wetness[5:12, 5:12] = 0.9
-    _set_channel(stack, "slope", np.ones(shape, dtype=np.float32) * 0.8)
-    stack.slope[5:12, 5:12] = 0.05
+    wetness = _set_channel(stack, "wetness", np.zeros(shape, dtype=np.float32))
+    wetness[5:12, 5:12] = 0.9
+    slope = _set_channel(stack, "slope", np.ones(shape, dtype=np.float32) * 0.8)
+    slope[5:12, 5:12] = 0.05
     wetlands = detect_wetlands(stack)
     assert len(wetlands) >= 1
     assert all(isinstance(w, Wetland) for w in wetlands)
@@ -394,7 +395,9 @@ def test_seasonal_dry_reduces_wetness():
     stack = _make_stack()
     _set_channel(stack, "wetness", np.full(stack.height.shape, 0.8, dtype=np.float32))
     apply_seasonal_water_state(stack, SeasonalState.DRY)
-    assert float(stack.wetness.mean()) < 0.8
+    wetness = stack.wetness
+    assert wetness is not None
+    assert float(wetness.mean()) < 0.8
 
 
 def test_seasonal_wet_increases_wetness_and_water_surface():
@@ -402,8 +405,12 @@ def test_seasonal_wet_increases_wetness_and_water_surface():
     _set_channel(stack, "wetness", np.full(stack.height.shape, 0.3, dtype=np.float32))
     _set_channel(stack, "water_surface", np.full(stack.height.shape, 0.2, dtype=np.float32))
     apply_seasonal_water_state(stack, SeasonalState.WET)
-    assert float(stack.wetness.mean()) > 0.3
-    assert float(stack.water_surface.mean()) > 0.2
+    wetness = stack.wetness
+    water_surface = stack.water_surface
+    assert wetness is not None
+    assert water_surface is not None
+    assert float(wetness.mean()) > 0.3
+    assert float(water_surface.mean()) > 0.2
 
 
 def test_seasonal_frozen_sets_tidal():
@@ -418,7 +425,9 @@ def test_seasonal_normal_is_noop_on_wetness():
     original = np.full(stack.height.shape, 0.5, dtype=np.float32)
     _set_channel(stack, "wetness", original.copy())
     apply_seasonal_water_state(stack, SeasonalState.NORMAL)
-    assert np.allclose(stack.wetness, original)
+    wetness = stack.wetness
+    assert wetness is not None
+    assert np.allclose(wetness, original)
 
 
 def test_seasonal_invalid_type_raises():
@@ -616,7 +625,7 @@ def test_allelopathic_exclusion_reduces_canopy_under_species_b():
     b_mask = np.zeros(stack.height.shape, dtype=np.float32)
     b_mask[10:20, 10:20] = 1.0
     original_canopy = layers.canopy_density.copy()
-    result = apply_allelopathic_exclusion(layers, a_mask, b_mask)
+    result = apply_allelopathic_exclusion(layers, species_a_mask=a_mask, species_b_mask=b_mask)
     suppressed_mean = float(result.canopy_density[10:20, 10:20].mean())
     original_mean = float(original_canopy[10:20, 10:20].mean())
     assert suppressed_mean <= original_mean
@@ -655,7 +664,9 @@ def test_pass_vegetation_depth_region_scope_leaves_outside_unchanged():
     # Region covers only top-left quadrant
     region = BBox(0.0, 0.0, 16.0, 16.0)
     pass_vegetation_depth(state, region=region)
-    canopy = state.mask_stack.detail_density["canopy"]
+    detail_density = state.mask_stack.detail_density
+    assert detail_density is not None
+    canopy = detail_density["canopy"]
     # Outside the region (bottom-right) should still equal sentinel.
     # Cell size = 2.0 so region covers rows 0:8, cols 0:8.
     outside = canopy[16:, 16:]
@@ -668,10 +679,14 @@ def test_pass_vegetation_depth_deterministic_by_seed():
     s2 = _make_state(rows=24, cols=24, seed=999)
     pass_vegetation_depth(s1, region=None)
     pass_vegetation_depth(s2, region=None)
+    detail_1 = s1.mask_stack.detail_density
+    detail_2 = s2.mask_stack.detail_density
+    assert detail_1 is not None
+    assert detail_2 is not None
     for key in ("canopy", "understory", "shrub", "ground_cover"):
         assert np.allclose(
-            s1.mask_stack.detail_density[key],
-            s2.mask_stack.detail_density[key],
+            detail_1[key],
+            detail_2[key],
         )
 
 
@@ -731,14 +746,21 @@ def test_bathymetry_uses_spill_rim_for_single_cell_channel():
     h = np.full((5, 5), 10.0, dtype=np.float32)
     h[2, 2] = 1.0
     state.mask_stack.set("height", h, "test")
-    state.mask_stack.set("water_surface", np.zeros_like(h, dtype=np.float32), "test")
-    state.mask_stack.water_surface[2, 2] = 1.0
+    water_surface = np.zeros_like(h, dtype=np.float32)
+    state.mask_stack.set("water_surface", water_surface, "test")
+    water_surface[2, 2] = 1.0
 
     pass_bathymetry(state, region=None)
 
-    assert state.mask_stack.water_surface_elevation_m[2, 2] == pytest.approx(10.0)
-    assert state.mask_stack.bathymetry[2, 2] == pytest.approx(9.0)
-    assert state.mask_stack.water_depth_zone[2, 2] == 3
+    water_surface_elevation = state.mask_stack.water_surface_elevation_m
+    bathymetry = state.mask_stack.bathymetry
+    water_depth_zone = state.mask_stack.water_depth_zone
+    assert water_surface_elevation is not None
+    assert bathymetry is not None
+    assert water_depth_zone is not None
+    assert abs(float(water_surface_elevation[2, 2]) - 10.0) < 1e-6
+    assert abs(float(bathymetry[2, 2]) - 9.0) < 1e-6
+    assert water_depth_zone[2, 2] == 3
 
 
 def test_w1_mask_and_elevation_are_distinct_channels():

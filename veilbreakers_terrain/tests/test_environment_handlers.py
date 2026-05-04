@@ -6,12 +6,44 @@ handler return dict structure via pure-logic extraction.
 
 import json
 import struct
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TypeAlias, cast
 from unittest.mock import patch
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
+
+FloatArray: TypeAlias = NDArray[np.float64]
+RoadPath: TypeAlias = list[tuple[int, int]]
+JsonDict: TypeAlias = dict[str, object]
+
+
+def _identity_heightmap_profile(
+    hmap: FloatArray,
+    *args: object,
+    **kwargs: object,
+) -> FloatArray:
+    return hmap
+
+
+def _require_json_dict(value: object) -> JsonDict:
+    assert isinstance(value, dict)
+    return cast(JsonDict, value)
+
+
+def _param_int(params: Mapping[str, object], key: str) -> int:
+    value = params[key]
+    assert isinstance(value, int)
+    return value
+
+
+def _param_float(params: Mapping[str, object], key: str, default: float) -> float:
+    value = params.get(key, default)
+    assert isinstance(value, int | float)
+    return float(value)
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +195,10 @@ class TestWorldHeightSolverAdapter:
             dtype=np.float64,
         )
 
-        def _identity_solver(heightmap, **kwargs):
+        def _identity_solver(
+            heightmap: FloatArray,
+            **kwargs: object,
+        ) -> tuple[RoadPath, FloatArray]:
             return [(0, 0), (1, 1)], heightmap.copy()
 
         path, restored, transform = _run_height_solver_in_world_space(
@@ -187,7 +222,10 @@ class TestWorldHeightSolverAdapter:
             dtype=np.float64,
         )
 
-        def _lower_solver(heightmap, **kwargs):
+        def _lower_solver(
+            heightmap: FloatArray,
+            **kwargs: object,
+        ) -> tuple[RoadPath, FloatArray]:
             lowered = np.clip(heightmap - 0.25, 0.0, 1.0)
             return [(0, 0), (1, 1)], lowered
 
@@ -411,10 +449,16 @@ class TestRoadTerrainProfiling:
             assert abs(r1 - r0) <= 1
             assert abs(c1 - c0) <= 1
 
-    def test_solve_road_path_with_network_accepts_2d_route_points(self, monkeypatch):
+    def test_solve_road_path_with_network_accepts_2d_route_points(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        def _fake_compute_road_network(*args, **kwargs):
+        def _fake_compute_road_network(
+            *args: object,
+            **kwargs: object,
+        ) -> JsonDict:
             return {
                 "routes": [
                     {
@@ -451,7 +495,7 @@ class TestRoadTerrainProfiling:
         graded = _grade_road_path_in_world_space(
             heightmap,
             [(3, 3)],
-            width=3.5,
+            width=cast(int, 3.5),
             grade_strength=1.0,
         )
 
@@ -501,28 +545,28 @@ class TestRoadHandlerTerrainAwareRouting:
 
         captured: dict[str, object] = {}
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     SimpleNamespace(co=SimpleNamespace(z=float(z)))
                     for z in (0.0, 0.1, 0.2, 0.3)
                 )
 
-            def from_mesh(self, mesh):
+            def from_mesh(self, mesh: object) -> None:
                 return None
 
-            def to_mesh(self, mesh):
+            def to_mesh(self, mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         class _Mesh:
-            def update(self):
+            def update(self) -> None:
                 return None
 
         terrain_obj = SimpleNamespace(
@@ -531,7 +575,10 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_compute_road_network(waypoints, **kwargs):
+        def _fake_compute_road_network(
+            waypoints: Sequence[object],
+            **kwargs: object,
+        ) -> JsonDict:
             captured["cost_map"] = kwargs.get("cost_map")
             captured["terrain_bounds"] = kwargs.get("terrain_bounds")
             captured["connection_strategy"] = kwargs.get("connection_strategy")
@@ -560,7 +607,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -574,7 +621,9 @@ class TestRoadHandlerTerrainAwareRouting:
                 }
             )
 
-        np.testing.assert_allclose(captured["cost_map"], expected_cost)
+        captured_cost = captured["cost_map"]
+        assert isinstance(captured_cost, np.ndarray)
+        np.testing.assert_allclose(captured_cost, expected_cost)
         assert captured["terrain_bounds"] == (-2.0, -2.0, 2.0, 2.0)
         assert captured["connection_strategy"] == "chain"
         assert result["terrain_cost_context_used"] is True
@@ -588,28 +637,28 @@ class TestRoadHandlerTerrainAwareRouting:
 
         captured: dict[str, object] = {}
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     SimpleNamespace(co=SimpleNamespace(z=float(z)))
                     for z in (0.0, 0.1, 0.2, 0.3)
                 )
 
-            def from_mesh(self, mesh):
+            def from_mesh(self, mesh: object) -> None:
                 return None
 
-            def to_mesh(self, mesh):
+            def to_mesh(self, mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         class _Mesh:
-            def update(self):
+            def update(self) -> None:
                 return None
 
         terrain_obj = SimpleNamespace(
@@ -618,7 +667,10 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_compute_road_network(waypoints, **kwargs):
+        def _fake_compute_road_network(
+            waypoints: Sequence[object],
+            **kwargs: object,
+        ) -> JsonDict:
             captured["cost_map"] = kwargs.get("cost_map")
             return {
                 "routes": [
@@ -639,7 +691,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -654,7 +706,9 @@ class TestRoadHandlerTerrainAwareRouting:
                 }
             )
 
-        np.testing.assert_array_equal(captured["cost_map"], explicit_cost_map)
+        captured_cost = captured["cost_map"]
+        assert isinstance(captured_cost, np.ndarray)
+        np.testing.assert_array_equal(captured_cost, explicit_cost_map)
         assert result["terrain_cost_context_used"] is True
         assert result["terrain_cost_source"] == "explicit_cost_map"
 
@@ -663,28 +717,28 @@ class TestRoadHandlerTerrainAwareRouting:
 
         captured: dict[str, object] = {}
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     SimpleNamespace(co=SimpleNamespace(z=float(z)))
                     for z in (0.0, 0.1, 0.2, 0.3)
                 )
 
-            def from_mesh(self, mesh):
+            def from_mesh(self, mesh: object) -> None:
                 return None
 
-            def to_mesh(self, mesh):
+            def to_mesh(self, mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         class _Mesh:
-            def update(self):
+            def update(self) -> None:
                 return None
 
         terrain_obj = SimpleNamespace(
@@ -693,7 +747,10 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_compute_road_network(waypoints, **kwargs):
+        def _fake_compute_road_network(
+            waypoints: Sequence[object],
+            **kwargs: object,
+        ) -> JsonDict:
             captured["cost_map"] = kwargs.get("cost_map")
             return {
                 "routes": [
@@ -714,7 +771,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -728,12 +785,14 @@ class TestRoadHandlerTerrainAwareRouting:
             )
 
         expected = np.array([[0.0, 4.0], [0.0, 4.0]], dtype=np.float32)
-        np.testing.assert_array_equal(captured["cost_map"], expected)
+        captured_cost = captured["cost_map"]
+        assert isinstance(captured_cost, np.ndarray)
+        np.testing.assert_array_equal(captured_cost, expected)
         assert result["terrain_cost_context_used"] is True
         assert result["terrain_cost_source"] == "explicit_cost_map"
         assert result["road_routing_method"] == "astar_24dir"
 
-    def test_write_json_manifest_writes_utf8_and_creates_parent(self, tmp_path):
+    def test_write_json_manifest_writes_utf8_and_creates_parent(self, tmp_path: Path):
         from veilbreakers_terrain.handlers.environment import _write_json_manifest
 
         target = tmp_path / "nested" / "manifest.json"
@@ -744,7 +803,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert target.exists()
         assert target.read_text(encoding="utf-8").endswith("\n}")
 
-    def test_cleanup_written_artifacts_removes_existing_and_missing_paths(self, tmp_path):
+    def test_cleanup_written_artifacts_removes_existing_and_missing_paths(self, tmp_path: Path):
         from veilbreakers_terrain.handlers.environment import _cleanup_written_artifacts
 
         first = tmp_path / "a.json"
@@ -760,28 +819,28 @@ class TestRoadHandlerTerrainAwareRouting:
     def test_handle_generate_road_can_return_road_channels(self):
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     SimpleNamespace(co=SimpleNamespace(z=float(z)))
                     for z in (0.0, 0.1, 0.2, 0.3)
                 )
 
-            def from_mesh(self, mesh):
+            def from_mesh(self, mesh: object) -> None:
                 return None
 
-            def to_mesh(self, mesh):
+            def to_mesh(self, mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         class _Mesh:
-            def update(self):
+            def update(self) -> None:
                 return None
 
         terrain_obj = SimpleNamespace(
@@ -790,7 +849,10 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_compute_road_network(waypoints, **kwargs):
+        def _fake_compute_road_network(
+            waypoints: Sequence[object],
+            **kwargs: object,
+        ) -> JsonDict:
             return {
                 "routes": [
                     {
@@ -808,7 +870,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -834,31 +896,34 @@ class TestRoadHandlerTerrainAwareRouting:
         assert {"road_core", "road_edge", "approach_transition"} <= set(route_segment["material_stack"])
 
     @pytest.mark.parametrize("surface", ["dirt", "path", "trail"])
-    def test_terrain_only_roads_still_report_bridge_contract_for_water_crossing(self, surface):
+    def test_terrain_only_roads_still_report_bridge_contract_for_water_crossing(
+        self,
+        surface: str,
+    ):
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     SimpleNamespace(co=SimpleNamespace(z=float(z)))
                     for z in (0.0, 0.0, 0.0, 0.0)
                 )
 
-            def from_mesh(self, mesh):
+            def from_mesh(self, mesh: object) -> None:
                 return None
 
-            def to_mesh(self, mesh):
+            def to_mesh(self, mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         class _Mesh:
-            def update(self):
+            def update(self) -> None:
                 return None
 
         terrain_obj = SimpleNamespace(
@@ -867,7 +932,10 @@ class TestRoadHandlerTerrainAwareRouting:
             location=SimpleNamespace(x=0.0, y=0.0),
         )
 
-        def _fake_compute_road_network(waypoints, **kwargs):
+        def _fake_compute_road_network(
+            waypoints: Sequence[object],
+            **kwargs: object,
+        ) -> JsonDict:
             return {
                 "routes": [
                     {
@@ -885,7 +953,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "compute_road_network", side_effect=_fake_compute_road_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
             result = env_mod.handle_generate_road(
@@ -906,7 +974,7 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result["bridge_count"] == len(bridge_segments)
         assert result["bridge_span_count"] == len(bridge_segments)
 
-    def _road_handler_fixtures(self, env_mod):
+    def _road_handler_fixtures(self, env_mod: object) -> tuple[object, type[object], type[object]]:
         """Shared mock fixtures for road-fallback tests.
 
         Returns (terrain_obj, bm_factory, mesh_patchers) so each test can run
@@ -914,28 +982,28 @@ class TestRoadHandlerTerrainAwareRouting:
         the fallback path through ``_solve_road_path_with_network``.
         """
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     SimpleNamespace(co=SimpleNamespace(z=float(z)))
                     for z in (0.0, 0.1, 0.2, 0.3)
                 )
 
-            def from_mesh(self, mesh):
+            def from_mesh(self, mesh: object) -> None:
                 return None
 
-            def to_mesh(self, mesh):
+            def to_mesh(self, mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         class _Mesh:
-            def update(self):
+            def update(self) -> None:
                 return None
 
         terrain_obj = SimpleNamespace(
@@ -945,7 +1013,10 @@ class TestRoadHandlerTerrainAwareRouting:
         )
         return terrain_obj, _BM, _Mesh
 
-    def test_road_fallback_triggers_on_value_error_and_annotates_result(self, monkeypatch):
+    def test_road_fallback_triggers_on_value_error_and_annotates_result(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         """LookupError/ValueError/RuntimeError should fall back + annotate result."""
         from veilbreakers_terrain.handlers import environment as env_mod
 
@@ -955,13 +1026,17 @@ class TestRoadHandlerTerrainAwareRouting:
 
         terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
 
-        def _fake_solve_network(*args, **kwargs):
+        def _fake_solve_network(*args: object, **kwargs: object) -> None:
             raise ValueError("synthetic network solver failure")
 
         fake_legacy_path = [(0, 0), (0, 1)]
         fake_legacy_graded = np.zeros((2, 2), dtype=np.float64)
 
-        def _fake_run_height_solver(heightmap, solver, **kwargs):
+        def _fake_run_height_solver(
+            heightmap: FloatArray,
+            solver: object,
+            **kwargs: object,
+        ) -> tuple[RoadPath, FloatArray, JsonDict]:
             return fake_legacy_path, fake_legacy_graded, {}
 
         with pytest.warns(DeprecationWarning, match="VEILBREAKERS_ROAD_STRICT=0"), \
@@ -970,7 +1045,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=_fake_run_height_solver), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -986,7 +1061,10 @@ class TestRoadHandlerTerrainAwareRouting:
         assert result.get("fallback_reason", "").startswith("ValueError:")
         assert "synthetic network solver failure" in result["fallback_reason"]
 
-    def test_road_fallback_does_not_swallow_unexpected_exception(self, monkeypatch):
+    def test_road_fallback_does_not_swallow_unexpected_exception(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         """Exceptions outside the narrow whitelist must propagate (not fall back)."""
         from veilbreakers_terrain.handlers import environment as env_mod
 
@@ -1001,7 +1079,7 @@ class TestRoadHandlerTerrainAwareRouting:
         class _UnexpectedBoom(Exception):
             pass
 
-        def _fake_solve_network(*args, **kwargs):
+        def _fake_solve_network(*args: object, **kwargs: object) -> None:
             raise _UnexpectedBoom("not in the whitelist")
 
         with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
@@ -1009,7 +1087,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -1022,7 +1100,10 @@ class TestRoadHandlerTerrainAwareRouting:
                     }
                 )
 
-    def test_road_strict_env_flag_re_raises_narrowed_exception(self, monkeypatch):
+    def test_road_strict_env_flag_re_raises_narrowed_exception(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         """VEILBREAKERS_ROAD_STRICT=1 re-raises instead of falling back."""
         from veilbreakers_terrain.handlers import environment as env_mod
 
@@ -1030,7 +1111,7 @@ class TestRoadHandlerTerrainAwareRouting:
 
         terrain_obj, _BM, _Mesh = self._road_handler_fixtures(env_mod)
 
-        def _fake_solve_network(*args, **kwargs):
+        def _fake_solve_network(*args: object, **kwargs: object) -> None:
             raise RuntimeError("network solver runtime failure")
 
         with patch.object(env_mod.bpy.data.objects, "get", return_value=terrain_obj), \
@@ -1038,7 +1119,7 @@ class TestRoadHandlerTerrainAwareRouting:
              patch.object(env_mod, "_detect_grid_dims", return_value=(2, 2)), \
              patch.object(env_mod, "_solve_road_path_with_network", side_effect=_fake_solve_network), \
              patch.object(env_mod, "_run_height_solver_in_world_space", side_effect=AssertionError("legacy path should not run")), \
-             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=lambda hmap, *args, **kwargs: hmap), \
+             patch.object(env_mod, "_apply_road_profile_to_heightmap", side_effect=_identity_heightmap_profile), \
              patch.object(env_mod, "_paint_road_mask_on_terrain"), \
              patch.object(env_mod, "_collect_bridge_spans", return_value=[]), \
              patch.object(env_mod, "_sample_path_indices", return_value=[0, 1]):
@@ -1313,15 +1394,15 @@ class TestHandlerReturnDictKeys:
         assert arr.min() >= 0
         assert arr.max() <= 65535
 
-    def test_handle_export_heightmap_writes_metadata_sidecar(self, tmp_path):
+    def test_handle_export_heightmap_writes_metadata_sidecar(self, tmp_path: Path):
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        class _Verts(list):
-            def ensure_lookup_table(self):
+        class _Verts(list[object]):
+            def ensure_lookup_table(self) -> None:
                 return None
 
         class _BM:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.verts = _Verts(
                     [
                         SimpleNamespace(co=SimpleNamespace(z=10.0)),
@@ -1331,10 +1412,10 @@ class TestHandlerReturnDictKeys:
                     ]
                 )
 
-            def from_mesh(self, _mesh):
+            def from_mesh(self, _mesh: object) -> None:
                 return None
 
-            def free(self):
+            def free(self) -> None:
                 return None
 
         filepath = tmp_path / "terrain.raw"
@@ -1404,7 +1485,7 @@ class TestControllerTerrainPath:
             SimpleNamespace(pass_name="cliffs", status="ok"),
             SimpleNamespace(pass_name="validation_minimal", status="ok"),
         ]
-        controller_execution = {
+        controller_execution: JsonDict = {
             "state": controller_state,
             "results": controller_results,
             "mask_stack": stack,
@@ -1423,13 +1504,15 @@ class TestControllerTerrainPath:
         ]
         captured: dict[str, object] = {}
 
-        def _fake_create_mesh(**kwargs):
+        def _fake_create_mesh(**kwargs: object) -> JsonDict:
             captured["heightmap"] = np.asarray(kwargs["heightmap"]).copy()
             captured["controller_cliff_placements"] = kwargs.get("controller_cliff_placements")
+            placements = kwargs.get("controller_cliff_placements") or []
+            assert isinstance(placements, Sequence)
             return {
                 "name": kwargs["name"],
                 "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
-                "cliff_overlays": len(kwargs.get("controller_cliff_placements") or []),
+                "cliff_overlays": len(placements),
                 "hero_cliff_overlays": 1,
             }
 
@@ -1479,7 +1562,7 @@ class TestControllerTerrainPath:
             tile_y=0,
             height=height,
         )
-        controller_execution = {
+        controller_execution: JsonDict = {
             "state": SimpleNamespace(mask_stack=stack),
             "results": [],
             "mask_stack": stack,
@@ -1488,11 +1571,11 @@ class TestControllerTerrainPath:
         }
         captured: dict[str, object] = {}
 
-        def _fake_execute(params):
+        def _fake_execute(params: Mapping[str, object]) -> JsonDict:
             captured["params"] = dict(params)
             return controller_execution
 
-        def _fake_create_mesh(**kwargs):
+        def _fake_create_mesh(**kwargs: object) -> JsonDict:
             return {
                 "name": kwargs["name"],
                 "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
@@ -1522,8 +1605,9 @@ class TestControllerTerrainPath:
                 }
             )
 
-        params = captured["params"]
-        assert params["scene_read"]["cave_candidates"] == [(6.0, 3.0, 0.0)]
+        params = _require_json_dict(captured["params"])
+        scene_read = _require_json_dict(params["scene_read"])
+        assert scene_read["cave_candidates"] == [(6.0, 3.0, 0.0)]
         assert "pipeline" not in params
         assert params["world_origin_x"] == pytest.approx(-12.0)
         assert params["world_origin_y"] == pytest.approx(-18.0)
@@ -1545,7 +1629,7 @@ class TestControllerTerrainPath:
             tile_y=0,
             height=height,
         )
-        controller_execution = {
+        controller_execution: JsonDict = {
             "state": SimpleNamespace(mask_stack=stack),
             "results": [],
             "mask_stack": stack,
@@ -1554,11 +1638,11 @@ class TestControllerTerrainPath:
         }
         captured: dict[str, object] = {}
 
-        def _fake_execute(params):
+        def _fake_execute(params: Mapping[str, object]) -> JsonDict:
             captured["params"] = dict(params)
             return controller_execution
 
-        def _fake_create_mesh(**kwargs):
+        def _fake_create_mesh(**kwargs: object) -> JsonDict:
             return {
                 "name": kwargs["name"],
                 "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
@@ -1589,9 +1673,10 @@ class TestControllerTerrainPath:
                 }
             )
 
-        params = captured["params"]
+        params = _require_json_dict(captured["params"])
         assert "pipeline" not in params
-        assert params["composition_hints"]["controller_apply_caves"] is True
+        composition_hints = _require_json_dict(params["composition_hints"])
+        assert composition_hints["controller_apply_caves"] is True
         assert result["cave_pipeline_deferred"] is False
 
     def test_controller_path_inserts_hydrology_before_erosion(self):
@@ -1608,7 +1693,7 @@ class TestControllerTerrainPath:
             tile_y=0,
             height=height,
         )
-        controller_execution = {
+        controller_execution: JsonDict = {
             "state": SimpleNamespace(mask_stack=stack),
             "results": [],
             "mask_stack": stack,
@@ -1617,11 +1702,11 @@ class TestControllerTerrainPath:
         }
         captured: dict[str, object] = {}
 
-        def _fake_execute(params):
+        def _fake_execute(params: Mapping[str, object]) -> JsonDict:
             captured["params"] = dict(params)
             return controller_execution
 
-        def _fake_create_mesh(**kwargs):
+        def _fake_create_mesh(**kwargs: object) -> JsonDict:
             return {
                 "name": kwargs["name"],
                 "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
@@ -1650,8 +1735,9 @@ class TestControllerTerrainPath:
                 }
             )
 
-        assert "pipeline" not in captured["params"]
-        assert captured["params"]["erosion_profile"] == "temperate"
+        params = _require_json_dict(captured["params"])
+        assert "pipeline" not in params
+        assert params["erosion_profile"] == "temperate"
 
     def test_controller_path_forwards_quality_profile_hints_and_viewport_vantage(self):
         from veilbreakers_terrain.handlers import environment as env_mod
@@ -1667,7 +1753,7 @@ class TestControllerTerrainPath:
             tile_y=0,
             height=height,
         )
-        controller_execution = {
+        controller_execution: JsonDict = {
             "state": SimpleNamespace(mask_stack=stack),
             "results": [],
             "mask_stack": stack,
@@ -1676,11 +1762,11 @@ class TestControllerTerrainPath:
         }
         captured: dict[str, object] = {}
 
-        def _fake_execute(params):
+        def _fake_execute(params: Mapping[str, object]) -> JsonDict:
             captured["params"] = dict(params)
             return controller_execution
 
-        def _fake_create_mesh(**kwargs):
+        def _fake_create_mesh(**kwargs: object) -> JsonDict:
             return {
                 "name": kwargs["name"],
                 "vertex_count": int(np.asarray(kwargs["heightmap"]).size),
@@ -1708,15 +1794,16 @@ class TestControllerTerrainPath:
                 }
             )
 
-        assert captured["params"]["quality_profile"] == "aaa_open_world"
-        assert captured["params"]["composition_hints"] == {
+        params = _require_json_dict(captured["params"])
+        assert params["quality_profile"] == "aaa_open_world"
+        assert params["composition_hints"] == {
             "bundle_n_runtime": {"determinism_runs": 2}
         }
-        assert captured["params"]["viewport_vantage"] == {"camera": "test"}
+        assert params["viewport_vantage"] == {"camera": "test"}
 
 
 class TestWorldTerrainGeneration:
-    def test_generate_terrain_tile_writes_resume_manifest(self, tmp_path):
+    def test_generate_terrain_tile_writes_resume_manifest(self, tmp_path: Path):
         from veilbreakers_terrain.handlers import environment as env_mod
 
         heightmap = np.array(
@@ -1774,11 +1861,14 @@ class TestWorldTerrainGeneration:
     def test_world_terrain_can_wrap_multiple_tiles(self):
         from veilbreakers_terrain.handlers import environment as env_mod
 
-        with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=lambda params: {
-            "name": params["name"],
-            "tile_x": params["tile_x"],
-            "tile_y": params["tile_y"],
-        }):
+        def _fake_tile(params: Mapping[str, object]) -> JsonDict:
+            return {
+                "name": params["name"],
+                "tile_x": params["tile_x"],
+                "tile_y": params["tile_y"],
+            }
+
+        with patch.object(env_mod, "handle_generate_terrain_tile", side_effect=_fake_tile):
             result = env_mod.handle_generate_world_terrain({
                 "name": "World",
                 "tiles_x": 2,
@@ -1791,19 +1881,19 @@ class TestWorldTerrainGeneration:
             (0, 0), (1, 0), (0, 1), (1, 1),
         }
 
-    def test_world_terrain_writes_batch_manifest_and_frontier(self, tmp_path):
+    def test_world_terrain_writes_batch_manifest_and_frontier(self, tmp_path: Path):
         from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
-        def _fake_tile(params):
-            tile_x = params["tile_x"]
-            tile_y = params["tile_y"]
-            terrain_size = float(params.get("tile_size", 64)) * float(params.get("cell_size", 1.0))
+        def _fake_tile(params: Mapping[str, object]) -> JsonDict:
+            tile_x = _param_int(params, "tile_x")
+            tile_y = _param_int(params, "tile_y")
+            terrain_size = _param_float(params, "tile_size", 64.0) * _param_float(params, "cell_size", 1.0)
             seam_contract = build_tile_seam_contract(
                 [[tile_x, tile_x + 1], [tile_y, tile_y + 1]],
                 tile_x=tile_x,
                 tile_y=tile_y,
-                cell_size=float(params.get("cell_size", 1.0)),
+                cell_size=_param_float(params, "cell_size", 1.0),
                 world_origin_x=float(tile_x) * terrain_size,
                 world_origin_y=float(tile_y) * terrain_size,
                 world_id="World",
@@ -1841,7 +1931,7 @@ class TestWorldTerrainGeneration:
         assert batch_manifest["frontier_tiles"]
         assert {"tile_x": 2, "tile_y": 0} in batch_manifest["frontier_tiles"]
 
-    def test_generate_terrain_tile_manifest_failure_cleans_export_artifacts(self, tmp_path):
+    def test_generate_terrain_tile_manifest_failure_cleans_export_artifacts(self, tmp_path: Path):
         from veilbreakers_terrain.handlers import environment as env_mod
 
         heightmap = np.array(
@@ -1855,7 +1945,7 @@ class TestWorldTerrainGeneration:
             "object_location": (1.0, 1.0, 0.0),
         }
 
-        def _fake_export_world_tile_artifacts(**kwargs):
+        def _fake_export_world_tile_artifacts(**kwargs: object) -> dict[str, str]:
             height_path = tmp_path / "TileFail_heightmap.raw"
             alpha_path = tmp_path / "TileFail_alphamap.raw"
             height_path.write_bytes(b"height")
@@ -1865,7 +1955,7 @@ class TestWorldTerrainGeneration:
                 "alphamap_path": str(alpha_path),
             }
 
-        def _fake_write_json_manifest(path, payload):
+        def _fake_write_json_manifest(path: str | Path, payload: JsonDict) -> str:
             if str(path).endswith("TileFail_tile_manifest.json"):
                 raise OSError("disk full")
             return _original_write_json_manifest(path, payload)
@@ -1896,19 +1986,19 @@ class TestWorldTerrainGeneration:
         assert not (tmp_path / "TileFail_alphamap.raw").exists()
         assert not (tmp_path / "TileFail_tile_manifest.json").exists()
 
-    def test_world_terrain_manifest_write_failure_isolated(self, tmp_path):
+    def test_world_terrain_manifest_write_failure_isolated(self, tmp_path: Path):
         from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
-        def _fake_tile(params):
-            tile_x = params["tile_x"]
-            tile_y = params["tile_y"]
-            terrain_size = float(params.get("tile_size", 64)) * float(params.get("cell_size", 1.0))
+        def _fake_tile(params: Mapping[str, object]) -> JsonDict:
+            tile_x = _param_int(params, "tile_x")
+            tile_y = _param_int(params, "tile_y")
+            terrain_size = _param_float(params, "tile_size", 64.0) * _param_float(params, "cell_size", 1.0)
             seam_contract = build_tile_seam_contract(
                 [[tile_x, tile_x + 1], [tile_y, tile_y + 1]],
                 tile_x=tile_x,
                 tile_y=tile_y,
-                cell_size=float(params.get("cell_size", 1.0)),
+                cell_size=_param_float(params, "cell_size", 1.0),
                 world_origin_x=float(tile_x) * terrain_size,
                 world_origin_y=float(tile_y) * terrain_size,
                 world_id="World",
@@ -1926,7 +2016,7 @@ class TestWorldTerrainGeneration:
                 "tile_manifest_path": str(tmp_path / f"{params['name']}.json"),
             }
 
-        def _fake_write_json_manifest(path, payload):
+        def _fake_write_json_manifest(path: str | Path, payload: JsonDict) -> str:
             if str(path).endswith("world_batch_manifest.json"):
                 raise OSError("manifest write failed")
             return _original_write_json_manifest(path, payload)
@@ -1950,21 +2040,21 @@ class TestWorldTerrainGeneration:
         assert result["batch_manifest_path"] is None
         assert "manifest write failed" in result["batch_manifest_error"]
 
-    def test_world_terrain_partial_failure_preserves_requested_bounds_and_frontier(self, tmp_path):
+    def test_world_terrain_partial_failure_preserves_requested_bounds_and_frontier(self, tmp_path: Path):
         from veilbreakers_terrain.handlers import environment as env_mod
         from veilbreakers_terrain.handlers.terrain_chunking import build_tile_seam_contract
 
-        def _fake_tile(params):
-            tile_x = params["tile_x"]
-            tile_y = params["tile_y"]
+        def _fake_tile(params: Mapping[str, object]) -> JsonDict:
+            tile_x = _param_int(params, "tile_x")
+            tile_y = _param_int(params, "tile_y")
             if (tile_x, tile_y) == (2, 0):
                 raise RuntimeError("tile exploded")
-            terrain_size = float(params.get("tile_size", 64)) * float(params.get("cell_size", 1.0))
+            terrain_size = _param_float(params, "tile_size", 64.0) * _param_float(params, "cell_size", 1.0)
             seam_contract = build_tile_seam_contract(
                 [[tile_x, tile_x + 1], [tile_y, tile_y + 1]],
                 tile_x=tile_x,
                 tile_y=tile_y,
-                cell_size=float(params.get("cell_size", 1.0)),
+                cell_size=_param_float(params, "cell_size", 1.0),
                 world_origin_x=float(tile_x) * terrain_size,
                 world_origin_y=float(tile_y) * terrain_size,
                 world_id="World",
@@ -2090,8 +2180,8 @@ def test_handle_generate_waterfall_materializes_object_and_threads_direction():
 
     captured: dict[str, object] = {}
 
-    class _DummyMaterials(list):
-        def clear(self):
+    class _DummyMaterials(list[object]):
+        def clear(self) -> None:
             del self[:]
 
     dummy_obj = SimpleNamespace(
@@ -2099,7 +2189,7 @@ def test_handle_generate_waterfall_materializes_object_and_threads_direction():
         data=SimpleNamespace(materials=_DummyMaterials()),
     )
 
-    def _fake_generate_waterfall(**kwargs):
+    def _fake_generate_waterfall(**kwargs: object) -> JsonDict:
         captured["facing_direction"] = kwargs["facing_direction"]
         return {
             "mesh": {
@@ -2112,7 +2202,7 @@ def test_handle_generate_waterfall_materializes_object_and_threads_direction():
             "face_count": 1,
         }
 
-    def _fake_create_mesh(spec, **kwargs):
+    def _fake_create_mesh(spec: Mapping[str, object], **kwargs: object) -> object:
         captured["mesh_spec"] = spec
         captured["location"] = kwargs["location"]
         return dummy_obj
@@ -2134,7 +2224,8 @@ def test_handle_generate_waterfall_materializes_object_and_threads_direction():
 
     assert captured["facing_direction"] == (1.0, 0.0)
     assert captured["location"] == (1.0, 2.0, 3.0)
-    assert captured["mesh_spec"]["material_ids"] == [0]
+    mesh_spec = _require_json_dict(captured["mesh_spec"])
+    assert mesh_spec["material_ids"] == [0]
     assert result["name"] == "HeroFalls"
     assert result["object_created"] is True
     assert len(dummy_obj.data.materials) == 1
@@ -2145,7 +2236,7 @@ def test_handle_generate_waterfall_normalizes_facing_direction():
 
     captured: dict[str, object] = {}
 
-    def _fake_generate_waterfall(**kwargs):
+    def _fake_generate_waterfall(**kwargs: object) -> JsonDict:
         captured["facing_direction"] = kwargs["facing_direction"]
         return {
             "mesh": {"vertices": [], "faces": []},
@@ -2233,56 +2324,60 @@ def test_multi_biome_world_uses_mesh_backed_scatter_helper():
             self.color = None
 
     class _ColorAttr:
-        def __init__(self, count):
+        def __init__(self, count: int) -> None:
             self.data = [_ColorDatum() for _ in range(count)]
 
     class _ColorAttributes:
-        def __init__(self):
-            self._attrs = {}
+        def __init__(self) -> None:
+            self._attrs: dict[str, _ColorAttr] = {}
 
-        def get(self, name):
+        def get(self, name: str) -> _ColorAttr | None:
             return self._attrs.get(name)
 
-        def new(self, name, type, domain):
+        def new(self, name: str, type: str, domain: str) -> _ColorAttr:
             attr = _ColorAttr(4)
             self._attrs[name] = attr
             return attr
 
-        def remove(self, attr):
+        def remove(self, attr: _ColorAttr) -> None:
             for key, value in list(self._attrs.items()):
                 if value is attr:
                     del self._attrs[key]
 
     class _Mesh:
-        def __init__(self):
+        def __init__(self) -> None:
             self.color_attributes = _ColorAttributes()
             self.vertices = [object(), object(), object(), object()]
 
     class _Obj:
-        def __init__(self):
+        def __init__(self) -> None:
             self.data = _Mesh()
 
     class _Spec:
-        def __init__(self):
+        def __init__(self) -> None:
             self.biome_names = ["thornwood_forest", "corrupted_swamp"]
             self.biome_ids = np.array([[0, 1], [1, 0]], dtype=np.int32)
             self.corruption_map = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
             self.flatten_zones = [{"center": [0.0, 0.0], "radius": 10.0}]
 
     fake_obj = _Obj()
-    scatter_calls = []
-    terrain_calls = []
+    scatter_calls: list[Mapping[str, object]] = []
+    terrain_calls: list[JsonDict] = []
 
-    def _fake_generate_terrain(params):
+    def _fake_generate_terrain(params: Mapping[str, object]) -> JsonDict:
         terrain_calls.append(dict(params))
         return {"vertex_count": 4}
+
+    def _fake_scatter_vegetation(params: Mapping[str, object]) -> dict[str, int]:
+        scatter_calls.append(params)
+        return {"instance_count": 3}
 
     with patch.object(env_mod, "handle_generate_terrain", side_effect=_fake_generate_terrain), \
          patch.object(env_mod, "_compute_vertex_colors_for_biome_map", return_value=[(1.0, 0.0, 0.0, 1.0)] * 4), \
          patch.object(env_mod.bpy.data.objects, "get", return_value=fake_obj), \
          patch("veilbreakers_terrain.handlers._biome_grammar.generate_world_map_spec", return_value=_Spec()), \
          patch("veilbreakers_terrain.handlers.terrain_materials.handle_create_biome_terrain", return_value={"status": "ok"}), \
-         patch("veilbreakers_terrain.handlers.environment_scatter.handle_scatter_vegetation", side_effect=lambda params: scatter_calls.append(params) or {"instance_count": 3}), \
+         patch("veilbreakers_terrain.handlers.environment_scatter.handle_scatter_vegetation", side_effect=_fake_scatter_vegetation), \
          patch("veilbreakers_terrain.handlers.vegetation_system.scatter_biome_vegetation", side_effect=AssertionError("legacy scatter path should not run")):
         result = env_mod.handle_generate_multi_biome_world(
             {
@@ -2376,13 +2471,13 @@ class TestRoadMaskPainting:
         from veilbreakers_terrain.handlers.environment import _paint_road_mask_on_terrain
 
         class _Vertex:
-            def __init__(self, x, y, z=0.0):
+            def __init__(self, x: float, y: float, z: float = 0.0) -> None:
                 self.co = SimpleNamespace(x=x, y=y, z=z)
 
-        class _VertexCollection(list):
+        class _VertexCollection(list[_Vertex]):
             """List of _Vertex objects that also supports Blender's foreach_get API."""
 
-            def foreach_get(self, attr, dest):
+            def foreach_get(self, attr: str, dest: NDArray[np.float64]) -> None:
                 # attr is expected to be "co"; dest is a flat array of length n_verts*3.
                 for i, v in enumerate(self):
                     co = getattr(v, attr)
@@ -2391,25 +2486,25 @@ class TestRoadMaskPainting:
                     dest[i * 3 + 2] = co.z
 
         class _Loop:
-            def __init__(self, vertex_index):
+            def __init__(self, vertex_index: int) -> None:
                 self.vertex_index = vertex_index
 
-        class _LoopCollection(list):
+        class _LoopCollection(list[_Loop]):
             """List of _Loop objects that also supports Blender's foreach_get API."""
 
-            def foreach_get(self, attr, dest):
+            def foreach_get(self, attr: str, dest: NDArray[np.int_]) -> None:
                 # attr is expected to be "vertex_index"; dest is a flat int array of length n_loops.
                 for i, loop in enumerate(self):
                     dest[i] = getattr(loop, attr)
 
         class _ColorDatum:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.color = (0.0, 0.0, 0.0, 0.0)
 
-        class _ColorDataCollection(list):
+        class _ColorDataCollection(list[_ColorDatum]):
             """List of _ColorDatum objects that supports Blender's foreach_get/foreach_set API."""
 
-            def foreach_get(self, attr, dest):
+            def foreach_get(self, attr: str, dest: NDArray[np.float64]) -> None:
                 # attr is expected to be "color"; dest is a flat float array of length n_loops*4.
                 for i, datum in enumerate(self):
                     val = getattr(datum, attr)
@@ -2418,7 +2513,7 @@ class TestRoadMaskPainting:
                     dest[i * 4 + 2] = val[2]
                     dest[i * 4 + 3] = val[3]
 
-            def foreach_set(self, attr, src):
+            def foreach_set(self, attr: str, src: NDArray[np.float64]) -> None:
                 # attr is expected to be "color"; src is a flat float array of length n_loops*4.
                 for i, datum in enumerate(self):
                     setattr(datum, attr, (
@@ -2429,23 +2524,23 @@ class TestRoadMaskPainting:
                     ))
 
         class _ColorAttr:
-            def __init__(self, count):
+            def __init__(self, count: int) -> None:
                 self.data = _ColorDataCollection(_ColorDatum() for _ in range(count))
 
         class _ColorAttributes:
-            def __init__(self):
-                self._attrs = {}
+            def __init__(self) -> None:
+                self._attrs: dict[str, _ColorAttr] = {}
 
-            def get(self, name):
+            def get(self, name: str) -> _ColorAttr | None:
                 return self._attrs.get(name)
 
-            def new(self, name, type, domain):
+            def new(self, name: str, type: str, domain: str) -> _ColorAttr:
                 attr = _ColorAttr(4)
                 self._attrs[name] = attr
                 return attr
 
         class _Mesh:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.vertices = _VertexCollection([
                     _Vertex(0.0, 0.0),
                     _Vertex(2.0, 0.0),
@@ -2975,6 +3070,7 @@ class TestVBBiomePresets:
 
         for name in self.VB_BIOME_NAMES:
             preset = get_vb_biome_preset(name)
+            assert preset is not None
             expected = sum(
                 1
                 for rule in preset.get("scatter_rules", [])
@@ -2995,6 +3091,7 @@ class TestVBBiomePresets:
 
         for name in self.VB_BIOME_NAMES:
             preset = get_vb_biome_preset(name)
+            assert preset is not None
             # Build the effective params dict as the handler would
             effective = {
                 "terrain_type": preset["terrain_type"],

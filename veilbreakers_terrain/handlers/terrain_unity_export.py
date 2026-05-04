@@ -8,10 +8,12 @@ auxiliary grids, and JSON descriptors with explicit Y-up coordinates.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from collections.abc import Mapping, Sequence
+from typing import Any, Callable, Dict, List, Optional, TypeAlias, cast, overload
 
 import numpy as np
 
@@ -43,11 +45,44 @@ Applied as the LAST step before serialization — internal computation is unchan
 """
 
 
+JsonDict: TypeAlias = Dict[str, Any]
+Float3: TypeAlias = tuple[float, float, float]
+
+
+@overload
+def _apply_unity_scale(v: float) -> float:
+    ...
+
+
+@overload
+def _apply_unity_scale(v: list[float]) -> list[float]:
+    ...
+
+
 def _apply_unity_scale(v: "float | list[float]") -> "float | list[float]":
     """Multiply v by UNITY_SCALE_FACTOR.  Supports scalar or list-of-float."""
     if isinstance(v, list):
         return [x * UNITY_SCALE_FACTOR for x in v]
     return float(v) * UNITY_SCALE_FACTOR
+
+
+def _float3(value: object) -> Float3 | None:
+    """Return a finite float triplet from JSON/list-like input."""
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return None
+    seq = cast(Sequence[object], value)
+    if len(seq) < 3:
+        return None
+    return (float(cast(Any, seq[0])), float(cast(Any, seq[1])), float(cast(Any, seq[2])))
+
+
+def _float2(value: object) -> tuple[float, float] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return None
+    seq = cast(Sequence[object], value)
+    if len(seq) < 2:
+        return None
+    return (float(cast(Any, seq[0])), float(cast(Any, seq[1])))
 
 
 def write_animation_clip_yaml(
@@ -768,8 +803,7 @@ def _write_rgba_png(
         _PILImage.fromarray(np.ascontiguousarray(export_arr), mode="RGBA").save(target)
     except ImportError:
         try:
-            import imageio.v3 as _imageio  # type: ignore[import]
-
+            _imageio = cast(Any, importlib.import_module("imageio.v3"))
             _imageio.imwrite(target, np.ascontiguousarray(export_arr))
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise RuntimeError(
@@ -819,17 +853,18 @@ def _supplemental_mesh_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     }
     mesh_specs: List[Dict[str, Any]] = []
     for raw_spec in list(stack.cliff_mesh_specs or []) + list(stack.cave_mesh_specs or []):
-        raw_vertices = list(raw_spec.get("vertices") or [])
-        raw_faces = list(raw_spec.get("faces") or [])
+        raw_vertices = list(cast(Sequence[object], raw_spec.get("vertices") or []))
+        raw_faces = list(cast(Sequence[object], raw_spec.get("faces") or []))
         if not raw_vertices or not raw_faces:
             continue
 
         vertices: List[Dict[str, float]] = []
         for vec in raw_vertices:
-            if not isinstance(vec, (list, tuple)) or len(vec) < 3:
+            vec3 = _float3(vec)
+            if vec3 is None:
                 vertices = []
                 break
-            unity_vec = _apply_unity_scale(_zup_to_unity_vector(vec))
+            unity_vec = _apply_unity_scale(_zup_to_unity_vector(vec3))
             vertices.append(
                 {
                     "x": float(unity_vec[0]),
@@ -842,20 +877,24 @@ def _supplemental_mesh_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
         faces: List[Dict[str, List[int]]] = []
         for face in raw_faces:
-            if not isinstance(face, (list, tuple)) or len(face) < 3:
+            if not isinstance(face, Sequence) or isinstance(face, (str, bytes)):
                 continue
-            faces.append({"indices": [int(idx) for idx in face]})
+            face_indices = cast(Sequence[object], face)
+            if len(face_indices) < 3:
+                continue
+            faces.append({"indices": [int(cast(Any, idx)) for idx in face_indices]})
         if not faces:
             continue
 
         uvs: List[Dict[str, float]] = []
-        for uv in list(raw_spec.get("uvs") or []):
-            if not isinstance(uv, (list, tuple)) or len(uv) < 2:
+        for uv in list(cast(Sequence[object], raw_spec.get("uvs") or [])):
+            uv2 = _float2(uv)
+            if uv2 is None:
                 uvs = []
                 break
-            uvs.append({"x": float(uv[0]), "y": float(uv[1])})
+            uvs.append({"x": uv2[0], "y": uv2[1]})
 
-        serialized = {
+        serialized: Dict[str, Any] = {
             "mesh_id": str(raw_spec.get("mesh_id", f"supplemental_mesh_{len(mesh_specs):03d}")),
             "mesh_type": str(raw_spec.get("mesh_type", "supplemental")),
             "material_hint": str(raw_spec.get("material_hint", "terrain_rock")),
@@ -865,7 +904,9 @@ def _supplemental_mesh_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         }
         drip_edge_indices = raw_spec.get("drip_edge_indices")
         if isinstance(drip_edge_indices, (list, tuple)):
-            serialized["drip_edge_indices"] = [int(idx) for idx in drip_edge_indices]
+            serialized["drip_edge_indices"] = [
+                int(cast(Any, idx)) for idx in cast(Sequence[object], drip_edge_indices)
+            ]
         if uvs and len(uvs) == len(vertices):
             serialized["uvs"] = uvs
         mesh_specs.append(serialized)
@@ -1068,18 +1109,19 @@ def _particle_emitter_specs_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     raw_specs = list(stack.particle_emitter_specs or [])
     emitters: List[Dict[str, Any]] = []
     for i, raw in enumerate(raw_specs):
-        position = raw.get("position")
-        normal = raw.get("normal")
-        bounds = raw.get("bounds") or {}
-        if not isinstance(position, (list, tuple)) or len(position) < 3:
-            continue
-        if not isinstance(normal, (list, tuple)) or len(normal) < 3:
+        position = _float3(raw.get("position"))
+        normal = _float3(raw.get("normal"))
+        bounds_raw = raw.get("bounds")
+        bounds: Mapping[str, Any] = (
+            cast(Mapping[str, Any], bounds_raw) if isinstance(bounds_raw, Mapping) else {}
+        )
+        if position is None or normal is None:
             continue
 
-        unity_pos = _apply_unity_scale(_zup_to_unity_vector(list(position)))
+        unity_pos = _apply_unity_scale(_zup_to_unity_vector(position))
         # Normals are direction vectors — do NOT apply the unity world-scale
         # factor. We only need the Z-up -> Y-up axis swap.
-        unity_nrm = _zup_to_unity_vector(list(normal))
+        unity_nrm = _zup_to_unity_vector(normal)
 
         emitter = {
             "emitter_id": str(raw.get("zone_name", f"emitter_{i:03d}")) +
@@ -1246,11 +1288,7 @@ def _component_vertical_extent(
     fallback_max_m: float,
 ) -> tuple[float, float]:
     """Resolve a terrain-aware vertical span for a connected component."""
-    height = stack.height
-    if height is None:
-        return float(fallback_min_m), float(fallback_max_m)
-
-    h = np.asarray(height, dtype=np.float64)
+    h = np.asarray(stack.height, dtype=np.float64)
     if h.ndim != 2 or rr.size == 0 or cc.size == 0:
         return float(fallback_min_m), float(fallback_max_m)
 
@@ -1284,7 +1322,11 @@ def _biome_manifest_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     vals, counts = np.unique(arr.astype(np.int64), return_counts=True)
     total = max(int(counts.sum()), 1)
     names_raw = getattr(stack, "biome_names", None)
-    biome_names = list(names_raw) if isinstance(names_raw, (list, tuple)) else []
+    biome_names = (
+        [str(name) for name in cast(Sequence[object], names_raw)]
+        if isinstance(names_raw, Sequence) and not isinstance(names_raw, (str, bytes))
+        else []
+    )
 
     rows: List[Dict[str, Any]] = []
     for val, count in zip(vals.tolist(), counts.tolist()):
@@ -1370,7 +1412,8 @@ def _write_unity_mesh_attributes(
     if not attrs:
         return []
     path = output_dir / "mesh_attributes.npz"
-    np.savez_compressed(path, **attrs)
+    savez_compressed = cast(Callable[..., Any], np.savez_compressed)
+    savez_compressed(path, **attrs)
     files["mesh_attributes.npz"] = {
         "kind": "unity_mesh_attributes",
         "encoding": "npz_named_arrays",
@@ -1551,7 +1594,7 @@ def _build_unity_import_descriptor(
     }
 
 
-def _zup_to_unity_vector(vec: list[float] | tuple[float, float, float]) -> list[float]:
+def _zup_to_unity_vector(vec: Sequence[float]) -> list[float]:
     x, y, z = (float(vec[0]), float(vec[1]), float(vec[2]))
     return [x, z, y]
 
@@ -1564,8 +1607,8 @@ def _bounds_to_unity(bounds_min: list[float], bounds_max: list[float]) -> Dict[s
 
 
 def _terrain_normal_at(stack: TerrainMaskStack, row: int, col: int) -> list[float]:
-    h = np.asarray(stack.height, dtype=np.float64) if stack.height is not None else None
-    if h is None or h.size == 0:
+    h = np.asarray(stack.height, dtype=np.float64)
+    if h.size == 0:
         return [0.0, 0.0, 1.0]
 
     r0 = max(0, row - 1)
@@ -1583,8 +1626,8 @@ def _terrain_normal_at(stack: TerrainMaskStack, row: int, col: int) -> list[floa
 
 
 def _terrain_height_at_world(stack: TerrainMaskStack, world_x: float, world_y: float) -> float | None:
-    h = np.asarray(stack.height, dtype=np.float64) if stack.height is not None else None
-    if h is None or h.ndim != 2 or h.size == 0:
+    h = np.asarray(stack.height, dtype=np.float64)
+    if h.ndim != 2 or h.size == 0:
         return None
     cs = max(float(stack.cell_size), 1e-9)
     col = int(round((float(world_x) - float(stack.world_origin_x)) / cs))
@@ -1632,7 +1675,7 @@ def _write_splatmap_groups(
         raise ValueError("splatmap_weights_layer must be 3D (H, W, L)")
     if weights_np.shape[2] < 1:
         raise ValueError("splatmap_weights_layer must contain at least one layer")
-    if stack.height is not None and weights_np.shape[:2] != np.asarray(stack.height).shape:
+    if weights_np.shape[:2] != np.asarray(stack.height).shape:
         raise ValueError(
             "splatmap_weights_layer spatial dimensions must match stack.height"
         )
@@ -1940,7 +1983,7 @@ def export_unity_manifest(
 
     _decal_dens = stack.get("decal_density")
     if _decal_dens and isinstance(_decal_dens, dict):
-        for key, value in _decal_dens.items():
+        for key, value in cast(Mapping[str, object], _decal_dens).items():
             _write_raw_array(
                 files,
                 output_dir,
@@ -2017,11 +2060,16 @@ def export_unity_manifest(
     # D-7: atmospheric volumes — written only when the pass ran
     _atm_vols = stack.get("atmospheric_volumes")
     if _atm_vols is not None:
+        atmospheric_payload: Dict[str, Any]
+        if isinstance(_atm_vols, dict):
+            atmospheric_payload = dict(cast(Mapping[str, Any], _atm_vols))
+        else:
+            atmospheric_payload = {"volumes": list(cast(Sequence[object], _atm_vols))}
         _write_json(
             files,
             output_dir,
             filename="atmospheric_volumes.json",
-            payload=_atm_vols if isinstance(_atm_vols, dict) else {"volumes": list(_atm_vols)},
+            payload=atmospheric_payload,
         )
     if supplemental_mesh_specs_json["mesh_specs"]:
         _write_json(
@@ -2113,9 +2161,7 @@ def export_unity_manifest(
             wet_heights = height_arr[mask_arr & np.isfinite(height_arr)]
             if wet_heights.size > 0:
                 water_level_m = float(np.percentile(wet_heights, 75))
-    water_level_unity: Optional[float] = (
-        _apply_unity_scale(water_level_m) if water_level_m is not None else None
-    )
+    water_level_unity: Optional[float] = _apply_unity_scale(water_level_m) if water_level_m is not None else None
 
     # ---------------------------------------------------------------------- #
     # Lightmap hints — baked AO + chart IDs for Unity Progressive lightmapper.
@@ -2318,22 +2364,24 @@ def _light_placements_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     """Build light placement descriptors from world props via light_integration."""
     from .light_integration import compute_light_placements
 
-    props: list = []
+    props: list[Mapping[str, Any]] = []
     talus = stack.get("talus_boulder_placements")
     if talus and isinstance(talus, (list, tuple)):
-        for p in talus:
-            if isinstance(p, dict) and "position" in p:
-                props.append({"type": p.get("type", "boulder"), "position": p["position"]})
+        for p in cast(Sequence[object], talus):
+            if isinstance(p, Mapping) and "position" in p:
+                prop = cast(Mapping[str, Any], p)
+                props.append({"type": prop.get("type", "boulder"), "position": prop["position"]})
     lights = compute_light_placements(props)
     for lt in lights:
-        if "position" in lt and isinstance(lt["position"], (list, tuple)):
-            lt["position"] = _zup_to_unity_vector(
-                _apply_unity_scale(list(lt["position"]))  # type: ignore[arg-type]
-            )
-        if "direction" in lt and isinstance(lt["direction"], (list, tuple)):
-            lt["direction"] = _zup_to_unity_vector(list(lt["direction"]))
-        if "color" in lt and isinstance(lt["color"], tuple):
-            lt["color"] = list(lt["color"])
+        position = _float3(lt.get("position"))
+        if position is not None:
+            lt["position"] = _zup_to_unity_vector(_apply_unity_scale(list(position)))
+        direction = _float3(lt.get("direction"))
+        if direction is not None:
+            lt["direction"] = _zup_to_unity_vector(direction)
+        color = lt.get("color")
+        if isinstance(color, tuple):
+            lt["color"] = list(cast(tuple[object, ...], color))
     return {
         "schema_version": "1.0",
         "coordinate_system": _EXPORT_COORDINATE_SYSTEM,
@@ -2381,9 +2429,14 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
             return _audio_zone_list_json(stack, explicit_zones)
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "zones": zones}
 
-    from .terrain_audio_zones import AudioReverbClass, REVERB_PRESETS, compute_audio_zone_list
+    from .terrain_audio_zones import AudioReverbClass, compute_audio_zone_list
 
-    enriched_zones = list(stack.audio_zone_list or compute_audio_zone_list(stack))
+    audio_zones_module = cast(
+        Any,
+        importlib.import_module("veilbreakers_terrain.handlers.terrain_audio_zones"),
+    )
+    reverb_presets = cast(Mapping[str, Mapping[str, Any]], audio_zones_module.REVERB_PRESETS)
+    enriched_zones = [dict(cast(Mapping[str, Any], zone)) for zone in (stack.audio_zone_list or compute_audio_zone_list(stack))]
     class_name_fallback = {
         int(AudioReverbClass.OPEN_FIELD): "open_field",
         int(AudioReverbClass.FOREST_DENSE): "forest_dense",
@@ -2416,7 +2469,7 @@ def _audio_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
                 or enriched.get("reverb_preset")
                 or class_name_fallback.get(int(val), "unknown")
             )
-            preset = REVERB_PRESETS.get(name, {})
+            preset = reverb_presets.get(name, {})
             wet = float(enriched.get("wet_send_default", enriched.get("dry_wet_ratio", 0.2)))
             er = float(preset.get("pre_delay", 0.2))
             tail = float(enriched.get("rt60_seconds", enriched.get("rt60", preset.get("rt60", 0.5))))
@@ -2453,14 +2506,15 @@ def _audio_zone_list_json(
     zones: List[Dict[str, Any]] = []
     world_tile_extent = float(stack.tile_size * stack.cell_size)
     for i, zone in enumerate(explicit_zones):
-        boundary = zone.get("boundary_polygon") or []
+        boundary: Sequence[object] = cast(Sequence[object], zone.get("boundary_polygon") or [])
         rr: List[int] = []
         cc: List[int] = []
         for point in boundary:
-            if not isinstance(point, (list, tuple)) or len(point) < 2:
+            point2 = _float2(point)
+            if point2 is None:
                 continue
-            rr.append(int(point[0]))
-            cc.append(int(point[1]))
+            rr.append(int(point2[0]))
+            cc.append(int(point2[1]))
         if rr and cc:
             rr_np = np.asarray(rr, dtype=np.int32)
             cc_np = np.asarray(cc, dtype=np.int32)
@@ -2554,7 +2608,10 @@ def _gameplay_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
     volumes: List[Dict[str, Any]] = []
-    _wl = stack.get("wildlife_affinity") or {}
+    _wl_raw = stack.get("wildlife_affinity")
+    _wl: Mapping[str, object] = (
+        cast(Mapping[str, object], _wl_raw) if isinstance(_wl_raw, Mapping) else {}
+    )
     if not _wl:
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "volumes": volumes}
 
@@ -2593,12 +2650,13 @@ def _wildlife_zones_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
 
 def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
-    decals: Dict[str, List[Dict[str, Any]]] = {}
+    decals: Dict[str, Dict[str, Any]] = {}
     _dd = stack.get("decal_density")
     if not _dd or not isinstance(_dd, dict):
         return {"schema_version": "1.0", "coordinate_system": _EXPORT_COORDINATE_SYSTEM, "decals": decals}
 
-    for kind, arr in _dd.items():
+    height_arr = np.asarray(stack.height, dtype=np.float64)
+    for kind, arr in cast(Mapping[str, object], _dd).items():
         arr_np = np.asarray(arr, dtype=np.float32)
         coords = np.argwhere(arr_np > 0.5)
         if coords.size:
@@ -2618,7 +2676,7 @@ def _decals_json(stack: TerrainMaskStack) -> Dict[str, Any]:
             position_zup = [
                 _apply_unity_scale(float(stack.world_origin_x + c * stack.cell_size)),
                 _apply_unity_scale(float(stack.world_origin_y + r * stack.cell_size)),
-                _apply_unity_scale(float(stack.height[r, c]) if stack.height is not None else 0.0),
+                _apply_unity_scale(float(height_arr[r, c])),
             ]
             placements.append(
                 {
@@ -2739,11 +2797,13 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
 
     # FIX-8-3: sample wind_field per instance instead of using a global default
     _wind_arr = stack.get("wind_field")
-    _has_wind_field = (
-        _wind_arr is not None
-        and isinstance(_wind_arr, np.ndarray)
-        and _wind_arr.ndim == 3
-        and _wind_arr.shape[2] >= 2
+    _wind_field_arr: np.ndarray | None = (
+        cast(np.ndarray, _wind_arr) if isinstance(_wind_arr, np.ndarray) else None
+    )
+    _has_wind_field: bool = (
+        _wind_field_arr is not None
+        and _wind_field_arr.ndim == 3
+        and _wind_field_arr.shape[2] >= 2
     )
     # FIX-8-4: scale from optional columns 5/6 (scale_x, scale_z)
     _has_scale = points.shape[1] >= 7
@@ -2761,16 +2821,17 @@ def _tree_instances_json(stack: TerrainMaskStack) -> Dict[str, Any]:
         # FIX-8-3: per-instance wind direction from wind_field channel
         _wind_dir = _WIND_DIR_DEFAULT
         if _has_wind_field:
+            wind_field = cast(np.ndarray, _wind_field_arr)
             _cs = max(float(stack.cell_size), 1e-9)
             _ci = int(np.clip(
                 round((float(row[0]) - float(stack.world_origin_x)) / _cs),
-                0, _wind_arr.shape[1] - 1,
+                0, wind_field.shape[1] - 1,
             ))
             _ri = int(np.clip(
                 round((float(row[1]) - float(stack.world_origin_y)) / _cs),
-                0, _wind_arr.shape[0] - 1,
+                0, wind_field.shape[0] - 1,
             ))
-            _wx, _wz = float(_wind_arr[_ri, _ci, 0]), float(_wind_arr[_ri, _ci, 1])
+            _wx, _wz = float(wind_field[_ri, _ci, 0]), float(wind_field[_ri, _ci, 1])
             _wn = float(np.sqrt(_wx * _wx + _wz * _wz))
             if _wn > 1e-9:
                 _wind_dir = (_wx / _wn, _wz / _wn)

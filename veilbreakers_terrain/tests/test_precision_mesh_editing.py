@@ -590,7 +590,7 @@ class TestFalloffMonotonicity:
     """Verify that all falloff functions decrease as distance increases."""
 
     @pytest.mark.parametrize("falloff", ["smooth", "sharp", "linear"])
-    def test_monotonic_decrease(self, falloff):
+    def test_monotonic_decrease(self, falloff: str):
         from veilbreakers_terrain.handlers.terrain_sculpt import get_falloff_value
 
         prev = get_falloff_value(0.0, falloff)

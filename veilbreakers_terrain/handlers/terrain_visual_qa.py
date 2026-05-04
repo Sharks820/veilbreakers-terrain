@@ -15,18 +15,21 @@ from __future__ import annotations
 
 import math
 import os
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 
-_HAS_BPY = False
 try:
-    import bpy
-    _HAS_BPY = True
+    bpy: Any | None = importlib.import_module("bpy")
+    _has_bpy = True
 except ImportError:
-    pass
+    bpy = None
+    _has_bpy = False
+
+_HAS_BPY: bool = _has_bpy
 
 
 VALID_SHADING_TYPES = frozenset({"WIREFRAME", "SOLID", "MATERIAL", "RENDERED"})
@@ -139,7 +142,7 @@ def _coerce_shading_type(shading_type: str) -> str:
 
 def set_viewport_shading(shading: ViewportShading) -> bool:
     shading_type = _coerce_shading_type(shading.shading_type)
-    if not _HAS_BPY:
+    if not _HAS_BPY or bpy is None:
         return False
     try:
         for area in bpy.context.screen.areas:
@@ -161,7 +164,7 @@ def _setup_camera_in_blender(
     camera_setup: CameraSetup,
     target_pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> Optional[Any]:
-    if not _HAS_BPY:
+    if not _HAS_BPY or bpy is None:
         return None
     try:
         if "Camera" not in bpy.data.objects:
@@ -221,7 +224,7 @@ def capture_viewport_screenshot(
     height: int = 1080,
     mode: str = "viewport",
 ) -> bool:
-    if not _HAS_BPY:
+    if not _HAS_BPY or bpy is None:
         return False
 
     width = _clamp_screenshot_dimension(width, context="render")
@@ -515,7 +518,7 @@ def _check_stochastic_seam(stack: Any) -> Dict[str, Any]:
         return _qa_result("stochastic_seam", False, f"bad shape {arr.shape}")
 
     n = min(arr.shape)
-    idx = np.arange(n - 1)
+    idx = np.asarray(np.arange(n - 1), dtype=np.int64)
     diag = arr[idx, idx]
     adjacent = arr[idx, idx + 1]
     diag_delta = np.asarray(diag, dtype=np.float64) - np.asarray(adjacent, dtype=np.float64)
@@ -779,7 +782,11 @@ def compare_render_to_golden(
             r_img = _np_local.asarray(r_pil, dtype=_np_local.float32) / 255.0
 
         try:
-            from skimage.metrics import structural_similarity as _ssim_fn
+            metrics_module = importlib.import_module("skimage.metrics")
+            _ssim_fn = cast(
+                Callable[..., float],
+                getattr(metrics_module, "structural_similarity"),
+            )
             score = float(_ssim_fn(r_img, g_img, data_range=1.0, channel_axis=2))
             result["ssim"] = round(score, 6)
             result["ok"] = score >= ssim_threshold

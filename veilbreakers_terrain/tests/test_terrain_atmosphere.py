@@ -16,17 +16,23 @@ import json
 import math
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size: int = 128, seed: int = 11):
+def _make_stack(tile_size: int = 128, seed: int = 11) -> "TerrainMaskStack":
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -53,7 +59,7 @@ def _make_stack(tile_size: int = 128, seed: int = 11):
     return stack
 
 
-def _build_state(tile_size: int = 128, seed: int = 11):
+def _build_state(tile_size: int = 128, seed: int = 11) -> "TerrainPipelineState":
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -73,12 +79,12 @@ def _build_state(tile_size: int = 128, seed: int = 11):
 
 
 @pytest.fixture
-def state():
+def state() -> "TerrainPipelineState":
     return _build_state()
 
 
 @pytest.fixture
-def stack(state):
+def stack(state: "TerrainPipelineState") -> "TerrainMaskStack":
     return state.mask_stack
 
 
@@ -87,7 +93,7 @@ def stack(state):
 # ---------------------------------------------------------------------------
 
 
-def test_compute_horizon_lod_enforces_1_over_64_ceiling(stack):
+def test_compute_horizon_lod_enforces_1_over_64_ceiling(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import compute_horizon_lod
 
     # Request a deliberately too-large target_res; function must clamp.
@@ -98,7 +104,7 @@ def test_compute_horizon_lod_enforces_1_over_64_ceiling(stack):
     assert lod.dtype == np.float32
 
 
-def test_compute_horizon_lod_preserves_peak_silhouette(stack):
+def test_compute_horizon_lod_preserves_peak_silhouette(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import compute_horizon_lod
 
     lod = compute_horizon_lod(stack, target_res=2)
@@ -106,7 +112,7 @@ def test_compute_horizon_lod_preserves_peak_silhouette(stack):
     assert float(lod.max()) >= float(stack.height.max()) - 1e-3
 
 
-def test_compute_horizon_lod_deterministic(stack):
+def test_compute_horizon_lod_deterministic(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import compute_horizon_lod
 
     a = compute_horizon_lod(stack, target_res=2)
@@ -114,7 +120,7 @@ def test_compute_horizon_lod_deterministic(stack):
     assert np.array_equal(a, b)
 
 
-def test_build_horizon_skybox_mask_shape_and_range(stack):
+def test_build_horizon_skybox_mask_shape_and_range(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import build_horizon_skybox_mask
 
     vantage = (128.0, 128.0, 50.0)
@@ -126,7 +132,9 @@ def test_build_horizon_skybox_mask_shape_and_range(stack):
     assert float(profile.min()) >= -math.pi * 0.5 - 1e-6
 
 
-def test_build_horizon_skybox_mask_higher_vantage_lowers_horizon(stack):
+def test_build_horizon_skybox_mask_higher_vantage_lowers_horizon(
+    stack: "TerrainMaskStack",
+) -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import build_horizon_skybox_mask
 
     low = build_horizon_skybox_mask(stack, (128.0, 128.0, -500.0), ray_count=32)
@@ -135,7 +143,7 @@ def test_build_horizon_skybox_mask_higher_vantage_lowers_horizon(stack):
     assert float(high.mean()) < float(low.mean())
 
 
-def test_build_horizon_skybox_mask_ignores_off_axis_peaks():
+def test_build_horizon_skybox_mask_ignores_off_axis_peaks() -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import build_horizon_skybox_mask
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
@@ -156,10 +164,10 @@ def test_build_horizon_skybox_mask_ignores_off_axis_peaks():
     expected_east = math.atan2(10.0, 2.0)
 
     assert profile.shape == (4,)
-    assert profile[0] == pytest.approx(expected_east, abs=0.08)
+    assert math.isclose(float(profile[0]), expected_east, abs_tol=0.08)
 
 
-def test_pass_horizon_lod_populates_lod_bias(state):
+def test_pass_horizon_lod_populates_lod_bias(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import pass_horizon_lod
 
     res = pass_horizon_lod(state, None)
@@ -173,7 +181,10 @@ def test_pass_horizon_lod_populates_lod_bias(state):
     assert res.metrics["target_res"] <= max(1, min(state.mask_stack.height.shape) // 64)
 
 
-def test_pass_horizon_lod_persists_horizon_channel(state, tmp_path):
+def test_pass_horizon_lod_persists_horizon_channel(
+    state: "TerrainPipelineState",
+    tmp_path: Path,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_horizon_lod import pass_horizon_lod
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
@@ -200,7 +211,7 @@ def test_pass_horizon_lod_persists_horizon_channel(state, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_compute_fog_pool_mask_shape_and_range(stack):
+def test_compute_fog_pool_mask_shape_and_range(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_fog_masks import compute_fog_pool_mask
 
     fog = compute_fog_pool_mask(stack)
@@ -210,7 +221,7 @@ def test_compute_fog_pool_mask_shape_and_range(stack):
     assert float(fog.max()) <= 1.0 + 1e-6
 
 
-def test_compute_fog_pool_mask_thicker_in_valleys(stack):
+def test_compute_fog_pool_mask_thicker_in_valleys(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_fog_masks import compute_fog_pool_mask
 
     fog = compute_fog_pool_mask(stack)
@@ -220,7 +231,7 @@ def test_compute_fog_pool_mask_thicker_in_valleys(stack):
     assert float(fog[low_mask].mean()) > float(fog[high_mask].mean())
 
 
-def test_compute_mist_envelope_near_water(stack):
+def test_compute_mist_envelope_near_water(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_fog_masks import compute_mist_envelope
 
     wet = np.zeros_like(stack.height, dtype=np.float32)
@@ -235,7 +246,7 @@ def test_compute_mist_envelope_near_water(stack):
     assert float(env[0, 0]) == 0.0
 
 
-def test_pass_fog_masks_populates_mist(state):
+def test_pass_fog_masks_populates_mist(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_fog_masks import pass_fog_masks
 
     res = pass_fog_masks(state, None)
@@ -252,7 +263,7 @@ def test_pass_fog_masks_populates_mist(state):
 # ---------------------------------------------------------------------------
 
 
-def test_compute_god_ray_hints_returns_list(stack):
+def test_compute_god_ray_hints_returns_list(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_god_ray_hints import compute_god_ray_hints
 
     cs = np.zeros_like(stack.height, dtype=np.float32)
@@ -264,7 +275,7 @@ def test_compute_god_ray_hints_returns_list(stack):
         assert 0.0 <= h.intensity
 
 
-def test_compute_god_ray_hints_cave_bonus(stack):
+def test_compute_god_ray_hints_cave_bonus(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_god_ray_hints import compute_god_ray_hints
 
     cave = np.zeros_like(stack.height, dtype=np.float32)
@@ -275,7 +286,7 @@ def test_compute_god_ray_hints_cave_bonus(stack):
     assert any("cave_entrance" in h.source_feature_id for h in hints)
 
 
-def test_export_god_ray_hints_json_roundtrip(stack):
+def test_export_god_ray_hints_json_roundtrip(stack: "TerrainMaskStack") -> None:
     from veilbreakers_terrain.handlers.terrain_god_ray_hints import (
         compute_god_ray_hints,
         export_god_ray_hints_json,
@@ -295,7 +306,9 @@ def test_export_god_ray_hints_json_roundtrip(stack):
             assert "direction_rad" in data["hints"][0]
 
 
-def test_pass_god_ray_hints_runs_without_cave_or_cloud(state):
+def test_pass_god_ray_hints_runs_without_cave_or_cloud(
+    state: "TerrainPipelineState",
+) -> None:
     from veilbreakers_terrain.handlers.terrain_god_ray_hints import pass_god_ray_hints
 
     res = pass_god_ray_hints(state, None)
@@ -304,7 +317,7 @@ def test_pass_god_ray_hints_runs_without_cave_or_cloud(state):
     assert res.metrics["hint_count"] >= 0
 
 
-def test_pass_god_ray_hints_deterministic(state):
+def test_pass_god_ray_hints_deterministic(state: "TerrainPipelineState") -> None:
     from veilbreakers_terrain.handlers.terrain_god_ray_hints import compute_god_ray_hints
 
     cs = np.zeros_like(state.mask_stack.height, dtype=np.float32)
@@ -321,7 +334,7 @@ def test_pass_god_ray_hints_deterministic(state):
 # ---------------------------------------------------------------------------
 
 
-def test_register_bundle_l_passes_registers_all_three():
+def test_register_bundle_l_passes_registers_all_three() -> None:
     from veilbreakers_terrain.handlers.terrain_bundle_l import (
         BUNDLE_L_PASSES,
         register_bundle_l_passes,
@@ -336,7 +349,7 @@ def test_register_bundle_l_passes_registers_all_three():
         assert defn.func is not None
 
 
-def test_bundle_l_passes_have_distinct_seed_namespaces():
+def test_bundle_l_passes_have_distinct_seed_namespaces() -> None:
     from veilbreakers_terrain.handlers.terrain_bundle_l import (
         BUNDLE_L_PASSES,
         register_bundle_l_passes,

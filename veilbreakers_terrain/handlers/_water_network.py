@@ -13,7 +13,7 @@ import heapq
 import math
 from collections import deque
 from dataclasses import asdict, dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, overload
 
 import numpy as np
 
@@ -37,6 +37,53 @@ _D8_DISTANCES: list[float] = [
     1.0, math.sqrt(2.0), 1.0, math.sqrt(2.0),
     1.0, math.sqrt(2.0), 1.0, math.sqrt(2.0),
 ]
+
+GridCell = tuple[int, int]
+Vec3 = tuple[float, float, float]
+FeatureRecord = dict[str, Any]
+
+
+class LakeRecord(TypedDict):
+    center_row: int
+    center_col: int
+    surface_z: float
+    cells: list[GridCell]
+    boundary_cells: list[GridCell]
+    pour_point: GridCell | None
+    area: int
+    inflow: float
+
+
+class WaterfallRecord(TypedDict):
+    top_idx: int
+    bottom_idx: int
+    top_row: int
+    top_col: int
+    bottom_row: int
+    bottom_col: int
+    drop: float
+    horizontal_dist: float
+    drop_rate: float
+    drainage_area: float
+    orientation_rad: float
+
+
+class EdgeHeadRecord(TypedDict):
+    position: float
+    world_z: float
+    inflow_head_m: float
+    network_id: int
+    water_type: str
+
+
+class DeltaFanMetadata(TypedDict):
+    fan_radius_m: float
+    delta_type: str
+    spread_angle_deg: float
+
+
+def _empty_braided_polylines() -> list[list[Vec3]]:
+    return []
 
 
 # ===================================================================
@@ -120,14 +167,14 @@ class WaterSegment:
     source_node_id: int
     target_node_id: int
     network_id: int          # Which river/stream this belongs to
-    waypoints: list[tuple[float, float, float]]  # Intermediate (x, y, z) points
+    waypoints: list[Vec3]  # Intermediate (x, y, z) points
     avg_width: float
     avg_depth: float
     segment_type: str        # "river", "stream", "waterfall", "underground"
     # Phase E addition — extra braided-flow polylines.  Empty when the
     # channel is not wide enough for braiding (< braiding_width_threshold).
-    braided_polylines: list[list[tuple[float, float, float]]] = field(
-        default_factory=list
+    braided_polylines: list[list[Vec3]] = field(
+        default_factory=_empty_braided_polylines
     )
 
 
@@ -327,7 +374,7 @@ def _build_sine_generated_waypoints(
     """
     n = len(path)
     if n < 2:
-        wps: list[tuple[float, float, float]] = []
+        wps: list[Vec3] = []
         for r, c in path:
             wx = world_origin_x + c * cell_size
             wy = world_origin_y + r * cell_size
@@ -336,8 +383,8 @@ def _build_sine_generated_waypoints(
         return wps
 
     # --- Build raw world coordinates from grid path -------------------------
-    raw_x = np.array([world_origin_x + c * cell_size for r, c in path], dtype=np.float64)
-    raw_y = np.array([world_origin_y + r * cell_size for r, c in path], dtype=np.float64)
+    raw_x = np.array([world_origin_x + c * cell_size for _, c in path], dtype=np.float64)
+    raw_y = np.array([world_origin_y + r * cell_size for r, _ in path], dtype=np.float64)
     raw_z = np.array([float(heightmap[r, c]) for r, c in path], dtype=np.float64)
 
     # --- Compute arc-length parameterization --------------------------------
@@ -512,6 +559,24 @@ def _resolve_flats_epsilon(
     return out
 
 
+@overload
+def priority_flood_d8(
+    dem: np.ndarray,
+    *,
+    return_filled: Literal[False] = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    ...
+
+
+@overload
+def priority_flood_d8(
+    dem: np.ndarray,
+    *,
+    return_filled: Literal[True],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ...
+
+
 def priority_flood_d8(
     dem: np.ndarray,
     *,
@@ -625,14 +690,15 @@ def pass_hydrology(
 
     t0 = _time.perf_counter()
     stack = state.mask_stack
-    dem = stack.height
-    if dem is None:
+    dem_raw = getattr(stack, "height", None)
+    if dem_raw is None:
         return PassResult(
             pass_name="pass_hydrology",
             status="failed",
             duration_seconds=_time.perf_counter() - t0,
             issues=[],
         )
+    dem = np.asarray(dem_raw, dtype=np.float64)
 
     flow_dir, flow_acc = priority_flood_d8(dem)
     stack.set("flow_direction", flow_dir, "pass_hydrology")
@@ -921,7 +987,7 @@ def compute_flow_direction_field(
     # Build D8 unit direction LUTs (east +x, north +y)
     lut_fx = np.array(_D8_DX, dtype=np.float32)
     lut_fy = np.array(
-        [-float(dr) / _d for (dr, dc), _d in zip(_D8_OFFSETS, _D8_DISTANCES)],
+        [-float(dr) / _d for (dr, _dc), _d in zip(_D8_OFFSETS, _D8_DISTANCES)],
         dtype=np.float32,
     )
 
@@ -1051,7 +1117,7 @@ def detect_lakes(
     heightmap: np.ndarray,
     flow_accumulation: np.ndarray,
     min_area: float = 100.0,
-) -> list[dict]:
+) -> list[LakeRecord]:
     """Detect lake basins using Barnes 2014 priority-flood algorithm.
 
     Priority-flood correctly handles spill-over cascading: water can spill
@@ -1156,7 +1222,7 @@ def detect_lakes(
     # --- Connected-component labeling of lake cells -------------------------
     label_grid = np.full((rows, cols), -1, dtype=np.int32)
     next_label = 0
-    lakes: list[dict] = []
+    lakes: list[LakeRecord] = []
 
     for seed_r in range(rows):
         for seed_c in range(cols):
@@ -1268,13 +1334,13 @@ def detect_lakes(
 
 def detect_waterfalls(
     heightmap: np.ndarray,
-    river_path: list[tuple[int, int]],
+    river_path: list[GridCell],
     cell_size: float = 1.0,
     min_drop: float = 3.0,
     max_horizontal: float = 5.0,
     flow_accumulation: np.ndarray | None = None,
     min_accumulation: float = 50.0,
-) -> list[dict]:
+) -> list[WaterfallRecord]:
     """Detect waterfall locations along a river path.
 
     AAA standard (Witcher 3 / God of War): a waterfall lip requires BOTH a
@@ -1324,7 +1390,7 @@ def detect_waterfalls(
         if flow_accumulation is not None
         else None
     )
-    waterfalls: list[dict] = []
+    waterfalls: list[WaterfallRecord] = []
     if len(river_path) < 2:
         return waterfalls
 
@@ -1572,8 +1638,8 @@ def compute_velocity_field(
     # --- Pre-compute D8 unit direction vectors per cell ---------------------
     # _D8_OFFSETS: (dr, dc) in row-col space
     # World-space: dc → east (+x), dr → south (+y); we flip dr sign for north-up
-    _d8_dx = np.array([float(dc) for dr, dc in _D8_OFFSETS], dtype=np.float64)
-    _d8_dy = np.array([-float(dr) for dr, dc in _D8_OFFSETS], dtype=np.float64)
+    _d8_dx = np.array([float(dc) for _dr, dc in _D8_OFFSETS], dtype=np.float64)
+    _d8_dy = np.array([-float(dr) for dr, _dc in _D8_OFFSETS], dtype=np.float64)
     _d8_dist = np.array(_D8_DISTANCES, dtype=np.float64)
     # Normalise to unit vectors
     _d8_dx /= _d8_dist
@@ -1659,7 +1725,7 @@ class WaterNetwork:
         # Seam-continuity validation summary (populated by from_heightmap via
         # validate_seam_continuity()).  None until validation has run; safe to
         # read on a freshly-constructed network without raising AttributeError.
-        self._seam_validation_result: dict | None = None
+        self._seam_validation_result: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -1754,8 +1820,6 @@ class WaterNetwork:
         # (Barnes et al. 2014).
         flow_dir, flow_acc = priority_flood_d8(hmap)
         flow_dir = flow_dir.astype(np.int32)
-
-        rows, cols = hmap.shape
 
         # Step 2-3: trace rivers from source cells
         sources = _find_high_accumulation_sources(flow_acc, flow_dir, min_drainage_area)
@@ -2073,43 +2137,6 @@ class WaterNetwork:
             """Cell-center coordinates: cx = (col + 0.5) * cs, cy = (row + 0.5) * cs."""
             return (col + 0.5) * cs, (row + 0.5) * cs
 
-        def _liang_barsky_t(
-            cx0: float, cy0: float, cx1: float, cy1: float,
-            xmin: float, xmax: float, ymin: float, ymax: float,
-        ) -> float | None:
-            """Return the parametric t in [0,1] where segment (p0→p1) first
-            enters the AABB [xmin,xmax]×[ymin,ymax], or None if no crossing.
-
-            Uses the Liang-Barsky clipping algorithm.
-            """
-            dx = cx1 - cx0
-            dy = cy1 - cy0
-            t0, t1 = 0.0, 1.0
-
-            for p, q in (
-                (-dx, cx0 - xmin),
-                ( dx, xmax - cx0),
-                (-dy, cy0 - ymin),
-                ( dy, ymax - cy0),
-            ):
-                if abs(p) < 1e-12:
-                    if q < 0:
-                        return None  # parallel and outside
-                    continue
-                t = q / p
-                if p < 0:
-                    if t > t1:
-                        return None
-                    t0 = max(t0, t)
-                else:
-                    if t < t0:
-                        return None
-                    t1 = min(t1, t)
-
-            if t0 > t1:
-                return None
-            return t0  # first entry point
-
         # For each river path, check where it crosses tile boundaries
         for network_id, path in traced_paths:
             for i in range(len(path) - 1):
@@ -2325,7 +2352,7 @@ class WaterNetwork:
         self,
         tile_x: int,
         tile_y: int,
-    ) -> dict[str, list[dict]]:
+    ) -> dict[str, list[EdgeHeadRecord]]:
         """Return water-surface head levels for every contract on each tile edge.
 
         B+ feature: per-cardinal-edge head-level summary so mesh generators can
@@ -2342,7 +2369,7 @@ class WaterNetwork:
                 ``water_type``    — "river" | "stream" | …
         """
         contracts = self.get_tile_contracts(tile_x, tile_y)
-        result: dict[str, list[dict]] = {}
+        result: dict[str, list[EdgeHeadRecord]] = {}
         for edge in ("north", "south", "east", "west"):
             result[edge] = [
                 {
@@ -2369,7 +2396,7 @@ class WaterNetwork:
         self,
         position_tolerance: float = 0.05,
         head_tolerance_m: float = 0.5,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Validate that every outflow contract has a matching inflow on the neighbour tile.
 
         B+ feature: seam-continuity check comparable to Houdini River Network's
@@ -2405,7 +2432,7 @@ class WaterNetwork:
         valid = 0
         orphaned = 0
         head_mismatch = 0
-        mismatched_pairs: list[tuple] = []
+        mismatched_pairs: list[tuple[int, int, str, float]] = []
 
         for (tx, ty), edges in self.tile_contracts.items():
             for edge, contracts in edges.items():
@@ -2464,7 +2491,7 @@ class WaterNetwork:
         tile_y: int,
         tile_size: int,
         cell_size: float = 1.0,
-    ) -> dict:
+    ) -> dict[str, list[FeatureRecord]]:
         """Get all water features within a tile's bounds.
 
         AAA standard: complete feature inventory with physically correct
@@ -2520,17 +2547,17 @@ class WaterNetwork:
         strahler = self.assign_strahler_orders()
         shreve = self.compute_shreve_orders()
 
-        river_paths: list[dict] = []
-        streams: list[dict] = []
-        waterfalls: list[dict] = []
-        lakes: list[dict] = []
-        springs: list[dict] = []
+        river_paths: list[FeatureRecord] = []
+        streams: list[FeatureRecord] = []
+        waterfalls: list[FeatureRecord] = []
+        lakes: list[FeatureRecord] = []
+        springs: list[FeatureRecord] = []
 
         for seg in self.segments.values():
             # Collect waypoints inside (or near) the tile
             inside_run: list[tuple[float, float, float]] = []
             for wp in seg.waypoints:
-                wx, wy, wz = wp
+                wx, wy, _wz = wp
                 if x_min - seg.avg_width <= wx <= x_max + seg.avg_width and \
                    y_min - seg.avg_width <= wy <= y_max + seg.avg_width:
                     inside_run.append(wp)
@@ -2676,10 +2703,15 @@ class WaterNetwork:
                     d_seg = out_seg.avg_depth
                     area = w * d_seg
                     wetted_p = w + 2.0 * d_seg
-                    R = area / max(wetted_p, 1e-9)
+                    hydraulic_radius = area / max(wetted_p, 1e-9)
                     wtype = out_seg.segment_type
                     n = self._MANNING_N_RIVER if wtype == "river" else self._MANNING_N_STREAM
-                    flow_rate = (1.0 / n) * area * (R ** (2.0 / 3.0)) * math.sqrt(slope)
+                    flow_rate = (
+                        (1.0 / n)
+                        * area
+                        * (hydraulic_radius ** (2.0 / 3.0))
+                        * math.sqrt(slope)
+                    )
 
                 springs.append({
                     "node_id": node.node_id,
@@ -2896,7 +2928,7 @@ class WaterNetwork:
 
     # ------------------------------------------------------------------
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize network to dict for persistence.
 
         B+ upgrade: full serialisation of all water-network state including:
@@ -2921,28 +2953,28 @@ class WaterNetwork:
                 return [_to_py(x) for x in v]
             return v
 
-        nodes_list = []
+        nodes_list: list[dict[str, Any]] = []
         for n in self.nodes.values():
             nd = asdict(n)
             nodes_list.append({k: _to_py(v) for k, v in nd.items()})
 
-        segments_list = []
+        segments_list: list[dict[str, Any]] = []
         for s in self.segments.values():
             sd = asdict(s)
             # Waypoints stored as lists-of-lists for JSON compat
-            sd["waypoints"] = [list(wp) for wp in sd["waypoints"]]
+            sd["waypoints"] = [list(wp) for wp in s.waypoints]
             # Braided flow polylines (Phase E) — same list-of-lists encoding
             sd["braided_polylines"] = [
                 [list(wp) for wp in bp]
-                for bp in (sd.get("braided_polylines") or [])
+                for bp in s.braided_polylines
             ]
             segments_list.append({k: _to_py(v) for k, v in sd.items()})
 
-        contracts_list = []
+        contracts_list: list[dict[str, Any]] = []
         for (tx, ty), edges in self.tile_contracts.items():
             entry: dict[str, Any] = {"tile_x": int(tx), "tile_y": int(ty)}
             for direction, clist in edges.items():
-                serialised = []
+                serialised: list[dict[str, Any]] = []
                 for c in clist:
                     cd = asdict(c)
                     cd["flow_direction"] = list(cd["flow_direction"])
@@ -2985,7 +3017,7 @@ class WaterNetwork:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "WaterNetwork":
+    def from_dict(cls, data: dict[str, Any]) -> "WaterNetwork":
         """Deserialize network from dict."""
         net = cls()
         net._tile_size = data.get("tile_size", 256)
@@ -3001,36 +3033,51 @@ class WaterNetwork:
         net._next_network_id = data.get("next_network_id", 0)
 
         for nd in data.get("nodes", []):
-            node = WaterNode(**nd)
+            node_data = dict(nd)
+            node = WaterNode(**node_data)
             net.nodes[node.node_id] = node
 
         for sd in data.get("segments", []):
             # Convert waypoints from lists back to tuples
             sd = dict(sd)
-            sd["waypoints"] = [tuple(wp) for wp in sd["waypoints"]]
+            sd["waypoints"] = [
+                (float(wp[0]), float(wp[1]), float(wp[2]))
+                for wp in sd["waypoints"]
+            ]
             # Braided polylines (Phase E) — restore tuples for round-trip.
             # Older snapshots without the key default to an empty list.
-            braided = sd.get("braided_polylines") or []
+            braided: list[Any] = list(sd.get("braided_polylines") or [])
             sd["braided_polylines"] = [
-                [tuple(wp) for wp in bp] for bp in braided
+                [
+                    (float(wp[0]), float(wp[1]), float(wp[2]))
+                    for wp in bp
+                ]
+                for bp in braided
             ]
             seg = WaterSegment(**sd)
             net.segments[seg.segment_id] = seg
 
         for tc in data.get("tile_contracts", []):
+            tc = dict(tc)
             tx = tc["tile_x"]
             ty = tc["tile_y"]
             edges: dict[str, list[WaterEdgeContract]] = {}
             for direction in ("north", "south", "east", "west"):
-                clist = []
+                clist: list[WaterEdgeContract] = []
                 for cd in tc.get(direction, []):
                     cd = dict(cd)
-                    cd["flow_direction"] = tuple(cd["flow_direction"])
+                    flow_direction = cd["flow_direction"]
+                    cd["flow_direction"] = (
+                        float(flow_direction[0]),
+                        float(flow_direction[1]),
+                    )
                     # New fields added in B+ upgrade: convert list→tuple if present
                     if "target_tile" in cd and not isinstance(cd["target_tile"], tuple):
-                        cd["target_tile"] = tuple(cd["target_tile"])
+                        target_tile = cd["target_tile"]
+                        cd["target_tile"] = (int(target_tile[0]), int(target_tile[1]))
                     if "entry_cell" in cd and not isinstance(cd["entry_cell"], tuple):
-                        cd["entry_cell"] = tuple(cd["entry_cell"])
+                        entry_cell = cd["entry_cell"]
+                        cd["entry_cell"] = (int(entry_cell[0]), int(entry_cell[1]))
                     clist.append(WaterEdgeContract(**cd))
                 edges[direction] = clist
             net.tile_contracts[(tx, ty)] = edges
@@ -3043,10 +3090,10 @@ class WaterNetwork:
 # ===================================================================
 
 def _apply_delta_fan(
-    waypoints: list[tuple[float, float, float]],
+    waypoints: list[Vec3],
     terminal_flow_accumulation: float,
     cell_size: float,
-) -> tuple[list[tuple[float, float, float]], dict]:
+) -> tuple[list[Vec3], DeltaFanMetadata]:
     """Blend the terminal segment's velocity to zero over a delta fan radius.
 
     When a river reaches a lake or ocean, Galloway (1975) describes two
@@ -3087,7 +3134,7 @@ def _apply_delta_fan(
         delta_type = "wave_dominated"
         spread_angle_deg = 80.0
 
-    metadata = {
+    metadata: DeltaFanMetadata = {
         "fan_radius_m": round(fan_radius_m, 2),
         "delta_type": delta_type,
         "spread_angle_deg": spread_angle_deg,
@@ -3178,7 +3225,10 @@ def detect_river_mouth_zones(
         try:
             from scipy.ndimage import binary_dilation  # type: ignore
             struct = np.ones((2 * buffer_cells + 1, 2 * buffer_cells + 1), dtype=bool)
-            mouth_dilated = binary_dilation(mouth_raw, structure=struct)
+            mouth_dilated = np.asarray(
+                binary_dilation(mouth_raw, structure=struct),
+                dtype=bool,
+            )
         except ImportError:
             mouth_dilated = np.zeros((H, W), dtype=bool)
             rs, cs = np.where(mouth_raw)
@@ -3220,8 +3270,8 @@ def _build_delta_fan_direction(
     fan_dir = np.zeros((H, W, 2), dtype=np.float32)
 
     # D8 unit vectors in world space: dc = east (+x), -dr = north (+y)
-    _d8_dx = np.array([float(dc) for dr, dc in _D8_OFFSETS], dtype=np.float64)
-    _d8_dy = np.array([-float(dr) for dr, dc in _D8_OFFSETS], dtype=np.float64)
+    _d8_dx = np.array([float(dc) for _dr, dc in _D8_OFFSETS], dtype=np.float64)
+    _d8_dy = np.array([-float(dr) for dr, _dc in _D8_OFFSETS], dtype=np.float64)
     _d8_dist = np.array(_D8_DISTANCES, dtype=np.float64)
     _d8_dx_norm = _d8_dx / _d8_dist
     _d8_dy_norm = _d8_dy / _d8_dist
@@ -3280,7 +3330,10 @@ def _build_confluence_foam(
     if rapids_candidates.any():
         try:
             from scipy.ndimage import distance_transform_edt  # type: ignore
-            dist_to_mouth = distance_transform_edt(~mouth_bool).astype(np.float64)
+            dist_to_mouth = np.asarray(
+                distance_transform_edt(~mouth_bool),
+                dtype=np.float64,
+            )
             near_mouth = dist_to_mouth <= 5.0
         except ImportError:
             near_mouth = np.zeros((H, W), dtype=bool)
@@ -3303,7 +3356,7 @@ def _build_confluence_foam(
     # Gaussian blur to soften hard edges
     try:
         from scipy.ndimage import gaussian_filter  # type: ignore
-        foam = gaussian_filter(foam, sigma=1.5)
+        foam = np.asarray(gaussian_filter(foam, sigma=1.5), dtype=np.float64)
     except ImportError:
         pass
 
@@ -3413,14 +3466,14 @@ def register_pass_river_convergence() -> None:
 
 
 def build_braided_polylines(
-    primary_waypoints: list[tuple[float, float, float]],
+    primary_waypoints: list[Vec3],
     channel_width: float,
     *,
     braiding_width_threshold: float = 20.0,
     max_branches: int = 3,
     divergence_ratio: float = 0.18,
     seed: int = 0,
-) -> list[list[tuple[float, float, float]]]:
+) -> list[list[Vec3]]:
     """Split a wide channel into 2–3 braided flow polylines.
 
     When the river is wider than ``braiding_width_threshold`` cells worth of
@@ -3466,16 +3519,17 @@ def build_braided_polylines(
     # Taper pins offset = 0 at s=0 and s=1
     taper = np.sin(np.pi * s_norm)
 
-    branches: list[list[tuple[float, float, float]]] = []
+    branches: list[list[Vec3]] = []
     for b in range(n_branches):
         side = 1.0 if (b % 2 == 0) else -1.0
         # Alternate amplitude slightly so 3 branches differ
         amp = offset * (1.0 - 0.3 * (b // 2))
         phase = float(rng.uniform(0.0, math.pi * 0.5))
-        branch: list[tuple[float, float, float]] = []
+        branch: list[Vec3] = []
         for i in range(n):
             if i == 0 or i == n - 1:
-                branch.append(tuple(primary_waypoints[i]))
+                x_end, y_end, z_end = primary_waypoints[i]
+                branch.append((float(x_end), float(y_end), float(z_end)))
                 continue
             x, y, z = primary_waypoints[i]
             # Perpendicular direction based on local tangent
@@ -3542,12 +3596,12 @@ def validate_flow_direction_continuity(
     # Build the D8 unit direction LUT in world-space (east +x, north +y)
     lut_fx = np.array(_D8_DX, dtype=np.float64)
     lut_fy = np.array(
-        [-float(dr) / _d for (dr, dc), _d in zip(_D8_OFFSETS, _D8_DISTANCES)],
+        [-float(dr) / _d for (dr, _dc), _d in zip(_D8_OFFSETS, _D8_DISTANCES)],
         dtype=np.float64,
     )
     threshold_cos = math.cos(math.radians(reversal_angle_deg))
 
-    def _sample_polyline(poly: list[tuple[float, float, float]], tag: str) -> None:
+    def _sample_polyline(poly: list[Vec3], tag: str) -> None:
         if len(poly) < 2:
             return
         prev_vec: tuple[float, float] | None = None

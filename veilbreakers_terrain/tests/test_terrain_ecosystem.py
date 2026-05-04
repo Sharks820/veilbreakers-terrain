@@ -8,10 +8,19 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -19,7 +28,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size: int = 32, seed: int = 7):
+def _make_stack(tile_size: int = 32, seed: int = 7) -> TerrainMaskStack:
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -43,7 +52,7 @@ def _make_stack(tile_size: int = 32, seed: int = 7):
     return stack
 
 
-def _attach_structural_masks(stack) -> None:
+def _attach_structural_masks(stack: TerrainMaskStack) -> None:
     h = np.asarray(stack.height, dtype=np.float64)
     gy, gx = np.gradient(h, float(stack.cell_size))
     slope = np.arctan(np.sqrt(gx * gx + gy * gy))
@@ -57,7 +66,9 @@ def _attach_structural_masks(stack) -> None:
     stack.set("basin", (lap > 0.5).astype(np.int32), "test_fixture")
 
 
-def _build_state(tile_size: int = 32, seed: int = 7, structural: bool = True):
+def _build_state(
+    tile_size: int = 32, seed: int = 7, structural: bool = True
+) -> TerrainPipelineState:
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -78,12 +89,12 @@ def _build_state(tile_size: int = 32, seed: int = 7, structural: bool = True):
 
 
 @pytest.fixture
-def state():
+def state() -> TerrainPipelineState:
     return _build_state()
 
 
 @pytest.fixture
-def stack(state):
+def stack(state: TerrainPipelineState) -> TerrainMaskStack:
     return state.mask_stack
 
 
@@ -92,7 +103,7 @@ def stack(state):
 # ---------------------------------------------------------------------------
 
 
-def test_audio_zones_produces_int8_array(stack):
+def test_audio_zones_produces_int8_array(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import compute_audio_reverb_zones
 
     arr = compute_audio_reverb_zones(stack)
@@ -100,7 +111,7 @@ def test_audio_zones_produces_int8_array(stack):
     assert arr.shape == stack.height.shape
 
 
-def test_audio_zones_cave_overrides_open(stack):
+def test_audio_zones_cave_overrides_open(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import (
         AudioReverbClass,
         compute_audio_reverb_zones,
@@ -113,7 +124,7 @@ def test_audio_zones_cave_overrides_open(stack):
     assert (arr[5:10, 5:10] == AudioReverbClass.CAVE.value).all()
 
 
-def test_audio_zones_water_sets_water_near(stack):
+def test_audio_zones_water_sets_water_near(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import (
         AudioReverbClass,
         compute_audio_reverb_zones,
@@ -126,7 +137,7 @@ def test_audio_zones_water_sets_water_near(stack):
     assert (arr[12:15, 12:15] == AudioReverbClass.WATER_NEAR.value).any()
 
 
-def test_pass_audio_zones_populates_channel(state):
+def test_pass_audio_zones_populates_channel(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
 
     result = pass_audio_zones(state, None)
@@ -140,7 +151,7 @@ def test_pass_audio_zones_populates_channel(state):
 # ---------------------------------------------------------------------------
 
 
-def test_wildlife_affinity_default_rules(stack):
+def test_wildlife_affinity_default_rules(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_wildlife_zones import (
         DEFAULT_WILDLIFE_RULES,
         compute_wildlife_affinity,
@@ -156,7 +167,7 @@ def test_wildlife_affinity_default_rules(stack):
         assert (arr >= 0).all() and (arr <= 1.01).all()
 
 
-def test_wildlife_zones_writes_dict_channel(state):
+def test_wildlife_zones_writes_dict_channel(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_wildlife_zones import pass_wildlife_zones
 
     result = pass_wildlife_zones(state, None)
@@ -165,7 +176,7 @@ def test_wildlife_zones_writes_dict_channel(state):
     assert len(state.mask_stack.wildlife_affinity) >= 1
 
 
-def test_wildlife_exclusion_respects_hero_exclusion(stack):
+def test_wildlife_exclusion_respects_hero_exclusion(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_wildlife_zones import (
         SpeciesAffinityRule,
         compute_wildlife_affinity,
@@ -189,7 +200,7 @@ def test_wildlife_exclusion_respects_hero_exclusion(stack):
 # ---------------------------------------------------------------------------
 
 
-def test_gameplay_zones_returns_int32(stack):
+def test_gameplay_zones_returns_int32(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_gameplay_zones import compute_gameplay_zones
 
     zones = compute_gameplay_zones(stack)
@@ -197,7 +208,7 @@ def test_gameplay_zones_returns_int32(stack):
     assert zones.shape == stack.height.shape
 
 
-def test_gameplay_zones_puzzle_from_caves(stack):
+def test_gameplay_zones_puzzle_from_caves(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_gameplay_zones import (
         GameplayZoneType,
         compute_gameplay_zones,
@@ -210,7 +221,7 @@ def test_gameplay_zones_puzzle_from_caves(stack):
     assert (zones[3:6, 3:6] == GameplayZoneType.PUZZLE.value).all()
 
 
-def test_pass_gameplay_zones_populates(state):
+def test_pass_gameplay_zones_populates(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_gameplay_zones import pass_gameplay_zones
 
     result = pass_gameplay_zones(state, None)
@@ -224,7 +235,7 @@ def test_pass_gameplay_zones_populates(state):
 # ---------------------------------------------------------------------------
 
 
-def test_wind_field_shape_and_dtype(stack):
+def test_wind_field_shape_and_dtype(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_wind_field import compute_wind_field
 
     field = compute_wind_field(stack, 0.5, 6.0)
@@ -232,7 +243,7 @@ def test_wind_field_shape_and_dtype(stack):
     assert field.shape == stack.height.shape + (2,)
 
 
-def test_wind_field_faster_at_altitude():
+def test_wind_field_faster_at_altitude() -> None:
     from veilbreakers_terrain.handlers.terrain_wind_field import compute_wind_field
 
     # Use a bare stack (no slope/basin/ridge) so the altitude_factor (1×valley → 2×peak)
@@ -248,7 +259,7 @@ def test_wind_field_faster_at_altitude():
     assert speed[top_mask].mean() >= speed[bot_mask].mean() * 0.95
 
 
-def test_pass_wind_field_populates(state):
+def test_pass_wind_field_populates(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_wind_field import pass_wind_field
 
     result = pass_wind_field(state, None)
@@ -262,7 +273,7 @@ def test_pass_wind_field_populates(state):
 # ---------------------------------------------------------------------------
 
 
-def test_cloud_shadow_range(stack):
+def test_cloud_shadow_range(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
 
     mask = compute_cloud_shadow_mask(stack, seed=42, cloud_density=0.5, cloud_scale_m=60.0)
@@ -271,17 +282,25 @@ def test_cloud_shadow_range(stack):
     assert mask.shape == stack.height.shape
 
 
-def test_cloud_shadow_no_scipy_blur_preserves_shape(monkeypatch):
+def test_cloud_shadow_no_scipy_blur_preserves_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
 
     import builtins
 
     real_import = builtins.__import__
 
-    def blocked_import(name, *args, **kwargs):
+    def blocked_import(
+        name: str,
+        globals: Mapping[str, object] | None = None,
+        locals: Mapping[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name == "scipy" or name.startswith("scipy."):
             raise ImportError("blocked scipy")
-        return real_import(name, *args, **kwargs)
+        return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", blocked_import)
 
@@ -293,7 +312,7 @@ def test_cloud_shadow_no_scipy_blur_preserves_shape(monkeypatch):
     assert np.isfinite(mask).all()
 
 
-def test_cloud_shadow_determinism(stack):
+def test_cloud_shadow_determinism(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import compute_cloud_shadow_mask
 
     a = compute_cloud_shadow_mask(stack, seed=123)
@@ -301,7 +320,7 @@ def test_cloud_shadow_determinism(stack):
     np.testing.assert_array_equal(a, b)
 
 
-def test_pass_cloud_shadow_populates(state):
+def test_pass_cloud_shadow_populates(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import pass_cloud_shadow
 
     result = pass_cloud_shadow(state, None)
@@ -314,7 +333,7 @@ def test_pass_cloud_shadow_populates(state):
 # ---------------------------------------------------------------------------
 
 
-def test_decal_kinds_produce_float32_in_unit_range(stack):
+def test_decal_kinds_produce_float32_in_unit_range(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_decal_placement import (
         DecalKind,
         compute_decal_density,
@@ -327,7 +346,7 @@ def test_decal_kinds_produce_float32_in_unit_range(stack):
         assert (arr >= 0).all() and (arr <= 1.0001).all()
 
 
-def test_pass_decals_fills_dict_channel(state):
+def test_pass_decals_fills_dict_channel(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_decal_placement import DecalKind, pass_decals
 
     result = pass_decals(state, None)
@@ -342,7 +361,7 @@ def test_pass_decals_fills_dict_channel(state):
 # ---------------------------------------------------------------------------
 
 
-def test_navmesh_area_id_classification(stack):
+def test_navmesh_area_id_classification(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_navmesh_export import (
         NAVMESH_SWIM,
         NAVMESH_WALKABLE,
@@ -358,7 +377,7 @@ def test_navmesh_area_id_classification(stack):
     assert (area == NAVMESH_WALKABLE).any()
 
 
-def test_traversability_is_unit_range_float32(stack):
+def test_traversability_is_unit_range_float32(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_navmesh_export import compute_traversability
 
     trav = compute_traversability(stack)
@@ -366,7 +385,7 @@ def test_traversability_is_unit_range_float32(stack):
     assert (trav >= 0).all() and (trav <= 1.0).all()
 
 
-def test_pass_navmesh_produces_two_channels(state):
+def test_pass_navmesh_produces_two_channels(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_navmesh_export import pass_navmesh
 
     result = pass_navmesh(state, None)
@@ -376,7 +395,7 @@ def test_pass_navmesh_produces_two_channels(state):
     assert set(result.produced_channels) == {"navmesh_area_id", "traversability"}
 
 
-def test_pass_navmesh_export_alias_preserves_channels(state):
+def test_pass_navmesh_export_alias_preserves_channels(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_navmesh_export import pass_navmesh_export
 
     result = pass_navmesh_export(state, None)
@@ -387,7 +406,7 @@ def test_pass_navmesh_export_alias_preserves_channels(state):
     assert set(result.produced_channels) == {"navmesh_area_id", "traversability"}
 
 
-def test_export_navmesh_json_writes_file(state):
+def test_export_navmesh_json_writes_file(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_navmesh_export import export_navmesh_json
 
     with tempfile.TemporaryDirectory() as td:
@@ -406,7 +425,7 @@ def test_export_navmesh_json_writes_file(state):
 # ---------------------------------------------------------------------------
 
 
-def test_ecotone_graph_empty_without_biome(stack):
+def test_ecotone_graph_empty_without_biome(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_ecotone_graph import build_ecotone_graph
 
     graph = build_ecotone_graph(stack)
@@ -414,7 +433,7 @@ def test_ecotone_graph_empty_without_biome(stack):
     assert graph["edges"] == []
 
 
-def test_ecotone_graph_with_biomes(stack):
+def test_ecotone_graph_with_biomes(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_ecotone_graph import build_ecotone_graph
 
     biome = np.zeros(stack.height.shape, dtype=np.int32)
@@ -429,7 +448,7 @@ def test_ecotone_graph_with_biomes(stack):
     assert graph["edges"][0]["shared_cells"] > 0
 
 
-def test_validate_ecotone_smoothness_flags_narrow(stack):
+def test_validate_ecotone_smoothness_flags_narrow(stack: TerrainMaskStack) -> None:
     from veilbreakers_terrain.handlers.terrain_ecotone_graph import validate_ecotone_smoothness
 
     graph = {
@@ -448,7 +467,7 @@ def test_validate_ecotone_smoothness_flags_narrow(stack):
     assert any(i.code == "ECOTONE_HARD_BOUNDARY" for i in issues)
 
 
-def test_pass_ecotones_runs_clean(state):
+def test_pass_ecotones_runs_clean(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_ecotone_graph import pass_ecotones
 
     result = pass_ecotones(state, None)
@@ -463,7 +482,7 @@ def test_pass_ecotones_runs_clean(state):
 # ---------------------------------------------------------------------------
 
 
-def test_unity_export_manifest_writes_files(state):
+def test_unity_export_manifest_writes_files(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import pass_cloud_shadow
     from veilbreakers_terrain.handlers.terrain_decal_placement import pass_decals
@@ -505,7 +524,7 @@ def test_unity_export_manifest_writes_files(state):
         assert manifest["source_coordinate_system"] == "z-up"
 
 
-def test_unity_export_json_schemas(state):
+def test_unity_export_json_schemas(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
     from veilbreakers_terrain.handlers.terrain_gameplay_zones import pass_gameplay_zones
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
@@ -529,7 +548,7 @@ def test_unity_export_json_schemas(state):
         assert "zones" in gz
 
 
-def test_unity_export_decals_convert_to_y_up(state):
+def test_unity_export_decals_convert_to_y_up(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     decal = np.zeros_like(state.mask_stack.height, dtype=np.float32)
@@ -544,11 +563,11 @@ def test_unity_export_decals_convert_to_y_up(state):
         expected_x = float(state.mask_stack.world_origin_x + 3 * state.mask_stack.cell_size) * UNITY_SCALE_FACTOR
         expected_y = float(state.mask_stack.height[2, 3]) * UNITY_SCALE_FACTOR
         expected_z = float(state.mask_stack.world_origin_y + 2 * state.mask_stack.cell_size) * UNITY_SCALE_FACTOR
-        assert placement["position"] == pytest.approx([expected_x, expected_y, expected_z])
+        np.testing.assert_allclose(placement["position"], [expected_x, expected_y, expected_z])
         assert placement["normal"][1] > 0.0
 
 
-def test_unity_export_heightmap_u16_quantized(state):
+def test_unity_export_heightmap_u16_quantized(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     with tempfile.TemporaryDirectory() as td:
@@ -560,7 +579,7 @@ def test_unity_export_heightmap_u16_quantized(state):
         assert arr.shape == state.mask_stack.height.shape
 
 
-def test_unity_export_writes_terrain_normals(state):
+def test_unity_export_writes_terrain_normals(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 
     with tempfile.TemporaryDirectory() as td:
@@ -575,7 +594,7 @@ def test_unity_export_writes_terrain_normals(state):
         assert np.all(arr[..., 1] > 0.0)
 
 
-def test_prepare_terrain_normals_pass_populates_channel(state):
+def test_prepare_terrain_normals_pass_populates_channel(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_unity_export import pass_prepare_terrain_normals
 
     result = pass_prepare_terrain_normals(state, None)
@@ -587,7 +606,7 @@ def test_prepare_terrain_normals_pass_populates_channel(state):
     assert "terrain_normals" in result.produced_channels
 
 
-def test_prepare_heightmap_raw_u16_pass_populates_channel(state):
+def test_prepare_heightmap_raw_u16_pass_populates_channel(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_unity_export import pass_prepare_heightmap_raw_u16
 
     result = pass_prepare_heightmap_raw_u16(state, None)
@@ -603,7 +622,7 @@ def test_prepare_heightmap_raw_u16_pass_populates_channel(state):
 # ---------------------------------------------------------------------------
 
 
-def test_register_bundle_j_passes_lands_all_eight():
+def test_register_bundle_j_passes_lands_all_eight() -> None:
     from veilbreakers_terrain.handlers.terrain_bundle_j import (
         BUNDLE_J_PASSES,
         register_bundle_j_passes,
@@ -620,7 +639,7 @@ def test_register_bundle_j_passes_lands_all_eight():
         TerrainPassController.clear_registry()
 
 
-def test_bundle_j_passes_run_through_controller():
+def test_bundle_j_passes_run_through_controller() -> None:
     from veilbreakers_terrain.handlers.terrain_bundle_j import (
         BUNDLE_J_PASSES,
         register_bundle_j_passes,
@@ -640,7 +659,7 @@ def test_bundle_j_passes_run_through_controller():
         TerrainPassController.clear_registry()
 
 
-def test_bundle_j_passes_do_not_require_scene_read():
+def test_bundle_j_passes_do_not_require_scene_read() -> None:
     """Bundle J passes are read-only classification — no scene read needed."""
     from veilbreakers_terrain.handlers.terrain_bundle_j import (
         BUNDLE_J_PASSES,
@@ -660,7 +679,7 @@ def test_bundle_j_passes_do_not_require_scene_read():
         TerrainPassController.clear_registry()
 
 
-def test_bundle_j_does_not_touch_default_passes():
+def test_bundle_j_does_not_touch_default_passes() -> None:
     """Ensure Bundle J registration does not clobber Bundle A passes when
     both are registered in sequence."""
     from veilbreakers_terrain.handlers.terrain_bundle_j import register_bundle_j_passes
@@ -696,7 +715,7 @@ def test_bundle_j_does_not_touch_default_passes():
 # ---------------------------------------------------------------------------
 
 
-def test_bundle_j_populates_unity_ready_channels(state):
+def test_bundle_j_populates_unity_ready_channels(state: TerrainPipelineState) -> None:
     """Every Bundle J pass must populate at least one Unity-ready channel."""
     from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
     from veilbreakers_terrain.handlers.terrain_cloud_shadow import pass_cloud_shadow
@@ -721,28 +740,32 @@ def test_bundle_j_populates_unity_ready_channels(state):
         assert state.mask_stack.get(expected) is not None
 
 
-def test_wildlife_affinity_populates_dict_channel_provenance(state):
+def test_wildlife_affinity_populates_dict_channel_provenance(
+    state: TerrainPipelineState,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_wildlife_zones import pass_wildlife_zones
 
     pass_wildlife_zones(state, None)
     assert "wildlife_affinity" in state.mask_stack.populated_by_pass
 
 
-def test_decal_density_populates_dict_channel_provenance(state):
+def test_decal_density_populates_dict_channel_provenance(
+    state: TerrainPipelineState,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_decal_placement import pass_decals
 
     pass_decals(state, None)
     assert "decal_density" in state.mask_stack.populated_by_pass
 
 
-def test_audio_zones_metrics_contain_distribution(state):
+def test_audio_zones_metrics_contain_distribution(state: TerrainPipelineState) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import pass_audio_zones
 
     result = pass_audio_zones(state, None)
     assert "class_distribution" in result.metrics
 
 
-def test_unity_export_manifest_minimal_without_optional_channels():
+def test_unity_export_manifest_minimal_without_optional_channels() -> None:
     """Manifest export works even if only height is populated."""
     from veilbreakers_terrain.handlers.terrain_unity_export import export_unity_manifest
 

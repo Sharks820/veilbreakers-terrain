@@ -5,10 +5,19 @@ Tests are fast (no full pipeline; mock stacks and small arrays).
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
-import pytest
+from numpy.typing import NDArray
+from typing import TYPE_CHECKING, TypeAlias
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+Grid: TypeAlias = list[list[float]]
+GridShape: TypeAlias = tuple[int, int]
+Float32Array: TypeAlias = NDArray[np.float32]
 
 
 # ---------------------------------------------------------------------------
@@ -16,12 +25,17 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(shape=(16, 16), *, cell_size=1.0):
+def _make_stack(
+    shape: GridShape = (16, 16), *, cell_size: float = 1.0
+) -> "TerrainMaskStack":
     """Return a minimal TerrainMaskStack with a ramp heightmap."""
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
+    height: Float32Array = np.linspace(
+        0.0, 10.0, shape[0] * shape[1], dtype=np.float32
+    ).reshape(shape)
     stack = TerrainMaskStack(
-        height=np.linspace(0.0, 10.0, shape[0] * shape[1], dtype=np.float32).reshape(shape),
+        height=height,
         tile_size=shape[0],
         cell_size=cell_size,
         world_origin_x=0.0,
@@ -32,7 +46,7 @@ def _make_stack(shape=(16, 16), *, cell_size=1.0):
     return stack
 
 
-def _make_state(stack):
+def _make_state(stack: "TerrainMaskStack") -> "TerrainPipelineState":
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -48,6 +62,25 @@ def _make_state(stack):
         composition_hints={},
     )
     return TerrainPipelineState(intent=intent, mask_stack=stack)
+
+
+def _column_marker_grid(size: int, marker_col: int, value: float) -> Grid:
+    """Return square grid with one marked column."""
+    assert 0 <= marker_col < size
+    grid = [[0.0 for _ in range(size)] for _ in range(size)]
+    for row in grid:
+        row[marker_col] = value
+    assert all(row[marker_col] == value for row in grid)
+    return grid
+
+
+def _row_marker_grid(size: int, marker_row: int, value: float) -> Grid:
+    """Return square grid with one marked row."""
+    assert 0 <= marker_row < size
+    grid = [[0.0 for _ in range(size)] for _ in range(size)]
+    grid[marker_row] = [value for _ in range(size)]
+    assert all(cell == value for cell in grid[marker_row])
+    return grid
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +291,8 @@ class TestBug102:
 
         # tile_b is WEST neighbor of tile_a
         # tile_a left col (col 0) = 5.0, tile_b right col (col 7) = 5.0 → should match
-        tile_a = [[5.0 if c == 0 else 0.0 for c in range(8)] for r in range(8)]
-        tile_b = [[5.0 if c == 7 else 0.0 for c in range(8)] for r in range(8)]
+        tile_a = _column_marker_grid(8, 0, 5.0)
+        tile_b = _column_marker_grid(8, 7, 5.0)
         result = validate_tile_seams(tile_a, tile_b, direction="west", tolerance=1e-6)
         assert result["match"] is True, (
             f"West seam: left col of A must match right col of B. Got: {result}"
@@ -270,8 +303,8 @@ class TestBug102:
 
         # tile_b is NORTH neighbor of tile_a
         # tile_a top row (row 0) = 7.0, tile_b bottom row (row 7) = 7.0 → should match
-        tile_a = [[7.0 if r == 0 else 0.0 for c in range(8)] for r in range(8)]
-        tile_b = [[7.0 if r == 7 else 0.0 for c in range(8)] for r in range(8)]
+        tile_a = _row_marker_grid(8, 0, 7.0)
+        tile_b = _row_marker_grid(8, 7, 7.0)
         result = validate_tile_seams(tile_a, tile_b, direction="north", tolerance=1e-6)
         assert result["match"] is True, (
             f"North seam: top row of A must match bottom row of B. Got: {result}"
@@ -281,8 +314,8 @@ class TestBug102:
         from veilbreakers_terrain.handlers.terrain_chunking import validate_tile_seams
 
         # Sanity: east direction was already correct
-        tile_a = [[3.0 if c == 7 else 0.0 for c in range(8)] for r in range(8)]
-        tile_b = [[3.0 if c == 0 else 0.0 for c in range(8)] for r in range(8)]
+        tile_a = _column_marker_grid(8, 7, 3.0)
+        tile_b = _column_marker_grid(8, 0, 3.0)
         result = validate_tile_seams(tile_a, tile_b, direction="east", tolerance=1e-6)
         assert result["match"] is True, f"East seam regression: {result}"
 
@@ -290,7 +323,7 @@ class TestBug102:
         from veilbreakers_terrain.handlers.terrain_chunking import validate_tile_seams
 
         # tile_b is SOUTH neighbor: bottom row of A == top row of B
-        tile_a = [[2.0 if r == 7 else 0.0 for c in range(8)] for r in range(8)]
-        tile_b = [[2.0 if r == 0 else 0.0 for c in range(8)] for r in range(8)]
+        tile_a = _row_marker_grid(8, 7, 2.0)
+        tile_b = _row_marker_grid(8, 0, 2.0)
         result = validate_tile_seams(tile_a, tile_b, direction="south", tolerance=1e-6)
         assert result["match"] is True, f"South seam regression: {result}"

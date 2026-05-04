@@ -16,37 +16,117 @@ All brush math is in pure functions for testability.
 
 from __future__ import annotations
 
+import importlib
 import math
+from collections.abc import Callable
+from collections.abc import Sequence
+from typing import Any
+from typing import Protocol
+from typing import cast
 
 import numpy as np
 
 try:
     from scipy import ndimage as _scipy_ndimage
-    _SCIPY_AVAILABLE = True
 except ImportError:
     _scipy_ndimage = None  # type: ignore[assignment]
-    _SCIPY_AVAILABLE = False
+_scipy_available = _scipy_ndimage is not None
 
 # Lazy-import guard: brush falloff math is pure-Python and testable without
 # Blender, but handle_sculpt_terrain needs bpy/bmesh. Guard the imports so
 # transitive imports outside Blender do not crash.
 try:
-    import bmesh
-    import bpy
-    _HAS_BPY = True
+    bmesh = importlib.import_module("bmesh")
+    bpy = importlib.import_module("bpy")
 except ModuleNotFoundError:
-    bmesh = None  # type: ignore[assignment]
-    bpy = None  # type: ignore[assignment]
-    _HAS_BPY = False
+    bmesh = None
+    bpy = None
+_has_bpy = bmesh is not None and bpy is not None
+
+
+class _BMeshLike(Protocol):
+    verts: Any
+
+
+def _falloff_smooth(d: float) -> float:
+    return float(2.0 * d * d * d - 3.0 * d * d + 1.0) if d < 1.0 else 0.0
+
+
+def _falloff_linear(d: float) -> float:
+    return float(1.0 - d) if d < 1.0 else 0.0
+
+
+def _falloff_sphere(d: float) -> float:
+    return float(math.sqrt(max(0.0, 1.0 - d * d))) if d < 1.0 else 0.0
+
+
+def _falloff_root(d: float) -> float:
+    return float(math.sqrt(max(0.0, 1.0 - d))) if d < 1.0 else 0.0
+
+
+def _falloff_sharp(d: float) -> float:
+    return float(max(0.0, 1.0 - d * d)) if d < 1.0 else 0.0
+
+
+def _falloff_gaussian(d: float) -> float:
+    return float(math.exp(-4.0 * d * d)) if d < 1.0 else 0.0
+
+
+def _falloff_constant(d: float) -> float:
+    return 1.0 if d < 1.0 else 0.0
 
 
 def _require_bpy() -> None:
     """Raise RuntimeError if bpy/bmesh are not available (outside Blender)."""
-    if not _HAS_BPY:
+    if not _has_bpy:
         raise RuntimeError(
             "This function requires Blender (bpy + bmesh). "
             "It cannot run outside the Blender Python runtime."
         )
+
+
+def _param_float(params: dict[str, object], key: str, default: float) -> float:
+    value = params.get(key)
+    return float(default if value is None else cast(Any, value))
+
+
+def _param_str(params: dict[str, object], key: str, default: str) -> str:
+    value = params.get(key)
+    return str(default if value is None else value)
+
+
+def _brush_operation(params: dict[str, object]) -> str:
+    value = params.get("brush_mode", params.get("operation", "raise"))
+    return str(value)
+
+
+def _position_xyz(value: object) -> tuple[float, float, float]:
+    if value is None:
+        return (0.0, 0.0, 0.0)
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError("position must be a sequence of at least two numbers")
+    position = cast(Sequence[object], value)
+    if len(position) < 2:
+        raise ValueError("position must contain at least x and y")
+    return (
+        float(cast(Any, position[0])),
+        float(cast(Any, position[1])),
+        float(cast(Any, position[2])) if len(position) > 2 else 0.0,
+    )
+
+
+def _heightmap_from_param(value: object) -> list[list[float]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError("heightmap must be a 2D numeric sequence")
+
+    rows: list[list[float]] = []
+    for row_value in cast(Sequence[object], value):
+        if not isinstance(row_value, Sequence) or isinstance(row_value, (str, bytes)):
+            raise ValueError("heightmap must be a 2D numeric sequence")
+        rows.append([float(cast(Any, cell)) for cell in cast(Sequence[object], row_value)])
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -64,14 +144,14 @@ def _require_bpy() -> None:
 #   sharp   — quadratic concave           1-d²        (fast fade from center)
 #   gaussian— Gaussian bell               exp(-4d²)   (narrow peak, ZBrush Clay)
 #   constant— hard-edge flat top          1.0 inside  (useful for debug / uniform)
-_FALLOFF_FUNCTIONS: dict[str, object] = {
-    "smooth":   lambda d: float(2.0 * d * d * d - 3.0 * d * d + 1.0) if d < 1.0 else 0.0,
-    "linear":   lambda d: float(1.0 - d) if d < 1.0 else 0.0,
-    "sphere":   lambda d: float(math.sqrt(max(0.0, 1.0 - d * d))) if d < 1.0 else 0.0,
-    "root":     lambda d: float(math.sqrt(max(0.0, 1.0 - d))) if d < 1.0 else 0.0,
-    "sharp":    lambda d: float(max(0.0, 1.0 - d * d)) if d < 1.0 else 0.0,
-    "gaussian": lambda d: float(math.exp(-4.0 * d * d)) if d < 1.0 else 0.0,
-    "constant": lambda d: 1.0 if d < 1.0 else 0.0,
+_FALLOFF_FUNCTIONS: dict[str, Callable[[float], float]] = {
+    "smooth": _falloff_smooth,
+    "linear": _falloff_linear,
+    "sphere": _falloff_sphere,
+    "root": _falloff_root,
+    "sharp": _falloff_sharp,
+    "gaussian": _falloff_gaussian,
+    "constant": _falloff_constant,
 }
 
 
@@ -187,8 +267,8 @@ def _sample_falloff_lut(lut: np.ndarray, norm_dist: np.ndarray) -> np.ndarray:
 
 
 def compute_brush_weights(
-    vert_positions_2d: list[tuple[float, ...]] | np.ndarray,
-    brush_center: tuple[float, ...],
+    vert_positions_2d: Sequence[Sequence[float]] | np.ndarray,
+    brush_center: Sequence[float],
     brush_radius: float,
     falloff: str = "smooth",
     normalize: bool = False,
@@ -528,7 +608,7 @@ def compute_lower_displacements(
 
 
 def compute_smooth_displacements(
-    vert_positions: list[tuple[float, float, float]],
+    vert_positions: Sequence[Sequence[float]],
     adjacency: dict[int, list[int]],
     weights: list[tuple[int, float]],
     smooth_strength: float = 1.0,
@@ -597,12 +677,16 @@ def compute_smooth_displacements(
     # ------------------------------------------------------------------
     # Fast path: scipy Gaussian grid smooth (Z only).
     # ------------------------------------------------------------------
-    if _SCIPY_AVAILABLE and hmap_grid is not None:
+    if _scipy_available and hmap_grid is not None:
         grid = np.asarray(hmap_grid, dtype=np.float64)
         # σ in grid cells: default radius/3 expressed as grid cells, or 1.0
         sigma_cells = (float(brush_radius) / 3.0) if brush_radius else 1.0
         sigma_cells = max(sigma_cells, 0.3)
-        smoothed = _scipy_ndimage.gaussian_filter(
+        if _scipy_ndimage is None:
+            raise RuntimeError("scipy ndimage unavailable despite availability check")
+        scipy_ndimage = cast(Any, _scipy_ndimage)
+        gaussian_filter = cast(Callable[..., np.ndarray], scipy_ndimage.gaussian_filter)
+        smoothed = gaussian_filter(
             grid, sigma=sigma_cells, mode="reflect"
         )
         lap_grid = smoothed - grid
@@ -812,10 +896,10 @@ def compute_flatten_displacements(
 
 
 def compute_stamp_displacements(
-    vert_positions_2d: list[tuple[float, float]],
+    vert_positions_2d: Sequence[Sequence[float]],
     vert_heights: list[float],
     weights: list[tuple[int, float]],
-    brush_center: tuple[float, float],
+    brush_center: Sequence[float],
     brush_radius: float,
     heightmap: list[list[float]],
     stamp_strength: float = 1.0,
@@ -978,7 +1062,7 @@ def compute_stamp_displacements(
 # ---------------------------------------------------------------------------
 
 
-def _build_adjacency(bm_obj) -> dict[int, list[int]]:
+def _build_adjacency(bm_obj: _BMeshLike) -> dict[int, list[int]]:
     """Build 8-connected vertex adjacency map from a bmesh object.
 
     **8-connectivity (Moore neighbourhood)** — the returned adjacency includes
@@ -1023,7 +1107,7 @@ def _build_adjacency(bm_obj) -> dict[int, list[int]]:
     return adj
 
 
-def handle_sculpt_terrain(params: dict) -> dict:
+def handle_sculpt_terrain(params: dict[str, object]) -> dict[str, object]:
     """Sculpt terrain at specific world-space coordinates (GAP-09).
 
     All five sculpt modes are dispatched here.  The incoming ``position`` is in
@@ -1054,22 +1138,29 @@ def handle_sculpt_terrain(params: dict) -> dict:
     Returns:
         dict with operation details and affected vertex count.
     """
+    _require_bpy()
+    if bpy is None or bmesh is None:
+        raise RuntimeError("Blender modules unavailable after runtime guard")
+
+    bpy_module = cast(Any, bpy)
+    bmesh_module = cast(Any, bmesh)
+
     terrain_name = params.get("terrain_name")
-    obj = bpy.data.objects.get(terrain_name)
+    obj = bpy_module.data.objects.get(terrain_name)
     if not obj or obj.type != "MESH":
         raise ValueError(f"Terrain mesh object not found: {terrain_name}")
 
-    position = params.get("position", [0, 0])
-    radius = float(params.get("radius", 5.0))
-    strength = float(params.get("strength", 1.0))
+    world_pos_x, world_pos_y, world_pos_z = _position_xyz(params.get("position"))
+    radius = _param_float(params, "radius", 5.0)
+    strength = _param_float(params, "strength", 1.0)
     # Accept both "brush_mode" (new) and "operation" (legacy key).
-    operation = str(params.get("brush_mode", params.get("operation", "raise")))
-    falloff = str(params.get("falloff", "smooth"))
-    heightmap = params.get("heightmap")
-    height_min = float(params.get("height_min", float("-inf")))
-    height_max = float(params.get("height_max", float("inf")))
-    blend_mode = str(params.get("blend_mode", "add"))
-    feather = float(params.get("feather", 0.0))
+    operation = _brush_operation(params)
+    falloff = _param_str(params, "falloff", "smooth")
+    heightmap = _heightmap_from_param(params.get("heightmap"))
+    height_min = _param_float(params, "height_min", float("-inf"))
+    height_max = _param_float(params, "height_max", float("inf"))
+    blend_mode = _param_str(params, "blend_mode", "add")
+    feather = _param_float(params, "feather", 0.0)
 
     valid_ops = ("raise", "lower", "smooth", "flatten", "stamp")
     if operation not in valid_ops:
@@ -1087,28 +1178,23 @@ def handle_sculpt_terrain(params: dict) -> dict:
     # scale factor (average of the three axis scales) so that a "5 m"
     # brush covers 5 m of terrain regardless of object scale.
     # ------------------------------------------------------------------
-    world_pos_x = float(position[0])
-    world_pos_y = float(position[1])
-    world_pos_z = float(position[2]) if len(position) > 2 else 0.0
-
     mw = obj.matrix_world          # 4×4 Matrix
     mw_inv = mw.inverted()
 
-    import mathutils  # available inside Blender; guarded below
+    mathutils = cast(Any, importlib.import_module("mathutils"))
     world_pt = mathutils.Vector((world_pos_x, world_pos_y, world_pos_z))
     local_pt = mw_inv @ world_pt
 
     # Approximate local-space radius: divide by the average absolute scale.
     scale_x = abs(mw[0][0])
     scale_y = abs(mw[1][1])
-    scale_z = abs(mw[2][2])
     # Use the XY mean for the horizontal radius conversion.
     avg_scale_xy = (scale_x + scale_y) / 2.0 if (scale_x + scale_y) > 0 else 1.0
     local_radius = radius / avg_scale_xy if avg_scale_xy > 1e-8 else radius
 
     brush_center = (float(local_pt.x), float(local_pt.y))
 
-    bm = bmesh.new()
+    bm = bmesh_module.new()
     new_heights: dict[int, float] = {}
     try:
         bm.from_mesh(obj.data)

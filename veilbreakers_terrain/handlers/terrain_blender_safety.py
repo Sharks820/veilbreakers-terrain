@@ -15,7 +15,11 @@ from __future__ import annotations
 import functools
 import threading
 from pathlib import Path
-from typing import Callable, List, Sequence, Tuple
+from typing import Callable, Sequence, TypeAlias, TypeVar
+
+Vector3: TypeAlias = tuple[float, float, float]
+Matrix3x3: TypeAlias = tuple[Vector3, Vector3, Vector3]
+_ReturnT = TypeVar("_ReturnT")
 
 
 class CoordinateSystemError(RuntimeError):
@@ -46,10 +50,10 @@ def assert_z_is_up(obj_up_axis: str) -> None:
 
 
 def convert_y_up_to_z_up(
-    position: Tuple[float, float, float],
-    orientation: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    position: Vector3,
+    orientation: Vector3 = (0.0, 0.0, 0.0),
     euler_order: str = "XYZ",
-) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+) -> tuple[Vector3, Vector3]:
     """Convert a Y-up coordinate (x, y, z) to Z-up (x, -z, y).
 
     Blender 4.5 is right-handed Z-up. FBX/GLTF importers (and many DCC
@@ -111,57 +115,70 @@ def convert_y_up_to_z_up(
     # Input rotation matrix R (from Euler angles, intrinsic rotations).
     # Output = decompose(M @ R) back to the same Euler order.
 
-    def _rot_x(a: float) -> List:
+    def _rot_x(a: float) -> Matrix3x3:
         ca, sa = _math.cos(a), _math.sin(a)
-        return [[1, 0, 0], [0, ca, -sa], [0, sa, ca]]
+        return ((1.0, 0.0, 0.0), (0.0, ca, -sa), (0.0, sa, ca))
 
-    def _rot_y(a: float) -> List:
+    def _rot_y(a: float) -> Matrix3x3:
         ca, sa = _math.cos(a), _math.sin(a)
-        return [[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]]
+        return ((ca, 0.0, sa), (0.0, 1.0, 0.0), (-sa, 0.0, ca))
 
-    def _rot_z(a: float) -> List:
+    def _rot_z(a: float) -> Matrix3x3:
         ca, sa = _math.cos(a), _math.sin(a)
-        return [[ca, -sa, 0], [sa, ca, 0], [0, 0, 1]]
+        return ((ca, -sa, 0.0), (sa, ca, 0.0), (0.0, 0.0, 1.0))
 
-    def _mat_mul(A: List, B: List) -> List:
-        return [
-            [sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)]
-            for i in range(3)
-        ]
+    def _mat_mul(a: Matrix3x3, b: Matrix3x3) -> Matrix3x3:
+        return (
+            (
+                sum(a[0][k] * b[k][0] for k in range(3)),
+                sum(a[0][k] * b[k][1] for k in range(3)),
+                sum(a[0][k] * b[k][2] for k in range(3)),
+            ),
+            (
+                sum(a[1][k] * b[k][0] for k in range(3)),
+                sum(a[1][k] * b[k][1] for k in range(3)),
+                sum(a[1][k] * b[k][2] for k in range(3)),
+            ),
+            (
+                sum(a[2][k] * b[k][0] for k in range(3)),
+                sum(a[2][k] * b[k][1] for k in range(3)),
+                sum(a[2][k] * b[k][2] for k in range(3)),
+            ),
+        )
 
     if order == "XYZ":
         # Intrinsic XYZ: R = Rz(rz) @ Ry(ry) @ Rx(rx)
-        R = _mat_mul(_mat_mul(_rot_z(rz), _rot_y(ry)), _rot_x(rx))
+        rotation = _mat_mul(_mat_mul(_rot_z(rz), _rot_y(ry)), _rot_x(rx))
         # Axis-swap matrix M = Rx(-pi/2)
-        M = _rot_x(-_math.pi / 2.0)
-        MR = _mat_mul(M, R)
+        axis_swap = _rot_x(-_math.pi / 2.0)
+        converted = _mat_mul(axis_swap, rotation)
         # Decompose MR → XYZ Euler: ry = asin(-MR[2][0]), rx/rz from atan2
-        sy = -MR[2][0]
+        sy = -converted[2][0]
         sy = max(-1.0, min(1.0, sy))
         out_ry = _math.asin(sy)
         if abs(sy) < 0.9999:
-            out_rx = _math.atan2(MR[2][1], MR[2][2])
-            out_rz = _math.atan2(MR[1][0], MR[0][0])
+            out_rx = _math.atan2(converted[2][1], converted[2][2])
+            out_rz = _math.atan2(converted[1][0], converted[0][0])
         else:
             # Gimbal lock
-            out_rx = _math.atan2(-MR[1][2], MR[1][1])
+            out_rx = _math.atan2(-converted[1][2], converted[1][1])
             out_rz = 0.0
-        zup_orientation: Tuple[float, float, float] = (out_rx, out_ry, out_rz)
+        zup_orientation: Vector3 = (out_rx, out_ry, out_rz)
 
     elif order == "ZYX":
         # Intrinsic ZYX: R = Rx(rx) @ Ry(ry) @ Rz(rz)
-        R = _mat_mul(_mat_mul(_rot_x(rx), _rot_y(ry)), _rot_z(rz))
-        M = _rot_x(-_math.pi / 2.0)
-        MR = _mat_mul(M, R)
+        rotation = _mat_mul(_mat_mul(_rot_x(rx), _rot_y(ry)), _rot_z(rz))
+        axis_swap = _rot_x(-_math.pi / 2.0)
+        converted = _mat_mul(axis_swap, rotation)
         # Decompose MR → ZYX Euler
-        sy = -MR[2][0]
+        sy = -converted[2][0]
         sy = max(-1.0, min(1.0, sy))
         out_ry = _math.asin(sy)
         if abs(sy) < 0.9999:
-            out_rx = _math.atan2(MR[2][1], MR[2][2])
-            out_rz = _math.atan2(MR[1][0], MR[0][0])
+            out_rx = _math.atan2(converted[2][1], converted[2][2])
+            out_rz = _math.atan2(converted[1][0], converted[0][0])
         else:
-            out_rx = _math.atan2(-MR[1][2], MR[1][1])
+            out_rx = _math.atan2(-converted[1][2], converted[1][1])
             out_rz = 0.0
         zup_orientation = (out_rx, out_ry, out_rz)
 
@@ -179,11 +196,11 @@ def convert_y_up_to_z_up(
     return zup_position, zup_orientation
 
 
-def guard_z_up(fn: Callable) -> Callable:
+def guard_z_up(fn: Callable[..., _ReturnT]) -> Callable[..., _ReturnT]:
     """Decorator that checks any ``up`` kwarg before the wrapped function runs."""
 
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: object, **kwargs: object) -> _ReturnT:
         up_axis = kwargs.get("up_axis")
         if up_axis is not None:
             assert_z_is_up(str(up_axis))
@@ -333,14 +350,14 @@ def recommend_boolean_solver(
 # ---------------------------------------------------------------------------
 
 _GLTF_IMPORT_LOCK = threading.Lock()
-_GLTF_IMPORT_LOG: List[Path] = []
+_GLTF_IMPORT_LOG: list[Path] = []
 
 
 def import_gltf_serialized(
     glb_paths: Sequence[Path],
     *,
     require_exists: bool = True,
-) -> List[Path]:
+) -> list[Path]:
     """Return ``glb_paths`` in order, holding a global lock for each.
 
     Enforces two contracts (Addendum 1.A.6):
@@ -353,7 +370,7 @@ def import_gltf_serialized(
     inside the with-block. Headless mode records the serialization order
     and validated paths so tests can assert the contract.
     """
-    out: List[Path] = []
+    out: list[Path] = []
     for p in glb_paths:
         path = Path(p)
         suffix = path.suffix.lower()
@@ -372,7 +389,7 @@ def import_gltf_serialized(
     return out
 
 
-def get_gltf_import_log() -> List[Path]:
+def get_gltf_import_log() -> list[Path]:
     """Test helper — returns a copy of the serialization log."""
     return list(_GLTF_IMPORT_LOG)
 
@@ -381,7 +398,7 @@ def clear_gltf_import_log() -> None:
     _GLTF_IMPORT_LOG.clear()
 
 
-__all__ = [
+__all__: list[str] = [
     "CoordinateSystemError",
     "BlenderBooleanUnsafe",
     "assert_z_is_up",

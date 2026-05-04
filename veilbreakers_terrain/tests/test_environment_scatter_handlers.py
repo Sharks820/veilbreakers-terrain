@@ -7,8 +7,13 @@ expected result dict shapes.
 """
 
 
+from collections.abc import Callable
+from typing import NoReturn, cast
+
 import numpy as np
+import numpy.typing as npt
 import pytest
+from _pytest.python_api import ApproxBase
 
 from veilbreakers_terrain.handlers._scatter_engine import (
     biome_filter_points,
@@ -16,6 +21,19 @@ from veilbreakers_terrain.handlers._scatter_engine import (
     generate_breakable_variants,
     poisson_disk_sample,
 )
+
+
+_TYPED_APPROX = cast(Callable[..., ApproxBase], getattr(pytest, "approx"))
+
+
+def approx(
+    expected: object,
+    *,
+    rel: float | None = None,
+    abs: float | None = None,
+    nan_ok: bool = False,
+) -> ApproxBase:
+    return _TYPED_APPROX(expected, rel=rel, abs=abs, nan_ok=nan_ok)
 
 
 class TestScatterVegetationLogic:
@@ -55,7 +73,7 @@ class TestScatterVegetationLogic:
             terrain_origin_y=200.0,
         )
 
-        assert offset == pytest.approx(centered)
+        assert offset == approx(centered)
 
     def test_world_height_sampling_respects_rectangular_terrain_extent(self):
         """World-space sampling should map X and Y against their own terrain axes."""
@@ -81,7 +99,7 @@ class TestScatterVegetationLogic:
             terrain_origin_y=0.0,
         )
 
-        assert sampled == pytest.approx(7.5)
+        assert sampled == approx(7.5)
 
     def test_world_height_sampling_clamps_out_of_bounds(self):
         """World-space sampling should clamp gracefully outside the terrain footprint."""
@@ -106,7 +124,7 @@ class TestScatterVegetationLogic:
             terrain_origin_y=0.0,
         )
 
-        assert sampled == pytest.approx(8.0)
+        assert sampled == approx(8.0)
 
     def test_world_height_sampling_applies_height_offset(self):
         from veilbreakers_terrain.handlers.environment_scatter import _sample_heightmap_world
@@ -131,7 +149,7 @@ class TestScatterVegetationLogic:
             terrain_origin_y=0.0,
         )
 
-        assert sampled == pytest.approx(5.0)
+        assert sampled == approx(5.0)
 
     def test_terrain_cell_size_from_extent_uses_world_spacing(self):
         from veilbreakers_terrain.handlers.environment_scatter import _terrain_cell_size_from_extent
@@ -143,7 +161,7 @@ class TestScatterVegetationLogic:
             cols=9,
         )
 
-        assert spacing == pytest.approx(30.0)
+        assert spacing == approx(30.0)
 
     def test_full_vegetation_pipeline(self):
         """Poisson disk + biome filter produces valid placements."""
@@ -395,10 +413,13 @@ class TestMultipassScatterIntegration:
             x, y = item["position"]
             assert not (40.0 <= x <= 60.0 and 40.0 <= y <= 60.0)
 
-    def test_category_mapped_catalog_species_still_respect_building_exclusion(self, monkeypatch):
+    def test_category_mapped_catalog_species_still_respect_building_exclusion(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         from veilbreakers_terrain.handlers import environment_scatter as scatter_mod
 
-        def fake_scatter_pass(*args, **kwargs):
+        def fake_scatter_pass(*args: object, **kwargs: object) -> list[dict[str, object]]:
             if kwargs.get("pass_type") != "debris":
                 return []
             return [
@@ -515,7 +536,7 @@ class TestMultipassScatterIntegration:
         assert table.format == "ScatterPointTable"
         assert validate_scatter_point_table(table) == []
         point = table.points[0]
-        assert point.position == pytest.approx((-15.0, 10.0, 15.0))
+        assert point.position == approx((-15.0, 10.0, 15.0))
         assert point.prototype_id == "3"
         assert point.species_id == "tree_oak"
         assert point.biome_id == "forest"
@@ -555,10 +576,10 @@ class TestMultipassScatterIntegration:
 
         point = table.points[0]
 
-        assert point.position == pytest.approx((101.0, 202.0, 33.0))
-        assert point.height_m == pytest.approx(33.0)
-        assert point.normal == pytest.approx((-0.2, 0.1, 0.97))
-        assert point.orient == pytest.approx((0.1, 0.2, 0.3, 0.9))
+        assert point.position == approx((101.0, 202.0, 33.0))
+        assert point.height_m == approx(33.0)
+        assert point.normal == approx((-0.2, 0.1, 0.97))
+        assert point.orient == approx((0.1, 0.2, 0.3, 0.9))
 
     def test_catalog_category_placements_map_to_coarse_rules_without_dropping(self):
         from veilbreakers_terrain.handlers.environment_scatter import _filter_multipass_scatter_placements
@@ -692,7 +713,7 @@ class TestPropGeneratorMapCoverage:
         from veilbreakers_terrain.handlers._scatter_engine import PROP_AFFINITY
         from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
-        missing = []
+        missing: list[str] = []
         for building_type, prop_list in PROP_AFFINITY.items():
             for prop_type, _weight in prop_list:
                 if prop_type not in PROP_GENERATOR_MAP:
@@ -707,10 +728,10 @@ class TestPropGeneratorMapCoverage:
         from veilbreakers_terrain.handlers._scatter_engine import _GENERIC_PROPS
         from veilbreakers_terrain.handlers._mesh_bridge import PROP_GENERATOR_MAP
 
-        missing = []
+        missing: list[str] = []
         for prop_type, _weight in _GENERIC_PROPS:
             if prop_type not in PROP_GENERATOR_MAP:
-                missing.append(prop_type)
+                missing.append(str(prop_type))
 
         assert not missing, (
             f"PROP_GENERATOR_MAP is missing generic prop entries: {missing}"
@@ -815,7 +836,7 @@ class TestScatterChannelConsumers:
         result = _collapse_detail_density({"canopy": arr, "ground_cover": arr})
         assert result is not None
         assert result.shape == (4, 4)
-        assert float(result.mean()) == pytest.approx(0.5)
+        assert float(result.mean()) == approx(0.5)
 
     def test_detail_density_none_returns_none(self):
         from veilbreakers_terrain.handlers.environment_scatter import _collapse_detail_density
@@ -855,7 +876,7 @@ class TestScatterChannelConsumers:
 
         arr = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
         sampled = _sample_scalar_map(arr, x_local=5.0, y_local=5.0, width=10.0, height=10.0)
-        assert sampled == pytest.approx(1.5, abs=1e-6)
+        assert sampled == approx(1.5, abs=1e-6)
 
     def test_resolve_scatter_context_maps_combines_water_sources(self):
         from types import SimpleNamespace
@@ -880,9 +901,9 @@ class TestScatterChannelConsumers:
 
         assert disturbance_map is None
         assert water_map is not None
-        assert water_map[0, 0] == pytest.approx(0.2, abs=1e-6)
-        assert water_map[0, 1] == pytest.approx(0.8, abs=1e-6)
-        assert water_map[1, 1] == pytest.approx(1.0, abs=1e-6)
+        assert water_map[0, 0] == approx(0.2, abs=1e-6)
+        assert water_map[0, 1] == approx(0.8, abs=1e-6)
+        assert water_map[1, 1] == approx(1.0, abs=1e-6)
 
     def test_resolve_scatter_context_maps_combines_disturbance_layers(self):
         from types import SimpleNamespace
@@ -909,7 +930,7 @@ class TestScatterChannelConsumers:
         assert disturbance_map is not None
         assert disturbance_map[1, 0] > 0.0
         assert disturbance_map[0, 1] > 0.0
-        assert disturbance_map[1, 1] == pytest.approx(1.0, abs=1e-6)
+        assert disturbance_map[1, 1] == approx(1.0, abs=1e-6)
 
     # -- hero_exclusion (Fix 9.4) --
 
@@ -940,7 +961,7 @@ class TestScatterChannelConsumers:
 
     def test_wind_rotation_none_returns_zero(self):
         from veilbreakers_terrain.handlers.environment_scatter import _wind_rotation_y
-        assert _wind_rotation_y(None, 5.0, 5.0, 10.0, 10.0) == pytest.approx(0.0)
+        assert _wind_rotation_y(None, 5.0, 5.0, 10.0, 10.0) == approx(0.0)
 
     def test_wind_rotation_plus_x_direction(self):
         from veilbreakers_terrain.handlers.environment_scatter import _wind_rotation_y
@@ -950,7 +971,7 @@ class TestScatterChannelConsumers:
         wind[..., 1] = 0.0   # wind_y = 0
         # arctan2(1, 0) = pi/2
         rot = _wind_rotation_y(wind, 5.0, 5.0, 10.0, 10.0)
-        assert rot == pytest.approx(math.pi / 2, abs=1e-4)
+        assert rot == approx(math.pi / 2, abs=1e-4)
 
     def test_wind_rotation_plus_y_direction(self):
         from veilbreakers_terrain.handlers.environment_scatter import _wind_rotation_y
@@ -959,7 +980,7 @@ class TestScatterChannelConsumers:
         wind[..., 1] = 1.0
         # arctan2(0, 1) = 0.0
         rot = _wind_rotation_y(wind, 5.0, 5.0, 10.0, 10.0)
-        assert rot == pytest.approx(0.0, abs=1e-4)
+        assert rot == approx(0.0, abs=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -1012,7 +1033,9 @@ class TestWriteTreeInstancePoints:
         np.testing.assert_array_equal(stack.tree_instance_points[:, 4], np.array([2.0, 0.0], dtype=np.float32))
 
 
-def test_scatter_point_table_catalog_fallback_and_bad_normal_gating(monkeypatch):
+def test_scatter_point_table_catalog_fallback_and_bad_normal_gating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers import terrain_foliage_catalog
     from veilbreakers_terrain.handlers.environment_scatter import (
         _build_scatter_point_table_from_placements,
@@ -1020,24 +1043,36 @@ def test_scatter_point_table_catalog_fallback_and_bad_normal_gating(monkeypatch)
     )
     from veilbreakers_terrain.handlers.terrain_scatter_points import validate_scatter_point_table
 
+    def explicit_catalog(species: str) -> dict[str, object]:
+        return {"unity_asset_path": f"Assets/{species}.prefab"}
+
+    def resolved_catalog(species: str) -> dict[str, object]:
+        return {"fallback": False, "unity_asset_path": f"Assets/{species}.prefab"}
+
+    def fallback_catalog(species: str) -> dict[str, object]:
+        return {"fallback": True, "unity_asset_path": f"Assets/{species}.prefab"}
+
+    def raising_catalog(_species: str) -> NoReturn:
+        raise RuntimeError()
+
     assert _resolve_prototype_id(
         {"prototype_id": "explicit_prefab"},
         "tree_oak",
-        lambda species: {"unity_asset_path": f"Assets/{species}.prefab"},
+        explicit_catalog,
     ) == "explicit_prefab"
     assert _resolve_prototype_id(
         {},
         "tree_oak",
-        lambda species: {"fallback": False, "unity_asset_path": f"Assets/{species}.prefab"},
+        resolved_catalog,
     ) == "Assets/tree_oak.prefab"
     assert _resolve_prototype_id(
         {},
         "tree_oak",
-        lambda species: {"fallback": True, "unity_asset_path": f"Assets/{species}.prefab"},
+        fallback_catalog,
     ) == "tree_oak"
-    assert _resolve_prototype_id({}, "tree_oak", lambda species: (_ for _ in ()).throw(RuntimeError())) == "tree_oak"
+    assert _resolve_prototype_id({}, "tree_oak", raising_catalog) == "tree_oak"
 
-    def _catalog(species_id):
+    def _catalog(species_id: str) -> dict[str, object]:
         if species_id == "tree_oak":
             return {"fallback": False, "unity_asset_path": "Assets/Foliage/Oak.prefab"}
         return {"fallback": True, "unity_asset_path": "Assets/Fallback.prefab"}
@@ -1084,7 +1119,7 @@ def test_scatter_point_table_catalog_fallback_and_bad_normal_gating(monkeypatch)
     assert table.points[0].prototype_id == "Assets/Foliage/Oak.prefab"
     assert table.points[0].normal == (0.0, 0.0, 1.0)
     assert table.points[0].lod_bucket == "lod1"
-    assert table.points[0].position == pytest.approx((96.0, 197.0, 20.0))
+    assert table.points[0].position == approx((96.0, 197.0, 20.0))
     assert table.points[1].prototype_id == "fern"
     assert table.points[1].wind_profile == "groundcover"
 
@@ -1146,7 +1181,10 @@ class TestLocationLayer:
             dist_sq = np.einsum("ij,ij->i", delta, delta)
             assert np.all(dist_sq >= (rr * rr) - 1e-5)
 
-    def test_large_repulsion_no_scipy_fallback_checks_dynamic_cell_radius(self, monkeypatch):
+    def test_large_repulsion_no_scipy_fallback_checks_dynamic_cell_radius(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         """Pure-Python fallback must not regress to adjacent-cell-only checks."""
         from veilbreakers_terrain.handlers.environment_scatter import LocationLayer
 
@@ -1154,10 +1192,16 @@ class TestLocationLayer:
 
         real_import = builtins.__import__
 
-        def blocked_import(name, *args, **kwargs):
+        def blocked_import(
+            name: str,
+            globals: dict[str, object] | None = None,
+            locals: dict[str, object] | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
             if name == "scipy" or name.startswith("scipy."):
                 raise ImportError("blocked scipy")
-            return real_import(name, *args, **kwargs)
+            return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", blocked_import)
 
@@ -1257,10 +1301,15 @@ class TestRoadMaskExclusion:
     def test_write_tree_instance_points_via_stack_set(self):
         """_write_tree_instance_points calls stack.set when available."""
         from veilbreakers_terrain.handlers.environment_scatter import _write_tree_instance_points
-        recorded = {}
+        recorded: dict[str, npt.NDArray[np.float32]] = {}
 
         class MockStack:
-            def set(self, key, arr, provenance=None):
+            def set(
+                self,
+                key: str,
+                arr: npt.NDArray[np.float32],
+                provenance: object | None = None,
+            ) -> None:
                 recorded[key] = arr
 
         arr = np.array([[1.0, 2.0, 3.0, 0.1, 0.0]], dtype=np.float32)
@@ -1283,7 +1332,13 @@ class TestRoadMaskExclusion:
 class TestSdfRoadExclusion:
     """Tests for SDF-based road edge exclusion via _apply_sdf_exclusion."""
 
-    def _excl(self, world_x, world_y, sdf_val, placement_radius=2.0):
+    def _excl(
+        self,
+        world_x: float,
+        world_y: float,
+        sdf_val: float,
+        placement_radius: float = 2.0,
+    ) -> bool:
         from veilbreakers_terrain.handlers.environment_scatter import _apply_sdf_exclusion
         road_sdf = np.full((8, 8), sdf_val, dtype=np.float32)
         return _apply_sdf_exclusion(
@@ -1468,7 +1523,7 @@ class TestDensityBilinearSampling:
 
         # Build a 1D-style ramp 0->1 in the row direction, 8 rows x 2 cols.
         dm = np.linspace(0.0, 1.0, 8, dtype=np.float32)[:, None].repeat(2, axis=1)
-        samples = []
+        samples: list[float] = []
         # Sample 40 fractional row positions and reconstruct sampled density
         # by binary-searching the rng threshold at which reject flips.
         test_rows = np.linspace(0.0, 7.0, 40)
@@ -1481,16 +1536,16 @@ class TestDensityBilinearSampling:
                 else:
                     lo = mid
             samples.append((lo + hi) * 0.5)
-        samples = np.asarray(samples)
+        samples_array: npt.NDArray[np.float64] = np.asarray(samples, dtype=np.float64)
         # Monotonic non-decreasing across all 40 samples. A nearest-neighbour
         # implementation produces stair-step jumps with local flat regions.
-        diffs = np.diff(samples)
+        diffs = np.diff(samples_array)
         assert np.all(diffs >= -1e-3), (
             f"Bilinear sampling should be monotonic non-decreasing across "
             f"a linear ramp; got min-diff={diffs.min():.4f}"
         )
         # And the first->last direction actually spans the ramp.
-        assert samples[-1] - samples[0] > 0.8
+        assert samples_array[-1] - samples_array[0] > 0.8
 
     def test_none_density_never_rejects(self):
         from veilbreakers_terrain.handlers.environment_scatter import _density_reject

@@ -10,7 +10,10 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
+
+FloatArray = NDArray[np.float64]
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +21,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _estimate_fractal_dimension_boxcount(heightmap: np.ndarray, n_scales: int = 6) -> float:
+def _estimate_fractal_dimension_boxcount(heightmap: FloatArray, n_scales: int = 6) -> float:
     """Estimate 2D fractal dimension of a heightmap via box-counting.
 
     Treats the heightmap as a 2D surface and counts how many boxes of
@@ -37,8 +40,8 @@ def _estimate_fractal_dimension_boxcount(heightmap: np.ndarray, n_scales: int = 
     h_range = max(h_max - h_min, 1e-12)
     h_quant = ((h - h_min) / h_range * 255).astype(np.int32)
 
-    scales = []
-    counts = []
+    scales: list[float] = []
+    counts: list[int] = []
 
     for k in range(1, n_scales + 1):
         box_size = max(2, side // (2 ** k))
@@ -67,7 +70,7 @@ def _estimate_fractal_dimension_boxcount(heightmap: np.ndarray, n_scales: int = 
     return float(coeffs[0])
 
 
-def _radial_spectral_power(heightmap: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _radial_spectral_power(heightmap: FloatArray) -> tuple[FloatArray, FloatArray]:
     """Compute radially averaged power spectrum of a heightmap.
 
     Returns (frequencies, power) arrays where power is the azimuthally
@@ -107,33 +110,42 @@ def _radial_spectral_power(heightmap: np.ndarray) -> tuple[np.ndarray, np.ndarra
 
 
 @pytest.fixture
-def mountain_hmap():
+def mountain_hmap() -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-    return generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="mountains")
+    return np.asarray(
+        generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="mountains"),
+        dtype=np.float64,
+    )
 
 
 @pytest.fixture
-def plains_hmap():
+def plains_hmap() -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-    return generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="plains")
+    return np.asarray(
+        generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="plains"),
+        dtype=np.float64,
+    )
 
 
 @pytest.fixture
-def canyon_hmap():
+def canyon_hmap() -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-    return generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="canyon")
+    return np.asarray(
+        generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="canyon"),
+        dtype=np.float64,
+    )
 
 
 @pytest.fixture
-def mountain_slope(mountain_hmap):
+def mountain_slope(mountain_hmap: FloatArray) -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
-    return compute_slope_map(mountain_hmap)
+    return np.asarray(compute_slope_map(mountain_hmap), dtype=np.float64)
 
 
 @pytest.fixture
-def plains_slope(plains_hmap):
+def plains_slope(plains_hmap: FloatArray) -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
-    return compute_slope_map(plains_hmap)
+    return np.asarray(compute_slope_map(plains_hmap), dtype=np.float64)
 
 
 # ===========================================================================
@@ -144,12 +156,12 @@ def plains_slope(plains_hmap):
 class TestHeightDistribution:
     """Height values should follow expected statistical properties."""
 
-    def test_mountain_full_range(self, mountain_hmap):
+    def test_mountain_full_range(self, mountain_hmap: FloatArray) -> None:
         """Mountain heightmap should use most of the [0,1] range."""
         h_range = mountain_hmap.max() - mountain_hmap.min()
         assert h_range > 0.5, f"Mountain range {h_range:.3f} too narrow"
 
-    def test_plains_narrow_range(self, plains_hmap):
+    def test_plains_narrow_range(self, plains_hmap: FloatArray) -> None:
         """Plains should have a narrower height range than mountains (unnormalized)."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         # Use normalize=False to see the raw amplitude differences between presets
@@ -161,28 +173,28 @@ class TestHeightDistribution:
             f"Plains std={plains_std:.4f} should be less than mountain std={mtn_std:.4f}"
         )
 
-    def test_mountain_height_not_degenerate(self, mountain_hmap):
+    def test_mountain_height_not_degenerate(self, mountain_hmap: FloatArray) -> None:
         """Mountain heightmap should not be constant or near-constant."""
         assert mountain_hmap.std() > 0.01
 
-    def test_normalized_in_unit_range(self, mountain_hmap):
+    def test_normalized_in_unit_range(self, mountain_hmap: FloatArray) -> None:
         """Normalized heightmap values should be in [0, 1]."""
         assert mountain_hmap.min() >= -1e-6
         assert mountain_hmap.max() <= 1.0 + 1e-6
 
-    def test_height_mean_not_extreme(self, mountain_hmap):
+    def test_height_mean_not_extreme(self, mountain_hmap: FloatArray) -> None:
         """Mean height should not be at extremes (degenerate distribution)."""
         mean = mountain_hmap.mean()
         assert 0.05 < mean < 0.95, f"Mean height {mean:.3f} is extreme"
 
-    def test_different_seeds_different_distribution(self):
+    def test_different_seeds_different_distribution(self) -> None:
         """Different seeds should produce different height distributions."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         h1 = generate_heightmap(64, 64, scale=50.0, seed=1, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, scale=50.0, seed=999, terrain_type="mountains")
         assert abs(h1.mean() - h2.mean()) > 1e-4 or abs(h1.std() - h2.std()) > 1e-4
 
-    def test_terrain_types_differ_statistically(self):
+    def test_terrain_types_differ_statistically(self) -> None:
         """Different terrain types should have distinguishable statistics (unnormalized)."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         # Use normalize=False to preserve the amplitude_scale differences
@@ -193,7 +205,7 @@ class TestHeightDistribution:
         assert mtn.std() > plains.std()
         assert plains.std() > flat.std()
 
-    def test_canyon_has_bimodal_tendency(self, canyon_hmap):
+    def test_canyon_has_bimodal_tendency(self, canyon_hmap: FloatArray) -> None:
         """Canyon terrain should show more spread in height values."""
         assert canyon_hmap.std() > 0.05, "Canyon terrain should have significant variation"
 
@@ -206,15 +218,15 @@ class TestHeightDistribution:
 class TestSlopeStatistics:
     """Slope maps should match expected terrain character."""
 
-    def test_slope_non_negative(self, mountain_slope):
+    def test_slope_non_negative(self, mountain_slope: FloatArray) -> None:
         """All slope values must be >= 0."""
         assert mountain_slope.min() >= 0.0
 
-    def test_slope_under_90_degrees(self, mountain_slope):
+    def test_slope_under_90_degrees(self, mountain_slope: FloatArray) -> None:
         """All slope values must be <= 90 degrees."""
         assert mountain_slope.max() <= 90.0 + 1e-6
 
-    def test_mountain_has_steep_areas(self, mountain_slope):
+    def test_mountain_has_steep_areas(self, mountain_slope: FloatArray) -> None:
         """Mountain terrain should have some areas steeper than the mean."""
         # Heightmaps normalized to [0,1] with cell_size=1.0 produce low absolute
         # slopes (~1-5 deg).  Test that mountains have meaningful slope variation
@@ -226,27 +238,27 @@ class TestSlopeStatistics:
         )
         assert mean_slope > 0.1, f"Mountain mean slope {mean_slope:.3f} too low"
 
-    def test_plains_mostly_flat(self, plains_slope):
+    def test_plains_mostly_flat(self, plains_slope: FloatArray) -> None:
         """Plains should be mostly flat (< 15 deg slope)."""
         flat_frac = (plains_slope < 15.0).mean()
         assert flat_frac > 0.8, f"Only {flat_frac:.1%} of plains is flat"
 
-    def test_slope_map_same_shape(self, mountain_hmap, mountain_slope):
+    def test_slope_map_same_shape(self, mountain_hmap: FloatArray, mountain_slope: FloatArray) -> None:
         """Slope map should have same shape as heightmap."""
         assert mountain_slope.shape == mountain_hmap.shape
 
-    def test_flat_heightmap_zero_slope(self):
+    def test_flat_heightmap_zero_slope(self) -> None:
         """A perfectly flat heightmap should have zero slope everywhere."""
         from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
         flat = np.full((32, 32), 0.5)
         slope = compute_slope_map(flat)
         np.testing.assert_allclose(slope, 0.0, atol=1e-10)
 
-    def test_slope_mean_ordered_by_terrain_type(self):
+    def test_slope_mean_ordered_by_terrain_type(self) -> None:
         """Mean slope: mountains > canyon > hills > plains > flat."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap, compute_slope_map
         types_ordered = ["mountains", "canyon", "hills", "plains", "flat"]
-        means = []
+        means: list[float] = []
         for t in types_ordered:
             h = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type=t)
             s = compute_slope_map(h)
@@ -265,12 +277,16 @@ class TestSlopeStatistics:
 class TestFractalDimension:
     """Natural terrain should have fractal dimension ~2.0-2.5."""
 
-    def test_mountain_fractal_dimension_range(self, mountain_hmap):
+    def test_mountain_fractal_dimension_range(self, mountain_hmap: FloatArray) -> None:
         """Mountain fractal dimension should be in [1.5, 3.0]."""
         fd = _estimate_fractal_dimension_boxcount(mountain_hmap)
         assert 1.5 < fd < 3.0, f"Fractal dimension {fd:.2f} out of natural range"
 
-    def test_plains_lower_fractal_than_mountains(self, mountain_hmap, plains_hmap):
+    def test_plains_lower_fractal_than_mountains(
+        self,
+        mountain_hmap: FloatArray,
+        plains_hmap: FloatArray,
+    ) -> None:
         """Plains should have equal or lower fractal dimension than mountains."""
         fd_mtn = _estimate_fractal_dimension_boxcount(mountain_hmap)
         fd_plains = _estimate_fractal_dimension_boxcount(plains_hmap)
@@ -279,14 +295,14 @@ class TestFractalDimension:
             f"Plains FD={fd_plains:.2f} should not greatly exceed mountain FD={fd_mtn:.2f}"
         )
 
-    def test_flat_terrain_low_fractal_dimension(self):
+    def test_flat_terrain_low_fractal_dimension(self) -> None:
         """Flat terrain should have lower fractal dimension."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         flat = generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="flat")
         fd = _estimate_fractal_dimension_boxcount(flat)
         assert fd < 3.5, f"Flat terrain FD={fd:.2f} is unexpectedly high"
 
-    def test_fractal_dimension_deterministic(self, mountain_hmap):
+    def test_fractal_dimension_deterministic(self, mountain_hmap: FloatArray) -> None:
         """Same heightmap should produce same fractal dimension."""
         fd1 = _estimate_fractal_dimension_boxcount(mountain_hmap)
         fd2 = _estimate_fractal_dimension_boxcount(mountain_hmap)
@@ -301,9 +317,9 @@ class TestFractalDimension:
 class TestSpectralPower:
     """Terrain should show 1/f-like spectral characteristics."""
 
-    def test_power_spectrum_decreasing(self, mountain_hmap):
+    def test_power_spectrum_decreasing(self, mountain_hmap: FloatArray) -> None:
         """Power should generally decrease with frequency (1/f^beta)."""
-        freqs, power = _radial_spectral_power(mountain_hmap)
+        _, power = _radial_spectral_power(mountain_hmap)
         # Compare low-freq power (first quarter) vs high-freq (last quarter)
         n = len(power)
         low_power = power[:n // 4].mean()
@@ -312,7 +328,7 @@ class TestSpectralPower:
             f"Low-freq power ({low_power:.1f}) should exceed high-freq ({high_power:.1f})"
         )
 
-    def test_spectral_slope_negative(self, mountain_hmap):
+    def test_spectral_slope_negative(self, mountain_hmap: FloatArray) -> None:
         """Log-log spectral slope should be negative (power law decay)."""
         freqs, power = _radial_spectral_power(mountain_hmap)
         mask = (freqs > 0) & (power > 0)
@@ -322,7 +338,7 @@ class TestSpectralPower:
         slope = np.polyfit(log_f, log_p, 1)[0]
         assert slope < 0, f"Spectral slope {slope:.2f} should be negative"
 
-    def test_white_noise_flat_spectrum(self):
+    def test_white_noise_flat_spectrum(self) -> None:
         """White noise should have roughly flat power spectrum."""
         rng = np.random.RandomState(42)
         noise = rng.rand(128, 128)
@@ -335,7 +351,11 @@ class TestSpectralPower:
         # White noise slope should be near 0 (flat), not strongly negative
         assert slope > -1.5, f"White noise spectral slope {slope:.2f} is too steep"
 
-    def test_mountain_steeper_spectrum_than_plains(self, mountain_hmap, plains_hmap):
+    def test_mountain_steeper_spectrum_than_plains(
+        self,
+        mountain_hmap: FloatArray,
+        plains_hmap: FloatArray,
+    ) -> None:
         """Mountain terrain should have steeper spectral decay than plains."""
         _, p_mtn = _radial_spectral_power(mountain_hmap)
         _, p_pln = _radial_spectral_power(plains_hmap)
@@ -348,21 +368,21 @@ class TestSpectralPower:
 class TestHeightmapReproducibility:
     """Heightmap generation must be deterministic."""
 
-    def test_same_params_same_output(self):
+    def test_same_params_same_output(self) -> None:
         """Identical parameters produce identical heightmaps."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         h1 = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
         np.testing.assert_array_equal(h1, h2)
 
-    def test_different_seeds_different_output(self):
+    def test_different_seeds_different_output(self) -> None:
         """Different seeds produce different heightmaps."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         h1 = generate_heightmap(64, 64, scale=50.0, seed=1, terrain_type="mountains")
         h2 = generate_heightmap(64, 64, scale=50.0, seed=2, terrain_type="mountains")
         assert not np.array_equal(h1, h2)
 
-    def test_all_terrain_types_generate(self):
+    def test_all_terrain_types_generate(self) -> None:
         """Every terrain preset should generate without error."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap, TERRAIN_PRESETS
         for ttype in TERRAIN_PRESETS:

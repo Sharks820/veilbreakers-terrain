@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import heapq
 import math
-import random
 from typing import Any
 
 from .terrain_path_contracts import (
@@ -30,12 +29,32 @@ from .terrain_path_contracts import (
     validate_path_network_contract,
 )
 
+np: Any = None
+_Delaunay: Any = None
 try:
-    import numpy as np
-    from scipy.spatial import Delaunay
-    _SCIPY_AVAILABLE = True
+    import numpy as _np
+    from scipy.spatial import Delaunay as _Delaunay
+    np = _np
 except ImportError:  # pragma: no cover
-    _SCIPY_AVAILABLE = False
+    pass
+_SCIPY_AVAILABLE = _Delaunay is not None
+
+__all__ = [
+    "compute_mst_edges",
+    "compute_road_network",
+    "enforce_turn_radius",
+    "handle_compute_road_network",
+    "_classify_intersection",
+    "_classify_road_type",
+    "_compute_slope_degrees",
+    "_detect_bridges",
+    "_generate_switchback_points",
+    "_road_cross_section_z",
+    "_road_segment_mesh_spec",
+    "_sample_heightmap",
+    "_sample_heightmap_bilinear",
+    "_segments_near",
+]
 
 # ---------------------------------------------------------------------------
 # AASHTO grade standards
@@ -59,8 +78,8 @@ _SWITCHBACK_MIN_RADIUS_M = 15.0
 # 8 cardinal + 8 diagonal + 8 knight-move directions give much smoother
 # terrain-following paths than the standard 4- or 8-direction grids.
 # Directions: (dr, dc, base_cost_multiplier)
-def _build_24_directions():
-    dirs = []
+def _build_24_directions() -> list[tuple[int, int, float]]:
+    dirs: list[tuple[int, int, float]] = []
     # Cardinal (N/S/E/W): 4
     for dr, dc in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
         dirs.append((dr, dc, 1.0))
@@ -75,7 +94,6 @@ def _build_24_directions():
     for dr, dc in [(2, 2), (2, -2), (-2, 2), (-2, -2)]:
         dirs.append((dr, dc, 2.0 * math.sqrt(2.0)))
     # 3-step knight variants (3,1) and (1,3): 8 (total = 28, trim to 24)
-    count = len(dirs)  # 20 so far
     for dr, dc in [(3, 1), (3, -1), (-3, 1), (-3, -1)]:
         dirs.append((dr, dc, math.sqrt(10.0)))
     return dirs[:24]
@@ -88,17 +106,17 @@ _24_DIRS = _build_24_directions()
 # ---------------------------------------------------------------------------
 
 
-def _dist3(a, b) -> float:
+def _dist3(a: Any, b: Any) -> float:
     """Euclidean 3-D distance between two points."""
     return math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 + (b[2] - a[2]) ** 2)
 
 
-def _dist2(a, b) -> float:
+def _dist2(a: Any, b: Any) -> float:
     """2-D (XY) Euclidean distance between two points."""
     return math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
 
 
-def _slope_penalty(a, b, slope_weight: float = 4.0) -> float:
+def _slope_penalty(a: Any, b: Any, slope_weight: float = 4.0) -> float:
     """Return a slope-penalized cost for edge (a, b).
 
     Cost = horiz_distance * (1 + slope_weight * sin²(slope_angle)).
@@ -121,17 +139,17 @@ def _slope_penalty(a, b, slope_weight: float = 4.0) -> float:
 
 
 def _astar_24dir(
-    heightmap,
-    terrain_bounds,
-    start_world,
-    end_world,
+    heightmap: Any,
+    terrain_bounds: Any,
+    start_world: Any,
+    end_world: Any,
     road_type: str = "gravel_road",
     max_grade_pct: float = _AASHTO_MAX_VEHICLE_GRADE_PCT,
     slope_penalty_weight: float = 6.0,
     turn_penalty_weight: float = 0.8,
     cross_slope_penalty_weight: float = 1.5,
-    cost_map=None,
-) -> list:
+    cost_map: Any = None,
+) -> list[Any]:
     """Find a contour-following path between two world-space points using
     24-directional A* with the full AASHTO cost function.
 
@@ -156,14 +174,14 @@ def _astar_24dir(
     # Heightmap dimensions
     if hasattr(heightmap, 'shape'):
         rows, cols = heightmap.shape[:2]
-        def _h(r, c):
+        def _h(r: int, c: int) -> float:
             r = max(0, min(rows - 1, r))
             c = max(0, min(cols - 1, c))
             return float(heightmap[r, c])
     else:
         rows = len(heightmap)
         cols = len(heightmap[0]) if rows else 0
-        def _h(r, c):
+        def _h(r: int, c: int) -> float:
             r = max(0, min(rows - 1, r))
             c = max(0, min(cols - 1, c))
             return float(heightmap[r][c])
@@ -185,12 +203,12 @@ def _astar_24dir(
     cell_w = (max_x - min_x) / cols
     cell_h = (max_y - min_y) / rows
 
-    def _world_to_grid(wx, wy):
+    def _world_to_grid(wx: float, wy: float) -> tuple[int, int]:
         c = (wx - min_x) / (max_x - min_x) * cols
         r = (wy - min_y) / (max_y - min_y) * rows
         return int(round(r)), int(round(c))
 
-    def _grid_to_world(r, c):
+    def _grid_to_world(r: int, c: int) -> tuple[float, float, float]:
         wx = min_x + (c + 0.5) * cell_w
         wy = min_y + (r + 0.5) * cell_h
         wz = _h(r, c)
@@ -207,15 +225,14 @@ def _astar_24dir(
     if (sr, sc) == (er, ec):
         return [start_world, end_world]
 
-    def _heuristic(r, c):
+    def _heuristic(r: int, c: int) -> float:
         dr = (r - er) * cell_h
         dc = (c - ec) * cell_w
         return math.sqrt(dr * dr + dc * dc)
 
     # A* open set: (f, g, r, c, prev_dr, prev_dc, parent)
     # Use (r, c) -> (g, prev_dir, parent) closed dict
-    INF = float('inf')
-    open_heap = []
+    open_heap: list[Any] = []
     g_start = 0.0
     h_start = _heuristic(sr, sc)
     heapq.heappush(open_heap, (h_start, g_start, sr, sc, 0, 0, None))
@@ -229,7 +246,7 @@ def _astar_24dir(
     found_path = None
 
     while open_heap and nodes_explored < MAX_NODES:
-        f, g, r, c, pdr, pdc, parent_rc = heapq.heappop(open_heap)
+        _, g, r, c, pdr, pdc, parent_rc = heapq.heappop(open_heap)
 
         if (r, c) in closed:
             continue
@@ -250,7 +267,7 @@ def _astar_24dir(
 
         hz = _h(r, c)
 
-        for dr, dc, base_cost in _24_DIRS:
+        for dr, dc, _base_cost in _24_DIRS:
             nr, nc = r + dr, c + dc
             if not (0 <= nr < rows and 0 <= nc < cols):
                 continue
@@ -330,7 +347,7 @@ def _astar_24dir(
     return world_path
 
 
-def _simplify_path_rdp(path: list, epsilon: float = 0.5) -> list:
+def _simplify_path_rdp(path: list[Any], epsilon: float = 0.5) -> list[Any]:
     """Ramer-Douglas-Peucker path simplification in 3D.
 
     Reduces dense A* cell paths to a manageable set of waypoints while
@@ -373,7 +390,7 @@ def _simplify_path_rdp(path: list, epsilon: float = 0.5) -> list:
         return [start, end]
 
 
-def _subdivide_long_segments(path: list, max_seg_m: float = 5.0) -> list:
+def _subdivide_long_segments(path: list[Any], max_seg_m: float = 5.0) -> list[Any]:
     """Re-insert linearly-interpolated midpoints on any segment > max_seg_m.
 
     Prevents mesh gaps after aggressive RDP simplification on steep terrain.
@@ -402,7 +419,7 @@ def _subdivide_long_segments(path: list, max_seg_m: float = 5.0) -> list:
 # ---------------------------------------------------------------------------
 
 
-def compute_mst_edges(waypoints: list) -> list:
+def compute_mst_edges(waypoints: list[Any]) -> list[tuple[int, int, float]]:
     """Compute a Minimum Spanning Tree over *waypoints* via Kruskal's algorithm.
 
     Edge weights are slope-penalized so the MST naturally prefers gentler
@@ -423,11 +440,11 @@ def compute_mst_edges(waypoints: list) -> list:
         return []
 
     use_delaunay = False
+    edge_set: set[tuple[int, int]] = set()
     if _SCIPY_AVAILABLE and n >= 4:
         points_2d = np.array([(wp[0], wp[1]) for wp in waypoints], dtype=np.float64)
         try:
-            tri = Delaunay(points_2d)
-            edge_set: set = set()
+            tri = _Delaunay(points_2d)
             for simplex in tri.simplices:
                 for k in range(3):
                     a, b = sorted([simplex[k], simplex[(k + 1) % 3]])
@@ -470,7 +487,7 @@ def compute_mst_edges(waypoints: list) -> list:
             rank[ra] += 1
         return True
 
-    result = []
+    result: list[tuple[int, int, float]] = []
     for cost, i, j in edges:
         if _union(i, j):
             result.append((i, j, cost))
@@ -548,7 +565,7 @@ def _classify_road_type_extended(
 # ---------------------------------------------------------------------------
 
 
-def _compute_slope_degrees(start, end) -> float:
+def _compute_slope_degrees(start: Any, end: Any) -> float:
     """Return the slope angle in degrees between two 3-D points."""
     dx = end[0] - start[0]
     dy = end[1] - start[1]
@@ -576,11 +593,11 @@ _MAX_GRADE_BY_TYPE: dict[str, float] = {
 
 
 def _generate_switchback_points(
-    start,
-    end,
+    start: Any,
+    end: Any,
     max_slope: float = 45.0,
-    seed=None,
-) -> list:
+    seed: Any = None,
+) -> list[Any]:
     """Insert parabolic hairpin switchbacks when slope exceeds *max_slope* degrees.
 
     Hairpin radius is 15 m (AASHTO minimum for mountain roads).
@@ -590,8 +607,6 @@ def _generate_switchback_points(
     slope = _compute_slope_degrees(start, end)
     if slope <= max_slope:
         return []
-
-    rng = random.Random(seed)
 
     dz = abs(end[2] - start[2])
     horiz = _dist2(start, end)
@@ -659,10 +674,10 @@ def _generate_switchback_points(
 
 
 def _compute_worn_path_spec(
-    path_points: list,
+    path_points: list[Any],
     road_type: str = "trail",
     width: float = 2.0,
-) -> dict:
+) -> dict[str, Any]:
     """Compute the erosion channel specification for a path.
 
     Worn paths deepen 0.05-0.15 m and widen 1-3× road width over 100 m of
@@ -733,7 +748,7 @@ def _compute_worn_path_spec(
 # ---------------------------------------------------------------------------
 
 
-def _closest_point_on_segment(p, a, b):
+def _closest_point_on_segment(p: Any, a: Any, b: Any) -> tuple[float, float]:
     """Return the closest point on segment AB to point P (2-D XY)."""
     ax, ay = a[0], a[1]
     bx, by = b[0], b[1]
@@ -746,7 +761,7 @@ def _closest_point_on_segment(p, a, b):
     return (ax + t * dx, ay + t * dy)
 
 
-def _segments_near(seg_a, seg_b, threshold: float = 1.0):
+def _segments_near(seg_a: Any, seg_b: Any, threshold: float = 1.0) -> Any:
     """Check if two 3-D segments pass within *threshold* of each other."""
     a0, a1 = seg_a
     b0, b1 = seg_b
@@ -777,7 +792,7 @@ def _segments_near(seg_a, seg_b, threshold: float = 1.0):
 # ---------------------------------------------------------------------------
 
 
-def _classify_intersection(point, segments, road_priorities=None) -> str:
+def _classify_intersection(point: Any, segments: Any, road_priorities: Any = None) -> str:
     """Classify an intersection using angular analysis.
 
     Returns one of: 'T', 'cross', 'Y', 'merge'.
@@ -836,7 +851,7 @@ def _classify_intersection(point, segments, road_priorities=None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _sample_heightmap_bilinear(heightmap, terrain_bounds, wx, wy):
+def _sample_heightmap_bilinear(heightmap: Any, terrain_bounds: Any, wx: float, wy: float) -> float | None:
     """Bilinearly sample a 2-D heightmap at world-space coordinates (wx, wy)."""
     if heightmap is None:
         return None
@@ -887,7 +902,7 @@ def _sample_heightmap_bilinear(heightmap, terrain_bounds, wx, wy):
     )
 
 
-def _sample_heightmap(heightmap, terrain_bounds, wx, wy) -> float | None:
+def _sample_heightmap(heightmap: Any, terrain_bounds: Any, wx: float, wy: float) -> float | None:
     """Nearest-neighbour heightmap sample (legacy wrapper)."""
     return _sample_heightmap_bilinear(heightmap, terrain_bounds, wx, wy)
 
@@ -897,13 +912,13 @@ _BRIDGE_WATER_CLEARANCE_M = 0.75
 
 
 def _detect_bridges(
-    segments: list,
+    segments: list[Any],
     water_level: float = 0.0,
-    heightmap=None,
-    terrain_bounds=None,
-    water_mask=None,
-    water_surface_elevation_m=None,
-) -> list:
+    heightmap: Any = None,
+    terrain_bounds: Any = None,
+    water_mask: Any = None,
+    water_surface_elevation_m: Any = None,
+) -> list[dict[str, Any]]:
     """Detect segments requiring bridges due to river/valley crossings."""
     PROFILE_SAMPLES = 32
     bridges = []
@@ -1033,11 +1048,11 @@ def _road_cross_section_z(
 
 
 def _road_segment_mesh_spec(
-    start,
-    end,
+    start: Any,
+    end: Any,
     width: float = _TRAVEL_WIDTH_M,
     subdivisions: int = 8,
-) -> dict:
+) -> dict[str, Any]:
     """Generate a terrain-conforming, crowned road mesh for one segment.
 
     Cross-section: parabolic crown (2% cross-slope) + shoulder taper.
@@ -1125,8 +1140,11 @@ def _road_segment_mesh_spec(
 
 
 def _catmull_rom_tangent(
-    p_prev: tuple, p0: tuple, p1: tuple, p_next: tuple,
-) -> tuple:
+    p_prev: tuple[float, float, float],
+    p0: tuple[float, float, float],
+    p1: tuple[float, float, float],
+    p_next: tuple[float, float, float],
+) -> tuple[float, float, float]:
     """C1-continuous Catmull-Rom tangent at p0→p1 junction.
 
     Replaces finite-difference (p_next - p_prev).normalized() with the
@@ -1142,7 +1160,7 @@ def _catmull_rom_tangent(
     return (tx / mag, ty / mag, tz / mag)
 
 
-def _bridge_mesh_spec(bridge: dict) -> dict:
+def _bridge_mesh_spec(bridge: dict[str, Any]) -> dict[str, Any]:
     """Generate a crowned bridge deck mesh spec aligned to the road profile."""
     deck_start = bridge["deck_start"]
     deck_end = bridge["deck_end"]
@@ -1290,19 +1308,19 @@ def _path_network_contract_for_result(
 
 
 def compute_road_network(
-    waypoints: list,
-    water_level=None,
+    waypoints: list[Any],
+    water_level: Any = None,
     seed: int = 42,
-    heightmap=None,
-    water_mask=None,
-    water_surface_elevation_m=None,
-    cost_map=None,
-    anchor_kinds: list | None = None,
+    heightmap: Any = None,
+    water_mask: Any = None,
+    water_surface_elevation_m: Any = None,
+    cost_map: Any = None,
+    anchor_kinds: list[Any] | None = None,
     use_astar: bool = True,
     rdp_epsilon: float = 0.25,
-    terrain_bounds=None,
+    terrain_bounds: Any = None,
     connection_strategy: str = "mst",
-) -> dict:
+) -> dict[str, Any]:
     """Build a full AAA road network from waypoints.
 
     Uses 24-directional A* with full AASHTO cost function to find
@@ -1408,7 +1426,7 @@ def compute_road_network(
             raise ValueError("terrain_bounds must be a 4-item iterable") from exc
 
     if resolved_terrain_bounds is None and hmap is not None and hasattr(hmap, 'tolist'):
-        rows, cols = hmap.shape[:2]
+        _rows, _cols = hmap.shape[:2]
         # Infer bounds: treat heightmap as covering the bounding box of waypoints
         xs = [wp[0] for wp in waypoints]
         ys = [wp[1] for wp in waypoints]
@@ -1568,8 +1586,8 @@ def compute_road_network(
     ]
 
     # Bridge detection
-    bridges: list = []
-    bridge_mesh_specs: list = []
+    bridges: list[dict[str, Any]] = []
+    bridge_mesh_specs: list[dict[str, Any]] = []
     if water_level is not None:
         detect_bounds = resolved_terrain_bounds
         detect_hmap = hmap
@@ -1618,7 +1636,7 @@ def compute_road_network(
 # ---------------------------------------------------------------------------
 
 
-def handle_compute_road_network(params: dict) -> dict:
+def handle_compute_road_network(params: dict[str, Any]) -> dict[str, Any]:
     """MCP command handler for ``env_compute_road_network``.
 
     Supports all compute_road_network parameters plus:
@@ -1670,7 +1688,7 @@ def handle_compute_road_network(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def enforce_turn_radius(path: list, min_radius: float = 15.0) -> list:
+def enforce_turn_radius(path: list[Any], min_radius: float = 15.0) -> list[Any]:
     """Insert circular arc fillets at any vertex whose turning radius < min_radius.
 
     For each interior vertex p[i], computes the geometric turning radius from

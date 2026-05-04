@@ -1,14 +1,102 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
+from typing import NamedTuple, Protocol, TypedDict, cast
 
 import pytest
 from PIL import Image, ImageDraw
+from pytest import MonkeyPatch
+
+
+class RenderMetrics(TypedDict):
+    semantic_enclosure: float
+
+
+class SemanticMetrics(TypedDict, total=False):
+    silhouette_read: float
+
+
+class RenderAnalysisResult(TypedDict):
+    valid: bool
+    semantic_issues: list[str]
+    semantic_score: float
+    metrics: RenderMetrics
+
+
+class VerifyAngleResult(TypedDict):
+    angle_id: int
+    angle_label: str
+    score: float
+    issues: list[str]
+    semantic_issues: list[str]
+    semantic_metrics: SemanticMetrics
+    semantic_score: float
+    validation_profile: object
+    passed: bool
+
+
+class MapVerifyResult(TypedDict):
+    passed: bool
+    total_score: float
+    per_angle: list[VerifyAngleResult]
+    failed_angles: list[int]
+    failed_angle_labels: list[str]
+    missing_angles: list[str]
+    validation_profile: object
+    issues: list[str]
+
+
+class AssetPipelineResult(TypedDict):
+    status: str
+    verification: MapVerifyResult
+
+
+class AnalyzeRenderImage(Protocol):
+    def __call__(self, path: str, *, validation_profile: str) -> RenderAnalysisResult: ...
+
+
+class AaaVerifyMap(Protocol):
+    def __call__(
+        self,
+        paths: Sequence[str],
+        min_score: float = 60,
+        **kwargs: object,
+    ) -> MapVerifyResult: ...
+
+
+class BlenderServerModule(Protocol):
+    aaa_verify_map: AaaVerifyMap
+
+    def _derive_terrain_validation_profiles(
+        self,
+        *,
+        map_spec: Mapping[str, object],
+        terrain_result: Mapping[str, object],
+        object_names: Sequence[str],
+        location_results: Sequence[object],
+    ) -> list[str]: ...
+
+    async def asset_pipeline(
+        self,
+        *,
+        action: str,
+        angles: int,
+        validation_profile: str,
+    ) -> AssetPipelineResult: ...
+
+    def get_blender_connection(self) -> object: ...
+
+
+class VisualValidationModules(NamedTuple):
+    blender_server: BlenderServerModule
+    aaa_verify_map: AaaVerifyMap
+    analyze_render_image: AnalyzeRenderImage
 
 
 @pytest.fixture
-def visual_validation_modules():
+def visual_validation_modules() -> VisualValidationModules:
     pytest.importorskip(
         "veilbreakers_mcp",
         reason="veilbreakers-mcp toolkit package is optional and unavailable in this Python lane",
@@ -19,16 +107,23 @@ def visual_validation_modules():
         analyze_render_image,
     )
 
-    if "validation_profile" not in inspect.signature(analyze_render_image).parameters:
+    analyze_render_callable = cast(Callable[..., object], analyze_render_image)
+    aaa_verify_callable = cast(Callable[..., object], aaa_verify_map)
+    asset_pipeline_callable = cast(Callable[..., object], blender_server.asset_pipeline)
+    if "validation_profile" not in inspect.signature(analyze_render_callable).parameters:
         pytest.skip("installed veilbreakers-mcp lacks visual validation_profile support")
-    if "validation_profile" not in inspect.signature(aaa_verify_map).parameters:
+    if "validation_profile" not in inspect.signature(aaa_verify_callable).parameters:
         pytest.skip("installed veilbreakers-mcp lacks aaa_verify_map validation_profile support")
     if not hasattr(blender_server, "_derive_terrain_validation_profiles"):
         pytest.skip("installed veilbreakers-mcp lacks terrain validation profile derivation")
-    if "validation_profile" not in inspect.signature(blender_server.asset_pipeline).parameters:
+    if "validation_profile" not in inspect.signature(asset_pipeline_callable).parameters:
         pytest.skip("installed veilbreakers-mcp lacks asset_pipeline validation_profile support")
 
-    return blender_server, aaa_verify_map, analyze_render_image
+    return VisualValidationModules(
+        cast(BlenderServerModule, blender_server),
+        cast(AaaVerifyMap, aaa_verify_map),
+        cast(AnalyzeRenderImage, analyze_render_image),
+    )
 
 
 def _write_framed_cave_image(path: Path) -> None:
@@ -76,14 +171,20 @@ def _write_waterfall_image(path: Path) -> None:
 
 
 class _DummyBlender:
-    def __init__(self, handler):
+    def __init__(
+        self,
+        handler: Callable[[str, Mapping[str, object]], Awaitable[dict[str, str]]],
+    ) -> None:
         self._handler = handler
 
-    async def send_command(self, command, params):
+    async def send_command(self, command: str, params: Mapping[str, object]) -> dict[str, str]:
         return await self._handler(command, params)
 
 
-def test_analyze_render_image_passes_framed_cave_profile(tmp_path, visual_validation_modules):
+def test_analyze_render_image_passes_framed_cave_profile(
+    tmp_path: Path,
+    visual_validation_modules: VisualValidationModules,
+) -> None:
     _blender_server, _aaa_verify_map, analyze_render_image = visual_validation_modules
     path = tmp_path / "cave.png"
     _write_framed_cave_image(path)
@@ -96,7 +197,10 @@ def test_analyze_render_image_passes_framed_cave_profile(tmp_path, visual_valida
     assert result["metrics"]["semantic_enclosure"] >= 58.0
 
 
-def test_analyze_render_image_flags_flat_waterfall_profile(tmp_path, visual_validation_modules):
+def test_analyze_render_image_flags_flat_waterfall_profile(
+    tmp_path: Path,
+    visual_validation_modules: VisualValidationModules,
+) -> None:
     _blender_server, _aaa_verify_map, analyze_render_image = visual_validation_modules
     path = tmp_path / "flat.png"
     _write_flat_terrain_image(path)
@@ -108,7 +212,10 @@ def test_analyze_render_image_flags_flat_waterfall_profile(tmp_path, visual_vali
     assert any("terrain_waterfall" in issue for issue in result["semantic_issues"])
 
 
-def test_aaa_verify_map_surfaces_failed_angle_labels_with_profile(tmp_path, visual_validation_modules):
+def test_aaa_verify_map_surfaces_failed_angle_labels_with_profile(
+    tmp_path: Path,
+    visual_validation_modules: VisualValidationModules,
+) -> None:
     _blender_server, aaa_verify_map, _analyze_render_image = visual_validation_modules
     path = tmp_path / "waterfall.png"
     _write_waterfall_image(path)
@@ -125,7 +232,10 @@ def test_aaa_verify_map_surfaces_failed_angle_labels_with_profile(tmp_path, visu
     assert result["failed_angle_labels"] == [] or result["failed_angle_labels"] == ["waterfall_side"]
 
 
-def test_aaa_verify_map_rejects_unknown_profile(tmp_path, visual_validation_modules):
+def test_aaa_verify_map_rejects_unknown_profile(
+    tmp_path: Path,
+    visual_validation_modules: VisualValidationModules,
+) -> None:
     _blender_server, aaa_verify_map, _analyze_render_image = visual_validation_modules
     path = tmp_path / "cave.png"
     _write_framed_cave_image(path)
@@ -138,7 +248,9 @@ def test_aaa_verify_map_rejects_unknown_profile(tmp_path, visual_validation_modu
     assert any("Unknown validation_profile" in issue for issue in result["per_angle"][0]["issues"])
 
 
-def test_derive_terrain_validation_profiles_includes_river_and_road(visual_validation_modules):
+def test_derive_terrain_validation_profiles_includes_river_and_road(
+    visual_validation_modules: VisualValidationModules,
+) -> None:
     blender_server, _aaa_verify_map, _analyze_render_image = visual_validation_modules
     profiles = blender_server._derive_terrain_validation_profiles(
         map_spec={
@@ -162,21 +274,25 @@ def test_derive_terrain_validation_profiles_includes_river_and_road(visual_valid
 
 @pytest.mark.asyncio
 async def test_asset_pipeline_aaa_verify_forwards_validation_profile(
-    monkeypatch,
-    tmp_path,
-    visual_validation_modules,
-):
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+    visual_validation_modules: VisualValidationModules,
+) -> None:
     blender_server, _aaa_verify_map, _analyze_render_image = visual_validation_modules
-    captured: dict = {}
+    captured: dict[str, object] = {}
 
-    async def _handler(command, params):
+    async def _handler(command: str, params: Mapping[str, object]) -> dict[str, str]:
         if command == "render_angle":
-            output_path = Path(params["output_path"])
+            output_path = Path(cast(str, params["output_path"]))
             _write_framed_cave_image(output_path)
             return {"status": "success", "output_path": str(output_path)}
         raise AssertionError(f"unexpected command: {command}")
 
-    def _fake_verify(paths, min_score=60, **kwargs):
+    def _fake_verify(
+        paths: Sequence[str],
+        min_score: float = 60,
+        **kwargs: object,
+    ) -> MapVerifyResult:
         captured["paths"] = list(paths)
         captured["min_score"] = min_score
         captured.update(kwargs)

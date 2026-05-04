@@ -10,7 +10,8 @@ import json
 import sys
 import warnings
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
+from typing import Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,7 +30,6 @@ with warnings.catch_warnings():
         DARK_FANTASY_PRESETS,
         HuggingFaceBackend,
         KNOWN_CATEGORIES,
-        PipelineConfig,
         RodinBackend,
         RunPodBackend,
         _atomic_copy,
@@ -73,7 +73,9 @@ def test_asset_request_negative_poly_raises():
         )
 
 
-def test_asset_request_unknown_category_warns_but_accepts(caplog):
+def test_asset_request_unknown_category_warns_but_accepts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     with caplog.at_level("WARNING"):
         req = AssetRequest(prompt="x", asset_category="zorgon", output_name="z")
     assert req.asset_category == "zorgon"
@@ -138,7 +140,10 @@ def test_validate_glb_accepts_valid(tmp_path: Path):
     assert validate_glb(p)
 
 
-def test_progress_prints_desc_without_tqdm(monkeypatch, capsys):
+def test_progress_prints_desc_without_tqdm(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(asset_generation, "_tqdm", None)
 
     out = list(_progress([1, 2, 3], desc="asset pass"))
@@ -147,8 +152,11 @@ def test_progress_prints_desc_without_tqdm(monkeypatch, capsys):
     assert "asset pass" in capsys.readouterr().out
 
 
-def test_retry_retries_then_returns(monkeypatch):
-    monkeypatch.setattr(asset_generation.time, "sleep", lambda _seconds: None)
+def test_retry_retries_then_returns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(asset_generation.time, "sleep", no_sleep)
     calls = {"n": 0}
 
     def flaky():
@@ -161,8 +169,11 @@ def test_retry_retries_then_returns(monkeypatch):
     assert calls["n"] == 2
 
 
-def test_retry_raises_last_exception(monkeypatch):
-    monkeypatch.setattr(asset_generation.time, "sleep", lambda _seconds: None)
+def test_retry_raises_last_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(asset_generation.time, "sleep", no_sleep)
 
     with pytest.raises(ValueError, match="final"):
         _retry(lambda: (_ for _ in ()).throw(ValueError("final")), max_attempts=2)
@@ -235,10 +246,19 @@ def _make_fake_glb(path: Path) -> Path:
     return path
 
 
-def test_pipeline_generate_writes_glb_and_sidecar(tmp_path: Path, monkeypatch):
+def test_pipeline_generate_writes_glb_and_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pipe = AssetGenerationPipeline()
     fake_backend = MagicMock()
-    fake_backend.generate.side_effect = lambda req, out, timeout_s: _make_fake_glb(out)
+    monkeypatch.setattr(fake_backend, "generate", MagicMock())
+
+    def generate_ok(_req: AssetRequest, out: Path, timeout_s: float) -> Path:
+        assert timeout_s > 0
+        return _make_fake_glb(out)
+
+    fake_backend.generate.side_effect = generate_ok
     pipe._backends[AssetGenerationBackend.HUGGINGFACE] = fake_backend
 
     req = AssetRequest(prompt="boulder", asset_category="rock", output_name="rock_99")
@@ -257,7 +277,8 @@ def test_pipeline_generate_rejects_invalid_glb(tmp_path: Path):
     pipe = AssetGenerationPipeline()
     fake = MagicMock()
 
-    def _bad(req, out, timeout_s):
+    def _bad(_req: AssetRequest, out: Path, timeout_s: float) -> Path:
+        assert timeout_s > 0
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"bad!")
         return out
@@ -275,7 +296,8 @@ def test_pipeline_batch_continues_on_error(tmp_path: Path):
     fake = MagicMock()
     calls = {"n": 0}
 
-    def _flaky(req, out, timeout_s):
+    def _flaky(_req: AssetRequest, out: Path, timeout_s: float) -> Path:
+        assert timeout_s > 0
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("simulated failure")
@@ -296,7 +318,12 @@ def test_pipeline_batch_continues_on_error(tmp_path: Path):
 def test_pipeline_generate_from_concept(tmp_path: Path):
     pipe = AssetGenerationPipeline()
     fake = MagicMock()
-    fake.generate.side_effect = lambda req, out, timeout_s: _make_fake_glb(out)
+
+    def generate_ok(_req: AssetRequest, out: Path, timeout_s: float) -> Path:
+        assert timeout_s > 0
+        return _make_fake_glb(out)
+
+    fake.generate.side_effect = generate_ok
     pipe._backends[AssetGenerationBackend.HUGGINGFACE] = fake
 
     out = pipe.generate_from_concept(
@@ -323,11 +350,14 @@ def test_huggingface_backend_construct_with_token():
     assert b.space.startswith("tencent/")
 
 
-def test_huggingface_lazy_client_and_wrap_image(monkeypatch, tmp_path: Path):
+def test_huggingface_lazy_client_and_wrap_image(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     seen: dict[str, object] = {}
 
     class FakeClient:
-        def __init__(self, space, hf_token=None):
+        def __init__(self, space: str, hf_token: str | None = None) -> None:
             seen["space"] = space
             seen["hf_token"] = hf_token
 
@@ -352,12 +382,17 @@ def test_huggingface_lazy_client_and_wrap_image(monkeypatch, tmp_path: Path):
     assert backend._wrap_image(None) is None
 
 
-def test_runpod_backend_construct_logs_warning(caplog):
+def test_runpod_backend_construct_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     with caplog.at_level("WARNING"):
         RunPodBackend(endpoint_id=None, api_key=None)
 
 
-def test_runpod_lazy_import_and_download_stream(monkeypatch, tmp_path: Path):
+def test_runpod_lazy_import_and_download_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     fake_runpod = SimpleNamespace(api_key=None)
     monkeypatch.setitem(sys.modules, "runpod", fake_runpod)
 
@@ -366,35 +401,46 @@ def test_runpod_lazy_import_and_download_stream(monkeypatch, tmp_path: Path):
     assert fake_runpod.api_key == "key"
 
     class FakeResponse:
-        def __enter__(self):
+        def __enter__(self) -> "FakeResponse":
             return self
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> bool:
             return False
 
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             return None
 
-        def iter_content(self, chunk_size):
+        def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+            assert chunk_size > 0
             yield b"glTF"
             yield b"x" * 2048
+
+    def fake_get(_url: str, *, stream: bool, timeout: float) -> FakeResponse:
+        assert stream
+        assert timeout > 0
+        return FakeResponse()
 
     monkeypatch.setitem(
         sys.modules,
         "requests",
-        SimpleNamespace(get=lambda *args, **kwargs: FakeResponse()),
+        SimpleNamespace(get=fake_get),
     )
 
     dest = RunPodBackend._download("https://example.invalid/out.glb", tmp_path / "out.glb")
     assert dest.read_bytes().startswith(b"glTF")
 
 
-def test_rodin_backend_construct_logs_warning(caplog):
+def test_rodin_backend_construct_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level("WARNING"):
         RodinBackend(api_key=None)
 
 
-def test_rodin_lazy_requests_and_headers(monkeypatch):
+def test_rodin_lazy_requests_and_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_requests = SimpleNamespace()
     monkeypatch.setitem(sys.modules, "requests", fake_requests)
     backend = RodinBackend(api_key="rodin-key", base_url="https://api.test/")

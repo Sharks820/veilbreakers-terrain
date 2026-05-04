@@ -8,8 +8,34 @@ Pure numpy -- no Blender required.
 from __future__ import annotations
 
 
+from typing import Mapping, TypeAlias, TypedDict, cast
+
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+
+
+FloatArray: TypeAlias = NDArray[np.float64]
+IntArray: TypeAlias = NDArray[np.int32]
+HeightmapList: TypeAlias = list[list[float]]
+
+
+class FlowResult(TypedDict):
+    flow_direction: IntArray
+    flow_accumulation: FloatArray
+    drainage_basins: IntArray
+
+
+def as_float_array(value: object) -> FloatArray:
+    return np.asarray(value, dtype=np.float64)
+
+
+def as_int_array(value: object) -> IntArray:
+    return np.asarray(value, dtype=np.int32)
+
+
+def heightmap_to_list(heightmap: FloatArray) -> HeightmapList:
+    return cast(HeightmapList, heightmap.tolist())
 
 
 # ---------------------------------------------------------------------------
@@ -18,38 +44,40 @@ import pytest
 
 
 @pytest.fixture
-def mountain_hmap():
+def mountain_hmap() -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
-    return generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
+    return as_float_array(
+        generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
+    )
 
 
 @pytest.fixture
-def eroded_hmap(mountain_hmap):
+def eroded_hmap(mountain_hmap: FloatArray) -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
-    return apply_hydraulic_erosion(mountain_hmap, iterations=200, seed=42)
+    return as_float_array(apply_hydraulic_erosion(mountain_hmap, iterations=200, seed=42))
 
 
 @pytest.fixture
-def flow_result(mountain_hmap):
+def flow_result(mountain_hmap: FloatArray) -> FlowResult:
     from veilbreakers_terrain.handlers.terrain_advanced import compute_flow_map
-    raw = compute_flow_map(mountain_hmap)
+    raw = cast(Mapping[str, object], compute_flow_map(mountain_hmap))
     return {
-        "flow_direction": np.asarray(raw["flow_direction"], dtype=np.int32),
-        "flow_accumulation": np.asarray(raw["flow_accumulation"], dtype=np.float64),
-        "drainage_basins": np.asarray(raw["drainage_basins"], dtype=np.int32),
+        "flow_direction": as_int_array(raw["flow_direction"]),
+        "flow_accumulation": as_float_array(raw["flow_accumulation"]),
+        "drainage_basins": as_int_array(raw["drainage_basins"]),
     }
 
 
 @pytest.fixture
-def slope_map(mountain_hmap):
+def slope_map(mountain_hmap: FloatArray) -> FloatArray:
     from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
-    return compute_slope_map(mountain_hmap)
+    return as_float_array(compute_slope_map(mountain_hmap))
 
 
 @pytest.fixture
-def biome_map(mountain_hmap, slope_map):
+def biome_map(mountain_hmap: FloatArray, slope_map: FloatArray) -> IntArray:
     from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
-    return compute_biome_assignments(mountain_hmap, slope_map)
+    return as_int_array(compute_biome_assignments(mountain_hmap, slope_map))
 
 
 # ===========================================================================
@@ -60,37 +88,41 @@ def biome_map(mountain_hmap, slope_map):
 class TestNoiseErosionComposition:
     """Noise + erosion must compose correctly."""
 
-    def test_erosion_preserves_shape(self, mountain_hmap, eroded_hmap):
+    def test_erosion_preserves_shape(
+        self, mountain_hmap: FloatArray, eroded_hmap: FloatArray
+    ) -> None:
         """Eroded heightmap must have same shape as source."""
         assert eroded_hmap.shape == mountain_hmap.shape
 
-    def test_erosion_preserves_range(self, mountain_hmap, eroded_hmap):
+    def test_erosion_preserves_range(
+        self, mountain_hmap: FloatArray, eroded_hmap: FloatArray
+    ) -> None:
         """Eroded values must stay within source range."""
         assert eroded_hmap.min() >= mountain_hmap.min() - 1e-9
         assert eroded_hmap.max() <= mountain_hmap.max() + 1e-9
 
-    def test_slope_after_erosion_still_valid(self, eroded_hmap):
+    def test_slope_after_erosion_still_valid(self, eroded_hmap: FloatArray) -> None:
         """Slope computed on eroded terrain should be valid [0, 90]."""
         from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
-        slope = compute_slope_map(eroded_hmap)
+        slope = as_float_array(compute_slope_map(eroded_hmap))
         assert slope.min() >= 0.0
         assert slope.max() <= 90.0 + 1e-6
 
-    def test_flow_after_erosion_valid(self, eroded_hmap):
+    def test_flow_after_erosion_valid(self, eroded_hmap: FloatArray) -> None:
         """Flow computed on eroded terrain should still be valid."""
         from veilbreakers_terrain.handlers.terrain_advanced import compute_flow_map
-        raw = compute_flow_map(eroded_hmap)
-        flow_dir = np.asarray(raw["flow_direction"], dtype=np.int32)
-        flow_acc = np.asarray(raw["flow_accumulation"], dtype=np.float64)
+        raw = cast(Mapping[str, object], compute_flow_map(eroded_hmap))
+        flow_dir = as_int_array(raw["flow_direction"])
+        flow_acc = as_float_array(raw["flow_accumulation"])
         assert flow_dir.shape == eroded_hmap.shape
         assert flow_acc.shape == eroded_hmap.shape
         assert (flow_acc >= 1.0).all()
 
-    def test_biome_after_erosion_valid(self, eroded_hmap):
+    def test_biome_after_erosion_valid(self, eroded_hmap: FloatArray) -> None:
         """Biome assignment on eroded terrain should produce valid indices."""
         from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map, compute_biome_assignments
-        slope = compute_slope_map(eroded_hmap)
-        biomes = compute_biome_assignments(eroded_hmap, slope)
+        slope = as_float_array(compute_slope_map(eroded_hmap))
+        biomes = as_int_array(compute_biome_assignments(eroded_hmap, slope))
         assert biomes.shape == eroded_hmap.shape
         assert biomes.min() >= 0
         assert np.isfinite(biomes).all()
@@ -99,29 +131,33 @@ class TestNoiseErosionComposition:
 class TestNoiseBiomeComposition:
     """Noise + biome assignment must compose correctly."""
 
-    def test_biome_shape_matches_heightmap(self, mountain_hmap, biome_map):
+    def test_biome_shape_matches_heightmap(
+        self, mountain_hmap: FloatArray, biome_map: IntArray
+    ) -> None:
         """Biome map must have same shape as heightmap."""
         assert biome_map.shape == mountain_hmap.shape
 
-    def test_biome_indices_non_negative(self, biome_map):
+    def test_biome_indices_non_negative(self, biome_map: IntArray) -> None:
         """Biome indices must be non-negative."""
         assert biome_map.min() >= 0
 
-    def test_biome_uses_multiple_types(self, biome_map):
+    def test_biome_uses_multiple_types(self, biome_map: IntArray) -> None:
         """Non-trivial terrain should have multiple biome types."""
         unique_biomes = np.unique(biome_map)
         assert len(unique_biomes) >= 2, f"Only {len(unique_biomes)} biome type(s)"
 
-    def test_biome_varies_with_altitude(self, mountain_hmap, slope_map):
+    def test_biome_varies_with_altitude(
+        self, mountain_hmap: FloatArray, slope_map: FloatArray
+    ) -> None:
         """Different altitude ranges should show different biome distributions."""
         from veilbreakers_terrain.handlers._terrain_noise import compute_biome_assignments
-        biomes = compute_biome_assignments(mountain_hmap, slope_map)
+        biomes = as_int_array(compute_biome_assignments(mountain_hmap, slope_map))
         low_mask = mountain_hmap < 0.3
         high_mask = mountain_hmap > 0.7
         assert low_mask.sum() > 0, "Fixture must expose low-altitude cells"
         assert high_mask.sum() > 0, "Fixture must expose high-altitude cells"
-        low_biomes = set(np.unique(biomes[low_mask]))
-        high_biomes = set(np.unique(biomes[high_mask]))
+        low_biomes = set(np.unique(biomes[low_mask]).tolist())
+        high_biomes = set(np.unique(biomes[high_mask]).tolist())
         # At least some differentiation should exist
         assert low_biomes != high_biomes or len(low_biomes) > 1, (
             "Low and high altitude have identical single biome"
@@ -132,8 +168,8 @@ class TestNoiseFlowComposition:
     """Noise + flow computation must compose correctly."""
 
     def test_flow_accumulation_correlates_with_low_elevation(
-        self, mountain_hmap, flow_result
-    ):
+        self, mountain_hmap: FloatArray, flow_result: FlowResult
+    ) -> None:
         """High flow accumulation should tend to occur at lower elevations."""
         flow_acc = flow_result["flow_accumulation"]
         high_flow = flow_acc > np.percentile(flow_acc, 90)
@@ -147,7 +183,12 @@ class TestNoiseFlowComposition:
             f"low-flow ({mean_elev_low_flow:.3f})"
         )
 
-    def test_flow_slope_at_channels(self, mountain_hmap, flow_result, slope_map):
+    def test_flow_slope_at_channels(
+        self,
+        mountain_hmap: FloatArray,
+        flow_result: FlowResult,
+        slope_map: FloatArray,
+    ) -> None:
         """Channels (high flow) should exist at various slope values."""
         flow_acc = flow_result["flow_accumulation"]
         high_flow = flow_acc > np.percentile(flow_acc, 90)
@@ -170,85 +211,93 @@ class TestLODDownsample:
     directly; tests for LOD selection use ``compute_chunk_lod``.
     """
 
-    def test_lod_returns_correct_size(self, mountain_hmap):
+    def test_lod_returns_correct_size(self, mountain_hmap: FloatArray) -> None:
         """Downsampled chunk should match target resolution."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         result = _downsample_heightmap(hmap_list, 16)
         assert len(result) == 16
         assert len(result[0]) == 16
 
-    def test_lod_preserves_height_range(self, mountain_hmap):
+    def test_lod_preserves_height_range(self, mountain_hmap: FloatArray) -> None:
         """LOD downsample should not exceed source height range."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         lod = _downsample_heightmap(hmap_list, 16)
-        lod_arr = np.array(lod)
+        lod_arr = as_float_array(lod)
         assert lod_arr.min() >= mountain_hmap.min() - 1e-6
         assert lod_arr.max() <= mountain_hmap.max() + 1e-6
 
-    def test_lod_preserves_mean_approximately(self, mountain_hmap):
+    def test_lod_preserves_mean_approximately(
+        self, mountain_hmap: FloatArray
+    ) -> None:
         """LOD mean should approximate source mean."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         lod = _downsample_heightmap(hmap_list, 32)
-        lod_arr = np.array(lod)
+        lod_arr = as_float_array(lod)
         assert abs(lod_arr.mean() - mountain_hmap.mean()) < 0.1, (
             f"LOD mean {lod_arr.mean():.4f} differs from source {mountain_hmap.mean():.4f}"
         )
 
-    def test_lod_chain_decreasing_resolution(self, mountain_hmap):
+    def test_lod_chain_decreasing_resolution(self, mountain_hmap: FloatArray) -> None:
         """Successive LOD levels should have decreasing resolution."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         resolutions = [32, 16, 8, 4]
         for target_res in resolutions:
             lod = _downsample_heightmap(hmap_list, target_res)
             assert len(lod) == target_res
 
-    def test_lod_identity_at_source_resolution(self, mountain_hmap):
+    def test_lod_identity_at_source_resolution(
+        self, mountain_hmap: FloatArray
+    ) -> None:
         """LOD at source resolution should return the original data."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         lod = _downsample_heightmap(hmap_list, 64)
-        lod_arr = np.array(lod)
+        lod_arr = as_float_array(lod)
         np.testing.assert_allclose(lod_arr, mountain_hmap, atol=1e-10)
 
-    def test_lod_no_nan_or_inf(self, mountain_hmap):
+    def test_lod_no_nan_or_inf(self, mountain_hmap: FloatArray) -> None:
         """No NaN or Inf values in any LOD level."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         for res in [32, 16, 8]:
             lod = _downsample_heightmap(hmap_list, res)
-            lod_arr = np.array(lod)
+            lod_arr = as_float_array(lod)
             assert np.isfinite(lod_arr).all(), f"Non-finite values at LOD {res}"
 
-    def test_lod_std_decreases_with_resolution(self, mountain_hmap):
+    def test_lod_std_decreases_with_resolution(
+        self, mountain_hmap: FloatArray
+    ) -> None:
         """Standard deviation should not increase dramatically at lower LODs."""
         from veilbreakers_terrain.handlers.terrain_chunking import _downsample_heightmap
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         src_std = mountain_hmap.std()
         for res in [32, 16]:
             lod = _downsample_heightmap(hmap_list, res)
-            lod_std = np.array(lod).std()
+            lod_std = as_float_array(lod).std()
             # LOD can slightly increase std due to sampling but not double it
             assert lod_std < src_std * 2.0, (
                 f"LOD {res} std ({lod_std:.4f}) > 2x source ({src_std:.4f})"
             )
 
-    def test_compute_chunk_lod_returns_int(self, mountain_hmap):
+    def test_compute_chunk_lod_returns_int(self, mountain_hmap: FloatArray) -> None:
         """compute_chunk_lod returns an integer LOD level, not a downsampled array."""
         from veilbreakers_terrain.handlers.terrain_chunking import compute_chunk_lod
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         # No camera distance -> LOD 0 (full detail)
         lod_level = compute_chunk_lod(hmap_list, 16)
         assert isinstance(lod_level, int)
         assert lod_level == 0
 
-    def test_compute_chunk_lod_increases_with_distance(self, mountain_hmap):
+    def test_compute_chunk_lod_increases_with_distance(
+        self, mountain_hmap: FloatArray
+    ) -> None:
         """Farther camera distances should yield higher (coarser) LOD levels."""
         from veilbreakers_terrain.handlers.terrain_chunking import compute_chunk_lod
-        hmap_list = mountain_hmap.tolist()
+        hmap_list = heightmap_to_list(mountain_hmap)
         lod_close = compute_chunk_lod(hmap_list, 16, camera_distance=10.0)
         lod_far = compute_chunk_lod(hmap_list, 16, camera_distance=500.0)
         assert lod_far >= lod_close
@@ -257,11 +306,13 @@ class TestLODDownsample:
 class TestLODEdgeStitching:
     """Adjacent LOD chunks must have matching edges for seamless stitching."""
 
-    def test_adjacent_chunks_share_edge_values(self):
+    def test_adjacent_chunks_share_edge_values(self) -> None:
         """Two adjacent chunks from the same heightmap should have continuous boundary."""
         from veilbreakers_terrain.handlers._terrain_noise import generate_heightmap
         # Generate a large square heightmap and split into two halves
-        big = generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="mountains")
+        big = as_float_array(
+            generate_heightmap(128, 128, scale=80.0, seed=42, terrain_type="mountains")
+        )
         left = big[:, :65]   # columns 0-64 (inclusive)
         right = big[:, 64:]  # columns 64-127
 
@@ -279,7 +330,7 @@ class TestLODEdgeStitching:
 class TestExportContracts:
     """Unity export contracts must validate correctly."""
 
-    def test_mesh_attributes_all_present(self):
+    def test_mesh_attributes_all_present(self) -> None:
         """All required mesh attributes should pass validation."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
             REQUIRED_MESH_ATTRIBUTES,
@@ -288,7 +339,7 @@ class TestExportContracts:
         issues = validate_mesh_attributes_present(REQUIRED_MESH_ATTRIBUTES)
         assert len(issues) == 0, f"Unexpected issues: {[i.message for i in issues]}"
 
-    def test_mesh_attributes_missing_detected(self):
+    def test_mesh_attributes_missing_detected(self) -> None:
         """Missing mesh attributes should produce hard issues."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
             validate_mesh_attributes_present,
@@ -297,7 +348,7 @@ class TestExportContracts:
         assert len(issues) >= 1
         assert all(i.severity == "hard" for i in issues)
 
-    def test_vertex_attributes_all_present(self):
+    def test_vertex_attributes_all_present(self) -> None:
         """All required vertex attributes should pass validation."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
             REQUIRED_VERTEX_ATTRIBUTES,
@@ -306,7 +357,7 @@ class TestExportContracts:
         issues = validate_vertex_attributes_present(REQUIRED_VERTEX_ATTRIBUTES)
         assert len(issues) == 0
 
-    def test_vertex_attributes_missing_detected(self):
+    def test_vertex_attributes_missing_detected(self) -> None:
         """Missing vertex attributes should produce hard issues."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import (
             validate_vertex_attributes_present,
@@ -314,7 +365,7 @@ class TestExportContracts:
         issues = validate_vertex_attributes_present(["position", "normal"])
         assert len(issues) >= 1
 
-    def test_export_contract_bit_depths(self):
+    def test_export_contract_bit_depths(self) -> None:
         """Export contract should enforce minimum bit depths."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import UnityExportContract
         contract = UnityExportContract()
@@ -323,12 +374,12 @@ class TestExportContracts:
         assert contract.minimum_for("shadow_clipmap") == 32
         assert contract.minimum_for("unknown") == 0
 
-    def test_required_mesh_attrs_count(self):
+    def test_required_mesh_attrs_count(self) -> None:
         """Exactly 6 mesh attributes are required per spec."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import REQUIRED_MESH_ATTRIBUTES
         assert len(REQUIRED_MESH_ATTRIBUTES) == 6
 
-    def test_required_vertex_attrs_count(self):
+    def test_required_vertex_attrs_count(self) -> None:
         """Exactly 6 vertex attributes are required per spec."""
         from veilbreakers_terrain.handlers.terrain_unity_export_contracts import REQUIRED_VERTEX_ATTRIBUTES
         assert len(REQUIRED_VERTEX_ATTRIBUTES) == 6
@@ -337,31 +388,39 @@ class TestExportContracts:
 class TestExportDataIntegrity:
     """Exported data must maintain integrity through the pipeline."""
 
-    def test_heightmap_finite_after_full_pipeline(self, mountain_hmap):
+    def test_heightmap_finite_after_full_pipeline(
+        self, mountain_hmap: FloatArray
+    ) -> None:
         """Heightmap should be finite after noise + erosion + slope pipeline."""
         from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
         from veilbreakers_terrain.handlers._terrain_noise import compute_slope_map
-        eroded = apply_hydraulic_erosion(mountain_hmap, iterations=100, seed=42)
-        slope = compute_slope_map(eroded)
+        eroded = as_float_array(
+            apply_hydraulic_erosion(mountain_hmap, iterations=100, seed=42)
+        )
+        slope = as_float_array(compute_slope_map(eroded))
         assert np.isfinite(eroded).all(), "Non-finite values after erosion"
         assert np.isfinite(slope).all(), "Non-finite values in slope"
 
-    def test_flow_data_finite_after_erosion(self, eroded_hmap):
+    def test_flow_data_finite_after_erosion(self, eroded_hmap: FloatArray) -> None:
         """Flow data computed on eroded terrain should be finite."""
         from veilbreakers_terrain.handlers.terrain_advanced import compute_flow_map
-        raw = compute_flow_map(eroded_hmap)
-        flow_acc = np.asarray(raw["flow_accumulation"], dtype=np.float64)
+        raw = cast(Mapping[str, object], compute_flow_map(eroded_hmap))
+        flow_acc = as_float_array(raw["flow_accumulation"])
         assert np.isfinite(flow_acc).all()
 
-    def test_chunking_metadata_valid(self, mountain_hmap):
+    def test_chunking_metadata_valid(self, mountain_hmap: FloatArray) -> None:
         """Chunk metadata should contain expected fields."""
         from veilbreakers_terrain.handlers.terrain_chunking import compute_terrain_chunks
-        chunks = compute_terrain_chunks(
-            mountain_hmap.tolist(), chunk_size=32, lod_levels=2
+        chunks = cast(
+            Mapping[str, object],
+            compute_terrain_chunks(
+                heightmap_to_list(mountain_hmap), chunk_size=32, lod_levels=2
+            ),
         )
+        chunk_entries = cast(list[Mapping[str, object]], chunks["chunks"])
         assert "chunks" in chunks
-        assert len(chunks["chunks"]) > 0
-        for chunk in chunks["chunks"]:
+        assert len(chunk_entries) > 0
+        for chunk in chunk_entries:
             assert "grid_x" in chunk or "row" in chunk, f"Missing grid position key: {list(chunk.keys())}"
             assert "heightmap" in chunk
             assert "lods" in chunk
@@ -375,7 +434,7 @@ class TestExportDataIntegrity:
 class TestFullPipelineIntegration:
     """End-to-end pipeline: noise -> erosion -> flow -> slope -> biome -> chunk."""
 
-    def test_full_pipeline_no_exceptions(self):
+    def test_full_pipeline_no_exceptions(self) -> None:
         """Complete pipeline should execute without exceptions."""
         from veilbreakers_terrain.handlers._terrain_noise import (
             generate_heightmap, compute_slope_map, compute_biome_assignments,
@@ -387,15 +446,18 @@ class TestFullPipelineIntegration:
             _downsample_heightmap,
         )
 
-        hmap = generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
-        eroded = apply_hydraulic_erosion(hmap, iterations=100, seed=42)
-        slope = compute_slope_map(eroded)
-        biomes = compute_biome_assignments(eroded, slope)
+        hmap = as_float_array(
+            generate_heightmap(64, 64, scale=50.0, seed=42, terrain_type="mountains")
+        )
+        eroded = as_float_array(apply_hydraulic_erosion(hmap, iterations=100, seed=42))
+        slope = as_float_array(compute_slope_map(eroded))
+        biomes = as_int_array(compute_biome_assignments(eroded, slope))
         compute_flow_map(eroded)
         # compute_chunk_lod returns an int LOD level; _downsample_heightmap
         # performs the actual bilinear downsample.
-        lod_level = compute_chunk_lod(eroded.tolist(), 32)
-        lod = _downsample_heightmap(eroded.tolist(), 32)
+        eroded_list = heightmap_to_list(eroded)
+        lod_level = compute_chunk_lod(eroded_list, 32)
+        lod = _downsample_heightmap(eroded_list, 32)
 
         # All outputs valid
         assert eroded.shape == (64, 64)
@@ -406,18 +468,20 @@ class TestFullPipelineIntegration:
         assert np.isfinite(eroded).all()
         assert np.isfinite(slope).all()
 
-    def test_pipeline_deterministic(self):
+    def test_pipeline_deterministic(self) -> None:
         """Full pipeline should be deterministic with same seeds."""
         from veilbreakers_terrain.handlers._terrain_noise import (
             generate_heightmap, compute_slope_map, compute_biome_assignments,
         )
         from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
-        def run_pipeline():
-            h = generate_heightmap(32, 32, scale=30.0, seed=7, terrain_type="hills")
-            e = apply_hydraulic_erosion(h, iterations=50, seed=7)
-            s = compute_slope_map(e)
-            b = compute_biome_assignments(e, s)
+        def run_pipeline() -> tuple[FloatArray, FloatArray, IntArray]:
+            h = as_float_array(
+                generate_heightmap(32, 32, scale=30.0, seed=7, terrain_type="hills")
+            )
+            e = as_float_array(apply_hydraulic_erosion(h, iterations=50, seed=7))
+            s = as_float_array(compute_slope_map(e))
+            b = as_int_array(compute_biome_assignments(e, s))
             return e, s, b
 
         e1, s1, b1 = run_pipeline()
@@ -426,7 +490,7 @@ class TestFullPipelineIntegration:
         np.testing.assert_array_equal(s1, s2)
         np.testing.assert_array_equal(b1, b2)
 
-    def test_all_terrain_types_through_pipeline(self):
+    def test_all_terrain_types_through_pipeline(self) -> None:
         """Every terrain type should survive the full pipeline."""
         from veilbreakers_terrain.handlers._terrain_noise import (
             generate_heightmap, compute_slope_map, TERRAIN_PRESETS,
@@ -434,8 +498,10 @@ class TestFullPipelineIntegration:
         from veilbreakers_terrain.handlers._terrain_erosion import apply_hydraulic_erosion
 
         for ttype in TERRAIN_PRESETS:
-            h = generate_heightmap(32, 32, scale=30.0, seed=42, terrain_type=ttype)
-            e = apply_hydraulic_erosion(h, iterations=50, seed=42)
-            s = compute_slope_map(e)
+            h = as_float_array(
+                generate_heightmap(32, 32, scale=30.0, seed=42, terrain_type=ttype)
+            )
+            e = as_float_array(apply_hydraulic_erosion(h, iterations=50, seed=42))
+            s = as_float_array(compute_slope_map(e))
             assert np.isfinite(e).all(), f"{ttype}: non-finite after erosion"
             assert np.isfinite(s).all(), f"{ttype}: non-finite in slope"

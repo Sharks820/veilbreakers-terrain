@@ -6,10 +6,23 @@ of only checking registration tables.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, Mapping
+
 import numpy as np
+from numpy.typing import NDArray
 
 
-def _stack(height: np.ndarray):
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+
+FloatArray = NDArray[np.float32]
+
+
+def _stack(height: FloatArray) -> TerrainMaskStack:
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     return TerrainMaskStack(
@@ -23,7 +36,9 @@ def _stack(height: np.ndarray):
     )
 
 
-def _state(stack, *, hints=None):
+def _state(
+    stack: TerrainMaskStack, *, hints: Mapping[str, Any] | None = None
+) -> TerrainPipelineState:
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -112,9 +127,12 @@ def test_pass_water_variants_writes_surface_elevation_channel():
     assert result.status == "ok"
     assert "water_surface_elevation_m" in result.produced_channels
     assert stack.water_surface_elevation_m is not None
-    wet = stack.water_surface_mask > 0.0
-    assert np.array_equal(stack.water_surface_elevation_m[wet], stack.height[wet])
-    assert np.all(stack.water_surface_elevation_m[~wet] == 0.0)
+    assert stack.water_surface_mask is not None
+    surface_elevation = stack.water_surface_elevation_m
+    water_mask = stack.water_surface_mask
+    wet = water_mask > 0.0
+    assert np.array_equal(surface_elevation[wet], stack.height[wet])
+    assert np.all(surface_elevation[~wet] == 0.0)
     assert stack.populated_by_pass["water_surface_elevation_m"] == "water_variants"
 
 
@@ -129,7 +147,8 @@ def test_structural_masks_publish_hero_exclusion_channel():
     assert result.status == "ok"
     assert "hero_exclusion" in result.produced_channels
     assert stack.hero_exclusion is not None
-    assert stack.hero_exclusion.shape == stack.height.shape
+    hero_exclusion = stack.hero_exclusion
+    assert hero_exclusion.shape == stack.height.shape
     assert stack.populated_by_pass["hero_exclusion"] == "structural_masks"
 
 
@@ -143,10 +162,14 @@ def test_biome_channels_pass_writes_biome_and_corruption_arrays():
 
     assert result.status == "ok"
     assert set(result.produced_channels) == {"biome_id", "corruption_map"}
-    assert stack.biome_id.shape == stack.height.shape
-    assert stack.corruption_map.shape == stack.height.shape
-    assert stack.biome_id.dtype.kind in {"i", "u"}
-    assert stack.corruption_map.dtype == np.float32
+    assert stack.biome_id is not None
+    assert stack.corruption_map is not None
+    biome_id = stack.biome_id
+    corruption_map = stack.corruption_map
+    assert biome_id.shape == stack.height.shape
+    assert corruption_map.shape == stack.height.shape
+    assert biome_id.dtype.kind in {"i", "u"}
+    assert corruption_map.dtype == np.float32
 
 
 def test_stratigraphy_pass_writes_bedrock_and_sediment_channels():
@@ -169,10 +192,16 @@ def test_stratigraphy_pass_writes_bedrock_and_sediment_channels():
     assert {"bedrock_height", "sediment_height", "strata_height"}.issubset(
         set(result.produced_channels)
     )
-    assert stack.bedrock_height.shape == stack.height.shape
-    assert stack.sediment_height.shape == stack.height.shape
-    assert stack.strata_height.shape == stack.height.shape
-    assert np.all(stack.sediment_height >= 0.0)
+    assert stack.bedrock_height is not None
+    assert stack.sediment_height is not None
+    assert stack.strata_height is not None
+    bedrock_height = stack.bedrock_height
+    sediment_height = stack.sediment_height
+    strata_height = stack.strata_height
+    assert bedrock_height.shape == stack.height.shape
+    assert sediment_height.shape == stack.height.shape
+    assert strata_height.shape == stack.height.shape
+    assert np.all(sediment_height >= 0.0)
     assert stack.populated_by_pass["bedrock_height"] == "stratigraphy"
 
 
@@ -196,8 +225,14 @@ def test_unity_auxiliary_pass_writes_physics_lightmap_and_ao():
         "lightmap_uv_chart_id",
         "ambient_occlusion_bake",
     }
-    assert stack.physics_collider_mask.dtype == np.uint8
-    assert stack.lightmap_uv_chart_id.dtype == np.uint16
-    assert stack.ambient_occlusion_bake.dtype == np.float32
-    assert stack.ambient_occlusion_bake.min() >= 0.0
-    assert stack.ambient_occlusion_bake.max() <= 1.0
+    assert stack.physics_collider_mask is not None
+    assert stack.lightmap_uv_chart_id is not None
+    assert stack.ambient_occlusion_bake is not None
+    physics_collider_mask = stack.physics_collider_mask
+    lightmap_uv_chart_id = stack.lightmap_uv_chart_id
+    ambient_occlusion_bake = stack.ambient_occlusion_bake
+    assert physics_collider_mask.dtype == np.uint8
+    assert lightmap_uv_chart_id.dtype == np.uint16
+    assert ambient_occlusion_bake.dtype == np.float32
+    assert ambient_occlusion_bake.min() >= 0.0
+    assert ambient_occlusion_bake.max() <= 1.0

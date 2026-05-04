@@ -19,23 +19,38 @@ from __future__ import annotations
 import logging
 import math
 import random
-from typing import Any
+from typing import Any, Callable, TYPE_CHECKING, TypeAlias
 
 import numpy as np
 
 # Lazy-import guard: bpy/bmesh/mathutils only available inside Blender. Pure-logic
 # helpers (poisson sampling, biome filters) remain importable outside Blender;
 # functions that touch bpy must call _require_bpy() at entry.
+bpy: Any = None
+bmesh: Any = None
+_mathutils_Vector: Any = None
 try:
-    import bpy
-    import bmesh
-    from mathutils import Vector as _mathutils_Vector
-    _HAS_BPY = True
+    import bpy as _bpy
+    import bmesh as _bmesh
+    from mathutils import Vector as _Vector
+    bpy = _bpy
+    bmesh = _bmesh
+    _mathutils_Vector = _Vector
 except ModuleNotFoundError:
-    bpy = None  # type: ignore[assignment]
-    bmesh = None  # type: ignore[assignment]
-    _mathutils_Vector = None  # type: ignore[assignment]
-    _HAS_BPY = False
+    pass
+_HAS_BPY = bpy is not None and bmesh is not None and _mathutils_Vector is not None
+
+if TYPE_CHECKING:
+    from bpy import types as _bpy_types
+    from bmesh import types as _bmesh_types
+
+    BlenderCollection: TypeAlias = _bpy_types.Collection
+    BlenderObject: TypeAlias = _bpy_types.Object
+    BMeshObject: TypeAlias = _bmesh_types.BMesh
+else:
+    BlenderCollection: TypeAlias = Any
+    BlenderObject: TypeAlias = Any
+    BMeshObject: TypeAlias = Any
 
 
 def _require_bpy() -> None:
@@ -52,9 +67,6 @@ from ._scatter_engine import (
     lloyd_relax_points,
     context_scatter,
     generate_breakable_variants,
-    cluster_density_map,
-    edge_scatter,
-    apply_collision_exclusion,
 )
 from ._terrain_noise import compute_slope_map
 from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERATOR_MAP
@@ -64,25 +76,41 @@ from ._mesh_bridge import mesh_from_spec, VEGETATION_GENERATOR_MAP, PROP_GENERAT
 try:
     import warnings as _warnings
     from .vegetation_lsystem import generate_billboard_impostor as _generate_billboard_impostor_raw
-    def generate_billboard_impostor(*args, **kwargs):
-        _warnings.warn(
-            "generate_billboard_impostor is deprecated (L-3/C-4); "
-            "implement N-view Blender atlas bake in Phase 9C.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _generate_billboard_impostor_raw(*args, **kwargs)
 except ImportError:
-    def generate_billboard_impostor(*args, **kwargs):  # type: ignore[misc]
+    _warnings = None
+    _generate_billboard_impostor_raw = None
+
+
+def generate_billboard_impostor(*args: Any, **kwargs: Any) -> Any:
+    if _generate_billboard_impostor_raw is None:
         raise NotImplementedError(
             "vegetation_lsystem.generate_billboard_impostor unavailable (L-3); "
             "implement N-view Blender atlas bake in Phase 9C of the 12-phase plan."
         )
-from .lod_pipeline import generate_lod_chain
+    assert _warnings is not None
+    _warnings.warn(
+        "generate_billboard_impostor is deprecated (L-3/C-4); "
+        "implement N-view Blender atlas bake in Phase 9C.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _generate_billboard_impostor_raw(*args, **kwargs)
 from .terrain_semantics import WorldHeightTransform
 from .terrain_scatter_points import ScatterPoint, ScatterPointTable, validate_scatter_point_table
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "_BILLBOARD_LOD_VERTEX_THRESHOLD",
+    "_TREE_VEG_TYPES",
+    "_create_grass_card",
+    "_location_layer_rand2",
+    "_setup_billboard_lod",
+    "_terrain_cell_size_from_extent",
+    "handle_create_breakable",
+    "handle_scatter_props",
+    "handle_scatter_vegetation",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +215,7 @@ _PROP_Y_UP_TYPES = frozenset({
 })
 
 
-def _assign_scatter_material(obj: bpy.types.Object, material_key: str) -> None:
+def _assign_scatter_material(obj: BlenderObject, material_key: str) -> None:
     """Assign a lightweight procedural preview material.
 
     AAA upgrade: foliage modes receive alpha-clip blend mode (mandatory for
@@ -206,6 +234,7 @@ def _assign_scatter_material(obj: bpy.types.Object, material_key: str) -> None:
       "organic" — fully opaque, medium roughness.
       "metal"   — fully opaque, metallic = 0.4, low roughness.
     """
+    _require_bpy()
     if not hasattr(obj, "data") or obj.data is None:
         return
 
@@ -342,8 +371,11 @@ def _prop_rotation(prop_type: str, yaw_degrees: float) -> tuple[float, float, fl
     return (x_rot, 0.0, math.radians(yaw_degrees))
 
 
-def _terrain_height_sampler(terrain_obj: bpy.types.Object | None):
+def _terrain_height_sampler(
+    terrain_obj: BlenderObject | None,
+) -> Callable[[float, float], float] | None:
     """Build a lightweight terrain-height sampler for prop placement."""
+    _require_bpy()
     if terrain_obj is None or terrain_obj.type != "MESH" or terrain_obj.data is None:
         return None
 
@@ -539,7 +571,7 @@ def _terrain_cell_size_from_extent(
 # All pure Python + numpy; no bpy dependency. Testable in isolation.
 # ---------------------------------------------------------------------------
 
-def _collapse_detail_density(detail_dens_raw) -> "np.ndarray | None":
+def _collapse_detail_density(detail_dens_raw: Any) -> "np.ndarray | None":
     """Collapse a detail_density dict[str, (H,W)] to a single (H,W) float32 map.
 
     Returns None when the input is None or empty.
@@ -559,7 +591,12 @@ def _collapse_detail_density(detail_dens_raw) -> "np.ndarray | None":
     return arr if arr.ndim == 2 else None
 
 
-def _density_reject(density_map, row_f: float, col_f: float, rng_val: float) -> bool:
+def _density_reject(
+    density_map: "np.ndarray | None",
+    row_f: float,
+    col_f: float,
+    rng_val: float,
+) -> bool:
     """Return True (reject) when density_map is below rng_val at (row_f, col_f).
 
     Uses 4-tap bilinear sampling so a linearly-ramping density map yields
@@ -597,7 +634,7 @@ def _density_reject(density_map, row_f: float, col_f: float, rng_val: float) -> 
     return rng_val > density_val
 
 
-def _stack_value(stack, key: str):
+def _stack_value(stack: Any, key: str) -> Any:
     """Return a channel/property from stack when available, else None."""
     if stack is None:
         return None
@@ -610,7 +647,7 @@ def _stack_value(stack, key: str):
     return val
 
 
-def _resize_scatter_map(map_raw, target_shape: tuple[int, int]) -> "np.ndarray | None":
+def _resize_scatter_map(map_raw: Any, target_shape: tuple[int, int]) -> "np.ndarray | None":
     """Resize a 2-D context map to target_shape using nearest-neighbor resampling."""
     if map_raw is None:
         return None
@@ -624,7 +661,11 @@ def _resize_scatter_map(map_raw, target_shape: tuple[int, int]) -> "np.ndarray |
     return arr.astype(np.float32, copy=False)
 
 
-def _normalize_scatter_signal(signal_raw, *, log_scale: bool = False) -> "np.ndarray | None":
+def _normalize_scatter_signal(
+    signal_raw: Any,
+    *,
+    log_scale: bool = False,
+) -> "np.ndarray | None":
     """Normalize a scalar raster signal to [0, 1] for scatter weighting."""
     if signal_raw is None:
         return None
@@ -682,7 +723,7 @@ def _scatter_base_type(vegetation_type: str, category: str = "") -> str:
 
 
 def _resolve_scatter_context_maps(
-    stack,
+    stack: Any,
     heightmap: np.ndarray,
     moisture_map: "np.ndarray | None" = None,
 ) -> tuple["np.ndarray | None", "np.ndarray | None"]:
@@ -746,7 +787,7 @@ def _localize_exclusion_zones(
     return local_zones
 
 
-def _resolve_combat_clearings(params: dict) -> "list[dict[str, Any]] | None":
+def _resolve_combat_clearings(params: dict[str, Any]) -> "list[dict[str, Any]] | None":
     """Resolve optional combat clearings for the multi-pass scatter path."""
     clearings = params.get("combat_clearings")
     if clearings:
@@ -1019,7 +1060,7 @@ def _generate_multipass_scatter_placements(
     seed: int,
     separation_scale: float,
     max_tilt_angle: float,
-    stack=None,
+    stack: Any = None,
     moisture_map: "np.ndarray | None" = None,
     building_zones_world: "list[tuple[float, float, float, float]] | None" = None,
     terrain_origin_x: float = 0.0,
@@ -1211,8 +1252,8 @@ def _apply_sdf_exclusion(
 
 
 def _write_tree_instance_points(
-    instances: np.ndarray,
-    stack,
+    instances: "np.ndarray | None",
+    stack: Any,
 ) -> None:
     """Write LocationLayer output to stack.tree_instance_points (Fix 9.2).
 
@@ -1247,7 +1288,7 @@ def _write_tree_instance_points(
 # Fix 9.8 / BUG-S10-010
 # ---------------------------------------------------------------------------
 
-def _location_layer_rand2(i: int, j: int, seed: int, k: int) -> tuple:
+def _location_layer_rand2(i: int, j: int, seed: int, k: int) -> tuple[float, float]:
     """Deterministic 2D random offset in [-0.5, 0.5] per cell (i, j), candidate k.
 
     Uses integer hash mix with no floating-point RNG state — output is fully
@@ -1300,8 +1341,8 @@ class LocationLayer:
         self,
         width_m: float,
         height_m: float,
-        height_sample_fn=None,
-        wind_sample_fn=None,
+        height_sample_fn: Callable[[float, float], float] | None = None,
+        wind_sample_fn: Callable[[float, float], float] | None = None,
         prototype_id: int = 0,
     ) -> np.ndarray:
         """Generate scatter instances over a [0, width_m] x [0, height_m] region.
@@ -1362,7 +1403,7 @@ class LocationLayer:
         cy_flat = cy_all.ravel()
         total = cx_flat.shape[0]
 
-        all_instances: list = []
+        all_instances: list[tuple[float, float, float, float, float]] = []
 
         def _append_instance(flat_idx: int) -> None:
             cx = float(cx_flat[flat_idx])
@@ -1372,7 +1413,7 @@ class LocationLayer:
             all_instances.append((cx, cy, float(z), float(rot), float(prototype_id)))
 
         try:
-            from scipy.spatial import cKDTree as _cKDTree
+            from scipy.spatial import KDTree as _cKDTree
         except ImportError:
             _cKDTree = None
 
@@ -1397,7 +1438,7 @@ class LocationLayer:
         else:
             # Fallback for minimal Python environments without SciPy. Candidate
             # positions are still precomputed; only accept/reject remains scalar.
-            accepted_per_cell: dict = {}
+            accepted_per_cell: dict[tuple[int, int], list[tuple[float, float]]] = {}
             neighbor_radius_cells = max(
                 1,
                 int(np.ceil(self.repulsion_radius / max(cs, 1e-9))),
@@ -1513,8 +1554,9 @@ _DEFAULT_VEG_RULES: list[dict[str, Any]] = [
 # Template geometry helpers
 # ---------------------------------------------------------------------------
 
-def _create_template_collection(name: str) -> bpy.types.Collection:
+def _create_template_collection(name: str) -> BlenderCollection:
     """Create a hidden collection for instance templates."""
+    _require_bpy()
     coll = bpy.data.collections.new(name)
     bpy.context.scene.collection.children.link(coll)
     # Hide from viewport and render
@@ -1524,8 +1566,8 @@ def _create_template_collection(name: str) -> bpy.types.Collection:
 
 
 def _create_vegetation_template(
-    veg_type: str, collection: bpy.types.Collection
-) -> bpy.types.Object:
+    veg_type: str, collection: BlenderCollection
+) -> BlenderObject:
     """Create a scatter-optimized template mesh for a vegetation type.
 
     Uses procedural mesh generators from VEGETATION_GENERATOR_MAP when
@@ -1543,6 +1585,7 @@ def _create_vegetation_template(
     Falls back to oriented billboard planes (not cubes) for unmapped types
     so scatter previews are always scene-readable.
     """
+    _require_bpy()
     gen_entry = VEGETATION_GENERATOR_MAP.get(veg_type)
     if gen_entry is not None:
         gen_func, gen_kwargs = gen_entry
@@ -1590,7 +1633,6 @@ def _create_vegetation_template(
         # Low billboard plane — ground-level cover
         bmesh.ops.create_grid(bm_local, x_segments=1, y_segments=1, size=0.3)
         # Rotate to stand vertically (Z-up convention for billboard grass)
-        import bmesh as _bmesh_mod
         bmesh.ops.rotate(
             bm_local,
             cent=(0, 0, 0),
@@ -1700,7 +1742,7 @@ _BIOME_DENSITY: dict[str, float] = {
 # ---------------------------------------------------------------------------
 
 def _add_leaf_card_canopy(
-    bm: "bmesh.types.BMesh",
+    bm: BMeshObject,
     canopy_center: tuple[float, float, float],
     canopy_radius: float,
     num_planes: int,
@@ -1770,7 +1812,9 @@ def _add_leaf_card_canopy(
     _ATLAS_CELL_V = 1.0 / _ATLAS_ROWS
     _species = max(0, min(_ATLAS_ROWS - 1, species_row))
 
-    def _atlas_uv(age_col: int) -> tuple[tuple, tuple, tuple, tuple]:
+    def _atlas_uv(
+        age_col: int,
+    ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]:
         """Return 4 UV corners (BL, BR, TR, TL) for (species_row, age_col) cell."""
         _age = max(0, min(_ATLAS_COLS - 1, age_col))
         u0 = _age * _ATLAS_CELL_U
@@ -1779,7 +1823,9 @@ def _add_leaf_card_canopy(
         v1 = v0 + _ATLAS_CELL_V
         return (u0, v0), (u1, v0), (u1, v1), (u0, v1)
 
-    def _atlas_uv_flipped(age_col: int) -> tuple[tuple, tuple, tuple, tuple]:
+    def _atlas_uv_flipped(
+        age_col: int,
+    ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]:
         """Return UV corners for the backface duplicate (winding BL↔BR swapped → U mirrored)."""
         _age = max(0, min(_ATLAS_COLS - 1, age_col))
         u0 = _age * _ATLAS_CELL_U
@@ -1890,7 +1936,7 @@ def create_leaf_card_tree(
     num_planes: int = 8,
     seed: int = 42,
     species_variant: int = 0,
-) -> "bpy.types.Object":
+) -> BlenderObject:
     """Create a tree with a leaf card canopy (SpeedTree / Ghost of Tsushima style).
 
     Geometry:
@@ -1922,6 +1968,7 @@ def create_leaf_card_tree(
     Returns:
         The created ``bpy.types.Object`` linked into the active collection.
     """
+    _require_bpy()
     rng = random.Random(seed)
     name = f"LeafCardTree_{seed}"
 
@@ -2037,8 +2084,8 @@ def create_leaf_card_tree(
 def _create_grass_card(
     biome: str = "prairie",
     seed: int = 0,
-    collection: "bpy.types.Collection | None" = None,
-) -> "bpy.types.Object":
+    collection: BlenderCollection | None = None,
+) -> BlenderObject:
     """Create a 3-quad billboard grass card for the given biome.
 
     Geometry: 3 crossing blades (each 2 quads with a V-bend), totalling 6 quads
@@ -2055,6 +2102,7 @@ def _create_grass_card(
 
     Returns the created Blender object.
     """
+    _require_bpy()
     rng = random.Random(seed)
     spec = _GRASS_BIOME_SPECS.get(biome, _GRASS_BIOME_SPECS["prairie"])
     height = rng.uniform(spec["height_min"], spec["height_max"])
@@ -2291,7 +2339,9 @@ def _generate_combat_clearing(
 
     # Build opposite-side framing pairs: each entry gets one opposite framing tree.
     # These pairs define the visual sight lines players see when entering.
-    framing_pairs: list[tuple[tuple, tuple]] = []
+    framing_pairs: list[
+        tuple[tuple[float, float, float], tuple[float, float, float]]
+    ] = []
     for ea in entry_angles:
         entry_pt_x = cx + math.cos(ea) * (radius + 2.0)
         entry_pt_y = cy + math.sin(ea) * (radius + 2.0)
@@ -2312,7 +2362,7 @@ def _generate_combat_clearing(
 
     # Sight lines: each entry angle projects a line through center to opposite edge.
     # These mark the "lanes" enemies walk along — no large scatter should block them.
-    sight_lines: list[tuple[tuple, tuple]] = []
+    sight_lines: list[tuple[tuple[float, float], tuple[float, float]]] = []
     for ea in entry_angles:
         near_x = cx + math.cos(ea) * (radius + 4.0)
         near_y = cy + math.sin(ea) * (radius + 4.0)
@@ -2550,7 +2600,7 @@ def _scatter_pass(
     separation_scale: float = 1.0,
     building_zones: "list[tuple[float, float, float, float]] | None" = None,
     tree_positions: "list[tuple[float, float]] | None" = None,
-    combat_clearings: "list[dict] | None" = None,
+    combat_clearings: "list[dict[str, Any]] | None" = None,
     water_proximity_map: "np.ndarray | None" = None,
     disturbance_map: "np.ndarray | None" = None,
     viewer_origin: "tuple[float, float] | None" = None,
@@ -2893,7 +2943,7 @@ def _scatter_pass(
                 return True
         return False
 
-    def _passes_affinity(spec_row: dict, pos: tuple[float, float],
+    def _passes_affinity(spec_row: dict[str, Any], pos: tuple[float, float],
                          wx: float, wy: float) -> bool:
         """Apply exclude_near / place_near rules from the catalog row."""
         exclude = spec_row.get("exclude_near", []) or []
@@ -2920,7 +2970,7 @@ def _scatter_pass(
                 return False
         return True
 
-    _catalog_species_specs = getattr(_CATALOG, "values", lambda: [])() if _CATALOG else []
+    _catalog_species_specs = list(_CATALOG.values()) if _CATALOG else []
     _target_categories = _PASS_CATEGORY_MAP.get(pass_type, set())
     _height_min = float(np.nanmin(heightmap)) if heightmap.size else 0.0
     _height_max = float(np.nanmax(heightmap)) if heightmap.size else 0.0
@@ -2933,7 +2983,7 @@ def _scatter_pass(
         _water_min = 0.0
         _water_max = float(np.clip(1.0 - max(_height_min, 0.0) ** 0.7, 0.0, 1.0))
 
-    def _species_impossible_before_sampling(_spec_row: dict) -> bool:
+    def _species_impossible_before_sampling(_spec_row: dict[str, Any]) -> bool:
         """Skip catalog species whose global bands cannot match this tile."""
         if not _spec_row:
             return False
@@ -3069,15 +3119,14 @@ def _scatter_pass(
         # ``slope`` for cliff-rejection.
         _slope_deg = 0.0
         try:
-            if slope_map is not None:
-                _rows, _cols = slope_map.shape
-                _row_f = ((_pos2[1] + (terrain_height or terrain_size) * 0.5) /
-                          max(terrain_height or terrain_size, 1e-6)) * (_rows - 1)
-                _col_f = ((_pos2[0] + (terrain_width or terrain_size) * 0.5) /
-                          max(terrain_width or terrain_size, 1e-6)) * (_cols - 1)
-                _r = int(max(0, min(_rows - 1, _row_f)))
-                _c = int(max(0, min(_cols - 1, _col_f)))
-                _slope_deg = float(slope_map[_r, _c])
+            _rows, _cols = slope_map.shape
+            _row_f = ((_pos2[1] + (terrain_height or terrain_size) * 0.5) /
+                      max(terrain_height or terrain_size, 1e-6)) * (_rows - 1)
+            _col_f = ((_pos2[0] + (terrain_width or terrain_size) * 0.5) /
+                      max(terrain_width or terrain_size, 1e-6)) * (_cols - 1)
+            _r = int(max(0, min(_rows - 1, _row_f)))
+            _c = int(max(0, min(_cols - 1, _col_f)))
+            _slope_deg = float(slope_map[_r, _c])
         except Exception:  # noqa: BLE001
             _slope_deg = 0.0
         # Density: this point's *placement density*.  When the placement
@@ -3130,7 +3179,7 @@ def _scatter_pass(
 # Handler: scatter_vegetation
 # ---------------------------------------------------------------------------
 
-def handle_scatter_vegetation(params: dict) -> dict:
+def handle_scatter_vegetation(params: dict[str, Any]) -> dict[str, Any]:
     """Scatter vegetation on terrain using Poisson disk + biome rules.
 
     Uses collection instances for performance (not individual objects).
@@ -3203,7 +3252,6 @@ def handle_scatter_vegetation(params: dict) -> dict:
     dims = obj.dimensions
     terrain_width = max(float(dims.x), 1.0)
     terrain_height = max(float(dims.y), 1.0)
-    terrain_size = max(terrain_width, terrain_height, 1.0)
     terrain_row_spacing, terrain_col_spacing = _terrain_axis_spacing_from_extent(
         terrain_width,
         terrain_height,
@@ -3387,7 +3435,7 @@ def handle_scatter_vegetation(params: dict) -> dict:
 
     # Create template collection and templates
     template_coll = _create_template_collection(f"{terrain_name}_veg_templates")
-    templates: dict[str, bpy.types.Object] = {}
+    templates: dict[str, BlenderObject] = {}
 
     # Collect unique vegetation types
     veg_types_needed = set(p.get("species_id") or p["vegetation_type"] for p in placements)
@@ -3540,8 +3588,8 @@ def handle_scatter_vegetation(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _create_prop_template(
-    prop_type: str, collection: bpy.types.Collection
-) -> bpy.types.Object:
+    prop_type: str, collection: BlenderCollection
+) -> BlenderObject:
     """Create a template mesh for a prop type.
 
     Uses procedural mesh generators from PROP_GENERATOR_MAP when
@@ -3549,6 +3597,7 @@ def _create_prop_template(
     wiring gaps are visible instead of being hidden by placeholder
     geometry.
     """
+    _require_bpy()
     gen_entry = PROP_GENERATOR_MAP.get(prop_type)
     if gen_entry is not None:
         gen_func, gen_kwargs = gen_entry
@@ -3593,7 +3642,7 @@ def _create_prop_template(
     return obj
 
 
-def handle_scatter_props(params: dict) -> dict:
+def handle_scatter_props(params: dict[str, Any]) -> dict[str, Any]:
     """Scatter context-aware props near buildings using collection instances.
 
     Uses procedural mesh generators from PROP_GENERATOR_MAP for real prop
@@ -3699,7 +3748,7 @@ def handle_scatter_props(params: dict) -> dict:
 
     # Template collection for prop types (hidden, used for instancing)
     template_coll = _create_template_collection(f"{area_name}_templates")
-    templates: dict[str, bpy.types.Object] = {}
+    templates: dict[str, BlenderObject] = {}
 
     prop_counts: dict[str, int] = {}
 
@@ -3733,7 +3782,7 @@ def handle_scatter_props(params: dict) -> dict:
 # Handler: create_breakable
 # ---------------------------------------------------------------------------
 
-def handle_create_breakable(params: dict) -> dict:
+def handle_create_breakable(params: dict[str, Any]) -> dict[str, Any]:
     """Create a breakable prop with intact and destroyed variants.
 
     Params:

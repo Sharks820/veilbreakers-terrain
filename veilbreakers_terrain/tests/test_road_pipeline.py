@@ -10,8 +10,35 @@ Covers:
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, TypeAlias, cast
+
 import numpy as np
+import numpy.typing as npt
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainAnchor,
+        TerrainIntentState,
+    )
+
+GridPoint: TypeAlias = tuple[int, int]
+WorldPoint: TypeAlias = tuple[float, float, float]
+TerrainBounds: TypeAlias = tuple[float, float, float, float]
+Float32Array: TypeAlias = npt.NDArray[np.float32]
+Float64Array: TypeAlias = npt.NDArray[np.float64]
+RoadProfile: TypeAlias = dict[str, float]
+
+
+def _road_profile_params_typed(road_type: str) -> RoadProfile:
+    from veilbreakers_terrain.handlers import terrain_twelve_step
+
+    raw_profile_params = cast(
+        Callable[[str], object],
+        getattr(terrain_twelve_step, "_road_profile_params"),
+    )
+    return cast(RoadProfile, raw_profile_params(road_type))
 
 
 # ---------------------------------------------------------------------------
@@ -110,26 +137,22 @@ class TestPoiRoadPipeline:
         assert _road_type_for_anchor_pair("Settlement", "Settlement") == "main"
 
     def test_main_profile_road_width_ge_3(self):
-        from veilbreakers_terrain.handlers.terrain_twelve_step import _road_profile_params
-        p = _road_profile_params("main")
+        p = _road_profile_params_typed("main")
         assert p["road_width"] >= 3.0
 
     def test_trail_profile_road_width_le_1_5(self):
-        from veilbreakers_terrain.handlers.terrain_twelve_step import _road_profile_params
-        p = _road_profile_params("trail")
+        p = _road_profile_params_typed("trail")
         assert p["road_width"] <= 1.5
 
     def test_path_profile_has_all_keys(self):
-        from veilbreakers_terrain.handlers.terrain_twelve_step import _road_profile_params
-        p = _road_profile_params("path")
+        p = _road_profile_params_typed("path")
         assert "road_width" in p
         assert "shoulder_width" in p
         assert "influence_width" in p
 
     def test_unknown_type_falls_back_to_path(self):
-        from veilbreakers_terrain.handlers.terrain_twelve_step import _road_profile_params
-        p = _road_profile_params("unknown_type")
-        p_path = _road_profile_params("path")
+        p = _road_profile_params_typed("unknown_type")
+        p_path = _road_profile_params_typed("path")
         assert p == p_path
 
 
@@ -138,10 +161,13 @@ class TestPoiRoadPipeline:
 # ---------------------------------------------------------------------------
 
 
-def _make_intent(waypoints=None, anchors=()):
+def _make_intent(
+    waypoints: Sequence[GridPoint] | None = None,
+    anchors: Sequence["TerrainAnchor"] = (),
+) -> "TerrainIntentState":
     """Build a minimal TerrainIntentState for testing."""
     from veilbreakers_terrain.handlers.terrain_semantics import (
-        BBox, TerrainIntentState, TerrainAnchor,
+        BBox, TerrainIntentState,
     )
     intent = TerrainIntentState(
         seed=42,
@@ -158,22 +184,26 @@ def _make_intent(waypoints=None, anchors=()):
 
 
 class TestPipelineUnification:
-    def test_generate_road_path_grid_threads_cost_map_to_astar(self, monkeypatch):
+    def test_generate_road_path_grid_threads_cost_map_to_astar(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         import warnings as _warnings
         from veilbreakers_terrain.handlers import _terrain_noise as noise_mod
 
-        captured: dict[str, np.ndarray | None] = {"cost_map": None}
+        captured: dict[str, object] = {"cost_map": None, "cell_size": None}
 
         def _fake_legacy_astar(
-            heightmap,
-            source,
-            dest,
+            heightmap: Float64Array,
+            source: GridPoint,
+            dest: GridPoint,
             *,
-            cell_size,
-            slope_weight=5.0,
-            height_weight=1.0,
-            cost_map=None,
-        ):
+            cell_size: float,
+            slope_weight: float = 5.0,
+            height_weight: float = 1.0,
+            cost_map: Float32Array | None = None,
+        ) -> list[GridPoint]:
+            assert heightmap.shape == (8, 8)
             captured["cost_map"] = cost_map
             captured["cell_size"] = cell_size
             return [source, dest]
@@ -196,13 +226,24 @@ class TestPipelineUnification:
         assert captured["cell_size"] == 1.0
         assert carved.shape == hmap.shape
 
-    def test_twelve_step_road_mesh_specs_use_24dir_world_solver(self, monkeypatch):
+    def test_twelve_step_road_mesh_specs_use_24dir_world_solver(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from veilbreakers_terrain.handlers import road_network as road_mod
         from veilbreakers_terrain.handlers.terrain_twelve_step import _generate_road_mesh_specs
 
         captured: dict[str, object] = {}
 
-        def _fake_astar(heightmap, terrain_bounds, start_world, end_world, **kwargs):
+        def _fake_astar(
+            heightmap: Float64Array,
+            terrain_bounds: TerrainBounds,
+            start_world: WorldPoint,
+            end_world: WorldPoint,
+            **kwargs: object,
+        ) -> list[WorldPoint]:
+            assert heightmap.shape == (4, 4)
+            assert kwargs
             captured["terrain_bounds"] = terrain_bounds
             captured["start_world"] = start_world
             captured["end_world"] = end_world
@@ -299,12 +340,23 @@ class TestPipelineUnification:
         assert result["segments"][-1][0] == waypoints[1]
         assert result["segments"][-1][1] == waypoints[2]
 
-    def test_compute_road_network_threads_explicit_terrain_bounds_to_astar(self, monkeypatch):
+    def test_compute_road_network_threads_explicit_terrain_bounds_to_astar(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from veilbreakers_terrain.handlers import road_network as road_mod
 
         captured: dict[str, object] = {}
 
-        def _fake_astar(heightmap, terrain_bounds, start_world, end_world, **kwargs):
+        def _fake_astar(
+            heightmap: Float32Array,
+            terrain_bounds: TerrainBounds,
+            start_world: WorldPoint,
+            end_world: WorldPoint,
+            **kwargs: object,
+        ) -> list[WorldPoint]:
+            assert heightmap.shape == (4, 4)
+            assert kwargs
             captured["terrain_bounds"] = terrain_bounds
             return [start_world, end_world]
 
@@ -338,7 +390,7 @@ class TestPipelineUnification:
             cell_size=1.0,
             anchors=anchors,
         )
-        specs, carved, road_mask, road_sdf = _generate_road_mesh_specs(
+        _, _, road_mask, _ = _generate_road_mesh_specs(
             hmap, intent, 1, 1, 1.0, 77
         )
         assert road_mask.sum() > 0, "Expected nonzero road_mask from two settlement anchors"
@@ -409,7 +461,7 @@ class TestRoadPathNetworkContracts:
         )
 
         assert result["path_network_contract_issues"] == []
-        assert bridge_segment["water_depth_m"] == pytest.approx(2.0)
+        assert abs(float(bridge_segment["water_depth_m"]) - 2.0) <= 1e-12
         assert bridge_segment["bridge_clearance_m"] >= 1.0
 
     def test_continuation_edge_uses_start_edge_when_route_ends_inside_node(self):
@@ -431,7 +483,12 @@ class TestRoadPathNetworkContracts:
 class TestRoadMaxGradeClamp:
     """Verify `_grade_road_path_in_world_space` clamps adjacent slopes."""
 
-    def _max_adjacent_grade_deg(self, heightmap: np.ndarray, path, cell_size: float) -> float:
+    def _max_adjacent_grade_deg(
+        self,
+        heightmap: Float64Array,
+        path: Sequence[GridPoint],
+        cell_size: float,
+    ) -> float:
         import math as _math
         max_tan = 0.0
         for i in range(1, len(path)):

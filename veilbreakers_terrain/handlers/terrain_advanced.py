@@ -20,7 +20,7 @@ import logging
 import math
 import random as _random
 import warnings
-from typing import Any
+from typing import Any, Callable
 
 _log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def _rng_from_seed(seed: int, seed_namespace: str) -> np.random.Generator:
     )
 
 
-def _detect_grid_dims(bm) -> tuple[int, int]:
+def _detect_grid_dims(bm: Any) -> tuple[int, int]:
     """Detect actual (rows, cols) of a terrain grid mesh.
 
     Shared with environment.py — duplicated here to avoid circular import.
@@ -340,7 +340,7 @@ def distance_point_to_polyline(
 # Falloff functions
 # ---------------------------------------------------------------------------
 
-_FALLOFF_FUNCS = {
+_FALLOFF_FUNCS: dict[str, Callable[[float], float]] = {
     "smooth": lambda d: 0.5 * (1.0 + math.cos(math.pi * d)) if d < 1.0 else 0.0,
     "sharp": lambda d: max(0.0, (1.0 - d) ** 2) if d < 1.0 else 0.0,
     "linear": lambda d: max(0.0, 1.0 - d) if d < 1.0 else 0.0,
@@ -497,7 +497,7 @@ def compute_spline_deformation(
         #   dist      — perpendicular distance from spline axis (XY only)
         #   closest   — 3D closest point on the polyline (includes Z)
         #   t_spline  — normalised arc position [0, 1] along the spline
-        dist, closest, t_spline = distance_point_to_polyline(vx, vy, polyline)
+        dist, _closest, t_spline = distance_point_to_polyline(vx, vy, polyline)
 
         if dist > width:
             continue
@@ -544,7 +544,7 @@ def compute_spline_deformation(
     return result
 
 
-def handle_spline_deform(params: dict) -> dict:
+def handle_spline_deform(params: dict[str, Any]) -> dict[str, Any]:
     """Deform terrain along a spline path for roads/rivers (GAP-44).
 
     Spline control points are supplied in world space and are transformed
@@ -958,8 +958,6 @@ def apply_layer_operation(
     r_grid_y = radius / td * rows
 
     affected = 0
-    rng = _random.Random(seed)
-
     min_row = max(0, int(cy_grid - r_grid_y) - 1)
     max_row = min(rows, int(cy_grid + r_grid_y) + 2)
     min_col = max(0, int(cx_grid - r_grid_x) - 1)
@@ -1122,7 +1120,7 @@ def flatten_layers(
     return result
 
 
-def handle_terrain_layers(params: dict) -> dict:
+def handle_terrain_layers(params: dict[str, Any]) -> dict[str, Any]:
     """Non-destructive layered terrain editing (GAP-45).
 
     Params:
@@ -1199,7 +1197,7 @@ def handle_terrain_layers(params: dict) -> dict:
     # This eliminates the ~10 MB JSON round-trip per brush stroke that
     # made interactive painting unusable with 5+ layers at 256².
     # ------------------------------------------------------------------
-    def _bump_version_and_serialize(obj, layers):
+    def _bump_version_and_serialize(obj: Any, layers: list["TerrainLayer"]) -> None:
         """Serialize layers to JSON and increment the dirty version counter."""
         obj["terrain_layers"] = json.dumps([L.to_dict() for L in layers])
         obj["terrain_layers_version"] = int(obj.get("terrain_layers_version", 0)) + 1
@@ -1378,19 +1376,19 @@ class BrushResult:
         self.eroded = eroded
         self.deposited = deposited
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype: Any = None) -> np.ndarray:
         """Allow numpy operations to use the heightmap array."""
         if dtype is not None:
             return np.asarray(self.heightmap, dtype=dtype)
         return np.asarray(self.heightmap)
 
-    def __sub__(self, other):
+    def __sub__(self, other: Any) -> np.ndarray:
         """Subtract another BrushResult or array (heightmap difference)."""
         if isinstance(other, BrushResult):
             return np.asarray(self.heightmap) - np.asarray(other.heightmap)
         return np.asarray(self.heightmap) - np.asarray(other)
 
-    def __rsub__(self, other):
+    def __rsub__(self, other: Any) -> np.ndarray:
         return np.asarray(other) - np.asarray(self.heightmap)
 
     def max(self):
@@ -1606,8 +1604,6 @@ def compute_erosion_brush(
                 else:
                     # Erode: pick up material scaled by velocity bend (curvature)
                     # Bend factor = 1 - dot(old_dir, new_dir): high on sharp turns
-                    old_vx = nx_dir
-                    old_vy = ny_dir
                     erode_amount = (sed_capacity - sediment) * erode_rate
                     erode_amount = min(erode_amount, abs(h_cur) * 0.5)
                     if erode_amount > 0.0:
@@ -1744,7 +1740,7 @@ def compute_erosion_brush(
     return BrushResult(result, footprint, total_eroded, total_deposited)
 
 
-def handle_erosion_paint(params: dict) -> dict:
+def handle_erosion_paint(params: dict[str, Any]) -> dict[str, Any]:
     """Brush-based erosion at specific coordinates (GAP-46).
 
     Params:
@@ -1915,10 +1911,6 @@ def compute_flow_map(
     # Build destination arrays for vectorized scatter-add:
     # For each cell with a valid flow direction, compute its downstream (nr, nc).
     valid_mask = flat_d >= 0
-    vi_r = flat_r[valid_mask]
-    vi_c = flat_c[valid_mask]
-    vi_d = flat_d[valid_mask]
-
     # Process each valid cell in height-descending order (Python loop over sorted
     # unique heights would be O(N) — keep explicit loop only over sorted order).
     # Vectorize the inner scatter via index-based access instead of a cell loop.
@@ -2102,7 +2094,7 @@ def apply_thermal_erosion(
 
 # Stamp shape generators -- radial profile functions: r_norm in [0, 1].
 # Terrain-feature shapes (legacy, kept for backward compat):
-_STAMP_SHAPES = {
+_STAMP_SHAPES: dict[str, Callable[[float], float]] = {
     # crater is now handled by a dedicated numpy array branch below for
     # asymmetric rim + ejecta blanket — this lambda is kept only as a
     # fallback if someone calls compute_falloff("crater") directly.
@@ -2386,16 +2378,18 @@ def apply_stamp_to_heightmap(
     if cell_size is None or cell_size <= 0:
         cs_x = tw / max(cols - 1, 1)
         cs_y = td / max(rows - 1, 1)
-        cell_size = (cs_x + cs_y) * 0.5
+        cell_size_f = (cs_x + cs_y) * 0.5
+    else:
+        cell_size_f = float(cell_size)
 
     # Convert world-space stamp center to cell indices.
     terrain_min_x = ox - tw * 0.5
     terrain_min_y = oy - td * 0.5
-    cx_cells = (position[0] - terrain_min_x) / cell_size
-    cy_cells = (position[1] - terrain_min_y) / cell_size
+    cx_cells = (position[0] - terrain_min_x) / cell_size_f
+    cy_cells = (position[1] - terrain_min_y) / cell_size_f
 
     # Stamp radius in cells
-    r_cells = radius / cell_size
+    r_cells = radius / cell_size_f
 
     # Clamp bounding region to valid heightmap indices
     min_r = max(0, int(math.floor(cy_cells - r_cells)))
@@ -2479,7 +2473,7 @@ def apply_stamp_to_heightmap(
     # Write only cells inside the stamp footprint.
     result[min_r:max_r + 1, min_c:max_c + 1] = np.where(inside, new_region, orig_region)
     return result
-def handle_terrain_stamp(params: dict) -> dict:
+def handle_terrain_stamp(params: dict[str, Any]) -> dict[str, Any]:
     """Stamp features onto existing terrain (GAP-28/GAP-10).
 
     The incoming ``position`` is a world-space XY coordinate.  It is
@@ -2631,7 +2625,7 @@ def handle_terrain_stamp(params: dict) -> dict:
 # 7. Object-to-Terrain Snapping (handler only)
 # ---------------------------------------------------------------------------
 
-def handle_snap_to_terrain(params: dict) -> dict:
+def handle_snap_to_terrain(params: dict[str, Any]) -> dict[str, Any]:
     """Snap objects to terrain surface via raycast (GAP-30/GAP-12).
 
     Params:
@@ -2798,7 +2792,7 @@ def flatten_terrain_zone(
 
 def flatten_multiple_zones(
     heightmap: np.ndarray,
-    zones: list[dict],
+    zones: list[dict[str, Any]],
 ) -> np.ndarray:
     """Apply multiple flatten zones in priority order.
 
@@ -2846,7 +2840,7 @@ def flatten_multiple_zones(
     return result
 
 
-def handle_terrain_flatten_zone(params: dict) -> dict:
+def handle_terrain_flatten_zone(params: dict[str, Any]) -> dict[str, Any]:
     """Flatten one or more circular/elliptical zones on a Blender terrain mesh.
 
     Delegates all zone logic to flatten_multiple_zones so no business logic
@@ -2915,7 +2909,10 @@ def handle_terrain_flatten_zone(params: dict) -> dict:
     # Build zone list — support both the legacy single-zone API and the   #
     # new multi-zone list form.                                            #
     # ------------------------------------------------------------------ #
-    raw_zones: list[dict] = params.get("zones", [])
+    raw_zones_raw = params.get("zones", [])
+    raw_zones: list[dict[str, Any]] = (
+        list(raw_zones_raw) if isinstance(raw_zones_raw, list) else []
+    )
     if not raw_zones:
         # Single-zone convenience form — construct a one-element list.
         radius_x = float(params.get("radius_x", span_x * 0.1))
@@ -2963,7 +2960,7 @@ def handle_terrain_flatten_zone(params: dict) -> dict:
     # Translate each zone from world coords to normalised grid coords     #
     # and validate target_height is within tile range.                    #
     # ------------------------------------------------------------------ #
-    norm_zones: list[dict] = []
+    norm_zones: list[dict[str, Any]] = []
     warnings_out: list[str] = []
     for z in raw_zones:
         cx_w   = float(z.get("center_x", (min_x + max_x) * 0.5))
@@ -3059,6 +3056,7 @@ __all__ = [
     "apply_thermal_erosion",
     "compute_stamp_heightmap",
     "apply_stamp_to_heightmap",
+    "_bilinear_sample",
     "flatten_terrain_zone",
     "flatten_multiple_zones",
     # Handler functions — wired into COMMAND_HANDLERS via handlers/__init__.py

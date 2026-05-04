@@ -8,12 +8,18 @@ Run:
     blender --background --python scripts/render_water_visual.py
 """
 
+from __future__ import annotations
+
 import math
 import os
+from typing import Any, TypeAlias
 
 import bpy
 import bmesh
 from mathutils import Vector
+
+Color: TypeAlias = tuple[float, float, float, float]
+Vec3: TypeAlias = tuple[float, float, float]
 
 # ---------------------------------------------------------------------------
 # Output directory
@@ -24,7 +30,7 @@ OUT_DIR = os.path.join(REPO_ROOT, "output", "water_test")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 
-def _set_input(node, name, value):
+def _set_input(node: Any, name: str, value: Any) -> None:
     """Set a shader node input by name, silently skipping missing inputs."""
     inp = node.inputs.get(name)
     if inp is not None:
@@ -88,7 +94,16 @@ terrain_col = bpy.data.collections.new("Terrain")
 scene.collection.children.link(terrain_col)
 
 
-def make_terrain_block(name, x0, x1, y0, y1, z_top, z_bottom, col):
+def make_terrain_block(
+    name: str,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    z_top: float,
+    z_bottom: float,
+    col: Any,
+) -> Any:
     """Create a simple box mesh for a terrain tier."""
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
@@ -161,7 +176,7 @@ DEEP_COLOR    = (0.04, 0.14, 0.18, 1.0)
 GRID_RES = 20
 
 
-def beer_lambert_color(depth_m):
+def beer_lambert_color(depth_m: float) -> Color:
     """RGBA color for given water depth via Beer-Lambert attenuation."""
     t = 1.0 - math.exp(-BEER_K * depth_m)   # 0 = shallow, 1 = deep
     r = SHALLOW_COLOR[0] * (1 - t) + DEEP_COLOR[0] * t
@@ -170,7 +185,17 @@ def beer_lambert_color(depth_m):
     return (r, g, b, 1.0)
 
 
-def make_water_surface(name, x0, x1, y0, y1, z_surface, max_depth_m, grid_res, col):
+def make_water_surface(
+    name: str,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    z_surface: float,
+    max_depth_m: float,
+    grid_res: int,
+    col: Any,
+) -> Any:
     """Subdivided water plane with per-loop Beer-Lambert depth vertex color."""
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
@@ -269,7 +294,15 @@ fall_col = bpy.data.collections.new("Waterfalls")
 scene.collection.children.link(fall_col)
 
 
-def make_waterfall_sheet(name, x0, x1, y_pos, z_top, z_bottom, col):
+def make_waterfall_sheet(
+    name: str,
+    x0: float,
+    x1: float,
+    y_pos: float,
+    z_top: float,
+    z_bottom: float,
+    col: Any,
+) -> Any:
     """Volumetric waterfall sheet: tapered prism with parabolic curve."""
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
@@ -350,7 +383,7 @@ FOAM_STRIPS = [
 FOAM_RES = 16
 
 
-def make_foam_plane(name, x0, x1, y_center, z, col):
+def make_foam_plane(name: str, x0: float, x1: float, y_center: float, z: float, col: Any) -> Any:
     """Foam strip with sine-displacement simulating turbulent surface."""
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
@@ -428,7 +461,17 @@ MIST_ZONES = [
 ]
 
 
-def make_mist_volume(name, x0, x1, y0, y1, z_bot, z_top, density, col):
+def make_mist_volume(
+    name: str,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    z_bot: float,
+    z_top: float,
+    density: float,
+    col: Any,
+) -> Any:
     """Box volume with Principled Volume shader for waterfall mist."""
     mesh = bpy.data.meshes.new(name)
     obj = bpy.data.objects.new(name, mesh)
@@ -472,7 +515,7 @@ cam_col = bpy.data.collections.new("Cameras")
 scene.collection.children.link(cam_col)
 
 
-def add_camera(name, location, look_at, fov_deg=55):
+def add_camera(name: str, location: Vec3, look_at: Vec3, fov_deg: float = 55) -> Any:
     cam_data = bpy.data.cameras.new(name)
     cam_data.lens_unit = "FOV"
     cam_data.angle = math.radians(fov_deg)
@@ -508,7 +551,7 @@ scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode  = "RGBA"
 
 
-def render_camera(cam_obj, output_path):
+def render_camera(cam_obj: Any, output_path: str) -> None:
     scene.camera = cam_obj
     scene.render.filepath = output_path
     bpy.ops.render.render(write_still=True)

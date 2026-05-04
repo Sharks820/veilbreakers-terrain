@@ -6,9 +6,11 @@ Blender/live probe file for wrappers that fail closed when bpy is unavailable.
 
 from __future__ import annotations
 
-import math
 import builtins
-from types import SimpleNamespace
+import math
+from collections.abc import Callable, Mapping, Sequence
+from types import ModuleType, SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -16,6 +18,27 @@ from veilbreakers_terrain.handlers import _bridge_mesh as bridge
 from veilbreakers_terrain.handlers import blender_capability_bridge as bcb
 from veilbreakers_terrain.handlers import vegetation_lsystem as lsys
 from veilbreakers_terrain.handlers import vegetation_system as veg
+
+Vec2 = tuple[float, float]
+Vec3 = tuple[float, float, float]
+JsonDict = dict[str, Any]
+
+
+def _assert_tuple_close(
+    actual: Sequence[float],
+    expected: Sequence[float],
+    *,
+    rel_tol: float = 1e-6,
+    abs_tol: float = 1e-6,
+) -> None:
+    assert len(actual) == len(expected)
+    for actual_value, expected_value in zip(actual, expected):
+        assert math.isclose(
+            actual_value,
+            expected_value,
+            rel_tol=rel_tol,
+            abs_tol=abs_tol,
+        )
 
 
 def test_bridge_mesh_helpers_generate_connected_swept_geometry():
@@ -95,22 +118,32 @@ def test_bridge_mesh_helpers_generate_connected_swept_geometry():
     assert rope_profile["centerline_point_count"] == 2
 
 
-def test_blender_capability_bridge_fails_closed_without_bpy_or_bmesh(monkeypatch):
+def test_blender_capability_bridge_fails_closed_without_bpy_or_bmesh(
+    monkeypatch: pytest.MonkeyPatch,
+):
     real_import = builtins.__import__
 
-    def blocked_import(name, *args, **kwargs):
+    def blocked_import(
+        name: str,
+        globals_: Mapping[str, object] | None = None,
+        locals_: Mapping[str, object] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name in {"bpy", "bmesh"}:
             raise ModuleNotFoundError(f"No module named '{name}'")
-        return real_import(name, *args, **kwargs)
+        return cast(ModuleType, real_import(name, globals_, locals_, fromlist, level))
 
     monkeypatch.setattr(builtins, "__import__", blocked_import)
 
     bpy_mod, bpy_error = bcb._require_bpy()
     assert bpy_mod is None
+    assert bpy_error is not None
     assert bpy_error["error"] == "bpy_unavailable"
 
     bmesh_mod, bmesh_error = bcb._require_bmesh()
     assert bmesh_mod is None
+    assert bmesh_error is not None
     assert bmesh_error["error"] == "bmesh_unavailable"
 
     fake_bpy = SimpleNamespace(data=SimpleNamespace(objects={}))
@@ -128,13 +161,27 @@ def test_blender_capability_bridge_fails_closed_without_bpy_or_bmesh(monkeypatch
 
 
 def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
+    generate_tree = cast(
+        Callable[[dict[str, object]], JsonDict],
+        getattr(lsys, "generate_lsystem_tree"),
+    )
+    generate_impostor = cast(
+        Callable[[dict[str, object]], JsonDict],
+        getattr(lsys, "generate_billboard_impostor"),
+    )
+    prepare_gpu_export = cast(
+        Callable[[dict[str, object]], JsonDict],
+        getattr(lsys, "prepare_gpu_instancing_export"),
+    )
+
     expanded = lsys.expand_lsystem("F", {"F": "F[+F]"}, 2, seed=7)
     assert expanded.count("F") == 4
     rx, ry, rz = lsys._rotate_vector(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, math.pi / 2.0)
     assert abs(rx) < 1e-6
-    assert ry == pytest.approx(1.0)
+    assert math.isclose(ry, 1.0, rel_tol=1e-6)
+    assert math.isclose(rz, 0.0, abs_tol=1e-6)
     heading, right = lsys._reorthogonalize(0.0, 0.0, 2.0, 1.0, 0.0, 0.5)
-    assert heading == pytest.approx((0.0, 0.0, 1.0))
+    _assert_tuple_close(heading, (0.0, 0.0, 1.0))
     assert abs(sum(a * b for a, b in zip(heading, right))) < 1e-6
 
     segments = lsys.interpret_lsystem("F[+F][-F]", segment_length=0.5, seed=3)
@@ -147,18 +194,21 @@ def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
 
     roots = lsys.generate_roots((0.0, 0.0, 0.0), 0.4, num_roots=3, num_segments=3, seed=9)
     assert len(roots) == 9
-    tree = lsys.generate_lsystem_tree(
+    tree = generate_tree(
         {"tree_type": "oak", "iterations": 2, "seed": 11, "ring_segments": 5}
     )
     assert tree["metadata"]["branch_segments"] > 0
     assert tree["vertex_count"] > 0
 
-    tips = [
+    tip_positions = cast(list[Vec3], tree["tip_positions"])
+    tip_directions = cast(list[Vec3], tree["tip_directions"])
+    tip_radii = cast(list[float], tree["tip_radii"])
+    tips: list[dict[str, Any]] = [
         {"position": pos, "direction": direction, "radius": radius}
         for pos, direction, radius in zip(
-            tree["tip_positions"][:4],
-            tree["tip_directions"][:4],
-            tree["tip_radii"][:4],
+            tip_positions[:4],
+            tip_directions[:4],
+            tip_radii[:4],
         )
     ]
     leaves = lsys.generate_leaf_cards(tips, density=1.0, seed=5)
@@ -169,8 +219,11 @@ def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
 
     views = lsys._compute_impostor_atlas_views(8, 3, 3)
     assert len(views) == 9
-    assert lsys._quad_normal((0, 0, 0), (1, 0, 0), (1, 1, 0)) == pytest.approx((0, 0, 1))
-    impostor = lsys.generate_billboard_impostor({"height": 5.0, "width": 2.0, "num_views": 8})
+    _assert_tuple_close(
+        lsys._quad_normal((0, 0, 0), (1, 0, 0), (1, 1, 0)),
+        (0.0, 0.0, 1.0),
+    )
+    impostor = generate_impostor({"height": 5.0, "width": 2.0, "num_views": 8})
     assert impostor["impostor_spec"]["total_views"] == 9
     quat = lsys._euler_deg_to_quaternion(0.0, 0.0, 90.0)
     assert math.isclose(sum(v * v for v in quat), 1.0, rel_tol=1e-6)
@@ -178,8 +231,8 @@ def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
         [{"mesh_name": "oak", "uniform_scale": 2.0}],
         {"oak": 3.0},
     )
-    assert radius == pytest.approx(6.0)
-    gpu = lsys.prepare_gpu_instancing_export(
+    assert math.isclose(radius, 6.0, rel_tol=1e-6)
+    gpu = prepare_gpu_export(
         {
             "instances": [
                 {
@@ -194,7 +247,7 @@ def test_lsystem_tree_pipeline_outputs_mesh_wind_impostor_and_gpu_payloads():
         }
     )
     assert gpu["status"] == "success"
-    assert gpu["bounds_radius"]["oak"] == pytest.approx(3.0)
+    assert math.isclose(gpu["bounds_radius"]["oak"], 3.0, rel_tol=1e-6)
 
 
 def test_vegetation_system_places_lod_instances_and_density_maps():
@@ -234,14 +287,16 @@ def test_vegetation_system_places_lod_instances_and_density_maps():
         def __init__(self) -> None:
             import numpy as np
 
-            self.height = np.zeros((3, 3), dtype=np.float32)
-            self._channels = {"biome_id": np.full((3, 3), 10, dtype=np.uint8)}
-            self.writes = []
+            self.height: Any = np.zeros((3, 3), dtype=np.float32)
+            self._channels: dict[str, Any] = {
+                "biome_id": np.full((3, 3), 10, dtype=np.uint8)
+            }
+            self.writes: list[tuple[str, Any, str]] = []
 
-        def get(self, name):
+        def get(self, name: str) -> Any | None:
             return self._channels.get(name)
 
-        def set(self, name, value, source):
+        def set(self, name: str, value: Any, source: str) -> None:
             self.writes.append((name, value, source))
 
     stack = Stack()
@@ -250,10 +305,17 @@ def test_vegetation_system_places_lod_instances_and_density_maps():
     assert stack.writes and stack.writes[0][0] == "detail_density"
 
 
-def test_vegetation_placement_samples_regular_raster_by_world_axes(monkeypatch):
+def test_vegetation_placement_samples_regular_raster_by_world_axes(
+    monkeypatch: pytest.MonkeyPatch,
+):
     from veilbreakers_terrain.handlers import _scatter_engine
 
-    def _single_point(width, depth, min_distance, seed=0):
+    def _single_point(
+        width: float,
+        depth: float,
+        min_distance: float,
+        seed: int = 0,
+    ) -> list[Vec2]:
         return [(1.6, 2.1)]
 
     monkeypatch.setattr(_scatter_engine, "poisson_disk_sample", _single_point)
@@ -297,14 +359,22 @@ def test_vegetation_placement_samples_regular_raster_by_world_axes(monkeypatch):
     )
 
     assert len(placements) == 1
-    assert placements[0]["position"][:2] == pytest.approx((1.6, 2.1))
-    assert placements[0]["position"][2] == pytest.approx(22.0)
+    position = cast(Vec3, placements[0]["position"])
+    _assert_tuple_close(position[:2], (1.6, 2.1))
+    assert math.isclose(position[2], 22.0, rel_tol=1e-6)
 
 
-def test_vegetation_water_level_rejects_by_world_height_not_normalized(monkeypatch):
+def test_vegetation_water_level_rejects_by_world_height_not_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+):
     from veilbreakers_terrain.handlers import _scatter_engine
 
-    def _single_point(width, depth, min_distance, seed=0):
+    def _single_point(
+        width: float,
+        depth: float,
+        min_distance: float,
+        seed: int = 0,
+    ) -> list[Vec2]:
         return [(1.0, 1.0)]
 
     monkeypatch.setattr(_scatter_engine, "poisson_disk_sample", _single_point)

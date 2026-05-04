@@ -11,10 +11,16 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
+
+
+FloatArray = NDArray[np.floating[Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +279,7 @@ class TestPassFunctionBehavior:
         state = _make_state(tile_size=16)
         pass_generate_high_freq_detail(state, None)
         h = state.mask_stack.hmap_high_freq
+        assert h is not None
         assert h.shape[0] == h.shape[1]  # square tile
 
     def test_pass_composite_hmap_computes_correct_formula(self):
@@ -363,26 +370,40 @@ class TestPassFunctionBehavior:
             state.mask_stack.height,
         )
 
-    def test_pass_erosion_quality_profile_controls_iteration_budget(self, monkeypatch):
+    def test_pass_erosion_quality_profile_controls_iteration_budget(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """AAA quality profiles must drive erosion cost/quality, not dead config."""
-        from types import SimpleNamespace
-
         import veilbreakers_terrain.handlers._terrain_world as world_mod
 
         hydraulic_iterations: list[int] = []
         thermal_iterations: list[int] = []
 
-        def fake_analytical(height, cfg, seed, cell_size):
+        def fake_analytical(
+            height: FloatArray,
+            cfg: object,
+            seed: int,
+            cell_size: float,
+        ) -> SimpleNamespace:
             return SimpleNamespace(
-                height_delta=np.zeros_like(height, dtype=np.float32),
-                ridge_map=np.zeros_like(height, dtype=np.float32),
+                height_delta=cast(FloatArray, np.zeros_like(height, dtype=np.float32)),
+                ridge_map=cast(FloatArray, np.zeros_like(height, dtype=np.float32)),
             )
 
-        def fake_hydraulic(height, iterations, seed, hero_exclusion, erodibility_map):
+        def fake_hydraulic(
+            height: FloatArray,
+            iterations: int = 1000,
+            seed: int = 0,
+            *,
+            hero_exclusion: FloatArray | None = None,
+            erodibility_map: FloatArray | None = None,
+            **_kwargs: object,
+        ) -> SimpleNamespace:
             hydraulic_iterations.append(int(iterations))
-            zeros = np.zeros_like(height, dtype=np.float32)
+            zeros = cast(FloatArray, np.zeros_like(height, dtype=np.float32))
             return SimpleNamespace(
-                height=np.asarray(height, dtype=np.float32),
+                height=cast(FloatArray, np.asarray(height, dtype=np.float32)),
                 erosion_amount=zeros,
                 deposition_amount=zeros,
                 wetness=zeros,
@@ -392,12 +413,23 @@ class TestPassFunctionBehavior:
                 pool_deepening_delta=zeros,
             )
 
-        def fake_thermal(height, iterations, talus_angle, cell_size):
+        def fake_thermal(
+            height: FloatArray,
+            iterations: int = 10,
+            talus_angle: float = 32.0,
+            cell_size: float = 1.0,
+        ) -> SimpleNamespace:
             thermal_iterations.append(int(iterations))
             return SimpleNamespace(
-                height=np.asarray(height, dtype=np.float32),
-                talus=np.zeros_like(height, dtype=np.float32),
+                height=cast(FloatArray, np.asarray(height, dtype=np.float32)),
+                talus=cast(FloatArray, np.zeros_like(height, dtype=np.float32)),
             )
+
+        def fake_stream_power_erosion(
+            height: FloatArray,
+            **_kwargs: object,
+        ) -> FloatArray:
+            return cast(FloatArray, np.asarray(height, dtype=np.float32))
 
         monkeypatch.setattr(world_mod, "apply_analytical_erosion", fake_analytical)
         monkeypatch.setattr(world_mod, "apply_hydraulic_erosion_masks", fake_hydraulic)
@@ -405,7 +437,7 @@ class TestPassFunctionBehavior:
         monkeypatch.setattr(
             world_mod,
             "compute_stream_power_erosion",
-            lambda height, **_kwargs: np.asarray(height, dtype=np.float32),
+            fake_stream_power_erosion,
         )
 
         mobile = _make_state()
@@ -438,7 +470,9 @@ class TestPassFunctionBehavior:
         controller.run_pipeline(pass_sequence=["macro_world"], checkpoint=False)
 
         np.testing.assert_allclose(state.mask_stack.height[0, :], 7.0)
-        np.testing.assert_allclose(state.mask_stack.hmap_low_freq[0, :], 7.0)
+        low_freq = state.mask_stack.hmap_low_freq
+        assert low_freq is not None
+        np.testing.assert_allclose(low_freq[0, :], 7.0)
 
     def test_constants_declared(self):
         from veilbreakers_terrain.handlers._terrain_world import (

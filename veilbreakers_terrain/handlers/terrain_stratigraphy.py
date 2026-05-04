@@ -28,11 +28,12 @@ Pure numpy, no bpy. Z-up, world meters. All seeding is deterministic via
 
 from __future__ import annotations
 
-import json
 import math
 import time
+import importlib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Optional, TypedDict, cast
 
 import numpy as np
 
@@ -43,6 +44,12 @@ from .terrain_semantics import (
     TerrainPipelineState,
     ValidationIssue,
 )
+
+
+class StrataCrossSection(TypedDict):
+    layer_table: list[dict[str, object]]
+    surface_material_id: list[list[int]]
+    tile_metadata: dict[str, int | float]
 
 
 def _rng_from_pass_seed(
@@ -94,7 +101,7 @@ class StratigraphyLayer:
     azimuth_rad: float = 0.0
     rock_type: str = "sedimentary"
     age_ma: float = 0.0
-    color_rgb: Tuple[float, float, float] = (0.5, 0.5, 0.5)
+    color_rgb: tuple[float, float, float] = (0.5, 0.5, 0.5)
     strike_angle_rad: float = 0.0
     color_hex: str = "#888888"
 
@@ -133,7 +140,9 @@ class StratigraphyStack:
     """
 
     base_elevation_m: float = 0.0
-    layers: List[StratigraphyLayer] = field(default_factory=list)
+    layers: list[StratigraphyLayer] = field(
+        default_factory=lambda: list[StratigraphyLayer]()
+    )
 
     def total_thickness(self) -> float:
         return float(sum(L.thickness_m for L in self.layers))
@@ -174,12 +183,11 @@ def compute_strata_orientation(
     Horizontal strata (dip = 0) yield ``(0, 0, 1)``; dipped strata tilt
     proportionally in the azimuth direction.
     """
-    if stack.height is None:
-        raise ValueError("compute_strata_orientation requires stack.height")
     if not strat_stack.layers:
         raise ValueError("StratigraphyStack must have at least one layer")
 
-    h = np.asarray(stack.height, dtype=np.float64)
+    height = stack.height
+    h = np.asarray(height, dtype=np.float64)
     H, W = h.shape
     orientation = np.zeros((H, W, 3), dtype=np.float32)
 
@@ -229,12 +237,11 @@ def compute_rock_hardness(
     inside harder layers carry higher values, so downstream passes
     (erosion, cliffs) can modulate their rates.
     """
-    if stack.height is None:
-        raise ValueError("compute_rock_hardness requires stack.height")
     if not strat_stack.layers:
         raise ValueError("StratigraphyStack must have at least one layer")
 
-    h = np.asarray(stack.height, dtype=np.float64)
+    height = stack.height
+    h = np.asarray(height, dtype=np.float64)
     thicks = np.array([L.thickness_m for L in strat_stack.layers], dtype=np.float64)
     bounds = np.concatenate(([0.0], np.cumsum(thicks)))
     hardness_vals = np.array(
@@ -309,11 +316,9 @@ def apply_differential_erosion(
             "apply_differential_erosion requires stack.rock_hardness "
             "(call compute_rock_hardness first)"
         )
-    if stack.height is None:
-        raise ValueError("apply_differential_erosion requires stack.height")
-
     hardness = np.asarray(stack.rock_hardness, dtype=np.float64)
-    h = np.asarray(stack.height, dtype=np.float64)
+    height = stack.height
+    h = np.asarray(height, dtype=np.float64)
     H, W = hardness.shape
 
     # ------------------------------------------------------------------
@@ -322,8 +327,11 @@ def apply_differential_erosion(
     #    Vectorised 3×3 mean via uniform_filter (no Python neighbourhood loop).
     # ------------------------------------------------------------------
     try:
-        from scipy.ndimage import uniform_filter as _uf
-        neighbourhood_mean = _uf(h, size=3, mode="nearest")
+        scipy_ndimage = importlib.import_module("scipy.ndimage")
+        uniform_filter = getattr(scipy_ndimage, "uniform_filter")
+        neighbourhood_mean = np.asarray(
+            uniform_filter(h, size=3, mode="nearest"), dtype=np.float64
+        )
     except ImportError:
         # Pure-numpy fallback: accumulate all 9 shifts without Python loop.
         # Shape: (9, H, W) stacked shifts, mean over axis 0.
@@ -431,10 +439,8 @@ def simulate_fold_deformation(
     Returns:
         (H, W) float64 delta array of the applied deformation.
     """
-    if stack.height is None:
-        raise ValueError("simulate_fold_deformation requires stack.height")
-
-    h = np.asarray(stack.height, dtype=np.float64)
+    height = stack.height
+    h = np.asarray(height, dtype=np.float64)
     H, W = h.shape
 
     if rng is None:
@@ -471,7 +477,7 @@ def simulate_fold_deformation(
 
     delta = amplitude_m * sin_term * exp_decay  # (H, W)
 
-    stack.set("height", (h + delta).astype(stack.height.dtype), "stratigraphy")
+    stack.set("height", (h + delta).astype(height.dtype), "stratigraphy")
     return delta.astype(np.float64)
 
 
@@ -507,13 +513,11 @@ def detect_unconformities(
     Returns:
         (H, W) float32 unconformity mask in [0, 1].
     """
-    if stack.height is None:
-        raise ValueError("detect_unconformities requires stack.height")
+    height = stack.height
     if not strat_stack.layers:
-        return np.zeros(stack.height.shape, dtype=np.float32)
+        return np.zeros(height.shape, dtype=np.float32)
 
-    h = np.asarray(stack.height, dtype=np.float64)
-    H, W = h.shape
+    h = np.asarray(height, dtype=np.float64)
     erosion_depth = np.abs(np.asarray(erosion_delta, dtype=np.float64))
 
     # Build per-layer thickness array indexed by layer idx
@@ -549,7 +553,7 @@ def simulate_intrusions(
     *,
     rng: Optional[np.random.Generator] = None,
     n_intrusions: int = 3,
-    width_range_m: Tuple[float, float] = (0.5, 5.0),
+    width_range_m: tuple[float, float] = (0.5, 5.0),
     albedo_iron_stain_strength: float = 0.3,
 ) -> np.ndarray:
     """Simulate igneous dike/intrusion features (AAA req #4).
@@ -581,10 +585,8 @@ def simulate_intrusions(
     Returns:
         (H, W) float32 intrusion_mask.
     """
-    if stack.height is None:
-        raise ValueError("simulate_intrusions requires stack.height")
-
-    h = np.asarray(stack.height, dtype=np.float64)
+    height = stack.height
+    h = np.asarray(height, dtype=np.float64)
     H, W = h.shape
 
     if rng is None:
@@ -660,7 +662,7 @@ def simulate_intrusions(
 def export_strata_cross_section(
     stack: TerrainMaskStack,
     strat_stack: StratigraphyStack,
-) -> Dict:
+) -> StrataCrossSection:
     """Build strata cross-section dict for Unity material assignment (AAA req #6).
 
     Produces a JSON-serialisable dictionary (and stores it on stack as the
@@ -695,13 +697,11 @@ def export_strata_cross_section(
         dict with keys ``layer_table``, ``surface_material_id``,
         ``tile_metadata``.
     """
-    if stack.height is None:
-        raise ValueError("export_strata_cross_section requires stack.height")
-
-    h = np.asarray(stack.height, dtype=np.float64)
+    height = stack.height
+    h = np.asarray(height, dtype=np.float64)
 
     # Build stable material_id mapping (index in layers list)
-    layer_table = []
+    layer_table: list[dict[str, object]] = []
     for mat_id, L in enumerate(strat_stack.layers):
         layer_table.append({
             "layer_id":    L.layer_id,
@@ -725,9 +725,9 @@ def export_strata_cross_section(
     else:
         surface_mat_id = np.zeros(h.shape, dtype=np.int32)
 
-    cross_section = {
+    cross_section: StrataCrossSection = {
         "layer_table": layer_table,
-        "surface_material_id": surface_mat_id.tolist(),
+        "surface_material_id": cast(list[list[int]], surface_mat_id.tolist()),
         "tile_metadata": {
             "tile_size":     stack.tile_size,
             "cell_size":     stack.cell_size,
@@ -753,7 +753,7 @@ def export_strata_cross_section(
 
 # Built-in material table with full geological attributes.
 # Each entry: (hardness, rock_type, age_ma, color_rgb)
-_MATERIAL_TABLE: Dict[str, Tuple[float, str, float, Tuple[float, float, float]]] = {
+_MATERIAL_TABLE: dict[str, tuple[float, str, float, tuple[float, float, float]]] = {
     "soil":               (0.10, "sedimentary",  0.0,    (0.50, 0.38, 0.25)),
     "peat":               (0.08, "sedimentary",  0.0,    (0.22, 0.18, 0.10)),
     "gravel":             (0.18, "sedimentary",  1.0,    (0.62, 0.58, 0.50)),
@@ -781,8 +781,39 @@ _MATERIAL_TABLE: Dict[str, Tuple[float, str, float, Tuple[float, float, float]]]
 }
 
 
+def _rgb_triplet(value: object) -> tuple[float, float, float]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        values = list(cast(Sequence[object], value))
+        if len(values) >= 3:
+            return (_to_float(values[0]), _to_float(values[1]), _to_float(values[2]))
+    return (0.5, 0.5, 0.5)
+
+
+def _to_float(value: object) -> float:
+    return float(cast(Any, value))
+
+
+def _to_int(value: object) -> int:
+    return int(cast(Any, value))
+
+
+def _layer_from_mapping(spec: Mapping[str, object]) -> StratigraphyLayer:
+    return StratigraphyLayer(
+        layer_id=str(spec["layer_id"]),
+        hardness=_to_float(spec["hardness"]),
+        thickness_m=_to_float(spec["thickness_m"]),
+        dip_rad=_to_float(spec.get("dip_rad", 0.0)),
+        azimuth_rad=_to_float(spec.get("azimuth_rad", 0.0)),
+        rock_type=str(spec.get("rock_type", "sedimentary")),
+        age_ma=_to_float(spec.get("age_ma", 0.0)),
+        color_rgb=_rgb_triplet(spec.get("color_rgb", (0.5, 0.5, 0.5))),
+        strike_angle_rad=_to_float(spec.get("strike_angle_rad", 0.0)),
+        color_hex=str(spec.get("color_hex", "#888888")),
+    )
+
+
 def _default_strat_stack_from_hints(
-    hints: dict,
+    hints: Mapping[str, object],
     *,
     rng: Optional[np.random.Generator] = None,
 ) -> StratigraphyStack:
@@ -825,23 +856,41 @@ def _default_strat_stack_from_hints(
     if rng is None:
         rng = _rng_from_pass_seed(0, "stratigraphy_stack_default")
 
-    base = float(hints.get("stratigraphy_base_elevation_m", -50.0))
-    dip_variation = float(hints.get("strata_dip_variation_rad", 0.087))  # ±5°
+    base = _to_float(hints.get("stratigraphy_base_elevation_m", -50.0))
+    dip_variation = _to_float(hints.get("strata_dip_variation_rad", 0.087))  # ±5°
 
     # --- Explicit layer list wins outright --------------------------------
-    user_layers = hints.get("stratigraphy_layers")
-    if user_layers:
-        layers = [StratigraphyLayer(**L) for L in user_layers]
-        return StratigraphyStack(base_elevation_m=base, layers=layers)
+    user_layers_raw = hints.get("stratigraphy_layers")
+    if (
+        isinstance(user_layers_raw, Sequence)
+        and not isinstance(user_layers_raw, (str, bytes))
+    ):
+        user_layers = cast(Sequence[object], user_layers_raw)
+        if len(user_layers) == 0:
+            user_layers = ()
+        layers = [
+            _layer_from_mapping(cast(Mapping[str, object], layer_spec))
+            for layer_spec in user_layers
+            if isinstance(layer_spec, Mapping)
+        ]
+        if layers:
+            return StratigraphyStack(base_elevation_m=base, layers=layers)
 
     # --- strata_materials + strata_spacing --------------------------------
-    strata_materials = hints.get("strata_materials")
-    if strata_materials:
-        spacing = float(hints.get("strata_spacing", 30.0))
+    strata_materials_raw = hints.get("strata_materials")
+    if (
+        isinstance(strata_materials_raw, Sequence)
+        and not isinstance(strata_materials_raw, (str, bytes))
+    ):
+        strata_materials = cast(Sequence[object], strata_materials_raw)
+        if len(strata_materials) == 0:
+            strata_materials = ()
+        spacing = _to_float(hints.get("strata_spacing", 30.0))
         if spacing <= 0.0:
             spacing = 30.0
-        layers: List[StratigraphyLayer] = []
+        layers: list[StratigraphyLayer] = []
         for i, mat in enumerate(strata_materials):
+            strike = float(rng.uniform(0.0, np.pi))
             if isinstance(mat, str):
                 name = mat
                 entry = _MATERIAL_TABLE.get(name.lower())
@@ -850,20 +899,21 @@ def _default_strat_stack_from_hints(
                 age_ma    = entry[2] if entry else float(i * 50)
                 color_rgb = entry[3] if entry else (0.5, 0.5, 0.5)
                 thickness = spacing
-            elif isinstance(mat, dict):
-                name = mat.get("name", f"layer_{i}")
+            elif isinstance(mat, Mapping):
+                mat_mapping = cast(Mapping[str, object], mat)
+                name = str(mat_mapping.get("name", f"layer_{i}"))
                 entry = _MATERIAL_TABLE.get(name.lower())
-                hardness  = float(mat.get("hardness",
+                hardness  = _to_float(mat_mapping.get("hardness",
                                   entry[0] if entry else 0.5))
-                rock_type = mat.get("rock_type",
-                                    entry[1] if entry else "sedimentary")
-                age_ma    = float(mat.get("age_ma",
+                rock_type = str(mat_mapping.get("rock_type",
+                                    entry[1] if entry else "sedimentary"))
+                age_ma    = _to_float(mat_mapping.get("age_ma",
                                   entry[2] if entry else float(i * 50)))
-                raw_rgb   = mat.get("color_rgb",
+                raw_rgb   = mat_mapping.get("color_rgb",
                                     entry[3] if entry else (0.5, 0.5, 0.5))
-                color_rgb = tuple(float(c) for c in raw_rgb[:3])
-                thickness = float(mat.get("thickness_m", spacing))
-                strike    = float(mat.get("strike_angle_rad", 0.0))
+                color_rgb = _rgb_triplet(raw_rgb)
+                thickness = _to_float(mat_mapping.get("thickness_m", spacing))
+                strike    = _to_float(mat_mapping.get("strike_angle_rad", 0.0))
             else:
                 continue
 
@@ -880,10 +930,7 @@ def _default_strat_stack_from_hints(
                     rock_type=rock_type,
                     age_ma=age_ma,
                     color_rgb=color_rgb,
-                    strike_angle_rad=(
-                        strike if isinstance(mat, dict) else
-                        float(rng.uniform(0.0, np.pi))
-                    ),
+                    strike_angle_rad=strike,
                 )
             )
         if layers:
@@ -975,9 +1022,9 @@ def pass_stratigraphy(
     """
     t0 = time.perf_counter()
     stack = state.mask_stack
-    issues: List[ValidationIssue] = []
+    issues: list[ValidationIssue] = []
 
-    hints = dict(state.intent.composition_hints) if state.intent else {}
+    hints: dict[str, object] = dict(state.intent.composition_hints) if state.intent else {}
 
     # Derive deterministic per-stage seeds for this pass.
     seed = int(state.intent.seed) if state.intent else 0
@@ -1004,17 +1051,17 @@ def pass_stratigraphy(
         fold_delta = simulate_fold_deformation(
             stack, strat_stack,
             rng=_rng_from_pass_seed(seed, "stratigraphy_fold", tile_x, tile_y, region),
-            amplitude_m=float(fold_amplitude) if fold_amplitude is not None else None,
-            wavelength_m=float(fold_wavelength) if fold_wavelength is not None else None,
-            phase_rad=float(fold_phase) if fold_phase is not None else None,
+            amplitude_m=_to_float(fold_amplitude) if fold_amplitude is not None else None,
+            wavelength_m=_to_float(fold_wavelength) if fold_wavelength is not None else None,
+            phase_rad=_to_float(fold_phase) if fold_phase is not None else None,
         )
         # Re-compute hardness after fold (elevation bands have shifted)
         hardness = compute_rock_hardness(stack, strat_stack)
         stack.set("rock_hardness", hardness, "stratigraphy")
 
     # --- 4. Hardness-coupled differential erosion -------------------------
-    max_erosion_frac   = float(hints.get("erosion_max_fraction", 0.12))
-    undercut_strength  = float(hints.get("erosion_undercutting_strength", 0.4))
+    max_erosion_frac   = _to_float(hints.get("erosion_max_fraction", 0.12))
+    undercut_strength  = _to_float(hints.get("erosion_undercutting_strength", 0.4))
 
     erosion_delta = apply_differential_erosion(
         stack,
@@ -1024,12 +1071,13 @@ def pass_stratigraphy(
     )
     stack.set("strat_erosion_delta", erosion_delta, "stratigraphy")
     sediment_height = np.maximum(-np.asarray(erosion_delta, dtype=np.float32), 0.0)
+    height = stack.height
     bedrock_height = (
-        np.asarray(stack.height, dtype=np.float32) - sediment_height
+        np.asarray(height, dtype=np.float32) - sediment_height
     ).astype(np.float32)
     stack.set("sediment_height", sediment_height, "stratigraphy")
     stack.set("bedrock_height", bedrock_height, "stratigraphy")
-    stack.set("strata_height", np.asarray(stack.height, dtype=np.float32), "stratigraphy")
+    stack.set("strata_height", np.asarray(height, dtype=np.float32), "stratigraphy")
 
     # --- 5. Unconformity detection ----------------------------------------
     unconformity_mask = detect_unconformities(stack, strat_stack, erosion_delta)
@@ -1037,10 +1085,10 @@ def pass_stratigraphy(
     # --- 6. Igneous intrusions / dikes -----------------------------------
     intrusion_enabled = bool(hints.get("intrusions_enabled", True))
     if intrusion_enabled:
-        n_int = int(hints.get("intrusion_count", 3))
-        w_min = float(hints.get("intrusion_width_min_m", 0.5))
-        w_max = float(hints.get("intrusion_width_max_m", 5.0))
-        iron_strength = float(hints.get("intrusion_iron_stain", 0.3))
+        n_int = _to_int(hints.get("intrusion_count", 3))
+        w_min = _to_float(hints.get("intrusion_width_min_m", 0.5))
+        w_max = _to_float(hints.get("intrusion_width_max_m", 5.0))
+        iron_strength = _to_float(hints.get("intrusion_iron_stain", 0.3))
         simulate_intrusions(
             stack, strat_stack,
             rng=_rng_from_pass_seed(seed, "stratigraphy_intrusion", tile_x, tile_y, region),
@@ -1051,12 +1099,12 @@ def pass_stratigraphy(
     else:
         stack.set(
             "intrusion_mask",
-            np.zeros_like(np.asarray(stack.height, dtype=np.float32)),
+            np.zeros_like(np.asarray(height, dtype=np.float32)),
             "stratigraphy",
         )
         stack.set(
             "albedo_shift_rgb",
-            np.zeros((*np.asarray(stack.height).shape, 3), dtype=np.float32),
+            np.zeros((*np.asarray(height).shape, 3), dtype=np.float32),
             "stratigraphy",
         )
 
@@ -1067,7 +1115,7 @@ def pass_stratigraphy(
     issues.extend(validate_strata_consistency(stack))
 
     # --- Metrics ----------------------------------------------------------
-    unconformity_frac = float(unconformity_mask.mean()) if unconformity_mask is not None else 0.0
+    unconformity_frac = float(unconformity_mask.mean())
     intrusion_mask_arr = stack.get("intrusion_mask")
     intrusion_coverage = float(intrusion_mask_arr.mean()) if intrusion_mask_arr is not None else 0.0
 

@@ -17,15 +17,15 @@ from __future__ import annotations
 import csv
 import builtins
 import sys
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from types import SimpleNamespace, ModuleType
-from typing import Any, Dict, List
+from typing import Any, cast
 
 import pytest
 
 from veilbreakers_terrain.handlers import COMMAND_HANDLERS
 from veilbreakers_terrain.src.veilbreakers_mcp.blender_server import (
-    _LOC_HANDLERS,
     dispatch,
     resolve_command,
 )
@@ -117,15 +117,21 @@ def test_blender_capability_audit_has_full_coverage() -> None:
         assert cmd in blob, f"audit CSV doesn't mention {cmd}"
 
 
-def test_dispatch_returns_error_when_bpy_missing(monkeypatch) -> None:
+def test_dispatch_returns_error_when_bpy_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without bpy, the bridge returns a structured bpy_unavailable error."""
     monkeypatch.delitem(sys.modules, "bpy", raising=False)
     real_import = builtins.__import__
 
-    def _block_bpy_import(name, globals=None, locals=None, fromlist=(), level=0):
+    def _block_bpy_import(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name == "bpy":
             raise ModuleNotFoundError("No module named 'bpy'")
-        return real_import(name, globals, locals, fromlist, level)
+        return cast(ModuleType, real_import(name, globals, locals, fromlist, level))
 
     monkeypatch.setattr(builtins, "__import__", _block_bpy_import)
     r = dispatch("modifier_list", {"object_name": "foo"})
@@ -144,8 +150,8 @@ class _FakeSocket:
         return id(self)
 
 
-class _FakeSocketCollection(list):
-    def get(self, name: str) -> Any:
+class _FakeSocketCollection(list[_FakeSocket]):
+    def get(self, name: str) -> _FakeSocket | None:
         for s in self:
             if s.name == name:
                 return s
@@ -171,7 +177,7 @@ class _FakeNode:
 
 class _FakeNodeCollection:
     def __init__(self) -> None:
-        self._items: List[_FakeNode] = []
+        self._items: list[_FakeNode] = []
 
     def new(self, bl_idname: str) -> _FakeNode:
         # Replicate Blender's auto-naming for Input/Output.
@@ -188,13 +194,13 @@ class _FakeNodeCollection:
         self._items.append(node)
         return node
 
-    def get(self, name: str) -> Any:
+    def get(self, name: str) -> _FakeNode | None:
         for n in self._items:
             if n.name == name:
                 return n
         return None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_FakeNode]:
         return iter(self._items)
 
     def __len__(self) -> int:
@@ -212,11 +218,11 @@ class _FakeLink:
 
 class _FakeLinkCollection:
     def __init__(self) -> None:
-        self._items: List[_FakeLink] = []
+        self._items: list[_FakeLink] = []
 
     def new(self, src: _FakeSocket, dst: _FakeSocket) -> _FakeLink:
         # Find parent nodes for the sockets
-        parents: Dict[int, _FakeNode] = {}
+        parents: dict[int, _FakeNode] = {}
         for node in self._all_nodes:
             for s in list(node.inputs) + list(node.outputs):
                 parents[id(s)] = node
@@ -224,14 +230,18 @@ class _FakeLinkCollection:
         self._items.append(link)
         return link
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_FakeLink]:
         return iter(self._items)
 
     def __len__(self) -> int:
         return len(self._items)
 
     # hook set later
-    _all_nodes: List[_FakeNode] = []
+    _all_nodes: list[_FakeNode] = []
+
+
+def _fake_new_socket(**kwargs: object) -> SimpleNamespace:
+    return SimpleNamespace(**kwargs)
 
 
 class _FakeNodeGroup:
@@ -244,20 +254,20 @@ class _FakeNodeGroup:
         self.links._all_nodes = self.nodes._items  # type: ignore[attr-defined]
         # Blender 4.x interface
         self.interface = SimpleNamespace(
-            new_socket=lambda **kw: SimpleNamespace(**kw)
+            new_socket=_fake_new_socket
         )
 
 
 class _FakeNodeGroupCollection:
     def __init__(self) -> None:
-        self._items: Dict[str, _FakeNodeGroup] = {}
+        self._items: dict[str, _FakeNodeGroup] = {}
 
     def new(self, name: str, type: str) -> _FakeNodeGroup:  # noqa: A002
         group = _FakeNodeGroup(name, type)
         self._items[name] = group
         return group
 
-    def get(self, name: str) -> Any:
+    def get(self, name: str) -> _FakeNodeGroup | None:
         return self._items.get(name)
 
     def __contains__(self, name: str) -> bool:
@@ -266,12 +276,19 @@ class _FakeNodeGroupCollection:
 
 class _FakeMesh:
     def __init__(self) -> None:
-        self.vertices: List[Any] = []
-        self.polygons: List[Any] = []
-        self.materials: List[Any] = []
+        self.name = ""
+        self.vertices: list[SimpleNamespace] = []
+        self.polygons: list[SimpleNamespace] = []
+        self.materials: list[_FakeMaterial] = []
         self.attributes = _FakeAttributeCollection()
 
-    def from_pydata(self, verts, edges, faces) -> None:
+    def from_pydata(
+        self,
+        verts: Iterable[Sequence[float]],
+        edges: Iterable[Sequence[int]],
+        faces: Iterable[Sequence[int]],
+    ) -> None:
+        _ = edges
         self.vertices = [SimpleNamespace(co=v) for v in verts]
         self.polygons = [
             SimpleNamespace(vertices=tuple(face), use_smooth=False)
@@ -283,7 +300,7 @@ class _FakeMesh:
         return None
 
 
-class _FakeMeshCollection(dict):
+class _FakeMeshCollection(dict[str, _FakeMesh]):
     def new(self, name: str) -> _FakeMesh:
         mesh = _FakeMesh()
         mesh.name = name
@@ -296,8 +313,8 @@ class _FakeAttributeDatum:
         self.value = 0.0
 
 
-class _FakeAttributeData(list):
-    def foreach_set(self, attr: str, values: Any) -> None:
+class _FakeAttributeData(list[_FakeAttributeDatum]):
+    def foreach_set(self, attr: str, values: Iterable[float]) -> None:
         if attr != "value":
             raise AttributeError(attr)
         for datum, value in zip(self, values):
@@ -307,12 +324,18 @@ class _FakeAttributeData(list):
 class _FakeAttribute:
     def __init__(self, name: str, count: int) -> None:
         self.name = name
+        self.type = ""
+        self.domain = ""
         self.data = _FakeAttributeData(_FakeAttributeDatum() for _ in range(count))
 
 
-class _FakeAttributeCollection(dict):
+class _FakeAttributeCollection(dict[str, _FakeAttribute]):
+    def __init__(self) -> None:
+        super().__init__()
+        self._vertex_count = 0
+
     def new(self, name: str, type: str, domain: str) -> _FakeAttribute:  # noqa: A002
-        attr = _FakeAttribute(name, getattr(self, "_vertex_count", 0))
+        attr = _FakeAttribute(name, self._vertex_count)
         attr.type = type
         attr.domain = domain
         self[name] = attr
@@ -322,14 +345,18 @@ class _FakeAttributeCollection(dict):
         self.pop(attr.name, None)
 
 
+def _noop_link(_: object) -> None:
+    return None
+
+
 class _FakeCollection:
     def __init__(self, name: str) -> None:
         self.name = name
-        self.objects = SimpleNamespace(link=lambda obj: None)
-        self.children = SimpleNamespace(link=lambda coll: None)
+        self.objects = SimpleNamespace(link=_noop_link)
+        self.children = SimpleNamespace(link=_noop_link)
 
 
-class _FakeCollectionCollection(dict):
+class _FakeCollectionCollection(dict[str, _FakeCollection]):
     def new(self, name: str) -> _FakeCollection:
         coll = _FakeCollection(name)
         self[name] = coll
@@ -345,14 +372,14 @@ class _FakeModifier:
 
 class _FakeModifierCollection:
     def __init__(self) -> None:
-        self._items: List[_FakeModifier] = []
+        self._items: list[_FakeModifier] = []
 
     def new(self, name: str, type: str) -> _FakeModifier:  # noqa: A002
         mod = _FakeModifier(name, type)
         self._items.append(mod)
         return mod
 
-    def get(self, name: str) -> Any:
+    def get(self, name: str) -> _FakeModifier | None:
         for m in self._items:
             if m.name == name:
                 return m
@@ -361,7 +388,7 @@ class _FakeModifierCollection:
     def __contains__(self, name: str) -> bool:
         return self.get(name) is not None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_FakeModifier]:
         return iter(self._items)
 
 
@@ -373,14 +400,11 @@ class _FakeMaterial:
         self.node_tree = SimpleNamespace(nodes={})
 
 
-class _FakeMaterialCollection(dict):
+class _FakeMaterialCollection(dict[str, _FakeMaterial]):
     def new(self, name: str) -> _FakeMaterial:
         mat = _FakeMaterial(name)
         self[name] = mat
         return mat
-
-    def get(self, name: str, default=None) -> Any:  # type: ignore[override]
-        return super().get(name, default)
 
 
 class _FakeDataBlock:
@@ -392,7 +416,7 @@ class _FakeDataBlock:
         self.lens = 35.0
 
 
-class _FakeDataBlockCollection(dict):
+class _FakeDataBlockCollection(dict[str, _FakeDataBlock]):
     def __init__(self, type_: str) -> None:
         super().__init__()
         self._type = type_
@@ -413,14 +437,11 @@ class _FakeObject:
         self.rotation_euler = (0.0, 0.0, 0.0)
         self.scale = (1.0, 1.0, 1.0)
         self.dimensions = (1.0, 1.0, 1.0)
-        self.bound_box = []
-        self.parent = None
+        self.bound_box: list[object] = []
+        self.parent: _FakeObject | None = None
 
 
-class _FakeObjectCollection(dict):
-    def get(self, name: str, default=None) -> Any:  # type: ignore[override]
-        return super().get(name, default)
-
+class _FakeObjectCollection(dict[str, _FakeObject]):
     def new(self, name: str, data: Any) -> _FakeObject:
         type_ = "EMPTY" if data is None else getattr(data, "type", "MESH")
         if type_ in {"AREA", "POINT", "SPOT", "SUN"}:
@@ -485,8 +506,8 @@ def _install_fake_bpy(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     fake_bpy.context = SimpleNamespace(  # type: ignore[attr-defined]
         scene=SimpleNamespace(
             collection=SimpleNamespace(
-                objects=SimpleNamespace(link=lambda obj: None),
-                children=SimpleNamespace(link=lambda c: None),
+                objects=SimpleNamespace(link=_noop_link),
+                children=SimpleNamespace(link=_noop_link),
             ),
             render=SimpleNamespace(engine="BLENDER_EEVEE_NEXT"),
         ),
@@ -539,8 +560,9 @@ def test_geometry_nodes_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
         "modifier_name": "GeometryNodes",
     })
     assert r["status"] == "ok", r
-    assert obj.modifiers.get("GeometryNodes") is not None
-    assert obj.modifiers.get("GeometryNodes").node_group.name == "gn_test"
+    modifier = obj.modifiers.get("GeometryNodes")
+    assert modifier is not None
+    assert modifier.node_group.name == "gn_test"
 
     # 5. Dump and assert structural integrity
     r = dispatch("gn_dump", {"group_name": "gn_test"})

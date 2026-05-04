@@ -117,7 +117,7 @@ def bake_foam_vertex_alpha(
     return saturate(result)
 
 
-def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict]":
+def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict[str, Any]]":
     """Build a list of per-vertex dicts for water mesh export (Fix 13.1).
 
     Each dict has:
@@ -128,13 +128,18 @@ def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict]":
     else zeros (documented fallback per CONTEXT.md Claude's Discretion).
     flow_speed is taken from stack.get("flow_speed") if available, else zeros.
     """
-    height = stack.height if stack.height is not None else np.zeros((2, 2), dtype=np.float32)
+    height = np.asarray(stack.height, dtype=np.float32)
     rows, cols = height.shape
 
     # Approximate obstacle_proximity from rock_mask EDT if available
-    if hasattr(stack, "rock_mask") and stack.rock_mask is not None:
+    rock_mask_raw = stack.get("rock_mask") if hasattr(stack, "get") else None
+    if rock_mask_raw is not None:
         from scipy.ndimage import distance_transform_edt
-        obstacle_prox = distance_transform_edt(stack.rock_mask == 0).astype(np.float32)
+        rock_mask = np.asarray(rock_mask_raw, dtype=np.float32)
+        obstacle_prox = np.asarray(
+            distance_transform_edt(rock_mask == 0),
+            dtype=np.float32,
+        )
         cell_size = float(getattr(stack, "cell_size", 1.0))
         obstacle_prox = obstacle_prox * cell_size
     else:
@@ -144,9 +149,12 @@ def export_water_mesh_vertices(stack: "TerrainMaskStack") -> "List[dict]":
     if flow_speed_field is None:
         flow_speed_field = np.zeros((rows, cols), dtype=np.float32)
 
-    foam_alpha_grid = bake_foam_vertex_alpha(obstacle_prox, flow_speed_field)
+    foam_alpha_grid = np.asarray(
+        bake_foam_vertex_alpha(obstacle_prox, flow_speed_field),
+        dtype=np.float32,
+    )
 
-    vertices: List[dict] = []
+    vertices: List[dict[str, Any]] = []
     world_origin_x = float(getattr(stack, "world_origin_x", 0.0))
     world_origin_y = float(getattr(stack, "world_origin_y", 0.0))
     cell_size = float(getattr(stack, "cell_size", 1.0))
@@ -573,20 +581,16 @@ def _detect_cascade_chain(
 
     cur_r, cur_c = seed_lip.grid_rc
     max_trace = max(rows, cols)
-    visited: set = {(cur_r, cur_c)}
+    visited: set[tuple[int, int]] = {(cur_r, cur_c)}
 
     for _ in range(max_trace):
         step = _steepest_descent_step(h, cur_r, cur_c)
         if step is None:
             break
-        nr, nc, d8 = step
+        nr, nc, _d8 = step
         if (nr, nc) in visited:
             break
         visited.add((nr, nc))
-
-        drop_here = float(h[nr, nc - search_cells:nc + search_cells + 1].min()
-                          if 0 <= nc - search_cells and nc + search_cells < cols
-                          else h[nr, nc])
 
         # Scan a small neighbourhood for another steep drop
         found_tier = False
@@ -936,8 +940,6 @@ def solve_waterfall_from_river(
     # --- Freefall physics at each tier (AAA req #1) ---
     # V_h at lip from Manning's equation (stored on lip)
     v_h = max(0.1, lip.flow_velocity_mps)
-    Q = max(0.01, lip.discharge_m3s)
-
     # Trace plunge path while drop-per-step is steep (> half lip drop)
     steep_threshold = max(1.0, lip.downstream_drop_m * 0.5)
     cur_r, cur_c = r, c
@@ -976,8 +978,6 @@ def solve_waterfall_from_river(
             Q_here = _estimate_discharge(drain_here, cs)
             r_hyd = max(0.1, Q_here ** 0.4)
             v_h = _manning_velocity(slope_here, r_hyd)
-            Q = Q_here
-
         cur_r, cur_c = nr, nc
         plunge_path.append(_grid_to_world(stack, cur_r, cur_c))
         last_drop = drop
@@ -1284,7 +1284,7 @@ def build_outflow_channel(
     all_rows = np.arange(rows, dtype=np.float64)
     all_cols = np.arange(cols, dtype=np.float64)
 
-    for pt_idx, (wx, wy, wz) in enumerate(chain.outflow):
+    for pt_idx, (wx, wy, _wz) in enumerate(chain.outflow):
         # Exponential taper: width = base * exp(-3t), t in [0,1]
         # Much faster narrowing than linear; matches alluvial-fan dispersal.
         taper_t = float(pt_idx) / max(1.0, float(n_pts - 1))
@@ -1587,7 +1587,7 @@ def _generate_local_waterfall_foam_mask(
     if turb_seed.any():
         try:
             from scipy.ndimage import distance_transform_edt
-            dist_turb_px = distance_transform_edt(~turb_seed)
+            dist_turb_px = np.asarray(distance_transform_edt(~turb_seed), dtype=np.float32)
             dist_turb_m = dist_turb_px * cs
             max_turb_int = max((ti for _, _, ti in turb_intensities), default=0.0)
             in_turb = dist_turb_m <= turb_radius_m
@@ -1692,9 +1692,12 @@ def compute_physical_foam_composite(
         (H×W) float32 composite foam mask in [0, 1].
     """
     try:
-        from scipy.ndimage import gaussian_filter, binary_dilation  # type: ignore
+        from scipy.ndimage import binary_dilation as _binary_dilation
+        from scipy.ndimage import gaussian_filter as _gaussian_filter
         _have_scipy = True
     except ImportError:
+        _binary_dilation = None
+        _gaussian_filter = None
         _have_scipy = False
 
     h = np.asarray(stack.height, dtype=np.float64)
@@ -1769,9 +1772,9 @@ def compute_physical_foam_composite(
                     next_cells[nr, nc] = True
             current = next_cells
         wf_foam = wf_base
-    elif np.any(lip_binary) and _have_scipy:
+    elif np.any(lip_binary) and _have_scipy and _binary_dilation is not None:
         struct = np.ones((11, 11), dtype=bool)  # ~5-cell isotropic dilation
-        wf_foam = binary_dilation(lip_binary, structure=struct).astype(np.float32)
+        wf_foam = _binary_dilation(lip_binary, structure=struct).astype(np.float32)
     else:
         wf_foam = np.zeros((rows, cols), dtype=np.float32)
 
@@ -1787,17 +1790,13 @@ def compute_physical_foam_composite(
         ws = np.asarray(ws_arr, dtype=np.float32)
         wet = ws > 0.0
         # Edge: wet cell with at least one dry neighbour
-        if _have_scipy:
-            edge = wet & ~binary_dilation(wet, iterations=1)
-            # Alternatively: cells at the inner boundary of the wet region
-            # Proper edge = wet but adjacent to dry
+        if _have_scipy and _binary_dilation is not None:
             from scipy.ndimage import binary_erosion  # type: ignore
-            inner = binary_erosion(wet, iterations=1)
+            inner = np.asarray(binary_erosion(wet, iterations=1), dtype=bool)
             edge = wet & ~inner
-            shore_seed = binary_dilation(edge, iterations=3).astype(np.float32)
+            shore_seed = _binary_dilation(edge, iterations=3).astype(np.float32)
         else:
             # Manual 3-cell dilation via 7×7 window
-            from numpy.lib.stride_tricks import sliding_window_view  # noqa
             pad = 3
             padded = np.pad(wet.astype(np.uint8), pad, mode="constant", constant_values=0)
             any_dry_neighbour = np.zeros((rows, cols), dtype=bool)
@@ -1873,8 +1872,8 @@ def compute_physical_foam_composite(
     except Exception as exc:  # pragma: no cover - physical foam is additive
         logger.debug("sim.foam composite contribution skipped: %s", exc)
 
-    if _have_scipy:
-        composite = gaussian_filter(composite, sigma=1.5).astype(np.float32)
+    if _have_scipy and _gaussian_filter is not None:
+        composite = _gaussian_filter(composite, sigma=1.5).astype(np.float32)
 
     return np.clip(composite, 0.0, 1.0).astype(np.float32)
 
@@ -1956,7 +1955,7 @@ def generate_velocity_field(
 
     # Outflow velocity: tapers from pool velocity to near-zero with local spread.
     n_out = len(chain.outflow)
-    for i, (wx, wy, wz) in enumerate(chain.outflow):
+    for i, (wx, wy, _wz) in enumerate(chain.outflow):
         pr, pc = _world_to_grid(stack, wx, wy)
         if not (0 <= pr < rows and 0 <= pc < cols):
             continue
@@ -2074,54 +2073,41 @@ def validate_waterfall_system(
     issues: List[ValidationIssue] = []
     for i, c in enumerate(chains):
         tag = c.chain_id or f"chain_{i}"
-        if c.lip is None:
-            issues.append(ValidationIssue(
-                code="WATERFALL_NO_LIP", severity="hard",
-                affected_feature=tag, message="chain missing lip",
-            ))
         if not c.plunge_path or len(c.plunge_path) < 2:
             issues.append(ValidationIssue(
                 code="WATERFALL_NO_PLUNGE", severity="hard",
                 affected_feature=tag, message="chain missing plunge path",
-            ))
-        if c.pool is None or c.pool.radius_m <= 0.0:
-            issues.append(ValidationIssue(
-                code="WATERFALL_NO_POOL", severity="hard",
-                affected_feature=tag, message="chain missing pool",
             ))
         if not c.outflow or len(c.outflow) < 2:
             issues.append(ValidationIssue(
                 code="WATERFALL_NO_OUTFLOW", severity="hard",
                 affected_feature=tag, message="chain missing outflow",
             ))
-        if c.lip is not None and c.pool is not None:
-            if c.lip.world_position[2] <= c.pool.world_position[2]:
-                issues.append(ValidationIssue(
-                    code="WATERFALL_INVERTED", severity="hard",
-                    affected_feature=tag,
-                    message="lip not above pool",
-                ))
+        if c.lip.world_position[2] <= c.pool.world_position[2]:
+            issues.append(ValidationIssue(
+                code="WATERFALL_INVERTED", severity="hard",
+                affected_feature=tag,
+                message="lip not above pool",
+            ))
         # Validate lip polyline (AAA req #4 — no straight-line lip)
-        if c.lip is not None:
-            poly = c.lip.lip_polyline
-            if poly is None or len(poly) < 2:
-                issues.append(ValidationIssue(
-                    code="WATERFALL_STRAIGHT_LINE_LIP", severity="soft",
-                    affected_feature=tag,
-                    message="lip polyline has fewer than 2 points (may be straight-line/point lip)",
-                ))
+        poly = c.lip.lip_polyline
+        if poly is None or len(poly) < 2:
+            issues.append(ValidationIssue(
+                code="WATERFALL_STRAIGHT_LINE_LIP", severity="soft",
+                affected_feature=tag,
+                message="lip polyline has fewer than 2 points (may be straight-line/point lip)",
+            ))
         # Validate Mason 1985 pool parameters
-        if c.pool is not None:
-            Q = c.pool.discharge_m3s
-            H = c.pool.drop_height_m
-            if H > 0 and Q > 0:
-                expected_r, expected_d = _mason_1985_pool(H, Q)
-                if c.pool.radius_m < expected_r * 0.5:
-                    issues.append(ValidationIssue(
-                        code="WATERFALL_POOL_UNDERSIZED", severity="soft",
-                        affected_feature=tag,
-                        message=(
-                            f"Pool radius {c.pool.radius_m:.1f}m < "
+        Q = c.pool.discharge_m3s
+        H = c.pool.drop_height_m
+        if H > 0 and Q > 0:
+            expected_r, _expected_d = _mason_1985_pool(H, Q)
+            if c.pool.radius_m < expected_r * 0.5:
+                issues.append(ValidationIssue(
+                    code="WATERFALL_POOL_UNDERSIZED", severity="soft",
+                    affected_feature=tag,
+                    message=(
+                        f"Pool radius {c.pool.radius_m:.1f}m < "
                             f"0.5 × Mason 1985 expected {expected_r:.1f}m"
                         ),
                     ))
@@ -2377,9 +2363,12 @@ def pass_waterfalls(
 
     # 5. Velocity field (AAA req #6 — float2 channel for Unity water shader)
     vel_field = np.zeros((*h_shape, 2), dtype=np.float32)
-    water_body_mask = None
-    if hasattr(stack, "water_body") and stack.water_body is not None:
-        water_body_mask = np.asarray(stack.water_body, dtype=bool)
+    water_body_raw = stack.get("water_body") if hasattr(stack, "get") else None
+    water_body_mask = (
+        np.asarray(water_body_raw, dtype=bool)
+        if water_body_raw is not None
+        else None
+    )
     for chain in chains:
         chain_vel = generate_velocity_field(chain, _preview_stack)
         # AAA req #8: blend velocity to zero at water body merge
@@ -2402,16 +2391,10 @@ def pass_waterfalls(
         flow_speed = np.zeros(stack.height.shape, dtype=np.float32)
     else:
         flow_speed = np.asarray(_flow_speed_raw, dtype=np.float32).copy()
-    cs_m = float(stack.cell_size)
     for chain in chains:
         # Walk the outflow path and apply boost per cell
         outflow_pts = list(chain.outflow)
         n_boost_cells = min(10, len(outflow_pts))
-        pool_gx = _world_to_grid(
-            stack,
-            chain.pool.world_position[0],
-            chain.pool.world_position[1],
-        )
         for step_i, (wx, wy, _wz) in enumerate(outflow_pts[:n_boost_cells]):
             gr, gc = _world_to_grid(stack, wx, wy)
             if not (0 <= gr < h_shape[0] and 0 <= gc < h_shape[1]):
@@ -2431,8 +2414,6 @@ def pass_waterfalls(
 
     # 7. Region scope: zero outside the region
     if region is not None:
-        for arr_ref in ["foam", "mist", "lip_mask", "wet_rock", "pool_delta"]:
-            pass  # handled below
         scoped = np.zeros_like(foam)
         scoped[r_slice, c_slice] = foam[r_slice, c_slice]
         foam = scoped
@@ -2564,7 +2545,7 @@ def pass_waterfalls(
 def _build_particle_emitter_specs(
     chains: "List[WaterfallChain]",
     wind_direction_rad: float = 0.0,
-) -> List[dict]:
+) -> List[dict[str, Any]]:
     """Serialise waterfall particle seed zones to JSON-compatible emitter specs.
 
     Each chain publishes three zones (lip / impact / mist) derived from
@@ -2604,14 +2585,22 @@ def _build_particle_emitter_specs(
         build_waterfall_volume_bounds,
     )
 
-    specs: List[dict] = []
+    specs: List[dict[str, Any]] = []
     if not chains:
         return specs
 
     for chain in chains:
         try:
-            lip_pos = tuple(float(v) for v in chain.lip.world_position)
-            pool_pos = tuple(float(v) for v in chain.pool.world_position)
+            lip_pos = (
+                float(chain.lip.world_position[0]),
+                float(chain.lip.world_position[1]),
+                float(chain.lip.world_position[2]),
+            )
+            pool_pos = (
+                float(chain.pool.world_position[0]),
+                float(chain.pool.world_position[1]),
+                float(chain.pool.world_position[2]),
+            )
             zones = build_particle_seed_zones(
                 lip_world_position=lip_pos,
                 pool_world_position=pool_pos,
@@ -2729,7 +2718,7 @@ def pass_emit_particle_systems(
     stack = state.mask_stack
     raw = list(stack.get("particle_emitter_specs") or [])
 
-    layer_specs: List[dict] = []
+    layer_specs: List[dict[str, Any]] = []
     for spec in raw:
         augmented = dict(spec)
         # Engine-specific hints — kept separate from the raw emitter
@@ -2849,7 +2838,7 @@ class WaterfallMistResult:
     """
 
     mist_zone_mask: np.ndarray
-    wet_surface_decal: list
+    wet_surface_decal: list[dict[str, Any]]
 
 
 def pass_waterfall_mist(
@@ -2867,25 +2856,25 @@ def pass_waterfall_mist(
     t0 = time.perf_counter()
     stack = state.mask_stack
 
-    h_shape = stack.height.shape if stack.height is not None else (1, 1)
-
-    if stack.mist is not None:
-        mist_zone_mask = np.asarray(stack.mist, dtype=np.float32).copy()
+    if stack.mist is None:
+        mist_zone_mask = np.zeros(stack.height.shape, dtype=np.float32)
     else:
-        mist_zone_mask = np.zeros(h_shape, dtype=np.float32)
+        mist_zone_mask = np.asarray(stack.mist, dtype=np.float32).copy()
 
     threshold = 0.3
-    decal_list: list = []
+    decal_list: list[dict[str, Any]] = []
     mist_cells = int(np.sum(mist_zone_mask > threshold))
     if mist_cells > 0 and mist_cells <= 1_000_000:
         try:
             from scipy.ndimage import label as _label
 
             binary = mist_zone_mask > threshold
-            labeled, num_features = _label(binary)
+            label_result: Any = _label(binary)
+            labeled = np.asarray(label_result[0], dtype=np.int32)
+            num_features = int(label_result[1])
             cs = float(stack.cell_size) if stack.cell_size else 1.0
-            ox = float(stack.world_origin_x) if stack.world_origin_x is not None else 0.0
-            oy = float(stack.world_origin_y) if stack.world_origin_y is not None else 0.0
+            ox = float(stack.world_origin_x)
+            oy = float(stack.world_origin_y)
             hints = dict(state.intent.composition_hints) if state.intent else {}
             wind_dir = float(hints.get("wind_direction_rad", 0.0))
             wind_cos = math.cos(wind_dir)
@@ -2915,8 +2904,11 @@ def pass_waterfall_mist(
 
     stack.set("mist_zone_mask", mist_zone_mask, "waterfall_mist")
     stack.set("wet_surface_decal", decal_list, "waterfall_mist")
-    stack._extra_channels = getattr(stack, "_extra_channels", {})
-    stack._extra_channels["wet_surface_decal"] = decal_list
+    extra_channels = getattr(stack, "_extra_channels", {})
+    if not isinstance(extra_channels, dict):
+        extra_channels = {}
+    extra_channels["wet_surface_decal"] = decal_list
+    setattr(stack, "_extra_channels", extra_channels)
 
     return PassResult(
         pass_name="waterfall_mist",

@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+import builtins
+import math
+from collections.abc import Mapping, Sequence
+from importlib import import_module
+from importlib.util import find_spec
+from types import ModuleType
+from typing import TYPE_CHECKING, cast
+
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+
+Float32Array = NDArray[np.float32]
+Float64Array = NDArray[np.float64]
+BoolArray = NDArray[np.bool_]
+Int32Array = NDArray[np.int32]
+ImportGlobals = Mapping[str, object] | None
 
 
-def _stack(height: np.ndarray | None = None):
+def _stack(height: Float32Array | None = None) -> TerrainMaskStack:
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     h = (
@@ -25,7 +46,7 @@ def _stack(height: np.ndarray | None = None):
     )
 
 
-def _set_channel(stack, channel: str, value):
+def _set_channel(stack: TerrainMaskStack, channel: str, value: object) -> object:
     stack.set(channel, value, "test_fixture")
     return value
 
@@ -41,11 +62,11 @@ def test_atmospheric_noise_helpers_are_deterministic_and_bounded():
 
     assert _permute(17, seed=3) == _permute(17, seed=3)
     assert _permute(17, seed=3) != _permute(18, seed=3)
-    assert _smooth(0.0) == pytest.approx(0.0)
-    assert _smooth(1.0) == pytest.approx(1.0)
-    assert _lerp(2.0, 6.0, 0.25) == pytest.approx(3.0)
-    assert _grad2(0, 0.25, 0.5) == pytest.approx(0.75)
-    assert _perlin2(0.0, 0.0, seed=5) == pytest.approx(0.0)
+    assert math.isclose(_smooth(0.0), 0.0, abs_tol=1e-12)
+    assert math.isclose(_smooth(1.0), 1.0, abs_tol=1e-12)
+    assert math.isclose(_lerp(2.0, 6.0, 0.25), 3.0, abs_tol=1e-12)
+    assert math.isclose(_grad2(0, 0.25, 0.5), 0.75, abs_tol=1e-12)
+    assert math.isclose(_perlin2(0.0, 0.0, seed=5), 0.0, abs_tol=1e-12)
     assert -1.0 <= _perlin2(0.37, 0.82, seed=5) <= 1.0
 
 
@@ -114,8 +135,8 @@ def test_rhythm_helpers_score_feature_type_salience_distances_and_gradients():
 
     assert _feature_type(features[0]) == "cave"
     assert _feature_type(features[1]) == "arch"
-    assert _feature_salience(features[0]) == pytest.approx(0.9)
-    assert _feature_salience(features[1]) == pytest.approx(0.4)
+    assert math.isclose(_feature_salience(features[0]), 0.9, abs_tol=1e-12)
+    assert math.isclose(_feature_salience(features[1]), 0.4, abs_tol=1e-12)
     assert np.allclose(_nn_distances(np.array([[0.0, 0.0], [3.0, 4.0]])), 5.0)
     assert _ripley_k_proxy(pts, area=1000.0, radii=radii).shape == radii.shape
     assert np.isfinite(_ripley_k_proxy(pts, area=1000.0, radii=radii)).all()
@@ -158,17 +179,23 @@ def test_audio_zone_helpers_filter_boundaries_rt60_echo_classification_and_zone_
     assert zones[0]["reverb_preset"] == "water_near"
 
 
-def test_audio_cc_filter_no_scipy_removes_small_components(monkeypatch):
+def test_audio_cc_filter_no_scipy_removes_small_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import _audio_cc_filter
-
-    import builtins
 
     real_import = builtins.__import__
 
-    def blocked_import(name, *args, **kwargs):
+    def blocked_import(
+        name: str,
+        globals_: ImportGlobals = None,
+        locals_: ImportGlobals = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name == "scipy" or name.startswith("scipy."):
             raise ImportError("blocked scipy")
-        return real_import(name, *args, **kwargs)
+        return cast(ModuleType, real_import(name, globals_, locals_, fromlist, level))
 
     monkeypatch.setattr(builtins, "__import__", blocked_import)
 
@@ -188,7 +215,7 @@ def test_audio_cc_filter_no_scipy_removes_small_components(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _make_stack_large(tile_size: int = 24, seed: int = 7):
+def _make_stack_large(tile_size: int = 24, seed: int = 7) -> TerrainMaskStack:
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -211,13 +238,13 @@ def _make_stack_large(tile_size: int = 24, seed: int = 7):
     )
 
 
-def _attach_slope(stack) -> None:
+def _attach_slope(stack: TerrainMaskStack) -> None:
     h = np.asarray(stack.height, dtype=np.float64)
     gy, gx = np.gradient(h, float(stack.cell_size))
     stack.set("slope", np.arctan(np.sqrt(gx * gx + gy * gy)), "test_fixture")
 
 
-def _build_state(tile_size: int = 24, seed: int = 7):
+def _build_state(tile_size: int = 24, seed: int = 7) -> TerrainPipelineState:
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -248,7 +275,7 @@ def _build_state(tile_size: int = 24, seed: int = 7):
 def test_cliff_echo_delay_chamfer_fallback_matches_scipy_within_tolerance():
     from veilbreakers_terrain.handlers.terrain_audio_zones import _cliff_echo_delay
 
-    import scipy  # noqa: F401
+    assert find_spec("scipy") is not None
 
     cliff = np.zeros((16, 16), dtype=bool)
     cliff[3, 4] = True
@@ -268,7 +295,9 @@ def test_cliff_echo_delay_chamfer_fallback_matches_scipy_within_tolerance():
     )
 
 
-def test_cliff_echo_delay_chamfer_fallback_emits_warning(caplog):
+def test_cliff_echo_delay_chamfer_fallback_emits_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import _cliff_echo_delay
 
     cliff = np.zeros((6, 6), dtype=bool)
@@ -434,7 +463,7 @@ def test_audio_zone_priority_order_is_documented_and_complete():
 # ---------------------------------------------------------------------------
 
 
-def _make_composite_stack():
+def _make_composite_stack() -> TerrainMaskStack:
     stack = _make_stack_large(tile_size=28, seed=23)
     _attach_slope(stack)
     H, W = stack.height.shape
@@ -520,20 +549,26 @@ def test_export_zones_to_wwise_csv_empty_input_emits_header_only():
     assert "zone_id" in lines[0]
 
 
-def test_compute_audio_zone_list_no_scipy_keeps_disconnected_regions(monkeypatch):
+def test_compute_audio_zone_list_no_scipy_keeps_disconnected_regions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from veilbreakers_terrain.handlers.terrain_audio_zones import (
         AudioReverbClass,
         compute_audio_zone_list,
     )
 
-    import builtins
-
     real_import = builtins.__import__
 
-    def blocked_import(name, *args, **kwargs):
+    def blocked_import(
+        name: str,
+        globals_: ImportGlobals = None,
+        locals_: ImportGlobals = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name == "scipy" or name.startswith("scipy."):
             raise ImportError("blocked scipy")
-        return real_import(name, *args, **kwargs)
+        return cast(ModuleType, real_import(name, globals_, locals_, fromlist, level))
 
     monkeypatch.setattr(builtins, "__import__", blocked_import)
 
@@ -607,11 +642,12 @@ def test_sabine_rt60_eyring_shorter_than_sabine_at_high_absorption():
 def test_reverb_presets_cover_every_enum_class():
     from veilbreakers_terrain.handlers.terrain_audio_zones import (
         AudioReverbClass,
-        REVERB_PRESETS,
         _CLASS_PRESET,
     )
 
+    audio_zones = import_module("veilbreakers_terrain.handlers.terrain_audio_zones")
+    reverb_presets = cast(Mapping[str, object], getattr(audio_zones, "REVERB_PRESETS"))
     for cls in AudioReverbClass:
         preset_name = _CLASS_PRESET.get(cls.value)
         assert preset_name is not None, f"class {cls.name} has no preset mapping"
-        assert preset_name in REVERB_PRESETS, f"preset {preset_name!r} undefined"
+        assert preset_name in reverb_presets, f"preset {preset_name!r} undefined"

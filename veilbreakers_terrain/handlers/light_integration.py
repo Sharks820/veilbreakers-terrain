@@ -21,9 +21,17 @@ UE5-style probe placement (compute_probe_placements) uses three scoring signals:
 from __future__ import annotations
 
 import math
-from typing import Any, List, Optional, Tuple
+import importlib
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, TypeAlias, cast
 
 import numpy as np
+
+Vec3: TypeAlias = tuple[float, float, float]
+LightRecord: TypeAlias = dict[str, Any]
+ProbeRecord: TypeAlias = dict[str, Any]
+LightBudget: TypeAlias = dict[str, Any]
+LightBudgetTypeRow: TypeAlias = dict[str, int | float]
 
 
 # ---------------------------------------------------------------------------
@@ -58,11 +66,26 @@ FLICKER_PRESETS: dict[str, dict[str, Any]] = {
 # Light prop map -- 8 entries
 # ---------------------------------------------------------------------------
 
-def _fp(preset_key: Optional[str]) -> Optional[dict]:
+def _fp(preset_key: str | None) -> dict[str, Any] | None:
     """Return a defensive copy of a flicker preset (or None)."""
     if preset_key is None:
         return None
     return dict(FLICKER_PRESETS[preset_key])
+
+
+def _vec3(value: object, default: Vec3 = (0.0, 0.0, 0.0)) -> Vec3:
+    """Coerce loose terrain record coordinates into a stable 3-float tuple."""
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return default
+    coords = cast(Sequence[object], value)
+    if len(coords) < 2:
+        return default
+    z_value: object = coords[2] if len(coords) > 2 else default[2]
+    return (
+        float(cast(Any, coords[0])),
+        float(cast(Any, coords[1])),
+        float(cast(Any, z_value)),
+    )
 
 
 LIGHT_PROP_MAP: dict[str, dict[str, Any]] = {
@@ -153,14 +176,14 @@ def compute_probe_placements(
     cell_size: float = 1.0,
     world_origin_x: float = 0.0,
     world_origin_y: float = 0.0,
-    water_surface: Optional[np.ndarray] = None,
-    feature_positions: Optional[List[Tuple[float, float, float]]] = None,
+    water_surface: np.ndarray | None = None,
+    feature_positions: list[Vec3] | None = None,
     max_probes: int = 16,
     min_probe_spacing_m: float = 20.0,
     height_weight: float = 1.0,
     water_weight: float = 1.5,
     feature_weight: float = 2.0,
-) -> List[dict]:
+) -> list[ProbeRecord]:
     """Place reflection/irradiance probes using UE5-style three-signal scoring.
 
     Signal 1 — Height percentile (height_weight):
@@ -228,8 +251,16 @@ def compute_probe_placements(
             # Approx via repeated box-filter (3-pass ≈ Gaussian sigma≈1.73 each pass)
             sigma_cells = 3.0
             try:
-                from scipy.ndimage import gaussian_filter as _gf
-                sig_water = _gf(water_mask, sigma=sigma_cells)
+                ndimage_module = importlib.import_module("scipy.ndimage")
+                gaussian_filter = cast(
+                    Callable[..., Any],
+                    getattr(ndimage_module, "gaussian_filter"),
+                )
+
+                sig_water = np.asarray(
+                    gaussian_filter(water_mask, sigma=sigma_cells),
+                    dtype=np.float64,
+                )
             except ImportError:
                 # Manual separable box blur fallback. np.convolve(mode="same")
                 # grows tiny inputs when the kernel is wider than the row, so
@@ -242,7 +273,7 @@ def compute_probe_placements(
                     return np.convolve(padded, kernel, mode="valid")
 
                 tmp = np.apply_along_axis(_box_same, 1, water_mask)
-                sig_water = np.apply_along_axis(_box_same, 0, tmp)
+                sig_water = np.asarray(np.apply_along_axis(_box_same, 0, tmp), dtype=np.float64)
             # Normalise
             sw_max = float(sig_water.max())
             sig_water = sig_water / sw_max if sw_max > 1e-12 else sig_water
@@ -275,7 +306,7 @@ def compute_probe_placements(
     # --- Greedy probe selection with exclusion disc ---
     exclusion_cells = max(1.0, min_probe_spacing_m / cell_size)
     score_map = score.copy()
-    probes: List[dict] = []
+    probes: list[ProbeRecord] = []
 
     rr_grid, cc_grid = np.mgrid[0:rows, 0:cols].astype(np.float64)
 
@@ -313,9 +344,9 @@ def compute_probe_placements(
 # ---------------------------------------------------------------------------
 
 def compute_light_placements(
-    props: list,
-    sun_direction: tuple = (0.5, -0.5, -0.7),
-) -> list:
+    props: Sequence[Mapping[str, Any]],
+    sun_direction: Vec3 = (0.5, -0.5, -0.7),
+) -> list[LightRecord]:
     """Generate light descriptors from a list of world prop dicts.
 
     Extends basic prop lookup with terrain-contextual light types:
@@ -352,29 +383,25 @@ def compute_light_placements(
     _GOD_RAY_TYPES = {"forest_edge", "canopy_gap"}
 
     # Normalise sun_direction
-    sx, sy, sz = sun_direction
+    sx, sy, sz = _vec3(sun_direction, (0.5, -0.5, -0.7))
     slen = math.sqrt(sx * sx + sy * sy + sz * sz) or 1.0
     sx, sy, sz = sx / slen, sy / slen, sz / slen
 
-    lights = []
+    lights: list[LightRecord] = []
     for prop in props:
-        prop_type = prop.get("type", "")
+        prop_type = str(prop.get("type", ""))
         if prop.get("on") is False:
             continue
 
-        pos = prop.get("position", (0.0, 0.0, 0.0))
-        if len(pos) == 2:
-            px, py, pz = float(pos[0]), float(pos[1]), 0.0
-        else:
-            px, py, pz = float(pos[0]), float(pos[1]), float(pos[2])
+        px, py, pz = _vec3(prop.get("position", (0.0, 0.0, 0.0)))
 
-        normal = prop.get("normal", (0.0, 0.0, 1.0))
-        scale = prop.get("scale", 1.0)
+        normal = _vec3(prop.get("normal", (0.0, 0.0, 1.0)), (0.0, 0.0, 1.0))
+        scale = float(prop.get("scale", 1.0) or 1.0)
 
         if prop_type in _PORTAL_TYPES:
             # Portal light: area light directed inward (along -normal)
             # Low energy (daylight leaking in through entrance aperture)
-            nx, ny, nz = float(normal[0]), float(normal[1]), float(normal[2])
+            nx, ny, nz = normal
             lights.append({
                 "light_type": "area",
                 "source_prop": prop_type,
@@ -432,10 +459,9 @@ def compute_light_placements(
 
         elif prop_type in LIGHT_PROP_MAP:
             ldef = LIGHT_PROP_MAP[prop_type]
-            energy = ldef["energy"]
-            if scale is not None:
-                energy = energy * scale
+            energy = float(ldef["energy"]) * scale
             z = pz + float(ldef["offset_z"])
+            flicker = ldef.get("flicker")
             lights.append({
                 "light_type": ldef["type"],
                 "source_prop": prop_type,
@@ -444,7 +470,7 @@ def compute_light_placements(
                 "color": tuple(ldef["color"]),
                 "radius": ldef["radius"],
                 "shadow": ldef["shadow"],
-                "flicker": dict(ldef["flicker"]) if ldef.get("flicker") else None,
+                "flicker": dict(cast(Mapping[str, Any], flicker)) if flicker else None,
             })
             if ldef["type"] == "spot":
                 lights[-1]["direction"] = tuple(ldef.get("direction", (0.0, 0.0, -1.0)))
@@ -457,20 +483,20 @@ def compute_light_placements(
 # Merge nearby lights
 # ---------------------------------------------------------------------------
 
-def _dist3(a: tuple, b: tuple) -> float:
+def _dist3(a: Vec3, b: Vec3) -> float:
     return math.sqrt(
         (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
     )
 
 
-def _uf_find(parent: list, i: int) -> int:
+def _uf_find(parent: list[int], i: int) -> int:
     while parent[i] != i:
         parent[i] = parent[parent[i]]  # path compression
         i = parent[i]
     return i
 
 
-def _uf_union(parent: list, rank: list, i: int, j: int) -> None:
+def _uf_union(parent: list[int], rank: list[int], i: int, j: int) -> None:
     ri, rj = _uf_find(parent, i), _uf_find(parent, j)
     if ri == rj:
         return
@@ -481,7 +507,18 @@ def _uf_union(parent: list, rank: list, i: int, j: int) -> None:
         rank[ri] += 1
 
 
-def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
+def _light_position(light: Mapping[str, Any]) -> Vec3:
+    return _vec3(light.get("position", (0.0, 0.0, 0.0)))
+
+
+def _light_energy(light: Mapping[str, Any]) -> float:
+    return float(light.get("energy", 0.0) or 0.0)
+
+
+def merge_nearby_lights(
+    lights: Sequence[Mapping[str, Any]],
+    merge_distance: float = 5.0,
+) -> list[LightRecord]:
     """Group lights within merge_distance and merge each group into one light.
 
     Uses union-find (disjoint set) for transitive clustering: A-B and B-C both
@@ -513,7 +550,7 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
 
     for i in range(n):
         for j in range(i + 1, n):
-            if _dist3(lights[i]["position"], lights[j]["position"]) <= merge_distance:
+            if _dist3(_light_position(lights[i]), _light_position(lights[j])) <= merge_distance:
                 _uf_union(parent, rank, i, j)
 
     groups: dict[int, list[int]] = {}
@@ -523,7 +560,7 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
             groups[root] = []
         groups[root].append(i)
 
-    merged = []
+    merged: list[LightRecord] = []
     for group in groups.values():
         if len(group) == 1:
             entry = dict(lights[group[0]])
@@ -531,41 +568,47 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
             merged.append(entry)
             continue
 
-        total_energy = sum(lights[k]["energy"] for k in group)
-        max_radius = max(lights[k]["radius"] for k in group)
-        has_shadow = any(lights[k]["shadow"] for k in group)
-        max_k = max(group, key=lambda k: lights[k]["energy"])
+        total_energy = sum(_light_energy(lights[k]) for k in group)
+        max_radius = max(float(lights[k].get("radius", 0.0) or 0.0) for k in group)
+        has_shadow = any(bool(lights[k].get("shadow")) for k in group)
+        max_k = max(group, key=lambda k: _light_energy(lights[k]))
         has_flicker = lights[max_k].get("flicker")
         dominant_direction = lights[max_k].get("direction")
         dominant_spot_angle = lights[max_k].get("spot_angle")
 
-        max_energy_val = max(lights[k]["energy"] for k in group)
-        min_energy_val = min(lights[k]["energy"] for k in group)
+        max_energy_val = max(_light_energy(lights[k]) for k in group)
+        min_energy_val = min(_light_energy(lights[k]) for k in group)
         if max_energy_val > 2.0 * max(min_energy_val, 1e-12):
-            anchor_k = max(group, key=lambda k: lights[k]["energy"])
-            px, py, pz = lights[anchor_k]["position"]
+            anchor_k = max(group, key=lambda k: _light_energy(lights[k]))
+            px, py, pz = _light_position(lights[anchor_k])
         elif total_energy == 0.0:
-            px = sum(lights[k]["position"][0] for k in group) / len(group)
-            py = sum(lights[k]["position"][1] for k in group) / len(group)
-            pz = sum(lights[k]["position"][2] for k in group) / len(group)
+            px = sum(_light_position(lights[k])[0] for k in group) / len(group)
+            py = sum(_light_position(lights[k])[1] for k in group) / len(group)
+            pz = sum(_light_position(lights[k])[2] for k in group) / len(group)
         else:
-            px = sum(lights[k]["position"][0] * lights[k]["energy"] for k in group) / total_energy
-            py = sum(lights[k]["position"][1] * lights[k]["energy"] for k in group) / total_energy
-            pz = sum(lights[k]["position"][2] * lights[k]["energy"] for k in group) / total_energy
+            px = sum(
+                _light_position(lights[k])[0] * _light_energy(lights[k]) for k in group
+            ) / total_energy
+            py = sum(
+                _light_position(lights[k])[1] * _light_energy(lights[k]) for k in group
+            ) / total_energy
+            pz = sum(
+                _light_position(lights[k])[2] * _light_energy(lights[k]) for k in group
+            ) / total_energy
 
         rep = lights[group[0]]
         merged.append({
-            "light_type": rep["light_type"],
+            "light_type": rep.get("light_type", "point"),
             "source_prop": rep.get("source_prop", ""),
             "position": (px, py, pz),
             "energy": total_energy,
-            "color": rep["color"],
+            "color": rep.get("color", (1.0, 1.0, 1.0)),
             "radius": max_radius,
             "shadow": has_shadow,
             "flicker": has_flicker,
             "merged_count": len(group),
         })
-        if rep["light_type"] == "spot":
+        if rep.get("light_type") == "spot":
             if dominant_direction is not None:
                 merged[-1]["direction"] = dominant_direction
             if dominant_spot_angle is not None:
@@ -579,11 +622,11 @@ def merge_nearby_lights(lights: list, merge_distance: float = 5.0) -> list:
 # ---------------------------------------------------------------------------
 
 def compute_light_budget(
-    lights: list,
+    lights: Sequence[Mapping[str, Any]],
     shadow_cost: float = 3.0,
     flicker_cost: float = 0.5,
     target_platform: str = "desktop",
-) -> dict:
+) -> LightBudget:
     """Estimate GPU cost of a list of lights with per-type and per-platform breakdown.
 
     Cost model (matches Unity real-time lighting profiler guidance)
@@ -663,10 +706,10 @@ def compute_light_budget(
     flicker_count = 0
     total_cost = 0.0
 
-    by_type: dict[str, dict] = {}
+    by_type: dict[str, LightBudgetTypeRow] = {}
 
     for light in lights:
-        ltype = light.get("light_type", "point")
+        ltype = str(light.get("light_type", "point"))
         base = _BASE.get(ltype, 1.0)
         has_shadow = bool(light.get("shadow"))
         has_flicker = light.get("flicker") is not None

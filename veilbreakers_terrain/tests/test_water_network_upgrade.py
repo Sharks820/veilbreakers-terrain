@@ -4,11 +4,43 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import Protocol, cast
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+
+from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack, TerrainPipelineState
+
+FloatArray = NDArray[np.float64]
+IntArray = NDArray[np.int32]
+AnyArray = NDArray[np.generic]
+Point3 = tuple[float, float, float]
+
+
+class _WaterNetworkModule(Protocol):
+    _D8_OFFSETS: Sequence[tuple[int, int]]
+    _D8_DISTANCES: Sequence[float]
+
+    def compute_river_width(self, accumulation: float) -> float: ...
+
+    def _compute_river_depth(self, accumulation: float) -> float: ...
+
+    def compute_velocity_field(
+        self,
+        heightmap: FloatArray,
+        flow_accumulation: FloatArray,
+        flow_direction: IntArray,
+        *,
+        cell_size: float,
+        manning_n_river: float,
+        manning_n_stream: float,
+        river_threshold: float,
+        foam_velocity_threshold: float,
+        foam_gradient_threshold: float,
+    ) -> dict[str, AnyArray]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -19,7 +51,7 @@ import pytest
 @dataclass
 class _FakeSegment:
     segment_id: int
-    waypoints: List[Tuple[float, float, float]]
+    waypoints: list[Point3]
     bank_asymmetry: float = 0.0
 
 
@@ -33,8 +65,10 @@ class _FakeNode:
 
 @dataclass
 class _FakeNetwork:
-    segments: dict = field(default_factory=dict)
-    nodes: dict = field(default_factory=dict)
+    segments: dict[int, _FakeSegment] = field(
+        default_factory=lambda: cast(dict[int, _FakeSegment], {})
+    )
+    nodes: dict[int, _FakeNode] = field(default_factory=lambda: cast(dict[int, _FakeNode], {}))
 
 
 def _straight_segment(n: int = 20) -> _FakeSegment:
@@ -49,7 +83,7 @@ def _build_network_with_straight_segment(n: int = 20) -> _FakeNetwork:
     return net
 
 
-def _polyline_length(points) -> float:
+def _polyline_length(points: Sequence[Point3]) -> float:
     total = 0.0
     for i in range(1, len(points)):
         x0, y0 = points[i - 1][0], points[i - 1][1]
@@ -58,9 +92,7 @@ def _polyline_length(points) -> float:
     return total
 
 
-def _build_stack(size: int = 40):
-    from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
-
+def _build_stack(size: int = 40) -> TerrainMaskStack:
     h = np.zeros((size, size), dtype=np.float64)
     return TerrainMaskStack(
         tile_size=size - 1,
@@ -74,10 +106,10 @@ def _build_stack(size: int = 40):
 
 
 def _scalar_velocity_reference(
-    water_network,
-    heightmap: np.ndarray,
-    flow_accumulation: np.ndarray,
-    flow_direction: np.ndarray,
+    water_network: _WaterNetworkModule,
+    heightmap: FloatArray,
+    flow_accumulation: FloatArray,
+    flow_direction: IntArray,
     *,
     cell_size: float,
     manning_n_river: float,
@@ -85,7 +117,7 @@ def _scalar_velocity_reference(
     river_threshold: float,
     foam_velocity_threshold: float,
     foam_gradient_threshold: float,
-) -> dict[str, np.ndarray]:
+) -> dict[str, AnyArray]:
     hmap = np.asarray(heightmap, dtype=np.float64)
     fa = np.asarray(flow_accumulation, dtype=np.float64)
     fd = np.asarray(flow_direction, dtype=np.int32)
@@ -99,11 +131,11 @@ def _scalar_velocity_reference(
     slope_clamped = np.clip(slope_field, 1e-5, 1.0)
 
     d8_dx = np.array(
-        [float(dc) for dr, dc in water_network._D8_OFFSETS],
+        [float(dc) for _, dc in water_network._D8_OFFSETS],
         dtype=np.float64,
     )
     d8_dy = np.array(
-        [-float(dr) for dr, dc in water_network._D8_OFFSETS],
+        [-float(dr) for dr, _ in water_network._D8_OFFSETS],
         dtype=np.float64,
     )
     d8_dist = np.array(water_network._D8_DISTANCES, dtype=np.float64)
@@ -180,14 +212,15 @@ def test_compute_velocity_field_matches_scalar_manning_reference():
         "foam_gradient_threshold": 0.12,
     }
 
-    vectorized = water_network.compute_velocity_field(
+    water_network_typed = cast(_WaterNetworkModule, water_network)
+    vectorized = water_network_typed.compute_velocity_field(
         heightmap,
         flow_accumulation,
         flow_direction,
         **kwargs,
     )
     scalar = _scalar_velocity_reference(
-        water_network,
+        water_network_typed,
         heightmap,
         flow_accumulation,
         flow_direction,
@@ -195,18 +228,18 @@ def test_compute_velocity_field_matches_scalar_manning_reference():
     )
 
     np.testing.assert_allclose(
-        vectorized["speed"],
-        scalar["speed"].astype(np.float32),
+        cast(FloatArray, vectorized["speed"]),
+        cast(FloatArray, scalar["speed"]).astype(np.float32),
         rtol=1e-6,
     )
     np.testing.assert_allclose(
-        vectorized["vx"],
-        scalar["vx"].astype(np.float32),
+        cast(FloatArray, vectorized["vx"]),
+        cast(FloatArray, scalar["vx"]).astype(np.float32),
         rtol=1e-6,
     )
     np.testing.assert_allclose(
-        vectorized["vy"],
-        scalar["vy"].astype(np.float32),
+        cast(FloatArray, vectorized["vy"]),
+        cast(FloatArray, scalar["vy"]).astype(np.float32),
         rtol=1e-6,
     )
     np.testing.assert_array_equal(vectorized["foam_mask"], scalar["foam_mask"])
@@ -247,10 +280,10 @@ def test_apply_bank_asymmetry_tags_segments():
 
     net = _build_network_with_straight_segment(n=10)
     apply_bank_asymmetry(net, bias=0.6)
-    assert net.segments[0].bank_asymmetry == pytest.approx(0.6)
+    assert math.isclose(net.segments[0].bank_asymmetry, 0.6)
 
     apply_bank_asymmetry(net, bias=-0.4)
-    assert net.segments[0].bank_asymmetry == pytest.approx(-0.4)
+    assert math.isclose(net.segments[0].bank_asymmetry, -0.4)
 
 
 def test_apply_bank_asymmetry_clamps_range():
@@ -258,9 +291,9 @@ def test_apply_bank_asymmetry_clamps_range():
 
     net = _build_network_with_straight_segment(n=10)
     apply_bank_asymmetry(net, bias=5.0)
-    assert net.segments[0].bank_asymmetry == pytest.approx(1.0)
+    assert math.isclose(net.segments[0].bank_asymmetry, 1.0)
     apply_bank_asymmetry(net, bias=-5.0)
-    assert net.segments[0].bank_asymmetry == pytest.approx(-1.0)
+    assert math.isclose(net.segments[0].bank_asymmetry, -1.0)
 
 
 def test_compute_wet_rock_mask_zero_without_seeds():
@@ -439,7 +472,11 @@ def test_solve_outflow_produces_path():
 class TestManningSlopeConvention:
     """pass_water_flow_speed must assert slope is dimensionless rise/run."""
 
-    def _build_fake_stack_and_state(self, slope_array: np.ndarray | None, height: np.ndarray):
+    def _build_fake_stack_and_state(
+        self,
+        slope_array: AnyArray | None,
+        height: AnyArray,
+    ) -> tuple[TerrainPipelineState, object]:
         """Minimal mask-stack + state stand-in."""
         rows, cols = height.shape
         flow_dir = np.zeros((rows, cols), dtype=np.int8)
@@ -447,10 +484,10 @@ class TestManningSlopeConvention:
         water = np.ones((rows, cols), dtype=np.float32)
 
         class _Stack:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.height = height
                 self.cell_size = 1.0
-                self._channels = {
+                self._channels: dict[str, AnyArray] = {
                     "flow_direction": flow_dir,
                     "flow_accumulation": flow_acc,
                     "water_surface": water,
@@ -458,18 +495,18 @@ class TestManningSlopeConvention:
                 if slope_array is not None:
                     self._channels["slope"] = slope_array
 
-            def get(self, key):
+            def get(self, key: str) -> AnyArray | None:
                 return self._channels.get(key)
 
-            def set(self, key, value, source=None):
+            def set(self, key: str, value: AnyArray, source: str | None = None) -> None:
                 self._channels[key] = value
 
         class _State:
-            def __init__(self, stack):
+            def __init__(self, stack: object) -> None:
                 self.mask_stack = stack
 
         stack = _Stack()
-        return _State(stack), stack
+        return cast(TerrainPipelineState, _State(stack)), stack
 
     def test_dimensionless_slope_passes(self):
         from veilbreakers_terrain.handlers._water_network import pass_water_flow_speed
@@ -478,7 +515,7 @@ class TestManningSlopeConvention:
         height = np.tile(height, (16, 1))  # 1m total rise over 64m
         slope = np.full((16, 64), 0.015, dtype=np.float64)  # 1.5 % grade
 
-        state, stack = self._build_fake_stack_and_state(slope, height)
+        state, _stack = self._build_fake_stack_and_state(slope, height)
         result = pass_water_flow_speed(state, None)
         assert result.status == "ok"
         assert "slope_max_dimensionless" in result.metrics
@@ -492,7 +529,7 @@ class TestManningSlopeConvention:
         # A "slope" array in bogus units — values of 25 indicate something
         # other than rise/run (e.g., gradient of a steep world-height DEM).
         bad_slope = np.full((8, 8), 25.0, dtype=np.float64)
-        state, stack = self._build_fake_stack_and_state(bad_slope, height)
+        state, _stack = self._build_fake_stack_and_state(bad_slope, height)
         with pytest.raises(AssertionError, match="Manning slope"):
             pass_water_flow_speed(state, None)
 
@@ -537,11 +574,11 @@ def test_detect_waterfalls_requires_drainage_and_reports_orientation():
     assert waterfall["bottom_idx"] == 2
     assert waterfall["top_row"] == 0
     assert waterfall["bottom_col"] == 2
-    assert waterfall["drop"] == pytest.approx(8.0)
-    assert waterfall["horizontal_dist"] == pytest.approx(2.0)
-    assert waterfall["drop_rate"] == pytest.approx(4.0)
-    assert waterfall["drainage_area"] == pytest.approx(120.0)
-    assert waterfall["orientation_rad"] == pytest.approx(math.pi / 2.0)
+    assert math.isclose(waterfall["drop"], 8.0)
+    assert math.isclose(waterfall["horizontal_dist"], 2.0)
+    assert math.isclose(waterfall["drop_rate"], 4.0)
+    assert math.isclose(waterfall["drainage_area"], 120.0)
+    assert math.isclose(waterfall["orientation_rad"], math.pi / 2.0)
 
     low_flow = np.zeros_like(heightmap, dtype=np.float32)
     assert (
@@ -585,8 +622,10 @@ def test_from_heightmap_builds_velocity_and_valid_seam_contracts():
 
     assert len(net.nodes) > 0
     assert len(net.segments) > 0
-    assert net._seam_validation_result["orphaned"] == 0
-    assert net._seam_validation_result["head_mismatch"] == 0
+    seam_validation = net._seam_validation_result
+    assert seam_validation is not None
+    assert seam_validation["orphaned"] == 0
+    assert seam_validation["head_mismatch"] == 0
 
     velocity = net.get_velocity_field()
     assert velocity is not None
@@ -603,11 +642,11 @@ def test_from_heightmap_builds_velocity_and_valid_seam_contracts():
     assert crossing_contracts
     assert all(0.0 <= contract.position <= 1.0 for contract in crossing_contracts)
     assert all(contract.outflow_rate_m3s > 0.0 for contract in crossing_contracts)
-    assert all(contract.inflow_head_m == pytest.approx(contract.depth) for contract in crossing_contracts)
+    assert all(math.isclose(contract.inflow_head_m, contract.depth) for contract in crossing_contracts)
     assert all(contract.seam_valid is True for contract in crossing_contracts)
     for contract in crossing_contracts:
         dx, dy = contract.flow_direction
-        assert math.hypot(dx, dy) == pytest.approx(1.0, rel=1e-6)
+        assert math.isclose(math.hypot(dx, dy), 1.0, rel_tol=1e-6)
         if contract.target_tile == (-1, -1):
             continue
         assert contract.target_tile in net.tile_contracts
@@ -666,7 +705,7 @@ def test_water_network_sidecar_round_trips_export_metadata():
     assert contract_payload["outflow_rate_m3s"] > 0.0
     assert isinstance(contract_payload["target_tile"], list)
     assert isinstance(contract_payload["entry_cell"], list)
-    assert contract_payload["inflow_head_m"] == pytest.approx(contract_payload["depth"])
+    assert math.isclose(contract_payload["inflow_head_m"], contract_payload["depth"])
     assert contract_payload["seam_valid"] is True
 
     restored = WaterNetwork.from_dict(payload)

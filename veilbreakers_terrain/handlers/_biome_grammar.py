@@ -15,19 +15,21 @@ from __future__ import annotations
 
 import math
 import random
+import importlib
+import importlib.util
 from dataclasses import dataclass
+from typing import Any, TypedDict
 
 import numpy as np
 
-try:
-    import scipy.ndimage as _scipy_ndimage
-    from scipy.ndimage import distance_transform_edt as _edt
-    _HAS_SCIPY = True
-    _HAS_SCIPY_EDT = True
-except ImportError:
-    _scipy_ndimage = None  # type: ignore[assignment]
-    _HAS_SCIPY = False
-    _HAS_SCIPY_EDT = False
+_HAS_SCIPY = importlib.util.find_spec("scipy.ndimage") is not None
+_HAS_SCIPY_EDT = _HAS_SCIPY
+
+
+class ClimateParams(TypedDict):
+    temperature: float
+    moisture: float
+    elevation: float
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ def resolve_biome_name(name: str) -> str:
 # elevation: 0=sea level, 1=high mountain
 # ---------------------------------------------------------------------------
 
-BIOME_CLIMATE_PARAMS: dict[str, dict] = {
+BIOME_CLIMATE_PARAMS: dict[str, ClimateParams] = {
     "thornwood_forest":  {"temperature": 0.45, "moisture": 0.70, "elevation": 0.30},
     "corrupted_swamp":   {"temperature": 0.50, "moisture": 0.90, "elevation": 0.10},
     "mountain_pass":     {"temperature": 0.20, "moisture": 0.35, "elevation": 0.80},
@@ -116,8 +118,8 @@ class WorldMapSpec:
     biome_weights: np.ndarray            # (height, width, biome_count) float64, sum=1
     biome_names: list[str]               # length == biome_count, canonical BIOME_PALETTES keys
     corruption_map: np.ndarray           # (height, width) float64 in [0, 1]
-    flatten_zones: list[dict]            # normalized coords, one per building_plot
-    cell_params: list[dict]              # per-biome climate params (temperature, moisture, elevation)
+    flatten_zones: list[dict[str, float | int]]  # normalized coords, one per building_plot
+    cell_params: list[ClimateParams]     # per-biome climate params (temperature, moisture, elevation)
     transition_width_m: float            # meters (e.g. 15.0)
 
 
@@ -143,7 +145,7 @@ def generate_world_map_spec(
     biomes: list[str] | None = None,
     seed: int = 42,
     corruption_level: float = 0.0,
-    building_plots: list[dict] | None = None,
+    building_plots: list[dict[str, float]] | None = None,
     transition_width_m: float = 15.0,
 ) -> WorldMapSpec:
     """Compose a WorldMapSpec for multi-biome world generation.
@@ -202,7 +204,7 @@ def generate_world_map_spec(
     )
 
     # --- Flatten zones from building plots ---
-    flatten_zones = []
+    flatten_zones: list[dict[str, float | int]] = []
     for plot in (building_plots or []):
         # Convert world-space to normalized [0, 1]
         cx = plot["x"] / world_size
@@ -246,7 +248,6 @@ def generate_world_map_spec(
     # → climate-sorted biome index.
     _climate_rng = random.Random(seed ^ 0xFACEB00C)
     grid_side_c = max(1, int(math.ceil(math.sqrt(biome_count))))
-    cell_w_c = 1.0 / grid_side_c
     cell_h_c = 1.0 / grid_side_c
     seed_ys: list[float] = []
     for _bi in range(biome_count):
@@ -259,7 +260,7 @@ def generate_world_map_spec(
     # Sort chosen biomes by their temperature parameter (descending = cold first).
     sorted_by_temp = sorted(
         range(biome_count),
-        key=lambda i: cell_params[i].get("temperature", 0.5),
+        key=lambda i: cell_params[i]["temperature"],
     )   # index 0 = coldest biome
     # Sort Voronoi cell indices by seed Y (descending = northernmost first)
     sorted_by_y = sorted(range(biome_count), key=lambda i: seed_ys[i], reverse=True)
@@ -344,7 +345,7 @@ def _generate_corruption_map(
     xs = np.arange(width,  dtype=np.float64) / width
     yy, xx = np.meshgrid(ys, xs, indexing="ij")   # (H, W)
 
-    def _fbm_grid(gen, x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
+    def _fbm_grid(gen: Any, x_grid: np.ndarray, y_grid: np.ndarray) -> np.ndarray:
         """Vectorised fBm over coordinate grids using the noise generator."""
         noise = np.zeros_like(x_grid, dtype=np.float64)
         amp   = 1.0
@@ -430,9 +431,12 @@ def _box_filter_2d(
         return arr.copy()
     arr = np.asarray(arr, dtype=np.float64)
     if _HAS_SCIPY:
-        return _scipy_ndimage.uniform_filter(
-            arr, size=2 * radius + 1, mode=mode
-        ).astype(arr.dtype)
+        ndimage = importlib.import_module("scipy.ndimage")
+        uniform_filter = getattr(ndimage, "uniform_filter")
+        return np.asarray(
+            uniform_filter(arr, size=2 * radius + 1, mode=mode),
+            dtype=arr.dtype,
+        )
 
     # --- Vectorised SAT fallback (no Python inner loop) -------------------
     H, W = arr.shape
@@ -507,7 +511,9 @@ def _distance_from_mask(mask: np.ndarray, cell_size: float = 1.0) -> np.ndarray:
     if _HAS_SCIPY_EDT:
         # distance_transform_edt measures distance from False background to
         # nearest True foreground.  Invert mask: background = non-source.
-        dist = _edt(~mask).astype(np.float64) * float(cell_size)
+        ndimage = importlib.import_module("scipy.ndimage")
+        distance_transform_edt = getattr(ndimage, "distance_transform_edt")
+        dist = np.asarray(distance_transform_edt(~mask), dtype=np.float64) * float(cell_size)
         dist[mask] = 0.0
         return dist
 
@@ -1114,7 +1120,7 @@ def apply_hot_spring_features(
     terrace_rings: int = 4,
     hot_radius: float = 0.0,
     heat_sigma: float = 0.0,
-) -> tuple[np.ndarray, list[dict]]:
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
     """Create hot spring pools with travertine terraces and radial heat gradients.
 
     Returns the modified heightmap and a list of spring location dicts for
@@ -1158,7 +1164,7 @@ def apply_hot_spring_features(
     h, w = heightmap.shape
     result = heightmap.copy()
     rng = _rng_from_seed(seed, "biome_hot_spring_features")
-    springs: list[dict] = []
+    springs: list[dict[str, Any]] = []
 
     ys = np.arange(h, dtype=np.float64).reshape(-1, 1)
     xs = np.arange(w, dtype=np.float64).reshape(1, -1)
@@ -1197,8 +1203,6 @@ def apply_hot_spring_features(
         ring_cx = sx - grad_x / grad_mag * downhill_bias
 
         dist_pool  = np.sqrt((ys - sy) ** 2 + (xs - sx) ** 2)
-        dist_rings = np.sqrt((ys - ring_cy) ** 2 + (xs - ring_cx) ** 2)
-
         # Main pool depression
         pool_mask = np.clip(1.0 - dist_pool / pool_radius, 0.0, 1.0) ** 2
         result -= pool_mask * pool_depth
@@ -1272,7 +1276,7 @@ def apply_reef_platform(
     tidal_threshold: float = 0.1,
     max_reef_distance_m: float = 200.0,
     cell_size: float = 1.0,
-    stack: object | None = None,
+    stack: Any | None = None,
 ) -> np.ndarray:
     """Build fringing reef platforms at the coastline with coral buildup zones
     and wave-exposure gradient.
@@ -1358,11 +1362,13 @@ def apply_reef_platform(
     # Gradient of land mask points from sea toward land — "onshore" direction.
     # Exposure is high where there is a strong gradient (open ocean front).
     exposure = np.sqrt(grad_y_land ** 2 + grad_x_land ** 2)
-    exp_max = float(exposure.max()) or 1.0
     # Smooth exposure to spread the windward signal beyond the coastline edge
     if _HAS_SCIPY:
-        exposure_smooth = _scipy_ndimage.uniform_filter(
-            exposure, size=max(3, int(reef_width)), mode="reflect"
+        ndimage = importlib.import_module("scipy.ndimage")
+        uniform_filter = getattr(ndimage, "uniform_filter")
+        exposure_smooth = np.asarray(
+            uniform_filter(exposure, size=max(3, int(reef_width)), mode="reflect"),
+            dtype=np.float64,
         )
     else:
         exposure_smooth = _box_filter_2d(exposure, radius=max(1, int(reef_width // 2)))
@@ -1551,8 +1557,8 @@ def apply_tafoni_weathering(
 
     def _place_cavities(
         n: int,
-        rx_range: tuple,
-        ry_range: tuple,
+        rx_range: tuple[float, float],
+        ry_range: tuple[float, float],
         depth_scale: float,
         prob: np.ndarray,
         add_rim: bool = False,
@@ -1617,7 +1623,6 @@ def apply_tafoni_weathering(
         """Blend base prob with Gaussian attraction map from placed cavities."""
         if not placed_cy:
             return base
-        n_placed = len(placed_cy)
         cy_arr = np.array(placed_cy, dtype=np.float64)
         cx_arr = np.array(placed_cx, dtype=np.float64)
         # Vectorised: (n_placed, h*w) distance matrix — feasible for n_placed ≤ ~500

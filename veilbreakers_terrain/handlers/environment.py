@@ -24,7 +24,7 @@ import warnings
 import zlib
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 import numpy as np
 
@@ -33,14 +33,16 @@ from .terrain_protocol import enforce_protocol
 # Lazy-import guard: bpy/bmesh only available inside Blender. Modules that
 # transitively import this file outside Blender (tests, CI) must not crash at
 # import time; guarded functions raise RuntimeError at call time instead.
+bpy: Any = None
+bmesh: Any = None
 try:
-    import bpy
-    import bmesh
-    _HAS_BPY = True
+    import bpy as _bpy
+    import bmesh as _bmesh
+    bpy = _bpy
+    bmesh = _bmesh
 except ModuleNotFoundError:
-    bpy = None  # type: ignore[assignment]
-    bmesh = None  # type: ignore[assignment]
-    _HAS_BPY = False
+    pass
+_HAS_BPY = bpy is not None and bmesh is not None
 
 
 def _require_bpy() -> None:
@@ -55,6 +57,12 @@ def _require_bpy() -> None:
 logger = logging.getLogger(__name__)
 
 GLOBAL_LOG_FLOW_NORM = 12.0
+
+__all__ = [
+    "_normalize_altitude_for_rule_range",
+    "_point_segment_distance_2d",
+    "_require_bpy",
+]
 
 from ._terrain_noise import (  # noqa: E402
     generate_heightmap,
@@ -96,7 +104,7 @@ from .terrain_path_contracts import (  # noqa: E402
 
 def rasterize_poi_mask(
     stack: "TerrainMaskStack",
-    pois: list,
+    pois: Sequence[Sequence[float]],
     radius_m: float = 20.0,
 ) -> np.ndarray:
     """Rasterize a list of POI world-space positions into a (H, W) float32 mask.
@@ -120,8 +128,6 @@ def rasterize_poi_mask(
     -----------
     Calls ``stack.set("poi_mask", mask, "rasterize_poi_mask")`` before returning.
     """
-    if stack.height is None:
-        raise ValueError("rasterize_poi_mask requires stack.height")
     if len(pois) > 1000:
         raise ValueError(
             f"rasterize_poi_mask: poi list length {len(pois)} exceeds cap of 1000 "
@@ -131,8 +137,8 @@ def rasterize_poi_mask(
     h_arr = np.asarray(stack.height)
     H, W = h_arr.shape
     cs = float(stack.cell_size) if stack.cell_size else 1.0
-    ox = float(stack.world_origin_x) if stack.world_origin_x is not None else 0.0
-    oy = float(stack.world_origin_y) if stack.world_origin_y is not None else 0.0
+    ox = float(stack.world_origin_x)
+    oy = float(stack.world_origin_y)
 
     mask = np.zeros((H, W), dtype=np.float32)
     radius_cells = max(1, int(math.ceil(radius_m / cs)))
@@ -290,7 +296,7 @@ def _coerce_optional_grid_channel(
 
 
 def _resolve_road_cost_context(
-    params: dict,
+    params: dict[str, Any],
     *,
     heightmap: np.ndarray,
 ) -> tuple[np.ndarray | None, str | None]:
@@ -360,7 +366,7 @@ def _resolve_noise_sampling_scale(
 
 
 def _enforce_generate_terrain_protocol(
-    params: dict,
+    params: dict[str, Any],
     *,
     resolution: int,
     scale: float,
@@ -496,7 +502,7 @@ def _temper_heightmap_spikes(
 # 5000 iterations.  Values below 5000 produce no visible erosion channels and
 # defeat the purpose of the simulation pass.  Mountain/extreme biomes may use
 # higher values (e.g. 8000-10000) for deeper carving.
-VB_BIOME_PRESETS: dict[str, dict] = {
+VB_BIOME_PRESETS: dict[str, dict[str, Any]] = {
     "thornwood_forest": {
         "terrain_type": "hills",
         "resolution": 512,
@@ -1167,7 +1173,7 @@ def _apply_biome_season_profile(
 def get_vb_biome_preset(
     biome_name: str,
     season: str | None = None,
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Return a copy of the VB biome preset for *biome_name*, or None.
 
     The returned dict contains terrain generation parameters (terrain_type,
@@ -1195,7 +1201,7 @@ def get_vb_biome_preset(
     return resolved
 
 
-def _validate_terrain_params(params: dict) -> dict:
+def _validate_terrain_params(params: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize terrain generation parameters.
 
     Raises ValueError for invalid parameters. Returns normalized dict.
@@ -1243,7 +1249,7 @@ def _validate_terrain_params(params: dict) -> dict:
     }
 
 
-def _resolve_terrain_tile_params(params: dict) -> dict[str, Any]:
+def _resolve_terrain_tile_params(params: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize tiled terrain generation parameters."""
     tile_x = int(params.get("tile_x", 0))
     tile_y = int(params.get("tile_y", 0))
@@ -1251,20 +1257,22 @@ def _resolve_terrain_tile_params(params: dict) -> dict[str, Any]:
     if cell_size <= 0:
         raise ValueError("cell_size must be positive")
 
-    tile_size = params.get("tile_size")
-    resolution = params.get("resolution")
-    if tile_size is None and resolution is None:
+    tile_size_raw = params.get("tile_size")
+    resolution_raw = params.get("resolution")
+    if tile_size_raw is None and resolution_raw is None:
         tile_size = 256
         resolution = tile_size + 1
-    elif tile_size is None:
-        resolution = int(resolution)
+    elif tile_size_raw is None:
+        if resolution_raw is None:
+            raise ValueError("resolution is required when tile_size is omitted")
+        resolution = int(resolution_raw)
         tile_size = resolution - 1
-    elif resolution is None:
-        tile_size = int(tile_size)
+    elif resolution_raw is None:
+        tile_size = int(tile_size_raw)
         resolution = tile_size + 1
     else:
-        tile_size = int(tile_size)
-        resolution = int(resolution)
+        tile_size = int(tile_size_raw)
+        resolution = int(resolution_raw)
         if resolution != tile_size + 1:
             raise ValueError(
                 "resolution must equal tile_size + 1 for tiled terrain generation"
@@ -1425,10 +1433,13 @@ def _write_json_manifest(path: str | Path, payload: dict[str, Any]) -> str:
     return str(target)
 
 
-def _cleanup_written_artifacts(paths: list[str | Path | None]) -> None:
+def _cleanup_written_artifacts(paths: Iterable[Any]) -> None:
     """Best-effort cleanup for partially exported tile/world artifacts."""
     for path in paths:
         if not path:
+            continue
+        if not isinstance(path, (str, Path)):
+            logger.debug("artifact cleanup skipped for non-path value %r", path)
             continue
         try:
             Path(path).unlink(missing_ok=True)
@@ -1437,7 +1448,7 @@ def _cleanup_written_artifacts(paths: list[str | Path | None]) -> None:
 
 
 def _resolve_height_range(
-    params: dict,
+    params: dict[str, Any],
     heightmap: np.ndarray,
     *,
     allow_local_fallback: bool = True,
@@ -1477,7 +1488,7 @@ def _resolve_height_range(
 
 
 def _resolve_export_height_range(
-    params: dict,
+    params: dict[str, Any],
     heightmap: np.ndarray,
 ) -> tuple[float, float] | None:
     """Resolve an optional shared export range for heightmap RAW output.
@@ -1963,7 +1974,7 @@ def _cliff_structures_to_overlay_placements(
 # Handler: generate_terrain
 # ---------------------------------------------------------------------------
 
-def handle_generate_terrain(params: dict) -> dict:
+def handle_generate_terrain(params: dict[str, Any]) -> dict[str, Any]:
     """Generate a terrain mesh from noise heightmap with optional erosion.
 
     Params:
@@ -1985,14 +1996,14 @@ def handle_generate_terrain(params: dict) -> dict:
         and scatter_rules when a VB biome preset was used.
     """
     # Check if terrain_type is a VB biome preset name
+    requested_biome_name = str(params.get("terrain_type", ""))
     biome_preset = get_vb_biome_preset(
-        params.get("terrain_type", ""),
+        requested_biome_name,
         season=params.get("season"),
     )
     if biome_preset is not None:
-        biome_name = params["terrain_type"]
         # Build effective params: preset defaults, overridden by explicit params
-        effective = {}
+        effective: dict[str, Any] = {}
         effective["terrain_type"] = biome_preset["terrain_type"]
         effective["resolution"] = biome_preset["resolution"]
         effective["height_scale"] = biome_preset["height_scale"]
@@ -2008,7 +2019,7 @@ def handle_generate_terrain(params: dict) -> dict:
         for key in ("name", "resolution", "height_scale", "scale", "seed",
                      "octaves", "persistence", "lacunarity", "erosion",
                      "erosion_iterations"):
-            if key in params and key != "terrain_type":
+            if key in params:
                 effective[key] = params[key]
         # Keep the original terrain_type param out so validation uses the
         # resolved terrain_type from the biome preset
@@ -2043,7 +2054,10 @@ def handle_generate_terrain(params: dict) -> dict:
 
     # --- Controller path: controller state is the terrain source of truth ---
     if use_controller:
-        object_location = tuple(params.get("object_location", (0.0, 0.0, 0.0)))
+        object_location = _coerce_point3(
+            params.get("object_location"),
+            (0.0, 0.0, 0.0),
+        )
         scene_read_payload = params.get("scene_read")
         if scene_read_payload is not None and not isinstance(scene_read_payload, dict):
             scene_read_payload = None
@@ -2207,7 +2221,7 @@ def handle_generate_terrain(params: dict) -> dict:
             result["cave_pipeline_fallback"] = cave_pipeline_fallback
             result["cave_pipeline_deferred"] = not controller_apply_caves
         if biome_preset is not None:
-            result["biome_preset"] = biome_name
+            result["biome_preset"] = requested_biome_name
             result["scatter_rules"] = biome_preset.get("scatter_rules", [])
         return result
 
@@ -2268,7 +2282,10 @@ def handle_generate_terrain(params: dict) -> dict:
 
     terrain_size = scale
     # Fix L2: respect caller-supplied object_location instead of hardcoding origin
-    object_location = tuple(params.get("object_location", (0.0, 0.0, 0.0)))
+    object_location = _coerce_point3(
+        params.get("object_location"),
+        (0.0, 0.0, 0.0),
+    )
     terrain_result = _create_terrain_mesh_from_heightmap(
         name=name,
         heightmap=heightmap,
@@ -2294,7 +2311,7 @@ def handle_generate_terrain(params: dict) -> dict:
         "has_moisture_map": moisture_map is not None,
     }
     if biome_preset is not None:
-        result["biome_preset"] = biome_name
+        result["biome_preset"] = requested_biome_name
         result["scatter_rules"] = biome_preset.get("scatter_rules", [])
     return result
 
@@ -2303,7 +2320,7 @@ def handle_generate_terrain(params: dict) -> dict:
 # Handler: generate_terrain_tile
 # ---------------------------------------------------------------------------
 
-def handle_generate_terrain_tile(params: dict) -> dict:
+def handle_generate_terrain_tile(params: dict[str, Any]) -> dict[str, Any]:
     """Generate a single world-space terrain tile."""
     logger.info("Generating tiled terrain")
 
@@ -2377,7 +2394,7 @@ def handle_generate_terrain_tile(params: dict) -> dict:
     # "east": [...], "west": [...]} where each value is a 1-D list/array of
     # height floats matching the tile's W (north/south) or H (east/west) size.
     _neighbor_edges = params.get("neighbor_edges") or {}
-    def _apply_neighbor_edge_locks(heightmap_in):
+    def _apply_neighbor_edge_locks(heightmap_in: np.ndarray) -> np.ndarray:
         _BLEND_W = [1.0, 0.6, 0.2]
         _H, _W = heightmap_in.shape
         for _dir, _edge_raw in _neighbor_edges.items():
@@ -2571,7 +2588,7 @@ def handle_generate_terrain_tile(params: dict) -> dict:
 # Handler: generate_world_terrain
 # ---------------------------------------------------------------------------
 
-def handle_generate_world_terrain(params: dict) -> dict:
+def handle_generate_world_terrain(params: dict[str, Any]) -> dict[str, Any]:
     """Compatibility wrapper over tile generation for legacy world-terrain callers.
 
     AAA upgrade: full timing metrics, pass_name, affected_cells, error isolation
@@ -2807,7 +2824,7 @@ def handle_generate_world_terrain(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
+def _execute_terrain_pipeline(params: dict[str, Any]) -> dict[str, Any]:
     """Execute a terrain pass or pipeline and return live controller state."""
     # Local imports to avoid circular dependency at module load.
     from .terrain_master_registrar import register_all_terrain_passes
@@ -2896,14 +2913,14 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
             raise ValueError("region bounds must contain only finite coordinates")
         if coords[2] < coords[0] or coords[3] < coords[1]:
             raise ValueError("region bounds must satisfy max >= min on both axes")
-        if not isinstance(value, BBox):
-            bbox = BBox(
-                min_x=float(coords[0]),
-                min_y=float(coords[1]),
-                max_x=float(coords[2]),
-                max_y=float(coords[3]),
-            )
-        return bbox
+        if isinstance(value, BBox):
+            return value
+        return BBox(
+            min_x=float(coords[0]),
+            min_y=float(coords[1]),
+            max_x=float(coords[2]),
+            max_y=float(coords[3]),
+        )
 
     region_bounds = _to_bbox(params.get("region_bounds")) or BBox(
         min_x=world_origin_x,
@@ -3224,7 +3241,7 @@ def _execute_terrain_pipeline(params: dict) -> dict[str, Any]:
     }
 
 
-def handle_run_terrain_pass(params: dict) -> dict:
+def handle_run_terrain_pass(params: dict[str, Any]) -> dict[str, Any]:
     """Run a registered terrain pass via ``TerrainPassController``.
 
     Required params:
@@ -3262,7 +3279,7 @@ def handle_run_terrain_pass(params: dict) -> dict:
     mask_stack = execution["mask_stack"]
     results = execution["results"]
 
-    def _serialize(pr) -> dict:
+    def _serialize(pr: Any) -> dict[str, Any]:
         return {
             "pass_name": pr.pass_name,
             "status": pr.status,
@@ -3289,7 +3306,7 @@ def handle_run_terrain_pass(params: dict) -> dict:
     }
 
 
-def handle_generate_waterfall(params: dict) -> dict:
+def handle_generate_waterfall(params: dict[str, Any]) -> dict[str, Any]:
     """Generate a waterfall from water-network context when available.
 
     The legacy terrain-feature mesh generator remains available only via an
@@ -3410,7 +3427,7 @@ def handle_generate_waterfall(params: dict) -> dict:
         )
         result = legacy
 
-    mesh_payload = result.get("mesh", {}) if isinstance(result, dict) else {}
+    mesh_payload = result.get("mesh", {})
     object_name_raw = params.get("name") or params.get("object_name")
     mesh_spec = {
         "vertices": list(mesh_payload.get("vertices", []) or []),
@@ -3524,7 +3541,7 @@ def handle_generate_waterfall(params: dict) -> dict:
     return result
 
 
-def handle_stitch_terrain_edges(params: dict) -> dict:
+def handle_stitch_terrain_edges(params: dict[str, Any]) -> dict[str, Any]:
     """Stitch the seam between two adjacent terrain tiles by averaging shared edge Z values.
 
     AAA upgrade: deterministic per-vertex averaging (no wall-clock time), protected
@@ -3609,7 +3626,7 @@ def handle_stitch_terrain_edges(params: dict) -> dict:
                 return True
         return False
 
-    def _edge_vertices(obj, edge: str) -> list[tuple[float, int, float, float]]:
+    def _edge_vertices(obj: Any, edge: str) -> list[tuple[float, int, float, float]]:
         """Return sorted [(axis_val, vertex_index, world_x, world_y), ...] for an edge."""
         mesh = obj.data
         n = len(mesh.vertices)
@@ -3745,7 +3762,7 @@ def handle_stitch_terrain_edges(params: dict) -> dict:
 # Handler: paint_terrain
 # ---------------------------------------------------------------------------
 
-def handle_paint_terrain(params: dict) -> dict:
+def handle_paint_terrain(params: dict[str, Any]) -> dict[str, Any]:
     """Auto-paint terrain with biome materials based on slope/altitude rules.
 
     B+ upgrade: pressure-falloff brush for soft material boundaries, multi-
@@ -3963,7 +3980,7 @@ def handle_paint_terrain(params: dict) -> dict:
 # Handler: carve_river
 # ---------------------------------------------------------------------------
 
-def handle_carve_river(params: dict) -> dict:
+def handle_carve_river(params: dict[str, Any]) -> dict[str, Any]:
     """Carve a river channel on an existing terrain mesh using D8 flow routing.
 
     Uses a multi-segment A* path solver through the normalized heightmap with
@@ -4667,16 +4684,17 @@ def _build_road_mask_and_sdf(
 
     try:
         from scipy.ndimage import distance_transform_edt
-        try:
-            from scipy.spatial import cKDTree as _KDTree
-        except ImportError:
-            from scipy.spatial import KDTree as _KDTree  # type: ignore[assignment]
+        from scipy.spatial import KDTree as _KDTree
 
         tree = _KDTree(path_arr)
-        dist_flat, _ = tree.query(query_pts, k=1)
+        dist_raw, _nearest = tree.query(query_pts, k=1)
+        dist_flat = np.asarray(dist_raw, dtype=np.float64)
         dist_map = dist_flat.reshape(rows, cols)
         road_mask = (dist_map <= road_half_width).astype(np.uint8)
-        road_sdf = distance_transform_edt((1 - road_mask).astype(np.uint8)).astype(np.float32)
+        road_sdf = np.asarray(
+            distance_transform_edt((1 - road_mask).astype(np.uint8)),
+            dtype=np.float32,
+        )
         return road_mask, road_sdf
     except ImportError:
         dist_map = np.full((rows, cols), np.inf, dtype=np.float64)
@@ -4915,7 +4933,7 @@ def _carve_river_banks_into_terrain(
     flat = carved.reshape(-1)
     for idx, vert in enumerate(vertices):
         vert.co.z = float(flat[idx])
-    if hasattr(mesh, "update"):
+    if mesh is not None and hasattr(mesh, "update"):
         mesh.update()
 
     return {
@@ -5180,7 +5198,11 @@ def _ensure_grounded_road_material(material_name: str, road_material_key: str) -
         if specular is not None:
             specular.default_value = preset["specular"]
 
-        if preset["noise_scale"] > 0.0 and preset["bump_strength"] > 0.0:
+        noise_raw = preset.get("noise_scale", 0.0)
+        bump_raw = preset.get("bump_strength", 0.0)
+        noise_scale = float(noise_raw) if isinstance(noise_raw, (int, float)) else 0.0
+        bump_strength = float(bump_raw) if isinstance(bump_raw, (int, float)) else 0.0
+        if noise_scale > 0.0 and bump_strength > 0.0:
             texcoord = nodes.new("ShaderNodeTexCoord")
             texcoord.location = (-760, -120)
             mapping = nodes.new("ShaderNodeMapping")
@@ -5579,7 +5601,8 @@ def _infer_waterfall_functional_positions(
     origin: tuple[float, float, float],
 ) -> dict[str, list[float]]:
     """Infer stable world-space anchors for the 7 functional waterfall objects."""
-    dims = result.get("dimensions", {}) if isinstance(result, dict) else {}
+    dims_raw = result.get("dimensions", {})
+    dims = dims_raw if isinstance(dims_raw, dict) else {}
     height = max(float(dims.get("height", 1.0)), 1.0)
 
     feature = result.get("waterfall_feature")
@@ -5588,12 +5611,14 @@ def _infer_waterfall_functional_positions(
     top = _coerce_point3(feature_top, (origin[0], origin[1], origin[2] + height))
     bottom = _coerce_point3(feature_bottom, origin)
 
-    pool_info = result.get("pool", {}) if isinstance(result, dict) else {}
+    pool_info_raw = result.get("pool", {})
+    pool_info = pool_info_raw if isinstance(pool_info_raw, dict) else {}
     pool_center = _offset_point3(
         _coerce_point3(pool_info.get("center"), (0.0, 0.0, 0.0)),
         origin,
     )
-    splash_zone = result.get("splash_zone", {}) if isinstance(result, dict) else {}
+    splash_zone_raw = result.get("splash_zone", {})
+    splash_zone = splash_zone_raw if isinstance(splash_zone_raw, dict) else {}
     splash_center = _offset_point3(
         _coerce_point3(splash_zone.get("center"), pool_center),
         origin,
@@ -5683,7 +5708,7 @@ def _publish_waterfall_functional_objects(
 
 
 def _materialise_mist_volume(
-    mist_pos: list | tuple,
+    mist_pos: Sequence[float],
     *,
     parent: Any | None = None,
     height_m: float = 3.0,
@@ -5701,11 +5726,10 @@ def _materialise_mist_volume(
     try:
         import bmesh as _bmesh
 
-        col = collection or getattr(
-            getattr(bpy, "context", None) and bpy.context.collection, "", None
-        )
-        if col is None and hasattr(bpy, "context") and bpy.context is not None:
-            col = bpy.context.collection
+        context_obj: Any = getattr(bpy, "context", None)
+        col = collection or getattr(context_obj and context_obj.collection, "", None)
+        if col is None and context_obj is not None:
+            col = context_obj.collection
 
         # Half-extent: 60% of drop height for width, 40% for vertical rise
         hw = max(0.4, float(height_m) * 0.60)
@@ -5754,7 +5778,7 @@ def _materialise_mist_volume(
         return None
 
 
-def handle_create_cave_entrance(params: dict) -> dict:
+def handle_create_cave_entrance(params: dict[str, Any]) -> dict[str, Any]:
     """Create a terrain-facing cave entrance mesh object from the pure generator.
 
     AAA upgrade: slope validation, valley-orientation routing, protected zone
@@ -6002,7 +6026,7 @@ def handle_create_cave_entrance(params: dict) -> dict:
 
     _duration = time.perf_counter() - _t0
     return {
-        "name": object_name if isinstance(obj, dict) else obj.name,
+        "name": object_name if isinstance(obj, dict) else getattr(obj, "name", object_name),
         "style": style,
         "width": width,
         "height": height,
@@ -6044,7 +6068,7 @@ def handle_create_cave_entrance(params: dict) -> dict:
 # Handler: generate_road
 # ---------------------------------------------------------------------------
 
-def handle_generate_road(params: dict) -> dict:
+def handle_generate_road(params: dict[str, Any]) -> dict[str, Any]:
     """Generate a road between waypoints on terrain with grading.
 
     Params:
@@ -6407,7 +6431,12 @@ def handle_generate_road(params: dict) -> dict:
         base_index = len(road_vertices)
         road_vertices.extend(chunk_vertices)
         road_faces.extend(
-            tuple(base_index + corner for corner in face)
+            (
+                base_index + face[0],
+                base_index + face[1],
+                base_index + face[2],
+                base_index + face[3],
+            )
             for face in chunk_faces
         )
 
@@ -6957,14 +6986,18 @@ def _build_level_water_surface_from_terrain(
     heights = np.asarray([point[2] for point in world_points], dtype=np.float64).reshape(rows, cols)
     water_level_f = float(water_level)
     shoreline_eps = 0.02
-    bounded_mask = (
-        mask_center is not None
-        and mask_radius is not None
-        and float(mask_radius) > 0.0
-    )
-    mask_center_x = float(mask_center[0]) if bounded_mask else 0.0
-    mask_center_y = float(mask_center[1]) if bounded_mask else 0.0
-    mask_radius_f = float(mask_radius) if bounded_mask else 0.0
+    bounded_mask = False
+    mask_center_x = 0.0
+    mask_center_y = 0.0
+    mask_radius_f = 0.0
+    wp_arr: np.ndarray | None = None
+    if mask_center is not None and mask_radius is not None:
+        candidate_radius = float(mask_radius)
+        if candidate_radius > 0.0:
+            bounded_mask = True
+            mask_center_x = float(mask_center[0])
+            mask_center_y = float(mask_center[1])
+            mask_radius_f = candidate_radius
     mask_aspect = max(float(mask_aspect_y), 0.25)
     component_cells: np.ndarray | None = None
 
@@ -7022,7 +7055,7 @@ def _build_level_water_surface_from_terrain(
             + component_cells[1:, 1:].astype(np.int32)
         )
         keep_mask = (cc2 >= 2) & water_pass
-    elif bounded_mask:
+    elif bounded_mask and wp_arr is not None:
         qcx = (wp_arr[:-1, :-1, 0] + wp_arr[:-1, 1:, 0] + wp_arr[1:, :-1, 0] + wp_arr[1:, 1:, 0]) / 4.0
         qcy = (wp_arr[:-1, :-1, 1] + wp_arr[:-1, 1:, 1] + wp_arr[1:, :-1, 1] + wp_arr[1:, 1:, 1]) / 4.0
         qd = np.sqrt((qcx - mask_center_x) ** 2 + ((qcy - mask_center_y) / mask_aspect) ** 2)
@@ -7197,13 +7230,13 @@ def _build_level_water_surface_from_terrain(
     shoreline_faces = 0
     top_faces: list[tuple[int, int, int, int]] = []
     for row, col in kept_quads:
-        quad_indices = [
+        quad_indices: tuple[int, int, int, int] = (
             row * cols + col,
             row * cols + col + 1,
             (row + 1) * cols + col + 1,
             (row + 1) * cols + col,
-        ]
-        top_faces.append(tuple(quad_indices))
+        )
+        top_faces.append(quad_indices)
         try:
             face = bm.faces.new([top_verts[idx] for idx in quad_indices])
         except ValueError:
@@ -7321,7 +7354,7 @@ def _build_level_water_surface_from_terrain(
 # Handler: create_water
 # ---------------------------------------------------------------------------
 
-def handle_create_water(params: dict) -> dict:
+def handle_create_water(params: dict[str, Any]) -> dict[str, Any]:
     """Create a water body -- spline-based surface mesh with AAA flow data.
 
     AAA upgrade (39-02): replaces flat disc placeholder with a spline-following
@@ -7563,7 +7596,7 @@ def handle_create_water(params: dict) -> dict:
 
     # Ring of vertices per path point
     _vert_count = 0
-    rings: list[list] = []
+    rings: list[list[tuple[Any, Any | None, float, float, float, float, float, float]]] = []
     for pi, pt in enumerate(path):
         px, py, pz = pt
 
@@ -7858,7 +7891,7 @@ def _priority_flood_fill_basin(
     return basin_mask
 
 
-def handle_carve_water_basin(params: dict) -> dict:
+def handle_carve_water_basin(params: dict[str, Any]) -> dict[str, Any]:
     """Carve a shoreline-ready basin into an existing terrain mesh.
 
     AAA upgrade: priority-flood algorithm for connected-basin validation,
@@ -7954,7 +7987,7 @@ def handle_carve_water_basin(params: dict) -> dict:
     terrain_height_dim = obj.dimensions.y if obj.dimensions.y > 0 else terrain_width
     cx = float(center[0])
     cy = float(center[1])
-    protected_zones: list[dict] = list(params.get("protected_zones") or [])
+    protected_zones: list[dict[str, Any]] = list(params.get("protected_zones") or [])
 
     # ------------------------------------------------------------------
     # World-space coordinate arrays — must be defined before any mask or
@@ -8092,7 +8125,7 @@ def handle_carve_water_basin(params: dict) -> dict:
     # ------------------------------------------------------------------
     # Outflow channel routing
     # ------------------------------------------------------------------
-    outflow_channel: dict | None = None
+    outflow_channel: dict[str, Any] | None = None
     if outflow_length > 0.5:
         # Auto-detect steepest-descent rim cell when direction not specified
         if outflow_dir_raw is None:
@@ -8221,7 +8254,7 @@ def handle_carve_water_basin(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @enforce_protocol(require_rule_1=False, require_rule_3=False, require_rule_7=False)
-def handle_export_unity_bundle(params: dict) -> dict:
+def handle_export_unity_bundle(params: dict[str, Any]) -> dict[str, Any]:
     """Export a Unity terrain bundle from a populated ``TerrainMaskStack``.
 
     Params:
@@ -8274,7 +8307,7 @@ def handle_export_unity_bundle(params: dict) -> dict:
 # Handler: export_heightmap
 # ---------------------------------------------------------------------------
 
-def handle_export_heightmap(params: dict) -> dict:
+def handle_export_heightmap(params: dict[str, Any]) -> dict[str, Any]:
     """Export terrain heightmap as 16-bit little-endian RAW for Unity.
 
     Params:
@@ -8379,7 +8412,7 @@ def _nearest_pot_plus_1(n: int) -> int:
 # Handler: generate_multi_biome_world
 # ---------------------------------------------------------------------------
 
-def handle_generate_multi_biome_world(params: dict) -> dict:
+def handle_generate_multi_biome_world(params: dict[str, Any]) -> dict[str, Any]:
     """Generate a complete multi-biome world map in Blender.
 
     Orchestrates: WorldMapSpec -> terrain mesh -> biome vertex colors ->
@@ -8528,10 +8561,10 @@ def handle_generate_multi_biome_world(params: dict) -> dict:
 
 
 def _compute_vertex_colors_for_biome_map(
-    obj,            # Blender object
-    spec,           # WorldMapSpec
+    obj: Any,
+    spec: Any,
     world_size: float,
-) -> list:
+) -> list[tuple[float, float, float, float]]:
     """Sample per-vertex biome color from WorldMapSpec corruption map + biome palette.
 
     Returns list of (R, G, B, A) tuples, one per vertex.
@@ -8557,7 +8590,7 @@ def _compute_vertex_colors_for_biome_map(
 
     # Precompute base_color per unique biome — _get_material_def once per biome, not per vertex
     unique_biomes = np.unique(biome_idx_arr)
-    biome_base_colors: dict = {}
+    biome_base_colors: dict[int, tuple[float, float, float, float]] = {}
     for bidx in unique_biomes.tolist():
         base_color = (0.15, 0.12, 0.10, 1.0)
         try:

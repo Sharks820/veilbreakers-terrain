@@ -17,9 +17,22 @@ from __future__ import annotations
 import math
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING, SupportsFloat
 
 import numpy as np
+import numpy.typing as npt
 import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        TerrainMaskStack,
+        TerrainPipelineState,
+    )
+    from veilbreakers_terrain.handlers.terrain_waterfalls import WaterfallChain
+
+Float32Array = npt.NDArray[np.float32]
+Float64Array = npt.NDArray[np.float64]
+BoolArray = npt.NDArray[np.bool_]
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +40,17 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _cliff_heightmap(size: int = 40, drop: float = 20.0) -> np.ndarray:
+def _assert_close(
+    actual: SupportsFloat,
+    expected: float,
+    *,
+    rel: float = 1e-6,
+    abs_tol: float = 1e-8,
+) -> None:
+    assert math.isclose(float(actual), expected, rel_tol=rel, abs_tol=abs_tol)
+
+
+def _cliff_heightmap(size: int = 40, drop: float = 20.0) -> Float64Array:
     """Heightmap with a single sharp cliff running horizontally mid-grid."""
     h = np.zeros((size, size), dtype=np.float64)
     # Upper half (low rows) = high ground; lower half = low ground
@@ -41,7 +64,7 @@ def _cliff_heightmap(size: int = 40, drop: float = 20.0) -> np.ndarray:
     return h
 
 
-def _stacked_cliff_heightmap(size: int = 60) -> np.ndarray:
+def _stacked_cliff_heightmap(size: int = 60) -> Float64Array:
     """Three-tier staircase for multi-tier waterfall testing."""
     h = np.zeros((size, size), dtype=np.float64)
     tier = size // 4
@@ -57,7 +80,7 @@ def _stacked_cliff_heightmap(size: int = 60) -> np.ndarray:
     return h
 
 
-def _build_stack(height: np.ndarray, tile_size: int | None = None):
+def _build_stack(height: Float64Array, tile_size: int | None = None) -> "TerrainMaskStack":
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     ts = tile_size if tile_size is not None else height.shape[0] - 1
@@ -75,7 +98,12 @@ def _build_stack(height: np.ndarray, tile_size: int | None = None):
     return stack
 
 
-def _build_state(height: np.ndarray, *, include_scene_read: bool = True, seed: int = 101):
+def _build_state(
+    height: Float64Array,
+    *,
+    include_scene_read: bool = True,
+    seed: int = 101,
+) -> "TerrainPipelineState":
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
         TerrainIntentState,
@@ -110,7 +138,7 @@ def _build_state(height: np.ndarray, *, include_scene_read: bool = True, seed: i
     return TerrainPipelineState(intent=intent, mask_stack=stack)
 
 
-def _build_manual_chain():
+def _build_manual_chain() -> "WaterfallChain":
     from veilbreakers_terrain.handlers.terrain_waterfalls import (
         ImpactPool,
         LipCandidate,
@@ -172,7 +200,7 @@ def test_detect_lip_candidates_finds_cliff_edge():
 def test_manning_velocity_is_monotonic_and_clamped():
     from veilbreakers_terrain.handlers.terrain_waterfalls import _manning_velocity
 
-    assert _manning_velocity(0.0, 1.0) == pytest.approx(0.1)
+    _assert_close(_manning_velocity(0.0, 1.0), 0.1)
     assert _manning_velocity(0.05, 0.5) > _manning_velocity(0.01, 0.5)
     assert _manning_velocity(5.0, 20.0) <= 15.0
 
@@ -182,8 +210,8 @@ def test_freefall_impact_matches_closed_form_drop():
 
     h_drop = 20.0
     t_impact, v_total = _freefall_impact(h_drop, v_h=0.0)
-    assert t_impact == pytest.approx(math.sqrt(2.0 * h_drop / _G), rel=1e-6)
-    assert v_total == pytest.approx(math.sqrt(2.0 * _G * h_drop), rel=1e-6)
+    _assert_close(t_impact, math.sqrt(2.0 * h_drop / _G), rel=1e-6)
+    _assert_close(v_total, math.sqrt(2.0 * _G * h_drop), rel=1e-6)
 
 
 def test_mason_1985_pool_grows_with_drop_and_discharge():
@@ -273,7 +301,7 @@ def test_generate_mist_zone_falls_off_radially():
     # Grab pool cell — must equal peak (or close)
     from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
     pr, pc = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
-    assert mist[pr, pc] == pytest.approx(peak, rel=1e-5)
+    _assert_close(mist[pr, pc], float(peak), rel=1e-5)
     # Far cells should be zero
     assert mist[0, 0] == 0.0 or mist[0, 0] < peak * 0.5
 
@@ -382,8 +410,8 @@ def test_determinism_same_seed_same_chain_count():
     if lips_a:
         chain_a = solve_waterfall_from_river(stack_a, lips_a[0])
         chain_b = solve_waterfall_from_river(stack_b, lips_b[0])
-        assert chain_a.total_drop_m == pytest.approx(chain_b.total_drop_m)
-        assert chain_a.pool.radius_m == pytest.approx(chain_b.pool.radius_m)
+        _assert_close(chain_a.total_drop_m, chain_b.total_drop_m)
+        _assert_close(chain_a.pool.radius_m, chain_b.pool.radius_m)
 
 
 def test_region_scoped_pass_leaves_outside_cells_zero():
@@ -401,6 +429,9 @@ def test_region_scoped_pass_leaves_outside_cells_zero():
             controller.run_pass("waterfalls", region=region, checkpoint=False)
         stack = state.mask_stack
         # Corner cell (0,0) should be zero for all produced masks
+        assert stack.foam is not None
+        assert stack.mist is not None
+        assert stack.waterfall_lip_candidate is not None
         assert stack.foam[0, 0] == 0.0
         assert stack.mist[0, 0] == 0.0
         assert stack.waterfall_lip_candidate[0, 0] == 0.0
@@ -457,7 +488,7 @@ def test_generate_foam_mask_peaks_at_pool():
     assert foam.max() > 0.0
     from veilbreakers_terrain.handlers._water_network_ext import _world_to_grid  # type: ignore
     pr, pc = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
-    assert foam[pr, pc] == pytest.approx(foam.max(), rel=1e-5)
+    _assert_close(foam[pr, pc], float(foam.max()), rel=1e-5)
 
 
 def test_generate_foam_mask_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch):
@@ -469,14 +500,21 @@ def test_generate_foam_mask_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch
     sentinel = np.zeros_like(stack.height, dtype=np.float32)
     sentinel[2, 2] = 0.37
 
+    def _fake_compute_foam_mask(
+        chain_arg: "WaterfallChain",
+        stack_arg: "TerrainMaskStack",
+    ) -> Float32Array:
+        _ = (chain_arg, stack_arg)
+        return sentinel.copy()
+
     monkeypatch.setattr(
         water_ext,
         "compute_foam_mask",
-        lambda chain_arg, stack_arg: sentinel.copy(),
+        _fake_compute_foam_mask,
     )
 
     foam = generate_foam_mask(chain, stack)
-    assert foam[2, 2] == pytest.approx(0.37)
+    _assert_close(foam[2, 2], 0.37)
 
 
 def test_generate_foam_mask_preserves_plunge_path_turbulence_when_ext_quiet(
@@ -489,15 +527,22 @@ def test_generate_foam_mask_preserves_plunge_path_turbulence_when_ext_quiet(
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
 
+    def _quiet_compute_foam_mask(
+        chain_arg: "WaterfallChain",
+        stack_arg: "TerrainMaskStack",
+    ) -> Float32Array:
+        _ = (chain_arg, stack_arg)
+        return np.zeros_like(stack.height, dtype=np.float32)
+
     monkeypatch.setattr(
         water_ext,
         "compute_foam_mask",
-        lambda chain_arg, stack_arg: np.zeros_like(stack.height, dtype=np.float32),
+        _quiet_compute_foam_mask,
     )
 
     foam = generate_foam_mask(chain, stack)
     turb_r, turb_c = _world_to_grid(stack, chain.plunge_path[1][0], chain.plunge_path[1][1])
-    pool_r, pool_c = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
+    pool_r, _pool_c = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
 
     assert abs(turb_r - pool_r) >= 4
     assert foam[turb_r, turb_c] > 0.0
@@ -514,12 +559,13 @@ def test_generate_mist_zone_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch
     seen: dict[str, float] = {}
 
     def _fake_compute_mist_mask(
-        chain_arg,
-        stack_arg,
+        chain_arg: "WaterfallChain",
+        stack_arg: "TerrainMaskStack",
         mist_height_range: float = 20.0,
         wind_direction_rad: float = 0.0,
         wind_speed_ms: float = 3.0,
-    ):
+    ) -> Float32Array:
+        _ = (chain_arg, stack_arg, mist_height_range)
         seen["wind_direction_rad"] = float(wind_direction_rad)
         seen["wind_speed_ms"] = float(wind_speed_ms)
         return sentinel.copy()
@@ -527,9 +573,9 @@ def test_generate_mist_zone_uses_ext_richer_base(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(water_ext, "compute_mist_mask", _fake_compute_mist_mask)
 
     mist = generate_mist_zone(chain, stack, wind_factor=1.0, wind_direction_rad=0.0)
-    assert mist[2, 2] == pytest.approx(0.41)
-    assert seen["wind_speed_ms"] == pytest.approx(3.0)
-    assert seen["wind_direction_rad"] == pytest.approx(math.pi * 0.5)
+    _assert_close(mist[2, 2], 0.41)
+    _assert_close(seen["wind_speed_ms"], 3.0)
+    _assert_close(seen["wind_direction_rad"], math.pi * 0.5)
 
 
 def test_generate_mist_zone_preserves_downstream_bias_when_ext_quiet(
@@ -542,10 +588,18 @@ def test_generate_mist_zone_preserves_downstream_bias_when_ext_quiet(
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
 
+    def _quiet_compute_mist_mask(
+        chain_arg: "WaterfallChain",
+        stack_arg: "TerrainMaskStack",
+        **kwargs: object,
+    ) -> Float32Array:
+        _ = (chain_arg, stack_arg, kwargs)
+        return np.zeros_like(stack.height, dtype=np.float32)
+
     monkeypatch.setattr(
         water_ext,
         "compute_mist_mask",
-        lambda chain_arg, stack_arg, **kwargs: np.zeros_like(stack.height, dtype=np.float32),
+        _quiet_compute_mist_mask,
     )
 
     mist = generate_mist_zone(chain, stack)
@@ -580,7 +634,7 @@ def test_blend_velocity_to_water_body_damps_masked_pool_and_leaves_dry_cells_alo
     stack = _build_stack(np.zeros((40, 40), dtype=np.float64))
     chain = _build_manual_chain()
     vel = np.ones((40, 40, 2), dtype=np.float32)
-    water_body_mask = np.zeros((40, 40), dtype=bool)
+    water_body_mask: BoolArray = np.zeros((40, 40), dtype=bool)
     pool_r, pool_c = _world_to_grid(stack, chain.pool.world_position[0], chain.pool.world_position[1])
     water_body_mask[max(0, pool_r - 2): pool_r + 3, max(0, pool_c - 2): pool_c + 3] = True
 
@@ -672,13 +726,14 @@ def test_pass_waterfalls_without_chains_does_not_publish_empty_emitters():
     assert not specs
 
 
-def test_particle_emitter_specs_exported_to_unity_json(tmp_path):
+def test_particle_emitter_specs_exported_to_unity_json(tmp_path: Path) -> None:
     """Full pipeline: waterfall emits specs → Unity exporter writes JSON."""
     from veilbreakers_terrain.handlers.terrain_unity_export import (
         _particle_emitter_specs_json,
     )
     from veilbreakers_terrain.handlers.terrain_waterfalls import pass_waterfalls
 
+    assert tmp_path.exists()
     state = _build_state(_cliff_heightmap(size=40, drop=25.0))
     pass_waterfalls(state, region=None)
     payload = _particle_emitter_specs_json(state.mask_stack)

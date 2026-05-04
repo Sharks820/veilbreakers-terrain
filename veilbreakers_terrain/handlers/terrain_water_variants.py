@@ -25,8 +25,9 @@ import enum
 import logging
 import math
 import time
+import importlib
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -109,7 +110,7 @@ class SeasonalState(enum.Enum):
 # ---------------------------------------------------------------------------
 
 
-def _as_polyline(path) -> np.ndarray:
+def _as_polyline(path: Sequence[Sequence[float]] | np.ndarray) -> np.ndarray:
     arr = np.asarray(path, dtype=np.float32)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 2)
@@ -167,7 +168,7 @@ def _protected_mask(
 
 def generate_braided_channels(
     stack: TerrainMaskStack,
-    river_path,
+    river_path: Sequence[Sequence[float]] | np.ndarray,
     count: int = 3,
     seed: int = 0,
 ) -> BraidedChannels:
@@ -204,9 +205,12 @@ def generate_braided_channels(
         else:
             t = (k / (count - 1)) * 2.0 - 1.0  # [-1, 1]
         base_offset = t * (total_width_m * 0.5)
-        wiggle = rng.standard_normal(main.shape[0]) * (channel_cell * 0.25)
-        offsets = (base_offset + wiggle)[:, None] * normals
-        sub = (main + offsets).astype(np.float32)
+        wiggle = np.asarray(
+            rng.standard_normal(main.shape[0]),
+            dtype=np.float32,
+        ) * np.float32(channel_cell * 0.25)
+        offsets = (np.float32(base_offset) + wiggle)[:, None] * normals
+        sub = np.asarray(main + offsets, dtype=np.float32)
         channels.append(sub)
 
     # Main channel is the one closest to the original (smallest |t|).
@@ -229,7 +233,7 @@ def generate_braided_channels(
 
 def detect_estuary(
     stack: TerrainMaskStack,
-    river_path,
+    river_path: Sequence[Sequence[float]] | np.ndarray,
     sea_level_m: float,
 ) -> Optional[Estuary]:
     """Identify a river-meets-sea zone with salinity gradient proxy.
@@ -277,7 +281,7 @@ def detect_estuary(
 
 def detect_karst_springs(
     stack: TerrainMaskStack,
-    karst_features,
+    karst_features: Sequence[Sequence[float]] | np.ndarray | None,
 ) -> List[KarstSpring]:
     """Detect karst spring resurgences from soluble-rock areas.
 
@@ -540,9 +544,12 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
     # Connected-components: scipy label (fast) or Python flood-fill
     try:
-        from scipy.ndimage import label as _label
+        ndimage = importlib.import_module("scipy.ndimage")
+        label_components = getattr(ndimage, "label")
         struct8 = np.ones((3, 3), dtype=np.int32)
-        cc_labels, n_comp = _label(candidate, structure=struct8)
+        labeled_result = label_components(candidate, structure=struct8)
+        cc_labels = np.asarray(labeled_result[0], dtype=np.int32)
+        n_comp = int(labeled_result[1])
     except ImportError:
         # Python flood-fill fallback
         cc_labels = np.zeros((rows, cols), dtype=np.int32)
@@ -573,9 +580,13 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
     # Precompute open-water proximity (within 3 cells)
     if ws_arr is not None:
-        from scipy.ndimage import binary_dilation as _dil
         try:
-            near_water = _dil(ws_arr > 0.3, iterations=3)
+            ndimage = importlib.import_module("scipy.ndimage")
+            binary_dilation = getattr(ndimage, "binary_dilation")
+            near_water = np.asarray(
+                binary_dilation(ws_arr > 0.3, iterations=3),
+                dtype=bool,
+            )
         except Exception:
             near_water = ws_arr > 0.3
     else:
@@ -598,7 +609,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
         )
 
         mean_w = float(w[cell_rs, cell_cs].mean())
-        mean_s = float(s[cell_rs, cell_cs].mean())
+        _mean_s = float(s[cell_rs, cell_cs].mean())
 
         # Classify by pH proxy
         near_open = bool(near_water[cell_rs, cell_cs].any())
@@ -608,13 +619,13 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
             mean_rh = 0.3  # assume acidic when no data
 
         if near_open and mean_w > 0.5:
-            wetland_type = "marsh"
+            _wetland_type = "marsh"
             veg_density = min(1.0, mean_w + 0.25)
         elif mean_rh > 0.55:
-            wetland_type = "fen"
+            _wetland_type = "fen"
             veg_density = min(1.0, mean_w + 0.15)
         else:
-            wetland_type = "bog"
+            _wetland_type = "bog"
             veg_density = min(1.0, mean_w + 0.10)
 
         # Radius from bounding box diagonal / 2
@@ -624,7 +635,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
         cx_w = stack.world_origin_x + (min_c + max_c + 1) * 0.5 * stack.cell_size
         cy_w = stack.world_origin_y + (min_r + max_r + 1) * 0.5 * stack.cell_size
-        cz_w = float(stack.height[cell_rs, cell_cs].mean()) if stack.height is not None else 0.0
+        cz_w = float(stack.height[cell_rs, cell_cs].mean())
 
         wetlands.append(
             Wetland(
@@ -645,7 +656,7 @@ def detect_wetlands(stack: TerrainMaskStack) -> List[Wetland]:
 
 def apply_seasonal_water_state(
     stack: TerrainMaskStack,
-    state: SeasonalState,
+    state: object,
 ) -> None:
     """Mutate wetness / water_surface / tidal in-place per seasonal state.
 
@@ -925,7 +936,7 @@ def get_geyser_specs(
     *,
     max_geysers: int = 4,
     seed: int = 42,
-) -> list:
+) -> list[dict[str, Any]]:
     """Return MeshSpec dicts for geyser meshes at detected hot-spring sites.
 
     Calls ``detect_hot_springs`` to find sites, then ``generate_geyser``
@@ -940,14 +951,14 @@ def get_geyser_specs(
         return []
 
     rng = np.random.default_rng(seed)
-    results = []
-    for hs in springs[:max_geysers]:
+    results: list[dict[str, Any]] = []
+    for idx, hs in enumerate(springs[:max_geysers]):
         spec = generate_geyser(
-            pool_radius=rng.uniform(2.0, 5.0),
-            pool_depth=rng.uniform(0.3, 0.8),
-            vent_height=rng.uniform(0.5, 2.0),
-            mineral_rim_width=rng.uniform(0.5, 1.5),
-            seed=int(rng.integers(0, 2**31)),
+            pool_radius=float(rng.uniform(2.0, 5.0)),
+            pool_depth=float(rng.uniform(0.3, 0.8)),
+            vent_height=float(rng.uniform(0.5, 2.0)),
+            mineral_rim_width=float(rng.uniform(0.5, 1.5)),
+            seed=(int(seed) ^ (0x47E57E11 + idx * 104729)) & 0x7FFFFFFF,
         )
         results.append({"mesh_spec": spec, "world_pos": hs.world_pos})
     return results
@@ -958,7 +969,7 @@ def get_swamp_specs(
     *,
     max_swamps: int = 3,
     seed: int = 42,
-) -> list:
+) -> list[dict[str, Any]]:
     """Return MeshSpec dicts for swamp terrain at detected wetland sites.
 
     Calls ``detect_wetlands`` to find sites, then ``generate_swamp_terrain``
@@ -973,14 +984,14 @@ def get_swamp_specs(
         return []
 
     rng = np.random.default_rng(seed)
-    results = []
-    for wl in wetlands[:max_swamps]:
+    results: list[dict[str, Any]] = []
+    for idx, wl in enumerate(wetlands[:max_swamps]):
         spec = generate_swamp_terrain(
             size=wl.radius_m * 2.0,
-            water_level=rng.uniform(0.2, 0.5),
+            water_level=float(rng.uniform(0.2, 0.5)),
             hummock_count=int(rng.integers(6, 18)),
             island_count=int(rng.integers(2, 6)),
-            seed=int(rng.integers(0, 2**31)),
+            seed=(int(seed) ^ (0x5A9A9A11 + idx * 130363)) & 0x7FFFFFFF,
         )
         results.append({"mesh_spec": spec, "world_pos": wl.world_pos})
     return results
@@ -1085,7 +1096,7 @@ def generate_water_bottom_mesh(
     ripple_amplitude_m: float = 0.10,
     ripple_scale: float = 8.0,
     seed: int = 0,
-) -> dict:
+) -> dict[str, Any]:
     """Generate a water-bottom mesh with sediment micro-terrain and material zones.
 
     Produces geometry for the underside of a water body — the river / lake
@@ -1140,7 +1151,7 @@ def generate_water_bottom_mesh(
     cell_size = float(cell_size_override if cell_size_override is not None else stack.cell_size)
 
     h = np.asarray(stack.height, dtype=np.float32)
-    rows, cols = h.shape
+    _rows, _cols = h.shape
     mask = np.asarray(water_body_mask, dtype=bool)
     if mask.shape != h.shape:
         raise ValueError(
@@ -1367,10 +1378,11 @@ def pass_bathymetry(
     if ws_raw is None:
         # No water surface yet — produce zero-depth maps and warn
         issues.append(ValidationIssue(
-            severity="warning",
+            code="BATHYMETRY_WATER_SURFACE_MISSING",
+            severity="soft",
             message="pass_bathymetry: water_surface channel absent; "
                     "bathymetry will be all zeros. Run pass_water_variants first.",
-            channel="water_surface",
+            affected_feature="water_surface",
         ))
         bathymetry = np.zeros(h.shape, dtype=np.float32)
         water_depth_zone = np.zeros(h.shape, dtype=np.uint8)
@@ -1414,8 +1426,6 @@ def pass_bathymetry(
             # Label connected components (4-connectivity for speed)
             # We implement a simple two-pass union-find flood fill without scipy
             label_grid = np.full(h.shape, -1, dtype=np.int32)
-            next_label = 0
-
             # First pass: row-major assignment with left/up neighbour merging
             parent = list(range(rows * cols))
 
@@ -1447,8 +1457,8 @@ def pass_bathymetry(
                     _union(idx, left)
 
             # Assign canonical labels and compute per-body spill rims.
-            body_heights: dict = {}
-            body_rims: dict = {}
+            body_heights: dict[int, list[float]] = {}
+            body_rims: dict[int, list[float]] = {}
             for idx in range(rows * cols):
                 if not wet_flat[idx]:
                     continue
@@ -1466,7 +1476,7 @@ def pass_bathymetry(
                     if 0 <= nr < rows and 0 <= nc < cols and not wet_mask[nr, nc]:
                         rim_values.append(float(h[nr, nc]))
 
-            body_surface: dict = {
+            body_surface: dict[int, float] = {
                 root: float(max(body_rims.get(root) or heights))
                 for root, heights in body_heights.items()
             }

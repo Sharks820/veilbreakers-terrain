@@ -37,11 +37,18 @@ from __future__ import annotations
 
 import inspect
 import math
-from typing import Any, Dict, List
+from collections.abc import Callable, Sequence
+from typing import Any, Dict, List, TypeAlias
 
 from .animation_gaits import Keyframe, keyframe_to_dict
 
-VALID_ENV_TYPES: frozenset = frozenset({
+Float3: TypeAlias = tuple[float, float, float]
+FireBand: TypeAlias = tuple[float, float, float]
+FireBands: TypeAlias = Sequence[FireBand]
+EnvGenerator: TypeAlias = Callable[..., List[Keyframe]]
+
+
+VALID_ENV_TYPES: frozenset[str] = frozenset({
     "door_open", "door_close", "door_slam", "door_creak",
     "gate_raise", "gate_lower", "drawbridge",
     "shatter", "wobble_collapse",
@@ -207,8 +214,6 @@ def generate_door_slam_keyframes(
 
     # Phase 1: fast open — power curve f(t)=target*(t/snap)^0.4
     # Sparse: 0 and snap
-    t0 = 0.0 / snap
-    v0 = target * (max(t0, 0.0) ** 0.4) if t0 > 0 else 0.0
     # At t=0 the power curve tangent is infinite (vertical), approximate with high slope
     out0 = target * 0.4 / (max(1.0 / snap, 1e-9) ** 0.6) / duration
     kfs.append(_make_kf(0, 0.0, "rotation", 2, fps,
@@ -227,7 +232,6 @@ def generate_door_slam_keyframes(
                          in_tangent=0.0, out_tangent=0.0))
 
     # Phase 3: ease-out settle to target
-    settle_t = 1.0
     settle_tang = _ease_out_cubic_tangent(1.0, target, duration)
     kfs.append(_make_kf(frame_count, target, "rotation", 2, fps,
                          in_tangent=settle_tang, out_tangent=0.0))
@@ -511,7 +515,7 @@ def generate_drawbridge_keyframes(
 def generate_shatter_keyframes(
     frame_count: int = 20,
     num_shards: int = 6,
-    impact_normal: tuple = (0.0, 0.0, 1.0),
+    impact_normal: Float3 = (0.0, 0.0, 1.0),
     gravity: float = -9.81,
     sleep_threshold_velocity: float = 0.05,
     lod_visible_shards: int = 3,
@@ -561,8 +565,6 @@ def generate_shatter_keyframes(
         sleep_frame = fc + 1
         for f in range(1, fc + 1):
             t_sec = f * dt
-            t_norm = f / fc
-
             pz = vz_0 * t_sec + 0.5 * gravity * (t_sec ** 2)
             px = vx * t_sec
             py = vy * t_sec
@@ -662,7 +664,7 @@ def generate_wobble_collapse_keyframes(
 # Tangents are the analytical derivative of the sum so Unity Animator needs
 # no sub-frame baking.
 
-_FIRE_BANDS = (
+_FIRE_BANDS: tuple[FireBand, ...] = (
     # (freq_hz, amp_scale, phase_offset)
     (0.5,  0.25, 0.0),    # slow buoyancy sway
     (3.0,  0.35, 1.1),    # turbulent flicker
@@ -670,8 +672,12 @@ _FIRE_BANDS = (
 )
 
 
-def _fire_val_tang(t: float, intensity: float, duration: float,
-                   bands=_FIRE_BANDS) -> tuple:
+def _fire_val_tang(
+    t: float,
+    intensity: float,
+    duration: float,
+    bands: FireBands = _FIRE_BANDS,
+) -> tuple[float, float]:
     """Return (value, tangent) for the 3-band fire signal at normalised t."""
     val = intensity
     tang = 0.0
@@ -829,10 +835,10 @@ def generate_water_wave_keyframes(
     """
     kfs: List[Keyframe] = []
     fc = max(frame_count, 1)
-    duration = fc / max(fps, 1e-9)
     g = 9.81
     depth = max(0.1, water_depth_m)
     phase_speed = math.sqrt(g * depth)
+    reference_phase_speed = math.sqrt(g * 2.0)
 
     # Manning's equation: V = (1/n) * R_h^(2/3) * S^(1/2)
     Rh = max(0.01, hydraulic_radius_m)
@@ -845,9 +851,8 @@ def generate_water_wave_keyframes(
     dz = math.sin(wave_direction)
 
     for f in range(0, frame_count + 1):
-        t = f / fc
         t_sec = f / max(fps, 1e-9)
-        phase = freq * f
+        phase = freq * f * (phase_speed / reference_phase_speed)
         disp = amplitude * math.sin(phase)
         # Horizontal drift from Manning's velocity scaled to animation range
         horiz = flow_velocity * t_sec * 0.01  # 0.01 converts m/s to anim units/frame
@@ -984,8 +989,6 @@ def generate_waterfall_keyframes(
 
     for f in range(0, frame_count + 1):
         t = f / fc
-        t_sec = f / max(fps, 1e-9)
-
         # Water body displacement: cascade oscillation above impact zone
         disp = amplitude * (math.sin(t * math.pi * 3) + 0.5 * math.sin(t * math.pi * 7))
         d_disp = amplitude * (
@@ -1430,7 +1433,6 @@ def generate_trap_trigger_keyframes(
     """
     target = math.radians(angle)
     fc = max(frame_count, 1)
-    duration = fc / max(fps, 1e-9)
     omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
 
     # Snap phase duration
@@ -1504,10 +1506,8 @@ def generate_trap_reset_keyframes(
     """
     target = math.radians(angle)
     fc = max(frame_count, 1)
-    duration = fc / max(fps, 1e-9)
     compress = max(1, spring_compression_frames)
     cue_frame = compress + max(0, sound_cue_offset_frames)
-    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
 
     kfs: List[Keyframe] = []
     compression_overshoot = target * 0.08
@@ -1629,8 +1629,6 @@ def generate_chest_open_keyframes(
     hard_stop = math.radians(max(angle, max_angle_deg))
     fc = max(frame_count, 1)
     duration = fc / max(fps, 1e-9)
-    omega = math.sqrt(max(spring_k, 0.1) / max(mass_kg, 0.01))
-
     # Phase boundaries (normalised time)
     t_spring_end = 0.60
     t_coast_end  = 0.90
@@ -1704,8 +1702,6 @@ def generate_lever_pull_keyframes(
     target = math.radians(angle)
     detent = math.radians(max(0.0, min(detent_angle_deg, angle * 0.9)))
     fc = max(frame_count, 1)
-    duration = fc / max(fps, 1e-9)
-
     # Detent at what fraction of total travel
     detent_frac = detent / target if target > 0 else 0.5
     detent_frame = max(1, int(round(detent_frac * fc)))
@@ -1762,9 +1758,7 @@ def generate_switch_toggle_keyframes(
     """
     target = math.radians(angle)
     mid = max(1, frame_count // 2)
-    duration = frame_count / max(fps, 1e-9)
     dur1 = mid / max(fps, 1e-9)
-    dur2 = (frame_count - mid) / max(fps, 1e-9)
 
     # At midpoint: fast snap tangent from spring release
     # velocity = target/duration * acceleration_factor (detent snap is ~3x normal)
@@ -1985,7 +1979,7 @@ def generate_windmill_rotate_keyframes(
 # Dispatch table
 # ---------------------------------------------------------------------------
 
-_DISPATCH: Dict[str, Any] = {
+_DISPATCH: Dict[str, EnvGenerator] = {
     "door_open":       generate_door_open_keyframes,
     "door_close":      generate_door_close_keyframes,
     "door_slam":       generate_door_slam_keyframes,

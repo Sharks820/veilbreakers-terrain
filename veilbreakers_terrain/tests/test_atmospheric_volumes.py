@@ -1,6 +1,7 @@
 """Tests for atmospheric_volumes handler."""
 
 import pytest
+from typing import TypedDict
 
 from veilbreakers_terrain.handlers.atmospheric_volumes import (
     ATMOSPHERIC_VOLUMES,
@@ -12,7 +13,12 @@ from veilbreakers_terrain.handlers.atmospheric_volumes import (
 )
 
 
-def _terrain_kwargs(bounds):
+class _TerrainKwargs(TypedDict):
+    heightmap: list[list[float]]
+    cell_size: float
+
+
+def _terrain_kwargs(bounds: tuple[float, float, float, float]) -> _TerrainKwargs:
     min_x, _min_y, max_x, _max_y = bounds
     cell_size = max((max_x - min_x) / 8.0, 1.0)
     heightmap = [[float(r + c) for c in range(8)] for r in range(8)]
@@ -41,7 +47,7 @@ class TestVolumeDefinitions:
             assert vol["shape"] in valid, f"Volume '{name}' has invalid shape"
 
     def test_color_is_rgb(self):
-        for name, vol in ATMOSPHERIC_VOLUMES.items():
+        for _name, vol in ATMOSPHERIC_VOLUMES.items():
             assert len(vol["color"]) == 3
 
 
@@ -56,7 +62,7 @@ class TestBiomeRules:
                     f"Biome '{biome}' references unknown volume '{rule['volume']}'"
 
     def test_rules_have_coverage_and_count(self):
-        for biome, rules in BIOME_ATMOSPHERE_RULES.items():
+        for _biome, rules in BIOME_ATMOSPHERE_RULES.items():
             for rule in rules:
                 assert "coverage" in rule
                 assert "min_count" in rule
@@ -105,7 +111,7 @@ class TestComputeAtmosphericPlacements:
             "dark_forest", bounds, seed=42, **_terrain_kwargs(bounds)
         )
         for p in placements:
-            x, y, z = p["position"]
+            x, y, _z = p["position"]
             assert bounds[0] <= x <= bounds[2]
             assert bounds[1] <= y <= bounds[3]
 

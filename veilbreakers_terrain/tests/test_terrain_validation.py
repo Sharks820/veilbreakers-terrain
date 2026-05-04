@@ -4,10 +4,23 @@ from __future__ import annotations
 
 import threading
 import uuid
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import numpy as np
-import pytest
+
+if TYPE_CHECKING:
+    from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
+    from veilbreakers_terrain.handlers.terrain_semantics import (
+        HeroFeatureSpec,
+        ProtectedZoneSpec,
+        TerrainIntentState,
+        TerrainMaskStack,
+    )
+
+_ChannelValue = TypeVar("_ChannelValue")
+_BindingResult = dict[str, object]
 
 
 # ---------------------------------------------------------------------------
@@ -15,7 +28,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_stack(tile_size=16, cell_size=1.0, seed=0):
+def _make_stack(
+    tile_size: int = 16,
+    cell_size: float = 1.0,
+    seed: int = 0,
+) -> "TerrainMaskStack":
     from veilbreakers_terrain.handlers.terrain_semantics import TerrainMaskStack
 
     rng = np.random.default_rng(seed)
@@ -31,18 +48,31 @@ def _make_stack(tile_size=16, cell_size=1.0, seed=0):
     )
 
 
-def _set_channel(stack, channel: str, value):
+def _set_channel(
+    stack: "TerrainMaskStack",
+    channel: str,
+    value: _ChannelValue,
+) -> _ChannelValue:
     stack.set(channel, value, "test_fixture")
     return value
 
 
-def _force_channel(stack, channel: str, value):
+def _force_channel(
+    stack: "TerrainMaskStack",
+    channel: str,
+    value: _ChannelValue,
+) -> _ChannelValue:
     object.__setattr__(stack, channel, value)
     stack.populated_by_pass[channel] = "test_invalid_fixture"
     return value
 
 
-def _make_intent(stack, protected_zones=(), hero_specs=(), composition_hints=None):
+def _make_intent(
+    stack: "TerrainMaskStack",
+    protected_zones: Sequence["ProtectedZoneSpec"] = (),
+    hero_specs: Sequence["HeroFeatureSpec"] = (),
+    composition_hints: Mapping[str, Any] | None = None,
+) -> "TerrainIntentState":
     from veilbreakers_terrain.handlers.terrain_semantics import BBox, TerrainIntentState
 
     extent = float(stack.tile_size) * float(stack.cell_size)
@@ -303,8 +333,9 @@ def test_hero_feature_ok_when_mask_populated():
     )
 
     stack = _make_stack(tile_size=16)
-    _set_channel(stack, "cliff_candidate", np.zeros(stack.height.shape, dtype=np.float32))
-    stack.cliff_candidate[6:10, 6:10] = 1.0
+    cliff_candidate = np.zeros(stack.height.shape, dtype=np.float32)
+    cliff_candidate[6:10, 6:10] = 1.0
+    _set_channel(stack, "cliff_candidate", cliff_candidate)
     spec = HeroFeatureSpec(
         feature_id="c1",
         feature_kind="cliff",
@@ -635,8 +666,9 @@ def test_run_validation_suite_custom_validators():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def _build_controller_with_checkpoint():
+def _make_controller_with_checkpoint(
+    tile_size: int = 16,
+) -> tuple["TerrainPassController", Path]:
     from veilbreakers_terrain.handlers.terrain_pipeline import TerrainPassController
     from veilbreakers_terrain.handlers.terrain_semantics import (
         BBox,
@@ -644,30 +676,25 @@ def _build_controller_with_checkpoint():
         TerrainPipelineState,
     )
 
-    def _make(tile_size=16):
-        stack = _make_stack(tile_size=tile_size)
-        intent = TerrainIntentState(
-            seed=42,
-            region_bounds=BBox(
-                0.0, 0.0, float(tile_size), float(tile_size)
-            ),
-            tile_size=tile_size,
-            cell_size=1.0,
-            composition_hints={"unity_export_opt_out": True},
-        )
-        state = TerrainPipelineState(intent=intent, mask_stack=stack)
-        td = Path("output") / "test_artifacts" / "terrain_validation" / uuid.uuid4().hex
-        td.mkdir(parents=True, exist_ok=True)
-        controller = TerrainPassController(state, checkpoint_dir=td)
-        return controller, td
-
-    return _make
+    stack = _make_stack(tile_size=tile_size)
+    intent = TerrainIntentState(
+        seed=42,
+        region_bounds=BBox(0.0, 0.0, float(tile_size), float(tile_size)),
+        tile_size=tile_size,
+        cell_size=1.0,
+        composition_hints={"unity_export_opt_out": True},
+    )
+    state = TerrainPipelineState(intent=intent, mask_stack=stack)
+    td = Path("output") / "test_artifacts" / "terrain_validation" / uuid.uuid4().hex
+    td.mkdir(parents=True, exist_ok=True)
+    controller = TerrainPassController(state, checkpoint_dir=td)
+    return controller, td
 
 
-def test_pass_validation_full_returns_pass_result(_build_controller_with_checkpoint):
+def test_pass_validation_full_returns_pass_result():
     from veilbreakers_terrain.handlers.terrain_validation import pass_validation_full
 
-    controller, _ = _build_controller_with_checkpoint()
+    controller, _checkpoint_dir = _make_controller_with_checkpoint()
     result = pass_validation_full(controller.state, None)
     assert result.pass_name == "validation_full"
     assert result.status in ("ok", "warning"), (
@@ -676,16 +703,14 @@ def test_pass_validation_full_returns_pass_result(_build_controller_with_checkpo
     )
 
 
-def test_pass_validation_full_triggers_rollback_on_hard_fail(
-    _build_controller_with_checkpoint,
-):
+def test_pass_validation_full_triggers_rollback_on_hard_fail():
     from veilbreakers_terrain.handlers.terrain_checkpoints import save_checkpoint
     from veilbreakers_terrain.handlers.terrain_validation import (
         bind_active_controller,
         pass_validation_full,
     )
 
-    controller, _ = _build_controller_with_checkpoint()
+    controller, _checkpoint_dir = _make_controller_with_checkpoint()
     # Save a clean checkpoint first
     save_checkpoint(controller, pass_name="baseline")
     clean_hash = controller.state.mask_stack.compute_hash()
@@ -708,15 +733,21 @@ def test_pass_validation_full_triggers_rollback_on_hard_fail(
 def test_bind_active_controller_isolated_per_thread():
     from veilbreakers_terrain.handlers import terrain_validation as validation_mod
 
-    main_controller = object()
-    worker_controller = object()
-    worker_result: dict[str, object] = {}
+    main_controller, _main_checkpoint_dir = _make_controller_with_checkpoint()
+    worker_controller, _worker_checkpoint_dir = _make_controller_with_checkpoint()
+    worker_result: dict[str, _BindingResult] = {}
 
     validation_mod.bind_active_controller(main_controller)
     try:
         def _worker() -> None:
-            first = validation_mod.bind_active_controller(worker_controller)
-            second = validation_mod.bind_active_controller(worker_controller)
+            first = cast(
+                _BindingResult,
+                validation_mod.bind_active_controller(worker_controller),
+            )
+            second = cast(
+                _BindingResult,
+                validation_mod.bind_active_controller(worker_controller),
+            )
             worker_result["first"] = first
             worker_result["second"] = second
             validation_mod.bind_active_controller(None)
@@ -725,7 +756,10 @@ def test_bind_active_controller_isolated_per_thread():
         thread.start()
         thread.join()
 
-        rebound = validation_mod.bind_active_controller(main_controller)
+        rebound = cast(
+            _BindingResult,
+            validation_mod.bind_active_controller(main_controller),
+        )
         assert worker_result["first"]["controller_id"] == id(worker_controller)
         assert worker_result["second"]["already_bound"] is True
         assert rebound["already_bound"] is True

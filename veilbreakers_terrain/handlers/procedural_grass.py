@@ -27,9 +27,9 @@ import os
 import random
 import string
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence, cast
 
 import numpy as np
 
@@ -55,7 +55,7 @@ def _distance_transform_edt(mask: np.ndarray) -> np.ndarray:
     at the cell scale we use.
     """
     if _scipy_edt is not None:
-        return _scipy_edt(mask).astype(np.float32)
+        return np.asarray(cast(Any, _scipy_edt)(mask), dtype=np.float32)
 
     # Fallback: BFS-style multi-pass.
     mask = np.asarray(mask, dtype=bool)

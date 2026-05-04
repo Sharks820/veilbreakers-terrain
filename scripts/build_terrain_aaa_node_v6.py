@@ -41,12 +41,14 @@ Invoke::
 from __future__ import annotations
 
 import json
+import importlib
 import math
 import sys
 import tempfile
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "output" / "aaa_node_v6"
@@ -54,8 +56,8 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(REPO_ROOT))
 
-FAILURES: list[dict] = []
-VALIDATION_FULL_PROOF: dict = {}
+FAILURES: list[dict[str, str]] = []
+validation_full_proof: dict[str, Any] = {}
 
 SEED = 0xAAA6
 TILE_SIZE_M = 1024.0
@@ -96,10 +98,8 @@ def _fail(stage: str, exc: BaseException) -> None:
 # ---------------------------------------------------------------------------
 # Stage 1 — Heightmap (identical to v4/v5)
 # ---------------------------------------------------------------------------
-def compose_heightmap():
+def compose_heightmap() -> Any:
     import numpy as np
-
-    rng = np.random.default_rng(SEED)
 
     xs = np.linspace(X_MIN, X_MAX, RES, dtype=np.float32)
     ys = np.linspace(Y_MIN, Y_MAX, RES, dtype=np.float32)
@@ -120,7 +120,15 @@ def compose_heightmap():
     south_t = np.clip((-Y - 300.0) / 200.0, 0.0, 1.0)
     macro = macro * (1.0 - south_t) + 2.0 * south_t
 
-    def fbm(ax, ay, octaves=6, freq=0.006, persist=0.5, lac=2.0, seed=0):
+    def fbm(
+        ax: Any,
+        ay: Any,
+        octaves: int = 6,
+        freq: float = 0.006,
+        persist: float = 0.5,
+        lac: float = 2.0,
+        seed: int = 0,
+    ) -> Any:
         rn = np.random.default_rng(seed)
         out = np.zeros_like(ax)
         a = 1.0
@@ -146,7 +154,13 @@ def compose_heightmap():
     detail_amp = 5.0 + 25.0 * elev_norm
     heightmap = (macro + detail * detail_amp).astype(np.float32)
 
-    def carve_channel(h, cx, width, depth, axis="x"):
+    def carve_channel(
+        h: Any,
+        cx: float,
+        width: float,
+        depth: float,
+        axis: str = "x",
+    ) -> Any:
         if axis == "x":
             dist = np.abs(X - cx)
         else:
@@ -170,7 +184,7 @@ def compose_heightmap():
 # ---------------------------------------------------------------------------
 # Stage 2 — Production passes (cliff pass guarded with timeout-skip)
 # ---------------------------------------------------------------------------
-def run_production_passes(heightmap):
+def run_production_passes(heightmap: Any) -> Any | None:
     import numpy as np
 
     try:
@@ -273,7 +287,7 @@ def run_production_passes(heightmap):
     return mask_stack
 
 
-def run_validation_full_pipeline_proof():
+def run_validation_full_pipeline_proof() -> dict[str, Any]:
     """Run a tiny canonical production pipeline and record validation_full proof."""
     import numpy as np
 
@@ -336,14 +350,15 @@ def run_validation_full_pipeline_proof():
 # ---------------------------------------------------------------------------
 # Stage 3 — Blender mesh construction (all bpy usage stays inside functions)
 # ---------------------------------------------------------------------------
-def _look_at(cam_obj, target_xyz):
-    from mathutils import Vector
+def _look_at(cam_obj: Any, target_xyz: tuple[float, float, float]) -> None:
+    mathutils = importlib.import_module("mathutils")
+    Vector = getattr(mathutils, "Vector")
     direction = Vector(target_xyz) - Vector(cam_obj.location)
     rot_quat = direction.to_track_quat("-Z", "Y")
     cam_obj.rotation_euler = rot_quat.to_euler()
 
 
-def _build_dark_fantasy_material(mat_name: str, splat_image):
+def _build_dark_fantasy_material(mat_name: str, splat_image: Any) -> Any:
     """5-layer dark fantasy splatmap material with WorldXY UV projection
     and procedural break-up noise to defeat tiling.
 
@@ -354,7 +369,7 @@ def _build_dark_fantasy_material(mat_name: str, splat_image):
       3=wet_sand   — dark beige   (near water)
       4=vegetation — dark green   (low slopes / valley floors)
     """
-    import bpy
+    bpy = importlib.import_module("bpy")
 
     LAYER_COLORS = [
         (0.08, 0.06, 0.04, 1.0),   # 0 soil — dark brown
@@ -441,7 +456,7 @@ def _build_dark_fantasy_material(mat_name: str, splat_image):
 
     # Build 5 Principled BSDFs, each with a per-layer multiplied color via a
     # ShaderNodeMixRGB(MULTIPLY) so breakup noise modulates base color.
-    bsdfs = []
+    bsdfs: list[Any] = []
     for i, (color, rough) in enumerate(zip(LAYER_COLORS, LAYER_ROUGHNESS)):
         # Constant color
         rgb = nodes.new("ShaderNodeRGB"); rgb.location = (300, 700 - i * 240)
@@ -473,18 +488,16 @@ def _build_dark_fantasy_material(mat_name: str, splat_image):
         clamp_4.outputs["Value"],  # 4 vegetation
     ]
 
-    # Chain mix shaders
-    prev_mix = None
+    # Chain mix shaders. Keep a concrete final shader socket instead of an
+    # optional node reference so Blender API wiring cannot dereference None.
+    final_shader = bsdfs[0].outputs["BSDF"]
     for i in range(1, 5):
         mix = nodes.new("ShaderNodeMixShader")
         mix.location = (1100, 700 - i * 240)
         links.new(weight_sockets[i], mix.inputs["Fac"])
-        if i == 1:
-            links.new(bsdfs[0].outputs["BSDF"], mix.inputs[1])
-        else:
-            links.new(prev_mix.outputs["Shader"], mix.inputs[1])
+        links.new(final_shader, mix.inputs[1])
         links.new(bsdfs[i].outputs["BSDF"], mix.inputs[2])
-        prev_mix = mix
+        final_shader = mix.outputs["Shader"]
 
     # ---- Subtle bump from breakup noise to add stochastic normal variation ---
     bump = nodes.new("ShaderNodeBump"); bump.location = (760, -480)
@@ -495,15 +508,15 @@ def _build_dark_fantasy_material(mat_name: str, splat_image):
     for b in bsdfs:
         links.new(bump.outputs["Normal"], b.inputs["Normal"])
 
-    links.new(prev_mix.outputs["Shader"], out.inputs["Surface"])
+    links.new(final_shader, out.inputs["Surface"])
     return mat
 
 
-def _smooth_terrain_normals(mesh):
+def _smooth_terrain_normals(mesh: Any) -> None:
     """Set all polygons to smooth shading and recompute split normals.
     This eliminates faceted-look 'low-poly' artifacts called out in the
     art director's grade."""
-    import bpy
+    bpy = importlib.import_module("bpy")
     n_polys = len(mesh.polygons)
     if n_polys == 0:
         return
@@ -519,15 +532,15 @@ def _smooth_terrain_normals(mesh):
     mesh.update()
 
 
-def build_blender_scene(heightmap, stack):
+def build_blender_scene(heightmap: Any, stack: Any) -> None:
     try:
-        import bpy
-        import mathutils
+        bpy = importlib.import_module("bpy")
     except ImportError:
         _log("Not running inside Blender — skipping mesh build.")
         return
 
     import numpy as np
+    heightmap = np.asarray(heightmap, dtype=np.float32)
 
     _log("Building Blender scene...")
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -646,7 +659,7 @@ def build_blender_scene(heightmap, stack):
     try:
         kernel_size = 32
 
-        def _box_blur_2d(arr, k):
+        def _box_blur_2d(arr: Any, k: int) -> Any:
             padded = np.pad(arr, k // 2, mode="edge")
             cum = np.cumsum(padded, axis=0)
             blurred_row = (cum[k:, :] - cum[:-k, :]) / k
@@ -663,8 +676,8 @@ def build_blender_scene(heightmap, stack):
         detail_norm = ((detail_layer - d_min) / d_range).astype(np.float32)
 
         disp_res = 1024
-        ri = np.linspace(0, hm_h - 1, disp_res).astype(int)
-        ci = np.linspace(0, hm_w - 1, disp_res).astype(int)
+        ri = [int(round(i * (hm_h - 1) / max(disp_res - 1, 1))) for i in range(disp_res)]
+        ci = [int(round(i * (hm_w - 1) / max(disp_res - 1, 1))) for i in range(disp_res)]
         detail_small = detail_norm[np.ix_(ri, ci)]
 
         disp_img = bpy.data.images.new(
@@ -702,15 +715,15 @@ def build_blender_scene(heightmap, stack):
         wxs_g = np.linspace(-160.0, 160.0, wg)
         wys_g = np.linspace(-470.0, 470.0, wg)
 
-        def _world_to_hm_idx(wx, wy):
+        def _world_to_hm_idx(wx: float, wy: float) -> tuple[int, int]:
             col = int(np.clip((wx - X_MIN) / (X_MAX - X_MIN) * (RES - 1), 0, RES - 1))
             row = int(np.clip((wy - Y_MIN) / (Y_MAX - Y_MIN) * (RES - 1), 0, RES - 1))
             return row, col
 
         n_verts_total = wg * wg
-        w_verts = []
+        w_verts: list[tuple[float, float, float]] = []
         vert_alphas = np.zeros(n_verts_total, dtype=np.float32)
-        vert_idx_map = {}
+        vert_idx_map: dict[tuple[int, int], int] = {}
 
         for ri, wy in enumerate(wys_g):
             for ci, wx in enumerate(wxs_g):
@@ -723,17 +736,17 @@ def build_blender_scene(heightmap, stack):
                 t = float(np.clip(margin / SHORE_BLEND_M, 0.0, 1.0))
                 vert_alphas[vi] = t * t * (3.0 - 2.0 * t)
 
-        w_faces = []
+        w_faces: list[tuple[int, int, int, int]] = []
         for ri in range(wg - 1):
             for ci in range(wg - 1):
-                quad = [
+                quad = (
                     vert_idx_map[(ri,     ci    )],
                     vert_idx_map[(ri,     ci + 1)],
                     vert_idx_map[(ri + 1, ci + 1)],
                     vert_idx_map[(ri + 1, ci    )],
-                ]
+                )
                 if any(vert_alphas[v] > 0.0 for v in quad):
-                    w_faces.append(tuple(quad))
+                    w_faces.append(quad)
 
         _log(f"    water quads: {len(w_faces)} / {(wg-1)**2}")
 
@@ -871,7 +884,7 @@ def build_blender_scene(heightmap, stack):
         ("Cam_Aerial",         (  0.0,     0.0, 900.0), (  0.0,   0.0,   0.0), 28.0),
         ("Cam_Waterfall",      ( -30.0, -200.0, 200.0), (  0.0,  60.0,  10.0), 35.0),
     ]
-    cameras = []
+    cameras: list[Any] = []
     for name, loc, target, lens in cam_specs:
         cd = bpy.data.cameras.new(name)
         cd.lens = lens
@@ -922,8 +935,8 @@ def build_blender_scene(heightmap, stack):
 # ---------------------------------------------------------------------------
 # Stage 4 — Summary JSON + manifest
 # ---------------------------------------------------------------------------
-def write_summary(heightmap, stack):
-    channels = {}
+def write_summary(heightmap: Any, stack: Any) -> dict[str, Any]:
+    channels: dict[str, str] = {}
     if stack is not None:
         for ch in ["slope", "cliff_candidate", "foam", "mist", "wet_rock",
                    "riverbed_caustics", "waterfall_velocity",
@@ -962,7 +975,7 @@ def write_summary(heightmap, stack):
             "V6-R1: 1920x1080 @ 64 samples (was 1280x720 @ 128)",
         ],
         "channels_produced": channels,
-        "validation_full_pipeline_proof": VALIDATION_FULL_PROOF,
+        "validation_full_pipeline_proof": validation_full_proof,
         "failures": FAILURES,
     }
     out_path = OUT_DIR / "BUILD_SUMMARY.json"
@@ -998,16 +1011,16 @@ def write_generation_manifest() -> None:
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    global VALIDATION_FULL_PROOF
+    global validation_full_proof
     t0 = time.perf_counter()
     _log("=== AAA Terrain Node v6 — D/F -> A/B target rebuild ===")
     register_terrain_passes_for_script()
 
     heightmap = compose_heightmap()
     stack = run_production_passes(heightmap)
-    VALIDATION_FULL_PROOF = run_validation_full_pipeline_proof()
+    validation_full_proof = run_validation_full_pipeline_proof()
     build_blender_scene(heightmap, stack)
-    summary = write_summary(heightmap, stack)
+    write_summary(heightmap, stack)
     write_generation_manifest()
 
     elapsed = time.perf_counter() - t0
