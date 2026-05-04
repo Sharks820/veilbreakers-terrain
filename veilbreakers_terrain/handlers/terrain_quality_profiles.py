@@ -138,7 +138,7 @@ class TerrainQualityProfile:
     # ------------------------------------------------------------------
     # Erosion quality
     # ------------------------------------------------------------------
-    hydraulic_erosion_iterations: int = 2000
+    hydraulic_erosion_iterations: int = 50000  # FIX-B14-10: actual droplet count (no x25 multiplier in _terrain_world)
     thermal_erosion_iterations: int = 400
     talus_angle_degrees: float = 33.0
     erosion_rain_amount: float = 0.03
@@ -323,7 +323,7 @@ MOBILE_PROFILE = TerrainQualityProfile(
     extends=None,
     save_every_n_operations=0,
     # --- erosion quality ---
-    hydraulic_erosion_iterations=10,
+    hydraulic_erosion_iterations=250,  # FIX-B14-10: was 10 (calibrated against removed x25 multiplier)
     thermal_erosion_iterations=0,
     talus_angle_degrees=33.0,
     erosion_rain_amount=0.01,
@@ -379,7 +379,7 @@ STANDARD_PROFILE = TerrainQualityProfile(
     extends="mobile",
     save_every_n_operations=5,
     # --- erosion quality ---
-    hydraulic_erosion_iterations=100,
+    hydraulic_erosion_iterations=2500,  # FIX-B14-10: was 100 (calibrated against removed x25 multiplier)
     thermal_erosion_iterations=20,
     talus_angle_degrees=33.0,
     erosion_rain_amount=0.02,
@@ -435,7 +435,7 @@ HIGH_FIDELITY_PROFILE = TerrainQualityProfile(
     extends="standard",
     save_every_n_operations=2,
     # --- erosion quality ---
-    hydraulic_erosion_iterations=500,
+    hydraulic_erosion_iterations=12500,  # FIX-B14-10: was 500 (calibrated against removed x25 multiplier)
     thermal_erosion_iterations=100,
     talus_angle_degrees=33.0,
     erosion_rain_amount=0.025,
@@ -491,7 +491,7 @@ AAA_OPEN_WORLD_PROFILE = TerrainQualityProfile(
     extends="high_fidelity",
     save_every_n_operations=1,
     # --- erosion quality ---
-    hydraulic_erosion_iterations=2000,
+    hydraulic_erosion_iterations=50000,  # FIX-B14-10: was 2000 (calibrated against removed x25 multiplier)
     thermal_erosion_iterations=400,
     talus_angle_degrees=33.0,
     erosion_rain_amount=0.03,

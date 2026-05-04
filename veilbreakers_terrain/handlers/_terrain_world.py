@@ -1134,11 +1134,11 @@ def pass_erosion(
 
         quality = load_quality_profile("aaa_open_world")
 
-    # AAA hydraulic erosion: 1024² production tiles keep the established 50k
-    # droplet budget (Olsen 2004 / Gaea reference). Smaller scoped/test tiles
-    # scale by cell count so per-cell droplet density remains sane instead of
-    # running 50k particles over a 32² fixture and timing out the suite.
-    quality_hydraulic = max(1, int(quality.hydraulic_erosion_iterations) * 25)
+    # Actual iteration count — no implicit multiplier. See FIX-B14-10.
+    # Profile values (mobile=250, standard=2500, high_fidelity=12500,
+    # aaa_open_world=50000) are the real droplet counts; tile_scale below
+    # keeps per-cell density sane on sub-1024² fixtures.
+    quality_hydraulic = max(1, int(quality.hydraulic_erosion_iterations))
     quality_thermal = max(0, int(quality.thermal_erosion_iterations))
     cell_count = max(1, int(stack.height.size))
     reference_cell_count = 1024 * 1024
