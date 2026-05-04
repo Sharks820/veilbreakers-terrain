@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import os
 from collections import deque
 from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, overload
@@ -838,7 +839,7 @@ def pass_water_flow_speed(
     automatically after pass_hydrology.
     """
     import time as _time
-    from .terrain_semantics import PassResult
+    from .terrain_semantics import PassResult, ValidationIssue
 
     t0 = _time.perf_counter()
     stack = state.mask_stack
@@ -877,10 +878,21 @@ def pass_water_flow_speed(
     # (vertical cliff is 1.0), so anything above that indicates a stale
     # radian/degree channel was fed in upstream.
     max_slope = float(np.max(slope_arr)) if slope_arr.size else 0.0
-    assert max_slope < 10.0, (
-        "Manning slope exceeded 1000% — unit convention error "
-        "(expected dimensionless rise/run, got max={:.3f})".format(max_slope)
-    )
+    issues: list[ValidationIssue] = []
+    if max_slope >= 10.0:
+        _msg = (
+            "Manning slope exceeded 1000% — unit convention error "
+            "(expected dimensionless rise/run, got max={:.3f})".format(max_slope)
+        )
+        if os.environ.get("TERRAIN_DEV_MODE"):
+            raise AssertionError(_msg)
+        issues.append(
+            ValidationIssue(
+                code="WATER_FLOW_SPEED_SLOPE_UNIT_ERROR",
+                severity="soft",
+                message=_msg,
+            )
+        )
 
     # Log-normalise accumulation so it doesn't dominate the product.
     log_acc = np.log1p(flow_acc_arr)
@@ -922,7 +934,7 @@ def pass_water_flow_speed(
 
     return PassResult(
         pass_name="pass_water_flow_speed",
-        status="ok",
+        status="ok" if not issues else "warning",
         duration_seconds=_time.perf_counter() - t0,
         produced_channels=("flow_speed",),
         consumed_channels=("flow_direction", "flow_accumulation", "slope"),
@@ -932,7 +944,7 @@ def pass_water_flow_speed(
             "p95_raw": round(p95, 4),
             "slope_max_dimensionless": round(max_slope, 4),
         },
-        issues=[],
+        issues=issues,
     )
 
 
